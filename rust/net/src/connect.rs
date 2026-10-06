@@ -1,10 +1,13 @@
 //! Connections to HTTP(S) targets: direct, through a CONNECT tunnel, in absolute form or through SOCKS5.
 use crate::{
-    Alpn, Verify, client_config, dial,
+    Verify, client_config, dial,
     proxy::{Proxy, UnusableProxy, Upstream},
     socks,
 };
-use graphite_meter_proto::origin::{Host, Origin, Scheme};
+use graphite_meter_proto::{
+    discovery::Protocol,
+    origin::{Host, Origin, Scheme},
+};
 use rustls::pki_types::ServerName;
 use std::{fmt, io, time::Duration};
 use tokio::{
@@ -100,7 +103,7 @@ impl Connector {
     }
 
     /// Connects to `target`, offering `alpn` in its TLS handshake when it is HTTPS.
-    pub async fn connect(&self, target: &Origin, alpn: Alpn) -> Result<Connection, ConnectError> {
+    pub async fn connect(&self, target: &Origin, alpn: Option<Protocol>) -> Result<Connection, ConnectError> {
         let tls = target.scheme == Scheme::Https;
         let (stream, form) = match self.proxy.route(target)? {
             None => (Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>, RequestForm::Origin),
@@ -142,7 +145,7 @@ impl Connector {
         };
         let stream: Box<dyn Stream> = match origin.scheme {
             Scheme::Https => {
-                let hop = TlsConnector::from(client_config(self.verify, Alpn::None).await);
+                let hop = TlsConnector::from(client_config(self.verify, None).await);
                 Box::new(secure(&hop, &origin.host, stream).await?)
             }
             Scheme::Http => Box::new(stream),

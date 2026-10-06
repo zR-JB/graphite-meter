@@ -48,7 +48,7 @@ impl Client {
     pub async fn bus(&self, path: &LatencyPath) -> Result<Bus, Fault> {
         let channel = match path.transport {
             LatencyTransport::WebTransport => {
-                Channel::Datagrams(self.session(&path.origin, Route::WtPing, vec![]).await?)
+                Channel::Datagrams(self.session(None, &path.origin, Route::WtPing, vec![]).await?)
             }
             LatencyTransport::WebSocket => {
                 let socket = timeout(CONTROL_TIMEOUT, self.websocket(&path.origin)).await;

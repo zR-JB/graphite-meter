@@ -20,29 +20,19 @@ pub struct Session {
 }
 
 impl Client {
-    /// A session at `route` on a connection of its own, which the next pinned runtime runs.
+    /// A session at `route` on a connection of its own, which `home` runs, else the next pinned runtime.
     pub async fn session(
         &self,
+        home: Option<&Handle>,
         origin: &Origin,
         route: Route,
         query: Vec<(&'static str, String)>,
     ) -> Result<Session, Fault> {
-        self.session_on(&self.shared.runtimes.next(), origin, route, query)
-            .await
-    }
-
-    /// A session at `route` on a connection of its own, which `home` runs.
-    pub(super) async fn session_on(
-        &self,
-        home: &Handle,
-        origin: &Origin,
-        route: Route,
-        query: Vec<(&'static str, String)>,
-    ) -> Result<Session, Fault> {
+        let home = home.cloned().unwrap_or_else(|| self.shared.runtimes.next());
         let request = Request { query, ..Request::new(Method::CONNECT, origin, route) };
         let head = self.head(&request)?;
         let open = async {
-            let (quic, requests) = quic::dial(origin, self.shared.verify, home).await?;
+            let (quic, requests) = quic::dial(origin, self.shared.verify, &home).await?;
             let connected = webtransport::Session::connect(&requests, head).await;
             match connected.map_err(http3_fault)? {
                 Ok((session, _)) => Ok(Session { session, quic, client: self.clone(), origin: origin.clone() }),

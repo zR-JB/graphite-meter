@@ -15,7 +15,7 @@ fn from(variables: &[(&str, &str)]) -> Proxy {
 /// The proxy `target` goes through, `-` for none, or the refusal.
 fn via(proxy: &Proxy, target: &str) -> String {
     match proxy.route(&Origin::parse(target).unwrap()) {
-        Ok(Some(upstream)) => upstream.to_string(),
+        Ok(Some(upstream)) => format!("{upstream:?}"),
         Ok(None) => "-".into(),
         Err(unusable) => unusable.to_string(),
     }

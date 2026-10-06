@@ -1,5 +1,6 @@
 //! The one crypto provider, ring, and the client TLS configurations built on it.
 use crate::trust;
+use graphite_meter_proto::discovery::Protocol;
 use rustls::{
     CipherSuite::{
         TLS13_AES_128_GCM_SHA256 as AES_128, TLS13_AES_256_GCM_SHA384 as AES_256,
@@ -55,37 +56,26 @@ pub enum Verify {
     Insecure,
 }
 
-/// The protocols a client's TLS handshake offers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Alpn {
-    /// None, for an HTTPS proxy's hop, so the proxy answers CONNECT in HTTP/1.1.
-    None,
-    Http1,
-    Http2,
-    /// HTTP/2 or HTTP/1.1, as the server chooses.
-    Negotiated,
-    /// HTTP/3, over TLS 1.3 only.
-    Http3,
-}
-
-/// The client configuration for `verify` and `alpn`, built once so its connections share one session cache.
-pub async fn client_config(verify: Verify, alpn: Alpn) -> Arc<ClientConfig> {
+/// The client configuration for `verify` offering `alpn`, built once so its connections share one session cache.
+pub async fn client_config(verify: Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
     static CONFIGS: [[OnceCell<Arc<ClientConfig>>; 5]; 2] = [const { [const { OnceCell::const_new() }; 5] }; 2];
     let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
-    match CONFIGS[verify as usize][alpn as usize].get_or_try_init(build).await {
+    let index = alpn.map_or(0, |protocol| protocol as usize + 1);
+    match CONFIGS[verify as usize][index].get_or_try_init(build).await {
         Ok(config) => config.clone(),
         // A trust load that did not finish refuses this connection; the next call loads again.
         Err(cut_short) => configure(trust::refusing(cut_short), alpn),
     }
 }
 
-fn configure(verifier: Arc<dyn ServerCertVerifier>, alpn: Alpn) -> Arc<ClientConfig> {
+/// `alpn` none offers nothing, for an HTTPS proxy's hop, so the proxy answers CONNECT in HTTP/1.1.
+fn configure(verifier: Arc<dyn ServerCertVerifier>, alpn: Option<Protocol>) -> Arc<ClientConfig> {
     let (versions, protocols): (&[&SupportedProtocolVersion], &[&[u8]]) = match alpn {
-        Alpn::None => (rustls::DEFAULT_VERSIONS, &[]),
-        Alpn::Http1 => (rustls::DEFAULT_VERSIONS, &[b"http/1.1"]),
-        Alpn::Http2 => (rustls::DEFAULT_VERSIONS, &[b"h2"]),
-        Alpn::Negotiated => (rustls::DEFAULT_VERSIONS, &[b"h2", b"http/1.1"]),
-        Alpn::Http3 => (&[&rustls::version::TLS13], &[b"h3"]),
+        None => (rustls::DEFAULT_VERSIONS, &[]),
+        Some(Protocol::Http1) => (rustls::DEFAULT_VERSIONS, &[b"http/1.1"]),
+        Some(Protocol::Http2) => (rustls::DEFAULT_VERSIONS, &[b"h2"]),
+        Some(Protocol::Negotiated) => (rustls::DEFAULT_VERSIONS, &[b"h2", b"http/1.1"]),
+        Some(Protocol::Http3) => (&[&rustls::version::TLS13], &[b"h3"]),
     };
     let mut config = ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(versions)

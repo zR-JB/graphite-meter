@@ -50,18 +50,13 @@ impl Upstream {
     }
 }
 
-impl fmt::Display for Upstream {
+/// Without credentials.
+impl fmt::Debug for Upstream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http { origin, .. } => write!(formatter, "{origin}"),
             Self::Socks { host, port, .. } => write!(formatter, "socks5://{host}:{port}"),
         }
-    }
-}
-
-impl fmt::Debug for Upstream {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, formatter)
     }
 }
 

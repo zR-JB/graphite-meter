@@ -326,7 +326,7 @@ impl Group {
             Work::Upload(id) => (Route::WtUpload, vec![("id", id.clone())]),
         };
         let home = Handle::current();
-        let session = self.client.session_on(&home, &self.plan.path.origin, route, query);
+        let session = self.client.session(Some(&home), &self.plan.path.origin, route, query);
         let session = Arc::new(session.await?);
         if let Work::Upload(_) = self.work {
             tally.session.send_replace(Some(session.clone()));

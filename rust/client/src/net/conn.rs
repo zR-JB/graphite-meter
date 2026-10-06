@@ -2,7 +2,7 @@
 use super::{Client, Request, fault::Fault, quic::Quic};
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, Code};
-use graphite_meter_net::{Alpn, RequestForm};
+use graphite_meter_net::RequestForm;
 use graphite_meter_proto::{
     discovery::{MAX_RESPONSE_BYTES, Protocol},
     origin::{Origin, Scheme},
@@ -76,17 +76,12 @@ impl Conn {
         buffer: ReadBuffer,
         home: Option<&Handle>,
     ) -> Result<Self, Fault> {
-        let alpn = match via {
-            Protocol::Http1 => Alpn::Http1,
-            Protocol::Http2 => Alpn::Http2,
-            Protocol::Http3 => {
-                let home = home.cloned().unwrap_or_else(|| client.shared.runtimes.next());
-                let (quic, requests) = super::quic::dial(origin, client.shared.verify, &home).await?;
-                return Ok(Self::Http3 { requests, quic });
-            }
-            Protocol::Negotiated => Alpn::Negotiated,
-        };
-        let connection = client.shared.connector.connect(origin, alpn).await?;
+        if via == Protocol::Http3 {
+            let home = home.cloned().unwrap_or_else(|| client.shared.runtimes.next());
+            let (quic, requests) = super::quic::dial(origin, client.shared.verify, &home).await?;
+            return Ok(Self::Http3 { requests, quic });
+        }
+        let connection = client.shared.connector.connect(origin, Some(via)).await?;
         let h2 = connection.form == RequestForm::Origin
             && match connection.alpn.as_deref() {
                 Some(alpn) => alpn == b"h2",

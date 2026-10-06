@@ -9,6 +9,7 @@ use tokio::{
 };
 
 /// Pinned current-thread runtimes, each on a thread of its own, or none; their threads end with the pool.
+#[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
     turn: AtomicUsize,
@@ -38,11 +39,7 @@ impl Pool {
 
     /// No pinned runtimes: work runs on the caller's runtime.
     pub fn inline() -> Self {
-        Self {
-            runtimes: Vec::new(),
-            turn: AtomicUsize::new(0),
-            _running: watch::channel(()).0,
-        }
+        Self::default()
     }
 
     /// The runtimes in turn, or the caller's when the pool has none.

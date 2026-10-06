@@ -1,6 +1,6 @@
 //! Connections through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5, against in-test peers.
-use graphite_meter_net::{Alpn, ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
-use graphite_meter_proto::origin::Origin;
+use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
+use graphite_meter_proto::{discovery::Protocol, origin::Origin};
 use graphite_meter_testkit::Identity;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -18,7 +18,7 @@ fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
 
 async fn connect(connector: &Connector, target: &str) -> Result<Connection, ConnectError> {
     connector
-        .connect(&Origin::parse(target).unwrap(), Alpn::Negotiated)
+        .connect(&Origin::parse(target).unwrap(), Some(Protocol::Negotiated))
         .await
 }
 

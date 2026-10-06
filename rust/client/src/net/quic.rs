@@ -1,8 +1,11 @@
 //! QUIC dialing: 3 s per address to answer, then 5 s for the handshake; connection and driver stay on its runtime.
 use super::fault::Fault;
 use graphite_meter_http3::{Code, client};
-use graphite_meter_net::{Alpn, ConnectError, Verify, bind_udp, client_config, quic::client_transport, resolve};
-use graphite_meter_proto::origin::{Host, Origin};
+use graphite_meter_net::{ConnectError, Verify, bind_udp, client_config, quic::client_transport, resolve};
+use graphite_meter_proto::{
+    discovery::Protocol,
+    origin::{Host, Origin},
+};
 use noq::crypto::rustls::QuicClientConfig;
 use std::{
     io,
@@ -65,7 +68,8 @@ impl Drop for Dialing {
 
 /// Each address in turn, IPv4 first; the last address's fault if none connects.
 async fn connect(origin: &Origin, verify: Verify) -> Result<(Arc<Quic>, client::SendRequest), Fault> {
-    let crypto = QuicClientConfig::try_from(client_config(verify, Alpn::Http3).await).map_err(io::Error::other);
+    let crypto =
+        QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
     let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
     config.transport_config(Arc::new(client_transport()));
     let resolved = resolve(&origin.host, origin.port).await;

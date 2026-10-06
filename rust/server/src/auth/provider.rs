@@ -2,8 +2,11 @@
 
 use super::jwt::{self, Alg, Jwks, Verified};
 use crate::{config::ENGINE_VERSION, lock};
-use graphite_meter_net::{Alpn, Connector, Proxy, Verify};
-use graphite_meter_proto::origin::{Origin, Scheme};
+use graphite_meter_net::{Connector, Proxy, Verify};
+use graphite_meter_proto::{
+    discovery::Protocol,
+    origin::{Origin, Scheme},
+};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
@@ -72,7 +75,10 @@ async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Resul
     headers.insert(header::USER_AGENT, HeaderValue::from_str(&agent).map_err(failed)?);
     let path = if path.starts_with('/') { path.to_owned() } else { format!("/{path}") };
     *request.uri_mut() = path.parse().map_err(failed)?;
-    let connection = connector.connect(&origin, Alpn::Http1).await.map_err(failed)?;
+    let connection = connector
+        .connect(&origin, Some(Protocol::Http1))
+        .await
+        .map_err(failed)?;
     let handshake = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream));
     let (mut sender, driver) = handshake.await.map_err(failed)?;
     let exchange = async move {

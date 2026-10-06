@@ -177,7 +177,7 @@ where
 /// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol.
 async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<ThroughputPath, Fault> {
     if path.transport == ThroughputTransport::WebTransport {
-        let session = client.session(&path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
+        let session = client.session(None, &path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
         let opened = timeout(VERIFY, session).await;
         opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
     }

@@ -1,5 +1,6 @@
 //! Client TLS trust from the process's `SSL_CERT_FILE` and `SSL_CERT_DIR`.
-use graphite_meter_net::{Alpn, Verify, client_config};
+use graphite_meter_net::{Verify, client_config};
+use graphite_meter_proto::discovery::Protocol;
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::{
     CertificateError::{Other, UnknownIssuer},
@@ -83,10 +84,10 @@ async fn a_trust_store_without_roots_fails_each_verified_handshake_and_nothing_e
     }
     let server = Identity::generate().unwrap();
     for _ in 0..2 {
-        let trusted = client_config(Verify::Trusted, Alpn::Negotiated).await;
+        let trusted = client_config(Verify::Trusted, Some(Protocol::Negotiated)).await;
         assert!(untrusted(handshake(trusted, &server, "localhost")));
     }
-    let insecure = client_config(Verify::Insecure, Alpn::Negotiated).await;
+    let insecure = client_config(Verify::Insecure, Some(Protocol::Negotiated)).await;
     handshake(insecure, &server, "localhost").unwrap();
 }
 
@@ -102,7 +103,7 @@ fn a_trust_load_cut_short_by_its_runtime_s_shutdown_loads_again_on_next_use() {
     stopped.shutdown_background();
     let cut_short = {
         let _context = handle.enter();
-        let mut load = pin!(client_config(Verify::Trusted, Alpn::Http1));
+        let mut load = pin!(client_config(Verify::Trusted, Some(Protocol::Http1)));
         let Poll::Ready(config) = load.as_mut().poll(&mut Context::from_waker(Waker::noop())) else {
             panic!("a stopped runtime cancels the load at once");
         };
@@ -112,5 +113,10 @@ fn a_trust_load_cut_short_by_its_runtime_s_shutdown_loads_again_on_next_use() {
     assert!(matches!(refused, Err(Error::InvalidCertificate(Other(_)))), "{refused:?}");
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     // Only the self-signed root in SSL_CERT_FILE trusts this server, as its own chain.
-    handshake(runtime.block_on(client_config(Verify::Trusted, Alpn::Http1)), &server, "localhost").unwrap();
+    handshake(
+        runtime.block_on(client_config(Verify::Trusted, Some(Protocol::Http1))),
+        &server,
+        "localhost",
+    )
+    .unwrap();
 }
