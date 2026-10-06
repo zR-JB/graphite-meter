@@ -5,13 +5,13 @@
     python3 rust/interop/campaign.py report
 
 `build` adds Go's server and client to perf.py's store, beside the rewrite's (candidate) and PR #210's (baseline)
-static musl release builds. `measure` runs every transport and direction for the three variants of one side against
-a fixed counterpart: `servers` with Go's client, `clients` with the rewrite's server. Each run starts a fresh server;
-variants alternate their order and cells rotate across repetitions. A shaped profile (root only) moves the client
-into a network namespace behind a veth pair with netem in both directions, as PR #210's campaign did, and keeps the
-loaded latency the client measures by default. Every run lands in runs.jsonl beside its logs; the summary lists
-first where the rewrite is worse than PR #210 or Go beyond the run spread. `report` merges every job's runs into one
-summary. Only harness errors fail: a job in which no run succeeded, or a report without runs.
+static musl release builds. `measure` runs one profile's cells for the three variants of one side against a fixed
+counterpart: `servers` with Go's client, `clients` with the rewrite's server. Each run starts a fresh server;
+variants alternate their order and cells rotate across repetitions. A shaped profile (root only) puts the client in
+a network namespace behind a router namespace whose two egresses carry PR #210's netem shaping, as on a real path,
+and keeps the loaded latency the client measures by default. Every run lands in runs.jsonl beside its logs; the
+summary lists first where the rewrite is worse than PR #210 or Go beyond the run spread. `report` merges every job's
+runs into one summary. Only harness errors fail: a job in which no run succeeded, or a report without runs.
 """
 
 from __future__ import annotations
@@ -53,18 +53,24 @@ STUDIES = {"servers": "servers", "clients": "clients"}
 # Store directory of each variant in perf.py's layout.
 VARIANTS = {"rewrite": "candidate", "pr210": "baseline", "go": "go"}
 NAMES = tuple(VARIANTS)
-CELLS: tuple[Cell, ...] = tuple(
-    (listener, transport, direction)
-    for listener, transport in (("http1", "fetch-stream"), ("http2", "fetch-stream"), ("http3", "fetch-stream"),
-                                ("http3", "webtransport"))
-    for direction in ("download", "upload", "bidirectional"))
+CONTROL: tuple[Cell, ...] = (("http1", "fetch-stream", "download"), ("http1", "fetch-stream", "upload"))
+# HTTP/1.1 as a control, then where the first campaign found the rewrite behind PR #210 or Go.
+CELLS: dict[str, tuple[Cell, ...]] = {profile: CONTROL + cells for profile, cells in {
+    "loopback": (("http3", "fetch-stream", "download"),),
+    "cable": (("http2", "fetch-stream", "bidirectional"), ("http3", "fetch-stream", "download"),
+              ("http3", "fetch-stream", "upload")),
+    "far": (("http2", "fetch-stream", "upload"), ("http3", "fetch-stream", "upload"),
+            ("http3", "webtransport", "upload")),
+    "mobile": (("http3", "fetch-stream", "bidirectional"),),
+}.items()}
 REPEATS, SECONDS, STREAMS = 5, 10, 4
 # The server releases freed memory two seconds after its last connection closes.
 IDLE = 3.0
 # No further repetition round starts once another would likely end past this many seconds of measuring.
-BUDGET = 70 * 60
+BUDGET = 40 * 60
 MIB = 1 << 20
-LOOPBACK, SERVER_ADDRESS, CLIENT_ADDRESS, NAMESPACE = "127.0.0.1", "10.77.0.1", "10.77.0.2", "gm-client"
+LOOPBACK, SERVER_ADDRESS, CLIENT_ADDRESS = "127.0.0.1", "10.77.0.1", "10.78.0.2"
+ROUTER, CLIENT_NAMESPACE = "gm-router", "gm-client"
 # Linux's default congestion control, with TCP buffers that never limit a 1 Gbit/s, 300 ms path.
 TCP = ["net.ipv4.tcp_congestion_control=cubic", "net.ipv4.tcp_rmem=4096 131072 134217728",
        "net.ipv4.tcp_wmem=4096 16384 134217728"]
@@ -98,26 +104,42 @@ def build() -> None:
 
 
 def shape(profile: Profile) -> list[str]:
-    """Server in this namespace, client in NAMESPACE, one veth pair shaped in both directions."""
-    inside = ["ip", "netns", "exec", NAMESPACE]
+    """Server in this namespace, client in CLIENT_NAMESPACE, netem on both egresses of ROUTER between them."""
+    router, client = (["ip", "netns", "exec", name] for name in (ROUTER, CLIENT_NAMESPACE))
 
     def sh(*command: str) -> None:
         subprocess.run(command, check=True)
 
-    sh("ip", "netns", "add", NAMESPACE)
-    sh("ip", "link", "add", "gm-server", "type", "veth", "peer", "name", "gm-peer", "netns", NAMESPACE)
+    for name in (ROUTER, CLIENT_NAMESPACE):
+        sh("ip", "netns", "add", name)
+    # One queue each way, so every packet reaches the receive queue whose RPS map is set below.
+    queue = ("numtxqueues", "1", "numrxqueues", "1")
+    sh("ip", "link", "add", "gm-server", *queue, "type", "veth", "peer", "name", "gm-to-server", *queue, "netns",
+       ROUTER)
+    sh("ip", "link", "add", "gm-client", *queue, "netns", CLIENT_NAMESPACE, "type", "veth", "peer", "name",
+       "gm-to-client", *queue, "netns", ROUTER)
     limit = max(1000, int(profile.mbit * 1e6 / 8 * ((profile.rtt / 2 + profile.variation) / 1000 + 0.1) / 1500))
     netem = ["delay", f"{profile.rtt / 2:g}ms", *([f"{profile.variation:g}ms"] if profile.variation else []),
              "rate", f"{profile.mbit:g}mbit", *(["loss", f"{profile.loss:g}%"] if profile.loss else [])]
-    for prefix, interface, address in (([], "gm-server", SERVER_ADDRESS), (inside, "gm-peer", CLIENT_ADDRESS)):
+    for prefix, interface, address, route in (
+            ([], "gm-server", f"{SERVER_ADDRESS}/24", "10.78.0.0/24 via 10.77.0.254"),
+            (router, "gm-to-server", "10.77.0.254/24", None), (router, "gm-to-client", "10.78.0.254/24", None),
+            (client, "gm-client", f"{CLIENT_ADDRESS}/24", "10.77.0.0/24 via 10.78.0.254")):
         # netem must see single packets; batches would be delayed and dropped whole.
         sh(*prefix, "ethtool", "-K", interface, "tso", "off", "gso", "off", "gro", "off", "tx-udp-segmentation", "off")
-        sh(*prefix, "ip", "addr", "add", f"{address}/24", "dev", interface)
+        # Every receive waits in CPU 0's backlog, in order; per-CPU backlogs reorder a multi-threaded sender.
+        subprocess.run([*prefix, "tee", f"/sys/class/net/{interface}/queues/rx-0/rps_cpus"], input="1", text=True,
+                       stdout=subprocess.DEVNULL, check=True)
+        sh(*prefix, "ip", "addr", "add", address, "dev", interface)
         sh(*prefix, "ip", "link", "set", interface, "up")
-        sh(*prefix, "tc", "qdisc", "replace", "dev", interface, "root", "netem", "limit", str(limit), *netem)
-        sh(*prefix, "sysctl", "-qw", *TCP)
-    sh(*inside, "ping", "-c", "5", "-i", "0.2", SERVER_ADDRESS)
-    return inside
+        if route:
+            sh(*prefix, "ip", "route", "add", *route.split())
+            sh(*prefix, "sysctl", "-qw", *TCP)
+        else:
+            sh(*prefix, "tc", "qdisc", "replace", "dev", interface, "root", "netem", "limit", str(limit), *netem)
+    sh(*router, "sysctl", "-qw", "net.ipv4.ip_forward=1")
+    sh(*client, "ping", "-c", "5", "-i", "0.2", SERVER_ADDRESS)
+    return client
 
 
 def trust(fixture: Fixture) -> None:
@@ -203,6 +225,7 @@ def run(fixture: Fixture, study: str, prefix: list[str], variant: str, cell: Cel
 
 def measure(study: str, profile: Profile) -> None:
     prefix = shape(profile) if profile.mbit else []
+    cells = CELLS[profile.name]
     fixture = Fixture(f"campaign-{study}-{profile.name}-")
     if prefix:
         trust(fixture)
@@ -214,11 +237,11 @@ def measure(study: str, profile: Profile) -> None:
                 print(f"Stopping after {repeat} repetitions: another would pass the {BUDGET // 60} min budget")
                 break
             start = time.monotonic()
-            for index in range(len(CELLS)):
-                position = (index + repeat) % len(CELLS)
+            for index in range(len(cells)):
+                position = (index + repeat) % len(cells)
                 turn = (position + repeat) % len(NAMES)
                 for variant in NAMES[turn:] + NAMES[:turn]:
-                    row = {"profile": profile.name} | run(fixture, study, prefix, variant, CELLS[position], repeat)
+                    row = {"profile": profile.name} | run(fixture, study, prefix, variant, cells[position], repeat)
                     rows.append(row)
                     sink.write(json.dumps(row) + "\n")
                     sink.flush()
@@ -349,7 +372,7 @@ def main() -> None:
     commands.add_parser("build")
     measuring = commands.add_parser("measure")
     measuring.add_argument("study", choices=STUDIES)
-    measuring.add_argument("profile", choices=PROFILES)
+    measuring.add_argument("profile", choices=CELLS)
     commands.add_parser("report")
     args = parser.parse_args()
     if args.command == "build":

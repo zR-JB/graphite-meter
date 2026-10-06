@@ -609,14 +609,21 @@ jobs:
   rust-campaign:
     name: Temporary campaign (${{ matrix.study }}, ${{ matrix.profile }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     needs: [plan, rust-campaign-build]
     if: needs.plan.outputs.rust-interop == 'true'
     strategy:
       fail-fast: false
+      # Four legs at a time leave the account's other runners to the rest of CI; the longest start first.
+      max-parallel: 4
       matrix:
-        study: [servers, clients]
-        profile: [loopback, cable, far, wifi, mobile]
+        include:
+          - {study: servers, profile: far}
+          - {study: clients, profile: far}
+          - {study: servers, profile: cable}
+          - {study: clients, profile: cable}
+          - {study: servers, profile: mobile}
+          - {study: servers, profile: loopback}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -636,7 +643,7 @@ jobs:
           sudo modprobe sch_netem ||
             { sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe sch_netem; }
       # Shaping and the client's namespace need root, so shaped runs measure as root.
-      - name: Measure every transport and direction of the rewrite, PR 210 and Go in alternating order
+      - name: Measure the profile's cells for the rewrite, PR 210 and Go in alternating order
         env:
           STUDY: ${{ matrix.study }}
           PROFILE: ${{ matrix.profile }}
