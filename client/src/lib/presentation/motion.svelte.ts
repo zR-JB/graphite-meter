@@ -176,6 +176,8 @@ const unseen = (a: number, b: number) =>
   Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
 
 const GLIDE_MIN_MS = 50;
+// A live value redraws at most this often; past 100 frames a second a needle or a digit looks no smoother.
+const LIVE_FRAME_MS = 10;
 const GLIDE_MAX_MS = 400;
 const SAMPLE_GAP_MS = 2_000;
 
@@ -204,6 +206,7 @@ export class Smoothed {
   #glide = 100;
   #fixed = false;
   #ease = false;
+  #shown = -Infinity;
   #stop: (() => void) | null = null;
 
   /** The last sample. */
@@ -290,10 +293,14 @@ export class Smoothed {
       return false;
     }
     const value = this.at(now);
-    this.#publish(value);
     const moving =
       now - this.#at < this.#glide || (this.#rate > 0 && value < this.#max);
     if (!moving) this.#stop = null;
+    // A fixed glide takes every display frame; a live value skips the frames closer than LIVE_FRAME_MS.
+    if (!moving || this.#fixed || now - this.#shown >= LIVE_FRAME_MS) {
+      this.#shown = now;
+      this.#publish(value);
+    }
     return moving;
   };
 }

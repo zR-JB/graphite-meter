@@ -60,6 +60,26 @@ test("a correction too small to show publishes nothing, and a glide still lands 
     expect(value.current).toBe(0);
   }));
 
+test("at 120 Hz a live value redraws on every other frame and a fixed glide on every frame", () =>
+  withFrames((frame) => {
+    const live = new Smoothed();
+    const fixed = new Smoothed();
+    live.set(0, { snap: true, now: 0 });
+    fixed.set(0, { snap: true, now: 0 });
+    live.set(1_000, { now: 400 });
+    fixed.set(1_000, { over: 400, now: 400 });
+    const seen = { live: new Set<number>(), fixed: new Set<number>() };
+    for (let i = 1; i <= 60; i++) {
+      frame(400 + i * (1_000 / 120));
+      seen.live.add(live.current);
+      seen.fixed.add(fixed.current);
+    }
+    expect(seen.fixed.size).toBe(48);
+    expect(seen.live.size).toBe(25);
+    expect(live.current).toBe(1_000);
+    expect(fixed.current).toBe(1_000);
+  }));
+
 test("a fixed glide overrides the sample interval", () => {
   const value = new Smoothed();
   value.set(800, { snap: true, now: 0 });
