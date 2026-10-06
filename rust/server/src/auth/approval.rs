@@ -175,6 +175,7 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     approval.approved = true;
     drop(state);
     auth.security.count(Counter::CliApproval);
+    crate::log!(Info, "auth", "sign-in approved for a {}", if browser { "browser" } else { "terminal" });
     response::html(page::render(Page::CliDone, &[("Browser", if browser { "true" } else { "" })]))
 }
 

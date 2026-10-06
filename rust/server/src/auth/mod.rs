@@ -87,15 +87,16 @@ impl Auth {
             Oidc::new(&config.public_origin, settings, secret)
         };
         let oidc = settings.map(oidc).transpose()?;
+        let provider = settings.map(|oidc| {
+            let groups = oidc.allowed_groups.len();
+            format!(" provider={} issuer={} allowed-groups={groups}", config.provider, oidc.issuer)
+        });
+        let (origin, lifetime) = (&config.public_origin, duration::format(LOGIN_LIFETIME));
+        let provider = provider.unwrap_or_default();
         log!(
             Info,
             "auth",
-            "sign-in ready: mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
-            config.public_origin,
-            config.provider,
-            settings.map_or("", |oidc| oidc.issuer.as_str()),
-            settings.map_or(0, |oidc| oidc.allowed_groups.len()),
-            duration::format(LOGIN_LIFETIME),
+            "sign-in ready: mode={mode} origin={origin}{provider} session-lifetime={lifetime}"
         );
         Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),

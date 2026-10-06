@@ -107,7 +107,9 @@ to tags matching `-rust$` and compare the version before that suffix.
 The Rust image keeps the Go image's ports, `GM_*` settings, `hash-password` command, [container user](#container-user)
 and layout: one static binary on `scratch` with its notices and CA roots. It reports its version as `X.Y.Z-rust`,
 adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the connection buffers its HTTP/2 and HTTP/3
-listeners share. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
+listeners share. Its log lines carry a level, a topic and local time; the image has no zone data, so mount
+`/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
+instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
 On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its
 pinned builder also cross-compiles arm64, so on arm64 hosts run a published tag.
 
@@ -347,7 +349,7 @@ cannot read their keys.
 HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket; the Rust server's HTTP/3 endpoints share
 7 MiB, at least 2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
 server then logs one line at startup: the Go server prints quic-go's "failed to sufficiently increase receive buffer
-size …", the Rust server `WARN  udp       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
+size …", the Rust server `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
 of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
 results. Raise the caps on the host, which also covers containers:
 

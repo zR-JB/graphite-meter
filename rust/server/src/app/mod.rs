@@ -389,7 +389,7 @@ impl Endpoint {
     pub const fn role(self, auth: bool) -> &'static str {
         match self {
             Self::H1 if auth => {
-                "HTTP/1.1 clear (trusted proxy only; refuses direct requests, redirects GET / to HTTPS)"
+                "HTTP/1.1 clear (trusted proxy only, refuses direct requests, redirects GET / to HTTPS)"
             }
             Self::H1 => "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)",
             Self::H1Tls => "HTTPS HTTP/1.1 (UI, discovery, probe, transfers, WebSockets)",

@@ -44,15 +44,17 @@ fn terminate(mut child: std::process::Child) {
     assert!(child.wait().unwrap().success());
 }
 
-/// The level, topic and message of a plain log line after its `YYYY-MM-DDTHH:MM:SSZ ` time.
+/// The level, topic and message of a plain log line after its RFC 3339 local time.
 fn logged(line: &str) -> (&str, &str, &str) {
-    let (stamp, rest) = line.split_at(21);
-    let shape = stamp
-        .bytes()
-        .map(|byte| if byte.is_ascii_digit() { b'0' } else { byte })
-        .collect::<Vec<_>>();
-    assert_eq!(shape, b"0000-00-00T00:00:00Z ", "{line}");
-    (rest[..5].trim_end(), rest[6..15].trim_end(), &rest[16..])
+    let (stamp, rest) = line.split_once(' ').unwrap();
+    let shape: String = stamp
+        .chars()
+        .take(19)
+        .map(|c| if c.is_ascii_digit() { '0' } else { c })
+        .collect();
+    assert_eq!(shape, "0000-00-00T00:00:00", "{line}");
+    assert!(stamp[19..] == *"Z" || stamp[19..].len() == 6, "{line}");
+    (rest[..5].trim_end(), rest[6..16].trim_end(), &rest[17..])
 }
 
 #[test]
@@ -70,7 +72,7 @@ fn configuration_errors_log_an_error_line_and_exit_one() {
     assert_eq!(output.status.code(), Some(1));
     let line = text(&output.stderr).strip_suffix('\n').unwrap();
     let message = r#"GM_PUBLIC_ORIGINS contains invalid origin "bad\"origin""#;
-    assert_eq!(logged(line), ("ERROR", "config", message));
+    assert_eq!(logged(line), ("ERROR", "config:", message));
 }
 
 #[test]
@@ -112,7 +114,9 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     let next = || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     let role = "HTTP/1.1 clear (UI, discovery, probe, transfers, WebSockets)";
     assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
+    assert!(next().starts_with("serving as "));
     assert_eq!(next(), format!("listening on {address}/tcp: {role}"));
+    assert_eq!(next(), "ready");
     let mut download = std::net::TcpStream::connect(&address).unwrap();
     download
         .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")

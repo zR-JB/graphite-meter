@@ -132,7 +132,8 @@ fn listeners_need_distinct_addresses_and_tls_files() {
     ];
     assert_eq!(kinds, expected);
     assert_eq!(config.tls.unwrap().cert.to_str(), Some("/c.pem"));
-    let message = "GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled";
+    let message = "TLS certificate missing for GM_H2_ADDR: GM_TLS_CERT and GM_TLS_KEY must both be set; set them, or \
+                   leave GM_H2_ADDR empty";
     assert_eq!(error(&[("GM_H2_ADDR", ":8444"), ("GM_TLS_CERT", "/c.pem")], &[]), message);
     assert_eq!(error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]), "GM_H1_ADDR and GM_H3_ADDR must differ");
     let message = "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint \"http3\"";
@@ -243,7 +244,8 @@ fn authentication_refusals_read_as_go_does() {
         ),
         (
             &[("GM_ADVERTISED_NATIVE_ENDPOINTS", "all")],
-            "clear HTTP/1.1 cannot be advertised when authentication is enabled",
+            "clear HTTP/1.1 advertised with sign-in enabled: GM_ADVERTISED_NATIVE_ENDPOINTS includes http1-clear or \
+             is unset; list only TLS endpoints, such as http1-tls,http2,http3",
         ),
         (
             &[("GM_PUBLIC_ORIGINS", "self,https://other.example")],

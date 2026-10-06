@@ -1,9 +1,9 @@
-//! Log lines with a time, level and topic, and limits for lines peers or load can repeat.
+//! Log lines with a time, level, `[gm:topic]` tag and source, and limits for lines peers or load can repeat.
 //!
 //! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
 //! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
 //! uses one word for one meaning: `failed` (an operation did not complete), `refused` (the server declined),
-//! `unavailable` (a dependency did not answer), `ready`.
+//! `unavailable` (a dependency did not answer), `missing`, `ready`.
 
 use std::{
     fmt::{self, Write as _},
@@ -19,7 +19,7 @@ use std::{
 #[macro_export]
 macro_rules! log {
     ($level:ident, $topic:expr, $($message:tt)*) => {
-        $crate::log::write($crate::log::Level::$level, $topic, format_args!($($message)*))
+        $crate::log::write($crate::log::Level::$level, $topic, module_path!(), format_args!($($message)*))
     };
 }
 
@@ -41,29 +41,61 @@ impl Level {
         }
     }
 
-    /// The label's terminal colour: blue, green, bold yellow, bold red.
-    fn colour(self) -> &'static str {
+    /// The syslog priority journald reads from a `<N>` prefix.
+    fn priority(self) -> u8 {
         match self {
-            Self::Debug => "34",
-            Self::Info => "32",
-            Self::Warn => "1;33",
-            Self::Error => "1;31",
+            Self::Debug => 7,
+            Self::Info => 6,
+            Self::Warn => 4,
+            Self::Error => 3,
+        }
+    }
+
+    /// The label's and the message's terminal colours.
+    fn colours(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Debug => ("34", "2"),
+            Self::Info => ("32", "0"),
+            Self::Warn => ("1;33", "33"),
+            Self::Error => ("1;31", "1;31"),
         }
     }
 }
 
-/// Colour only on a terminal, and never with a non-empty `NO_COLOR`.
-static COLOUR: LazyLock<bool> = LazyLock::new(|| {
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    /// `2026-10-06T16:31:02+02:00 WARN  tls:       message; advice (transport::tls)`, for files, pipes and `docker logs`.
+    Plain,
+    /// The plain line in colour; a warning's or error's advice on a `help:` line.
+    Colour,
+    /// `<4>tls: message; advice (transport::tls)`: journald adds the time and reads the level from the prefix.
+    Journal,
+}
+
+/// journald when systemd connected stderr to it, else colour on a terminal that is not `TERM=dumb` unless `NO_COLOR`
+/// is set; `FORCE_COLOR` asks for colour anywhere. Windows consoles get colour only when asked.
+static STYLE: LazyLock<Style> = LazyLock::new(|| {
+    let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0");
+    let terminal =
+        cfg!(unix) && std::io::stderr().is_terminal() && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
+    match () {
+        _ if set("JOURNAL_STREAM") => Style::Journal,
+        _ if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) => Style::Colour,
+        _ => Style::Plain,
+    }
 });
 
-pub fn write(level: Level, topic: &str, message: fmt::Arguments<'_>) {
-    let line = line(level, topic, message, SystemTime::now(), *COLOUR);
+pub fn write(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>) {
+    let line = line(level, topic, module, message, &crate::clock::local(SystemTime::now()), *STYLE);
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
 }
 
-/// `2026-10-06T14:31:02Z WARN  tls       message`, its control characters escaped so no peer text drives a terminal.
-pub fn line(level: Level, topic: &str, message: fmt::Arguments<'_>, time: SystemTime, colour: bool) -> String {
+/// Topics are padded to the longest, `discovery:`, so messages start in one column.
+const TOPIC_WIDTH: usize = 10;
+
+/// One log line; control characters are escaped so no peer text drives a terminal. Warnings and errors name the
+/// module that wrote them, such as `transport::tls`.
+pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, time: &str, style: Style) -> String {
     let mut text = String::new();
     for character in message.to_string().chars() {
         if character.is_control() {
@@ -72,19 +104,33 @@ pub fn line(level: Level, topic: &str, message: fmt::Arguments<'_>, time: System
             text.push(character);
         }
     }
-    let (time, label) = (rfc3339(time), level.label());
-    let mut line = String::new();
-    if colour {
-        let message = if level == Level::Error { format!("\x1b[31m{text}\x1b[0m") } else { text };
-        let colour = level.colour();
-        let _ = writeln!(
-            line,
-            "\x1b[2m{time}\x1b[0m \x1b[{colour}m{label:<5}\x1b[0m \x1b[36m{topic:<9}\x1b[0m {message}"
-        );
-    } else {
-        let _ = writeln!(line, "{time} {label:<5} {topic:<9} {text}");
+    let module = module
+        .split_once("::")
+        .map(|(_, path)| path)
+        .filter(|_| matches!(level, Level::Warn | Level::Error));
+    let source = module.map(|module| format!(" ({module})")).unwrap_or_default();
+    let (topic, label) = (format!("{topic}:"), level.label());
+    match style {
+        Style::Plain => format!("{time} {label:<5} {topic:<TOPIC_WIDTH$} {text}{source}\n"),
+        Style::Journal => format!("<{}>{topic} {text}{source}\n", level.priority()),
+        Style::Colour => {
+            let (badge, colour) = level.colours();
+            let advice = text
+                .split_once("; ")
+                .filter(|_| matches!(level, Level::Warn | Level::Error));
+            let (what, advice) = advice.map_or((text.as_str(), None), |(what, advice)| (what, Some(advice)));
+            let dim = if source.is_empty() { source } else { format!("\x1b[2m{source}\x1b[0m") };
+            let mut line = format!(
+                "\x1b[2m{time}\x1b[0m \x1b[{badge}m{label:<5}\x1b[0m \x1b[1m{topic:<TOPIC_WIDTH$}\x1b[0m \
+                 \x1b[{colour}m{what}\x1b[0m{dim}\n"
+            );
+            if let Some(advice) = advice {
+                let indent = time.len() + 8 + TOPIC_WIDTH - "help: ".len();
+                let _ = writeln!(line, "{:indent$}\x1b[1;36mhelp:\x1b[0m {advice}", "");
+            }
+            line
+        }
     }
-    line
 }
 
 /// A whole-second UTC time as Go's `time.RFC3339` prints it, such as `2026-10-04T23:59:59Z`.
@@ -150,10 +196,11 @@ impl RateLimited {
 
     pub fn write(&self, message: fmt::Arguments<'_>) {
         match self.admit(Instant::now()) {
-            Some(0) => write(self.level, self.topic, message),
+            Some(0) => write(self.level, self.topic, "", message),
             Some(held) => write(
                 self.level,
                 self.topic,
+                "",
                 format_args!("{message} (and {held} more {} in the last minute)", self.what),
             ),
             None => {}
@@ -191,14 +238,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lines_align_level_and_topic_and_escape_control_characters() {
-        let time = UNIX_EPOCH + Duration::from_secs(1_759_761_062);
-        let plain = line(Level::Warn, "tls", format_args!("key\u{1b}[31m\nnext"), time, false);
-        assert_eq!(plain, "2025-10-06T14:31:02Z WARN  tls       key\\u{1b}[31m\\nnext\n");
-        let error = line(Level::Error, "config", format_args!("bad"), time, true);
+    fn lines_carry_level_topic_and_source_in_each_style_and_escape_control_characters() {
+        let time = "2025-10-06T16:31:02+02:00";
+        let tls = "graphite_meter_server::transport::tls";
+        let warn = |style| line(Level::Warn, "tls", tls, format_args!("key\u{1b}[31m\nnext; renew it"), time, style);
+        let plain = "2025-10-06T16:31:02+02:00 WARN  tls:       key\\u{1b}[31m\\nnext; renew it (transport::tls)\n";
+        assert_eq!(warn(Style::Plain), plain);
+        assert_eq!(warn(Style::Journal), "<4>tls: key\\u{1b}[31m\\nnext; renew it (transport::tls)\n");
+        let info = line(Level::Info, "listen", tls, format_args!("ready"), time, Style::Plain);
         assert_eq!(
-            error,
-            "\x1b[2m2025-10-06T14:31:02Z\x1b[0m \x1b[1;31mERROR\x1b[0m \x1b[36mconfig   \x1b[0m \x1b[31mbad\x1b[0m\n"
+            info, "2025-10-06T16:31:02+02:00 INFO  listen:    ready\n",
+            "only warnings and errors name a source"
         );
+        let error = line(
+            Level::Error,
+            "config",
+            "graphite_meter_server",
+            format_args!("bad: x; fix it"),
+            time,
+            Style::Colour,
+        );
+        let expected = format!(
+            "\x1b[2m2025-10-06T16:31:02+02:00\x1b[0m \x1b[1;31mERROR\x1b[0m \x1b[1mconfig:   \x1b[0m \
+             \x1b[1;31mbad: x\x1b[0m\n{:37}\x1b[1;36mhelp:\x1b[0m fix it\n",
+            ""
+        );
+        assert_eq!(error, expected);
     }
 }

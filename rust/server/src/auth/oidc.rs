@@ -334,6 +334,7 @@ async fn sign_in(
     let page = response::html(page::render(Page::Continue, &[("Challenge", &transaction.challenge)]));
     let answer = establish(auth, (&subject, &name, &auth.provider), transaction.prior, page).map_err(fail)?;
     auth.security.count(Counter::Oidc);
+    log!(Info, "auth", "signed in: {name}, through {}", auth.provider);
     Ok(answer)
 }
 

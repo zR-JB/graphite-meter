@@ -180,6 +180,7 @@ async fn sign_in<B: http_body::Body>(
         Err(reason) => return rejected(auth, reason, challenge),
     };
     auth.security.count(Counter::Local);
+    crate::log!(Info, "auth", "signed in: local operator, with the password");
     let (device, expires) = password.device(SystemTime::now());
     set_cookie(&mut answer, DEVICE_COOKIE, &device, expires);
     answer

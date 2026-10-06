@@ -161,13 +161,15 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 **Server**
 
 - A failed listen reads `listen tcp :7246: address already in use`, without Go's `bind: `.
-- Log lines read `2026-10-06T14:31:02Z WARN  tls       message`: UTC time, a `DEBUG`, `INFO`, `WARN` or `ERROR`
-  level and a topic, with colour on a terminal unless `NO_COLOR` is set. Messages follow one pattern,
-  `what happened: detail; what to do`, and escape control characters. Go prints `[gm:topic] message` after its
-  `log` time, without a level.
-- The server logs `starting`, `stop requested` and `stopped`; failed peer handshakes log once a minute at most, with
-  a count of those held back; `memory` lines report endpoints the budget does not cover and when receive-window
-  growth pauses or resumes.
+- Log lines read `2026-10-06T16:31:02+02:00 WARN  tls:       message (transport::tls)`: local time from `TZ` or
+  `/etc/localtime` (UTC without either), a `DEBUG`, `INFO`, `WARN` or `ERROR` level, a topic and, for warnings and
+  errors, the module that wrote them. Messages follow one pattern, `what happened: detail; what to do`, and escape
+  control characters. A terminal gets colour and a warning's advice on its own `help:` line, unless `NO_COLOR` is
+  set; `FORCE_COLOR` asks for colour anywhere. Under systemd (`JOURNAL_STREAM`) lines carry a `<N>` priority for
+  journald and no time. Go prints `[gm:topic] message` after its UTC `log` time, without a level.
+- The server logs `starting`, a configuration summary, `ready`, `stop requested` and `stopped`, each sign-in and
+  approval; failed peer handshakes log once a minute at most, with a count of those held back; `memory` lines report
+  endpoints the budget does not cover and when receive-window growth pauses or resumes.
 - Configuration errors name the setting and the fault in plain words, such as `"192.0.2.0/024" is not a CIDR`, where
   Go repeats its parser's texts, such as `netip.ParsePrefix(...)`.
 - `version` and `--version` print `X.Y.Z-rust`, which `/preflight` and `/servers` also report; `--legal` prints

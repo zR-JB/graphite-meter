@@ -75,6 +75,15 @@ type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>
 impl Server {
     /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port; a failure closes those bound.
     pub async fn bind(mut config: Config, pool: Pool) -> Result<Self, String> {
+        log!(Info, "server", "graphite-meter {ENGINE_VERSION} starting");
+        let others = match config.catalog.servers.len() - 1 {
+            0 => "no other servers".to_owned(),
+            1 => "1 other server".to_owned(),
+            count => format!("{count} other servers"),
+        };
+        let location = Some(config.location()).filter(|location| !location.is_empty());
+        let location = location.map(|location| format!(" ({location})")).unwrap_or_default();
+        log!(Info, "config", "serving as {}{location}; the catalogue lists {others}", config.name());
         let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
         let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
         let terms = Terms::of(&config)?;
@@ -147,7 +156,6 @@ impl Server {
         let Self { app, pool, listeners, certificates, shutdown, auth, verbose } = self;
         let (pool, stopping) = (&pool, &shutdown);
         let mut services = FuturesUnordered::<Service<'_>>::new();
-        log!(Info, "server", "graphite-meter {ENGINE_VERSION} starting");
         for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.role(auth);
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
@@ -199,6 +207,7 @@ impl Server {
         if verbose {
             services.push(until_stopped(stopping, log_verbose(&app)));
         }
+        log!(Info, "server", "ready");
         let mut result = tokio::select! {
             () = stop => Ok(()),
             Some(ended) = services.next() => ended.and(Err("server listener stopped unexpectedly".into())),

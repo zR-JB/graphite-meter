@@ -115,9 +115,17 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
     if settings.h1_addr.is_empty() {
         return Err("GM_H1_ADDR must not be empty".into());
     }
-    let tls = natives[1..].iter().any(|(_, address, _)| !address.is_empty());
-    if tls && (settings.tls_cert.is_empty() || settings.tls_key.is_empty()) {
-        return Err("GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled".into());
+    let names = ["GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR"];
+    let tls: Vec<_> = names
+        .iter()
+        .zip(&natives[1..])
+        .filter(|(_, (_, address, _))| !address.is_empty())
+        .collect();
+    if !tls.is_empty() && (settings.tls_cert.is_empty() || settings.tls_key.is_empty()) {
+        let set = tls.iter().map(|(name, _)| **name).collect::<Vec<_>>().join(" and ");
+        return Err(format!(
+            "TLS certificate missing for {set}: GM_TLS_CERT and GM_TLS_KEY must both be set; set them, or leave {set} empty"
+        ));
     }
     for (index, (kind, address, _)) in natives.iter().enumerate() {
         if let Some((other, ..)) = natives[index + 1..]
@@ -289,7 +297,9 @@ fn https_issuer(issuer: &str) -> bool {
 /// Under authentication clear HTTP/1.1 is not advertised, and advertised origins share the sign-in hostname.
 fn advertised_auth_origins(settings: &Settings, public: &Origin) -> Result<(), String> {
     if advertised(settings, ListenerKind::H1, &settings.h1_addr) {
-        return Err("clear HTTP/1.1 cannot be advertised when authentication is enabled".into());
+        return Err("clear HTTP/1.1 advertised with sign-in enabled: GM_ADVERTISED_NATIVE_ENDPOINTS includes \
+                    http1-clear or is unset; list only TLS endpoints, such as http1-tls,http2,http3"
+            .into());
     }
     let natives = natives(settings);
     let lists = public_lists(settings).into_iter();
