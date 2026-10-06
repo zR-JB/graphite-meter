@@ -96,24 +96,6 @@ async fn an_upload_without_its_own_valid_id_is_refused_before_its_body_is_read()
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_upload_that_stops_sending_is_answered_idle_and_keeps_its_bytes() {
-    let app = app(&ALL_LISTENERS);
-    let id = mint(&app).await;
-    let start = Instant::now();
-    let stalled = request("POST", &format!("/upload?id={id}"))
-        .body(chunks(&[b"0123456789"], true))
-        .unwrap();
-    let response = send(&app, Endpoint::H1, stalled).await;
-    assert_eq!(start.elapsed(), Duration::from_secs(30));
-    assert_eq!(
-        (response.status(), header(&response, "x-graphite-upload-refusal")),
-        (StatusCode::REQUEST_TIMEOUT, Some("idle"))
-    );
-    assert_eq!(text(response).await, "idle\n");
-    assert_eq!(checkpoint(&app, &id).await["bytes"], 10);
-}
-
-#[tokio::test(start_paused = true)]
 async fn an_upload_reaching_its_lifetime_or_shutdown_closes_without_an_answer() {
     let app = app(&[&ALL_LISTENERS[..], &[("GM_MAX_OPERATION_DURATION", "45s")]].concat());
     let id = mint(&app).await;

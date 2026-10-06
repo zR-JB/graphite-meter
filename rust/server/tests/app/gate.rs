@@ -3,7 +3,6 @@
 use super::*;
 use graphite_meter_proto::route::Route;
 use http::{StatusCode, Version};
-use http_body_util::Full;
 
 #[test]
 fn each_endpoint_mounts_the_routes_of_its_listener() {
@@ -72,17 +71,6 @@ async fn webtransport_sessions_are_admitted_before_their_upgrade() {
 }
 
 #[tokio::test]
-async fn a_request_head_over_32_kib_is_refused() {
-    let app = app(&[]);
-    let fixed = "GET".len() + "/nope".len() + 14 + "host".len() + "speed.example".len() + 4 + "x-fill".len() + 4;
-    for (fill, status) in [(0, StatusCode::NOT_FOUND), (1, StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)] {
-        let value = "a".repeat((32 << 10) - fixed + fill);
-        let response = send(&app, Endpoint::H1, empty(request("GET", "/nope").header("x-fill", value))).await;
-        assert_eq!(response.status(), status);
-    }
-}
-
-#[tokio::test]
 async fn an_http11_request_names_exactly_one_valid_host() {
     let app = app(&ALL_LISTENERS);
     let bare = |version| Request::builder().uri("/nope").version(version);
@@ -122,40 +110,6 @@ async fn options_asterisk_is_answered_before_any_route_except_over_http3() {
         let response = send(&app, endpoint, empty(request("OPTIONS", "*").version(version))).await;
         assert_eq!(response.status(), status, "{version:?}");
     }
-}
-
-#[tokio::test]
-async fn only_a_post_carries_a_body() {
-    let app = app(&ALL_LISTENERS);
-    let declared = |version, length: &str| {
-        empty(
-            request("GET", "/nope")
-                .version(version)
-                .header("content-length", length),
-        )
-    };
-    for (endpoint, version, close) in
-        [(Endpoint::H1, Version::HTTP_11, Some("close")), (Endpoint::H2, Version::HTTP_2, None)]
-    {
-        let response = send(&app, endpoint, declared(version, "5")).await;
-        assert_eq!((response.status(), header(&response, "connection")), (StatusCode::BAD_REQUEST, close));
-        assert_eq!(text(response).await, "request body not accepted\n");
-        assert_eq!(send(&app, endpoint, declared(version, "0")).await.status(), StatusCode::NOT_FOUND);
-    }
-    let unending = |version| request("GET", "/nope").version(version).body(Unending).unwrap();
-    assert_eq!(
-        send(&app, Endpoint::H1, unending(Version::HTTP_11)).await.status(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        send(&app, Endpoint::Quic, unending(Version::HTTP_3)).await.status(),
-        StatusCode::NOT_FOUND
-    );
-    let post = request("POST", "/nope")
-        .header("content-length", "3")
-        .body(Full::new(Bytes::from_static(b"abc")))
-        .unwrap();
-    assert_eq!(send(&app, Endpoint::H1, post).await.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]

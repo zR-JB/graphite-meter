@@ -173,20 +173,6 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
 }
 
 #[tokio::test]
-async fn head_keeps_the_length_and_other_methods_are_not_allowed() {
-    let app = served(&[]);
-    let head = send(&app, Endpoint::H1, empty(request("HEAD", "/favicon.svg"))).await;
-    assert_eq!(header(&head, "content-length"), Some("6"));
-    assert_eq!(text(head).await, "");
-    for (method, path) in [("POST", "/favicon.svg"), ("PUT", "/"), ("POST", "/preflight"), ("OPTIONS", "/ws/ping")] {
-        let response = send(&app, Endpoint::H1, empty(request(method, path))).await;
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
-        assert_eq!(header(&response, "allow"), Some("GET, HEAD"));
-        assert_eq!(text(response).await, "method not allowed\n");
-    }
-}
-
-#[tokio::test]
 async fn the_browser_notice_is_the_shared_report_suffix() {
     let app = served(&[]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;

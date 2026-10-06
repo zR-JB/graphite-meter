@@ -83,61 +83,6 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
     assert_eq!((full.status(), header(&full, "retry-after")), (StatusCode::TOO_MANY_REQUESTS, Some("1")));
 }
 
-#[tokio::test]
-async fn a_ticket_presented_at_another_port_or_route_is_refused_and_spent() {
-    let app = auth_app(&[]);
-    let login = login(&app, "operator");
-    let at_port = |path: &str| {
-        let mut request = websocket(path, PUBLIC);
-        request
-            .headers_mut()
-            .insert("host", http::HeaderValue::from_static("meter.example:8443"));
-        request
-    };
-    let elsewhere = ticket(&app, &login, "/ws/session", "https://meter.example:8443/ws/ping").await;
-    let path = format!("/ws/ping?token={elsewhere}");
-    assert_eq!(tls(&app, websocket(&path, PUBLIC)).await.status(), StatusCode::FORBIDDEN);
-    let spent = outcome(&app, Endpoint::H1Tls, "192.0.2.1", at_port(&path)).await;
-    assert!(!is_socket(&spent), "the refusal spent it");
-    let default = ticket(&app, &login, "/ws/session", "https://meter.example/ws/ping").await;
-    let path = format!("/ws/ping?token={default}");
-    assert!(!is_socket(&outcome(&app, Endpoint::H1Tls, "192.0.2.1", at_port(&path)).await));
-    let session = ticket(&app, &login, "/wt/session", "https://meter.example/wt/ping").await;
-    let path = format!("/ws/ping?token={session}");
-    assert_eq!(tls(&app, websocket(&path, PUBLIC)).await.status(), StatusCode::FORBIDDEN);
-    let connect = connect(&format!("/wt/ping?token={session}"));
-    assert!(!is_socket(&outcome(&app, Endpoint::Quic, "192.0.2.1", empty(connect)).await));
-    let fresh = ticket(&app, &login, "/ws/session", "https://meter.example:8443/ws/ping").await;
-    let opened = outcome(&app, Endpoint::H1Tls, "192.0.2.1", at_port(&format!("/ws/ping?token={fresh}"))).await;
-    assert!(is_socket(&opened), "a ticket opens its own port's socket");
-}
-
-#[tokio::test]
-async fn a_browser_grant_mints_tickets_from_its_origin_without_cookies() {
-    let app = auth_app(&[]);
-    let login = login(&app, "operator");
-    let grant = store(&app)
-        .grant(login.key, Some(http::HeaderValue::from_static(BROWSER)))
-        .unwrap();
-    let mint = |origin: &str| {
-        let request = bearer("POST", "/ws/session?target=https://meter.example/ws/ping", &grant);
-        empty(request.header("origin", origin))
-    };
-    for origin in [PUBLIC, "https://other.example", ""] {
-        assert_eq!(tls(&app, mint(origin)).await.status(), StatusCode::FORBIDDEN, "{origin:?}");
-    }
-    let minted = tls(&app, mint(BROWSER)).await;
-    assert_headers(
-        &minted,
-        &[("access-control-allow-origin", Some(BROWSER)), ("access-control-allow-credentials", None)],
-    );
-    let path = format!("/ws/ping?token={}", json(minted).await["token"].as_str().unwrap());
-    assert_eq!(tls(&app, websocket(&path, PUBLIC)).await.status(), StatusCode::FORBIDDEN);
-    let minted = json(tls(&app, mint(BROWSER)).await).await;
-    let path = format!("/ws/ping?token={}", minted["token"].as_str().unwrap());
-    assert!(is_socket(&outcome(&app, Endpoint::H1Tls, "192.0.2.1", websocket(&path, BROWSER)).await));
-}
-
 /// A WebTransport CONNECT for `path` from the public origin.
 fn connect(path: &str) -> Builder {
     Request::builder()

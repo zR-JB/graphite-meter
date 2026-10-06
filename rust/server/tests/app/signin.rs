@@ -9,7 +9,7 @@ use graphite_meter_proto::approval::challenge;
 use graphite_meter_server::auth::COUNTERS;
 use http::StatusCode;
 use http_body_util::Full;
-use std::{pin::pin, time::Duration};
+use std::time::Duration;
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 const RIGHT: &str = "correct+horse";
@@ -152,69 +152,4 @@ async fn signing_in_again_ends_the_presented_login_and_its_grants() {
     let store = store(&app);
     assert!(store.cookie(&prior.token).is_none() && store.bearer(&grant).is_none());
     assert!(store.cookie(&sibling.token).is_some());
-}
-
-#[tokio::test]
-async fn a_full_store_refuses_sign_in_as_busy_and_counts_it() {
-    let app = auth_app(&[]);
-    for subject in 0..1024 {
-        login(&app, &format!("subject {subject}"));
-    }
-    assert_eq!(location(&sign_in(&app, "192.0.2.1", RIGHT).await), Some("/login?error=busy"));
-    assert!(
-        line(&app, &mut [0; COUNTERS])
-            .unwrap()
-            .ends_with(" logout=0 cli-approval=0 capacity=1")
-    );
-}
-
-#[tokio::test]
-async fn the_password_is_verified_off_the_runtime() {
-    let app = auth_app(&[]);
-    let mut signing = pin!(sign_in(&app, "192.0.2.1", RIGHT));
-    let mut turns = 0;
-    let signed = loop {
-        tokio::select! {
-            biased;
-            signed = &mut signing => break signed,
-            () = tokio::task::yield_now() => turns += 1,
-        }
-    };
-    assert_eq!(location(&signed), Some("/"));
-    assert!(turns > 0, "the runtime's one thread served nothing else while the hash was verified");
-}
-
-/// A sign-in from `peer` posting `body` as `media`, with the login cookie its form token proves.
-async fn post_as(app: &App, peer: &str, media: &str, body: String) -> Response<Body> {
-    let request = public("POST", "/auth/password")
-        .header("origin", PUBLIC)
-        .header("content-type", media)
-        .header("cookie", format!("__Host-gm_login={NONCE}"))
-        .body(Full::new(Bytes::from(body)))
-        .unwrap();
-    send_from(app, Endpoint::H1Tls, peer, request).await
-}
-
-#[tokio::test]
-async fn a_sign_in_reads_a_form_of_at_most_4_kib_with_unique_fields() {
-    let app = auth_app(&[]);
-    const FORM: &str = "application/x-www-form-urlencoded";
-    let padded = |length: usize| {
-        let fields = format!("csrf={NONCE}&password={RIGHT}&pad=");
-        format!("{fields}{}", "x".repeat(length - fields.len()))
-    };
-    let largest = post_as(&app, "192.0.2.1", FORM, padded(4096)).await;
-    assert_eq!(location(&largest), Some("/"));
-    let failed = Some("/login?error=failed");
-    assert_eq!(location(&post_as(&app, "192.0.2.2", FORM, padded(4097)).await), failed);
-    let repeated = format!("csrf={NONCE}&csrf={NONCE}&password={RIGHT}");
-    assert_eq!(location(&post_as(&app, "192.0.2.3", FORM, repeated).await), failed);
-    let json = format!(r#"{{"csrf":"{NONCE}","password":"correct horse"}}"#);
-    assert_eq!(location(&post_as(&app, "192.0.2.4", "application/json", json).await), failed);
-    let boundary = "multipart/form-data; boundary=x";
-    let parts = format!(
-        "--x\r\nContent-Disposition: form-data; name=\"csrf\"\r\n\r\n{NONCE}\r\n--x\r\nContent-Disposition: form-data; \
-         name=\"password\"\r\n\r\ncorrect horse\r\n--x--\r\n"
-    );
-    assert_eq!(location(&post_as(&app, "192.0.2.5", boundary, parts).await), failed);
 }

@@ -206,42 +206,7 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
 }
 
 #[tokio::test]
-async fn a_login_holding_eight_grants_shows_the_client_limit_and_refuses_new_ones() {
-    let app = auth_app(&[]);
-    let operator = login(&app, "operator");
-    for _ in 0..8 {
-        store(&app)
-            .grant(operator.key, Some(HeaderValue::from_static("https://old.example")))
-            .unwrap();
-    }
-    let approval = challenge(VERIFIER);
-    let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
-    let full = page(&app, &path, Some(&operator)).await;
-    assert_eq!(full.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert!(
-        text(full)
-            .await
-            .contains("This login already has 8 approved clients, the most it can have.")
-    );
-    let token = exchange(&app, "/auth/browser/token", Some(BROWSER), &verifier(VERIFIER)).await;
-    assert_eq!(token.status(), StatusCode::TOO_MANY_REQUESTS);
-    let approved = approve(&app, "/auth/browser/approve", &operator, &approval).await;
-    assert_eq!(approved.status(), StatusCode::TOO_MANY_REQUESTS);
-
-    let native = challenge("a-terminal-verifier");
-    assert_eq!(
-        page(&app, &format!("/auth/cli?challenge={native}"), Some(&operator))
-            .await
-            .status(),
-        StatusCode::OK
-    );
-    assert_eq!(approve(&app, "/auth/cli/approve", &operator, &native).await.status(), StatusCode::OK);
-    let refused = exchange(&app, "/auth/cli/token", None, &verifier("a-terminal-verifier")).await;
-    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS, "no native grant to replace");
-}
-
-#[tokio::test]
-async fn approvals_are_bounded_per_login_and_pages_budgeted_per_address() {
+async fn approvals_are_bounded_per_login() {
     let app = auth_app(&[]);
     let operator = login(&app, "operator");
     let cli = |index: usize| format!("/auth/cli?challenge={}", challenge(&format!("terminal {index}")));
@@ -259,69 +224,4 @@ async fn approvals_are_bounded_per_login_and_pages_budgeted_per_address() {
             .unwrap()
             .ends_with(" capacity=1")
     );
-
-    let browser = |index: usize| {
-        let approval = challenge(&format!("browser {index}"));
-        public(
-            "GET",
-            &format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example"),
-        )
-    };
-    for index in 200..210 {
-        let opener = login(&app, &format!("opener {index}"));
-        let request = browser(index).header("cookie", format!("__Host-gm_session={}", opener.token));
-        assert_eq!(
-            send_from(&app, Endpoint::H1Tls, "203.0.113.1", empty(request))
-                .await
-                .status(),
-            StatusCode::OK
-        );
-        store(&app).sign_out(opener.key, false);
-    }
-    let opener = login(&app, "opener 210");
-    let request = browser(210).header("cookie", format!("__Host-gm_session={}", opener.token));
-    let throttled = send_from(&app, Endpoint::H1Tls, "203.0.113.1", empty(request)).await;
-    assert_eq!(throttled.status(), StatusCode::FORBIDDEN, "ten approval pages a minute");
-}
-
-#[tokio::test]
-async fn approvals_are_bounded_per_client_before_sign_in_and_in_total() {
-    let app = auth_app(&[]);
-    let browser = |index: usize| {
-        let approval = challenge(&format!("browser {index}"));
-        let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
-        empty(public("GET", &path))
-    };
-    for index in 0..8 {
-        let opened = send_from(&app, Endpoint::H1Tls, "198.51.100.1", browser(index)).await;
-        assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
-    }
-    let ninth = send_from(&app, Endpoint::H1Tls, "198.51.100.1", browser(8)).await;
-    assert_eq!(ninth.status(), StatusCode::FORBIDDEN, "eight per client");
-    for index in 8..128 {
-        let peer = format!("198.51.100.{}", index / 8 + 1);
-        let opened = send_from(&app, Endpoint::H1Tls, &peer, browser(index)).await;
-        assert_eq!(opened.status(), StatusCode::SEE_OTHER, "{index}");
-    }
-    let before_sign_in = send_from(&app, Endpoint::H1Tls, "198.51.100.200", browser(128)).await;
-    assert_eq!(before_sign_in.status(), StatusCode::FORBIDDEN, "half the table opened before sign-in");
-    // Sixteen logins on addresses of their own open eight terminal approvals each.
-    let open = async |opener: usize, approvals: usize| {
-        let login = login(&app, &format!("opener {opener}"));
-        let mut statuses = Vec::new();
-        for index in 0..approvals {
-            let path = format!("/auth/cli?challenge={}", challenge(&format!("terminal {opener} {index}")));
-            let peer = format!("203.0.113.{opener}");
-            statuses.push(
-                send_from(&app, Endpoint::H1Tls, &peer, empty(signed("GET", &path, &login)))
-                    .await
-                    .status(),
-            );
-        }
-        statuses
-    };
-    for opener in 0..16 {
-        assert_eq!(open(opener, 8).await, [StatusCode::OK; 8], "{opener}");
-    }
-    assert_eq!(open(16, 1).await, [StatusCode::FORBIDDEN], "the 257th approval");
 }

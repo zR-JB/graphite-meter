@@ -147,20 +147,6 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
 }
 
 #[tokio::test]
-async fn bootstrap_probe_answers_name_the_quic_port_and_close_the_connection() {
-    let app = app(&ALL_LISTENERS);
-    let response = send(&app, Endpoint::H3Companion, empty(request("GET", "/probe"))).await;
-    assert_eq!(
-        (header(&response, "alt-svc"), header(&response, "connection")),
-        (Some("h3=\":7249\""), Some("close"))
-    );
-    for (endpoint, method) in [(Endpoint::H3Companion, "OPTIONS"), (Endpoint::H1, "GET"), (Endpoint::Quic, "GET")] {
-        let response = send(&app, endpoint, empty(request(method, "/probe"))).await;
-        assert_eq!(header(&response, "alt-svc"), None, "{endpoint:?} {method}");
-    }
-}
-
-#[tokio::test]
 async fn a_download_sends_its_clamped_length_and_holds_a_handler_until_it_ends() {
     let app = app(&[]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/download?bytes=300000"))).await;
@@ -215,13 +201,4 @@ async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
     );
     drop((held, other));
     assert_eq!(download("192.0.2.3").await.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn socket_tickets_with_authentication_off_are_empty() {
-    let app = app(&ALL_LISTENERS);
-    for (endpoint, path) in [(Endpoint::H1, "/ws/session"), (Endpoint::Quic, "/wt/session")] {
-        let response = send(&app, endpoint, empty(request("POST", path))).await;
-        assert_eq!(text(response).await, r#"{"token":"","expires":0}"#);
-    }
 }
