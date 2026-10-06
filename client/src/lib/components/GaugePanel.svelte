@@ -192,26 +192,28 @@
         }))
       : [],
   );
+  // A result hands off to the live readout and back. The unit is not part of a view: switching it relabels the
+  // same measurement in place, and the arcs glide to the new scale.
   const hero = handoff(
-    () => {
-      return {
-        terminal: readout.terminal,
-        display: rateDisplay(liveRates),
-        unit: gaugeUnit,
-        arcs,
-        live: store.isRunning ? store.phaseStage : null,
-      };
-    },
-    // A new stage hands the figure and its name off together. The unit is not part of a view: switching it
-    // relabels the same measurement in place, and the arcs glide to the new scale.
-    ({ terminal, display, live }) =>
-      terminal
-        ? `${terminal.phase}:${store.result?.startedAt ?? ""}`
-        : `${live}:${display.value === MISSING}`,
+    () => ({ terminal: readout.terminal, unit: gaugeUnit, arcs }),
+    ({ terminal }) =>
+      terminal ? `${terminal.phase}:${store.result?.startedAt ?? ""}` : "live",
     // A result leaves as its arcs drain back to zero (GaugeDial), so the next run starts from an empty ring.
     (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
-  const { terminal, display, live } = $derived(hero.shown);
+  const { terminal } = $derived(hero.shown);
+  // Live, the running stage's name and its figure hand off apart: the name once per stage, the figure when a
+  // stage brings its first value, so a dash that stays a dash never blinks.
+  const liveStage = handoff(() => (store.isRunning ? store.phaseStage : null));
+  const liveValue = handoff(
+    () => ({
+      display: rateDisplay(liveRates),
+      stage: store.isRunning ? store.phaseStage : null,
+    }),
+    ({ display, stage }) => (display.value === MISSING ? MISSING : stage),
+  );
+  const live = $derived(liveStage.shown);
+  const display = $derived(liveValue.shown.display);
   // The dial beats only on idle replies, so a stall shows as stillness.
   const reply = $derived(
     phase === "latency"
@@ -335,7 +337,11 @@
               <div class="terminal-readout" aria-hidden="true">
                 <!-- The running stage names itself over its figure, as the result does. -->
                 {#if live}
-                  <span class="terminal-direction" data-tone={live}>
+                  <span
+                    class="terminal-direction handoff"
+                    class:handoff-out={liveStage.out}
+                    data-tone={live}
+                  >
                     <span class="tone-icon" aria-hidden="true"
                       ><Icon name={STAGE[live].icon} /></span
                     >
@@ -343,10 +349,14 @@
                   </span>
                 {/if}
                 <span
-                  class="gauge-value"
+                  class="gauge-value handoff"
+                  class:handoff-out={liveValue.out}
                   class:quiet={display.value === MISSING}>{display.value}</span
                 >
-                <span class="gauge-unit">{display.unit}</span>
+                <span
+                  class="gauge-unit handoff"
+                  class:handoff-out={liveValue.out}>{display.unit}</span
+                >
               </div>
             {/if}
             <span class="sr-only">{spoken.value} {spoken.unit}</span>
@@ -575,6 +585,12 @@
     max-width: 100%;
     border-radius: var(--r-chrome);
     pointer-events: auto;
+  }
+  /* The running stage's name arrives as it later hands off, rather than at once. */
+  @starting-style {
+    .terminal-direction.handoff {
+      opacity: 0;
+    }
   }
   .hero.terminal {
     max-width: 72%;
