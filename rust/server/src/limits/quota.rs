@@ -42,21 +42,15 @@ struct State {
     refused_client: u64,
 }
 
-/// Why a quota refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Refusal {
-    /// A client's share is full.
-    Client,
-    Total,
-}
-
-impl Refusal {
-    /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
-    pub const fn status(self) -> u16 {
-        match self {
-            Self::Client => 429,
-            Self::Total => 503,
-        }
+graphite_meter_proto::table! {
+    /// Why a quota refused.
+    pub enum Refusal {
+        /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
+        status.0: u16,
+    } {
+        /// A client's share is full.
+        Client => (429,),
+        Total => (503,),
     }
 }
 

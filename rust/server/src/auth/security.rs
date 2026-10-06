@@ -6,109 +6,61 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-/// The counters of the minute line, in its order.
-const NAMES: [&str; COUNTERS] = [
-    "local",
-    "oidc",
-    "invalid-password",
-    "oidc-failure",
-    "group-denial",
-    "replay-expiry",
-    "throttled",
-    "logout",
-    "cli-approval",
-    "capacity",
-];
-/// How many counters the minute line reports.
-pub const COUNTERS: usize = 10;
-
-/// A counted outcome, at its place in the minute line.
-#[derive(Debug, Clone, Copy)]
-pub(super) enum Counter {
-    Local = 0,
-    Oidc = 1,
-    InvalidPassword = 2,
-    OidcFailure = 3,
-    GroupDenial = 4,
-    ReplayExpiry = 5,
-    Throttled = 6,
-    Logout = 7,
-    CliApproval = 8,
-    Capacity = 9,
-}
-
-/// Why a sign-in was refused: the security log's reason codes, and the notice the sign-in page shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Reason {
-    CsrfOriginMissing,
-    CsrfOriginMismatch,
-    CsrfCookieMissing,
-    CsrfTokenMissing,
-    CsrfTokenMismatch,
-    MalformedForm,
-    Throttled,
-    VerifierBusy,
-    PasswordMismatch,
-    SessionCapacity,
-    ProviderNotReady,
-    TransactionCapacity,
-    ExchangeRateLimited,
-    CallbackParameters,
-    TransactionCookie,
-    TransactionReplay,
-    ResponseIssuer,
-    TokenExchange,
-    MissingIdToken,
-    IdTokenVerification,
-    IdTokenClaimsOrNonce,
-    AccessTokenHash,
-    UserInfoOrSubject,
-    UserInfoClaims,
-    /// No allowed group: reported as `userinfo_claims_or_group`, counted apart.
-    GroupDenied,
-    InvalidSubject,
-}
-
-impl Reason {
-    fn code(self) -> &'static str {
-        match self {
-            Self::CsrfOriginMissing => "csrf_origin_missing",
-            Self::CsrfOriginMismatch => "csrf_origin_mismatch",
-            Self::CsrfCookieMissing => "csrf_cookie_missing",
-            Self::CsrfTokenMissing => "csrf_token_missing",
-            Self::CsrfTokenMismatch => "csrf_token_mismatch",
-            Self::MalformedForm => "malformed_form",
-            Self::Throttled => "rate_limited_or_client_address",
-            Self::VerifierBusy => "verifier_busy",
-            Self::PasswordMismatch => "password_mismatch",
-            Self::SessionCapacity => "session_capacity",
-            Self::ProviderNotReady => "provider_not_ready",
-            Self::TransactionCapacity => "transaction_capacity",
-            Self::ExchangeRateLimited => "exchange_rate_limited",
-            Self::CallbackParameters => "callback_parameters",
-            Self::TransactionCookie => "transaction_cookie",
-            Self::TransactionReplay => "transaction_replay_or_expiry",
-            Self::ResponseIssuer => "response_issuer",
-            Self::TokenExchange => "token_exchange",
-            Self::MissingIdToken => "missing_id_token",
-            Self::IdTokenVerification => "id_token_verification",
-            Self::IdTokenClaimsOrNonce => "id_token_claims_or_nonce",
-            Self::AccessTokenHash => "access_token_hash",
-            Self::UserInfoOrSubject => "userinfo_or_subject",
-            Self::UserInfoClaims | Self::GroupDenied => "userinfo_claims_or_group",
-            Self::InvalidSubject => "invalid_subject",
-        }
+graphite_meter_proto::table! {
+    /// A counted outcome, at its place in the minute line.
+    pub(super) enum Counter {
+        name.0: &'static str,
+    } {
+        Local => ("local",),
+        Oidc => ("oidc",),
+        InvalidPassword => ("invalid-password",),
+        OidcFailure => ("oidc-failure",),
+        GroupDenial => ("group-denial",),
+        ReplayExpiry => ("replay-expiry",),
+        Throttled => ("throttled",),
+        Logout => ("logout",),
+        CliApproval => ("cli-approval",),
+        Capacity => ("capacity",),
     }
+}
 
-    pub fn notice(self) -> &'static str {
-        match self {
-            Self::ProviderNotReady => "provider",
-            Self::VerifierBusy | Self::SessionCapacity | Self::TransactionCapacity => "busy",
-            Self::Throttled => "throttled",
-            Self::PasswordMismatch => "password",
-            Self::CsrfCookieMissing | Self::CsrfTokenMissing | Self::TransactionCookie => "stale",
-            _ => "failed",
-        }
+/// How many counters the minute line reports.
+pub const COUNTERS: usize = Counter::ALL.len();
+
+graphite_meter_proto::table! {
+    /// Why a sign-in was refused: its security log code, the sign-in page's notice and the counter it adds to.
+    pub(super) enum Reason {
+        code.0: &'static str,
+        notice.1: &'static str,
+        counter.2: Option<Counter>,
+    } {
+        CsrfOriginMissing => ("csrf_origin_missing", "failed", None),
+        CsrfOriginMismatch => ("csrf_origin_mismatch", "failed", None),
+        CsrfCookieMissing => ("csrf_cookie_missing", "stale", None),
+        CsrfTokenMissing => ("csrf_token_missing", "stale", None),
+        CsrfTokenMismatch => ("csrf_token_mismatch", "failed", None),
+        MalformedForm => ("malformed_form", "failed", None),
+        Throttled => ("rate_limited_or_client_address", "throttled", Some(Counter::Throttled)),
+        VerifierBusy => ("verifier_busy", "busy", None),
+        PasswordMismatch => ("password_mismatch", "password", Some(Counter::InvalidPassword)),
+        SessionCapacity => ("session_capacity", "busy", Some(Counter::Capacity)),
+        ProviderNotReady => ("provider_not_ready", "provider", None),
+        TransactionCapacity => ("transaction_capacity", "busy", Some(Counter::Capacity)),
+        ExchangeRateLimited => ("exchange_rate_limited", "failed", None),
+        CallbackParameters => ("callback_parameters", "failed", None),
+        TransactionCookie => ("transaction_cookie", "stale", None),
+        TransactionReplay => ("transaction_replay_or_expiry", "failed", Some(Counter::ReplayExpiry)),
+        ResponseIssuer => ("response_issuer", "failed", None),
+        TokenExchange => ("token_exchange", "failed", None),
+        MissingIdToken => ("missing_id_token", "failed", None),
+        IdTokenVerification => ("id_token_verification", "failed", None),
+        IdTokenClaimsOrNonce => ("id_token_claims_or_nonce", "failed", None),
+        AccessTokenHash => ("access_token_hash", "failed", None),
+        UserInfoOrSubject => ("userinfo_or_subject", "failed", None),
+        UserInfoClaims => ("userinfo_claims_or_group", "failed", None),
+        /// No allowed group: reported as `userinfo_claims_or_group`, counted apart.
+        GroupDenied => ("userinfo_claims_or_group", "failed", Some(Counter::GroupDenial)),
+        InvalidSubject => ("invalid_subject", "failed", None),
     }
 }
 
@@ -136,13 +88,8 @@ impl Security {
     /// Logs a refused sign-in and counts the refusals the minute line reports.
     pub(super) fn refused(&self, reason: Reason) {
         self.debug(format_args!("login rejected reason={}", reason.code()));
-        match reason {
-            Reason::Throttled => self.count(Counter::Throttled),
-            Reason::PasswordMismatch => self.count(Counter::InvalidPassword),
-            Reason::SessionCapacity | Reason::TransactionCapacity => self.count(Counter::Capacity),
-            Reason::TransactionReplay => self.count(Counter::ReplayExpiry),
-            Reason::GroupDenied => self.count(Counter::GroupDenial),
-            _ => {}
+        if let Some(counter) = reason.counter() {
+            self.count(counter);
         }
     }
 
@@ -153,8 +100,8 @@ impl Security {
             return None;
         }
         let mut line = String::from("[gm:auth] 1m");
-        for ((name, count), last) in NAMES.iter().zip(counts).zip(last.iter_mut()) {
-            write!(line, " {name}={}", count - *last).expect("strings take writes");
+        for ((counter, count), last) in Counter::ALL.iter().zip(counts).zip(last.iter_mut()) {
+            write!(line, " {}={}", counter.name(), count - *last).expect("strings take writes");
             *last = count;
         }
         Some(line)

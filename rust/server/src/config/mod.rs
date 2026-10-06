@@ -79,48 +79,27 @@ impl Config {
     }
 }
 
-/// A native listener, in discovery's order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ListenerKind {
-    H1,
-    H1Tls,
-    H2,
-    H3,
+graphite_meter_proto::table! {
+    /// A native listener, in discovery's order.
+    #[derive(PartialOrd, Ord)]
+    pub enum ListenerKind {
+        /// Its name in `GM_ADVERTISED_NATIVE_ENDPOINTS`.
+        name.0: &'static str,
+        /// The prefix of its `_ADDR` and `_PUBLIC_ORIGIN` settings.
+        env.1: &'static str,
+        scheme.2: Scheme,
+        protocol.3: Protocol,
+    } {
+        H1 => ("http1-clear", "GM_H1", Scheme::Http, Protocol::Http1),
+        H1Tls => ("http1-tls", "GM_H1_TLS", Scheme::Https, Protocol::Http1),
+        H2 => ("http2", "GM_H2", Scheme::Https, Protocol::Http2),
+        H3 => ("http3", "GM_H3", Scheme::Https, Protocol::Http3),
+    }
 }
 
 impl ListenerKind {
-    pub const ALL: [Self; 4] = [Self::H1, Self::H1Tls, Self::H2, Self::H3];
-
-    /// Its endpoint name, setting prefix, scheme and protocol.
-    const fn row(self) -> (&'static str, &'static str, Scheme, Protocol) {
-        match self {
-            Self::H1 => ("http1-clear", "GM_H1", Scheme::Http, Protocol::Http1),
-            Self::H1Tls => ("http1-tls", "GM_H1_TLS", Scheme::Https, Protocol::Http1),
-            Self::H2 => ("http2", "GM_H2", Scheme::Https, Protocol::Http2),
-            Self::H3 => ("http3", "GM_H3", Scheme::Https, Protocol::Http3),
-        }
-    }
-
-    /// Its name in `GM_ADVERTISED_NATIVE_ENDPOINTS`.
-    pub const fn name(self) -> &'static str {
-        self.row().0
-    }
-
-    /// The prefix of its `_ADDR` and `_PUBLIC_ORIGIN` settings.
-    pub const fn env(self) -> &'static str {
-        self.row().1
-    }
-
-    pub const fn scheme(self) -> Scheme {
-        self.row().2
-    }
-
-    pub const fn protocol(self) -> Protocol {
-        self.row().3
-    }
-
     pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.name() == name)
+        Self::ALL.iter().copied().find(|kind| kind.name() == name)
     }
 }
 
