@@ -366,7 +366,7 @@ run = 'scripts/release-artifacts.sh "$usage_version"'
 
 [tasks.container-smoke]
 description = "Build and smoke-test the local production image"
-env = { VERSION = "0.0.0-ci", GM_CLIENT_REVISION = "local", GM_CLIENT_VALIDATE = "0" }
+env = { VERSION = "0.0.0-ci", GM_CLIENT_REVISION = "local" }
 run = [
   { task = "container-build", args = ["graphite-meter:smoke"] },
   "scripts/verify-container.sh graphite-meter:smoke",
