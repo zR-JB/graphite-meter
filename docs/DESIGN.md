@@ -305,8 +305,9 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   led by its mark: name, median, jitter, timeouts (the share of resolved probes that got no reply, which is not
   packet loss), box plot (P10–P90 box over its min–max whisker, median tick, latest reply as a dot while live) and
   the added latency in its ink, from the medians until the run saves it, "—" without evidence. Figures are as
-  wide as their longest value from Start, and a row whose probes timed out or were lost shows a note in its
-  mark's place, so no column moves mid-run. The rows share one ms axis on the gauge's ladder over their P90s, so
+  wide as their longest value from Start, so no column moves mid-run. A row keeps its mark whatever happens: missing
+  or unaccounted replies brighten its timeouts figure under a dotted mark whose tip gives every probe outcome, and
+  only a twentieth or more of the probes turns it to `--warn`; a failed population tints its name. The rows share one ms axis on the gauge's ladder over their P90s, so
   the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead and names its value. The axis
   sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
   is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
