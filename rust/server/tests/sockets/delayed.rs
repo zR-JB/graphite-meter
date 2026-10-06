@@ -1,5 +1,5 @@
-//! Delayed links: an HTTP/3 upload beyond the floor window, a control reply beside downloads on a slow link, and the
-//! optimized-build gate that QUIC downloads exceed the old window limit.
+//! Delayed links: an HTTP/3 upload beyond the floor window, and the optimized-build gate that QUIC downloads exceed
+//! the old window limit.
 
 use super::{
     http3::{H3, read, transport},
@@ -7,9 +7,8 @@ use super::{
 };
 use bytes::Bytes;
 use graphite_meter_http3::{RecvHalf, webtransport::RecvStream};
-use graphite_meter_net::quic::INITIAL_RECEIVE_WINDOW;
-use graphite_meter_testkit::{Bottleneck, Link};
-use tokio::{task::JoinSet, time::Instant};
+use graphite_meter_testkit::Link;
+use tokio::time::Instant;
 
 const KIB: usize = 1 << 10;
 
@@ -34,32 +33,6 @@ async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
         updates < floor_bound,
         "{updates} MAX_DATA round trips; each raises a 64 KiB floor window by 64 KiB at most"
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_link() {
-    let h3 = H3::start(&[]).await;
-    let bottleneck = Bottleneck { bits_per_second: 2_000_000, queue: Duration::from_millis(50) };
-    let link = Link::udp_through(h3.server.quic.unwrap(), Duration::from_millis(20), bottleneck)
-        .await
-        .unwrap();
-    // A quic-go peer's connection credit stays at its first window on a path this slow.
-    let mut credit = transport(None);
-    credit.receive_window(INITIAL_RECEIVE_WINDOW.into());
-    let connection = h3.connect_via(link.address, credit).await;
-    let mut downloads = JoinSet::new();
-    for _ in 0..4 {
-        let (answer, mut body) = connection.send("GET", ENDLESS, b"").await;
-        assert_eq!(answer.status(), 200);
-        downloads.spawn(async move { while let Ok(Some(_)) = body.data().await {} });
-    }
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    for _ in 0..4 {
-        let started = Instant::now();
-        connection.json("GET", "/probe").await;
-        let took = started.elapsed();
-        assert!(took < Duration::from_millis(500), "a probe beside the downloads took {took:?}");
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

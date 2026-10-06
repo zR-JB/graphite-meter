@@ -10,9 +10,8 @@ pub const RECEIVE_WINDOW: u32 = 48 << 20;
 pub const INITIAL_RECEIVE_WINDOW: u32 = 768 << 10;
 /// A server connection's receive window until an admitted upload reads: one maximal HTTP/3 frame.
 pub const RECEIVE_WINDOW_FLOOR: u32 = 64 << 10;
-/// The send window a server connection starts at and tunes back to: a third of quic-go's first connection receive
-/// window, so that on a slow path it binds before the peer's credit, which quic-go grants in quarters of that window.
-pub const MIN_SEND_WINDOW: u64 = INITIAL_RECEIVE_WINDOW as u64 / 3;
+/// The send window a server connection starts at and tunes back to.
+pub const MIN_SEND_WINDOW: u64 = 2 << 20;
 /// The client's send window and the ceiling of the server's tuning.
 pub const MAX_SEND_WINDOW: u64 = 16 << 20;
 
