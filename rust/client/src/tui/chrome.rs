@@ -1,5 +1,4 @@
-//! What the terminal shows beyond the frame, as the sequences that change it: the window title (OSC 2), the progress
-//! bar (OSC 9;4) and links over drawn text (OSC 8).
+//! What the terminal shows beyond the frame: title (OSC 2), progress bar (OSC 9;4) and links over drawn text (OSC 8).
 use crate::text::{self, Line, Profile};
 use std::io::Write;
 
@@ -30,8 +29,7 @@ pub struct Link {
 }
 
 impl Chrome {
-    /// The sequences that change what `shown` set, or set everything; links are written each time, since a draw may
-    /// cover them.
+    /// The sequences that change what `shown` set, or set everything; links are rewritten as draws may cover them.
     pub fn bytes(&self, shown: Option<&Self>, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {

@@ -1,6 +1,4 @@
-//! The stage engine: one schedule owns a stage's readiness, warmup, boundaries, membership and result
-//! (`docs/MEASUREMENTS.md`). It is pure and tick-synchronous: the coordinator passes time and every observation in,
-//! and carries out the decisions.
+//! The stage engine (`docs/MEASUREMENTS.md`), pure and tick-synchronous: the coordinator feeds time and observations.
 
 use crate::{
     measure::{
@@ -111,8 +109,7 @@ pub enum Decision {
 #[derive(Debug)]
 pub struct Tick {
     pub decisions: Vec<Decision>,
-    /// The boundary's rates for the live trace: a window of at least half a tick, or any at a restart, where none
-    /// breaks the trace.
+    /// The boundary's live-trace rates: a window of at least half a tick, or any at a restart; none breaks the trace.
     pub live: Option<Dir<Option<f64>>>,
     /// Silence every member shares: nobody leaves for it.
     pub recovering: bool,
@@ -569,8 +566,7 @@ fn sample<'a>(input: &Input<'a>, server: &ServerId) -> Option<&'a Sample> {
     input.samples.iter().find(|sample| sample.reading.server == *server)
 }
 
-/// How late a tick's timer fired: from when it was due, or from when the previous tick returned if that was later, so
-/// time spent gathering checkpoints never counts.
+/// How late a tick fired, from its due time or the previous tick's later return, so checkpoint gathering never counts.
 pub fn lateness(fired: Instant, due: Instant, returned: Instant) -> Duration {
     fired.saturating_duration_since(due.max(returned))
 }

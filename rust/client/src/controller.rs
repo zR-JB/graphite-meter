@@ -1,5 +1,4 @@
-//! One operation at a time, a path check or a run: each waits for the one it replaces, a stopped run ends within a
-//! 5 s grace, and a server asking for sign-in gets it where the operator can approve it.
+//! One operation at a time, each awaiting the one it replaces; a stopped run gets 5 s; sign-in waits on the operator.
 use crate::{
     config::Config,
     events::{Event, Events, SignInEnd, SignInPrompt},
@@ -204,8 +203,7 @@ impl Work {
         self.events.send(Event::RunFinished { outcome, error, elapsed });
     }
 
-    /// Prepares `config` with the grants kept, signing in while a server asks and an operator can approve; none once
-    /// stopped.
+    /// Prepares `config` with kept grants, signing in while a server asks and an operator approves; none once stopped.
     async fn prepare(&self, config: &Config, state: &mut State) -> Option<Result<Prepared, Failure>> {
         let mut approved = Vec::new();
         loop {

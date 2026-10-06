@@ -1,5 +1,4 @@
-//! What operations tell their viewers as it happens, and the view the report and the interface reduce it to;
-//! sending never waits for a viewer.
+//! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
     model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
@@ -99,8 +98,7 @@ const POINTS: usize = 480;
 /// The shortest spacing of points.
 const STEP: Duration = Duration::from_millis(50);
 
-/// A trace over the plan's measured time, which keeps its planned span; nearby values merge into means that keep their
-/// peaks.
+/// A trace over the plan's measured time, keeping its planned span; nearby values merge into peak-keeping means.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
     points: Vec<Point>,

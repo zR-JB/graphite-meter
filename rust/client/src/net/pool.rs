@@ -50,8 +50,7 @@ struct Taken {
 }
 
 impl Connections {
-    /// The answer's head by `deadline`; a request failing on a reused connection before any answer goes once
-    /// more on a new one.
+    /// The answer's head by `deadline`; a request failing unanswered on a reused connection retries once on a new one.
     pub(super) async fn send(
         &self,
         client: &Client,
@@ -162,8 +161,7 @@ impl Slot {
         Some(Taken { conn: idle.swap_remove(ready), serial: None, reused: true })
     }
 
-    /// Keeps an HTTP/1.1 connection for the requests after `answer` once its body ended; a request sent while the body
-    /// streams would wait behind it.
+    /// Keeps an HTTP/1.1 connection for later requests once `answer`'s body ended; one sent mid-body would wait behind.
     fn keep(self: &Arc<Self>, conn: Conn, answer: Answer) -> Answer {
         if conn.share().is_some() {
             return answer;

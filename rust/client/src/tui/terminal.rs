@@ -18,8 +18,7 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-/// Runs the interface on this terminal until it quits, feeding it events, input, ticks and each caught signal's
-/// status from `signals`, and writing its chrome after each draw.
+/// Runs the interface until it quits, fed events, input, ticks and `signals`' statuses; writes chrome after each draw.
 pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
@@ -72,8 +71,7 @@ const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1002h\x1b[?1006h";
 /// Undoes `ENTER`, putting back the pushed title.
 const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1002l\x1b[23;0t";
 
-/// The terminal in raw mode on the alternate screen, reporting the mouse and pastes and asked for its background;
-/// dropping it clears the chrome, restores the terminal and puts back the panic hook it replaced.
+/// The terminal raw on the alternate screen with mouse, pastes and a background query; dropping it restores it all.
 struct Session {
     hook: Arc<Hook>,
 }

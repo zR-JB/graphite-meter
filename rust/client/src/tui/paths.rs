@@ -181,9 +181,7 @@ impl App {
 /// A path a preflight offered: its origin, transport and HTTP version.
 type Offer<T> = (Origin, T, Protocol);
 
-/// A path row's kind of transport: the transports a choice for every server may name, their labels, where the
-/// settings keep the choice, the paths of this kind a preflight offered against the origin that served it, and the
-/// checked path's origin.
+/// A path row's transport kind: nameable transports, labels, settings slot, offered paths by origin, checked origin.
 pub(super) struct Kind<T> {
     shared: [T; 2],
     label: fn(T) -> &'static str,

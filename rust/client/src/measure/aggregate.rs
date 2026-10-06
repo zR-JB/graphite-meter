@@ -1,5 +1,4 @@
-//! One stage's coordinated throughput: boundaries give windows, intervals, the headline, the peak and byte ledgers
-//! (`docs/MEASUREMENTS.md`, `api/aggregation.testvectors.json`).
+//! One stage's coordinated throughput from its boundaries (`docs/MEASUREMENTS.md`, `api/aggregation.testvectors.json`).
 
 use crate::model::{Dir, Direction, Stage};
 use graphite_meter_proto::{catalog::ServerId, upload::Counters};
@@ -275,8 +274,7 @@ impl Aggregate {
         Some(sample)
     }
 
-    /// Departed servers leave: the interval ends where the first of them last moved, and the survivors' dropout
-    /// interval starts there.
+    /// Departed servers leave: the interval ends where the first last moved, where the survivors' dropout one starts.
     pub fn dropout(&mut self, survivors: &[ServerId], at: Instant) {
         let Some(interval) = self.intervals.back() else { return };
         if survivors.len() == interval.participants.len() {

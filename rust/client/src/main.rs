@@ -55,8 +55,7 @@ fn fail(error: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Runs the interface on a terminal and prints the report of the finished run it shows; otherwise, or with `-report`,
-/// runs `config` once and prints its report to stdout, or why it never started to stderr.
+/// Shows the interface on a terminal, else or with `-report` runs `config` once; prints the finished report to stdout.
 fn run(config: Config) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::beside(runtime.handle())?);
@@ -95,8 +94,7 @@ fn columns(terminal: bool) -> Option<u16> {
     columns.filter(|&columns| terminal && columns > 0)
 }
 
-/// Writes `view`'s report to stdout as wide as the terminal, or 100 columns, and ends with `status`; into a closed
-/// pipe with 141 on Unix.
+/// Writes `view`'s report to stdout at terminal width or 100 columns, ending with `status`; 141 into a closed pipe.
 fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, status: u8) -> io::Result<ExitCode> {
     let width = columns.map_or(report::WIDTH, |columns| usize::from(columns).max(40));
     let lines = report::report(view, width, palette);
@@ -175,8 +173,7 @@ fn written(bytes: &[u8]) -> ExitCode {
     }
 }
 
-/// Asks the terminal on stdin and stdout for its background in raw mode, reading until the DA1 reply or `limit`:
-/// whether it is dark, if it answered.
+/// Asks the terminal in raw mode for its background until the DA1 reply or `limit`; whether it is dark, if answered.
 #[cfg(unix)]
 async fn background(limit: std::time::Duration) -> Option<bool> {
     use std::{

@@ -1,5 +1,4 @@
-//! An upload session (`api/upload.md`): a receiver minted for the stage, its lanes and progress feed, checkpoints,
-//! one replacement per server and run, and its finish.
+//! An upload session (`api/upload.md`): minted receiver, lanes, feed, checkpoints, one replacement per server and run.
 use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
@@ -78,8 +77,7 @@ struct Progress {
     ended: Option<Fault>,
 }
 
-/// Where control requests go: over the throughput check's connection, or for an HTTP/3 path connections of the
-/// session's own.
+/// Where control requests go: the throughput check's connection, or on an HTTP/3 path the session's own connections.
 #[derive(Clone)]
 struct Control {
     client: Client,
@@ -88,8 +86,7 @@ struct Control {
 }
 
 impl UploadSession {
-    /// Mints a receiver with control requests over `via`, the protocol `path`'s check took, and starts its feed and
-    /// its lanes `stagger` apart; `replaced` is the server's for the run.
+    /// Mints a receiver over `via`, starting its feed and lanes `stagger` apart; `replaced` is the server's this run.
     pub async fn open(
         client: &Client,
         path: &ThroughputPath,
@@ -241,8 +238,7 @@ impl Control {
     }
 }
 
-/// Follows upload `id`'s feed into `progress` until `complete`: the WebTransport session's first server stream when
-/// there is one, else or once that fails the HTTP feed, reopened as the retry rule allows.
+/// Follows `id`'s feed into `progress` until `complete`: WebTransport's first server stream, else HTTP, with retry.
 async fn follow(
     control: Control,
     id: String,
@@ -302,8 +298,7 @@ impl Source {
     }
 }
 
-/// Records from `source` into `progress` until `complete`, each line at most 64 KiB and within the control timeout;
-/// `moved` once one decoded.
+/// Records from `source` into `progress` until `complete`, lines up to 64 KiB within the control timeout; `moved`.
 async fn read(
     control: &Control,
     mut source: Source,

@@ -1,5 +1,4 @@
-//! The run screen: the Test panel with the stage track, the timeline's readings and charts, the results once the
-//! run finished, the Details overlay and the stop prompt.
+//! The run screen: Test panel and stage track, timeline readings and charts, results, Details overlay and stop prompt.
 use super::{
     App, Effect, Overlay,
     chart::{self, Axis},
@@ -23,8 +22,7 @@ const EASING: f64 = 0.12;
 /// From this width the Test panel stands beside the timeline.
 const SIDE: usize = 100;
 
-/// What the run screen keeps beside the view: when the stage's warmup or window began, the eased rates, each
-/// server's latest round trip and timeout streak, and the latency server `l` picked.
+/// Run-screen state: stage timing, eased rates, each server's latest round trip and timeout streak, `l`'s latency pick.
 #[derive(Debug, Default)]
 pub struct Live {
     since: Option<Instant>,
@@ -150,8 +148,7 @@ impl App {
         self.now.saturating_duration_since(since)
     }
 
-    /// The progress bar: busy while the run prepares, then the share of planned stage time done, which a stage that
-    /// did not complete adds nothing to.
+    /// The progress bar: busy while preparing, then the planned stage time done; an incomplete stage adds nothing.
     pub(super) fn progress(&self) -> Progress {
         let Some(run) = self.view.run.as_ref().filter(|_| self.running()) else {
             return Progress::None;
@@ -211,8 +208,7 @@ impl App {
         }
     }
 
-    /// The Test panel beside the timeline from 100 cells, else above it; once over, the Test panel alone when the
-    /// timeline would not fit.
+    /// The Test panel beside the timeline from 100 cells, else above; once over, alone when the timeline would not fit.
     fn stages(&self, run: &Run, width: usize, rows: usize) -> Vec<Line> {
         let side = width >= SIDE;
         let left = if side { width * 2 / 5 } else { width };
@@ -239,8 +235,7 @@ impl App {
         self.panel(&title, self.live_view(run, width - 4, height - 2), width, height)
     }
 
-    /// The stage's readings while it runs, then the rate chart of its directions and the shown server's latency
-    /// chart.
+    /// The stage's readings while it runs, then its directions' rate chart and the shown server's latency chart.
     fn live_view(&self, run: &Run, width: usize, height: usize) -> Vec<Line> {
         let (palette, live) = (&self.palette, run.outcome.is_none());
         let stage = match live {

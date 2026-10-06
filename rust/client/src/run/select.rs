@@ -44,8 +44,7 @@ pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a Se
     Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
 
-/// The paths to check on `entry`'s server, discovered from `served`: throughput over its fetch-stream target, then
-/// its WebTransport one, and latency, when `latency`, over WebTransport, then WebSocket, unless a transport is forced.
+/// Paths on `entry`'s server: throughput by fetch-stream then WebTransport, latency by WebTransport then WebSocket.
 pub fn candidates(
     choice: &PathChoice,
     entry: &ServerEntry,

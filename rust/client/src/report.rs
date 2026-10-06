@@ -1,5 +1,4 @@
-//! A finished run as the printed report: header, throughput, latency, failures and notes, and with several servers
-//! each server's share and the run's issues; and the progress lines a run without the interface writes.
+//! A finished run as the printed report, per-server shares and issues with several servers, and headless progress.
 mod details;
 pub mod vocabulary;
 
@@ -48,8 +47,7 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     blocks.join(&Line::default()).into_iter().map(Line::trimmed).collect()
 }
 
-/// The finished run's results as the interface shows them with `focus` as the latency server: each stage's mean
-/// rates, the latency grid and the failures; none when nothing was measured.
+/// The finished run's results as the interface shows them, `focus` the latency server; none when nothing was measured.
 pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Palette) -> Vec<Line> {
     let Some(run) = view.run.as_ref().filter(|run| run.at.is_some()) else {
         return Vec::new();

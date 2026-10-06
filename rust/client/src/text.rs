@@ -1,5 +1,4 @@
-//! Styled text for terminals: spans measured in cells, fitting, padding and wrapping, and one SGR writer per colour
-//! profile.
+//! Styled terminal text: spans measured in cells, fitting, padding and wrapping, and one SGR writer per colour profile.
 use graphite_meter_proto::text::safe;
 use std::io::{self, Write};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};

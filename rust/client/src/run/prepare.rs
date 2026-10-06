@@ -1,5 +1,4 @@
-//! Path checks: the catalogue at `--url`, each selected server's preflight, then its throughput and latency paths,
-//! all within 12 s.
+//! Path checks: the catalogue at `--url`, each selected server's preflight, then throughput and latency paths, in 12 s.
 use super::select;
 use crate::{
     config::{Config, PrepKey},
@@ -32,8 +31,7 @@ const VERIFY: Duration = Duration::from_secs(3);
 /// How long a datagram probe waits for its reply before another goes.
 const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
 
-/// A path check: what it depends on, when it began, its network state, the catalogue and each selected server's
-/// paths.
+/// A path check: its dependencies, start, network state, the catalogue and each selected server's paths.
 pub struct Prepared {
     pub key: PrepKey,
     pub at: Instant,
@@ -176,8 +174,7 @@ where
     result
 }
 
-/// A throughput path that answers a probe, its WebTransport session opening first; the probe resolves a negotiated
-/// protocol.
+/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol.
 async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<ThroughputPath, Fault> {
     if path.transport == ThroughputTransport::WebTransport {
         let session = client.session(&path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
@@ -188,8 +185,7 @@ async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<Thro
     Ok(ThroughputPath { protocol, ..path.clone() })
 }
 
-/// The round trip of a probe over a bus of its own; only the latest probe's reply counts, and a datagram probe goes
-/// again after 750 ms.
+/// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats after 750 ms.
 async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, Fault> {
     let wait = match path.transport {
         LatencyTransport::WebTransport => DATAGRAM_REPLY,

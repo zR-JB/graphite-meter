@@ -70,8 +70,7 @@ impl Effect {
     }
 }
 
-/// How the interface ended: what it showed and in which palette, the status of an interrupt that ends it, and
-/// whether it showed a finished run, whose report follows.
+/// How the interface ended: what it showed, its palette, an interrupt's status, whether a finished report follows.
 pub struct Exit {
     pub view: View,
     pub palette: Palette,
@@ -301,8 +300,7 @@ impl App {
         stale || self.checking() || self.running() || matches!(self.screen, Screen::SignIn(_))
     }
 
-    /// How the interface ends now: with a signal's status after an interrupted run, or a caught one after a stopped
-    /// run.
+    /// How the interface ends now: a signal's status after an interrupted run, or a caught one after a stopped run.
     pub fn exit(self) -> Exit {
         let outcome = self.view.run.as_ref().and_then(|run| run.outcome);
         let report = outcome.is_some() && matches!(self.screen, Screen::Run);

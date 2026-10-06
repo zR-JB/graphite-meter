@@ -1,5 +1,4 @@
-//! The graphite palette in the terminal's colour profile, which follows the environment, and the background the
-//! terminal reports to an OSC 11 query.
+//! The graphite palette in the terminal's colour profile, which follows the environment, and the OSC 11 background.
 use crate::{
     model::{Outcome, Stage},
     text::{Color, Profile, Style},
@@ -161,8 +160,7 @@ fn environment(term: &str, color_term: &str, true_color_terminal: bool) -> Profi
     }
 }
 
-/// An answer to the query arriving as keys: its `ESC ]` as `alt+]`, or as esc and `]` when split, its characters as
-/// keys, its end as `alt+\` or `ctrl+g`.
+/// A query answer as keys: `ESC ]` as `alt+]` or split esc and `]`, characters as keys, its end as `alt+\` or `ctrl+g`.
 #[derive(Debug, Default)]
 pub struct Answer {
     answer: Option<Vec<u8>>,

@@ -68,8 +68,7 @@ impl Interrupts {
     }
 }
 
-/// Runs `config` once without the interface, writing stage progress to stderr; `stop` stops it with the status it
-/// resolves to. The run's view and the process status.
+/// Runs `config` once without the interface, stage progress to stderr; the view and the status, which `stop` can set.
 pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> (View, u8) {
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(false, runtimes, events);

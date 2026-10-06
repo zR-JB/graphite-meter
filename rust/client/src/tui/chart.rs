@@ -1,5 +1,4 @@
-//! Braille charts of a run's traces over the plan's measured time: each trace in its stages' colours, dashed where it
-//! is the upload of a bidirectional stage, with a scale and a ruler marking where each stage began.
+//! Braille charts of a run's traces in stage colours, bidirectional uploads dashed, with a scale and a stage ruler.
 use super::theme::Palette;
 use crate::{
     events::{Point, Series},
@@ -168,8 +167,7 @@ struct Canvas {
 }
 
 impl Canvas {
-    /// Draws `points` as stretch `owner`: values sharing a dot column merge into their mean, lines join them and a
-    /// gap breaks them.
+    /// Draws `points` as stretch `owner`: a dot column's values merge into their mean, lines join them, gaps break.
     fn plot(&mut self, owner: usize, dashed: bool, points: &[Point], span: f64, top: f64) {
         let (width, height) = (self.columns * 2, self.rows * 4);
         let column = |point: &Point| ((point.at.as_secs_f64() / span * width as f64) as usize).min(width - 1);

@@ -1,5 +1,4 @@
-//! QUIC dialing: each address gets 3 s to answer and an answering one 5 s more to finish its handshake; the
-//! connection and its HTTP/3 driver stay on the runtime that dialed.
+//! QUIC dialing: 3 s per address to answer, then 5 s for the handshake; connection and driver stay on its runtime.
 use super::fault::Fault;
 use graphite_meter_http3::{Code, client};
 use graphite_meter_net::{Alpn, ConnectError, Verify, bind_udp, client_config, quic::client_transport, resolve};
@@ -44,8 +43,7 @@ impl Drop for Quic {
     }
 }
 
-/// Dials `origin` on `runtime`, which then runs the connection, its endpoint and its driver; dropping the dial
-/// abandons it.
+/// Dials `origin` on `runtime`, which then runs the connection, endpoint and driver; dropping the dial abandons it.
 pub(super) async fn dial(
     origin: &Origin,
     verify: Verify,

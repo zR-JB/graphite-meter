@@ -1,5 +1,4 @@
-//! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and the loop that
-//! runs it over a server's bus.
+//! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
     measure::latency::{Deadline, ProbeOutcome},
     model::{Cadence, Stage},
@@ -91,8 +90,7 @@ impl Schedule {
         Some(ping)
     }
 
-    /// What a reply at `now` resolves: a reply before its deadline, else a timeout; a late reply only teaches the
-    /// deadline. Reply-driven probing sends again at once.
+    /// Resolves a reply at `now`: a reply in time, else a timeout, late ones teaching the deadline; replies resend.
     pub fn reply(&mut self, pong: Pong, now: Instant) -> Option<Probe> {
         if self.cadence == Cadence::ReplyDriven && self.due.is_some() {
             self.due = Some(now);

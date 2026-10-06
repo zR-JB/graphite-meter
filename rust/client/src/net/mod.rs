@@ -1,5 +1,4 @@
-//! The network layer: one request API over HTTP/1.1, HTTP/2 and HTTP/3, lane groups, the latency bus, their
-//! failures, the retry rule and native sign-in.
+//! The network layer: one request API over HTTP/1.1, 2 and 3, lane groups, latency bus, failures, retry, sign-in.
 pub mod approval;
 mod bus;
 mod conn;
@@ -40,8 +39,7 @@ use tokio::{
 /// How long a control request may take, its answer's body included, and a session or bus to open.
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A path check's network state, which its run reuses: proxies, verification, grants, control connections and
-/// the pinned runtimes QUIC connections run on.
+/// A path check's network state, reused by its run: proxies, verification, grants, control connections, QUIC runtimes.
 #[derive(Clone)]
 pub struct Client {
     shared: Arc<Shared>,
@@ -126,8 +124,7 @@ impl Client {
         Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
     }
 
-    /// Keeps `issuer`'s grant for its requests and its enrolled targets'; a token no header can carry is dropped,
-    /// so its server asks for sign-in again.
+    /// Keeps `issuer`'s grant for its and its enrolled targets' requests; a token no header can carry is dropped.
     pub fn grant(&self, issuer: &Origin, token: &str) {
         if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
             value.set_sensitive(true);
@@ -135,8 +132,7 @@ impl Client {
         }
     }
 
-    /// Lets `server`'s grant reach those of `targets` that are HTTPS on its host; a target another server
-    /// enrolled first keeps that server's grant.
+    /// Lets `server`'s grant reach its HTTPS `targets` on its host; one another server enrolled first keeps that grant.
     pub fn enroll(&self, server: &Origin, targets: &[Origin]) {
         let mut grants = lock(&self.shared.grants);
         grants.issuers.insert(server.clone(), server.clone());

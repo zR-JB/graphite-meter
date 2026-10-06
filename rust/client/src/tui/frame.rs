@@ -1,5 +1,4 @@
-//! The frame: header, the screen's body in a scrolled viewport, the footer with its keys, and panels; styled lines
-//! written into the terminal's buffer.
+//! The frame: header, the body in a scrolled viewport, footer keys and panels, written into the terminal's buffer.
 use super::{
     App, FRAME, Overlay, SMALLEST, SPINNER, Screen,
     chrome::{Chrome, Link},

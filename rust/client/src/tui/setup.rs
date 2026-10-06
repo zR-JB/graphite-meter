@@ -88,8 +88,7 @@ impl Row {
     }
 }
 
-/// Where setup stands: the focused row, the advanced rows shown, a reset awaiting its confirmation, and the chooser
-/// waiting for the check in progress.
+/// Where setup stands: focused row, shown advanced rows, a reset awaiting confirmation, the chooser awaiting the check.
 #[derive(Debug, Default)]
 pub struct Setup {
     pub row: usize,

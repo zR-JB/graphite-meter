@@ -1,5 +1,4 @@
-//! A run: its stages over the prepared servers' participants and the engine, membership between stages, warmups
-//! from idle round trips, and events as decisions arrive.
+//! A run: stages over the prepared participants and engine, membership between stages, idle-round-trip warmups, events.
 use super::{
     engine::{Decision, Engine, Input, Member, Probe, StagePlan, Tick, lateness, warmup},
     participant::Participant,
@@ -100,8 +99,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     outcome
 }
 
-/// Whether a sole server that left stays for the next stage: once the run measured, unless it needs sign-in; else why
-/// the run ends.
+/// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in; else why it ends.
 fn survivor(results: &[StageResult], sole: bool) -> Result<(), Failure> {
     let mut failures = results
         .iter()

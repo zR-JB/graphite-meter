@@ -1,5 +1,4 @@
-//! The one retry rule: work may fail without moving bytes for the redial window; busy answers back off and
-//! quick failures pause.
+//! The retry rule: work may fail moving no bytes for the redial window; busy answers back off, quick failures pause.
 use super::fault::{Class, Fault};
 use std::time::{Duration, Instant};
 

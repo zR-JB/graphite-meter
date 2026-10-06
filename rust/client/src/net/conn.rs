@@ -68,8 +68,7 @@ pub(super) struct Failed {
 }
 
 impl Conn {
-    /// A connection to `origin` over `via`, a negotiated one HTTP/2 when TLS agrees on it; a TCP connection runs
-    /// where it was dialed, a QUIC one on `home`, else on the next pinned runtime.
+    /// A connection to `origin` over `via`, HTTP/2 if TLS agrees; TCP runs where dialed, QUIC on `home` or a runtime.
     pub(super) async fn dial(
         client: &Client,
         origin: &Origin,

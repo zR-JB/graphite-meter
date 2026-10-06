@@ -100,8 +100,7 @@ impl Fault {
         })
     }
 
-    /// The fault an upload refusal in an answer to `from`, or in a progress record, means; a sign-in is for the
-    /// server `issuer` names.
+    /// The fault an upload refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.
     pub(super) fn refusal(
         refusal: UploadRefusal,
         from: Route,

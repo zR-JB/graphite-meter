@@ -193,8 +193,7 @@ impl StageResult {
     }
 }
 
-/// The run's latency server: the first selected one while it stays, else the first survivor whose latency stage has a
-/// median.
+/// The run's latency server: the first selected one while it stays, else the first survivor with a latency median.
 pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     let first = &results.first()?.servers.first()?.server;
     let mut survivors = results.last()?.servers.iter().filter(|server| !server.left);

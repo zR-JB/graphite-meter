@@ -62,8 +62,7 @@ pub struct GroupPlan {
     pub lanes: Range<usize>,
 }
 
-/// The groups `lanes` form in `stage` on `path`: HTTP/1.1 one connection per lane, HTTP/2 one per direction,
-/// HTTP/3 the path's connection except for a bidirectional stage's uploads, WebTransport a session per 16 lanes.
+/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport 16 each.
 pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<GroupPlan> {
     let mut plans = Vec::new();
     for &direction in stage.directions() {
@@ -122,8 +121,7 @@ impl Tally {
 }
 
 impl Lanes {
-    /// Starts `work` on the plans in its direction, lane `n` after `n` staggers, each group on one pinned runtime,
-    /// until `token` is cancelled.
+    /// Starts `work` on its direction's plans, lane `n` after `n` staggers, a group per runtime, until `token` cancels.
     pub fn start(
         client: &Client,
         plans: Vec<GroupPlan>,
@@ -217,8 +215,7 @@ fn block() -> Bytes {
 struct Slot<T>(tokio::sync::Mutex<Option<T>>);
 
 impl<T> Slot<T> {
-    /// A `handle` to the one `usable` says may go on, else to what `dial` brings; without a handle, as for an
-    /// HTTP/1.1 connection, the lane keeps it to itself.
+    /// A `handle` to the one `usable` allows, else to what `dial` brings; without one, as HTTP/1.1, the lane keeps it.
     async fn get(
         &self,
         dial: impl Future<Output = Result<T, Fault>>,

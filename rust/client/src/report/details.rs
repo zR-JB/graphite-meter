@@ -1,5 +1,4 @@
-//! Each server's share of a run: mean rates and latency medians per server, the run's issues and its aggregation
-//! intervals.
+//! Each server's share of a run: its mean rates and latency medians, the run's issues and its aggregation intervals.
 use super::{ADDED_NOTE, Report, vocabulary::*};
 use crate::{
     events::View,
@@ -10,8 +9,7 @@ use crate::{
 };
 use std::time::Duration;
 
-/// Each server's mean rates and latency medians, ✗ once it left, and the run's issues; with `full` the facts of each
-/// result first and the aggregation intervals once the run finished.
+/// Per-server mean rates and latency medians, ✗ once left, and issues; `full` adds result facts and final intervals.
 pub fn details(view: &View, width: usize, palette: &Palette, full: bool) -> Vec<Line> {
     let Some(run) = &view.run else { return Vec::new() };
     Report { view, run, focus: run.focus.as_ref(), width, palette }.details(full)
