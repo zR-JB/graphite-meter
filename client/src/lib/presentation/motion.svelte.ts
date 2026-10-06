@@ -32,11 +32,58 @@ const FLIP_MS = 380;
 const FLIP_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
 // Neighbours have moved most of the way by then: an arriving element appears into room already made.
 const ROOM_MS = 140;
-// A sheet moves without overshoot: it is a surface sliding to its edge, not a part settling into place.
-const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
-// As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
-const SHEET_MS = 320;
+// A move is a damped spring: it sets off from rest, or at the speed an interrupted move had, so nothing jumps to
+// speed; it overshoots by about 1% and settles within 1% in about 0.26 s.
+const DAMPING = 0.81;
+const OMEGA = 0.024;
+const SPRING_MS = 420;
+const STEPS = 30;
+const DECAY = DAMPING * OMEGA;
+const RING = OMEGA * Math.sqrt(1 - DAMPING ** 2);
+/** A spring released `x0` from rest at `v0` per ms: its offset and velocity `t` ms later. */
+function spring([x0, v0]: Axis, t: number): Axis {
+  const b = (v0 + DECAY * x0) / RING;
+  const [e, c, s] = [
+    Math.exp(-DECAY * t),
+    Math.cos(RING * t),
+    Math.sin(RING * t),
+  ];
+  return [e * (x0 * c + b * s), e * (v0 * c - (x0 * RING + DECAY * b) * s)];
+}
+type Axis = [offset: number, velocity: number];
+type Axes = { x: Axis; y: Axis; w: Axis };
+/** Each moving element's spring, so a move that interrupts it starts at its speed. */
+const moving = new WeakMap<
+  Element,
+  { at: number; axes: Axes; run: Animation }
+>();
+const velocity = (el: Element, now: number): Axes => {
+  const move = moving.get(el);
+  const t = move ? now - move.at : SPRING_MS;
+  const v = (axis: keyof Axes) =>
+    t < SPRING_MS ? spring(move!.axes[axis], t)[1] : 0;
+  return { x: [0, v("x")], y: [0, v("y")], w: [0, v("w")] };
+};
+/** Moves `el` on the spring from the given offsets to rest; `frame` turns offsets into a keyframe. */
+function settle(
+  el: Element,
+  axes: Axes,
+  frame: (x: number, y: number, w: number) => Keyframe,
+  fill?: FillMode,
+): Animation {
+  const frames = Array.from({ length: STEPS + 1 }, (_, i) => {
+    const t = (i / STEPS) * SPRING_MS;
+    const at = (axis: Axis) => (i === STEPS ? 0 : spring(axis, t)[0]);
+    return frame(at(axes.x), at(axes.y), at(axes.w));
+  });
+  const run = el.animate(frames, { duration: SPRING_MS, fill });
+  moving.set(el, { at: performance.now(), axes, run });
+  return run;
+}
+
 let flipping = false;
+/** A leaving sheet's copy, by its edge, while it slides out. */
+const leaving = new Map<string, HTMLElement>();
 /** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
 const boxes = (only?: readonly string[]) =>
   new Map(
@@ -48,19 +95,25 @@ const boxes = (only?: readonly string[]) =>
   );
 
 /** A change that reshapes the console applies at once, in the frame of the click that asked for it. Then every
-    element marked `data-flip` that stayed glides from its old place to its new one on the compositor; one also
-    marked `data-flip-resize` changes width on the same curve, a layout per frame within it. Two
-    things never share a place: a leaving one goes at once and its neighbours close over it, and an arriving one
-    waits for its neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`)
-    is a sheet: it slides in from beyond that edge and back out, without overshoot. `only`
-    names the keys that move, so a change can move a surface as one rather than each part on its own. A flip
-    within a flip is part of the outer one. */
+    element marked `data-flip` that stayed springs from where it is seen to its new place on the compositor; one
+    also marked `data-flip-resize` changes width on the same spring, a layout per frame within it. Two things never
+    share a place: a leaving one goes at once and its neighbours close over it, and an arriving one waits for its
+    neighbours to make room, then rises in. An element with `data-flip-edge` (`left` or `right`) is a sheet: it
+    slides in from beyond that edge and back out on the same spring, so edges that meet stay together through the
+    bob. A move that interrupts another keeps its speed. `only` names the keys that move, so a change can move a
+    surface as one rather than each part on its own. A flip within a flip is part of the outer one. */
 export function flip(update: () => void, only?: readonly string[]): void {
   if (flipping || still() || globalThis.document?.hidden !== false) {
     update();
     return;
   }
+  const now = performance.now();
   const before = boxes(only);
+  const speed = new Map(
+    [...before].map(([key, { el }]) => [key, velocity(el, now)]),
+  );
+  // The new places are measured without the moves still under way.
+  for (const { el } of before.values()) moving.get(el)?.run.cancel();
   flipping = true;
   try {
     update();
@@ -69,57 +122,52 @@ export function flip(update: () => void, only?: readonly string[]): void {
     flipping = false;
   }
   const after = boxes(only);
-  // With a sheet in it, everything that moves moves as one surface with the sheet.
-  const sheet = [...before.values(), ...after.values()].some(
-    ({ el }) => el.dataset.flipEdge,
-  );
-  const moveMs = sheet ? SHEET_MS : FLIP_MS;
-  const moveEase = sheet ? SHEET_EASE : FLIP_EASE;
   const arriving: HTMLElement[] = [];
   let moved = false;
   for (const [key, { el, box }] of after) {
     const old = before.get(key);
     const edge = el.dataset.flipEdge;
     if (!old && edge) {
-      const off = edge === "left" ? -box.right : innerWidth - box.left;
-      el.animate([{ translate: `${off}px 0` }, { translate: "0 0" }], {
-        duration: SHEET_MS,
-        easing: SHEET_EASE,
-      });
+      // A sheet coming back while its copy still leaves takes over from where the copy is, at its speed.
+      const copy = leaving.get(edge);
+      const off = copy
+        ? copy.getBoundingClientRect().left - box.left
+        : edge === "left"
+          ? -box.right
+          : innerWidth - box.left;
+      const v = copy ? velocity(copy, now).x[1] : 0;
+      copy?.remove();
+      leaving.delete(edge);
+      settle(el, { x: [off, v], y: [0, 0], w: [0, 0] }, (x) => ({
+        translate: `${x}px 0`,
+      }));
       continue;
     }
     if (!old) {
       arriving.push(el);
       continue;
     }
-    const dx = old.box.left - box.left;
-    const dy = old.box.top - box.top;
-    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
-      moved = true;
-      el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
-        duration: moveMs,
-        easing: moveEase,
-      });
-    }
-    // An element marked `data-flip-resize` changes width on the move's curve, so neighbours tile in every frame;
-    // any other wider element opens from its old width rather than jumping to the new one.
-    const grew = box.width - old.box.width;
-    if (Math.abs(grew) >= 1 && el.dataset.flipResize !== undefined) {
-      moved = true;
-      el.animate(
-        [{ width: `${old.box.width}px` }, { width: `${box.width}px` }],
-        { duration: moveMs, easing: moveEase },
-      );
-    } else if (grew >= 1) {
-      moved = true;
-      el.animate(
-        [
-          { clipPath: `inset(0 ${grew}px 0 0 round var(--r-surface))` },
-          { clipPath: "inset(0 0 0 0 round var(--r-surface))" },
-        ],
-        { duration: moveMs, easing: SHEET_EASE },
-      );
-    }
+    const v = speed.get(key)!;
+    const axes: Axes = {
+      x: [old.box.left - box.left, v.x[1]],
+      y: [old.box.top - box.top, v.y[1]],
+      w: [old.box.width - box.width, v.w[1]],
+    };
+    const shifted = Math.abs(axes.x[0]) >= 0.5 || Math.abs(axes.y[0]) >= 0.5;
+    // An element marked `data-flip-resize` changes width on the spring, so neighbours tile in every frame; any
+    // other wider element opens from its old width rather than jumping to the new one.
+    const resized =
+      Math.abs(axes.w[0]) >= 1 && el.dataset.flipResize !== undefined;
+    const opened = !resized && axes.w[0] <= -1;
+    if (!shifted && !resized && !opened) continue;
+    moved = true;
+    settle(el, axes, (x, y, w) => ({
+      translate: `${x}px ${y}px`,
+      ...(resized && { width: `${box.width + w}px` }),
+      ...(opened && {
+        clipPath: `inset(0 ${-w}px 0 0 round var(--r-surface))`,
+      }),
+    }));
   }
   // An arriving element waits only while neighbours move to make its room.
   for (const el of arriving)
@@ -138,7 +186,7 @@ export function flip(update: () => void, only?: readonly string[]): void {
   for (const [key, { el, box }] of before) {
     const edge = el.dataset.flipEdge;
     if (after.has(key) || !edge) continue;
-    // A sheet no longer displayed leaves to its edge as a copy at its old place.
+    // A sheet no longer displayed leaves to its edge as a copy at its old place, at the speed it had.
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.removeAttribute("data-flip");
     ghost.setAttribute("aria-hidden", "true");
@@ -153,15 +201,21 @@ export function flip(update: () => void, only?: readonly string[]): void {
       pointerEvents: "none",
       zIndex: "1",
     });
+    leaving.get(edge)?.remove();
+    leaving.set(edge, ghost);
     document.body.append(ghost);
     const off = edge === "left" ? -box.right : innerWidth - box.left;
-    ghost
-      .animate([{ translate: "0 0" }, { translate: `${off}px 0` }], {
-        duration: SHEET_MS,
-        easing: SHEET_EASE,
-        fill: "forwards",
-      })
-      .finished.finally(() => ghost.remove());
+    settle(
+      ghost,
+      { x: [-off, speed.get(key)!.x[1]], y: [0, 0], w: [0, 0] },
+      (x) => ({ translate: `${off + x}px 0` }),
+      "forwards",
+    )
+      .finished.catch(() => {})
+      .finally(() => {
+        ghost.remove();
+        if (leaving.get(edge) === ghost) leaving.delete(edge);
+      });
   }
 }
 

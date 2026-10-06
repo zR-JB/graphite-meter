@@ -790,7 +790,12 @@
     {/if}
   </SidePanel>
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage" data-flip="stage" inert={flyout}>
+    <section
+      class="stage history-stage"
+      data-flip="stage"
+      data-flip-resize
+      inert={flyout}
+    >
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -803,6 +808,7 @@
     {#if historyOpen}<section
         class="stage history-stage"
         data-flip="stage"
+        data-flip-resize
         inert={flyout}
       >
         {#if HistoryWorkspace}<HistoryWorkspace
@@ -835,6 +841,7 @@
       class="stage measurement-stage"
       class:away={historyOpen}
       data-flip={historyOpen ? undefined : "stage"}
+      data-flip-resize
       data-stage={store.isRunning ? store.phaseStage : undefined}
       class:previous={store.previousRun}
       {@attach entering}
