@@ -3,7 +3,6 @@
 use crate::measure::{aggregate::Interval, aggregate::Rate, latency::Population};
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::{
-    fmt,
     ops::{Index, IndexMut},
     time::{Duration, Instant},
 };
@@ -89,12 +88,6 @@ pub struct Failure {
 impl Failure {
     pub fn new(reason: FailureReason, text: impl Into<String>) -> Self {
         Self { reason, text: text.into() }
-    }
-}
-
-impl fmt::Display for Failure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.text)
     }
 }
 

@@ -52,7 +52,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     let unprepared: Vec<_> = unprepared.collect();
     let mut seats: Vec<_> = prepared.servers.iter().filter_map(Seat::new).collect();
     let plan = config.plan();
-    if let Some(error) = refusal(prepared, &seats, &unprepared, &plan) {
+    if let Some(error) = refusal(&prepared.servers, &unprepared, &plan) {
         let (outcome, elapsed) = (Outcome::Failed, started.elapsed());
         events.send(Event::RunFinished { outcome, error: Some(error), elapsed });
         return outcome;
@@ -101,29 +101,23 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
 
 /// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in; else why it ends.
 fn survivor(results: &[StageResult], sole: bool) -> Result<(), Failure> {
-    let mut failures = results
-        .iter()
-        .flat_map(|result| &result.failures)
-        .map(|failure| &failure.failure);
-    let last = failures.rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
+    let failures = results.iter().flat_map(|result| &result.failures);
+    let last = failures
+        .map(|failure| &failure.failure)
+        .rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
     let measured = results.iter().any(|result| !result.measured.is_zero());
     match last {
         _ if sole && measured && last.is_none_or(|last| last.reason != FailureReason::SignInRequired) => Ok(()),
-        Some(last) => Err(Failure::new(last.reason, format!("{NO_SURVIVORS}: {last}"))),
+        Some(last) => Err(Failure::new(last.reason, format!("{NO_SURVIVORS}: {}", last.text))),
         None => Err(Failure::new(FailureReason::ConnectionLost, NO_SURVIVORS)),
     }
 }
 
 /// Why the run cannot start: no server has a path, or a planned stage outlasts a server's limit.
-fn refusal(
-    prepared: &Prepared,
-    seats: &[Seat],
-    unprepared: &[ServerFailure],
-    plan: &[(Stage, Duration)],
-) -> Option<Failure> {
+fn refusal(servers: &[ServerPath], unprepared: &[ServerFailure], plan: &[(Stage, Duration)]) -> Option<Failure> {
     let refused = |text: String| Failure::new(FailureReason::PreparationFailed, text);
     match unprepared.first() {
-        _ if !seats.is_empty() => select::fit(plan, &prepared.servers).err().map(refused),
+        _ if servers.iter().any(|server| server.path.is_ok()) => select::fit(plan, servers).err().map(refused),
         Some(first) => Some(first.failure.clone()),
         None => Some(refused("no server was prepared".into())),
     }
@@ -262,20 +256,20 @@ impl Live<'_> {
                     participants.iter().for_each(|participant| participant.opened(end));
                     self.run.events.send(Event::Measuring(self.stage));
                 }
-                Decision::Checkpoint { budget, .. } => self.checkpoint = Some(budget),
+                Decision::Checkpoint(budget) => self.checkpoint = Some(budget),
                 Decision::CloseWindow => {
                     closed = true;
                     participants.iter_mut().for_each(|member| member.close(FINISH));
                 }
                 Decision::Failed(failure) => {
-                    let index = participants.iter().position(|open| *open.server() == failure.server);
+                    let index = participants.iter().position(|open| open.server == failure.server);
                     if let Some(index) = index.filter(|_| failure.scope == Scope::Latency) {
                         participants[index].stop_probing();
                     }
                     self.run.failed(&failure);
                 }
                 Decision::Remove(failure) => {
-                    let index = participants.iter().position(|open| *open.server() == failure.server);
+                    let index = participants.iter().position(|open| open.server == failure.server);
                     if let Some(index) = index {
                         participants.remove(index).depart();
                     }

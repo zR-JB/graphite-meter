@@ -2,18 +2,13 @@
 
 /// Milliseconds: one decimal below 100, whole from there.
 pub fn ms(value: f64) -> String {
-    match (value * 10.0).round().abs() < 1000.0 {
-        true => format!("{value:.1}"),
-        false => format!("{value:.0}"),
-    }
+    let decimals = if (value * 10.0).round().abs() < 1000.0 { 1 } else { 0 };
+    format!("{value:.decimals$}")
 }
 
 /// A round trip in milliseconds; below 0.1 shows as `< 0.1`.
 pub fn latency(value: f64) -> String {
-    match (0.0..0.1).contains(&value) {
-        true => "< 0.1".into(),
-        false => ms(value),
-    }
+    if (0.0..0.1).contains(&value) { "< 0.1".into() } else { ms(value) }
 }
 
 /// Added latency in milliseconds, always signed; what rounds to zero is `+0.0`.

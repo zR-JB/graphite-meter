@@ -123,7 +123,7 @@ fn aggregation() {
                 );
             }
         }
-        let (intervals, omitted) = aggregate.intervals();
+        let (intervals, omitted) = (&aggregate.intervals, aggregate.omitted);
         assert_eq!(omitted, 0);
         let expected = case["intervals"].as_array().unwrap();
         assert_eq!(intervals.len(), expected.len(), "{name}");

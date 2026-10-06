@@ -71,7 +71,6 @@ graphite_meter_proto::table! {
 /// One server's share of a window in one direction; uploads run on the receiver's clock.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Component {
-    pub server: ServerId,
     pub bytes: u64,
     pub duration: Duration,
     pub rate: f64,
@@ -178,8 +177,9 @@ struct Ledger {
 #[derive(Debug)]
 pub struct Aggregate {
     stage: Stage,
-    intervals: VecDeque<Interval>,
-    omitted: usize,
+    /// The latest last, and how many older ones were dropped.
+    pub intervals: VecDeque<Interval>,
+    pub omitted: usize,
     ledgers: Vec<Ledger>,
     open: Option<Open>,
     latest: Option<Boundary>,
@@ -211,11 +211,6 @@ impl Aggregate {
         };
         aggregate.restart(Reason::StageStart, participants, at);
         aggregate
-    }
-
-    /// The stage's intervals, the latest last, and how many older ones were dropped.
-    pub fn intervals(&self) -> (&VecDeque<Interval>, usize) {
-        (&self.intervals, self.omitted)
     }
 
     /// Credits `boundary` and returns the window since the previous one, if it adds one.
@@ -388,7 +383,7 @@ impl Aggregate {
             let (start, end) = first.reading(id).zip(last.reading(id)).ok_or(Gap::Broken)?;
             let component = |bytes: u64, duration: Duration| {
                 let rate = bytes as f64 / duration.as_secs_f64();
-                Component { server: id.clone(), bytes, duration, rate }
+                Component { bytes, duration, rate }
             };
             if self.stage.moves(Direction::Down) {
                 let (start, end) = start.down.zip(end.down).ok_or(Gap::Broken)?;

@@ -148,11 +148,8 @@ pub struct Population {
 impl Population {
     /// The median a view shows: none without a reply, or for an incomplete population of too few outcomes.
     pub fn median(&self) -> Option<Duration> {
-        let outcomes = self.summary.replies + self.summary.timeouts;
-        match self.complete || outcomes >= FAILED_MEDIAN_OUTCOMES {
-            true => self.summary.p50,
-            false => None,
-        }
+        let counted = self.complete || self.summary.replies + self.summary.timeouts >= FAILED_MEDIAN_OUTCOMES;
+        self.summary.p50.filter(|_| counted)
     }
 }
 

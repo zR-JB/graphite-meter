@@ -89,12 +89,10 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
     let Some((limit, name)) = limits.min_by_key(|(limit, _)| *limit) else {
         return Ok(());
     };
-    match plan.iter().find(|(_, duration)| *duration > limit) {
-        Some((stage, _)) => {
-            Err(format!("{name} allows stages up to {}; shorten the {} stage", short(limit), stage.name()))
-        }
-        None => Ok(()),
-    }
+    let Some((stage, _)) = plan.iter().find(|(_, duration)| *duration > limit) else {
+        return Ok(());
+    };
+    Err(format!("{name} allows stages up to {}; shorten the {} stage", short(limit), stage.name()))
 }
 
 /// The paths that resolved, in order; the first refusal when none did.

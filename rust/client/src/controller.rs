@@ -58,23 +58,21 @@ struct Operation {
 
 /// Runs the operations commands ask for and sends their events.
 pub struct Controller {
-    /// Whether an operator can approve sign-ins.
-    interactive: bool,
-    runtimes: Arc<Pool>,
-    events: Events,
+    /// What each operation starts from; its stop token is replaced.
+    work: Work,
     current: Option<Operation>,
     idle: State,
 }
 
 impl Controller {
     pub fn new(interactive: bool, runtimes: Arc<Pool>, events: Events) -> Self {
-        Self {
-            interactive,
-            runtimes,
+        let work = Work {
             events,
-            current: None,
-            idle: State::default(),
-        }
+            runtimes,
+            interactive,
+            stop: CancellationToken::new(),
+        };
+        Self { work, current: None, idle: State::default() }
     }
 
     pub fn command(&mut self, command: Command) {
@@ -109,12 +107,7 @@ impl Controller {
             previous.token.cancel();
         }
         let token = CancellationToken::new();
-        let work = Work {
-            events: self.events.clone(),
-            runtimes: self.runtimes.clone(),
-            interactive: self.interactive,
-            stop: token.child_token(),
-        };
+        let work = Work { stop: token.child_token(), ..self.work.clone() };
         let (stop, idle, settings) = (work.stop.clone(), std::mem::take(&mut self.idle), config.clone());
         let task = tokio::spawn(async move {
             let state = match previous {
@@ -136,9 +129,11 @@ impl Drop for Controller {
 }
 
 /// One operation's view of the controller.
+#[derive(Clone)]
 struct Work {
     events: Events,
     runtimes: Arc<Pool>,
+    /// Whether an operator can approve sign-ins.
     interactive: bool,
     stop: CancellationToken,
 }
@@ -182,10 +177,8 @@ impl Work {
     async fn run(&self, config: &Config, state: &mut State) {
         let started = Instant::now();
         self.events.send(Event::Checking { run: true });
-        let reused = state
-            .prepared
-            .take()
-            .filter(|prepared| prepared.reusable(&config.key(), started));
+        let key = config.key();
+        let reused = state.prepared.take().filter(|check| check.reusable(&key, started));
         let prepared = match reused {
             Some(prepared) => Some(Ok(prepared)),
             None => self.prepare(config, state).await,

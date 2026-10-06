@@ -46,6 +46,7 @@ pub struct Schedule {
     next: Ping,
     /// The next send; none once sending stopped.
     due: Option<Instant>,
+    /// Whether any probe was answered, in time or late.
     answered: bool,
 }
 
@@ -142,11 +143,6 @@ impl Schedule {
     /// Sending stops; probes in flight drain to their deadlines.
     pub fn stop(&mut self) {
         self.due = None;
-    }
-
-    /// Whether any probe was answered, in time or late.
-    pub fn answered(&self) -> bool {
-        self.answered
     }
 
     /// When a channel lost at `now`, opened at `opened`, is dialed again and by when it must open: within 2 s, capped
@@ -265,7 +261,7 @@ async fn serve(
                 let sent = timeout(SEND_TIMEOUT, bus.send(ping)).await;
                 if let Err(fault) = sent.unwrap_or(Err(Fault::TimedOut("probe send"))) {
                     schedule.failed(ping).into_iter().for_each(emit);
-                    if !schedule.answered() {
+                    if !schedule.answered {
                         return Err(fault);
                     }
                 }

@@ -3,7 +3,7 @@ use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
     net::{
-        Attempt, CONTROL_TIMEOUT, Class, Client, Decode, Fault, GroupPlan, Incoming, Lanes, Request, Retry, Session,
+        Attempt, CONTROL_TIMEOUT, Class, Client, Fault, GroupPlan, Incoming, Lanes, Request, Retry, Session,
         ThroughputPath, Work, retrying,
     },
 };
@@ -132,7 +132,7 @@ impl UploadSession {
         let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
         loop {
             let request = control.request(Method::POST, Route::UploadCheckpoint, id);
-            let asked = control.json(request, json::decode::<Counters>);
+            let asked = control.client.json(control.via, request, json::decode::<Counters>);
             let fault = match timeout_at(deadline, asked).await {
                 Ok(Ok(counters)) => return Ok(Receiver { id: self.upload.number, counters }),
                 Ok(Err(fault)) => fault,
@@ -204,7 +204,8 @@ impl Start {
     /// Mints receiver `number` and starts its feed and lanes.
     async fn upload(self, number: u32) -> Result<Upload, Fault> {
         let control = &self.control;
-        let mint = || control.json(control.request(Method::POST, Route::UploadSession, None), Minted::decode);
+        let request = || control.request(Method::POST, Route::UploadSession, None);
+        let mint = || control.client.json(control.via, request(), Minted::decode);
         let id = retrying(mint).await?.upload_id;
         let token = self.token.child_token();
         let work = Work::Upload(id.clone());
@@ -231,11 +232,6 @@ impl Control {
             while let Ok(Some(_)) = answer.chunk().await {}
         }
     }
-
-    /// The JSON answer to `request` within the control timeout.
-    async fn json<T>(&self, request: Request, decode: Decode<T>) -> Result<T, Fault> {
-        self.client.json(self.via, request, decode).await
-    }
 }
 
 /// Follows `id`'s feed into `progress` until `complete`: WebTransport's first server stream, else HTTP, with retry.
@@ -247,11 +243,8 @@ async fn follow(
 ) {
     if let Some(mut sessions) = session {
         let streamed = async {
-            let session = sessions
-                .wait_for(Option::is_some)
-                .await
-                .ok()
-                .and_then(|opened| opened.clone());
+            let opened = sessions.wait_for(Option::is_some).await.ok();
+            let session = opened.and_then(|opened| opened.clone());
             let session = session.ok_or_else(|| Fault::Lost("upload lanes ended".into()))?;
             let stream = session.accept_uni().await?;
             read(&control, Source::Stream(stream, session), &progress, &mut false).await

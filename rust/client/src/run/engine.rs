@@ -30,6 +30,7 @@ const MISSED_CHECKPOINTS: u32 = 3;
 const DRAIN_BOUND: Duration = Duration::from_secs(10);
 const MAX_WARMUP: Duration = Duration::from_secs(4);
 const MAX_STAGGER: Duration = Duration::from_millis(75);
+const UNCHECKPOINTED: &str = "receiver checkpoint unavailable before measurement";
 
 /// One stage for its members.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,8 +95,8 @@ pub struct Input<'a> {
 pub enum Decision {
     /// The measured window: probes sent in it count, and it closes at `end`.
     OpenWindow { start: Instant, end: Instant },
-    /// The next tick's samples carry checkpoints gathered within `budget`; `last` for the final boundary.
-    Checkpoint { budget: Duration, last: bool },
+    /// The next tick's samples carry checkpoints gathered within this budget.
+    Checkpoint(Duration),
     /// The window closed: lanes stop, upload sessions finish and probers drain.
     CloseWindow,
     /// A failure the member stays for: its latency population or the stage's evidence is lost.
@@ -264,10 +265,10 @@ impl Engine {
                 complete: seat.present && seat.probing != Probing::Failed && !self.stopped,
             }),
         });
-        let (intervals, omitted) = self.aggregate.as_ref().map_or((Vec::new(), 0), |aggregate| {
-            let (intervals, omitted) = aggregate.intervals();
-            (intervals.iter().cloned().collect(), omitted)
-        });
+        let (intervals, omitted) = match &self.aggregate {
+            Some(all) => (all.intervals.clone().into(), all.omitted),
+            None => (Vec::new(), 0),
+        };
         StageResult {
             stage: self.plan.stage,
             measured,
@@ -409,8 +410,7 @@ impl Engine {
             return self.open(input, tick);
         }
         (self.phase, tick.next) = (Phase::Opening, input.now);
-        let checkpoint = Decision::Checkpoint { budget: CHECKPOINT_BUDGET, last: false };
-        tick.decisions.push(checkpoint);
+        tick.decisions.push(Decision::Checkpoint(CHECKPOINT_BUDGET));
     }
 
     /// Opens the window from this tick's samples; an uploading member without its first checkpoint leaves.
@@ -421,12 +421,9 @@ impl Engine {
             if !uploads || !self.seats[index].present || sample.is_some_and(|sample| sample.reading.up.is_some()) {
                 continue;
             }
-            let failure = match sample.and_then(|sample| sample.missed.clone()) {
-                Some(refused) if refused.reason == FailureReason::SignInRequired => refused,
-                _ => {
-                    Failure::new(FailureReason::PreparationFailed, "receiver checkpoint unavailable before measurement")
-                }
-            };
+            let refused = sample.and_then(|sample| sample.missed.clone());
+            let refused = refused.filter(|refused| refused.reason == FailureReason::SignInRequired);
+            let failure = refused.unwrap_or_else(|| Failure::new(FailureReason::PreparationFailed, UNCHECKPOINTED));
             self.fail(index, Scope::Throughput, failure, now, true, &mut tick.decisions);
         }
         if self.present().next().is_none() {
@@ -455,7 +452,7 @@ impl Engine {
         self.last = tick.next >= end;
         if self.plan.stage.moves(Direction::Up) {
             let budget = if self.last { FINAL_CHECKPOINT_BUDGET } else { CHECKPOINT_BUDGET };
-            tick.decisions.push(Decision::Checkpoint { budget, last: self.last });
+            tick.decisions.push(Decision::Checkpoint(budget));
         }
     }
 
@@ -478,7 +475,7 @@ impl Engine {
         let Some(aggregate) = &mut self.aggregate else { return };
         let bytes = |seat: &Seat| Dir::from_fn(|direction| aggregate.bytes(&seat.server, direction));
         let before: Vec<_> = self.seats.iter().map(bytes).collect();
-        let intervals = |aggregate: &Aggregate| aggregate.intervals().0.len() + aggregate.intervals().1;
+        let intervals = |aggregate: &Aggregate| aggregate.intervals.len() + aggregate.omitted;
         let earlier = intervals(aggregate);
         let window = aggregate.observe(boundary);
         let restarted = intervals(aggregate) > earlier;

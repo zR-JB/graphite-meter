@@ -101,9 +101,9 @@ const STEP: Duration = Duration::from_millis(50);
 /// A trace over the plan's measured time, keeping its planned span; nearby values merge into peak-keeping means.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
-    points: Vec<Point>,
+    pub points: Vec<Point>,
     step: Duration,
-    span: Duration,
+    pub span: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -119,14 +119,6 @@ pub struct Point {
 impl Series {
     pub fn new(span: Duration) -> Self {
         Self { points: Vec::new(), step: STEP, span }
-    }
-
-    pub fn points(&self) -> &[Point] {
-        &self.points
-    }
-
-    pub fn span(&self) -> Duration {
-        self.span
     }
 
     /// Adds `value` at `at`; none breaks the trace.
@@ -320,14 +312,11 @@ impl Run {
     }
 
     fn series(&mut self, server: &ServerId) -> &mut Series {
-        let at = match self.rtt.iter().position(|(probed, _)| probed == server) {
-            Some(at) => at,
-            None => {
-                let span = self.throughput.down.span();
-                self.rtt.push((server.clone(), Series::new(span)));
-                self.rtt.len() - 1
-            }
-        };
+        let at = self.rtt.iter().position(|(probed, _)| probed == server);
+        let at = at.unwrap_or_else(|| {
+            self.rtt.push((server.clone(), Series::new(self.throughput.down.span)));
+            self.rtt.len() - 1
+        });
         &mut self.rtt[at].1
     }
 

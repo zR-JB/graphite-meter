@@ -172,7 +172,7 @@ b meter · Download throughput · at 7.5 s · Stopped delivering data
             readings: vec![reading],
         });
     }
-    run.results[1].intervals = aggregate.intervals().0.iter().cloned().collect();
+    run.results[1].intervals = aggregate.intervals.iter().cloned().collect();
     let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
     let intervals = "\n\nAggregation intervals\nDownload 0.0–2.0 s · a meter · measured window\n";
     assert!(text.ends_with(intervals), "{text}");

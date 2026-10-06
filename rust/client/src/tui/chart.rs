@@ -53,8 +53,7 @@ pub fn chart(
     palette: &Palette,
 ) -> Vec<Line> {
     let (columns, rows) = (width.saturating_sub(SCALE + 1).max(4), height.saturating_sub(2).max(2));
-    let split = |(series, dashed)| stretches(Series::points(series), marks, dashed);
-    let stretches: Vec<_> = traces.iter().copied().flat_map(split).collect();
+    let stretches: Vec<_> = traces.iter().flat_map(|trace| stretches(trace, marks)).collect();
     let values = stretches.iter().flat_map(|stretch| stretch.2);
     let peak = values.fold(0.0_f64, |peak, point| peak.max(point.peak).max(point.value.unwrap_or(0.0)));
     let top = nice(peak * axis.scale() * 1.05) / axis.scale();
@@ -120,13 +119,9 @@ fn ruler(marks: &[(Duration, Stage)], span: f64, columns: usize, palette: &Palet
     ]
 }
 
-/// `points` split at each mark into its stage's stretch; the upload's in a bidirectional stage is dashed.
-fn stretches<'a>(
-    mut points: &'a [Point],
-    marks: &[(Duration, Stage)],
-    upload: bool,
-) -> Vec<(Stage, bool, &'a [Point])> {
-    let mut stretches = Vec::new();
+/// A trace's points split at each mark into its stage's stretch; the upload's in a bidirectional stage is dashed.
+fn stretches<'a>(&(series, upload): &Trace<'a>, marks: &[(Duration, Stage)]) -> Vec<(Stage, bool, &'a [Point])> {
+    let (mut points, mut stretches) = (&series.points[..], Vec::new());
     for &(at, stage) in marks.iter().rev() {
         let start = points.partition_point(|point| point.at < at);
         stretches.push((stage, upload && stage == Stage::Bidirectional, &points[start..]));

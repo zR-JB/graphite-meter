@@ -207,6 +207,7 @@ pub fn usage(program: &str) -> String {
 }
 
 /// What the flags set; path choices stay text until every flag is read, so the last one given counts.
+#[derive(Default)]
 struct Flags {
     config: Config,
     protocol: String,
@@ -214,20 +215,6 @@ struct Flags {
     latency_transport: String,
     legal: bool,
     version: bool,
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        let auto = || "auto".to_owned();
-        Self {
-            config: Config::default(),
-            protocol: auto(),
-            throughput_transport: auto(),
-            latency_transport: auto(),
-            legal: false,
-            version: false,
-        }
-    }
 }
 
 impl Flags {
@@ -392,7 +379,7 @@ const FLAGS: [Flag<Flags>; 22] = [
     row!("latency-origin", String, "latency origin from discovery, or auto",
         |f, v| f.config.paths.latency_origin = origin(v)?, |f| show_origin(&f.config.paths.latency_origin)),
     row!("latency-transport", String, "latency transport: auto, websocket, or webtransport",
-        |f, v| v.clone_into(&mut f.latency_transport), |f| f.latency_transport.clone()),
+        |f, v| v.clone_into(&mut f.latency_transport), |_f| "auto".into()),
     row!("legal", Bool, "print the licences of the bundled software and exit",
         |f, v| f.legal = boolean(v)?, |f| f.legal.to_string()),
     row!("loaded-latency", Bool, "measure latency while transfer stages are loaded",
@@ -413,9 +400,9 @@ const FLAGS: [Flag<Flags>; 22] = [
     row!("throughput-origin", String, "throughput origin from discovery, or auto",
         |f, v| f.config.paths.throughput_origin = origin(v)?, |f| show_origin(&f.config.paths.throughput_origin)),
     row!("throughput-protocol", String, "protocol for a negotiated throughput origin: auto, http1, http2, or http3",
-        |f, v| v.clone_into(&mut f.protocol), |f| f.protocol.clone()),
+        |f, v| v.clone_into(&mut f.protocol), |_f| "auto".into()),
     row!("throughput-transport", String, "throughput transport: auto, fetch-stream, or webtransport",
-        |f, v| v.clone_into(&mut f.throughput_transport), |f| f.throughput_transport.clone()),
+        |f, v| v.clone_into(&mut f.throughput_transport), |_f| "auto".into()),
     stage_duration!("upload-duration", Upload, "upload measurement duration"),
     row!("url", String, "origin of the operator server catalogue",
         |f, v| f.config.url = url(v)?, |f| f.config.url.to_string()),

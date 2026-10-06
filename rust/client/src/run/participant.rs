@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::{CancellationToken, DropGuard};
 
 pub struct Participant {
-    server: ServerId,
+    pub server: ServerId,
     down: Option<Lanes>,
     up: Option<UploadSession>,
     prober: Option<Prober>,
@@ -70,10 +70,6 @@ impl Participant {
             finishing: None,
             _departs: departs,
         })
-    }
-
-    pub fn server(&self) -> &ServerId {
-        &self.server
     }
 
     /// Its local counters and lane health now; checkpoints come apart.

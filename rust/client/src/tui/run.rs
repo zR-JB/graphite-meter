@@ -247,7 +247,7 @@ impl App {
             }];
         };
         let traced = |direction: &Direction| {
-            let points = run.throughput[*direction].points();
+            let points = &run.throughput[*direction].points;
             points.iter().any(|point| point.value.is_some())
         };
         let directions: Vec<Direction> = match live {
@@ -264,7 +264,7 @@ impl App {
             lines.push(Line::styled(format!("Latency to {name} · l switches server"), palette.muted));
         }
         let span = match live {
-            true => run.throughput.down.span(),
+            true => run.throughput.down.span,
             false => Duration::from_secs(end.as_secs_f64().ceil() as u64),
         };
         let empty = Series::default();
