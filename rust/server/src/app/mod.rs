@@ -6,10 +6,8 @@ mod gate;
 mod page;
 pub mod query;
 pub(crate) mod response;
-pub mod topology;
 
 pub(crate) use gate::MAX_HEAD_BYTES;
-pub use topology::Endpoint;
 
 use crate::{
     assets::{Asset, Assets},
@@ -346,4 +344,56 @@ impl App {
 /// The port of a listen address such as `:7246` or `[::]:7249`.
 pub(super) fn listen_port(address: &str) -> Option<u16> {
     address.rsplit_once(':')?.1.parse().ok()
+}
+
+/// What accepted a connection: a TCP listener, HTTP/3's TCP companion or QUIC; its mounts follow `api/routes.txt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Endpoint {
+    H1,
+    H1Tls,
+    H2,
+    H3Companion,
+    Quic,
+}
+
+impl Endpoint {
+    pub const ALL: [Self; 5] = [Self::H1, Self::H1Tls, Self::H2, Self::H3Companion, Self::Quic];
+
+    /// Whether this endpoint serves `route`: the only mount decision.
+    pub const fn mounts(self, route: Route) -> bool {
+        match route {
+            Route::Probe
+            | Route::UploadSession
+            | Route::UploadCheckpoint
+            | Route::UploadProgress
+            | Route::WtSession => true,
+            Route::Preflight | Route::Servers | Route::WsSession | Route::Ping => self.ui(),
+            Route::Download | Route::Upload => !matches!(self, Self::H3Companion),
+            Route::WtDownload | Route::WtUpload | Route::WtPing => matches!(self, Self::Quic),
+        }
+    }
+
+    /// It serves the browser app and the authentication pages, which answer every path no route claims.
+    pub const fn ui(self) -> bool {
+        matches!(self, Self::H1 | Self::H1Tls)
+    }
+
+    /// Its probe answers point at the HTTP/3 port.
+    pub const fn bootstrap(self) -> bool {
+        matches!(self, Self::H3Companion)
+    }
+
+    /// What its startup line says it serves.
+    pub const fn role(self, auth: bool) -> &'static str {
+        match self {
+            Self::H1 if auth => {
+                "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+            }
+            Self::H1 => "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets",
+            Self::H1Tls => "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
+            Self::H2 => "HTTPS HTTP/2: measurement probe, transfers, progress only",
+            Self::H3Companion => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
+            Self::Quic => "HTTP/3: probe, transfers, progress, WebTransport",
+        }
+    }
 }
