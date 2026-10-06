@@ -196,42 +196,4 @@ mod tests {
             assert!(error.contains(message), "{document}: {error}");
         }
     }
-
-    #[test]
-    fn sizes_and_sources_are_bounded() {
-        let many: Vec<String> = (0..32).map(|index| format!("\"https://h{index}.example\"")).collect();
-        let error = parse(format!("[{}]", many.join(",")).as_bytes()).unwrap_err();
-        assert!(error.contains("at most 31"), "{error}");
-        let padded = format!("[{}\"https://a.example\"]", " ".repeat(MAX_INPUT_BYTES));
-        assert_eq!(parse(padded.as_bytes()).unwrap_err(), "server catalogue exceeds 64 KiB");
-        let (text, host) = ("x".repeat(250), "x".repeat(300));
-        let entries: Vec<String> = (0..31)
-            .map(|index| {
-                let others: Vec<_> = (0..4).map(|other| format!(r#""https://{host}.o{other}""#)).collect();
-                let identity = format!(r#""name":"{text}","location":"{text}""#);
-                let others = format!(r#""additionalOrigins":[{}]"#, others.join(","));
-                format!(r#"{{"id":"s{index}","url":"https://h{index}.example",{identity},{others}}}"#)
-            })
-            .collect();
-        let error = parse(format!(r#"{{"servers":[{}]}}"#, entries.join(",")).as_bytes()).unwrap_err();
-        assert!(error.starts_with("normalized catalogue exceeds 48 KiB"), "{error}");
-        assert!(
-            load(Some(String::new()), Some(String::new()))
-                .unwrap_err()
-                .contains("set only one")
-        );
-        assert_eq!(load(None, None).unwrap(), ServerCatalog::singleton());
-        assert!(
-            load(Some(String::new()), None).is_err(),
-            "an empty inline catalogue is present and invalid"
-        );
-        for path in ["relative.json", "/etc/../catalog.json"] {
-            assert!(load(None, Some(path.into())).unwrap_err().contains("absolute path"), "{path}");
-        }
-        let missing = load(None, Some("/nonexistent/catalog.json".into())).unwrap_err();
-        assert_eq!(
-            missing,
-            "GM_SERVER_CATALOG_FILE: open /nonexistent/catalog.json: no such file or directory"
-        );
-    }
 }

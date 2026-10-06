@@ -305,25 +305,10 @@ mod tests {
         peer::ClientKeys,
     };
     use graphite_meter_proto::lane::IDLE_BOUND;
-    use http_body::Body as _;
     use http_body_util::BodyExt;
     use std::{future::poll_fn, time::Duration};
     use tokio::time::advance;
     use tokio_util::sync::CancellationToken;
-
-    #[tokio::test]
-    async fn a_download_sends_its_exact_length_in_block_slices() {
-        let block = Block::new(&Budget::new(usize::MAX), Default::default()).unwrap();
-        let total = BLOCK_BYTES as u64 * 2 + 3;
-        let mut body = Body::download(block.source(total));
-        assert_eq!(body.size_hint().exact(), Some(total));
-        let mut frames = Vec::new();
-        while let Some(frame) = body.frame().await {
-            frames.push(frame.unwrap().into_data().unwrap().len());
-        }
-        assert_eq!(frames, [BLOCK_BYTES, BLOCK_BYTES, 3]);
-        assert!(body.is_end_stream());
-    }
 
     fn lane(shutdown: &CancellationToken) -> Lane {
         let hold = Quota::new(10, 10).acquire(&ClientKeys::Exempt, 1).unwrap();

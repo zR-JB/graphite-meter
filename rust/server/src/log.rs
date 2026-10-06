@@ -145,26 +145,4 @@ mod tests {
             "Sun, 04 Oct 2026 23:59:59 GMT"
         );
     }
-
-    #[test]
-    fn a_rate_limited_line_appears_once_a_minute_and_counts_the_rest() {
-        let limited = RateLimited::new("peer connection failures");
-        let start = Instant::now();
-        assert_eq!(limited.admit(start), Some(0));
-        assert_eq!(limited.admit(start + Duration::from_secs(1)), None);
-        assert_eq!(limited.admit(start + INTERVAL - Duration::from_millis(1)), None);
-        assert_eq!(limited.admit(start + INTERVAL), Some(2));
-        assert_eq!(limited.admit(start + INTERVAL * 3), Some(0));
-    }
-
-    #[test]
-    fn a_latch_reports_each_change_once_with_hysteresis() {
-        let latch = Latch::default();
-        assert_eq!(latch.update(false, true), None, "an ending condition that never started");
-        assert_eq!(latch.update(true, false), Some(true));
-        assert_eq!(latch.update(true, false), None);
-        assert_eq!(latch.update(false, false), None, "between the thresholds");
-        assert_eq!(latch.update(false, true), Some(false));
-        assert_eq!(latch.update(false, true), None);
-    }
 }

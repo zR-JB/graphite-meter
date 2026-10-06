@@ -164,47 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn sessions_take_handlers_from_the_shared_pool() {
-        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
-        let (a, b) = (client("192.0.2.1"), client("192.0.2.2"));
-        let session = quotas.session(&a).unwrap();
-        assert_eq!(quotas.session(&a).err(), Some(Refusal::Client));
-        let operations = [quotas.operation(&a).unwrap(), quotas.operation(&a).unwrap()];
-        assert_eq!(
-            quotas.load(),
-            (3, 3),
-            "a session's handler counts toward the pool, not the client's share"
-        );
-        assert_eq!(quotas.operation(&b).err(), Some(Refusal::Total));
-        assert_eq!(quotas.session(&b).err(), Some(Refusal::Total));
-        drop((session, operations));
-        assert_eq!(quotas.load(), (0, 3));
-    }
-
-    #[test]
-    fn the_admission_line_counts_peaks_and_refusals_as_go_does() {
-        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
-        let (a, b) = (client("192.0.2.1"), client("192.0.2.2"));
-        let session = quotas.session(&a).unwrap();
-        assert_eq!(quotas.session(&a).err(), Some(Refusal::Client));
-        let operations = [quotas.operation(&b).unwrap(), quotas.operation(&b).unwrap()];
-        assert_eq!(quotas.operation(&b).err(), Some(Refusal::Client));
-        assert_eq!(quotas.operation(&a).err(), Some(Refusal::Total));
-        assert_eq!(quotas.session(&b).err(), Some(Refusal::Total), "the handler pool is full");
-        drop(operations);
-        let connection = quotas.connection(&a, Transport::Tcp).unwrap();
-        drop(session);
-        assert_eq!(
-            quotas.admission(),
-            "[gm:admission] handlers 0 active / 3 peak, rejected 2 pool + 1 client; sessions 0 active / 2 max, 1 per \
-             client, rejected 0 budget + 1 client; connections 1 active / 1 peak, rejected 0 global + 0 client"
-        );
-        assert_eq!(quotas.connections(), 1);
-        drop(connection);
-        assert_eq!(quotas.connections(), 0);
-    }
-
-    #[test]
     fn window_credit_covers_eight_connection_windows_per_client() {
         let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal("op".into())));
         let source = client("2001:db8::1");

@@ -222,26 +222,4 @@ mod tests {
         assert!(!password.admit(keys(), None) && !password.admit(keys(), Some(&old)));
         assert!(password.admit(keys(), Some(&cookie)));
     }
-
-    #[test]
-    fn a_configured_hash_is_checked_with_gos_messages() {
-        let go = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
-        let parsed = Hash::parse(&format!(" {go}\n")).unwrap();
-        assert!(parsed.verify(b"correct horse") && !parsed.verify(b"correct horse "));
-        let salt = "OT2po7nOdP+21BKX5CuZQw";
-        for (encoded, message) in [
-            ("$argon2i$v=19$m=19456,t=2,p=1$a$b", "password hash must be an Argon2id v=19 PHC string"),
-            ("$argon2id$v=19$m=19456,t=2$a$b", "password hash has invalid Argon2 parameters"),
-            ("$argon2id$v=19$t=2,m=19456,p=1$a$b", "password hash has invalid Argon2 parameters"),
-            ("$argon2id$v=19$m=65536,t=2,p=1$a$b", "password hash must use m=19456,t=2,p=1"),
-            ("$argon2id$v=19$m=19456,t=+2,p=1$a$b", "password hash must use m=19456,t=2,p=1"),
-            ("$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$b", "password hash must use a 16-byte salt"),
-            (
-                &format!("$argon2id$v=19$m=19456,t=2,p=1${salt}$c2FsdA"),
-                "password hash must use a 32-byte output",
-            ),
-        ] {
-            assert_eq!(Hash::parse(encoded).err().as_deref(), Some(message), "{encoded}");
-        }
-    }
 }

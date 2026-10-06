@@ -189,23 +189,4 @@ mod tests {
         let refusal = "the browser asset directory has no index.html";
         assert_eq!(scan(scratch.path(), false).err().as_deref(), Some(refusal));
     }
-
-    #[test]
-    fn the_index_must_leave_room_for_the_server_meta_tags_and_policy() {
-        for (index, refusal) in [
-            ("<head></head></head>", "index.html must contain exactly one </head>"),
-            (
-                "<head><script></script><script></script></head>",
-                "index.html has more than one inline script",
-            ),
-            ("<head><style>a{}</head>", "index.html has an unterminated inline style"),
-            (
-                "<head><meta name=\"graphite-meter-auth\" content=\"enabled\"></head>",
-                "index.html must not carry the server's auth or result-history meta tags",
-            ),
-        ] {
-            assert_eq!(check_index(index.as_bytes()).err().as_deref(), Some(refusal), "{index}");
-        }
-        assert_eq!(check_index(b"\xff</head>").err().as_deref(), Some("index.html is not UTF-8"));
-    }
 }

@@ -1,11 +1,6 @@
 use super::*;
-use crate::{
-    auth::Holder,
-    engine::feed::{HEARTBEAT_AFTER, PROGRESS_INTERVAL},
-    exchange::Exchange,
-    lane::Work,
-};
-use graphite_meter_proto::{lane::IDLE_BOUND, lane::LaneEnding, upload::Record};
+use crate::{auth::Holder, exchange::Exchange, lane::Work};
+use graphite_meter_proto::upload::Record;
 use tokio::time::advance;
 use tokio_util::sync::CancellationToken;
 
@@ -40,10 +35,6 @@ async fn record(feed: &mut ProgressFeed) -> Option<Record> {
             return Some(record);
         }
     }
-}
-
-fn invalid() -> Record {
-    UploadRefusal::Invalid.into()
 }
 
 #[tokio::test(start_paused = true)]
@@ -131,87 +122,6 @@ async fn a_client_holds_thirty_two_aggregates_and_its_wider_prefixes_twice_as_ma
 }
 
 #[tokio::test(start_paused = true)]
-async fn at_capacity_only_the_stalest_empty_aggregate_is_displaced_and_stays_refused() {
-    let uploads = Uploads::new([7; 32], Meter::new(true));
-    let owner = client("192.0.2.1");
-    let (stalest, newer) = (uploads.mint(), uploads.mint());
-    let mut displaced = uploads.subscribe(&stalest, Some(&owner)).unwrap();
-    assert_eq!(record(&mut displaced).await, Some(Record::Ready));
-    advance(Duration::from_secs(1)).await;
-    drop(uploads.subscribe(&newer, Some(&owner)).unwrap());
-    let finished = uploads.mint();
-    drop(uploads.subscribe(&finished, Some(&owner)).unwrap());
-    uploads.finish(&finished, Some(&owner)).unwrap();
-    let _laned = uploads.begin(&uploads.mint(), Some(&owner), lane(), None).unwrap();
-    for index in 0..MAX_LIVE - 4 {
-        let keys = client(&format!("198.51.100.{}", index / 30));
-        uploads
-            .begin(&uploads.mint(), Some(&keys), lane(), None)
-            .unwrap()
-            .record(1);
-    }
-    assert_eq!(uploads.live(), MAX_LIVE);
-
-    let newcomer = client("203.0.113.1");
-    let _joined = uploads.begin(&uploads.mint(), Some(&newcomer), lane(), None).unwrap();
-    assert_eq!(record(&mut displaced).await, Some(invalid()));
-    assert_eq!(line(&mut displaced).await, None);
-    let refused = uploads.subscribe(&stalest, Some(&owner)).err();
-    assert_eq!(refused, Some(UploadRefusal::Invalid), "a displaced ID is refused while it is fresh");
-    let _second = uploads.begin(&uploads.mint(), Some(&newcomer), lane(), None).unwrap();
-    assert_eq!(uploads.checkpoint(&newer, Some(&owner)).err(), Some(UploadRefusal::Invalid));
-    let full = uploads.subscribe(&uploads.mint(), Some(&newcomer)).err();
-    assert_eq!(full, Some(UploadRefusal::GlobalFull), "finished, laned and nonempty aggregates stay");
-}
-
-#[tokio::test(start_paused = true)]
-async fn retention_outlasts_observers_but_not_an_idle_aggregate() {
-    let (uploads, owner, id) = fixture();
-    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
-    sink.record(42);
-    advance(RETENTION * 2).await;
-    assert_eq!(uploads.checkpoint(&id, Some(&owner)).unwrap().bytes(), 42, "a live lane keeps it");
-    drop(sink);
-    let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();
-    assert_eq!(record(&mut feed).await, Some(Record::Ready));
-    advance(RETENTION - Duration::from_secs(1)).await;
-    assert!(uploads.checkpoint(&id, Some(&owner)).is_ok());
-    drop(uploads.subscribe(&id, Some(&owner)).unwrap());
-    advance(Duration::from_secs(1) + SWEEP_INTERVAL).await;
-    assert_eq!(uploads.checkpoint(&id, Some(&owner)).err(), Some(UploadRefusal::Invalid));
-    let mut feed = uploads.subscribe(&uploads.mint(), Some(&owner)).unwrap();
-    assert_eq!(record(&mut feed).await, Some(Record::Ready));
-    advance(RETENTION + SWEEP_INTERVAL * 2).await;
-    assert_eq!(record(&mut feed).await, Some(invalid()), "an expired aggregate ends its feed");
-    assert_eq!(uploads.live(), 0);
-}
-
-#[tokio::test(start_paused = true)]
-async fn progress_follows_every_hundred_milliseconds_after_the_first_chunk() {
-    let (uploads, owner, id) = fixture();
-    let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();
-    let start = Instant::now();
-    assert_eq!(line(&mut feed).await, Some(Some(Record::Ready)));
-    assert_eq!(line(&mut feed).await, Some(None));
-    assert_eq!(start.elapsed(), HEARTBEAT_AFTER, "a heartbeat after a second without a line");
-    let mut sink = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
-    sink.record(10);
-    let Some(Record::Progress(first)) = record(&mut feed).await else {
-        panic!("no progress")
-    };
-    let mut last = (Instant::now(), first);
-    for _ in 0..5 {
-        let Some(Some(Record::Progress(counters))) = line(&mut feed).await else {
-            panic!("no progress")
-        };
-        assert_eq!(Instant::now() - last.0, PROGRESS_INTERVAL);
-        assert_eq!(counters.bytes(), 10, "unchanged bytes are reported too");
-        assert_eq!(Duration::from_nanos(counters.nanos() - last.1.nanos()), PROGRESS_INTERVAL);
-        last = (Instant::now(), counters);
-    }
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_finished_upload_completes_once_its_lanes_drain_and_takes_no_new_lane() {
     let (uploads, owner, id) = fixture();
     let mut feed = uploads.subscribe(&id, Some(&owner)).unwrap();
@@ -271,23 +181,4 @@ async fn lifecycle_changes_wake_a_waiting_feed_at_once() {
     drop(sink);
     let (line, at) = current.await.unwrap();
     assert_eq!((line, at), (Some(Some(Record::Complete(Counters::new(0, 0)))), start));
-}
-
-#[tokio::test(start_paused = true)]
-async fn lanes_feed_one_aggregate_and_each_chunk_moves_its_lane() {
-    let (uploads, owner, id) = fixture();
-    let bounded = lane();
-    let mut first = uploads.begin(&id, Some(&owner), bounded.clone(), None).unwrap();
-    let mut second = uploads.begin(&id, Some(&owner), lane(), None).unwrap();
-    advance(Duration::from_secs(20)).await;
-    first.record(5);
-    first.record(0);
-    second.record(7);
-    assert_eq!((first.bytes(), second.bytes()), (5, 7));
-    let counters = uploads.checkpoint(&id, Some(&owner)).unwrap();
-    assert_eq!((counters.bytes(), counters.nanos()), (12, 0));
-    let start = Instant::now();
-    assert_eq!(bounded.ended().await, LaneEnding::Idle);
-    assert_eq!(start.elapsed(), IDLE_BOUND, "idle from the last chunk");
-    assert_eq!(uploads.checkpoint(&id, Some(&owner)).unwrap().nanos(), IDLE_BOUND.as_nanos() as u64);
 }

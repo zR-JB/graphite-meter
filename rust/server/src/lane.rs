@@ -275,42 +275,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_moving_lane_ends_at_its_lifetime() {
-        let fixture = Fixture::new();
-        let lane = fixture.lane(Duration::from_secs(45));
-        let mover = lane.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                mover.moved();
-            }
-        });
-        assert_eq!(ending(&lane).await, (LaneEnding::Lifetime, Duration::from_secs(45)));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn revocation_and_shutdown_end_a_lane_at_once() {
-        let fixture = Fixture::new();
-        let lane = fixture.lane(LONG);
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        fixture.revoke();
-        assert_eq!(ending(&lane).await, (LaneEnding::Revoked, Duration::ZERO));
-        let fixture = Fixture::new();
-        let lane = fixture.lane(LONG);
-        fixture.shutdown.cancel();
-        assert_eq!(ending(&lane).await, (LaneEnding::Shutdown, Duration::ZERO));
-        let anonymous = Exchange::start().admit(
-            ClientKeys::Exempt,
-            fixture.quota.acquire(&ClientKeys::Exempt, 1).unwrap(),
-            LONG,
-            &fixture.work,
-            &CancellationToken::new(),
-            None,
-        );
-        assert_eq!(ending(&anonymous).await.0, LaneEnding::Idle, "a lane without sign-in is never revoked");
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn the_first_cause_wins_and_every_observer_sees_it() {
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);

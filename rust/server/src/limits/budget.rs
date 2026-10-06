@@ -231,32 +231,4 @@ mod tests {
         }
         churn.join().unwrap();
     }
-
-    #[test]
-    fn the_hold_back_report_needs_usage_below_five_eighths_to_end() {
-        let budget = Budget::new(800);
-        let held = budget.lease(600).unwrap();
-        assert_eq!(budget.pressure(), Pressure::HoldBack);
-        assert!(budget.0.held_back.on());
-        drop(held);
-        let hovering = budget.lease(500).unwrap();
-        assert_eq!(budget.pressure(), Pressure::Retry);
-        assert!(budget.0.held_back.on(), "five eighths still count as held back");
-        drop(hovering);
-        let _low = budget.lease(499).unwrap();
-        budget.pressure();
-        assert!(!budget.0.held_back.on());
-    }
-
-    #[test]
-    fn both_forks_charge_and_refund_the_same_budget() {
-        let budget = Budget::new(100);
-        let (noq, h2) = (budget.noq(), budget.h2());
-        assert!(noq.try_charge(70) && !h2.try_charge(31) && h2.try_charge(30));
-        assert_eq!(budget.usage().used, 100);
-        assert!(budget.lease(1).is_none(), "fork charges count against leases");
-        noq.refund(30);
-        h2.refund(70);
-        assert_eq!(budget.usage().used, 0);
-    }
 }

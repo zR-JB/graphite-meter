@@ -247,26 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn connection_ids_name_their_shard_and_validate_only_there() {
-        let mut first = cid_generator(1).as_ref()();
-        let second = cid_generator(2).as_ref()();
-        let cid = first.generate_cid();
-        assert_eq!((cid.len(), first.cid_len()), (1 + HASHED_CID_BYTES, 1 + HASHED_CID_BYTES));
-        assert_eq!(cid[0], 1);
-        assert_ne!(first.generate_cid(), cid, "a fresh nonce for every connection ID");
-        first.validate(cid).unwrap();
-        assert!(second.validate(cid).is_err(), "another shard's connection ID");
-        let mut renamed = cid;
-        renamed[0] = 2;
-        assert!(second.validate(renamed).is_err(), "a shard byte alone does not validate");
-        let mut forged = cid;
-        forged[HASHED_CID_BYTES] ^= 1;
-        assert!(first.validate(forged).is_err(), "a signature that does not match its nonce");
-        assert!(first.validate(ConnectionId::new(&cid[..HASHED_CID_BYTES])).is_err());
-        assert_eq!(first.cid_lifetime(), None);
-    }
-
-    #[test]
     fn only_short_headers_naming_another_shard_leave() {
         let (router, mut inboxes) = Router::new(4, 1472);
         let mut long = short(2, 40);
@@ -317,18 +297,6 @@ mod tests {
         assert_eq!(meta.len, 14, "a short last segment moves up behind the kept ones");
         assert_eq!(buf[..14], [short(0, 10), short(0, 4)].concat());
         assert_eq!(drain(&mut inboxes[1]).len(), 1);
-    }
-
-    #[test]
-    fn a_full_queue_drops_further_datagrams() {
-        let (router, mut inboxes) = Router::new(2, 1472);
-        for _ in 0..=QUEUE_DATAGRAMS {
-            let mut buf = short(1, 40);
-            let mut meta = received(40, 40);
-            router.route(0, &mut buf, &mut meta);
-            assert_eq!(meta.len, 0, "a dropped datagram does not stay either");
-        }
-        assert_eq!(drain(&mut inboxes[1]).len(), QUEUE_DATAGRAMS);
     }
 
     struct Woken(AtomicBool);

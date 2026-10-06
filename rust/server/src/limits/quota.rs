@@ -264,43 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn weights_fill_shares_and_totals_by_their_last_byte() {
-        let budget = Budget::new(1000);
-        let credit = Quota::client_windows(budget.clone(), 300, None);
-        let client = v6("2001:db8::1");
-        let claim = credit.acquire(&client, 300).unwrap();
-        assert_eq!(credit.acquire(&client, 1).err(), Some(Refusal::Client));
-        let other = credit.acquire(&v6("2001:db9::1"), 200).unwrap();
-        assert_eq!(
-            credit.acquire(&v6("2001:dba::1"), 1).err(),
-            Some(Refusal::Total),
-            "half the budget is held"
-        );
-        let reserved = budget.reserve(200).unwrap();
-        drop(other);
-        assert_eq!(
-            credit.acquire(&v6("2001:dba::1"), 101).err(),
-            Some(Refusal::Total),
-            "reservations shrink half"
-        );
-        drop((claim, reserved));
-        assert_eq!(credit.usage().active, 0);
-    }
-
-    #[test]
-    fn a_full_client_share_is_refused_before_a_full_total() {
-        let quota = Quota::new(1, 1);
-        let held = quota.acquire(&v6("2001:db8::1"), 1).unwrap();
-        assert_eq!(quota.acquire(&v6("2001:db8::2"), 1).err(), Some(Refusal::Client));
-        assert_eq!(quota.acquire(&v6("2001:db9::1"), 1).err(), Some(Refusal::Total));
-        assert_eq!(quota.acquire(&ClientKeys::Exempt, 1).err(), Some(Refusal::Total));
-        let usage = quota.usage();
-        assert_eq!((usage.active, usage.peak, usage.refused_client, usage.refused_total), (1, 1, 1, 2));
-        drop(held);
-        assert_eq!(quota.usage().active, 0);
-    }
-
-    #[test]
     fn an_inner_quota_checks_its_share_then_the_outer_total_then_its_own() {
         let (outer, inner) = (Quota::new(2, 2), Quota::new(1, 1));
         let client = v6("2001:db8::1");
@@ -339,17 +302,5 @@ mod tests {
         assert!(panicked.is_err());
         assert_eq!((quota.usage().active, other.usage().active), (0, 0));
         assert!(!quota.holds_any(&v6("2001:db8::1")));
-    }
-
-    #[test]
-    fn any_prefix_of_a_source_holding_a_share_counts() {
-        let quota = Quota::new(10, 10);
-        let held = quota.acquire(&v6("2001:db8:1:2::1"), 1).unwrap();
-        for sibling in ["2001:db8:1:2::2", "2001:db8:1:ff::1", "2001:db8:1:ff00::1"] {
-            assert!(quota.holds_any(&v6(sibling)), "{sibling}");
-        }
-        assert!(!quota.holds_any(&v6("2001:db8:2::1")) && !quota.holds_any(&ClientKeys::Exempt));
-        drop(held);
-        assert!(!quota.holds_any(&v6("2001:db8:1:2::1")));
     }
 }

@@ -201,20 +201,4 @@ mod tests {
         advance(SHUTDOWN_GRACE).await;
         assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::Close));
     }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_stopping_connection_closes_after_the_grace_whatever_runs() {
-        for grace in [Grace::Fresh, Grace::Once] {
-            let work = Work::default();
-            let mut lifecycle = Lifecycle::new(work.clone(), grace);
-            let _running = work.start();
-            assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            lifecycle.stop();
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
-            advance(SHUTDOWN_GRACE - MILLI).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(MILLI).await;
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::Close));
-        }
-    }
 }

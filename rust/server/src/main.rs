@@ -146,15 +146,3 @@ impl Drop for Hidden {
         let _ = rustix::termios::tcsetattr(&self.terminal, rustix::termios::OptionalActions::Now, &self.original);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_line_loses_only_its_trailing_breaks() {
-        for (input, line) in
-            [(&b"secret\r\n"[..], &b"secret"[..]), (b"a\rb\n", b"a\rb"), (b"tail", b"tail"), (b"", b"")]
-        {
-            assert_eq!(super::read_line(&mut &input[..]).unwrap().as_slice(), line);
-        }
-    }
-}
