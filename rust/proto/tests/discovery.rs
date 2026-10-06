@@ -1,7 +1,7 @@
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, ClientIpSource, DEFAULT_STAGE_LIMIT, IpVersion, LatencyTarget, LatencyTransport, Load,
-        NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
+        Capabilities, ClientIpSource, DEFAULT_STAGE_LIMIT, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol,
+        Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
     },
     origin::BaseUrl,
     token::{self, SocketTicket},
@@ -79,7 +79,7 @@ fn preflight() -> Preflight {
 fn probe() -> Probe {
     Probe {
         client_ip: "198.51.100.4".into(),
-        client_ip_version: IpVersion::V4,
+        client_ip_version: 4,
         client_ip_source: ClientIpSource::Socket,
         protocol_negotiated: NegotiatedProtocol::Http3,
         load: Some(Load { active: 3, max: 256 }),

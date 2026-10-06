@@ -25,13 +25,12 @@ fn visible_text_also_has_no_invisible_formatting() {
 
 #[test]
 fn cleaning_blanks_refused_characters_and_ends_long_text_in_an_ellipsis() {
-    assert_eq!(clean("a\u{202e}b\nc", 10, safe), "a b c");
-    assert_eq!(clean("a\u{200b}b", 10, safe), "a\u{200b}b");
-    assert_eq!(clean("a\u{200b}b", 10, visible), "a b");
-    assert_eq!(clean("abcdef", 6, safe), "abcdef");
-    assert_eq!(clean("abcdefg", 6, safe), "abcde…");
-    assert_eq!(clean("ééééééé", 3, safe), "éé…", "the limit counts characters");
-    assert_eq!(clean("ab", 0, safe), "…");
+    assert_eq!(clean("a\u{202e}b\nc", 10), "a b c");
+    assert_eq!(clean("a\u{200b}b", 10), "a\u{200b}b");
+    assert_eq!(clean("abcdef", 6), "abcdef");
+    assert_eq!(clean("abcdefg", 6), "abcde…");
+    assert_eq!(clean("ééééééé", 3), "éé…", "the limit counts characters");
+    assert_eq!(clean("ab", 0), "…");
 }
 
 #[test]

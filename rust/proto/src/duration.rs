@@ -1,6 +1,6 @@
 //! Go's `time.Duration` text, as flags, environment variables and usage defaults spell durations.
 
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
 const UNITS: [(&str, u64); 8] = [
     ("ns", 1),
@@ -14,21 +14,9 @@ const UNITS: [(&str, u64); 8] = [
 ];
 const LIMIT: u64 = 1 << 63;
 
-/// Go's message for a duration it refuses.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DurationError(String);
-
-impl fmt::Display for DurationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for DurationError {}
-
 /// Parses Go's duration syntax, such as `1h30m` or `-1.5s`, into signed nanoseconds as `time.ParseDuration` does.
-pub fn parse(text: &str) -> Result<i64, DurationError> {
-    let invalid = || DurationError(format!("time: invalid duration {}", quote(text.as_bytes())));
+pub fn parse(text: &str) -> Result<i64, String> {
+    let invalid = || format!("time: invalid duration {}", quote(text.as_bytes()));
     let (negative, mut rest) = match text.as_bytes() {
         [b'-', rest @ ..] => (true, rest),
         [b'+', rest @ ..] => (false, rest),
@@ -56,11 +44,11 @@ pub fn parse(text: &str) -> Result<i64, DurationError> {
         let unit = after_fraction.split(number_byte).next().unwrap_or_default();
         rest = &after_fraction[unit.len()..];
         if unit.is_empty() {
-            return Err(DurationError(format!("time: missing unit in duration {}", quote(text.as_bytes()))));
+            return Err(format!("time: missing unit in duration {}", quote(text.as_bytes())));
         }
         let Some(&(_, unit_nanos)) = UNITS.iter().find(|(name, _)| name.as_bytes() == unit) else {
             let (unit, text) = (quote(unit), quote(text.as_bytes()));
-            return Err(DurationError(format!("time: unknown unit {unit} in duration {text}")));
+            return Err(format!("time: unknown unit {unit} in duration {text}"));
         };
         if whole > LIMIT / unit_nanos {
             return Err(invalid());

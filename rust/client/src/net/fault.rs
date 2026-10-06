@@ -133,13 +133,15 @@ impl fmt::Display for Fault {
                 untrusted(certificate)
             ),
             Self::Connect(ConnectError::Unreachable(_)) => formatter.write_str("Server could not be reached"),
-            Self::Connect(ConnectError::Proxy(unusable)) => formatter.write_str(&clean(&unusable.to_string(), 320)),
+            Self::Connect(ConnectError::Proxy(unusable)) => {
+                formatter.write_str(&text::clean(&unusable.to_string(), 320))
+            }
             Self::Status { status, from, .. } => write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from)),
             Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status()),
             Self::Ended(ending) => write!(formatter, "the server ended the lane: {}", ending.name()),
             Self::SignIn(_) => formatter.write_str("authentication required"),
             Self::Malformed(detail) => {
-                formatter.write_str(&clean(&format!("unexpected server response: {detail}"), 320))
+                formatter.write_str(&text::clean(&format!("unexpected server response: {detail}"), 320))
             }
             Self::Connect(_) | Self::Lost(_) | Self::TimedOut(_) => formatter.write_str(self.reason().label()),
         }
@@ -176,13 +178,9 @@ fn untrusted(certificate: &CertificateError) -> String {
         | CertificateError::ExpiredContext { .. }
         | CertificateError::NotValidYet
         | CertificateError::NotValidYetContext { .. } => "certificate has expired or is not yet valid".into(),
-        CertificateError::Other(other) => clean(&other.0.to_string(), 200),
-        other => clean(&other.to_string(), 200),
+        CertificateError::Other(other) => text::clean(&other.0.to_string(), 200),
+        other => text::clean(&other.to_string(), 200),
     }
-}
-
-fn clean(detail: &str, limit: usize) -> String {
-    text::clean(detail, limit, text::safe)
 }
 
 #[cfg(test)]

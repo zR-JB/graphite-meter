@@ -18,9 +18,9 @@ pub fn visible(c: char) -> bool {
             | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}')
 }
 
-/// At most `limit` characters of `text`, `keep`'s refusals blanked, longer ones ellipsized, as Go's `CleanText`.
-pub fn clean(text: &str, limit: usize, keep: fn(char) -> bool) -> String {
-    let blanked = text.chars().map(|c| if keep(c) { c } else { ' ' });
+/// At most `limit` characters of `text`, unsafe ones blanked, longer ones ellipsized, as Go's `CleanText`.
+pub fn clean(text: &str, limit: usize) -> String {
+    let blanked = text.chars().map(|c| if safe(c) { c } else { ' ' });
     match text.chars().count() <= limit {
         true => blanked.collect(),
         false => blanked.take(limit.saturating_sub(1)).chain(['…']).collect(),

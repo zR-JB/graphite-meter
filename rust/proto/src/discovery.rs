@@ -2,7 +2,7 @@
 
 use crate::{json, origin::BaseUrl, text};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
-use std::{net::IpAddr, ops::RangeInclusive, time::Duration};
+use std::{ops::RangeInclusive, time::Duration};
 
 /// Clients read at most this many bytes of a control response.
 pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
@@ -191,38 +191,11 @@ fn base_url_of<E: serde::de::Error>(text: &str) -> Result<BaseUrl, E> {
     BaseUrl::parse(text).map_err(E::custom)
 }
 
-/// The client address family the server saw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IpVersion {
-    V4,
-    V6,
-}
-
-impl From<IpAddr> for IpVersion {
-    fn from(address: IpAddr) -> Self {
-        match address {
-            IpAddr::V4(_) => Self::V4,
-            IpAddr::V6(_) => Self::V6,
-        }
-    }
-}
-
-impl Serialize for IpVersion {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u8(match self {
-            Self::V4 => 4,
-            Self::V6 => 6,
-        })
-    }
-}
-
-impl<'de> Deserialize<'de> for IpVersion {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        match u8::deserialize(deserializer)? {
-            4 => Ok(Self::V4),
-            6 => Ok(Self::V6),
-            _ => Err(D::Error::custom("invalid client IP version")),
-        }
+/// The client address family the server saw: 4 or 6.
+fn ip_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+    match u8::deserialize(deserializer)? {
+        version @ (4 | 6) => Ok(version),
+        _ => Err(D::Error::custom("invalid client IP version")),
     }
 }
 
@@ -231,7 +204,8 @@ impl<'de> Deserialize<'de> for IpVersion {
 #[serde(rename_all = "camelCase")]
 pub struct Probe {
     pub client_ip: String,
-    pub client_ip_version: IpVersion,
+    #[serde(deserialize_with = "ip_version")]
+    pub client_ip_version: u8,
     pub client_ip_source: ClientIpSource,
     pub protocol_negotiated: NegotiatedProtocol,
     #[serde(skip_serializing_if = "Option::is_none")]

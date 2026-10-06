@@ -1,6 +1,6 @@
 use graphite_meter_proto::{
     duration,
-    flag::{self, Flag, FlagError, Kind, Parsed, parse_bool},
+    flag::{self, Flag, Kind, Parsed, parse_bool},
 };
 use std::{ffi::OsString, time::Duration};
 
@@ -83,7 +83,7 @@ const FLAGS: [Flag<Settings>; 7] = [
     flag("verbose", Kind::Bool, |s, v| put(&mut s.verbose, own(v)? == "true")),
 ];
 
-fn run(args: &[&str]) -> (Result<Parsed, FlagError>, Settings) {
+fn run(args: &[&str]) -> (Result<Parsed, String>, Settings) {
     let mut settings = Settings::default();
     let parsed = flag::parse(&FLAGS, &mut settings, args.iter().map(OsString::from));
     (parsed, settings)

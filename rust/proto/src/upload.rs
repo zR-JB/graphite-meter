@@ -115,7 +115,7 @@ impl Record {
             "complete" => Ok(Self::Complete(serde_json::from_slice(line)?)),
             "error" => {
                 let Detail { code, message } = serde_json::from_slice(line)?;
-                let (code, message) = (text::clean(&code, 64, text::safe), text::clean(&message, 256, text::safe));
+                let (code, message) = (text::clean(&code, 64), text::clean(&message, 256));
                 Ok(Self::Error { code, message })
             }
             _ => Err(serde_json::Error::custom("unknown upload progress record")),

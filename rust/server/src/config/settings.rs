@@ -93,7 +93,7 @@ impl Value for Duration {
     /// A negative duration reads as zero, which validation refuses by name.
     fn set(&mut self, text: &str) -> Result<(), String> {
         if !text.is_empty() {
-            let nanos = duration::parse(text).map_err(|error| error.to_string())?;
+            let nanos = duration::parse(text)?;
             *self = Duration::from_nanos(u64::try_from(nanos).unwrap_or(0));
         }
         Ok(())
@@ -319,7 +319,7 @@ pub(super) fn load(
         Ok(Parsed::Arguments(_)) => {}
         Err(error) => {
             let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage, &flags));
-            return Err(error.0);
+            return Err(error);
         }
     }
     from_env?;

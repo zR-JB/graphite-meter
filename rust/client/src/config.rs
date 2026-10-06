@@ -186,7 +186,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
     let arguments = match flag::parse(&FLAGS, &mut flags, args) {
         Ok(flag::Parsed::Help) => return Ok(Parsed::Help),
         Ok(flag::Parsed::Arguments(arguments)) => arguments,
-        Err(error) => return Err(Refusal::Flag(error.0)),
+        Err(error) => return Err(Refusal::Flag(error)),
     };
     if flags.legal {
         return Ok(Parsed::Legal);

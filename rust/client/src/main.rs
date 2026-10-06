@@ -32,7 +32,7 @@ fn main() -> ExitCode {
     NOTICES.keep();
     let mut args = std::env::args_os();
     let program = args.next().unwrap_or_default();
-    let usage = || config::usage(&text::clean(&program.to_string_lossy(), usize::MAX, text::safe));
+    let usage = || config::usage(&text::clean(&program.to_string_lossy(), usize::MAX));
     match config::parse(args) {
         Ok(Parsed::Help) => eprint!("{}", usage()),
         Ok(Parsed::Version) => return written(format!("graphite-meter-client {VERSION}\n").as_bytes()),

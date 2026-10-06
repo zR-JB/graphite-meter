@@ -205,7 +205,7 @@ impl Oidc {
         }
         let mut offered = [info.name, info.preferred_username].into_iter().chain(names).flatten();
         let name = offered.find(|name| !name.is_empty()).unwrap_or_else(|| subject.clone());
-        let name = text::clean(&name, 64, text::safe);
+        let name = text::clean(&name, 64);
         let name = match name.trim() {
             "" => "OIDC user",
             name => name,
