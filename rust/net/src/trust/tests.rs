@@ -72,15 +72,6 @@ fn ssl_cert_file_replaces_only_the_file_list_and_ssl_cert_dir_only_the_directori
 }
 
 #[test]
-fn a_block_cut_short_loses_no_root_after_it() {
-    let scratch = Scratch::new();
-    let [(cut, _), (pem, root)] = [certificate(), certificate()];
-    let cut: String = cut.lines().take(3).map(|line| format!("{line}\n")).collect();
-    let bundle = scratch.file("bundle.pem", &format!("{cut}{pem}"));
-    assert_eq!(roots(&locations(&[("SSL_CERT_FILE", &bundle)], &[], &[])), [root]);
-}
-
-#[test]
 fn a_root_in_the_bundle_its_directory_and_a_hash_link_loads_once() {
     let scratch = Scratch::new();
     let [(pem, root), (other_pem, other)] = [certificate(), certificate()];

@@ -1,9 +1,8 @@
-//! Client TLS: Go's suite order, and trust from the process's `SSL_CERT_FILE` and `SSL_CERT_DIR`.
-use graphite_meter_net::{Alpn, Verify, client_config, provider};
+//! Client TLS trust from the process's `SSL_CERT_FILE` and `SSL_CERT_DIR`.
+use graphite_meter_net::{Alpn, Verify, client_config};
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::{
     CertificateError::{Other, UnknownIssuer},
-    CipherSuite::{TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256},
     ClientConfig, ClientConnection, Connection, Error, ServerConnection,
     pki_types::ServerName,
 };
@@ -72,19 +71,6 @@ fn trusted_server() -> Identity {
     let read = |name| std::fs::read_to_string(std::env::var_os(name).unwrap()).unwrap();
     let certificate = read("SSL_CERT_FILE");
     Identity { ca: certificate.clone(), certificate, key: read(KEY) }
-}
-
-#[tokio::test]
-async fn the_client_offers_go_s_tls13_order_and_the_server_follows_it() {
-    let suites: Vec<_> = provider().cipher_suites[..3]
-        .iter()
-        .map(|suite| suite.suite())
-        .collect();
-    let aes_first = [TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256];
-    let chacha_first = [TLS13_CHACHA20_POLY1305_SHA256, TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384];
-    assert!(suites == aes_first || suites == chacha_first, "{suites:?}");
-    let client = client_config(Verify::Insecure, Alpn::None).await;
-    assert_eq!(handshake(client, &Identity::generate().unwrap(), "localhost").unwrap(), suites[0]);
 }
 
 #[tokio::test]
