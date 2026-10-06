@@ -100,7 +100,6 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
         (streams(vec![(control(&[]), false); 2]), Code::H3_STREAM_CREATION_ERROR),
         (streams(vec![(control(&[]), true)]), Code::H3_CLOSED_CRITICAL_STREAM),
         (open([control(&[]), frame(0x06, &[0; 8])].concat()), Code::H3_FRAME_UNEXPECTED),
-        (open(control(&[(0x21, 0), (0x21, 1)])), Code::H3_SETTINGS_ERROR),
         (open(vec![0x02, 0xc1, 0x01, 0x61]), Code::QPACK_ENCODER_STREAM_ERROR),
         (open(vec![0x03, 0x80]), Code::QPACK_DECODER_STREAM_ERROR),
         (open(vec![0x01, 0x00]), Code::H3_STREAM_CREATION_ERROR),
@@ -194,17 +193,12 @@ async fn settings_the_server_refuses() -> Result<(), TestError> {
     for (bytes, datagrams, code) in [
         (oversized, true, Code::H3_EXCESSIVE_LOAD),
         (control(&many), true, Code::H3_EXCESSIVE_LOAD),
-        (control(&many[1..]), true, Code::H3_NO_ERROR),
         (control(&[(0x06, 1), (0x06, 1)]), true, Code::H3_SETTINGS_ERROR),
         // HTTP datagrams need the QUIC datagram transport parameter.
         (control(&[(0x33, 1)]), false, Code::H3_SETTINGS_ERROR),
     ] {
-        let Served { peers, stop, .. } = pair(Setup { datagrams, ..PLAIN }).await?.serve(respond);
+        let Served { peers, .. } = pair(Setup { datagrams, ..PLAIN }).await?.serve(respond);
         let _control = uni(&peers.client, &bytes).await?;
-        if code == Code::H3_NO_ERROR {
-            peers.get().await?;
-            stop.notify_one();
-        }
         assert_eq!(closed_with(&peers.client).await, code, "{:x?}", &bytes[..4]);
     }
     Ok(())

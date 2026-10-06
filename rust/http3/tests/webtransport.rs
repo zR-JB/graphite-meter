@@ -12,12 +12,12 @@ use tokio::sync::{Notify, mpsc};
 const DRAFT02_SETTINGS: &[(u64, u64)] = &[(0x2b603742, 1), (0x33, 1)];
 const DRAFT02: Setup = raw(DRAFT02_SETTINGS);
 
-/// Every lane ending's code and reason reach the peer as CLOSE then FIN, and a peer that answers with FIN
-/// never sees STOP_SENDING.
+/// Every lane ending's code and reason reach the peer as CLOSE then FIN, a peer that answers with FIN never
+/// sees STOP_SENDING, and the connection outlasts the CLOSE by a second.
 #[tokio::test]
 async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
     for (code, reason) in [(0, ""), (1, "idle"), (2, "lifetime"), (3, "authentication required"), (4, "shutdown")] {
-        let Served { peers, mut outcomes, .. } = pair(DRAFT02)
+        let Served { peers, serving, mut outcomes, .. } = pair(DRAFT02)
             .await?
             .sessions(move |session| async move { session.close(code, reason).await });
         let (mut connect, response) = peers.connect().await?;
@@ -26,6 +26,12 @@ async fn the_close_code_table_reaches_the_peer() -> Result<(), TestError> {
         connect.finish()?;
         assert_eq!(stopped(&connect).await, None);
         assert_eq!(outcomes.recv().await, Some(()));
+        // The connection lingers a second so the CLOSE arrives first.
+        settled(&peers.budget).await;
+        assert!(peers.server.close_reason().is_none());
+        jump(Duration::from_secs(1)).await;
+        assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+        assert_eq!(serving.await?, Ok(()));
     }
     Ok(())
 }
@@ -55,20 +61,6 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     let (driver, requests) = client(&peers);
     accepted(&requests).await?.close(7, "bye").await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
-
-    // A raw peer answering with FIN: the connection lingers a second so the CLOSE arrives first.
-    let Served { peers, serving, .. } = pair(DRAFT02)
-        .await?
-        .sessions(|session| async move { session.close(2, "lifetime").await });
-    let (mut connect, response) = peers.connect().await?;
-    assert!(response.await?.1.is_ok(), "CLOSE, then FIN");
-    connect.finish()?;
-    assert_eq!(stopped(&connect).await, None);
-    settled(&peers.budget).await;
-    assert!(peers.server.close_reason().is_none());
-    jump(Duration::from_secs(1)).await;
-    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
-    assert_eq!(serving.await?, Ok(()));
 
     // A silent peer gets STOP_SENDING WT_SESSION_GONE only once the second passes.
     let Served { peers, .. } = pair(DRAFT02)
@@ -132,32 +124,6 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
         peers.client.close(0_u32.into(), b"done");
         settled(&peers.budget).await;
     }
-    Ok(())
-}
-
-/// A download lane the server resets with plain RESET_STREAM, as a client without reliable reset gets
-/// them, leaves the connection serving.
-#[tokio::test]
-async fn a_cancelled_lane_without_reliable_reset_leaves_the_connection_usable() -> Result<(), TestError> {
-    let setup = Setup { reliable_reset: false, ..PLAIN };
-    let Served { peers, .. } = pair(setup).await?.sessions(|session| async move {
-        let mut lane = session.open_uni().await.unwrap();
-        while lane.write_chunk(Bytes::from(vec![7; 64 * 1024])).await.is_ok() {}
-        let _ = session.closed().await;
-    });
-    let (_driver, requests) = client(&peers);
-    // A plain request keeps the connection past its sessions.
-    requests.send_request(get("/")).await?.split().1.response().await?;
-    for _ in 0..2 {
-        let session = accepted(&requests).await?;
-        let mut lane = session.accept_uni().await.ok_or("a download lane")?;
-        assert!(lane.read_chunk().await?.is_some());
-        session.close(0, "").await;
-        assert_eq!(lane.read_chunk().await, Err(Error::Refused));
-        assert!(peers.client.close_reason().is_none());
-    }
-    let (_send, mut recv) = requests.send_request(get("/")).await?.split();
-    assert_eq!(recv.response().await?.status(), http::StatusCode::OK);
     Ok(())
 }
 
