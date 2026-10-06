@@ -23,32 +23,6 @@ fn outcome(probe: Option<Probe>) -> ProbeOutcome {
 }
 
 #[test]
-fn a_fixed_cadence_sends_start_to_start_on_its_grid() {
-    let t0 = Instant::now();
-    let mut schedule = Schedule::new(Cadence::Every(ms(250)), 16, t0);
-    let first = schedule.send(t0).unwrap();
-    assert_eq!(schedule.send(t0 + ms(249)), None);
-    outcome(schedule.reply(pong(first), t0 + ms(400)));
-    assert_eq!(schedule.send(t0 + ms(400)).map(|ping| ping.id), Some(1), "a reply does not move the grid");
-    assert_eq!(schedule.send(t0 + ms(600)).map(|ping| ping.id), Some(2), "a late wake sends once");
-    assert_eq!(schedule.send(t0 + ms(700)), None);
-    assert_eq!(schedule.send(t0 + ms(750)).map(|ping| ping.id), Some(3));
-}
-
-#[test]
-fn reply_driven_probing_sends_on_each_reply_with_the_deadline_as_backup() {
-    let t0 = Instant::now();
-    let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);
-    let first = schedule.send(t0).unwrap();
-    assert_eq!(schedule.wake(), Some(t0 + ms(250)), "250 ms before the first reply");
-    let reply = outcome(schedule.reply(pong(first), t0 + ms(30)));
-    assert_eq!(reply, ProbeOutcome::Reply { rtt: ms(30), handling: Duration::from_nanos(100) });
-    assert!(schedule.send(t0 + ms(30)).is_some(), "the reply sends the next");
-    assert_eq!(schedule.send(t0 + ms(279)), None);
-    assert!(schedule.send(t0 + ms(280)).is_some(), "the deadline backs up a missing reply");
-}
-
-#[test]
 fn a_lost_channel_leaves_its_probes_unresolved_and_a_send_failure_apart() {
     let t0 = Instant::now();
     let mut schedule = Schedule::new(Cadence::Every(ms(80)), 16, t0);

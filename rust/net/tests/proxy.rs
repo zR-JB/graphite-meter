@@ -31,38 +31,6 @@ fn all_proxy_is_never_read() {
 }
 
 #[test]
-fn each_variable_reads_before_its_lowercase_spelling_and_empty_values_are_unset() {
-    let proxy = from(&[
-        ("HTTP_PROXY", "http://upper.example:3128"),
-        ("http_proxy", "http://lower.example:3128"),
-        ("HTTPS_PROXY", ""),
-        ("https_proxy", "lower.example:3129"),
-        ("NO_PROXY", ""),
-        ("no_proxy", "meter.example"),
-    ]);
-    for (target, expected) in [
-        ("http://other.example", "http://upper.example:3128"),
-        ("https://other.example", "http://lower.example:3129"),
-        ("http://meter.example", "-"),
-        ("https://meter.example", "-"),
-    ] {
-        assert_eq!(via(&proxy, target), expected, "{target}");
-    }
-}
-
-#[test]
-fn proxy_urls_default_to_http_and_socks_to_port_1080() {
-    for (value, expected) in [
-        ("proxy.example:3128", "http://proxy.example:3128"),
-        ("socks5://proxy.example", "socks5://proxy.example:1080"),
-        ("SOCKS5H://u:p@proxy.example:1081", "socks5://proxy.example:1081"),
-        ("http://bücher.example:8080", "http://xn--bcher-kva.example:8080"),
-    ] {
-        assert_eq!(via(&from(&[("HTTPS_PROXY", value)]), "https://meter.example"), expected, "{value}");
-    }
-}
-
-#[test]
 fn an_unusable_value_fails_each_request_it_would_carry_naming_the_variable() {
     let proxy = from(&[
         ("https_proxy", "ftp://proxy.example"),

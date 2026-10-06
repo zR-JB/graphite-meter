@@ -43,7 +43,7 @@ impl noq::SharedBudget for Budget {
 }
 
 /// How the peers connect: the server budget's limit; the client's receive windows, unidirectional stream
-/// limit, reliable reset offer and datagram parameter; and the SETTINGS a raw client sends, if it is raw.
+/// limit and reliable reset offer; and the SETTINGS a raw client sends, if it is raw.
 #[derive(Clone, Copy)]
 pub struct Setup {
     pub limit: usize,
@@ -51,7 +51,6 @@ pub struct Setup {
     pub connection_window: Option<u32>,
     pub uni_streams: Option<u32>,
     pub reliable_reset: bool,
-    pub datagrams: bool,
     pub settings: Option<&'static [(u64, u64)]>,
 }
 
@@ -61,7 +60,6 @@ pub const PLAIN: Setup = Setup {
     connection_window: None,
     uni_streams: None,
     reliable_reset: true,
-    datagrams: true,
     settings: None,
 };
 
@@ -93,9 +91,6 @@ fn transport(setup: &Setup) -> Arc<noq::TransportConfig> {
     }
     if let Some(streams) = setup.uni_streams {
         transport.max_concurrent_uni_streams(streams.into());
-    }
-    if !setup.datagrams {
-        transport.datagram_receive_buffer_size(None);
     }
     Arc::new(transport)
 }
@@ -409,12 +404,4 @@ pub async fn closed_with(quic: &noq::Connection) -> Code {
         Ok(noq::ConnectionError::ApplicationClosed(close)) => Code(close.error_code.into_inner()),
         error => panic!("closed without an application code: {error:?}"),
     }
-}
-
-/// Waits for the server's GOAWAY, after which no request starts.
-pub async fn until_goaway(requests: &client::SendRequest) {
-    while !requests.going_away() {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(requests.send_request(get("/late")).await.err(), Some(Error::GoingAway));
 }

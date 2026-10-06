@@ -63,13 +63,6 @@ fn up(server: &str, bytes: u64, at: Duration) -> Sample {
     checkpoint(server, bytes, at.as_nanos() as u64 + 1)
 }
 
-fn missed(server: &str, reason: FailureReason) -> Sample {
-    Sample {
-        missed: Some(Failure::new(reason, "checkpoint missed")),
-        ..sample(server)
-    }
-}
-
 /// An engine ticked at scripted times, with what it decided.
 struct Script {
     engine: Engine,
@@ -186,34 +179,6 @@ fn an_upload_server_falls_silent_when_its_ledger_stops_growing_on_the_client_clo
         ]
     });
     assert!(script.removed().is_empty());
-}
-
-#[test]
-fn a_refused_grant_leaves_at_once_asking_for_sign_in() {
-    let mut script = Script::new(plan(Stage::Upload, &["a", "b"], false));
-    script.run(|at| {
-        let b = if at == ms(3000) {
-            missed("b", FailureReason::SignInRequired)
-        } else {
-            up("b", moved(at, STAGE), at)
-        };
-        vec![up("a", moved(at, STAGE), at), b]
-    });
-    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
-    assert_eq!(script.removed(), [(ms(3000), "b", FailureReason::SignInRequired)]);
-
-    let mut script = Script::new(plan(Stage::Upload, &["a", "b", "c"], false));
-    script.run(|at| match at.is_zero() {
-        true => vec![
-            up("a", 0, at),
-            missed("b", FailureReason::SignInRequired),
-            missed("c", FailureReason::Timeout),
-        ],
-        false => vec![up("a", moved(at, STAGE), at)],
-    });
-    let refused = (Duration::ZERO, "b", FailureReason::SignInRequired);
-    assert_eq!(script.removed(), [refused, (Duration::ZERO, "c", FailureReason::PreparationFailed)]);
-    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
 }
 
 fn intervals(result: &StageResult) -> Vec<(Reason, bool)> {

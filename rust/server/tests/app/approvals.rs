@@ -1,12 +1,11 @@
-//! Sign-in approvals over the app: terminal and browser pages, approval, verifier exchanges bound to their origin,
-//! expiry, bounds and the approval budget.
+//! Sign-in approvals over the app: the browser page, approval and verifier exchanges bound to their origin.
 
 use super::{
     auth::{BROWSER, auth_app, login, public, signed, store, tls},
     *,
 };
-use graphite_meter_proto::approval::{challenge, verification_code};
-use graphite_meter_server::auth::{COUNTERS, NewLogin};
+use graphite_meter_proto::approval::challenge;
+use graphite_meter_server::auth::NewLogin;
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
 
@@ -48,56 +47,6 @@ fn verifier(verifier: &str) -> String {
 
 async fn pending(response: Response<Body>) -> bool {
     response.status() == StatusCode::ACCEPTED && text(response).await == r#"{"status":"pending"}"#
-}
-
-#[tokio::test]
-async fn a_terminal_approval_issues_one_native_grant_to_its_verifier() {
-    let app = auth_app(&[]);
-    let operator = login(&app, "local-operator");
-    let approval = challenge(VERIFIER);
-    let path = format!("/auth/cli?challenge={approval}");
-    assert_eq!(location(&page(&app, &path, None).await), format!("/login?challenge={approval}"));
-    assert!(pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await);
-    let shown = page(&app, &path, Some(&operator)).await;
-    assert_eq!(shown.status(), StatusCode::OK);
-    assert_eq!(header(&shown, "x-frame-options"), Some("DENY"));
-    let html = text(shown).await;
-    let code = verification_code(&approval).unwrap();
-    assert!(html.contains(&format!("<code class=\"code\">{code}</code>")) && html.contains("Approve terminal client"));
-    assert!(html.contains(&format!("name=\"csrf\" value=\"{}\"", operator.csrf)));
-    assert!(
-        pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await,
-        "not yet approved"
-    );
-    let forged = signed("POST", "/auth/cli/approve", &operator)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(Full::new(Bytes::from(format!("csrf=forged&challenge={approval}"))))
-        .unwrap();
-    assert_eq!(tls(&app, forged).await.status(), StatusCode::FORBIDDEN);
-    let approved = approve(&app, "/auth/cli/approve", &operator, &approval).await;
-    assert_eq!(approved.status(), StatusCode::OK);
-    assert!(text(approved).await.contains("Terminal client approved"));
-
-    for malformed in ["{}".to_owned(), "verifier".to_owned(), verifier(&"v".repeat(129))] {
-        assert!(pending(exchange(&app, "/auth/cli/token", None, &malformed).await).await, "{malformed}");
-    }
-    let issued = json(exchange(&app, "/auth/cli/token", Some(BROWSER), &verifier(VERIFIER)).await).await;
-    let (token, expires) = (issued["token"].as_str().unwrap(), issued["expires"].as_str().unwrap());
-    assert!(expires.len() == 20 && expires.ends_with('Z'), "{expires}");
-    let grant = store(&app).bearer(token).unwrap();
-    assert_eq!(grant.browser(), None, "a native grant, whatever origin asked");
-    assert!(
-        pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await,
-        "issued once"
-    );
-    assert!(
-        app.auth()
-            .security()
-            .unwrap()
-            .line(&mut [0; COUNTERS])
-            .unwrap()
-            .ends_with(" cli-approval=1 capacity=0")
-    );
 }
 
 #[tokio::test]

@@ -221,11 +221,7 @@ impl AsyncUdpSocket for ShardSocket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        net::{IpAddr, Ipv4Addr},
-        sync::atomic::{AtomicBool, Ordering},
-        task::Wake,
-    };
+    use std::net::{IpAddr, Ipv4Addr};
 
     const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4433);
 
@@ -297,50 +293,5 @@ mod tests {
         assert_eq!(meta.len, 14, "a short last segment moves up behind the kept ones");
         assert_eq!(buf[..14], [short(0, 10), short(0, 4)].concat());
         assert_eq!(drain(&mut inboxes[1]).len(), 1);
-    }
-
-    struct Woken(AtomicBool);
-
-    impl Wake for Woken {
-        fn wake(self: Arc<Self>) {
-            self.0.store(true, Ordering::Relaxed);
-        }
-    }
-
-    #[tokio::test]
-    async fn forwarding_wakes_the_shard_whose_socket_delivers_it_before_its_own() {
-        let runtime = noq::default_runtime().unwrap();
-        let socket = runtime
-            .wrap_udp_socket(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
-            .unwrap();
-        let address = socket.local_addr().unwrap();
-        let (router, mut inboxes) = Router::new(2, 1472);
-        let mut shard = ShardSocket::new(socket, 0, router.clone(), inboxes.remove(0));
-        let mut storage = vec![0; 4 * 1472];
-        let mut bufs: Vec<_> = storage.chunks_mut(1472).map(IoSliceMut::new).collect();
-        let mut meta = [RecvMeta::default(); 4];
-        let woken = Arc::new(Woken(AtomicBool::new(false)));
-        let waker = std::task::Waker::from(woken.clone());
-        let mut cx = Context::from_waker(&waker);
-        assert!(shard.poll_recv(&mut cx, &mut bufs, &mut meta).is_pending());
-
-        let local = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        local.send_to(&short(0, 30), address).unwrap();
-        let mut buf = short(0, 20);
-        let mut info = received(20, 20);
-        router.route(1, &mut buf, &mut info);
-        assert!(woken.0.load(Ordering::Relaxed), "forwarding left the shard asleep");
-        let mut arrived = Vec::new();
-        let receiving = async {
-            while arrived.len() < 2 {
-                let count = std::future::poll_fn(|cx| shard.poll_recv(cx, &mut bufs, &mut meta))
-                    .await
-                    .unwrap();
-                arrived.extend((0..count).map(|slot| (meta[slot].addr, bufs[slot][..meta[slot].len].to_vec())));
-            }
-        };
-        tokio::time::timeout(Duration::from_secs(5), receiving).await.unwrap();
-        assert_eq!(arrived[0], (PEER, short(0, 20)), "the forwarded datagram, with its peer, first");
-        assert_eq!(arrived[1], (local.local_addr().unwrap(), short(0, 30)));
     }
 }

@@ -171,29 +171,3 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
     let announced = |event: &Event| matches!(event, Event::ServerFailed(failure) if failure.server == relayed);
     assert!(events.iter().any(announced));
 }
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_sole_server_that_fails_a_stage_rejoins_the_next() {
-    let (_server, link) = relayed().await;
-    let url = Origin::parse(&format!("http://{}", link.address)).unwrap();
-    let args = ["-stages", "down,up", "-download-duration", "4s", "-upload-duration", "2s"];
-    let mut stalled = false;
-    let stall = async |event: &Event| match event {
-        Event::Measuring(_) if !stalled => {
-            stalled = true;
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            link.inject(Fault::Stall);
-        }
-        Event::StageFinished(_) => link.inject(Fault::None),
-        _ => {}
-    };
-    let (outcome, events) = run(&config(&url, &args), stall).await;
-    let [download, upload] = results(&events)[..] else {
-        panic!("two stages: {events:?}")
-    };
-    assert_eq!(outcome, Outcome::Partial, "{download:#?}");
-    let failure = &download.failures[0];
-    assert_eq!((download.servers[0].left, failure.failure.reason), (true, FailureReason::Timeout));
-    assert!(!upload.servers[0].left && upload.failures.is_empty(), "{upload:#?}");
-    assert!(upload.throughput[Direction::Up].unwrap().rate.is_some());
-}

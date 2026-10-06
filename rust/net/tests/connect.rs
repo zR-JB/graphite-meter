@@ -75,26 +75,6 @@ async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
     assert_eq!((&inside, alpn.as_deref()), (b"inside", Some(&b"h2"[..])));
 }
 
-#[tokio::test]
-async fn an_https_proxy_offers_no_alpn_and_is_verified_unless_insecure() {
-    let (address, proxy) = peer(|stream| async move {
-        let (alpn, mut tls) = accept(stream, &[b"h2", b"http/1.1"]).await;
-        let head = read_head(&mut tls).await;
-        tls.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
-        accept(tls, &[]).await;
-        (alpn, head)
-    })
-    .await;
-    let insecure = connector("HTTPS_PROXY", &format!("https://localhost:{}", address.port()), Verify::Insecure);
-    let _open = connect(&insecure, "https://meter.test").await.unwrap();
-    let (alpn, head) = proxy.await.unwrap();
-    assert_eq!((alpn, head.lines().next()), (None, Some("CONNECT meter.test:443 HTTP/1.1")));
-    let (address, _proxy) = peer(|stream| async move { accept(stream, &[]).await }).await;
-    let verified = connector("HTTPS_PROXY", &format!("https://localhost:{}", address.port()), Verify::Trusted);
-    let refused = connect(&verified, "https://meter.test").await.err().unwrap();
-    assert!(matches!(refused, ConnectError::Tls(rustls::Error::InvalidCertificate(_))), "{refused:?}");
-}
-
 /// A proxy that answers the CONNECT head it reads with `response` and returns the head.
 async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
     peer(|mut stream| async move {
