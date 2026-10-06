@@ -15,6 +15,15 @@ updates:
     groups:
       go-deps:
         patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /rust
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      rust-deps:
+        patterns: ["*"]
   - package-ecosystem: bun
     directory: /client
     # Svelte requires this alias for the stable native compiler alongside TypeScript 6.

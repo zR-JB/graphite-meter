@@ -1,0 +1,127 @@
+//! The binary without the interface against canned peers: the second signal's policy, a protected server, and a run
+//! whose server refuses its download.
+#![cfg(unix)]
+
+use graphite_meter_client::{INTERRUPTED, Interrupts, Reaction, TERMINATED};
+use std::{process::Stdio, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    process::{Child, Command},
+    time::timeout,
+};
+
+/// A run of `stages` for a second each in report mode at `url`, without proxies.
+fn client(url: &str, stages: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
+    command.args(["--report", "-url", url, "-stages", stages]);
+    command.args(["-latency-duration", "1s", "-download-duration", "1s", "-loaded-latency=false"]);
+    for name in ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] {
+        command.env_remove(name).env_remove(name.to_ascii_lowercase());
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
+async fn finished(child: Child) -> (Option<i32>, String, String) {
+    let output = timeout(Duration::from_secs(10), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    let text = |bytes| String::from_utf8(bytes).unwrap();
+    (output.status.code(), text(output.stdout), text(output.stderr))
+}
+
+#[test]
+fn the_first_signal_stops_and_a_second_exits_with_its_own_status_in_either_order() {
+    for (first, second) in [(INTERRUPTED, TERMINATED), (TERMINATED, INTERRUPTED)] {
+        let mut interrupts = Interrupts::default();
+        assert_eq!(interrupts.on(first), Reaction::Stop(first));
+        assert_eq!(interrupts.on(second), Reaction::Exit(second));
+        assert_eq!(interrupts.on(first), Reaction::Exit(first));
+    }
+}
+
+/// The path of the next request on `stream`, once its head arrived.
+async fn path(stream: &mut TcpStream) -> Option<String> {
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(stream.read_u8().await.ok()?);
+    }
+    String::from_utf8_lossy(&head).split(' ').nth(1).map(str::to_owned)
+}
+
+/// A peer at the returned URL answering each request by its path: a 200 JSON body, or `refusal`.
+async fn peer(body: fn(&str) -> &'static str, refusal: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                while let Some(path) = path(&mut stream).await {
+                    let answer = match body(&path) {
+                        "" => refusal.to_owned(),
+                        body => format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len()),
+                    };
+                    if stream.write_all(answer.as_bytes()).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_protected_server_exits_1_asking_for_a_terminal() {
+    let refusal = "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n";
+    let url = peer(|_| "", refusal).await;
+    let refused = "graphite-meter-client: Sign-in required; run graphite-meter-client in a terminal to sign in.\n";
+    let child = client(&url, "latency").spawn().unwrap();
+    assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
+}
+
+/// A server named A that answers its catalogue, preflight and probe, and refuses everything else.
+async fn refusing_downloads() -> String {
+    let body = |path: &str| match path {
+        "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,
+        "/preflight" => concat!(
+            r#"{"server":{"name":"A","location":""},"engineVersion":"1","generation":"1","#,
+            r#""capabilities":{"uploadCheckpoint":true,"maxStageMs":300000,"#,
+            r#""throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"#,
+            r#""latency":[{"baseUrl":".","transport":"websocket"}]}}"#
+        ),
+        "/probe" => {
+            r#"{"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}"#
+        }
+        _ => "",
+    };
+    peer(body, "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n").await
+}
+
+#[tokio::test]
+async fn a_run_whose_server_left_ends_its_report_with_why() {
+    let child = client(&refusing_downloads().await, "download").spawn().unwrap();
+    let (status, report, stderr) = finished(child).await;
+    assert_eq!((status, stderr.as_str()), (Some(1), ""), "{report}");
+    assert!(report.starts_with("Graphite Meter  Failed  A · "), "{report}");
+    assert!(
+        report.ends_with(" s\n\nall selected servers failed: HTTP 404 from /download\n"),
+        "{report}"
+    );
+    assert_eq!(report.lines().count(), 3, "{report}");
+}
+
+#[tokio::test]
+async fn a_report_into_a_closed_pipe_exits_141_quietly() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let mut command = client(&refusing_downloads().await, "download");
+    let (status, report, stderr) = finished(command.stdout(writer).spawn().unwrap()).await;
+    assert_eq!((status, report, stderr), (Some(141), String::new(), String::new()));
+}

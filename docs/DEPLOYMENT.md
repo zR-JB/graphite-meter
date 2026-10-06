@@ -91,6 +91,28 @@ Rootful Docker gives container root the host's root. _Rootless Podman already ma
 non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
 files; the keep-id units run as your user, as root did before.
 
+### Experimental Rust image
+
+Stable releases can also publish an experimental Rust server image for linux/amd64 and linux/arm64, beside Linux and
+Windows Rust TUI archives marked `_rust`; prereleases can publish the image alone. Go's image and archives remain the
+default, and there is no Rust build for macOS. The Rust tags share `ghcr.io/zr-jb/graphite-meter` with Go's:
+`:X.Y.Z-rust` for each stable release that shipped one, `:X.Y-rust` and `:latest-rust` for the newest such release,
+and `:X.Y.Z-{alpha,beta,rc}.N-rust` for a prerelease, which no alias follows. To try it, change the tag in the
+`docker run` command, Compose file or Quadlet unit, or pin a digest.
+
+Semver-range updaters such as Flux, Argo CD Image Updater, Renovate or WUD read `X.Y.Z-rust` as a prerelease of Go's
+`X.Y.Z`, so they may skip it or move a Rust pin to Go's next release. Follow `:latest-rust`, or restrict the updater
+to tags matching `-rust$` and compare the version before that suffix.
+
+The Rust image keeps the Go image's ports, `GM_*` settings, `hash-password` command, [container user](#container-user)
+and layout: one static binary on `scratch` with its notices and CA roots. It reports its version as `X.Y.Z-rust`,
+adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the connection buffers its HTTP/2 and HTTP/3
+listeners share. Its log lines carry a level, a topic and local time; the image has no zone data, so mount
+`/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
+instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
+On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its
+pinned builder also cross-compiles arm64, so on arm64 hosts run a published tag.
+
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
@@ -283,19 +305,19 @@ group. The footer explains the focused row and its steps, then names what enter 
 current screen. Every selected server is probed for latency; the run's latency is the first selected server's, and
 if it leaves the test a surviving one takes over. `l` switches the server shown; the printed report keeps the run's.
 
-| Key                       | Where              | Action                                                                                                                                                       |
-| ------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ↑/↓ (k/j, tab), ←/→       | setup              | Move; change the focused value.                                                                                                                              |
-| enter, space              | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
-| r, v, s, u, a             | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
-| ←/→, home/end, enter, esc | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
-| space, enter, esc         | server chooser     | Select, apply, cancel.                                                                                                                                       |
-| enter, space (o), esc     | sign-in            | Open the approval page, cancel.                                                                                                                              |
-| esc                       | running            | Stop test; a second esc confirms.                                                                                                                            |
-| enter (r), esc            | finished           | Run again; back to setup.                                                                                                                                    |
-| d, l                      | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
-| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                                 |
-| ?, q, ctrl+c              | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
+| Key                        | Where              | Action                                                                                                                                                       |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ↑/↓ (k/j, tab), ←/→        | setup              | Move; change the focused value.                                                                                                                              |
+| enter, space               | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
+| r, v, s, u, a              | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
+| ←/→, home/end, enter, esc  | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
+| space, enter, esc          | server chooser     | Select, apply, cancel.                                                                                                                                       |
+| enter, space (o), esc      | sign-in            | Open the approval page, cancel.                                                                                                                              |
+| esc                        | running            | Stop test; a second esc confirms.                                                                                                                            |
+| enter (r), esc             | finished           | Run again; back to setup.                                                                                                                                    |
+| d, l                       | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
+| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                               |
+| ?, q, ctrl+c               | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 
@@ -321,6 +343,21 @@ cannot read their keys.
 | Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests.                  |
 | Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener.         |
 | Timeouts or "—" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
+
+### UDP buffers
+
+HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket; the Rust server's HTTP/3 endpoints share
+7 MiB, at least 2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
+server then logs one line at startup: the Go server prints quic-go's "failed to sufficiently increase receive buffer
+size …", the Rust server `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
+of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
+results. Raise the caps on the host, which also covers containers:
+
+```sh
+sysctl --write net.core.rmem_max=7500000 net.core.wmem_max=7500000
+```
+
+Add both keys to a file under `/etc/sysctl.d/` to keep them after a reboot.
 
 ## Server reference
 

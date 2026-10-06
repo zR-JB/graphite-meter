@@ -20,7 +20,13 @@
       "source": "https://github.com/IBM/plex",
       "declaredLicenseExpression": "OFL-1.1",
       "selectedLicenseExpression": "OFL-1.1",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/IBM/plex"
+        }
+      ]
     },
     {
       "name": "IBM Plex Sans",
@@ -29,7 +35,13 @@
       "source": "https://github.com/IBM/plex",
       "declaredLicenseExpression": "OFL-1.1",
       "selectedLicenseExpression": "OFL-1.1",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/IBM/plex"
+        }
+      ]
     },
     {
       "name": "github.com/coder/websocket",
@@ -38,7 +50,13 @@
       "source": "https://github.com/coder/websocket",
       "declaredLicenseExpression": "ISC",
       "selectedLicenseExpression": "ISC",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/coder/websocket"
+        }
+      ]
     },
     {
       "name": "github.com/coreos/go-oidc/v3",
@@ -47,7 +65,13 @@
       "source": "https://github.com/coreos/go-oidc",
       "declaredLicenseExpression": "Apache-2.0",
       "selectedLicenseExpression": "Apache-2.0",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/coreos/go-oidc"
+        }
+      ]
     },
     {
       "name": "github.com/dunglas/httpsfv",
@@ -56,7 +80,13 @@
       "source": "https://github.com/dunglas/httpsfv",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/dunglas/httpsfv"
+        }
+      ]
     },
     {
       "name": "github.com/go-jose/go-jose/v4",
@@ -65,7 +95,13 @@
       "source": "https://github.com/go-jose/go-jose",
       "declaredLicenseExpression": "Apache-2.0",
       "selectedLicenseExpression": "Apache-2.0",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/go-jose/go-jose"
+        }
+      ]
     },
     {
       "name": "github.com/quic-go/qpack",
@@ -74,7 +110,13 @@
       "source": "https://github.com/quic-go/qpack",
       "declaredLicenseExpression": "MIT",
       "selectedLicenseExpression": "MIT",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/quic-go/qpack"
+        }
+      ]
     },
     {
       "name": "github.com/quic-go/quic-go",
@@ -83,7 +125,13 @@
       "source": "https://github.com/quic-go/quic-go",
       "declaredLicenseExpression": "MIT",
       "selectedLicenseExpression": "MIT",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/quic-go/quic-go"
+        }
+      ]
     },
     {
       "name": "github.com/quic-go/webtransport-go",
@@ -92,7 +140,13 @@
       "source": "https://github.com/quic-go/webtransport-go",
       "declaredLicenseExpression": "MIT",
       "selectedLicenseExpression": "MIT",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/quic-go/webtransport-go"
+        }
+      ]
     },
     {
       "name": "golang.org/x/crypto",
@@ -101,7 +155,13 @@
       "source": "https://go.googlesource.com/crypto",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/crypto"
+        }
+      ]
     },
     {
       "name": "golang.org/x/net",
@@ -110,7 +170,13 @@
       "source": "https://go.googlesource.com/net",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/net"
+        }
+      ]
     },
     {
       "name": "golang.org/x/oauth2",
@@ -119,7 +185,13 @@
       "source": "https://go.googlesource.com/oauth2",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/oauth2"
+        }
+      ]
     },
     {
       "name": "golang.org/x/sys",
@@ -128,7 +200,13 @@
       "source": "https://go.googlesource.com/sys",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/sys"
+        }
+      ]
     },
     {
       "name": "golang.org/x/term",
@@ -137,7 +215,13 @@
       "source": "https://go.googlesource.com/term",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/term"
+        }
+      ]
     },
     {
       "name": "golang.org/x/text",
@@ -146,7 +230,13 @@
       "source": "https://go.googlesource.com/text",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.googlesource.com/text"
+        }
+      ]
     },
     {
       "name": "Go standard library",
@@ -155,7 +245,13 @@
       "source": "https://go.dev/",
       "declaredLicenseExpression": "BSD-3-Clause",
       "selectedLicenseExpression": "BSD-3-Clause",
-      "modified": false
+      "modified": false,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://go.dev/"
+        }
+      ]
     },
     {
       "name": "svelte",
@@ -164,7 +260,17 @@
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",
       "selectedLicenseExpression": "MIT",
-      "modified": true
+      "modified": true,
+      "links": [
+        {
+          "label": "Source",
+          "url": "https://github.com/sveltejs/svelte"
+        },
+        {
+          "label": "Changes",
+          "url": "https://github.com/zR-JB/graphite-meter/blob/HEAD/client/patches/svelte%405.57.1.patch"
+        }
+      ]
     }
   ]
 }

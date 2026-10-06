@@ -7,8 +7,10 @@ import os
 import re
 import tarfile
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
-from .model import Component, Json, LegalError, Project, Provenance, Review, marshal
+from .model import (Component, Json, LegalError, Project, Provenance, Review, array, manual_files, marshal, obj,
+                    read_json, text)
 from .review import component_key, find_review, validate_review
 
 RELEASE_VERSION = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?")
@@ -25,16 +27,73 @@ def notices(components: list[Component]) -> str:
     return "".join(output)
 
 
-def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
-    source_url = project.repository
+def release_source(project: Project, version: str) -> tuple[str, str]:
+    """The version a build names and its source: a release version's tag, otherwise the repository."""
     if RELEASE_VERSION.fullmatch(version):
         version = version.removeprefix("v")
-        source_url += "/tree/v" + version
+        return version, f"{project.repository}/tree/v{version}"
+    return version, project.repository
+
+
+def copyright_notice(project: Project) -> str:
+    return (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
+            f'{project.name} is free software licensed under {project.licenseExpression}.\n'
+            "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
+
+
+def legal_header(project: Project, source_url: str, license_text: bytes) -> bytes:
+    """How a native binary's legal report starts: copyright, source and LICENSE."""
+    header = copyright_notice(project).encode() + f"\nSource code: {source_url}\n\nLICENSE\n\n".encode() + license_text
+    return header if license_text.endswith(b"\n") else header + b"\n"
+
+
+def links(component: Component, forks: dict[tuple[str, str], dict[str, Json]], patches: dict[str, Json],
+          blob: str) -> list[Json]:
+    """A component's web pages: its source at the shipped version, and for a fork or a patched package its upstream
+    and the project's changes. `source` stays the review identity, which for a crate is not a web address."""
+    source, upstream, changes = component.source, "", ""
+    if component.ecosystem == "cargo" and source.startswith("registry+"):
+        source = f"https://crates.io/crates/{quote(component.name)}/{quote(component.version)}"
+    elif source.startswith("git+"):
+        location = urlsplit(source.removeprefix("git+"))
+        repository = urlunsplit((location.scheme, location.netloc, location.path.removesuffix(".git"), "", ""))
+        revision = location.fragment or parse_qs(location.query).get("rev", [""])[0]
+        source = repository + (f"/tree/{quote(revision)}" if revision else "")
+        if fork := forks.get((repository, revision)):
+            upstream = f"{text(fork, 'upstream')}/tree/{text(fork, 'base')}"
+            if component.modified:
+                changes = f"{repository}/compare/{text(fork, 'base')}...{revision}"
+    if component.modified and component.ecosystem == "npm":
+        if patch := text(patches, f"{component.name}@{component.version}"):
+            changes = f"{blob}/client/{quote(patch)}"
+    return [{"label": label, "url": url} for label, url in (("Source", source), ("Upstream", upstream),
+                                                            ("Changes", changes))
+            if url.startswith(("https://", "http://"))]
+
+
+def about(repo: Path, project: Project, version: str, source_url: str, components: list[Component]) -> bytes:
+    """The browser's legal/about.json."""
+    forks = {(text(fork, "fork"), text(fork, "rev")): fork
+             for fork in map(obj, array(read_json(repo / "legal/rust-forks.json")))}
+    patches = obj(obj(read_json(repo / "client/package.json")).get("patchedDependencies", {}))
+    # The client's patches as the named source holds them: at a release's tag, otherwise on the default branch.
+    blob = source_url.replace("/tree/", "/blob/", 1) if "/tree/" in source_url else source_url + "/blob/HEAD"
+    listed: list[Json] = []
+    for component in components:
+        value = component.json()
+        del value["legalTexts"], value["notices"]
+        value["links"] = links(component, forks, patches, blob)
+        listed.append(value)
+    return marshal({
+        "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
+        "licenseURL": "legal/LICENSE.txt", "noticesURL": "legal/THIRD_PARTY_NOTICES.txt", "components": listed,
+    })
+
+
+def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Component]]) -> dict[str, bytes]:
+    version, source_url = release_source(project, version)
     license_text = (repo / "LICENSE").read_bytes()
-    copyright_text = (f'{project.name}\nCopyright © {project.copyrightYears} {project.copyrightHolder}\n\n'
-                      f'{project.name} is free software licensed under {project.licenseExpression}.\n'
-                      "See LICENSE for the complete GNU Affero General Public License version 3 text.\n")
-    files = {"COPYRIGHT": copyright_text.encode()}
+    files = {"COPYRIGHT": copyright_notice(project).encode()}
     for scope, components in scopes.items():
         name = "server" if scope == "server/browser" else scope
         base = f"legal/generated/{name}"
@@ -42,22 +101,11 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
         files[base + "/inventory.json"] = marshal(inventory)
         files[base + "/THIRD_PARTY_NOTICES.txt"] = notices(components).encode()
         files[base + "/SOURCE.txt"] = (source_url + "\n").encode()
-    about_components: list[dict[str, Json]] = []
-    for component in scopes["server/browser"]:
-        value = component.json()
-        del value["legalTexts"], value["notices"]
-        about_components.append(value)
-    files["client/public/legal/about.json"] = marshal({
-        "schemaVersion": 2, "project": project.json(), "sourceVersion": version, "sourceURL": source_url,
-        "licenseURL": "legal/LICENSE.txt", "noticesURL": "legal/THIRD_PARTY_NOTICES.txt",
-        "components": about_components,
-    })
+    files["client/public/legal/about.json"] = about(repo, project, version, source_url, scopes["server/browser"])
     files["client/public/legal/LICENSE.txt"] = license_text
     files["client/public/legal/THIRD_PARTY_NOTICES.txt"] = notices(scopes["server/browser"]).encode()
-    report = copyright_text.encode() + f'\nSource code: {source_url}\n\nLICENSE\n\n'.encode() + license_text
-    if not license_text.endswith(b"\n"):
-        report += b"\n"
-    files["go/internal/legal/assets/TUI_LEGAL.txt"] = report + b"\n" + notices(scopes["tui"]).encode()
+    files["go/internal/legal/assets/TUI_LEGAL.txt"] = (legal_header(project, source_url, license_text) + b"\n"
+                                                       + notices(scopes["tui"]).encode())
     return files
 
 
@@ -154,9 +202,7 @@ def third_party_source_bundle(repo: Path, project: Project, version: str,
                              component.source_path)
             for entry in provenance:
                 destination = root + "/" + manual_source_destination(entry)
-                for local in entry.localPaths + [item.name for item in entry.localLegalFiles]:
-                    if Path(local).is_absolute():
-                        continue
+                for local in manual_files(entry):
                     path = repo / local
                     try:
                         path.lstat()

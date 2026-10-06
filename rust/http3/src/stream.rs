@@ -1,0 +1,318 @@
+//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a larger buffer.
+use crate::{
+    budget::{Budget, Charge},
+    code::Code,
+    driver::{Role, Shared},
+    error::Error,
+    fields,
+    frame::{self, Header},
+    message::{Event, Message},
+};
+use bytes::Bytes;
+use std::{
+    future::{Future, poll_fn},
+    pin::pin,
+    sync::Arc,
+    task::{Context, Poll, Waker, ready},
+};
+
+/// A request stream, from [`crate::server::Request::resolve`] or [`crate::client::SendRequest::send_request`].
+pub struct RequestStream {
+    pub(crate) send: SendHalf,
+    pub(crate) recv: RecvHalf,
+}
+
+/// Charges for a request stream's two halves, so each can drop on its own.
+pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
+    Some((Charge::new(budget, size_of::<SendHalf>())?, Charge::new(budget, size_of::<RecvHalf>())?))
+}
+
+/// Writes what remains of `header`.
+pub(crate) fn poll_write_header(
+    header: &mut Header,
+    stream: &mut noq::SendStream,
+    cx: &mut Context<'_>,
+) -> Poll<Result<(), noq::WriteError>> {
+    while !header.is_written() {
+        let written = ready!(pin!(stream.write(header.rest())).poll(cx))?;
+        header.advance(written);
+    }
+    Poll::Ready(Ok(()))
+}
+
+impl RequestStream {
+    pub(crate) fn new(
+        shared: &Arc<Shared>,
+        send: noq::SendStream,
+        recv: noq::RecvStream,
+        (send_charge, recv_charge): (Charge, Charge),
+    ) -> Self {
+        shared.hold(2);
+        let message = Message::new(shared.field_limit(), shared.role == Role::Client);
+        Self {
+            send: SendHalf {
+                stream: send,
+                header: Header::default(),
+                payload: Bytes::new(),
+                shared: shared.clone(),
+                _charge: send_charge,
+                finished: false,
+            },
+            recv: RecvHalf {
+                stream: recv,
+                message,
+                input: Bytes::new(),
+                shared: shared.clone(),
+                charge: recv_charge,
+                method: http::Method::default(),
+                done: false,
+            },
+        }
+    }
+
+    pub fn split(self) -> (SendHalf, RecvHalf) {
+        (self.send, self.recv)
+    }
+
+    /// The QUIC stream ID; a CONNECT stream's is its WebTransport session ID.
+    pub fn id(&self) -> u64 {
+        self.send.stream.id().into()
+    }
+
+    /// Answers `code` in both directions.
+    pub(crate) fn abort(&mut self, code: Code) -> Error {
+        self.recv.stop(code);
+        self.send.reset(code);
+        Error::Protocol(code)
+    }
+
+    pub(crate) fn shared(&self) -> &Arc<Shared> {
+        &self.recv.shared
+    }
+}
+
+/// Reads a message: its head, then DATA payloads as noq delivered them. Trailers are checked and dropped.
+pub struct RecvHalf {
+    stream: noq::RecvStream,
+    pub(crate) message: Message,
+    input: Bytes,
+    shared: Arc<Shared>,
+    charge: Charge,
+    /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
+    pub(crate) method: http::Method,
+    /// FIN arrived, or the stream was stopped.
+    done: bool,
+}
+
+impl RecvHalf {
+    pub(crate) fn poll_head(&mut self, cx: &mut Context<'_>) -> Poll<Result<Bytes, Error>> {
+        match ready!(self.poll_event(cx))? {
+            Some(Event::Head(section)) => Poll::Ready(Ok(section)),
+            _ => Poll::Ready(Err(self.abort(Code::H3_REQUEST_INCOMPLETE))),
+        }
+    }
+
+    pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Bytes>, Error>> {
+        loop {
+            match ready!(self.poll_event(cx))? {
+                Some(Event::Data(data)) => return Poll::Ready(Ok(Some(data))),
+                Some(Event::Trailers(section)) => {
+                    if let Err(invalid) = fields::check_trailers(&section, self.shared.field_limit()) {
+                        return Poll::Ready(Err(self.abort(invalid.code())));
+                    }
+                }
+                Some(Event::Head(_)) => return Poll::Ready(Err(self.abort(Code::H3_FRAME_UNEXPECTED))),
+                None => return Poll::Ready(Ok(None)),
+            }
+        }
+    }
+
+    /// The next DATA payload, or `None` once the message is complete.
+    pub async fn data(&mut self) -> Result<Option<Bytes>, Error> {
+        poll_fn(|cx| self.poll_data(cx)).await
+    }
+
+    /// Reads a response head past up to five interim ones; a sixth is H3_EXCESSIVE_LOAD, as quic-go's max1xxResponses.
+    pub async fn response(&mut self) -> Result<http::Response<()>, Error> {
+        for _ in 0..=5 {
+            let section = poll_fn(|cx| self.poll_head(cx)).await?;
+            match self.message.response(&section, &self.method) {
+                Ok(Some(response)) => return Ok(response),
+                Ok(None) => {}
+                Err(code) => return Err(self.abort(code)),
+            }
+        }
+        Err(self.abort(Code::H3_EXCESSIVE_LOAD))
+    }
+
+    pub fn stop(&mut self, code: Code) {
+        if !std::mem::replace(&mut self.done, true) {
+            let _ = self.stream.stop(code.into());
+        }
+    }
+
+    fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>, Error>> {
+        loop {
+            let event = self.message.next(&mut self.input);
+            if !self.charge.resize(size_of::<Self>() + self.message.buffered()) {
+                // Refused before its head is read, a request was never processed (RFC 9114 §4.1.1).
+                let refusal = if self.message.has_head() {
+                    Code::H3_EXCESSIVE_LOAD
+                } else {
+                    Code::H3_REQUEST_REJECTED
+                };
+                return Poll::Ready(Err(self.abort(refusal)));
+            }
+            match event {
+                Err(code) => return Poll::Ready(Err(self.abort(code))),
+                Ok(Some(event)) => return Poll::Ready(Ok(Some(event))),
+                Ok(None) => {}
+            }
+            let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX)).poll(cx));
+            match chunk {
+                Ok(Some(chunk)) => self.input = chunk,
+                Ok(None) => {
+                    self.done = true;
+                    return Poll::Ready(self.message.finish().map(|()| None).map_err(|code| self.abort(code)));
+                }
+                Err(error) => {
+                    self.done = true;
+                    return Poll::Ready(Err(error.into()));
+                }
+            }
+        }
+    }
+
+    /// Frame, ID and QPACK violations close the connection; the rest end only this stream.
+    pub(crate) fn abort(&mut self, code: Code) -> Error {
+        if matches!(
+            code,
+            Code::H3_FRAME_UNEXPECTED | Code::H3_FRAME_ERROR | Code::H3_ID_ERROR | Code::QPACK_DECOMPRESSION_FAILED
+        ) {
+            return self.shared.close(code);
+        }
+        self.stop(code);
+        Error::Protocol(code)
+    }
+
+    /// Whether FIN already arrived unread, after a complete message.
+    fn finished_unread(&mut self) -> bool {
+        let mut cx = Context::from_waker(Waker::noop());
+        let complete = self.input.is_empty() && self.message.finish().is_ok();
+        complete && matches!(pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx), Poll::Ready(Ok(None)))
+    }
+}
+
+impl Drop for RecvHalf {
+    fn drop(&mut self) {
+        // Stopping a stream whose FIN arrived makes some clients report a reset after a complete response.
+        self.done = self.done || self.finished_unread();
+        self.stop(match self.shared.role {
+            Role::Server => Code::H3_NO_ERROR,
+            Role::Client => Code::H3_REQUEST_CANCELLED,
+        });
+        self.shared.release();
+    }
+}
+
+/// Writes frames; a partly written frame stays owned here, and dropping it resets instead of FIN.
+pub struct SendHalf {
+    stream: noq::SendStream,
+    header: Header,
+    payload: Bytes,
+    shared: Arc<Shared>,
+    _charge: Charge,
+    finished: bool,
+}
+
+impl SendHalf {
+    /// Writes whatever frame is pending.
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        ready!(poll_write_header(&mut self.header, &mut self.stream, cx))?;
+        while !self.payload.is_empty() {
+            let length = self.payload.len();
+            let mut chunks = std::slice::from_mut(&mut self.payload);
+            // noq keeps an unwritten suffix in place, so a pending write loses nothing.
+            if ready!(pin!(self.stream.write_leased_chunks(&mut chunks)).poll(cx))? == length {
+                self.payload = Bytes::new();
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    /// Queues a frame; the previous one must be written.
+    pub(crate) fn queue(&mut self, kind: u64, payload: Bytes) {
+        (self.header, self.payload) = (Header::new(kind, payload.len() as u64), payload);
+    }
+
+    /// Queues a frame after the pending one, which may be partly written.
+    pub(crate) fn queue_after(&mut self, kind: u64, payload: &[u8]) {
+        let mut frames = Vec::from(&self.payload[..]);
+        frame::put_header(kind, payload.len() as u64, &mut frames);
+        frames.extend_from_slice(payload);
+        self.payload = frames.into();
+    }
+
+    pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
+        poll_fn(|cx| self.poll_ready(cx)).await?;
+        self.queue(kind, payload);
+        poll_fn(|cx| self.poll_ready(cx)).await
+    }
+
+    pub async fn send_data(&mut self, data: Bytes) -> Result<(), Error> {
+        self.frame(frame::DATA, data).await
+    }
+
+    /// Queues a response head within the peer's field section limit.
+    pub(crate) fn queue_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
+        let (parts, ()) = response.into_parts();
+        let section = fields::encode_response(&parts, self.shared.peer_field_limit()).map_err(|_| Error::Refused)?;
+        self.queue(frame::HEADERS, section.into());
+        Ok(())
+    }
+
+    pub async fn send_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
+        poll_fn(|cx| self.poll_ready(cx)).await?;
+        self.queue_response(response)?;
+        poll_fn(|cx| self.poll_ready(cx)).await
+    }
+
+    /// Ends the stream once pending frames are written; a stream that already ended stays so.
+    pub(crate) fn poll_finish(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        if !self.finished {
+            let written = ready!(self.poll_ready(cx));
+            self.finished = true;
+            written?;
+            self.stream
+                .finish()
+                .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))?;
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    pub async fn finish(&mut self) -> Result<(), Error> {
+        poll_fn(|cx| self.poll_finish(cx)).await
+    }
+
+    /// Waits for the peer to stop the stream, or to acknowledge all of its data and FIN; the future borrows nothing.
+    pub fn stopped(&self) -> impl Future<Output = Result<Option<Code>, Error>> + Send + use<> {
+        let stopped = self.stream.stopped();
+        async move {
+            let code = stopped.await.map_err(noq::WriteError::from)?;
+            Ok(code.map(|code| Code(code.into_inner())))
+        }
+    }
+
+    pub fn reset(&mut self, code: Code) {
+        if !std::mem::replace(&mut self.finished, true) {
+            let _ = self.stream.reset(code.into());
+        }
+    }
+}
+
+impl Drop for SendHalf {
+    fn drop(&mut self) {
+        self.reset(Code::H3_REQUEST_CANCELLED);
+        self.shared.release();
+    }
+}

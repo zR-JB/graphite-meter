@@ -32,3 +32,46 @@ deps:
   - 'client/package.json'
   - 'client/bun.lock'
   - 'client/bunfig.toml'
+
+# Inputs of the Rust workspace's checks and tests.
+rust:
+  - *workflow
+  - 'rust/**'
+  - 'api/**'
+  - 'legal/**'
+  - 'go/internal/auth/assets/**'
+
+# The Rust binaries against Go's peers, server and client.
+rust-interop:
+  - *workflow
+  - 'rust/**'
+  - 'go/**'
+
+# Every input of the Rust image build, which the policy checks against Dockerfile.rust.
+rust-image:
+  - *workflow
+  - 'rust/**'
+  - 'legal/**'
+  - 'client/**'
+  - 'api/**'
+  - 'go/internal/auth/assets/**'
+  - 'container/Dockerfile.rust'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'
+
+# Inputs of the TUI archives and their staging, rust/**/src included: every stage of Dockerfile.rust, and of the
+# browser app's only its locked dependencies, whose sources the server's source offers carry.
+rust-release:
+  - *workflow
+  - 'rust/**'
+  - 'legal/**'
+  - 'go/internal/auth/assets/**'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'
+  - 'client/patches/**'
+  - 'container/Dockerfile.rust'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'

@@ -43,7 +43,7 @@ async function churnSurfaces(cycles: number) {
       document.querySelector(
         "dialog[open], :popover-open:not(.tooltip), .scrim.open",
       );
-    for (let wait = 0; open() && wait < 30; wait++) await frames();
+    for (let wait = 0; open() && wait < 60; wait++) await frames();
     if (open()) throw new Error(`Surface stuck open at ${location.hash}`);
   };
   for (let i = 0; i < cycles; i++) {

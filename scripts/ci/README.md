@@ -19,7 +19,9 @@ mise run pipeline-test     # ty type check, control-plane and legal tests
 `mise run check` is the deterministic developer gate; `mise run ci` runs every
 CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
-narrow PR runs only; every push to main runs every job.
+narrow PR runs only; every push to main runs every job. Each job runs on the
+filter `workflow_policy.py` names for it, and a filter never selects a job
+without the jobs it needs, which the Gate would pass as skipped.
 
 ## Releases
 
@@ -27,44 +29,76 @@ narrow PR runs only; every push to main runs every job.
 gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
-A prerelease adds `-f pr=N -f sha=<PR head>` to a `vX.Y.Z-{alpha,beta,rc}.N`
-tag; `mode=validate` stops before any write. Approve the `ghcr-release`
-deployment when the Release run asks.
+A prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`,
+or `-f pr=N -f sha=<PR head>` to build an open PR; it publishes images only, and
+no alias follows it. `mode=validate` stops before any write. `-f rust=true` adds the
+experimental Rust image, tagged like Go's with `-rust`, and for a stable
+release the Rust TUI archives; Go's image and archives stay the default and
+are always released. Approve the `ghcr-release` deployment when the Release
+run asks.
 
 1. **Untrusted build.** `release-request.yml` is a `workflow_dispatch` job on
    main with `contents: read`, no secrets and no caches. Only `release.py
    prepare` sees the inputs, which GitHub also renders into the run title. A
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
-   image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token.
+   image from main; a prerelease builds only the image, from main or, for a
+   PR, as the exact remote commit BuildKit fetches without a token. With `rust`, the pinned Rust
+   builder builds the same source without caches: the `rust-image` job the
+   linux/amd64 + linux/arm64 image, and for a stable release exports the
+   server source offers from that same build, which its fresh builder holds;
+   the `rust-tui` job after it the Linux and Windows TUI archives with their
+   source offers, which that job checks by running the amd64 TUI. Every image
+   build takes the source the build job resolved.
+   `rust_release.py` stages exactly the release files out of each export.
+   Rust builds have no macOS archive.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first
-   attempt and bounded artifacts, verifies the image and archives as data, and
-   requires either every main CI job and CodeQL for a stable release or, for a
-   prerelease, an open PR containing current main with identical `.github`,
+   attempt and bounded artifacts, each written by the request job that
+   `release.py` names for it while that job and no other job of the run ran;
+   the request's jobs run one after another, so none can supply another's
+   artifact. It verifies the images and archives as data, the Rust ones
+   as CI's `rust-release` job does, and
+   requires either every main CI job and CodeQL for a release of main or, for a
+   PR prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
-   Publish mode also requires `ghcr-release` to have reviewers and main-only
+   A stable release whose tag already has a published Release must carry
+   exactly its assets, since the images go out before the Release. Publish
+   mode also requires `ghcr-release` to have reviewers and main-only
    deployments.
 3. **Approved publication.** One `ghcr-release` job holds the only write
    credentials. It rechecks the handoff digests and all trust above, pushes the
-   verified digest to its exact version tag, and for a stable release
-   publishes the GitHub Release and points the `major.minor` and `latest`
-   aliases at the highest published releases, which also repairs aliases a
-   cancelled run left behind.
+   verified digest to its exact version tag, and the Rust image's to
+   `VERSION-rust`. For a stable release it publishes the GitHub Release and
+   points the `major.minor` and `latest` aliases at the highest published
+   releases, which also repairs aliases a cancelled run left behind; after a
+   Rust release, `major.minor-rust` and `latest-rust` follow the highest
+   published releases that shipped a Rust server source offer. No alias
+   follows a prerelease.
 
 The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
 retained 35 days to cover the approval window; the recheck fails closed.
 GitHub's automatic source archives provide the project source; a stable
-release adds the third-party source archive and a source-availability note.
+release adds the third-party source archive, each Rust build's source offer
+and a source-availability note naming them. A prerelease publishes only its
+images and creates no GitHub Release. Go's and Rust's prerelease images both
+ship their notices, name the repository in `SOURCE.txt` and the built commit in
+their `revision` label; that commit's lockfiles (`go/go.sum`,
+`client/bun.lock`, `rust/Cargo.lock` with the forks in
+`legal/rust-forks.json`) pin the third-party source they were built from.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
-keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
-custom frontend. Verification requires one runnable `linux/amd64` and
+keep BuildKit's insecure entitlements disabled. Neither Dockerfile may select a
+custom frontend; both pin their base images by digest and install exact apt
+package versions only from one snapshot.debian.org timestamp, and
+`toolchain-sync` keeps their image literals equal to `mise.toml`'s. Verification requires one runnable `linux/amd64` and
 `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source (the fetched commit, or the local checkout's revision) is the release
-commit of this repository, and copies every blob inside a network-less Skopeo
+commit of this repository, and for the Rust image whose Dockerfile and target
+are `container/Dockerfile.rust` and `server`, requires each image's layers to ship the server and
+its `THIRD_PARTY_NOTICES.txt` with no copy carrying `UNREVIEWED DEVELOPMENT
+BUILD`, and copies every blob inside a network-less Skopeo
 container whose only mount is the read-only archive. The untrusted build writes
 that provenance, so it shows which source was built but does not authenticate
 it. Build arguments carry no secrets because max provenance records them.
@@ -97,7 +131,12 @@ it. Build arguments carry no secrets because max provenance records them.
 `.github/zizmor.yml`) requires full-SHA action pins, non-persisted checkout
 credentials and no dangerous triggers other than the reviewed `workflow_run`.
 `workflow_policy.py` holds the project's own trust rules, and
-`test_workflow_policy.py` breaks a copy of the repository once per rule.
+`test_workflow_policy.py` breaks a copy of the repository once per rule. No
+workflow or image build, nor a mise task, `scripts/*.sh` or Python driver
+one of them runs, may build with unreviewed development notices (`--development` or
+`scripts.rust_build`). Every dependency manifest, lockfile, toolchain pin, Cargo
+configuration and build script has a code owner, and every lockfile a
+Dependabot entry.
 
 When adding an external action, review it and its composite dependencies,
 allow it in repository settings, pin the SHA with a version comment for
@@ -117,3 +156,34 @@ key and certificate names and PEM material.
 Python uses the exact patch release from `mise.toml` and the standard library
 only. `mise run python-check` runs the pinned `ty` with warnings as errors. CI
 installs the Bun lockfile frozen; `bun dedupe` output is advisory.
+
+## Rust
+
+The `rust` job runs `mise run rust-check`, verifies the Cargo fork pins with
+`check_git_sources --verify` and runs `rust-check-targets`. `rust-image`
+builds the image once per architecture and exports its server source offers;
+`rust-tui` builds the TUI archives and their source offers with release
+settings and the release request's pinned BuildKit; `rust-release` stages both with `rust_release.py` and verifies them
+as a release does, without running them: the image as above, each source
+offer's inventory, notices and files against the checkout, each archive's
+layout, executable format and notices, that each executable and image server
+names the SHA-256 of its offer's notices as a reviewed build, and every
+`SOURCE.txt` against the offer it names. Setup
+installs the toolchain `rust/rust-toolchain.toml` pins with `--no-self-update`
+and refuses it unless rustup installed it from the channel manifest whose
+SHA-256 `mise.toml` pins as `rust_manifest_sha256`; a new channel needs the
+SHA-256 of its `channel-rust-<version>.toml`. Shipped platforms, their Rust
+targets and the platform record live in `[workspace.metadata.graphite-meter]`
+of `rust/Cargo.toml`, which tooling reads through `rust_workspace.py`. Cargo
+caches are keyed by job, toolchain and `Cargo.lock`, so a new lockfile builds
+once from scratch; only CI writes caches.
+
+The `rust` filter selects the workspace checks and the Windows client tests and
+covers every file a Rust source includes; `rust-interop` selects the
+interoperability job, which also builds Go; `rust-image` covers every
+input of `container/Dockerfile.rust` for the image and its browser suite;
+`rust-release` covers every stage but the browser app's for the TUI archives
+and the staging check, and the browser's locked dependencies, whose sources
+the server's source offers carry. `advisories.yml` rechecks the locked crates against the
+live advisory database daily. Dependabot's weekly cargo updates pass
+`rust-check` only once `check_rust_reviews` accepts every new crate.

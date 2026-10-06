@@ -1,2 +1,4 @@
+# Preserve the byte-for-byte upstream declaration used by legal provenance hashes.
+legal/manual/rust/enum-assoc/Cargo.toml.upstream -text whitespace=cr-at-eol
 # Patch context preserves upstream indentation and blank lines.
 client/patches/*.patch -whitespace

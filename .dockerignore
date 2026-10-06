@@ -35,3 +35,7 @@ go/internal/static/dist
 **/*.pkcs8
 **/*.jks
 **/*.keystore
+rust/target
+# Image builds fetch and check the pinned platform notices themselves.
+legal/manual/llvm
+legal/manual/musl

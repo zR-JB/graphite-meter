@@ -1,0 +1,293 @@
+//! The printed report of a reduced view: its lines, plain and in the 16-colour profile, and its width.
+use graphite_meter_client::{
+    events::{Event, View},
+    measure::{
+        aggregate::{Aggregate, Boundary, Rate, Reading},
+        latency::{Population, Summary, Timing},
+    },
+    model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
+    report::{WIDTH, details, report},
+    run::prepare::ServerPath,
+    text::{Line, Profile, write},
+    tui::theme::Palette,
+};
+use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+const SECOND: Duration = Duration::from_secs(1);
+
+fn id(text: &str) -> ServerId {
+    ServerId::parse(text).unwrap()
+}
+
+fn latency(median_ms: u64, replies: usize, timeouts: usize) -> Option<Population> {
+    let median = Duration::from_millis(median_ms);
+    let summary = Summary {
+        replies,
+        timeouts,
+        p50: Some(median),
+        p95: Some(median * 2),
+        jitter: Some(Duration::from_micros(400)),
+        jitter_pairs: replies - 1,
+        ..Summary::default()
+    };
+    Some(Population { summary, complete: true })
+}
+
+fn server(name: &str, left: bool, down: Option<f64>, median_ms: u64) -> ServerResult {
+    let down = down.map(|mean| Throughput { rate: Some(Rate { mean, peak: mean * 1.5 }), bytes: 0 });
+    ServerResult {
+        server: id(name),
+        left,
+        throughput: Dir { down, up: None },
+        latency: latency(median_ms, 40, 1),
+    }
+}
+
+/// The view of a finished run of `plan` over `names`, each a prepared server named `<name> meter`, whose stages
+/// gave `results` from `at`.
+fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>, end: Event, at: Instant) -> View {
+    let origin = Origin::parse("https://meter.example").unwrap();
+    let unchecked = Failure::new(FailureReason::Timeout, "unchecked");
+    let servers = names.iter().map(|name| ServerPath {
+        id: id(name),
+        name: format!("{name} meter"),
+        location: String::new(),
+        origin: origin.clone(),
+        offered: None,
+        path: Err(unchecked.clone()),
+    });
+    let mut events = vec![
+        Event::Checking { run: true },
+        Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
+        Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at },
+    ];
+    events.extend(results.into_iter().map(Event::StageFinished));
+    events.push(end);
+    let mut view = View::default();
+    events.iter().for_each(|event| view.apply(event));
+    view
+}
+
+fn result(stage: Stage, measured: Duration, down: Option<Throughput>, servers: Vec<ServerResult>) -> StageResult {
+    StageResult {
+        stage,
+        measured,
+        stopped: false,
+        throughput: Dir { down, up: None },
+        servers,
+        failures: Vec::new(),
+        intervals: Vec::new(),
+        omitted: 0,
+    }
+}
+
+/// A latency and download run over `names`; the second leaves the download at 7.5 s.
+fn view(names: &[&str]) -> View {
+    let at = Instant::now();
+    let shares = |left: bool, down| {
+        let named = names.iter().enumerate();
+        named.map(move |(at, name)| server(name, left && at == 1, down, 12 + at as u64))
+    };
+    let headline = Throughput {
+        rate: Some(Rate { mean: 1.25e7, peak: 1.5e7 }),
+        bytes: 125_000_000,
+    };
+    let share = Some(1.25e7 / names.len() as f64);
+    let mut download = result(Stage::Download, SECOND * 10, Some(headline), shares(true, share).collect());
+    if let [_, second, ..] = names {
+        let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
+        let failed = ServerFailure {
+            server: id(second),
+            scope: Scope::Throughput,
+            failure,
+            at: at + SECOND * 15 / 2,
+        };
+        download.failures.push(failed);
+    }
+    let idle = result(Stage::Latency, SECOND * 4, None, shares(false, None).collect());
+    let plan = [(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
+    let end = Event::RunFinished {
+        outcome: Outcome::Complete,
+        error: None,
+        elapsed: Duration::from_millis(17_400),
+    };
+    viewed(names, &plan, vec![idle, download], end, at)
+}
+
+fn printed(lines: &[Line], profile: Profile) -> String {
+    let mut out = Vec::new();
+    write(lines, profile, &mut out).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn full_details_open_with_each_result_s_facts_and_end_with_the_intervals_a_run_has() {
+    let mut view = view(&["a", "b"]);
+    let idle = &mut view.run.as_mut().unwrap().results[0].servers[0];
+    let idle = idle.latency.as_mut().unwrap();
+    let handling = Duration::from_micros(300);
+    idle.summary.timing = Some(Timing { pairs: 38, rtt: Duration::from_millis(12), handling });
+    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
+    let expected = "\
+Complete · 1 of 2 servers
+Idle latency: 40 replies · 4.0 s
+Server timing (38 paired replies, means): raw 12.0 ms · handling 0.3 ms
+Download: peak 120.0 Mbit/s · 125.0 MB · 10.0 s
+Loaded latency · Download: 40 replies · 10.0 s
+Added: loaded median minus idle median, same server.
+
+Server       Download
+All servers  100.0 Mbit/s
+a meter      50.00 Mbit/s
+b meter ✗    50.00 Mbit/s
+
+Latency median by server
+Server   Idle     Loaded down
+a meter  12.0 ms  12.0 ms
+b meter  13.0 ms  13.0 ms
+
+Issues
+b meter · Download throughput · at 7.5 s · Stopped delivering data
+";
+    assert_eq!(text, expected);
+    let run = view.run.as_mut().unwrap();
+    let (base, a) = (run.at.unwrap(), id("a"));
+    let mut aggregate = Aggregate::new(Stage::Download, vec![a.clone()], base);
+    for ms in [0, 1000, 2000] {
+        let reading = Reading {
+            server: a.clone(),
+            down: Some(ms * 1000),
+            up: None,
+            fed: None,
+        };
+        let at = base + Duration::from_millis(ms);
+        aggregate.observe(Boundary {
+            at,
+            stalled: false,
+            last: ms == 2000,
+            readings: vec![reading],
+        });
+    }
+    run.results[1].intervals = aggregate.intervals.iter().cloned().collect();
+    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
+    let intervals = "\n\nAggregation intervals\nDownload 0.0–2.0 s · a meter · measured window\n";
+    assert!(text.ends_with(intervals), "{text}");
+}
+
+#[test]
+fn the_16_colour_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_its_width() {
+    let lines = report(&view(&["a", "b"]), 40, &Palette::new(false));
+    let text = printed(&lines, Profile::Ansi);
+    let codes: Vec<u8> = text
+        .split("\x1b[")
+        .skip(1)
+        .flat_map(|sequence| {
+            sequence
+                .split_once('m')
+                .unwrap()
+                .0
+                .split(';')
+                .filter(|code| !code.is_empty())
+        })
+        .map(|code| code.parse().unwrap())
+        .collect();
+    assert!(codes.contains(&1) && codes.contains(&90) && codes.contains(&34), "{codes:?}");
+    assert!(codes.iter().all(|code| matches!(code, 1 | 30..=37 | 90..=97)), "{codes:?}");
+    let ascii = printed(&lines, Profile::Ascii);
+    assert!(ascii.starts_with("\x1b[1mGraphite Meter\x1b[m"), "{ascii}");
+    assert_eq!(ascii.replace("\x1b[1m", "").replace("\x1b[m", ""), printed(&lines, Profile::Plain));
+    let plain = printed(&lines, Profile::Plain);
+    assert!(plain.contains("\nIdle\n  Median 12.0 ms · P95 24.0 ms\n  Jitter 0.4 ms\n"), "{plain}");
+    let details = plain.split_once("\nComplete · 1 of 2 servers\n").unwrap().1;
+    assert!(details.lines().all(|line| line.chars().count() <= 40), "{details}");
+    assert!(details.ends_with("\nb meter · Download throughput · at 7.5 …\n"), "{details}");
+}
+
+/// The report of a finished download run over the server `a`, which `result` describes.
+fn sole(mut result: StageResult, outcome: Outcome, error: Option<Failure>) -> String {
+    let at = Instant::now();
+    for failure in &mut result.failures {
+        failure.at = at + SECOND * 5;
+    }
+    let end = Event::RunFinished { outcome, error, elapsed: SECOND * 12 };
+    let view = viewed(&["a"], &[(Stage::Download, SECOND * 10)], vec![result], end, at);
+    printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain)
+}
+
+/// The download stage over `a`: measured for `measured` at 100 Mbit/s when `rate`, `a` leaving with `failure`.
+fn download(measured: Duration, rate: bool, failure: Option<(Scope, FailureReason)>) -> StageResult {
+    let rate = rate.then_some(Rate { mean: 1.25e7, peak: 1.5e7 });
+    let throughput = (!measured.is_zero()).then_some(Throughput { rate, bytes: 125_000_000 });
+    let failures = failure.map(|(scope, reason)| ServerFailure {
+        server: id("a"),
+        scope,
+        failure: Failure::new(reason, "lost"),
+        at: Instant::now(),
+    });
+    let left = failures
+        .as_ref()
+        .is_some_and(|failed| failed.failure.reason != FailureReason::InsufficientEvidence);
+    let own = ServerResult {
+        server: id("a"),
+        left,
+        throughput: Dir { down: throughput, up: None },
+        latency: latency(12, 40, 1),
+    };
+    let mut result = result(Stage::Download, measured, throughput, vec![own]);
+    result.failures.extend(failures);
+    result
+}
+
+#[test]
+fn a_sole_server_that_left_names_why_under_its_partial_rate_and_latency() {
+    let result = download(SECOND * 10, true, Some((Scope::Throughput, FailureReason::ConnectionLost)));
+    let expected = "\
+Graphite Meter  Partial  a meter · 12.0 s · 125.0 MB
+
+↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
+
+Latency      Median   Added  P95      Jitter  Probe timeouts
+Loaded down  12.0 ms  —      24.0 ms  0.4 ms  1 / 41 (2.4%)
+
+Download: Connection lost
+Loaded latency · Download: Connection lost
+
+Loaded latency · Download: 40 replies · 10.0 s
+Added: loaded median minus idle median, same server.
+";
+    assert_eq!(sole(result, Outcome::Partial, None), expected);
+}
+
+#[test]
+fn too_little_measured_time_shows_only_a_dash() {
+    let result = download(SECOND * 10, false, Some((Scope::Throughput, FailureReason::InsufficientEvidence)));
+    let text = sole(result, Outcome::Incomplete, None);
+    assert!(text.contains("\n↓ Download  —\n\nLatency "), "{text}");
+    assert!(!text.contains("Too little measured time"), "{text}");
+}
+
+#[test]
+fn a_stop_before_the_window_shows_stopped_and_a_zero_window_no_duration() {
+    let mut result = download(Duration::ZERO, false, None);
+    result.stopped = true;
+    let text = sole(result, Outcome::Stopped, None);
+    assert!(text.contains("\n↓ Download  Stopped\n"), "{text}");
+    assert!(text.contains("\nLoaded latency · Download stopped.\n"), "{text}");
+    assert!(!text.contains("\nDownload stopped."), "{text}");
+    assert!(text.contains("\nLoaded latency · Download: 40 replies\n"), "{text}");
+}
+
+#[test]
+fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
+    let failure = Some((Scope::Throughput, FailureReason::ConnectionLost));
+    let error = Failure::new(FailureReason::ConnectionLost, "all selected servers failed: lost");
+    let text = sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error));
+    assert!(text.ends_with("\n\nall selected servers failed: lost\n"), "{text}");
+    let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
+    let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
+    assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
+}

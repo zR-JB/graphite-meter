@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Trust predicates shared by stable releases and PR prereleases."""
+"""Trust predicates shared by stable releases and main or PR prereleases."""
 
 from __future__ import annotations
 
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import github_api as gh
@@ -135,11 +136,20 @@ def require_control_plane_matches_main(repository: str, pr_sha: str, main_sha: s
         gh.fail(f"PR changes {', '.join(changed)}; prereleases need main's CI control plane")
 
 
+def timestamp(item: gh.JsonObject, key: str) -> datetime:
+    try:
+        return datetime.fromisoformat(gh.str_field(item, key, "GitHub record"))
+    except ValueError as exc:
+        raise gh.ControlPlaneError(f"{key} is not an ISO 8601 time") from exc
+
+
 def require_dispatch_run(
     repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
-    artifacts: dict[str, int],
+    artifacts: dict[str, tuple[str, int]],
 ) -> None:
-    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts."""
+    """Bind a request run to its workflow, inputs, main, one attempt, the owner and `artifacts`, each named with
+    the job that must have written it and its size limit. An artifact counts only if it was written while its job
+    ran and no other job of the run did, so no other job can have supplied it."""
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -161,11 +171,23 @@ def require_dispatch_run(
     pages = gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
                    paginate=True)
     unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
-    for name, limit in artifacts.items():
+    jobs = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                                    per_page=100), paginate=True), "jobs")
+    ran = [item for item in jobs if item.get("conclusion") != "skipped"]
+    for name, (job, limit) in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
             gh.fail(f"expected one unexpired artifact {name}, found {len(matches)}")
         if not 0 <= gh.int_field(matches[0], "size_in_bytes", name) <= limit:
             gh.fail(f"artifact {name} exceeds {limit} bytes")
+        built = [item for item in jobs if item.get("name") == job]
+        if len(built) != 1 or (built[0].get("status"), built[0].get("conclusion")) != DONE:
+            gh.fail(f"request run has no single successful job {job!r}")
+        created, updated = timestamp(matches[0], "created_at"), timestamp(matches[0], "updated_at")
+        if not timestamp(built[0], "started_at") <= created <= updated <= timestamp(built[0], "completed_at"):
+            gh.fail(f"artifact {name} was not written while its job {job!r} ran")
+        if others := [_text(item.get("name")) for item in ran if item is not built[0]
+                      and timestamp(item, "started_at") <= updated and created <= timestamp(item, "completed_at")]:
+            gh.fail(f"artifact {name} was written while {', '.join(others)} also ran")
 
 
 def require_ci_gate(

@@ -219,3 +219,17 @@ class Component:
             "legalTexts": [item.json() for item in self.legalTexts],
             "notices": [item.json() for item in self.notices],
         }
+
+
+def manual_sources(repo: Path, package: str) -> list[Provenance]:
+    """The manual entries whose files a Rust package's source offer carries: the Rust ones, and for the server
+    also those of its browser assets and its image."""
+    scopes = {"rust", "server", "server/browser", "container"} if package == "graphite-meter-server" else {"rust"}
+    return [entry for name in ("legal/rust-provenance.json", "legal/provenance.json")
+            for entry in map(Provenance.parse, array(read_json(repo / name))) if scopes & set(entry.artifactScopes)]
+
+
+def manual_files(entry: Provenance) -> list[str]:
+    """The repository files of an entry that a source offer carries; absolute paths name image content."""
+    return [path for path in entry.localPaths + [file.name for file in entry.localLegalFiles]
+            if not Path(path).is_absolute()]

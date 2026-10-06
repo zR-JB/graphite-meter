@@ -23,6 +23,7 @@ from release import command_publish
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
 VERIFIED = "sha256:" + "a" * 64
 OTHER = "sha256:" + "b" * 64
+RUST = "sha256:" + "c" * 64
 # Skopeo keeps registry tags as TAG=DIGEST lines in $TAGS.
 SKOPEO = """#!/bin/sh
 case "$1 $4" in
@@ -41,7 +42,13 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-gh() { printf '%s\\n' $RELEASES; }
+# Releases list RUST_RELEASES when asked for those with a Rust server source offer.
+gh() {
+  case "$*" in
+    *_rust_third-party-source*) printf '%s\\n' $RUST_RELEASES ;;
+    *) printf '%s\\n' $RELEASES ;;
+  esac
+}
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
@@ -163,6 +170,7 @@ class RegistryTests(unittest.TestCase):
                 "REGISTRY_TOKEN": "secret-token", "REPOSITORY": "Owner/Repo",
                 "REGISTRY_ACTOR": "owner", "VERSION": "1.2.3", "IMAGE_TAG": "1.2.3",
                 "ARCHIVE_DIR": directory, "SKOPEO_IMAGE": "skopeo", "RELEASES": releases,
+                "RUST_RELEASES": "",
             } | fakes
             result = subprocess.run(["bash", "-c", f"{SHIM}source {SCRIPT} {command}"], env=env,
                                     capture_output=True, text=True)
@@ -198,6 +206,42 @@ class RegistryTests(unittest.TestCase):
                 status, output, tags = self.run_script("aliases", registry, releases)
                 self.assertEqual(status, 0, output)
                 self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
+
+    def test_the_rust_image_is_tagged_version_rust_for_stable_releases_and_prereleases(self) -> None:
+        for tag, error in (("1.2.3-rust", None), ("1.2.3-rc.1-rust", None), ("1.2.3-alpha.0-rust", None),
+                           ("1.2.3-rust-rc.1", "invalid image tag"), ("1.2.3-rc.1-rust-rust", "invalid image tag"),
+                           ("1.2.3-rust.1", "invalid image tag"), ("1.2.3-RUST", "invalid image tag")):
+            with self.subTest(tag=tag):
+                status, output, tags = self.run_script("image", {}, IMAGE_TAG=tag)
+                if error is None:
+                    self.assertEqual((status, tags), (0, {tag: VERIFIED}), output)
+                else:
+                    self.assertNotEqual(status, 0)
+                    self.assertIn(error, output)
+                    self.assertEqual(tags, {})
+
+    def test_rust_aliases_follow_only_stable_releases_that_shipped_a_rust_source_offer(self) -> None:
+        registry = {"1.2.3": VERIFIED, "1.3.0": OTHER, "1.2.3-rust": RUST, "1.2.2-rust": OTHER}
+        for rust_releases, series, latest in (("v1.2.3", RUST, RUST), ("v1.2.2 v1.2.3", RUST, RUST)):
+            with self.subTest(rust_releases=rust_releases):
+                status, output, tags = self.run_script("aliases", registry, "v1.2.2 v1.2.3 v1.3.0",
+                                                       RUST_RELEASES=rust_releases, RUST_DIGEST=RUST)
+                self.assertEqual(status, 0, output)
+                # Go's aliases still follow every stable release.
+                self.assertEqual((tags["1.2"], tags["latest"]), (VERIFIED, OTHER))
+                self.assertEqual((tags["1.2-rust"], tags["latest-rust"]), (series, latest))
+        for rust_releases, digest, error in (("v1.2.2", RUST, "not a published stable release with a Rust image"),
+                                             ("v1.2.3", OTHER, "1.2.3-rust is not the verified")):
+            with self.subTest(error=error):
+                status, output, tags = self.run_script("aliases", registry, "v1.2.2 v1.2.3",
+                                                       RUST_RELEASES=rust_releases, RUST_DIGEST=digest)
+                self.assertNotEqual(status, 0)
+                self.assertIn(error, output)
+                self.assertNotIn("latest-rust", tags)
+        # A release without the Rust image leaves the -rust aliases alone.
+        status, output, tags = self.run_script("aliases", registry, "v1.2.3", RUST_RELEASES="v1.2.3")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("latest-rust", tags)
 
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
@@ -239,6 +283,19 @@ class ReleasePublicationTests(unittest.TestCase):
         error, _, after = self.publish(copy.deepcopy(EMPTY), {"checksums.txt": b"checksums"})
         self.assertIn(f"missing the third-party source asset {SOURCE}", error or "")
         self.assertEqual(after["writes"], [])
+
+    def test_a_rust_release_offers_each_rust_build_s_source_beside_go_s(self) -> None:
+        offers = [f"graphite-meter-{package}_1.2.3_linux_amd64_rust_third-party-source.tar.gz"
+                  for package in ("client", "server")]
+        error, output, published = self.publish(copy.deepcopy(EMPTY), ASSETS | {name: b"rust" for name in offers})
+        self.assertIsNone(error, output)
+        body = published["releases"][0]["body"]
+        self.assertIn(f"included in the Go artifacts is attached as **{SOURCE}**", body)
+        self.assertIn(", ".join(f"**{name}**" for name in offers), body)
+        error, output, published = self.publish(copy.deepcopy(EMPTY))
+        self.assertIsNone(error, output)
+        self.assertIn("included in the distributed artifacts", published["releases"][0]["body"])
+        self.assertNotIn("Rust", published["releases"][0]["body"])
 
     def test_release_publishes_only_exact_assets_at_the_exact_tag(self) -> None:
         error, output, published = self.publish(copy.deepcopy(EMPTY))

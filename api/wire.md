@@ -120,7 +120,8 @@ those connections up to 5 s to close so, then closes every remaining QUIC connec
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |
-| Peer closed or lane finished | `1000`                         | `0`                         |
+| Lane finished                | `1000`                         | `0`                         |
+| Peer closed                  | The peer's code, echoed        | `0`                         |
 | Idle                         | `4001 idle`                    | `1 idle`                    |
 | Lifetime bound               | `4002 lifetime`                | `2 lifetime`                |
 | Sign-out or grant revocation | `1008 authentication required` | `3 authentication required` |

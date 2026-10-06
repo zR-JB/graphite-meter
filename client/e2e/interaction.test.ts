@@ -100,13 +100,19 @@ test("a finger scrolls past graphs, reads one by dragging sideways and toggles j
 
   const before = await stage.evaluate((el: Element) => el.scrollTop);
   const from = await centre(graph);
-  const scrolled = await stage.evaluate((el: Element) => el.scrollTop);
+  const scrolled = await stage.evaluate((el: Element) => {
+    el.addEventListener("scrollend", () =>
+      Object.assign(window, { restedAt: el.scrollTop }),
+    );
+    return el.scrollTop;
+  });
   await touch(page, "touchStart", from.x, from.y);
   for (let step = 1; step <= 8; step++)
     await touch(page, "touchMove", from.x, from.y - step * 20);
   await touch(page, "touchEnd");
+  // The swipe flings on after the finger lifts; a drag begun mid-fling lands on moving content.
   await expect
-    .poll(() => stage.evaluate((el: Element) => el.scrollTop))
+    .poll(() => page.evaluate(() => (window as any).restedAt ?? -1))
     .toBeGreaterThan(Math.max(before, scrolled));
   await expect(readout).toHaveCount(0);
 

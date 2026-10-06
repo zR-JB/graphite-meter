@@ -1,0 +1,45 @@
+Usage of graphite-meter-client:
+  -auto-streams int
+    	maximum H1 streams per direction (default 6)
+  -bidirectional-duration duration
+    	bidirectional measurement duration (default 10s)
+  -download-duration duration
+    	download measurement duration (default 10s)
+  -insecure
+    	skip TLS certificate verification
+  -latency-duration duration
+    	latency measurement duration (default 4s)
+  -latency-origin string
+    	latency origin from discovery, or auto (default "auto")
+  -latency-transport string
+    	latency transport: auto, websocket, or webtransport (default "auto")
+  -legal
+    	print the licences of the bundled software and exit
+  -loaded-latency
+    	measure latency while transfer stages are loaded (default true)
+  -loaded-ping value
+    	loaded latency cadence (default medium): reply-driven, fast, medium, slow, or a duration from 80ms to 15s
+  -ping value
+    	idle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a duration from 80ms to 15s
+  -report
+    	run once without the interface and print the final report (automatic when stdout is not a terminal)
+  -server value
+    	selected catalogue ID (repeat up to 4 times; omission uses operator defaults)
+  -stages value
+    	comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) (default latency,download,upload)
+  -streams int
+    	force exact streams per server and direction (0 = automatic; at most 14)
+  -throughput-origin string
+    	throughput origin from discovery, or auto (default "auto")
+  -throughput-protocol string
+    	protocol for a negotiated throughput origin: auto, http1, http2, or http3 (default "auto")
+  -throughput-transport string
+    	throughput transport: auto, fetch-stream, or webtransport (default "auto")
+  -upload-duration duration
+    	upload measurement duration (default 10s)
+  -url string
+    	origin of the operator server catalogue (default "http://127.0.0.1:7246")
+  -version
+    	print version and exit
+  -warmup duration
+    	per-stage warmup duration (default 800ms)

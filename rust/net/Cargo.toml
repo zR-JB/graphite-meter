@@ -1,0 +1,34 @@
+[package]
+name = "graphite-meter-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+graphite-meter-proto.workspace = true
+ipnet.workspace = true
+noq.workspace = true
+percent-encoding.workspace = true
+rustls.workspace = true
+socket2.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-rustls.workspace = true
+webpki.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# rustix 1.1.5 compiles its net module only with time.
+rustix = { workspace = true, features = ["net", "time"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rustls-platform-verifier.workspace = true
+
+[dev-dependencies]
+graphite-meter-testkit.workspace = true
+noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true

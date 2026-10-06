@@ -22,13 +22,8 @@ import (
 )
 
 func main() {
-	if slices.Contains(os.Args[1:], "--legal") {
-		fmt.Print(string(legal.TUIReport()))
-		return
-	}
-
 	cfg := goclient.DefaultConfig()
-	var showVersion, report bool
+	var showVersion, showLegal, report bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
 	flag.Func("server", fmt.Sprintf("selected catalogue ID (repeat up to %d times; omission uses operator defaults)",
 		wire.MaxSelectedServers), func(id string) error {
@@ -72,9 +67,13 @@ func main() {
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&report, "report", false, "run once without the interface and print the final report "+
 		"(automatic when stdout is not a terminal)")
-	flag.Bool("legal", false, "print the licences of the bundled software and exit")
+	flag.BoolVar(&showLegal, "legal", false, "print the licences of the bundled software and exit")
 	flag.Parse()
 
+	if showLegal {
+		fmt.Print(string(legal.TUIReport()))
+		return
+	}
 	if showVersion {
 		fmt.Println("graphite-meter-client " + goclient.Version)
 		return

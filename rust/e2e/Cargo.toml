@@ -1,0 +1,24 @@
+[package]
+name = "graphite-meter-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+graphite-meter-client.workspace = true
+graphite-meter-net.workspace = true
+graphite-meter-proto.workspace = true
+graphite-meter-server.workspace = true
+graphite-meter-testkit.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+http.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "test-util"] }
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

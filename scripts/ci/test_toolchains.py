@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import re
 import shutil
 import tempfile
 import unittest
 
-from toolchains import ROOT, check, literal_updates, load_pins, runtime_pins
+from toolchains import ROOT, check, check_rust_manifest, literal_updates, load_pins, runtime_pins
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -14,7 +15,8 @@ class ToolchainBoundaryTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
+                     "rust/rust-toolchain.toml"):
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
@@ -39,11 +41,32 @@ class ToolchainBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
         updates = literal_updates(root)
-        self.assertEqual(set(updates), {root / "container/Dockerfile"})
+        self.assertEqual(set(updates), {root / "container/Dockerfile", root / "container/Dockerfile.rust"})
         for path, content in updates.items():
             path.write_text(content)
         check(root)
         self.assertIn(f"FROM {image} AS client", (root / "container/Dockerfile").read_text())
+        self.assertIn(f"FROM --platform=$BUILDPLATFORM {image} AS browser",
+                      (root / "container/Dockerfile.rust").read_text())
+
+    def test_the_rust_builder_images_follow_the_python_and_rust_pins(self) -> None:
+        root = self.copy_pins()
+        path = root / "mise.toml"
+        original = path.read_text()
+        for pattern, replacement, error in (
+            (r"python:3\.14\.\d+-slim", "python:3.13.1-slim", "images.python must use the tools.python"),
+            (r"rust:1\.99\.0-bookworm", "rust:1.98.0-bookworm", "images.rust must use the rust/rust-toolchain"),
+            (r"rust:1\.99\.0-bookworm@sha256:[0-9a-f]+", "rust:1.99.0-bookworm", "exact version or image digest"),
+        ):
+            with self.subTest(replacement=replacement):
+                path.write_text(re.sub(pattern, replacement, original))
+                with self.assertRaisesRegex(ValueError, error):
+                    load_pins(root)
+        dockerfile = root / "container/Dockerfile.rust"
+        dockerfile.write_text(dockerfile.read_text().replace("@sha256:5903", "@sha256:0003"))
+        path.write_text(original)
+        with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
+            check(root)
 
     def test_publication_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()
@@ -52,6 +75,44 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
         with self.assertRaisesRegex(ValueError, "release.yml"):
             check(root)
+
+    def test_rust_is_installed_only_from_the_pinned_channel_manifest(self) -> None:
+        root = self.copy_pins()
+        manifest = (b'manifest-version = "2"\n\n[pkg.rustc]\nversion = "1.99.0"\n'
+                    b'git_commit_hash = "c0ffee"\n\n[pkg.rustc.target.x86_64-unknown-linux-gnu]\n'
+                    b'available = true\nurl = "https://static.rust-lang.org/dist/rustc.tar.gz"\n'
+                    b'hash = "' + b"1" * 64 + b'"\n')
+        path = root / "mise.toml"
+        digest = hashlib.sha256(manifest).hexdigest()
+        path.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$', f'rust_manifest_sha256 = "{digest}"',
+                               path.read_text()))
+        # rustup keeps a rewritten copy, with fields dropped and added but the same archives.
+        installed = root / "multirust-channel-manifest.toml"
+        installed.write_bytes(manifest.replace(b'git_commit_hash = "c0ffee"\n', b"") + b"components = []\n")
+        check_rust_manifest(installed, manifest, root)
+        with self.assertRaisesRegex(ValueError, "does not match mise.toml's rust_manifest_sha256"):
+            check_rust_manifest(installed, manifest + b"\n", root)
+        rewritten = installed.read_bytes()
+        # rustup prefers a zst archive, so one added beside an unchanged gz entry is another toolchain.
+        for tampered in (rewritten.replace(b"1" * 64, b"2" * 64), rewritten.replace(
+                b"available = true\n", b'available = true\nzst_url = "https://static.rust-lang.org/dist/'
+                b'rustc.tar.zst"\nzst_hash = "' + b"3" * 64 + b'"\n')):
+            installed.write_bytes(tampered)
+            with self.assertRaisesRegex(ValueError, "from another than the pinned manifest"):
+                check_rust_manifest(installed, manifest, root)
+
+    def test_rust_pins_require_an_exact_release_and_manifest_digest(self) -> None:
+        root = self.copy_pins()
+        toolchain, mise = root / "rust/rust-toolchain.toml", root / "mise.toml"
+        original = toolchain.read_text()
+        toolchain.write_text(re.sub(r'(?m)^channel = ".*"$', 'channel = "stable"', original))
+        with self.assertRaisesRegex(ValueError, "exact Rust release"):
+            load_pins(root)
+        toolchain.write_text(original)
+        mise.write_text(re.sub(r'(?m)^rust_manifest_sha256 = ".*"$', 'rust_manifest_sha256 = "latest"',
+                               mise.read_text()))
+        with self.assertRaisesRegex(ValueError, "rust_manifest_sha256 must be a SHA-256"):
+            load_pins(root)
 
     def test_skopeo_tags_require_an_immutable_digest(self) -> None:
         root = self.copy_pins()

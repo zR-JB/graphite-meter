@@ -1,0 +1,92 @@
+[workspace]
+members = ["proto", "net", "http3", "server", "client", "legal", "testkit", "e2e"]
+resolver = "3"
+
+# Shipped platforms, their Rust targets and the platform record, read through scripts/ci/rust_workspace.py.
+[workspace.metadata.graphite-meter]
+tui = ["linux/amd64", "linux/arm64", "windows/amd64"]
+server = ["linux/amd64", "linux/arm64"]
+platform-record = "legal/rust-platform-debian-bookworm.json"
+
+[workspace.metadata.graphite-meter.targets]
+"linux/amd64" = "x86_64-unknown-linux-musl"
+"linux/arm64" = "aarch64-unknown-linux-musl"
+"windows/amd64" = "x86_64-pc-windows-gnu"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.0"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+graphite-meter-proto = { path = "proto" }
+graphite-meter-net = { path = "net" }
+graphite-meter-http3 = { path = "http3" }
+graphite-meter-server = { path = "server" }
+graphite-meter-client = { path = "client" }
+graphite-meter-legal = { path = "legal" }
+graphite-meter-testkit = { path = "testkit" }
+
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+bytes = "1.11"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+form_urlencoded = "1.2.2"
+futures-util = { version = "0.3.31", default-features = false, features = ["sink", "std"] }
+getrandom = "0.4.3"
+h2 = "0.4.19"
+hmac = { version = "0.13.0", features = ["zeroize"] }
+http = "1.3"
+http-body = "1.0.1"
+http-body-util = "0.1.5"
+httpdate = "1.0.3"
+hyper = "1.11.1"
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+ipnet = "2.12.2"
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+noq = { version = "1.3.0", default-features = false }
+percent-encoding = "2.3.2"
+ratatui-core = { version = "0.1.2", features = ["std"] }
+ratatui-crossterm = { version = "0.1.2", default-features = false, features = ["crossterm_0_29"] }
+ring = "0.17.14"
+rustfs-mimalloc = "=0.5.6"
+rustix = { version = "1.1.5", default-features = false, features = ["std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-platform-verifier = "0.7.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = { version = "0.11.0", default-features = false }
+socket2 = { version = "0.6.5", features = ["all"] }
+subtle = "2.6.1"
+tokio = { version = "1.53.1", default-features = false }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+tokio-util = { version = "0.7.19", default-features = false }
+unicode-width = "0.2.2"
+webpki = { package = "rustls-webpki", version = "0.103.15", default-features = false }
+zeroize = "1.9.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+[patch.crates-io]
+h2 = { git = "https://github.com/zR-JB/h2", rev = "214e3f4afeefab885c0f2f35b8cb6a73479fcec0" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "94e4e10bf84f5ffcad04f8c471dc8e98b980298f" }

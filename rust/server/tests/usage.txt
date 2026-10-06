@@ -1,0 +1,79 @@
+Usage:
+  graphite-meter [flags]
+  graphite-meter version | --version
+  graphite-meter hash-password    read a password twice on stdin, print its Argon2id hash
+  graphite-meter --legal           print the reviewed project and dependency notices
+
+Flags:
+  -advertised-native-endpoints names
+    	all, none, or comma-separated native endpoint names (env GM_ADVERTISED_NATIVE_ENDPOINTS) (default all)
+  -auth-mode mode
+    	authentication mode: off, password, oidc, or hybrid (env GM_AUTH_MODE) (default off)
+  -auth-oidc-allowed-groups groups
+    	comma-separated case-sensitive OIDC groups (env GM_AUTH_OIDC_ALLOWED_GROUPS)
+  -auth-oidc-client-id ID
+    	OIDC client ID (env GM_AUTH_OIDC_CLIENT_ID)
+  -auth-oidc-client-secret-file file
+    	file containing the OIDC client secret (env GM_AUTH_OIDC_CLIENT_SECRET_FILE)
+  -auth-oidc-issuer URL
+    	OIDC issuer URL (env GM_AUTH_OIDC_ISSUER)
+  -auth-oidc-provider-name label
+    	OIDC provider label (env GM_AUTH_OIDC_PROVIDER_NAME) (default Authelia)
+  -auth-password-hash-file file
+    	file containing the operator Argon2id PHC hash (env GM_AUTH_PASSWORD_HASH_FILE)
+  -auth-public-url origin
+    	canonical HTTPS UI origin (env GM_AUTH_PUBLIC_URL)
+  -h1-addr address
+    	clear HTTP/1.1 listen address (env GM_H1_ADDR) (default :7246)
+  -h1-public-origin origin
+    	public origin of the native clear HTTP/1.1 listener (env GM_H1_PUBLIC_ORIGIN)
+  -h1-tls-addr address
+    	HTTPS HTTP/1.1 listen address; empty disables it (env GM_H1_TLS_ADDR)
+  -h1-tls-public-origin origin
+    	public origin of the native HTTPS HTTP/1.1 listener (env GM_H1_TLS_PUBLIC_ORIGIN)
+  -h2-addr address
+    	HTTP/2 TLS listen address; empty disables it (env GM_H2_ADDR)
+  -h2-public-origin origin
+    	public origin of the native HTTP/2 listener (env GM_H2_PUBLIC_ORIGIN)
+  -h3-addr address
+    	HTTP/3 UDP and bootstrap TCP listen address; empty disables it (env GM_H3_ADDR)
+  -h3-public-origin origin
+    	public origin of the native HTTP/3 listener (env GM_H3_PUBLIC_ORIGIN)
+  -location location
+    	server location label (env GM_SERVER_LOCATION)
+  -max-active-measurements number
+    	maximum number of concurrent measurement handlers (env GM_MAX_ACTIVE_MEASUREMENTS) (default 256)
+  -max-active-measurements-per-client number
+    	maximum number of concurrent measurement handlers per client (env GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT) (default 32)
+  -max-active-sessions number
+    	maximum number of concurrent WebTransport sessions, a share of the measurement pool (env GM_MAX_ACTIVE_SESSIONS) (default 64)
+  -max-buffer-bytes bytes
+    	bytes of connection buffers shared by QUIC and HTTP/2 (env GM_MAX_BUFFER_BYTES) (default 8589934592)
+  -max-connections number
+    	maximum number of concurrent TCP and QUIC connections (env GM_MAX_CONNECTIONS) (default 4096)
+  -max-connections-per-client number
+    	maximum number of concurrent connections per direct client (env GM_MAX_CONNECTIONS_PER_CLIENT) (default 64)
+  -max-operation-duration duration
+    	maximum measurement operation duration (env GM_MAX_OPERATION_DURATION) (default 5m0s)
+  -max-session-duration duration
+    	maximum WebTransport session duration (env GM_MAX_SESSION_DURATION) (default 2h0m0s)
+  -max-sessions-per-client number
+    	maximum number of concurrent WebTransport sessions per client (env GM_MAX_SESSIONS_PER_CLIENT) (default 8)
+  -max-stage-duration duration
+    	longest stage duration clients may plan, 1s to 24h (env GM_MAX_STAGE_DURATION) (default 5m0s)
+  -name name
+    	server name advertised in /preflight (env GM_SERVER_NAME) (default graphite-meter)
+  -public-latency-origins origins
+    	comma-separated WebSocket latency origins (env GM_PUBLIC_LATENCY_ORIGINS)
+  -public-origins origins
+    	comma-separated negotiated origins providing throughput and latency (env GM_PUBLIC_ORIGINS)
+  -public-throughput-origins origins
+    	comma-separated negotiated throughput origins (env GM_PUBLIC_THROUGHPUT_ORIGINS)
+  -result-history-default
+    	save completed browser results on this device by default (env GM_RESULT_HISTORY_DEFAULT)
+  -tls-cert path
+    	TLS certificate PEM path (env GM_TLS_CERT)
+  -tls-key path
+    	TLS private key PEM path (env GM_TLS_KEY)
+  -verbose
+    	log per-second download/upload throughput (env GM_VERBOSE)

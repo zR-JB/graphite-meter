@@ -15,10 +15,17 @@ from github_api import (
     ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
 )
 from fixtures import (
-    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
+    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets, write_rust_offer,
+    write_rust_release, write_rust_tui,
 )
+from rust_release import OCI as RUST_OCI, server_offers, tui_files
+from rust_workspace import offer_name
+from verify_release_assets import verify_checksums, verify_release_file_set
 from release import (
+    BUILD_JOB,
     OCI,
+    RUST_IMAGE_JOB,
+    RUST_TUI_JOB,
     Release,
     assets_sha256,
     command_prepare,
@@ -50,10 +57,12 @@ P = f"repos/{REPO}/"
 PULL, MAIN_COMMIT = P + "pulls/101", P + "commits/main"
 REQUEST_WORKFLOW, REQUEST_RUN = P + "actions/workflows/release-request.yml", P + "actions/runs/4242"
 ARTIFACTS = REQUEST_RUN + "/artifacts?per_page=100"
+REQUEST_JOBS = REQUEST_RUN + "/jobs?filter=latest&per_page=100"
 JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
 CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
 CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
 TAG_REFS = P + "git/matching-refs/tags/v1.2.3"
+RELEASES, RELEASE_ASSETS = P + "releases?per_page=100", P + "releases/9/assets?per_page=100"
 ENVIRONMENT = P + "environments/ghcr-release"
 POLICIES = ENVIRONMENT + "/deployment-branch-policies"
 GATE = {"name": "Gate", "status": "completed", "conclusion": "success"}
@@ -102,22 +111,44 @@ def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[st
     }
 
 
-def artifacts(*names: str, size: int = 1024, expired: bool = False) -> object:
-    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}
-                                for name in names]})
+def written(*names: str, size: int = 1024, expired: bool = False, created: str = "10:05",
+            updated: str = "10:06") -> list[dict[str, object]]:
+    return [{"name": name, "expired": expired, "size_in_bytes": size,
+             "created_at": f"2026-09-01T{created}:00Z", "updated_at": f"2026-09-01T{updated}:00Z"} for name in names]
 
 
-def release_of(stable: bool) -> Release:
-    return Release("v1.2.3", MAIN, 0) if stable else Release("v1.2.3-rc.1", HEAD, 101)
+def artifacts(*names: str, size: int = 1024, expired: bool = False, created: str = "10:05",
+              updated: str = "10:06") -> object:
+    return pages({"artifacts": written(*names, size=size, expired=expired, created=created, updated=updated)})
 
 
-def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
-    """Every GitHub answer that authorizes a stable release or a PR #101 prerelease."""
-    names = ["release-request-4242"] + (["release-assets-4242"] if stable else [])
+def job(name: str = BUILD_JOB, conclusion: str = "success", started: str = "10:00",
+        completed: str = "10:10") -> dict[str, object]:
+    """A request job that ran from 10:00 to 10:10."""
+    return {"name": name, "status": "completed", "conclusion": conclusion,
+            "started_at": f"2026-09-01T{started}:00Z", "completed_at": f"2026-09-01T{completed}:00Z"}
+
+
+# The request jobs run one after another; each writes its artifacts while it runs.
+RUST_IMAGE_RAN, RUST_TUI_RAN = ("10:11", "10:20"), ("10:21", "10:30")
+
+
+def release_of(stable: bool, rust: bool = False) -> Release:
+    return Release("v1.2.3", MAIN, 0, rust) if stable else Release("v1.2.3-rc.1", HEAD, 101, rust)
+
+
+def trusted(stable: bool, mode: str = "publish", rust: bool = False) -> dict[str, object]:
+    """Every GitHub answer that authorizes a stable release or a PR #101 prerelease, with or without Rust."""
+    files = [*written("release-request-4242", *(["release-assets-4242"] if stable else [])),
+             *(written("release-rust-image-4242", created="10:15", updated="10:16") if rust else []),
+             *(written("release-rust-tui-4242", created="10:25", updated="10:26") if rust and stable else [])]
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
-        REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
-        ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
+        REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable, rust), MAIN)),
+        ARTIFACTS: pages({"artifacts": files}), JOBS: pages({"jobs": [GATE]}),
+        REQUEST_JOBS: pages({"jobs": [job(), job(RUST_IMAGE_JOB, "success" if rust else "skipped", *RUST_IMAGE_RAN),
+                                      job(RUST_TUI_JOB, "success" if rust and stable else "skipped",
+                                          *RUST_TUI_RAN)]}),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -126,7 +157,7 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
                                           "event": "push", "pull_requests": []}
         return responses | {
             TAG_REFS: [], ci_runs("push", MAIN): pages({"workflow_runs": [run]}),
-            CODEQL: pages([analysis(99, 1)]),
+            CODEQL: pages([analysis(99, 1)]), RELEASES: pages([]),
         }
     check = {"id": 77, "name": "CodeQL", "app": APP, "status": "completed",
              "conclusion": "success", "pull_requests": [{"number": 101}]}
@@ -137,6 +168,15 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
         ci_runs("pull_request", HEAD): pages({"workflow_runs": [ci_run(5151, "success")]}),
         CHECKS: pages({"check_runs": [check]}),
     }
+
+
+def published_with(*names: str, draft: bool, directory: Path | None = None) -> dict[str, object]:
+    """GitHub's answers for a v1.2.3 Release with assets `names`, digested from `directory` or made up."""
+    def digest(name: str) -> str:
+        return "sha256:" + (file_sha256(directory / name) if directory else "0" * 64)
+
+    return {RELEASES: pages([{"id": 9, "tag_name": "v1.2.3", "draft": draft, "prerelease": False}]),
+            RELEASE_ASSETS: pages([{"name": name, "digest": digest(name)} for name in names])}
 
 
 # Main has advanced to OLD, which the PR head still contains.
@@ -198,10 +238,10 @@ class MainBindingTests(unittest.TestCase):
             with self.subTest(error=error), github(responses):
                 outcome(self, error, lambda: require_compatible_release_tag(REPO, "v1.2.3", MAIN))
 
-    def test_stable_tags_have_no_pr_and_prerelease_tags_need_one(self) -> None:
+    def test_stable_tags_have_no_pr_and_prerelease_tags_may_name_one(self) -> None:
         for tag, pr, ok in (
             ("v0.5.2", 0, True), ("v10.12.30-rc.7", 7, True), ("v0.5.2-alpha.0", 1, True),
-            ("v0.5.2", 7, False), ("v0.5.2-rc.1", 0, False), ("v0.5.2-rc.1", -1, False),
+            ("v0.5.2-rc.1", 0, True), ("v0.5.2", 7, False), ("v0.5.2-rc.1", -1, False),
             ("0.5.2", 0, False), ("v0.5", 0, False), ("v0.5.2-preview.1", 7, False),
             ("v01.5.2", 0, False), ("v0.05.2-rc.1", 7, False), ("v0.5.2-alpha.00", 7, False),
         ):
@@ -212,6 +252,8 @@ class MainBindingTests(unittest.TestCase):
         for sha in ("main", "A" * 40, MAIN[:39], MAIN + "1"):
             with self.subTest(sha=sha), self.assertRaisesRegex(ControlPlaneError, "40-character"):
                 parse_release("v0.5.2", sha, 0)
+        self.assertEqual(parse_release("v0.5.2", MAIN, 0, True), Release("v0.5.2", MAIN, 0, True))
+        self.assertEqual(parse_release("v0.5.2-rc.1", MAIN, 7, True), Release("v0.5.2-rc.1", MAIN, 7, True))
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -301,17 +343,35 @@ class RequestTests(unittest.TestCase):
             ("artifact", artifacts(name, expired=True), "expected one unexpired"),
             ("artifact", artifacts(name, name), "expected one unexpired"),
             ("artifact", artifacts(name, size=4097), "exceeds"),
+            # The artifact comes from the job named for it, written while that job ran.
+            ("artifact", artifacts(name, created="09:59"), "not written while its job"),
+            ("artifact", artifacts(name, updated="10:11"), "not written while its job"),
+            ("artifact", artifacts(name, created="10:07"), "not written while its job"),
+            ("artifact", artifacts(name, created="10:00", updated="10:10"), None),
+            ("jobs", [], "no single successful job"),
+            ("jobs", [job("Build something else")], "no single successful job"),
+            ("jobs", [job(), job()], "no single successful job"),
+            ("jobs", [job(conclusion="failure")], "no single successful job"),
+            ("jobs", [job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
+            # No other job of the run may have been running while the artifact was written.
+            ("jobs", [job(), job(RUST_IMAGE_JOB)], f"written while {RUST_IMAGE_JOB} also ran"),
+            ("jobs", [job(), job(RUST_TUI_JOB, started="10:06", completed="10:20")], "also ran"),
+            ("jobs", [job(), job(RUST_IMAGE_JOB, "skipped")], None),
+            ("jobs", [job(), job(RUST_IMAGE_JOB, started="10:07", completed="10:20")], None),
         ):
             run = dispatch_run(7001, 4242)
-            files = artifacts(name)
+            files, jobs = artifacts(name), [job()]
             if field == "artifact":
                 files = value
+            elif field == "jobs":
+                jobs = cast(list[dict[str, object]], value)
             elif field is not None:
                 run[field] = value
-            with (self.subTest(field=field, error=error),
-                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})):
+            with (self.subTest(field=field, value=value, error=error),
+                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run,
+                          REQUEST_JOBS: pages({"jobs": jobs})})):
                 outcome(self, error, lambda: require_dispatch_run(
-                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: 4096}))
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: (BUILD_JOB, 4096)}))
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -354,13 +414,16 @@ class RequestTests(unittest.TestCase):
             "TRIGGERING_ACTOR": "zR-JB", "EVENT_NAME": "workflow_dispatch", "EVENT_SHA": MAIN,
             "REF": "refs/heads/main", "REQUEST_RUN_ID": "4242", "REQUEST_RUN_ATTEMPT": "1",
             "WORKFLOW_REF": f"{REPO}/.github/workflows/release-request.yml@refs/heads/main",
-            "TAG": "v1.2.3", "PR": "", "SHA": "", "MODE": "publish",
+            "TAG": "v1.2.3", "PR": "", "SHA": "", "MODE": "publish", "RUST": "false",
         }
         prerelease = {"TAG": "v1.2.3-rc.1", "PR": "101", "SHA": HEAD}
         for change, error in (
-            ({}, None), (prerelease, None),
+            ({}, None), (prerelease, None), ({"RUST": "true"}, None), (prerelease | {"RUST": "true"}, None),
+            ({"RUST": "yes"}, "true or false"),
+            ({"RUST": ""}, "RUST is required"),
             ({"SHA": HEAD}, "leave sha empty"), ({"PR": "101", "SHA": HEAD}, "stable tags"),
-            ({"TAG": "v1.2.3-rc.1"}, "stable tags"), (prerelease | {"SHA": ""}, "SHA is required"),
+            ({"TAG": "v1.2.3-rc.1"}, "exact commit"), (prerelease | {"SHA": ""}, "exact commit"),
+            ({"TAG": "v1.2.3-rc.1", "SHA": MAIN}, None), ({"TAG": "v1.2.3-rc.1", "SHA": HEAD}, "builds main"),
             ({"REF": "refs/heads/feature"}, "dispatched from main"),
             ({"EVENT_NAME": "push"}, "dispatched from main"),
             ({"WORKFLOW_REF": f"{REPO}/.github/workflows/release-request.yml@refs/heads/x"},
@@ -378,14 +441,18 @@ class RequestTests(unittest.TestCase):
                 if error is not None:
                     continue
                 request = json.loads((Path(directory) / "request.json").read_text())
-                self.assertEqual((request["sourceSha"], request["pr"]),
-                                 (HEAD, 101) if change else (MAIN, 0))
-                self.assertIn(f"remote_sha={HEAD if change else ''}\n", output.read_text())
+                pr = "PR" in change
+                self.assertEqual((request["sourceSha"], request["pr"], request["rust"]),
+                                 (HEAD if pr else MAIN, 101 if pr else 0, change.get("RUST") == "true"))
+                self.assertIn(f"remote_sha={HEAD if pr else ''}\n", output.read_text())
+                self.assertIn(f"rust={change.get('RUST', 'false')}\n", output.read_text())
 
     def test_publication_requires_main_or_pr_trust_for_the_release_kind(self) -> None:
         stable, prerelease = release_of(True), release_of(False)
         with github(trusted(True)):
             self.assertEqual(require_publishable(REPO, stable), (MAIN, 5151, ""))
+        with github(trusted(True)):
+            self.assertEqual(require_publishable(REPO, Release("v1.2.3-rc.1", MAIN, 0)), (MAIN, 5151, ""))
         with github(trusted(False)):
             self.assertEqual(require_publishable(REPO, prerelease), (MAIN, 5151, "77"))
         skipped = {JOBS: pages({"jobs": [
@@ -396,6 +463,7 @@ class RequestTests(unittest.TestCase):
             (stable, tag, "already exists"),
             (stable, {CODEQL: pages([analysis(99, 1, "failed")])}, "has errors"),
             (Release("v1.2.3", HEAD, 0), {}, "no longer current main"),
+            (Release("v1.2.3-rc.1", HEAD, 0), {}, "no longer current main"),
             (prerelease, {tree(HEAD): {"tree": []}}, "PR changes scripts"),
         ):
             with (self.subTest(error=error), github(trusted(release.stable) | change),
@@ -404,8 +472,8 @@ class RequestTests(unittest.TestCase):
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
         request: dict[str, object] = {
-            "schemaVersion": 2, "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
-            "mode": "publish", "requestRunId": 4242, "requestRunAttempt": 1,
+            "schemaVersion": 3, "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
+            "mode": "publish", "rust": False, "requestRunId": 4242, "requestRunAttempt": 1,
         }
         prerelease = {"tag": "v1.2.3-rc.1", "sourceSha": HEAD, "pr": 101}
         base_env = {
@@ -414,12 +482,16 @@ class RequestTests(unittest.TestCase):
             "REQUEST_RUN_ID": "4242",
         }
         for change, env, artifacts_present, error in (
-            ({}, {}, True, None), (prerelease, {}, False, None),
+            ({}, {}, True, None), (prerelease, {}, False, None), ({"rust": True}, {}, True, None),
+            ({"rust": True, "title": {"rust": False}}, {}, True, "dispatch inputs"),
+            ({"rust": "true"}, {}, True, "rust must be true or false"),
+            (prerelease | {"rust": True}, {}, False, None),
             (prerelease, {}, True, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
             ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
             ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
             ({"requestRunId": 1}, {}, True, "requestRunId"),
-            ({"tag": "v1.2.3-rc.1"}, {}, True, "stable tags"),
+            ({"tag": "v1.2.3-rc.1"}, {}, False, None),
+            ({"tag": "v1.2.3-rc.1", "sourceSha": HEAD}, {}, False, "trusted main commit"),
             ({"mode": "force"}, {}, True, "mode"),
             ({"tag": "v1.2.4", "title": {"tag": "v1.2.3"}}, {}, True, "dispatch inputs"),
             (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, {}, False, "dispatch inputs"),
@@ -438,32 +510,44 @@ class RequestTests(unittest.TestCase):
                 (candidate / "request.json").write_text(json.dumps(record))
                 if artifacts_present:
                     (root / "release-assets-4242").mkdir()
+                rust = record["rust"] is True
+                if rust:
+                    (root / "release-rust-image-4242").mkdir()
+                if rust and "-" not in str(record["tag"]):
+                    (root / "release-rust-tui-4242").mkdir()
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
-                    str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])), MAIN)
+                    str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"]), inputs["rust"] is True),
+                    MAIN)
                 checkout = git_head(Path(directory), env.get("HEAD", MAIN))
                 with (patch.dict(os.environ, base_env | env | checkout),
-                      github(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})):
+                      github(trusted(True, rust=rust) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})):
                     verified = outcome(self, error, lambda: verify_request(root))
                 if verified is not None:
                     release, publish = verified
                     self.assertEqual((release.sha, publish), ((request | change)["sourceSha"], True))
 
 
-def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject]:
-    release = release_of(stable)
+def write_request(root: Path, stable: bool, mode: str, rust: bool = False) -> tuple[Path, JsonObject, JsonObject]:
+    """Write a request's artifacts; return their directory and the Go and Rust images' indexes."""
+    release = release_of(stable, rust)
     request_dir = root / "request"
     candidate = request_dir / "release-request-4242"
     candidate.mkdir(parents=True)
     (candidate / "request.json").write_text(json.dumps({
-        "schemaVersion": 2, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
-        "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
+        "schemaVersion": 3, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
+        "pr": release.pr, "mode": mode, "rust": rust, "requestRunId": 4242, "requestRunAttempt": 1,
     }))
     oci = write_oci(candidate / OCI, REPO, release.sha, remote=not stable)
     (candidate / f"{OCI}.sha256").write_text(f"{file_sha256(candidate / OCI)}  {OCI}\n")
     if stable:
         write_release_assets(request_dir / "release-assets-4242", "1.2.3")
-    return request_dir, oci
+    rust_oci: JsonObject = {}
+    if rust:
+        rust_oci = write_rust_release(request_dir / "release-rust-image-4242",
+                                      request_dir / "release-rust-tui-4242" if stable else None, release.version,
+                                      release.sha, REPO)
+    return request_dir, oci, rust_oci
 
 
 def outputs(path: Path) -> dict[str, str]:
@@ -487,26 +571,49 @@ class CommandTests(unittest.TestCase):
             (request_dir / "release-assets-4242" / "checksums.txt").write_text(
                 "0" * 64 + "  graphite-meter_1.2.3_third-party-source.tar.gz\n")
 
+        def tui(request_dir: Path) -> None:
+            write_rust_tui(request_dir / "release-rust-tui-4242", "1.2.3", "linux/arm64", "aarch64-unknown-linux-musl",
+                           {"THIRD_PARTY_NOTICES.txt": b"other\n"})
+
+        def rust_checksum(request_dir: Path) -> None:
+            (request_dir / "release-rust-image-4242" / f"{RUST_OCI}.sha256").write_text(f"0  {RUST_OCI}\n")
+
+        def prerelease_offer(request_dir: Path) -> None:
+            name = offer_name("graphite-meter-server", "1.2.3-rc.1", "linux/amd64")
+            write_rust_offer(request_dir / "release-rust-image-4242" / name, "graphite-meter-server",
+                             "x86_64-unknown-linux-musl")
+
         unprotected = {ENVIRONMENT: REVIEWED | {"protection_rules": []}}
-        rows: tuple[tuple[bool, str, Edit | None, dict[str, object], dict[str, str],
-                          str | None], ...] = (
-            (True, "publish", None, {}, {}, None),
-            (False, "validate", None, {}, {}, None),
-            (True, "publish", checksum, {}, {}, "request checksum"),
-            (True, "publish", None, {}, {"LIMIT": "10"}, "exceeds 10 bytes"),
-            (True, "publish", asset, {}, {}, "checksum mismatch"),
-            (True, "publish", None, {}, {"FAKE_DIGEST": "latest"}, "digest is 'latest'"),
-            (True, "publish", None, unprotected, {}, "require reviewers"),
-            (False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
+        # An earlier run published v1.2.3 with other assets, such as without the Rust ones.
+        published = published_with("x.tar.gz", draft=False)
+        rows: tuple[tuple[bool, bool, str, Edit | None, dict[str, object], dict[str, str], str | None], ...] = (
+            (True, False, "publish", None, {}, {}, None),
+            (False, False, "validate", None, {}, {}, None),
+            (True, True, "publish", None, {}, {}, None),
+            (True, False, "publish", checksum, {}, {}, "request checksum"),
+            (True, False, "publish", None, {}, {"LIMIT": "10"}, "exceeds 10 bytes"),
+            (True, False, "publish", asset, {}, {}, "checksum mismatch"),
+            (True, False, "publish", None, {}, {"FAKE_DIGEST": "latest"}, "digest is 'latest'"),
+            (True, False, "publish", None, unprotected, {}, "require reviewers"),
+            (False, False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
              {}, "main moved during"),
+            (True, True, "publish", tui, {}, {}, "notices differ from its source offer"),
+            (True, True, "publish", None, published, {}, "already published with other assets"),
+            (True, False, "validate", None, published, {}, "already published with other assets"),
+            (True, True, "publish", None, published_with("x.tar.gz", draft=True), {}, None),
+            (True, True, "publish", rust_checksum, {}, {}, "does not match its checksum"),
+            # A Rust prerelease, as Go's, publishes only its image.
+            (False, True, "publish", None, {}, {}, None),
+            (False, True, "validate", rust_checksum, {}, {}, "does not match its checksum"),
+            (False, True, "publish", prerelease_offer, {}, {}, "files are"),
         )
-        for stable, mode, edit, responses, env, error in rows:
-            with self.subTest(stable=stable, mode=mode, error=error):
+        for stable, rust, mode, edit, responses, env, error in rows:
+            with self.subTest(stable=stable, rust=rust, mode=mode, error=error):
                 root = self.root / str(len(list(self.root.iterdir())))
-                request_dir, oci = write_request(root, stable, mode)
+                request_dir, oci, rust_oci = write_request(root, stable, mode, rust)
                 if edit is not None:
                     edit(request_dir)
-                release = release_of(stable)
+                release = release_of(stable, rust)
                 variables = {
                     "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
                     "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main",
@@ -514,33 +621,53 @@ class CommandTests(unittest.TestCase):
                     "HANDOFF_DIR": str(root / "handoff"),
                     "GITHUB_OUTPUT": str(root / "output"),
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
-                } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | env
+                } | engine(root, REPO, release.version, release.sha, oci, rust_oci) | git_head(root, MAIN) | env
                 limit = int(env.get("LIMIT", 1 << 30))
                 with (patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit),
-                      github(trusted(stable, mode) | responses)):
+                      github(trusted(stable, mode, rust) | responses)):
                     outcome(self, error, command_verify)
                 if error is not None:
                     self.assertFalse((root / "handoff").exists())
                     continue
                 result = outputs(root / "output")
-                self.assertEqual((result["digest"], result["publish"], result["sha"]),
-                                 (AMD, str(mode == "publish").lower(), release.sha))
+                self.assertEqual((result["digest"], result["publish"], result["sha"], result["rust"]),
+                                 (AMD, str(mode == "publish").lower(), release.sha, str(rust).lower()))
                 self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
-                if stable:
-                    self.assertEqual(result["assets_sha256"],
-                                     assets_sha256(request_dir / "release-assets-4242"))
+                if rust:
+                    self.assertEqual((result["rust_digest"], file_sha256(root / "handoff/rust-image" / OCI)),
+                                     (AMD, result["rust_oci_sha256"]))
+                else:
+                    self.assertFalse((root / "handoff/rust-image").exists())
+                    self.assertEqual(result["rust_digest"], "")
+                if not stable:
+                    self.assertFalse((root / "handoff/assets").exists())
+                    continue
+                handoff = root / "handoff/assets"
+                self.assertEqual(result["assets_sha256"], assets_sha256(handoff))
+                go = {path.name for path in (request_dir / "release-assets-4242").iterdir()}
+                rust_assets = set(server_offers("1.2.3")) | tui_files("1.2.3") if rust else set()
+                self.assertEqual({path.name for path in handoff.iterdir()}, go | rust_assets)
+                verify_release_file_set(handoff, verify_checksums(handoff))
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"
         (handoff / "image").mkdir(parents=True)
         (handoff / "image" / OCI).write_bytes(b"verified")
+        (handoff / "rust-image").mkdir()
+        (handoff / "rust-image" / OCI).write_bytes(b"verified rust")
         write_release_assets(handoff / "assets", "1.2.3")
         closed = {PULL: PR | {"state": "closed"}}
         for stable, env, responses, error in (
-            (True, {}, {}, None), (False, {}, {}, None),
+            (True, {}, {}, None), (False, {}, {}, None), (True, {"RUST": "true"}, {}, None),
+            (True, {"RUST": "true", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
+            (False, {"RUST": "true"}, {}, None),
+            (False, {"RUST": "true", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
             (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
             (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
             (True, {"HEAD": OLD}, {}, "checked-out tooling"),
+            (True, {}, published_with("x.tar.gz", draft=False), "already published with other assets"),
+            (True, {}, published_with(*sorted(path.name for path in (handoff / "assets").iterdir()), draft=False,
+                                      directory=handoff / "assets"), None),
             (False, {}, closed, "not open against main"),
             (False, {}, MOVED | {MAIN_COMMIT: {"sha": OLD}}, "main moved after verification"),
         ):
@@ -550,7 +677,8 @@ class CommandTests(unittest.TestCase):
                 variables = {
                     "MAIN_SHA": MAIN, "PR": str(release.pr or ""), "TAG": release.tag,
                     "SOURCE_SHA": release.sha, "REPOSITORY": REPO, "HANDOFF_DIR": str(handoff),
-                    "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(),
+                    "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(), "RUST": "false",
+                    "RUST_OCI_SHA256": hashlib.sha256(b"verified rust").hexdigest(),
                     "ASSETS_SHA256": assets_sha256(handoff / "assets"),
                     "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
                     "RUNNER_TEMP": tempfile.gettempdir(),

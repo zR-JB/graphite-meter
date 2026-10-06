@@ -96,7 +96,112 @@ Do not edit these by hand:
 The generator also creates release `SOURCE.txt` material from the same project
 metadata and reviewed component set.
 
+Each component in `client/public/legal/about.json` links its source, its
+upstream and, when Graphite Meter patches it, its changes. A release links
+the patch at its tag. Any other build, a prerelease included, links the patch
+on the default branch: the committed file cannot name a PR head, so a
+prerelease built from a PR that changes a patch shows main's version of it.
+
 ## Copyright year
 
 `legal/project.json` is the only place to update Graphite Meter's copyright
 year or year range. The generator never derives it from the wall clock.
+
+## Rust reviews
+
+The Rust binaries have their own review files:
+
+- `rust-reviewed-components.json`: one approved review per line for each crate
+  a shipped Rust binary compiles. A registry review covers its crate name and
+  source across versions while the license expression, modification status
+  and legal-file fingerprints stay the same; a git review binds the exact
+  version and fork revision. Unused approvals may remain.
+- `rust-provenance.json` and `manual/rust/`: legal texts, with their SHA-256
+  and review notes, for crates that do not package their own.
+- `rust-platform-debian-bookworm.json`: one reviewed record per shipped Rust
+  target for what the toolchain and builder link beyond Cargo's packages:
+  native inputs, system-library imports, the notice texts that cover them, and
+  `noticesSha256`, their fingerprint.
+- `rust-notice-sources.json`: pinned upstream URLs and SHA-256 of notice texts
+  the builder lacks, such as musl's and LLVM's, bound to the Rust release in
+  `rustVersion`.
+- `rust-forks.json`: the reviewed forks, described below.
+
+`mise run rust-check` runs `scripts.legal.check_rust_reviews`. The client
+ships on every TUI platform and the server on every server platform listed in
+`[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each of these
+builds, the check lists the compiled crates with `cargo tree` over normal and
+build edges and requires an approved review for each. Every shipped target
+needs an approved record with review notes and a notice fingerprint in the
+platform record the metadata names. The reviews file keeps its layout
+(`python3 -m scripts.legal.check_rust_reviews --format` rewrites it), and the
+static x86_64 Linux server and client compile at most 143 and 150 crates, a
+dependency policy rather than a license requirement.
+
+## Updating pinned forks
+
+The Rust workspace builds noq and h2 from forks that carry Graphite Meter
+patches on a stable upstream release. Each pin in `rust/Cargo.toml` has a
+record in `rust-forks.json`: the fork branch and full-SHA `rev`, the upstream
+tag and its commit `base`, `diffSha256` (the SHA-256 of
+`git diff-tree -r --no-renames --full-index base rev`), the changed packages
+and files, and each commit's subject, purpose and origin.
+
+To move a fork, carry the patches onto the new upstream release on its
+`graphite-meter/<crate>-v<version>` branch and review the upstream base, each
+patch's origin, the changed paths and their licenses. Then update
+`rust/Cargo.toml`, `rust/Cargo.lock` and the record. `mise run rust-check`
+requires a record for every git package in the lock and a lock package for
+every record; CI's Rust job also runs
+`python3 -m scripts.legal.check_git_sources --verify`, which fetches each
+branch and tag and checks ancestry, the change-set digest and scope, and the
+commit list.
+
+## Rust notices
+
+`python3 -m scripts.legal.rust` collects a Rust binary's notices around one
+real Cargo build of it, in three steps:
+
+1. **Prepare.** `cargo tree` for the target and the host gives a conservative
+   set of crates the build may compile, build scripts and procedural macros
+   included. Each needs its approved review, or manual provenance; the target
+   needs its approved platform record, whose notice texts the builder lacks are
+   fetched from `rust-notice-sources.json` into `legal/manual/` and checked by
+   SHA-256. The step writes the directory the build reads as
+   `GM_RUST_LEGAL_DIR`: `LEGAL.txt` (the `-legal` report) with its SHA-256 in
+   `LEGAL.sha256`, `package.txt`, `target.txt`, `rustc-path.txt`, and
+   `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the browser build in
+   `browser-assets/` with its own `legal/` files, and, for a reviewed build,
+   writes the image's `IMAGE_NOTICES.txt`.
+2. **Build and verify.** One `cargo rustc` build embeds the notices; the
+   build script refuses a directory prepared for another package, target or
+   compiler, or whose input copies differ. The collector then requires that
+   the build compiled only prepared crates with unchanged legal files, linked
+   only the record's native inputs, imported only its system libraries,
+   embedded exactly `LEGAL.txt` and, for a reviewed build, carries
+   `graphite-meter reviewed notices sha256:` with its SHA-256 in plain text,
+   which release verification compares with the notices shipped beside the
+   executable; it then writes `inventory.json` of the compiled crates and the
+   server's browser packages.
+3. **Source offer.** A reviewed build writes its source offer, named like
+   its release archive with `_third-party-source.tar.gz`, with the compiled
+   crates' and browser packages' sources (a package without a source
+   directory is refused, as in Go's), the inventory, the report, the fork
+   records and the manual material under one directory named like the
+   archive, as Go's. It also writes the `SOURCE.txt` that its TUI archive or
+   image ships: the release source, the source offer and the Rust target. A
+   prerelease publishes no tag or source offer, so, as in Go's prerelease
+   image, its `SOURCE.txt` and notices name the repository.
+
+A failed platform check prints the build's candidate record and the listing
+its `noticesSha256` hashes; `--review-template` prints pending reviews of the
+crates that lack one.
+
+`--development` notices, which the local build tasks (`rust-server-build`,
+`rust-client-build`, `rust-server-run`, `rust-client-run` and
+`GM_IMPLEMENTATION=rust`) embed, need the dependency reviews but no platform
+record, so any host builds them. Their report and their executable carry
+`UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable. A
+reviewed build's executable must not carry the marker, the workflow policy
+keeps development builds out of everything CI and releases run, and release
+verification refuses an image whose server or notices carry it.

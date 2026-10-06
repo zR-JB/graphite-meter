@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>transports</title>
+<script>
+  const query = new URLSearchParams(location.search);
+  const base = query.get("base");
+  const hash = query.get("hash");
+  const options = {
+    serverCertificateHashes: [
+      { algorithm: "sha-256", value: Uint8Array.from(hash.split(","), Number) },
+    ],
+  };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const within = (promise, ms) =>
+    Promise.race([
+      promise,
+      sleep(ms).then(() => {
+        throw new Error(`timeout ${ms} ms`);
+      }),
+    ]);
+  // A fetch's timing entry can land after its body has been read.
+  async function protocol(url) {
+    for (let waited = 0; waited < 2000; waited += 20) {
+      const entry = performance.getEntriesByName(url).at(-1);
+      if (entry) return entry.nextHopProtocol;
+      await sleep(20);
+    }
+  }
+  async function drain(readable) {
+    const reader = readable.getReader();
+    for (let bytes = 0; ; ) {
+      const { done, value } = await reader.read();
+      if (done) return bytes;
+      bytes += value.byteLength;
+    }
+  }
+  async function fetched(url, init) {
+    const response = await fetch(url, { cache: "no-store", ...init });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    return response;
+  }
+  async function uploadId() {
+    const session = await fetched(base + "/upload/session", { method: "POST" });
+    return (await session.json()).uploadId;
+  }
+  async function session(path, run) {
+    const wt = new WebTransport(base + path, options);
+    await within(wt.ready, 5000);
+    try {
+      return await run(wt);
+    } finally {
+      wt.close();
+      await wt.closed.catch(() => {});
+    }
+  }
+  async function closed(stop) {
+    const wt = new WebTransport(base + "/wt/ping", options);
+    await within(wt.ready, 5000);
+    if (stop) await fetch("/stop", { method: "POST" });
+    return await within(wt.closed, 10000);
+  }
+  async function* records(readable) {
+    const reader = readable.pipeThrough(new TextDecoderStream()).getReader();
+    for (let buffered = ""; ; ) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      const lines = (buffered + value).split("\n");
+      buffered = lines.pop();
+      for (const line of lines) if (line) yield JSON.parse(line);
+    }
+  }
+  const checks = {
+    async download() {
+      const url = base + "/download?bytes=1048576";
+      return { bytes: await drain((await fetched(url)).body), protocol: await protocol(url) };
+    },
+    async upload() {
+      const url = base + "/upload?id=" + (await uploadId());
+      const response = await fetched(url, { method: "POST", body: new Uint8Array(1048576) });
+      return { bytes: (await response.json()).bytes, protocol: await protocol(url) };
+    },
+    wt_ping: () =>
+      session("/wt/ping", async (wt) => {
+        await wt.datagrams.writable.getWriter().write(new TextEncoder().encode("PING,7"));
+        const { value } = await within(wt.datagrams.readable.getReader().read(), 5000);
+        return new TextDecoder().decode(value);
+      }),
+    wt_download: () =>
+      session("/wt/download?bytes=65536", async (wt) => {
+        const { value } = await within(wt.incomingUnidirectionalStreams.getReader().read(), 5000);
+        return await within(drain(value), 5000);
+      }),
+    wt_upload: async () =>
+      session("/wt/upload?id=" + (await uploadId()), async (wt) => {
+        const { value } = await within(wt.incomingUnidirectionalStreams.getReader().read(), 5000);
+        const feed = records(value);
+        if ((await within(feed.next(), 5000)).value?.type !== "ready") throw new Error("no ready record");
+        const writer = (await wt.createUnidirectionalStream()).getWriter();
+        await writer.write(new Uint8Array(65536));
+        await writer.close();
+        for (;;) {
+          const { value: record, done } = await within(feed.next(), 5000);
+          if (done) throw new Error("progress feed ended");
+          if (record.type === "progress" && record.bytes >= 65536) return record.bytes;
+        }
+      }),
+    wt_close: () => closed(false),
+    wt_shutdown: () => closed(true),
+  };
+  (async () => {
+    const report = { ua: navigator.userAgent, checks: {} };
+    for (const [name, check] of Object.entries(checks)) {
+      try {
+        report.checks[name] = { ok: true, detail: await within(check(), 20000) };
+      } catch (error) {
+        report.checks[name] = { ok: false, detail: `${error.name}: ${error.message}` };
+      }
+    }
+    await fetch("/report", { method: "POST", body: JSON.stringify(report) });
+  })();
+</script>

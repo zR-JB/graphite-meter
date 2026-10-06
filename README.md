@@ -117,6 +117,7 @@ reflects the outcome. Such a headless run cannot sign in, so it fails on a prote
 - [Benchmark harness](docs/BENCHMARKS.md): controlled throughput testing.
 - Client contracts: [discovery](api/discovery.md), [uploads](api/upload.md), and [latency / WebTransport](api/wire.md).
 - [Server catalogue and independent authorization](docs/SERVERS.md): configure available servers and interpret simultaneous results.
+- [Rust implementation](rust/README.md): the opt-in Rust server and terminal client; Go remains the default.
 
 ## Contributing
 

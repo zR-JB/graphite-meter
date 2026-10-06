@@ -29,6 +29,10 @@ jobs:
       code: ${{ github.event_name == 'push' || steps.filter.outputs.code == 'true' }}
       go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
       deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
+      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      rust-interop: ${{ github.event_name == 'push' || steps.filter.outputs.rust-interop == 'true' }}
+      rust-image: ${{ github.event_name == 'push' || steps.filter.outputs.rust-image == 'true' }}
+      rust-release: ${{ github.event_name == 'push' || steps.filter.outputs.rust-release == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,6 +189,320 @@ jobs:
           mise run security
           mise run client-audit
 
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust, pinned cargo-deny and cargo-nextest
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
+      - name: Check Rust formatting, dependency policy, lints and tests
+        run: mise run rust-check
+      - name: Verify the fork pins against their branches, upstream tags and reviewed change sets
+        run: python3 -m scripts.legal.check_git_sources --verify
+      # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers.
+      - name: Install C cross compilers for the target checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
+            musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      - name: Check the shipped TUI and server targets
+        run: mise run rust-check-targets
+
+  rust-interop:
+    name: Rust interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust-interop == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go, Rust and cargo-nextest
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', rust: 'true', cargo-nextest: 'true'}
+      # Only the static server's C dependencies use Ubuntu's unpinned musl compiler.
+      - name: Install the musl compiler for the static server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      # The scripts keep their evidence in TMPDIR.
+      - name: Run unchanged Go peers, the Go native client and process checks against the sharded server
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: mise run rust-interop
+      - name: Run the Rust client against the unchanged Go server and its approved sign-in
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: mise run rust-client-interop
+      - name: Gate delayed-link HTTP/3 and WebTransport downloads
+        run: mise run rust-delayed-downloads
+      - name: Upload interoperability evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-interop-evidence
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/interop-*/*.log
+            ${{ runner.temp }}/client-*/*.log
+          if-no-files-found: ignore
+
+  rust-image:
+    name: Rust image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust-image == 'true'
+    env:
+      VERSION: 0.0.0-ci
+      REPOSITORY: ${{ github.repository }}
+      REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      # The arm64 image's checks run its server.
+      - name: Set up arm64 emulation
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          # setup-qemu runs this image privileged to register binfmt. Pin the
+          # secondary image as tightly as the Action that launches it.
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: 'false'
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
+      # The OCI archive builds each architecture's server once; the loaded images and the source offers reuse its
+      # layers. The ci profile leaves out LTO, and the core job checks the browser app.
+      - name: Build the amd64 and arm64 server image with reviewed notices and export its source offers
+        run: |
+          build() {
+            docker buildx build --file container/Dockerfile.rust \
+              --build-arg VERSION="$VERSION" --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 \
+              --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+              --label "org.opencontainers.image.revision=$REVISION" \
+              --label "org.opencontainers.image.version=$VERSION-rust" \
+              --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" .
+          }
+          mkdir -p "$RUNNER_TEMP/rust-image"
+          build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
+            --output "type=oci,dest=$RUNNER_TEMP/rust-image/graphite-meter-rust.oci.tar"
+          # Docker's image store cannot load the attestation manifests.
+          for arch in amd64 arm64; do
+            build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter-rust:$arch"
+          done
+          build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
+            --output "type=local,dest=$RUNNER_TEMP/rust-image/server-export"
+      - name: Verify the archive's platforms, provenance, labels and reviewed notices
+        env:
+          OCI_ARCHIVE: ${{ runner.temp }}/rust-image/graphite-meter-rust.oci.tar
+          VERSION: 0.0.0-ci-rust
+        run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/verify_oci.py
+      # The arm64 image runs under emulation.
+      - name: Check both images' files, server, browser app and allocator setting like the Go image
+        env:
+          ENGINE_VERSION: 0.0.0-ci-rust
+          GM_CLIENT_REVISION: source
+        run: |
+          for arch in amd64 arm64; do
+            scripts/verify-container.sh "graphite-meter-rust:$arch"
+          done
+      - name: Export the amd64 image's server for the browser checks
+        run: |
+          docker create --name rust-image-server graphite-meter-rust:amd64
+          docker cp rust-image-server:/graphite-meter "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      - name: Upload the image, its source offers and its amd64 server
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image/
+          if-no-files-found: error
+          retention-days: 7
+
+  rust-e2e:
+    name: Rust browser E2E (${{ matrix.group }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [plan, rust-image]
+    if: needs.plan.outputs.rust-image == 'true'
+    # The surface-reversal file runs its three widths serially under CPU throttling; alone it takes as long as the
+    # other files together.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [heavy, rest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: toolchain
+        name: Set up E2E toolchain
+        uses: ./.github/actions/setup-project
+        with: {bun: 'true', client-deps: 'true'}
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
+          install-dependencies: true
+      - name: Download the image's amd64 server from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image
+      - name: Restore the server's executable mode
+        run: chmod +x "$RUNNER_TEMP/rust-image/graphite-meter-server"
+      # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
+      - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's sharded server
+        if: matrix.group == 'rest'
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python3 rust/interop/browser.py --server image
+      - name: Run Chromium against one fleet of the image's server, password sign-in included
+        env:
+          # As the Go job: Chrome for Testing has no setuid sandbox.
+          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
+          GROUP: ${{ matrix.group }}
+        run: mise run rust-e2e "$RUNNER_TEMP/rust-image/graphite-meter-server" "$GROUP"
+      - name: Upload E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-e2e-failures-${{ matrix.group }}
+          retention-days: 7
+          path: |
+            client/test-results/webview
+            client/test-results/servers
+            ${{ runner.temp }}/browser-*/*.log
+            ${{ runner.temp }}/browser-*/*.json
+          if-no-files-found: ignore
+
+  rust-tui:
+    name: Rust TUI exports
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: plan
+    if: needs.plan.outputs.rust-release == 'true'
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      - id: buildx
+        name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
+      # The release build itself: release profile, no CI cache, the release request's BuildKit. It runs the amd64 TUI
+      # in the builder.
+      - name: Build the Linux and Windows TUI archives and source offers in the pinned builder
+        env:
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          RELEASE_DIST: ${{ runner.temp }}/rust-tui
+        run: mise run rust-client-package "$VERSION"
+      # rust-release verifies every archive and source offer as a release does.
+      - name: Run the amd64 TUI out of its archive on the runner
+        env:
+          RELEASE_DIST: ${{ runner.temp }}/rust-tui
+        run: python3 -m scripts.package_rust "$VERSION" --output "$RELEASE_DIST" --check
+      - name: Upload the TUI archives and source offers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-tui
+          path: ${{ runner.temp }}/rust-tui/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  # Stages and verifies this run's Rust builds as a release request stages and the release verifies them.
+  rust-release:
+    name: Rust release staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [plan, rust-image, rust-tui]
+    if: needs.plan.outputs.rust-release == 'true'
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned mise and Python
+        uses: ./.github/actions/setup-project
+      - name: Download the image and its source offers from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-image
+          path: ${{ runner.temp }}/rust-image
+      - name: Download the TUI archives and source offers from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-tui
+          path: ${{ runner.temp }}/rust-tui
+      - name: Stage exactly the release files out of the exports
+        env:
+          OCI_ARCHIVE: ${{ runner.temp }}/rust-image/graphite-meter-rust.oci.tar
+          SERVER_EXPORT: ${{ runner.temp }}/rust-image/server-export
+          TUI_EXPORT: ${{ runner.temp }}/rust-tui
+        run: |
+          OUT_DIR=$RUNNER_TEMP/staged/image python3 scripts/ci/rust_release.py stage-image
+          OUT_DIR=$RUNNER_TEMP/staged/tui python3 scripts/ci/rust_release.py stage-tui
+      # The image's server uses the ci profile; the TUI archives are release builds.
+      - name: Verify the image, the TUI archives and every source offer as the release does
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          SERVER_PROFILE: ci
+          IMAGE_DIR: ${{ runner.temp }}/staged/image
+          TUI_DIR: ${{ runner.temp }}/staged/tui
+        run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/rust_release.py check
+
+  rust-windows:
+    name: Rust checks on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    defaults:
+      run: {shell: bash}
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      # Tests compare checked-in text byte for byte.
+      - name: Check out text with its committed line endings
+        run: git config --global core.autocrlf false
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true'}
+      - name: Run the client, net and legal crates' unit and process tests
+        working-directory: rust
+        run: cargo test --locked -p graphite-meter-client -p graphite-meter-net -p graphite-meter-legal --lib --tests
+      - name: Check that the server builds for Windows
+        working-directory: rust
+        run: cargo check --locked -p graphite-meter-server
+
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-24.04
@@ -204,7 +522,8 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-image,
+      rust-e2e, rust-tui, rust-release, rust-windows]
     steps:
       - name: Require every selected job
         env:

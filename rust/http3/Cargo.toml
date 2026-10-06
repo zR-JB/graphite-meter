@@ -1,0 +1,21 @@
+[package]
+name = "graphite-meter-http3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes.workspace = true
+http.workspace = true
+noq.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+
+[dev-dependencies]
+graphite-meter-testkit.workspace = true
+noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

@@ -34,7 +34,7 @@ class MiseTaskTests(unittest.TestCase):
             source = re.sub(r"(?ms)^\[(?:tools|tool_config)\]\n.*?(?=^\[|\Z)", "", source)
             (root / "mise.toml").write_text(source)
             for name in ("client/dist", "go/internal/static", "bin", "config", "state", "data",
-                         "cache", "scripts"):
+                         "cache", "scripts", "rust"):
                 (root / name).mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/build-version.sh", root / "scripts")
             for name in ("bun", "go", "python3"):
@@ -65,6 +65,14 @@ class MiseTaskTests(unittest.TestCase):
             built = run("client-build-prod", VERSION=payload, GM_CLIENT_REVISION=payload)
             self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
             run("goclient-build", VERSION=payload, status=2)
+            # GM_IMPLEMENTATION picks Go or Rust; a Rust build gets the checked version as one argument.
+            for task in ("dev", "prod", "tui"):
+                run(task, GM_IMPLEMENTATION=payload, status=2)
+            run("prod", GM_IMPLEMENTATION="rust", VERSION=payload, status=2)
+            run("rust-server-build", VERSION=payload, status=2)
+            rust = run("tui", "-server", payload, GM_IMPLEMENTATION="rust", VERSION="1.2.3", status=127)
+            self.assertEqual(rust["args"], ["-m", "scripts.rust_build", "--package", "graphite-meter-client",
+                                            "--profile", "ci", "--version", "1.2.3"])
             self.assertFalse(canary.exists())
 
 

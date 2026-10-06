@@ -177,7 +177,7 @@ class ReleaseAssetTests(unittest.TestCase):
 class OCITests(unittest.TestCase):
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
-                         [item["digest"] for item in ATTESTED])
+                         ([item["digest"] for item in ATTESTED], {"amd64": AMD, "arm64": ARM}))
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
         mistyped["annotations"] = {"vnd.docker.reference.type": "other",
@@ -255,6 +255,22 @@ class OCITests(unittest.TestCase):
                                 predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
                 with patch.dict(os.environ, env), patch("verify_oci.BLOB_LIMIT", limit):
+                    outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
+
+    def test_each_image_ships_the_server_and_notices_of_a_reviewed_build(self) -> None:
+        server, notices = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
+        marked = b"\0UNREVIEWED DEVELOPMENT BUILD\0"
+        for files, error in (
+            ({server: b"server", notices: b"notices"}, None),
+            ({server: b"server"}, r"lacks \['usr/share"),
+            ({notices: b"notices", "bin/graphite-meter": b"server"}, r"lacks \['graphite-meter'\]"),
+            ({server: marked, notices: b"notices"}, "development build's graphite-meter"),
+            ({server: b"server", notices: b"UNREVIEWED DEVELOPMENT BUILD\n\nnotices"}, "development build's usr"),
+        ):
+            with tempfile.TemporaryDirectory() as directory, self.subTest(files=list(files), error=error):
+                archive = Path(directory) / "image.oci.tar"
+                oci = write_oci(archive, "example/repo", "f" * 40, remote=False, files=files)
+                with patch.dict(os.environ, engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)):
                     outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
