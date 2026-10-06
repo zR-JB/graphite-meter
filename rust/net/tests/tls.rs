@@ -88,19 +88,6 @@ async fn the_client_offers_go_s_tls13_order_and_the_server_follows_it() {
 }
 
 #[tokio::test]
-async fn ssl_cert_file_and_dir_name_the_only_roots_and_a_trusted_self_signed_ca_is_its_own_chain() {
-    let test = "ssl_cert_file_and_dir_name_the_only_roots_and_a_trusted_self_signed_ca_is_its_own_chain";
-    if !child() {
-        return rerun_trusting_self_signed(test);
-    }
-    let server = trusted_server();
-    let trusted = || client_config(Verify::Trusted, Alpn::None);
-    handshake(trusted().await, &server, "localhost").unwrap();
-    assert!(handshake(trusted().await, &server, "other.test").is_err(), "its name still counts");
-    assert!(untrusted(handshake(trusted().await, &Identity::generate().unwrap(), "localhost")));
-}
-
-#[tokio::test]
 async fn a_trust_store_without_roots_fails_each_verified_handshake_and_nothing_else() {
     let test = "a_trust_store_without_roots_fails_each_verified_handshake_and_nothing_else";
     if !child() {
@@ -138,5 +125,6 @@ fn a_trust_load_cut_short_by_its_runtime_s_shutdown_loads_again_on_next_use() {
     let refused = handshake(cut_short, &server, "localhost");
     assert!(matches!(refused, Err(Error::InvalidCertificate(Other(_)))), "{refused:?}");
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    // Only the self-signed root in SSL_CERT_FILE trusts this server, as its own chain.
     handshake(runtime.block_on(client_config(Verify::Trusted, Alpn::Http1)), &server, "localhost").unwrap();
 }
