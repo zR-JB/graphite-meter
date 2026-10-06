@@ -345,8 +345,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   read, with Remove them, which deletes only those, or Dismiss. The detail repeats the result cards (three across or
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
-  sheet's edge: the list keeps its share of the width (50 % by default), never under 360 px, and the detail never
-  under 460 px.
+  sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
+  across from a 1366 px window), never under 360 px, and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
