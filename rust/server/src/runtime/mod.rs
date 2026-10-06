@@ -470,11 +470,9 @@ impl Terms {
             };
             let raise = (minimum * 11 / 10).div_ceil(GIB) * GIB;
             return Err(format!(
-                "GM_MAX_BUFFER_BYTES {} is below the {} that {connections} connections need\n\
+                "GM_MAX_BUFFER_BYTES {limit} is short of {minimum} for {connections} connections\n\
                  per connection {}, QUIC endpoints {}, download block {}\n\
                  raise GM_MAX_BUFFER_BYTES to {raise} or lower GM_MAX_CONNECTIONS to {fits}",
-                binary(limit as u128),
-                binary(minimum),
                 binary(floor as u128),
                 binary(endpoint as u128),
                 binary(BLOCK_BYTES as u128),
@@ -640,7 +638,10 @@ mod terms_tests {
         let refused = terms.check(1, endpoint).unwrap_err();
         let lines: Vec<&str> = refused.lines().collect();
         assert_eq!(lines.len(), 3, "{refused}");
-        assert!(lines[0].starts_with("GM_MAX_BUFFER_BYTES ") && lines[0].ends_with(" that 2 connections need"));
+        assert_eq!(
+            lines[0],
+            format!("GM_MAX_BUFFER_BYTES {} is short of {} for 2 connections", terms.limit, terms.limit + 2)
+        );
         assert!(
             lines[2] == "raise GM_MAX_BUFFER_BYTES to 1073741824 or lower GM_MAX_CONNECTIONS to 1",
             "a handshake byte more on each connection: {refused}"

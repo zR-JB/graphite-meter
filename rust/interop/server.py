@@ -106,7 +106,7 @@ def fewer_endpoints(binary: Path, fixture: Fixture) -> None:
         try:
             server.start()
         except RuntimeError:
-            minimum = re.search(r"must be at least (\d+)", server.output())
+            minimum = re.search(r"is short of (\d+) for", server.output())
             if minimum is None or int(minimum[1]) <= budget:
                 raise
             budget = int(minimum[1])
