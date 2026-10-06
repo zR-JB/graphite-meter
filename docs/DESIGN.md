@@ -204,8 +204,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   only), and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
-  and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
-  width. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
+  and each lane row) springs from where it is seen to its new place on the compositor, a card or the stage
+  changing width with it, and any other wider one opens from its old width. The spring sets off from rest, or at
+  the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
+  one move shares it, so edges that meet stay together through the bob, and nothing starts or stops at once. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
   arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
   moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
   in History moves its panes the same way: the list keeps its place while its width changes, so the result rises in
@@ -217,9 +219,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   swap, so the fade itself runs on the compositor and no element writes its opacity per frame. A view that
   carries a figure (`--rise`: the dial's 6 px, a card's 3 px) sinks as it leaves and rises as the next arrives.
   A stage's hue changes with its stage, never by a crossfade: the re-armed needle tells the change.
-- A docked sheet's column opens or closes in one step, never glides: a glide would lay the whole console out on
-  every frame. The move is `flip()`'s: the sheet slides in from its edge (320 ms, no overshoot) and pushes the
-  stage, which moves as one surface from where it stood; closing reverses it. A dragged handle sets the column's
+- A docked sheet's column opens or closes in one step and `flip()` moves it: the sheet slides in from its edge on
+  the spring and the stage moves and resizes with it, its far edge still, laying out only the stage per frame
+  (about 0.4 ms); closing reverses it, and swapping one dock for another of the same width only moves the stage.
+  The sheet's ground runs on past the screen edge, so its bob opens no gap there. A dragged handle sets the column's
   width directly. A changed time rolls like a counter (`Roll`, 320 ms): up as it grows, down as it shrinks.
 - The dial's head is a bead in its hue, a little wider than the arc. While the latency stage runs, each idle
   reply rings out from it, one `--dur-pulse` at a time: a faint hairline ring in its hue widens to twice the
