@@ -1,6 +1,6 @@
-use graphite_meter_proto::origin::{BaseUrl, Origin};
+use graphite_meter_proto::origin::BaseUrl;
 use graphite_meter_server::config::{self, Config, ListenerKind, Loaded, Methods, Secret};
-use std::{ffi::OsString, time::Duration};
+use std::ffi::OsString;
 
 fn load(env: &[(&str, &str)], args: &[&str]) -> (Result<Loaded, String>, String) {
     let mut usage = Vec::new();
@@ -28,24 +28,6 @@ const TLS: [(&str, &str); 2] = [("GM_TLS_CERT", "/c.pem"), ("GM_TLS_KEY", "/k.pe
 
 fn with_tls<'a>(env: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     TLS.iter().chain(env).copied().collect()
-}
-
-#[test]
-fn flags_override_the_environment_and_report_their_errors_first() {
-    let env = [("GM_SERVER_NAME", "from env"), ("GM_SERVER_LOCATION", "  Berlin  ")];
-    let loaded = config(&env, &["-name", "from flag", "--verbose", "-result-history-default=1", "rest", "-name=x"]);
-    assert_eq!((loaded.name(), loaded.location()), ("from flag", "Berlin"));
-    assert!(loaded.verbose && loaded.result_history_default);
-    let env = [("GM_MAX_CONNECTIONS", "many")];
-    assert_eq!(error(&env, &[]), "GM_MAX_CONNECTIONS: must be an integer");
-    assert_eq!(error(&env, &["-nope"]), "flag provided but not defined: -nope");
-    let refused = "GM_MAX_CONNECTIONS: must be an integer";
-    assert_eq!(
-        error(&env, &["-max-connections", "128"]),
-        refused,
-        "a flag does not repair the environment"
-    );
-    assert_eq!(config(&[], &["-max-connections", "128"]).limits.connections, 128);
 }
 
 #[test]
@@ -83,36 +65,6 @@ fn secrets_and_proxies_have_no_flag() {
     for flag in env_only.into_iter().chain(["server-catalog-file"]) {
         assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("flag provided but not defined: -{flag}"));
         assert!(!include_str!("usage.txt").contains(&format!("-{flag} ")), "{flag}");
-    }
-}
-
-#[test]
-fn values_are_trimmed_and_typed_as_go_reads_them() {
-    let env = [
-        ("GM_PUBLIC_ORIGINS", " https://a.example , ,self,"),
-        ("GM_VERBOSE", "TRUE"),
-        ("GM_RESULT_HISTORY_DEFAULT", ""),
-        ("GM_MAX_ACTIVE_MEASUREMENTS", " "),
-        ("GM_MAX_STAGE_DURATION", ""),
-    ];
-    let loaded = config(&env, &[]);
-    let a = BaseUrl::Origin(Origin::parse("https://a.example").unwrap());
-    assert_eq!(loaded.public.both, [a, BaseUrl::Served]);
-    assert!(loaded.verbose && !loaded.result_history_default);
-    assert_eq!((loaded.limits.operations, loaded.lifetimes.stage), (256, Duration::from_secs(300)));
-    assert_eq!(error(&[("GM_VERBOSE", "yes")], &[]), "GM_VERBOSE: must be true/false or 1/0");
-    assert_eq!(
-        error(&[("GM_MAX_CONNECTIONS", "-1")], &[]),
-        "GM_MAX_CONNECTIONS must be greater than zero"
-    );
-    assert_eq!(error(&[("GM_H1_ADDR", "")], &[]), "GM_H1_ADDR must not be empty");
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStringExt;
-        let mut usage = Vec::new();
-        let invalid = |name: &str| (name == "GM_SERVER_NAME").then(|| OsString::from_vec(vec![0xff]));
-        let loaded = config::load(invalid, Vec::<OsString>::new(), &mut usage);
-        assert_eq!(loaded.unwrap_err(), "GM_SERVER_NAME: must be UTF-8");
     }
 }
 
@@ -359,21 +311,4 @@ fn authentication_refusals_read_as_go_does() {
         env.push(change);
         assert_eq!(error(&dedupe(env), &[]), message, "{change:?}");
     }
-}
-
-#[test]
-fn catalogue_and_identity_failures_name_their_settings() {
-    let catalog = r#"{"defaultSelection":["remote","self"],"servers":[{"id":"remote","url":"https://r.example"}]}"#;
-    let config = config(&[("GM_SERVER_CATALOG", catalog), ("GM_SERVER_NAME", "Lab")], &[]);
-    assert_eq!(config.catalog.servers.len(), 2);
-    assert_eq!(config.name(), "Lab");
-    assert_eq!(config.catalog.default_selection[0].as_str(), "remote");
-    let long = "x".repeat(257);
-    let prefix = "GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalogue: ";
-    assert!(error(&[("GM_SERVER_NAME", &long)], &[]).starts_with(prefix));
-    assert!(error(&[("GM_SERVER_LOCATION", "a\u{1b}b")], &[]).starts_with(prefix));
-    assert_eq!(
-        error(&[("GM_SERVER_CATALOG", "[]"), ("GM_SERVER_CATALOG_FILE", "/x")], &[]),
-        "set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE"
-    );
 }

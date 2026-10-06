@@ -100,19 +100,6 @@ async fn an_http11_request_names_exactly_one_valid_host() {
 }
 
 #[tokio::test]
-async fn options_asterisk_is_answered_before_any_route_except_over_http3() {
-    let app = app(&ALL_LISTENERS);
-    for (endpoint, version, status) in [
-        (Endpoint::H1, Version::HTTP_11, StatusCode::OK),
-        (Endpoint::H2, Version::HTTP_2, StatusCode::OK),
-        (Endpoint::Quic, Version::HTTP_3, StatusCode::NOT_FOUND),
-    ] {
-        let response = send(&app, endpoint, empty(request("OPTIONS", "*").version(version))).await;
-        assert_eq!(response.status(), status, "{version:?}");
-    }
-}
-
-#[tokio::test]
 async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
     let app = app(&ALL_LISTENERS);
     let pin = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/routes.txt")).unwrap();

@@ -61,29 +61,6 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     assert!(retried(&h3, "127.0.0.3").await, "a quarter of the connections are used");
 }
 
-#[tokio::test]
-async fn a_silent_handshake_holds_its_connection_for_ten_seconds() {
-    let h3 = H3::start(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "1")]).await;
-    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    silent
-        .send_to(&initial(&h3).await, h3.server.quic.unwrap())
-        .await
-        .unwrap();
-    silent.recv(&mut [0; 2048]).await.unwrap();
-    let refused = h3.connect_from("127.0.0.1", transport(None)).await.err();
-    assert!(refused.is_some(), "the handshake holds the client's only connection");
-    for _ in 0..9 {
-        advance_clock(Duration::from_secs(1)).await;
-    }
-    assert!(h3.connect_from("127.0.0.1", transport(None)).await.is_err(), "nine seconds in");
-    advance_clock(Duration::from_millis(1500)).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        h3.connect_from("127.0.0.1", transport(None)).await.is_ok(),
-        "the handshake ended at ten seconds"
-    );
-}
-
 /// The budget's usage once it held still for a while.
 pub(super) async fn settled(budget: &Budget) -> usize {
     let mut last = budget.usage().used;

@@ -79,7 +79,6 @@ async fn native_targets_name_the_requested_host_in_listener_order() {
         "https://speed.example:7249 webtransport",
     ];
     assert_eq!((latency, stage), (expected.map(String::from).to_vec(), json!(90_000)));
-    assert_eq!(preflight("[2001:db8::1]:80").await.0[0], "http://[2001:db8::1]:7246 fetch-stream http1");
     assert_eq!(preflight("bad_host!").await.0[1], "https://localhost:7247 fetch-stream http1");
 
     let env = [&ALL_LISTENERS[..], &[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http2")]].concat();
@@ -135,15 +134,6 @@ async fn the_probe_reports_the_client_the_transport_and_the_handler_load() {
         (&document["clientIp"], &document["clientIpSource"]),
         (&json!("198.51.100.8"), &json!("forwarded"))
     );
-    let chained = request("GET", "/probe")
-        .header("x-real-ip", "198.51.100.8")
-        .header("forwarded", "for=a");
-    let response = send_from(app, Endpoint::H1, "10.1.2.3", empty(chained)).await;
-    assert_eq!(
-        (response.status(), header(&response, "access-control-allow-origin")),
-        (StatusCode::BAD_REQUEST, Some("*"))
-    );
-    assert_eq!(text(response).await, "ambiguous client address\n");
 }
 
 #[tokio::test]

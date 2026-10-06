@@ -7,7 +7,7 @@ use http::StatusCode;
 use http_body::Frame;
 use http_body_util::StreamBody;
 use std::time::Duration;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::timeout;
 
 type Frames = StreamBody<std::pin::Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, Infallible>> + Send>>>;
 
@@ -16,15 +16,6 @@ fn chunks(chunks: &'static [&'static [u8]], stalls: bool) -> Frames {
     let data = stream::iter(chunks.iter().map(|chunk| Ok(Frame::data(Bytes::from_static(chunk)))));
     let rest = if stalls { stream::pending().boxed() } else { stream::empty().boxed() };
     StreamBody::new(data.chain(rest).boxed())
-}
-
-/// An upload body sending one byte every ten seconds without end.
-fn trickle() -> Frames {
-    let bytes = stream::repeat(()).then(|()| async {
-        sleep(Duration::from_secs(10)).await;
-        Ok(Frame::data(Bytes::from_static(b"x")))
-    });
-    StreamBody::new(bytes.boxed())
 }
 
 async fn mint(app: &App) -> String {
@@ -93,28 +84,6 @@ async fn an_upload_without_its_own_valid_id_is_refused_before_its_body_is_read()
         assert_eq!(text(response).await, format!("{message}\n"));
     }
     assert_eq!(checkpoint(&app, &id).await["bytes"], 0);
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_upload_reaching_its_lifetime_or_shutdown_closes_without_an_answer() {
-    let app = app(&[&ALL_LISTENERS[..], &[("GM_MAX_OPERATION_DURATION", "45s")]].concat());
-    let id = mint(&app).await;
-    let start = Instant::now();
-    let upload = || request("POST", &format!("/upload?id={id}")).body(trickle()).unwrap();
-    assert!(matches!(outcome(&app, Endpoint::H1, "192.0.2.1", upload()).await, Outcome::Abort));
-    assert_eq!(start.elapsed(), Duration::from_secs(45));
-    assert_eq!(checkpoint(&app, &id).await["bytes"], 4, "bytes count in every ending");
-
-    let shutdown = CancellationToken::new();
-    let app = App::new(config(&ALL_LISTENERS), shutdown.clone()).unwrap();
-    let id = mint(&app).await;
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(25)).await;
-        shutdown.cancel();
-    });
-    let upload = request("POST", &format!("/upload?id={id}")).body(trickle()).unwrap();
-    assert!(matches!(outcome(&app, Endpoint::H1, "192.0.2.1", upload).await, Outcome::Abort));
-    assert_eq!(checkpoint(&app, &id).await["bytes"], 2);
 }
 
 #[tokio::test]

@@ -23,7 +23,7 @@ use std::{
     process::Command,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -62,8 +62,8 @@ pub(super) fn child(test: &str) -> bool {
 }
 
 /// What the provider changes in its answers: members merged into its metadata, its RSA key, the ID token's header
-/// and claims and the user information, where `null` removes one; `=` padding on its keys' members, the key set as
-/// `key_set` rewrites it, and user information signed with its P-256 key.
+/// and claims and the user information, where `null` removes one; `=` padding on its keys' members and the key set as
+/// `key_set` rewrites it.
 #[derive(Default)]
 pub(super) struct Twist {
     pub padded_keys: bool,
@@ -73,7 +73,6 @@ pub(super) struct Twist {
     pub header: Value,
     pub claims: Value,
     pub userinfo: Value,
-    pub signed_userinfo: bool,
 }
 
 struct Shared {
@@ -82,7 +81,6 @@ struct Shared {
     /// Each code's PKCE challenge and nonce.
     codes: Mutex<HashMap<String, (String, String)>>,
     twist: Mutex<Twist>,
-    ready: AtomicBool,
     key_sets: AtomicUsize,
     /// Where token and user information requests announce themselves while held.
     held: Mutex<Option<Held>>,
@@ -115,7 +113,6 @@ impl Provider {
             keys: Signers::new(),
             codes: Mutex::default(),
             twist: Mutex::default(),
-            ready: AtomicBool::new(true),
             key_sets: AtomicUsize::new(0),
             held: Mutex::default(),
         });
@@ -138,11 +135,6 @@ impl Provider {
 
     pub fn issuer(&self) -> &str {
         &self.0.issuer
-    }
-
-    /// Answers discovery, or 503 until set ready.
-    pub fn set_ready(&self, ready: bool) {
-        self.0.ready.store(ready, Ordering::Relaxed);
     }
 
     pub fn twist(&self, twist: Twist) {
@@ -198,7 +190,6 @@ impl Shared {
         }
         let issuer = &self.issuer;
         let (status, document) = match head.uri.path() {
-            "/.well-known/openid-configuration" if !self.ready.load(Ordering::Relaxed) => (503, json!({})),
             "/.well-known/openid-configuration" => (
                 200,
                 merge(
@@ -231,13 +222,6 @@ impl Shared {
                 assert_eq!(head.headers[header::AUTHORIZATION], "Bearer access");
                 let twist = self.twist.lock().unwrap();
                 let info = json!({"sub": "operator", "name": "Example Operator", "groups": ["operators"]});
-                if twist.signed_userinfo {
-                    let claims = merge(json!({"iss": issuer, "aud": CLIENT_ID}), &info);
-                    let token = self
-                        .keys
-                        .sign(&json!({"alg": "ES256", "kid": "p256"}), &merge(claims, &twist.userinfo));
-                    return answered(200, "application/jwt", token);
-                }
                 (200, merge(info, &twist.userinfo))
             }
             path => panic!("unexpected provider request {path}"),

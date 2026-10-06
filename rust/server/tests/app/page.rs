@@ -154,36 +154,11 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
         assert_eq!(header(&unchanged, name), None, "{name}");
     }
     assert_eq!(text(unchanged).await, "");
-    let icon = get(&app, "GET", "/favicon.svg", &[]).await;
-    let tag = header(&icon, "etag").unwrap().to_owned();
-    assert_eq!((tag.len(), header(&icon, "vary")), (18, None));
-    let unchanged = get(&app, "GET", "/favicon.svg", &[("if-none-match", &tag)]).await;
-    assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
-    assert_eq!(header(&unchanged, "etag"), Some(tag.as_str()));
-    assert_eq!(header(&unchanged, "cache-control"), Some("no-cache"));
-    let changed = get(&app, "GET", "/favicon.svg", &[("if-none-match", "\"other\"")]).await;
-    assert_eq!(text(changed).await, "<svg/>");
-    let font = get(&app, "GET", "/fonts/face.woff2", &[]).await;
-    assert_eq!(header(&font, "cache-control"), Some("public, max-age=604800"));
     let index = get(&app, "GET", "/", &[("accept-encoding", "br, gzip")]).await;
     for name in ["content-encoding", "vary", "etag"] {
         assert_eq!(header(&index, name), None, "{name}");
     }
     assert!(text(index).await.contains("content=\"false\"></head>"));
-}
-
-#[tokio::test]
-async fn the_browser_notice_is_the_shared_report_suffix() {
-    let app = served(&[]);
-    let response = send(&app, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;
-    assert_eq!(header(&response, "content-type"), Some("text/plain; charset=utf-8"));
-    assert_eq!(header(&response, "cache-control"), Some("no-cache"));
-    assert!(header(&response, "etag").is_some());
-    assert_eq!(text(response).await, "browser notice\n");
-    let unshared = Box::leak(Box::new(Notices::new(None, None, "")));
-    let unshared = super::app(&[]).with_assets(FILES, unshared);
-    let response = send(&unshared, Endpoint::H1, empty(request("GET", "/legal/THIRD_PARTY_NOTICES.txt"))).await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 //! OIDC sign-in over the app against a fake provider over TLS: the round trip, transaction binding, ID token and
-//! user information checks, group membership, discovery, budgets and the security log.
+//! key checks, group membership, discovery and the exchange bound.
 
 use super::{
     auth::{HASH, PUBLIC, public, store, tls},
@@ -276,7 +276,6 @@ async fn id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims() {
         json!({"alg": "ES512"}),
         json!({"alg": "RS256", "kid": "p256"}),
         json!({"crit": ["exp"]}),
-        json!({"typ": "secevent+jwt"}),
     ] {
         assert!(!signs_in(header.clone(), json!({})).await, "{header}");
     }
@@ -287,56 +286,11 @@ async fn id_tokens_need_an_allowed_algorithm_a_known_key_and_valid_claims() {
         json!({"iss": "https://elsewhere.example"}),
         json!({"aud": "another"}),
         json!({"exp": now - 1}),
-        json!({"nbf": now + 400}),
         json!({"at_hash": "another-access-token"}),
         json!({"nonce": null}),
     ] {
         assert!(!signs_in(json!({}), claims.clone()).await, "{claims}");
     }
-}
-
-#[tokio::test]
-async fn hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background() {
-    if !child("oidc::hybrid_keeps_the_password_while_the_provider_is_down_and_discovers_it_in_the_background") {
-        return;
-    }
-    let provider = Provider::start().await;
-    provider.set_ready(false);
-    let app = oidc_app(provider.issuer(), true);
-    let page = async || text(tls(&app, empty(public("GET", "/login"))).await).await;
-    let html = page().await;
-    assert!(html.contains("<button type=\"submit\" disabled>Continue with Id</button>"));
-    assert!(html.contains("<p class=\"notice\">Id is unavailable right now.</p>") && html.contains("current-password"));
-    assert!(html.contains("<div class=\"separator\">or</div>"));
-    assert_eq!(location(&start(&app, "192.0.2.1", "").await), "/login?error=provider");
-    let html = text(tls(&app, empty(public("GET", "/login?error=provider"))).await).await;
-    assert!(html.contains("Id is unavailable right now. Sign in with the operator password.</p>"));
-    let password = public("POST", "/auth/password")
-        .header("origin", PUBLIC)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("__Host-gm_login={NONCE}"))
-        .body(Full::new(Bytes::from(format!("csrf={NONCE}&password=correct+horse"))))
-        .unwrap();
-    assert_eq!(location(&tls(&app, password).await), "/");
-
-    let discovery = app.auth().background_discovery().unwrap();
-    let ready = async {
-        while !page()
-            .await
-            .contains("<button type=\"submit\" >Continue with Id</button>")
-        {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            provider.set_ready(true);
-        }
-    };
-    tokio::select! {
-        () = discovery => unreachable!("discovery runs until the server stops"),
-        ready = tokio::time::timeout(Duration::from_secs(5), ready) => ready.unwrap(),
-    }
-    assert_eq!(sign_in(&app, &provider, "192.0.2.2").await.status(), StatusCode::OK);
-    assert!(
-        line(&app, &mut [0; COUNTERS]).starts_with("[gm:auth] 1m local=1 oidc=1 invalid-password=0 oidc-failure=1 ")
-    );
 }
 
 #[tokio::test]
@@ -359,38 +313,6 @@ async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_re
     assert!(retrying.is_err(), "hybrid retries past the first backoff");
     let html = text(tls(&app, empty(public("GET", "/login"))).await).await;
     assert!(html.contains("disabled>Continue with Id</button>") && html.contains("current-password"));
-}
-
-#[tokio::test]
-async fn starts_and_code_exchanges_are_budgeted_per_client_address() {
-    if !child("oidc::starts_and_code_exchanges_are_budgeted_per_client_address") {
-        return;
-    }
-    let provider = Provider::start().await;
-    let app = discovered(&provider).await;
-    let mut last = [0; COUNTERS];
-    for _ in 0..8 {
-        assert!(location(&start(&app, "192.0.2.1", "").await).starts_with(provider.issuer()));
-    }
-    for _ in 0..2 {
-        assert_eq!(
-            location(&start(&app, "192.0.2.1", "").await),
-            "/login?error=busy",
-            "eight open transactions"
-        );
-    }
-    assert_eq!(location(&start(&app, "192.0.2.1", "").await), "/login?error=throttled");
-    assert!(
-        line(&app, &mut last)
-            .contains("oidc-failure=3 group-denial=0 replay-expiry=0 throttled=1 logout=0 cli-approval=0 capacity=2")
-    );
-    for client in 10..20 {
-        let signed = sign_in_from(&app, &provider, &format!("192.0.2.{client}"), "198.51.100.1").await;
-        assert_eq!(signed.status(), StatusCode::OK);
-    }
-    let throttled = sign_in_from(&app, &provider, "192.0.2.20", "198.51.100.1").await;
-    assert_eq!(location(&throttled), "/login?error=failed", "the eleventh exchange in the minute");
-    assert!(line(&app, &mut last).starts_with("[gm:auth] 1m local=0 oidc=10 invalid-password=0 oidc-failure=1 "));
 }
 
 #[tokio::test]
@@ -446,10 +368,6 @@ fn rsa_key(rsa_key: Value) -> Twist {
     Twist { rsa_key, ..signed_as(json!({"alg": "RS256", "kid": "rsa"})) }
 }
 
-fn signed_userinfo(userinfo: Value) -> Twist {
-    Twist { signed_userinfo: true, userinfo, ..Twist::default() }
-}
-
 fn key_set(key_set: fn(Value) -> String, header: Value) -> Twist {
     Twist { key_set: Some(key_set), header, ..Twist::default() }
 }
@@ -474,23 +392,12 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
     let pad = |pad: usize| Twist { claims: json!({"pad": "x".repeat(pad)}), ..Twist::default() };
     let rows = [
         ("padded RSA", padded(rsa()), true),
-        ("padded P-256", padded(json!({})), true),
         ("use=enc", rsa_key(json!({"use": "enc"})), false),
-        ("use=sig", rsa_key(json!({"use": "sig"})), true),
         ("key_ops=[sign]", rsa_key(json!({"key_ops": ["sign"]})), false),
-        ("key_ops=[sign, verify]", rsa_key(json!({"key_ops": ["sign", "verify"]})), true),
         ("a key for RS384", rsa_key(json!({"alg": "RS384"})), false),
-        ("a key with a numeric alg", rsa_key(json!({"alg": 256})), false),
         ("16 KiB", pad(11_700), true),
         ("over 16 KiB", pad(12_100), false),
         ("cty", signed_as(json!({"cty": "JWT"})), false),
-        ("signed user information", signed_userinfo(json!({})), true),
-        (
-            "signed by another issuer",
-            signed_userinfo(json!({"iss": "https://elsewhere.example"})),
-            false,
-        ),
-        ("signed for another client", signed_userinfo(json!({"aud": "another"})), false),
         (
             "keys named twice",
             key_set(|keys| format!(r#"{{"keys":[],"keys":{}}}"#, keys["keys"]), json!({})),

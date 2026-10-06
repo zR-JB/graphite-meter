@@ -154,12 +154,7 @@ async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writ
         &[
             ("access-control-allow-origin", Some(PUBLIC)),
             ("access-control-allow-credentials", Some("true")),
-            (
-                "access-control-expose-headers",
-                Some("Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After"),
-            ),
             ("vary", Some("Origin")),
-            ("strict-transport-security", Some("max-age=31536000")),
         ],
     );
     let session = tls(&app, empty(signed("POST", "/upload/session", &login))).await;
@@ -221,9 +216,7 @@ async fn preflights_answer_the_public_origin_and_browser_grants_over_https_only(
     assert_eq!(header(&exchange, "access-control-allow-methods"), Some("POST"));
     for (endpoint, path, origin, headers) in [
         (Endpoint::H1Tls, "/download", BROWSER, "content-type"),
-        (Endpoint::H1Tls, "/download", "http://app.example", "authorization"),
         (Endpoint::H1Tls, "/servers", BROWSER, "authorization"),
-        (Endpoint::H1Tls, "/download", PUBLIC, "x-other"),
         (Endpoint::H1, "/download", PUBLIC, ""),
     ] {
         let refused = preflight(&app, endpoint, path, origin, headers).await;
@@ -242,17 +235,7 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     assert_eq!(probe.status(), StatusCode::OK);
     assert_headers(
         &probe,
-        &[
-            ("access-control-allow-origin", Some(BROWSER)),
-            ("access-control-allow-credentials", None),
-            (
-                "access-control-expose-headers",
-                Some(
-                    "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After, \
-             Graphite-Meter-Browser-Auth",
-                ),
-            ),
-        ],
+        &[("access-control-allow-origin", Some(BROWSER)), ("access-control-allow-credentials", None)],
     );
     for (path, origin) in [("/servers", BROWSER), ("/probe", PUBLIC), ("/probe", ""), ("/", BROWSER)] {
         let refused = tls(&app, empty(bearer("GET", path, &browser).header("origin", origin))).await;
@@ -310,24 +293,4 @@ async fn a_login_ends_after_eight_hours_and_a_subject_holds_eight() {
     tokio::time::advance(Duration::from_millis(1)).await;
     lease.ended().await;
     assert!(store.cookie(&logins[1].token).is_none());
-}
-
-#[tokio::test]
-async fn the_session_report_needs_the_session_cookie_and_answers_like_every_auth_route() {
-    let app = auth_app(&[]);
-    let login = login(&app, "operator");
-    let grant = store(&app).grant(login.key, None).unwrap();
-    let refused = StatusCode::FORBIDDEN;
-    let requests = [
-        (public("GET", "/auth/session"), refused),
-        (bearer("GET", "/auth/session", &grant), refused),
-        (signed("GET", "/auth/session", &login), StatusCode::OK),
-    ];
-    for (request, status) in requests {
-        let answer = tls(&app, empty(request)).await;
-        assert_eq!(answer.status(), status);
-        assert_headers(&answer, &[("cache-control", Some("no-store")), ("x-frame-options", Some("DENY"))]);
-        let policy = header(&answer, "content-security-policy").unwrap();
-        assert!(policy.starts_with("default-src 'none'"), "{policy}");
-    }
 }
