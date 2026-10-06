@@ -1,7 +1,11 @@
 //! Authentication over the app: Go's refusals, trust, and cookie and grant access.
 
 use super::*;
-use graphite_meter_server::auth::{NewLogin, Store};
+use graphite_meter_server::{
+    auth::{NewLogin, OPERATOR, Store},
+    limits::CONNECTION_CREDIT,
+    peer::ClientKeys,
+};
 use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
@@ -202,4 +206,24 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     assert!(store(&app).sign_out(login.key, false));
     let ended = tls(&app, empty(bearer("GET", "/probe", &native))).await;
     assert_eq!(header(&ended, "graphite-meter-auth"), Some("required"));
+}
+
+#[tokio::test]
+async fn password_logins_fund_windows_past_one_client_s_share() {
+    // Three logins at a client's share each pass the principal's double share unless it is exempt.
+    let share = 8 * CONNECTION_CREDIT;
+    let funded = |app: &App| {
+        let held: Vec<_> = (0..3)
+            .map(|_| {
+                let token = store(app).sign_in(OPERATOR, "Local operator", "local").unwrap().token;
+                app.window_credit(&store(app).cookie(&token).unwrap().keys(), share)
+            })
+            .collect();
+        held.iter().flatten().count()
+    };
+    assert_eq!(funded(&auth_app(&[])), 3);
+    assert_eq!(funded(&super::oidc::oidc_app("https://localhost:1", false)), 2);
+    let (open, source) = (app(&[]), ClientKeys::address("192.0.2.1".parse().unwrap()));
+    let _held = open.window_credit(&source, share).unwrap();
+    assert!(open.window_credit(&source, 1).is_none(), "without auth a client keeps its share");
 }

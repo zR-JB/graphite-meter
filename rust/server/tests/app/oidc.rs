@@ -18,7 +18,7 @@ use std::{
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 
-fn oidc_app(issuer: &str, hybrid: bool) -> App {
+pub(super) fn oidc_app(issuer: &str, hybrid: bool) -> App {
     let mut env = ALL_LISTENERS.to_vec();
     env.extend([
         ("GM_AUTH_MODE", if hybrid { "hybrid" } else { "oidc" }),
@@ -321,6 +321,10 @@ fn rsa_key(rsa_key: Value) -> Twist {
     Twist { rsa_key, ..signed_as(json!({"alg": "RS256", "kid": "rsa"})) }
 }
 
+fn signed_userinfo(userinfo: Value) -> Twist {
+    Twist { signed_userinfo: true, userinfo, ..Twist::default() }
+}
+
 fn key_set(key_set: fn(Value) -> String, header: Value) -> Twist {
     Twist { key_set: Some(key_set), header, ..Twist::default() }
 }
@@ -368,6 +372,13 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
         ("16 KiB", pad(11_700), true),
         ("over 16 KiB", pad(12_100), false),
         ("cty", signed_as(json!({"cty": "JWT"})), false),
+        ("signed user information", signed_userinfo(json!({})), true),
+        (
+            "user information from another issuer",
+            signed_userinfo(json!({"iss": "https://elsewhere.example"})),
+            false,
+        ),
+        ("user information for another client", signed_userinfo(json!({"aud": "another"})), false),
         (
             "keys named twice",
             key_set(|keys| format!(r#"{{"keys":[],"keys":{}}}"#, keys["keys"]), json!({})),

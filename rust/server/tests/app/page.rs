@@ -153,7 +153,13 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
     for name in ["content-encoding", "content-type", "content-length"] {
         assert_eq!(header(&unchanged, name), None, "{name}");
     }
+    assert_eq!(header(&unchanged, "etag"), Some(tags[2].1.as_str()));
+    assert_eq!(header(&unchanged, "cache-control"), Some("public, max-age=31536000, immutable"));
     assert_eq!(text(unchanged).await, "");
+    let changed = get(&app, "GET", "/favicon.svg", &[("if-none-match", "\"other\"")]).await;
+    assert_eq!(text(changed).await, "<svg/>");
+    let font = get(&app, "GET", "/fonts/face.woff2", &[]).await;
+    assert_eq!(header(&font, "cache-control"), Some("public, max-age=604800"));
     let index = get(&app, "GET", "/", &[("accept-encoding", "br, gzip")]).await;
     for name in ["content-encoding", "vary", "etag"] {
         assert_eq!(header(&index, name), None, "{name}");
