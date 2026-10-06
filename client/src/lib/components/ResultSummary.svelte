@@ -484,7 +484,7 @@
     }
     .card {
       gap: 2px;
-      padding: 8px var(--space-3) 10px;
+      padding: 7px var(--space-3) 8px;
     }
     /* The figure stands at the right across the name's line and its detail's. */
     .card {

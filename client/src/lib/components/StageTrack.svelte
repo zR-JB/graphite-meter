@@ -401,7 +401,7 @@
     }
     .chip {
       container-type: inline-size;
-      padding: 8px;
+      padding: 6px 8px;
     }
     .chip-tag .full {
       display: none;

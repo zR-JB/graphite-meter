@@ -240,7 +240,7 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   beside the latency lanes with the controls under them, the run key over the stage chips, centred in the room
   the lanes leave; the dial is as tall as its ring wants or as the lanes and the controls together; under both
   one card per stage across the console. What is measured live lies on the page (dial, lanes, keys); what is
-  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps about three tenths
+  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps under a third
   of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
   without its glyph) and no legend, the cards one to a row in stage order, each whole from Start so nothing moves
   as the stages run and compact so a default run's three fit the screen of a large phone (the figure at the right
