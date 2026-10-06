@@ -1,16 +1,15 @@
 //! Operations against the server through the controller: a run replacing a check, a stop before the run starts, and
 //! the sign-ins a protected server asks for where none can happen.
 use graphite_meter_client::{
-    config::{self, Config, Parsed},
+    config::Config,
     controller::{Command, Controller, SIGN_IN},
     events::{Event, Events},
     model::{Failure, Outcome},
 };
-use graphite_meter_e2e::{Server, until};
+use graphite_meter_e2e::{self as e2e, Server, until};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{origin::Origin, reason::FailureReason};
 use std::{
-    ffi::OsString,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -22,11 +21,7 @@ const LIMIT: Duration = Duration::from_secs(20);
 /// A one-second latency run at `url` without warmup.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
-    let args = [&["-url", &url, "-stages", "latency", "-latency-duration", "1s", "-warmup", "0s"], args].concat();
-    match config::parse(args.into_iter().map(OsString::from)) {
-        Ok(Parsed::Run(config)) => *config,
-        other => panic!("{other:?}"),
-    }
+    e2e::config(&[&["-url", &url, "-stages", "latency", "-latency-duration", "1s", "-warmup", "0s"], args].concat())
 }
 
 fn controller(interactive: bool) -> (Controller, UnboundedReceiver<Event>) {

@@ -1,7 +1,7 @@
 //! Whole runs against the server on pinned runtimes: every stage over each transport, a server that departs
 //! mid-stage, and a run without the interface.
 use graphite_meter_client::{
-    config::{self, Config, Parsed},
+    config::Config,
     events::{Event, Events},
     headless,
     model::{Direction, Outcome, Scope, Stage, StageResult},
@@ -10,11 +10,11 @@ use graphite_meter_client::{
     run::{coordinator, prepare::prepare},
     tui::theme::Palette,
 };
-use graphite_meter_e2e::Server;
+use graphite_meter_e2e::{self as e2e, Server};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
 use graphite_meter_testkit::{Fault, Link};
-use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -36,11 +36,7 @@ const SHORT: [&str; 11] = [
 /// `args` at `url` without warmup, two HTTP/1.1 lanes a direction.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
-    let args = [&["-url", &url, "-warmup", "0s", "-auto-streams", "2"], args].concat();
-    match config::parse(args.into_iter().map(OsString::from)) {
-        Ok(Parsed::Run(config)) => *config,
-        other => panic!("{other:?}"),
-    }
+    e2e::config(&[&["-url", &url, "-warmup", "0s", "-auto-streams", "2"], args].concat())
 }
 
 /// The pinned runtimes beside the test's multi-thread runtime.

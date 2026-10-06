@@ -1,9 +1,10 @@
 //! End-to-end tests of the client against the in-process server.
+use graphite_meter_client::config::{self, Config, Parsed};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::origin::Origin;
 use graphite_meter_server::{
     app::{App, Endpoint},
-    config::{self, Loaded},
+    config::Loaded,
     runtime,
 };
 use graphite_meter_testkit::{Identity, Scratch};
@@ -53,7 +54,7 @@ impl Server {
             ("GM_TLS_KEY", key.into()),
         ]);
         let lookup = |name: &str| env.iter().find(|(set, _)| *set == name).map(|(_, value)| value.clone());
-        let loaded = config::load(lookup, Vec::<OsString>::new(), &mut Vec::new());
+        let loaded = graphite_meter_server::config::load(lookup, Vec::<OsString>::new(), &mut Vec::new());
         let Ok(Loaded::Config(config)) = loaded else {
             panic!("the test configuration loads: {:?}", loaded.err());
         };
@@ -79,6 +80,14 @@ impl Server {
             _stop: stop,
             _scratch: scratch,
         }
+    }
+}
+
+/// The client's run settings for `args`.
+pub fn config(args: &[&str]) -> Config {
+    match config::parse(args.iter().map(OsString::from)) {
+        Ok(Parsed::Run(config)) => *config,
+        other => panic!("{args:?}: {other:?}"),
     }
 }
 

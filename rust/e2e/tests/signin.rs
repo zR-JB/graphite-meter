@@ -1,17 +1,17 @@
 //! Native sign-in against a password-mode server, each test in a child process that trusts the server's CA alone:
 //! the operator's browser approves over HTTP and the run completes, or the approval expires.
 use graphite_meter_client::{
-    config::{self, Config, Parsed},
+    config::Config,
     controller::{Command, Controller},
     events::{Event, Events, SignInEnd, SignInPrompt},
     model::{Failure, Outcome},
     net::approval::EXPIRED,
 };
-use graphite_meter_e2e::{Server, until};
+use graphite_meter_e2e::{self as e2e, Server, until};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::reason::FailureReason;
 use graphite_meter_testkit::{Identity, Scratch};
-use std::{ffi::OsString, net::SocketAddr, path::Path, process::Command as Process, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::Path, process::Command as Process, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -70,7 +70,7 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
 /// A check of a latency and download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
-    let args = [
+    e2e::config(&[
         "-url",
         &url,
         "-stages",
@@ -79,11 +79,7 @@ fn config(address: SocketAddr) -> Config {
         "1s",
         "-download-duration",
         "1s",
-    ];
-    match config::parse(args.into_iter().map(OsString::from)) {
-        Ok(Parsed::Run(config)) => *config,
-        other => panic!("{other:?}"),
-    }
+    ])
 }
 
 /// The prompt an interactive check of `config` shows.

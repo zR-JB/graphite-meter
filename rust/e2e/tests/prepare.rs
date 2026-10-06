@@ -1,10 +1,9 @@
 //! Path checks against the server: each path, the fallbacks and failures by name.
 use graphite_meter_client::{
-    config::{self, Config, Parsed},
     net::{Client, LatencyPath, ThroughputPath},
     run::prepare::{Paths, Prepared, prepare},
 };
-use graphite_meter_e2e::Server;
+use graphite_meter_e2e::{self as e2e, Server};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
@@ -12,25 +11,12 @@ use graphite_meter_proto::{
     reason::FailureReason,
 };
 use std::{
-    ffi::OsString,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-fn config(url: &Origin, args: &[&str]) -> Config {
-    let url = url.to_string();
-    let args = ["-url", &url]
-        .into_iter()
-        .chain(args.iter().copied())
-        .map(OsString::from);
-    match config::parse(args) {
-        Ok(Parsed::Run(config)) => *config,
-        other => panic!("{other:?}"),
-    }
-}
-
 async fn check(url: &Origin, args: &[&str]) -> Prepared {
-    let config = config(url, args);
+    let config = e2e::config(&[&["-url", &url.to_string()], args].concat());
     let client = Client::new(config.insecure, Arc::new(Pool::inline()));
     prepare(&config, client).await.unwrap()
 }
