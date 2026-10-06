@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Validate release requests, then authorize stable releases and PR prereleases, each optionally with Rust builds."""
+"""Validate release requests, then authorize stable releases and main or PR prereleases, each optionally with Rust
+builds."""
 
 from __future__ import annotations
 
@@ -69,7 +70,7 @@ class Release:
 
     @property
     def stable(self) -> bool:
-        return self.pr == 0
+        return "-" not in self.tag
 
     @property
     def version(self) -> str:
@@ -86,8 +87,8 @@ def assets_sha256(directory: Path) -> str:
 
 def parse_release(tag: str, sha: str, pr: int, rust: bool = False) -> Release:
     match = TAG_RE.fullmatch(tag)
-    if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
-        gh.fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
+    if pr < 0 or match is None or (match.group(1) is None and pr):
+        gh.fail("stable tags are vMAJOR.MINOR.PATCH; prereleases, of main or a PR, add -{alpha,beta,rc}.N")
     if SHA_RE.fullmatch(sha) is None:
         gh.fail("release source must be a 40-character commit SHA")
     return Release(tag, sha, pr, rust)
@@ -147,9 +148,10 @@ def converge(what: str, probe: Callable[[], T | None]) -> T:
 def require_publishable(repository: str, release: Release) -> tuple[str, int, str]:
     """Return current main, the CI run and the PR CodeQL check that authorize `release`."""
     sha = release.sha
-    if release.stable:
+    if not release.pr:
         main = require_exact_current_main(repository, sha)
-        require_compatible_release_tag(repository, release.tag, sha)
+        if release.stable:
+            require_compatible_release_tag(repository, release.tag, sha)
         ci_run_id = require_ci_gate(repository, sha, event="push", branch="main")
         require_main_codeql(repository, sha)
         return main, ci_run_id, ""
@@ -178,9 +180,14 @@ def command_prepare() -> None:
     if (mode := env("MODE")) not in ("validate", "publish"):
         gh.fail("mode must be validate or publish")
     pr = env_int("PR") if os.environ.get("PR") else 0
-    if not pr and os.environ.get("SHA"):
+    sha = env_sha("SHA") if os.environ.get("SHA") else ""
+    release = parse_release(env("TAG"), sha or main, pr, flag("RUST"))
+    if release.stable and sha:
         gh.fail("stable releases build current main; leave sha empty")
-    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr, flag("RUST"))
+    if not release.stable and not sha:
+        gh.fail("prereleases name the exact commit they build in sha")
+    if not pr and sha and sha != main:
+        gh.fail(f"a prerelease without a PR builds main, which is {main}; sha must match")
     out = gh.runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     request = {
@@ -191,7 +198,7 @@ def command_prepare() -> None:
     (out / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
     gh.append_output(
         tag=release.tag, version=release.version, sha=release.sha,
-        stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
+        stable=str(release.stable).lower(), remote_sha=release.sha if release.pr else "",
         client_validate="0" if release.stable else "1", rust=str(release.rust).lower(),
     )
 
@@ -218,8 +225,8 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
                             gh.int_field(request, "pr", "request"), rust)
     if request["mode"] not in ("validate", "publish"):
         gh.fail("request mode must be validate or publish")
-    if release.stable and release.sha != publisher:
-        gh.fail("a stable release must build the trusted main commit")
+    if not release.pr and release.sha != publisher:
+        gh.fail("a release without a PR must build the trusted main commit")
     artifacts = {candidate.name: (BUILD_JOB, OCI_LIMIT + 1024 * 1024)}
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = (BUILD_JOB, ASSETS_LIMIT)

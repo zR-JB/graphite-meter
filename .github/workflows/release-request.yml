@@ -11,16 +11,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N with a PR
+        description: vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N for a prerelease
         required: true
         type: string
       pr:
-        description: Same-repository PR number for a prerelease; empty for a stable release
+        description: Same-repository PR number for a PR prerelease; empty to build main
         required: false
         default: ''
         type: string
       sha:
-        description: Exact PR head SHA for a prerelease; empty for a stable release
+        description: Exact commit a prerelease builds, the PR head or current main; empty for a stable release
         required: false
         default: ''
         type: string
@@ -197,8 +197,8 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  # The Rust jobs build the source the build job resolved: main for a stable release, which alone ships TUI
-  # archives and source offers, or the exact PR head that BuildKit fetches for a prerelease, as Go's image.
+  # The Rust jobs build the source the build job resolved: main, where a stable release alone ships TUI archives
+  # and source offers, or the exact PR head that BuildKit fetches for a PR prerelease, as Go's image.
   # Each job runs alone, so release.py binds every artifact to the one job that ran while it was written.
   rust-image:
     name: Build untrusted Rust image

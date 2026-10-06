@@ -29,8 +29,9 @@ without the jobs it needs, which the Gate would pass as skipped.
 gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
-A prerelease adds `-f pr=N -f sha=<PR head>` to a `vX.Y.Z-{alpha,beta,rc}.N`
-tag; `mode=validate` stops before any write. `-f rust=true` adds the
+A prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`,
+or `-f pr=N -f sha=<PR head>` to build an open PR; it publishes images only, and
+no alias follows it. `mode=validate` stops before any write. `-f rust=true` adds the
 experimental Rust image, tagged like Go's with `-rust`, and for a stable
 release the Rust TUI archives; Go's image and archives stay the default and
 are always released. Approve the `ghcr-release` deployment when the Release
@@ -41,8 +42,8 @@ run asks.
    prepare` sees the inputs, which GitHub also renders into the run title. A
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
-   image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token. With `rust`, the pinned Rust
+   image from main; a prerelease builds only the image, from main or, for a
+   PR, as the exact remote commit BuildKit fetches without a token. With `rust`, the pinned Rust
    builder builds the same source without caches: the `rust-image` job the
    linux/amd64 + linux/arm64 image, and for a stable release exports the
    server source offers from that same build, which its fresh builder holds;
@@ -59,8 +60,8 @@ run asks.
    the request's jobs run one after another, so none can supply another's
    artifact. It verifies the images and archives as data, the Rust ones
    as CI's `rust-release` job does, and
-   requires either every main CI job and CodeQL for a stable release or, for a
-   prerelease, an open PR containing current main with identical `.github`,
+   requires either every main CI job and CodeQL for a release of main or, for a
+   PR prerelease, an open PR containing current main with identical `.github`,
    `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
    A stable release whose tag already has a published Release must carry
    exactly its assets, since the images go out before the Release. Publish
@@ -82,7 +83,7 @@ GitHub's automatic source archives provide the project source; a stable
 release adds the third-party source archive, each Rust build's source offer
 and a source-availability note naming them. A prerelease publishes only its
 images and creates no GitHub Release. Go's and Rust's prerelease images both
-ship their notices, name the repository in `SOURCE.txt` and the PR head in
+ship their notices, name the repository in `SOURCE.txt` and the built commit in
 their `revision` label; that commit's lockfiles (`go/go.sum`,
 `client/bun.lock`, `rust/Cargo.lock` with the forks in
 `legal/rust-forks.json`) pin the third-party source they were built from.

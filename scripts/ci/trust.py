@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trust predicates shared by stable releases and PR prereleases."""
+"""Trust predicates shared by stable releases and main or PR prereleases."""
 
 from __future__ import annotations
 

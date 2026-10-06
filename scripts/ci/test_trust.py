@@ -238,10 +238,10 @@ class MainBindingTests(unittest.TestCase):
             with self.subTest(error=error), github(responses):
                 outcome(self, error, lambda: require_compatible_release_tag(REPO, "v1.2.3", MAIN))
 
-    def test_stable_tags_have_no_pr_and_prerelease_tags_need_one(self) -> None:
+    def test_stable_tags_have_no_pr_and_prerelease_tags_may_name_one(self) -> None:
         for tag, pr, ok in (
             ("v0.5.2", 0, True), ("v10.12.30-rc.7", 7, True), ("v0.5.2-alpha.0", 1, True),
-            ("v0.5.2", 7, False), ("v0.5.2-rc.1", 0, False), ("v0.5.2-rc.1", -1, False),
+            ("v0.5.2-rc.1", 0, True), ("v0.5.2", 7, False), ("v0.5.2-rc.1", -1, False),
             ("0.5.2", 0, False), ("v0.5", 0, False), ("v0.5.2-preview.1", 7, False),
             ("v01.5.2", 0, False), ("v0.05.2-rc.1", 7, False), ("v0.5.2-alpha.00", 7, False),
         ):
@@ -422,7 +422,8 @@ class RequestTests(unittest.TestCase):
             ({"RUST": "yes"}, "true or false"),
             ({"RUST": ""}, "RUST is required"),
             ({"SHA": HEAD}, "leave sha empty"), ({"PR": "101", "SHA": HEAD}, "stable tags"),
-            ({"TAG": "v1.2.3-rc.1"}, "stable tags"), (prerelease | {"SHA": ""}, "SHA is required"),
+            ({"TAG": "v1.2.3-rc.1"}, "exact commit"), (prerelease | {"SHA": ""}, "exact commit"),
+            ({"TAG": "v1.2.3-rc.1", "SHA": MAIN}, None), ({"TAG": "v1.2.3-rc.1", "SHA": HEAD}, "builds main"),
             ({"REF": "refs/heads/feature"}, "dispatched from main"),
             ({"EVENT_NAME": "push"}, "dispatched from main"),
             ({"WORKFLOW_REF": f"{REPO}/.github/workflows/release-request.yml@refs/heads/x"},
@@ -450,6 +451,8 @@ class RequestTests(unittest.TestCase):
         stable, prerelease = release_of(True), release_of(False)
         with github(trusted(True)):
             self.assertEqual(require_publishable(REPO, stable), (MAIN, 5151, ""))
+        with github(trusted(True)):
+            self.assertEqual(require_publishable(REPO, Release("v1.2.3-rc.1", MAIN, 0)), (MAIN, 5151, ""))
         with github(trusted(False)):
             self.assertEqual(require_publishable(REPO, prerelease), (MAIN, 5151, "77"))
         skipped = {JOBS: pages({"jobs": [
@@ -460,6 +463,7 @@ class RequestTests(unittest.TestCase):
             (stable, tag, "already exists"),
             (stable, {CODEQL: pages([analysis(99, 1, "failed")])}, "has errors"),
             (Release("v1.2.3", HEAD, 0), {}, "no longer current main"),
+            (Release("v1.2.3-rc.1", HEAD, 0), {}, "no longer current main"),
             (prerelease, {tree(HEAD): {"tree": []}}, "PR changes scripts"),
         ):
             with (self.subTest(error=error), github(trusted(release.stable) | change),
@@ -486,7 +490,8 @@ class RequestTests(unittest.TestCase):
             ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
             ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
             ({"requestRunId": 1}, {}, True, "requestRunId"),
-            ({"tag": "v1.2.3-rc.1"}, {}, True, "stable tags"),
+            ({"tag": "v1.2.3-rc.1"}, {}, False, None),
+            ({"tag": "v1.2.3-rc.1", "sourceSha": HEAD}, {}, False, "trusted main commit"),
             ({"mode": "force"}, {}, True, "mode"),
             ({"tag": "v1.2.4", "title": {"tag": "v1.2.3"}}, {}, True, "dispatch inputs"),
             (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, {}, False, "dispatch inputs"),
@@ -508,7 +513,7 @@ class RequestTests(unittest.TestCase):
                 rust = record["rust"] is True
                 if rust:
                     (root / "release-rust-image-4242").mkdir()
-                if rust and record["pr"] == 0:
+                if rust and "-" not in str(record["tag"]):
                     (root / "release-rust-tui-4242").mkdir()
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
