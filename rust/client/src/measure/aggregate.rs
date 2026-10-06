@@ -57,21 +57,14 @@ impl Boundary {
     }
 }
 
-/// Why an interval began.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reason {
-    StageStart,
-    Dropout,
-    EvidenceResumed,
-}
-
-impl Reason {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::StageStart => "stage-start",
-            Self::Dropout => "dropout",
-            Self::EvidenceResumed => "evidence-resumed",
-        }
+graphite_meter_proto::table! {
+    /// Why an interval began.
+    pub enum Reason {
+        name.0: &'static str,
+    } {
+        StageStart => ("stage-start",),
+        Dropout => ("dropout",),
+        EvidenceResumed => ("evidence-resumed",),
     }
 }
 

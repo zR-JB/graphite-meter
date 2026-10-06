@@ -8,32 +8,22 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A measured stage; runs take them in this order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Stage {
-    Latency,
-    Download,
-    Upload,
-    Bidirectional,
+graphite_meter_proto::table! {
+    /// A measured stage; runs take them in this order.
+    #[derive(PartialOrd, Ord)]
+    pub enum Stage {
+        name.0: &'static str,
+        /// The directions the stage moves bytes in; none for latency.
+        directions.1: &'static [Direction],
+    } {
+        Latency => ("latency", &[]),
+        Download => ("download", &[Direction::Down]),
+        Upload => ("upload", &[Direction::Up]),
+        Bidirectional => ("bidirectional", &[Direction::Down, Direction::Up]),
+    }
 }
 
 impl Stage {
-    pub const ALL: [Self; 4] = [Self::Latency, Self::Download, Self::Upload, Self::Bidirectional];
-
-    pub const fn name(self) -> &'static str {
-        ["latency", "download", "upload", "bidirectional"][self as usize]
-    }
-
-    /// The directions the stage moves bytes in; none for latency.
-    pub const fn directions(self) -> &'static [Direction] {
-        match self {
-            Self::Latency => &[],
-            Self::Download => &[Direction::Down],
-            Self::Upload => &[Direction::Up],
-            Self::Bidirectional => &[Direction::Down, Direction::Up],
-        }
-    }
-
     pub fn moves(self, direction: Direction) -> bool {
         self.directions().contains(&direction)
     }
