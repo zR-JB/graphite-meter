@@ -7,7 +7,6 @@
   import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
-  import { handoff } from "../presentation/motion.svelte";
   import { announceChanges } from "../presentation/announcer.svelte";
 
   const servers = $derived(
@@ -46,10 +45,6 @@
       };
     }),
   );
-  const profile = handoff(
-    () => ({ run: store.runSeq, lanes }),
-    (profile) => profile.run,
-  );
   const saved = $derived(store.result && store.latencyServer);
   const stage = $derived(store.stagePresentation.latency);
   const failure = $derived(
@@ -74,8 +69,7 @@
 
 <div class="live-profile">
   <LatencyProfileView
-    lanes={profile.shown.lanes}
-    out={profile.out}
+    {lanes}
     variant="bare"
     added={saved?.addedLatency}
     {failure}

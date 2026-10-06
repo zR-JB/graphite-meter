@@ -38,6 +38,7 @@ import type {
   StageKey,
 } from "../state/store.svelte";
 import { readStored, writeStored } from "../state/persistence";
+import { flip } from "../presentation/motion.svelte";
 import { adaptWarmup, buildSegments, planned, STAGES } from "./schedule";
 import { epochMs, pageMs } from "./clock";
 import {
@@ -561,7 +562,8 @@ export function createApplicationController(
           .join("; "),
       );
     const [focus] = prepared;
-    store.reset();
+    // The stages the new run leaves out give up their cards and lanes, and the rest close over them.
+    flip(() => store.reset());
     store.preparationStatus = "launching";
     store.latencyFocus = focus.server.id;
     releaseRunner();

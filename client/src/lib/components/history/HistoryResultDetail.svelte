@@ -456,8 +456,9 @@
   .detail-body > :global(.result-summary) {
     max-width: none;
   }
-  /* A saved result's three cards run three across or one to a row, never two and an orphan (3 × 240 px + 2 gaps). */
-  @container results (width < 768px) {
+  /* A saved result's three cards run three across or one to a row, never two and an orphan; three across holds
+     from where the console's cards stop folding to two (3 × 232 px + 2 gaps). */
+  @container results (width < 720px) {
     .detail-body :global(.result-cards:has(> :nth-child(3))) {
       grid-template-columns: minmax(0, 1fr);
     }

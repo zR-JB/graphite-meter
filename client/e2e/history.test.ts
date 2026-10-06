@@ -271,20 +271,20 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
   const handle = page.getByRole("slider", { name: /^Resize results list/ });
   const list = () =>
     page.locator(".history-list").evaluate((el: HTMLElement) => el.offsetWidth);
-  await expect(handle).toHaveAttribute("aria-valuenow", "640");
+  await expect(handle).toHaveAttribute("aria-valuenow", "538");
   await handle.evaluate((el: HTMLElement) => el.focus());
   // The list never narrows past 360 px, nor leaves the detail under 460 px.
   for (const [key, width] of [
-    ["ArrowRight", 656],
+    ["ArrowRight", 554],
     ["Home", 360],
     ["End", 820],
-    ["Enter", 640],
-    ["ArrowLeft", 624],
+    ["Enter", 538],
+    ["ArrowLeft", 522],
   ] as const) {
     await page.raw.press(key);
     await expect.poll(list).toBe(width);
   }
-  await expect(handle).toHaveAttribute("aria-valuenow", "624");
+  await expect(handle).toHaveAttribute("aria-valuenow", "522");
   await expect
     .poll(() =>
       page.evaluate(
@@ -292,13 +292,12 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
           JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit,
       ),
     )
-    .toBe(624 / 1280);
+    .toBe(522 / 1280);
   await page.reload();
-  await expect.poll(list).toBe(624);
-  // A narrower window keeps the share within the limits (the saved share, just under the detail's floor), then
-  // shows one pane.
+  await expect.poll(list).toBe(522);
+  // A narrower window keeps the saved share within the limits, then shows one pane.
   await page.setViewportSize({ width: 900, height: 800 });
-  await expect.poll(list).toBe(439);
+  await expect.poll(list).toBe(367);
   await page.setViewportSize({ width: 800, height: 800 });
   await expect(handle).toHaveCount(0);
 });

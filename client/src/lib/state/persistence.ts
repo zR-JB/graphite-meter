@@ -38,7 +38,7 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
 
 export const DEFAULT_DOCK_WIDTH = { left: 420, right: 420 };
 /** History's list takes this share of the width beside a result. */
-export const DEFAULT_HISTORY_SPLIT = 0.5;
+export const DEFAULT_HISTORY_SPLIT = 0.42;
 
 interface PersistedState {
   config: RunnerConfig;

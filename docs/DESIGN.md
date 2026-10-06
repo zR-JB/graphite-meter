@@ -179,8 +179,11 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   it was laid out instead of building it again.
 - A run is one story told on the dial, and nothing passes through an empty console on the way. Start: the run
   key's skin turns to Stop on the press while its label crosses over; the previous result rewinds, every arc
-  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the lanes and the cards keep
-  their frames and only their figures clear. Each stage: during its warmup the ring's track takes a faint tint of
+  draining back to zero together as its beads drop off (`result-drain`, 300 ms, fast from the press), while the
+  lanes, the cards and the status bar keep their frames and their figures clear in one frame, with no fade: the
+  dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
+  starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the
+  shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
   its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
   from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
   stage's hue on the way down. End: the last needle drains, and the result sweep starts as it reaches zero.
@@ -197,16 +200,16 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 - A press never moves what it presses: a key's or a chip's hit box stays put, so a press near its edge still
   lands. The key's fill deepens and its glyph gives (0.82) and springs back; the run key's and a chip's content
   give a little (0.975, 0.96).
-- A theme change opens the new theme as a circle from the theme key (a view transition of type `theme`, 420 ms),
-  and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
+- A theme change fades the new theme in over the old (a view transition of type `theme`, 200 ms, opacity
+  only), and the key's new glyph turns into place on the spring. The page stays clickable while it runs.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
   width. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
-  arriving one waits for its neighbours to make room (140 ms) before it rises in. Nothing waits for a snapshot of
-  the old page, so the click is answered at once. Opening or closing a result in History moves its panes the same
-  way: the list keeps its place while its width changes, and the result rises in; closing, the result goes at once
-  and the list opens across its place from its old width, like a curtain.
+  arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
+  moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
+  in History moves its panes the same way: the list keeps its place while its width changes, so the result rises in
+  at once; closing, the result goes at once and the list opens across its place from its old width, like a curtain.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
@@ -319,8 +322,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`Stepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
   time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
-  field takes the keyboard like a spin button; − and + serve pointers, repeat while held (after 0.4 s, every
-  70 ms) and stay put at a limit. The stream limit is
+  field takes the keyboard like a spin button; − and + serve pointers, repeat while held (after 0.5 s, every
+  150 ms, so each rolled value can be read) and stay put at a limit. The stream limit is
   the same `Stepper` over a whole number. In a settings row a control stands at its label's end while the row
   holds both and against the right edge under it when it wraps; a cadence's segments then take the row's width.
   The servers' stage
@@ -342,8 +345,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   read, with Remove them, which deletes only those, or Dismiss. The detail repeats the result cards (three across or
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
-  sheet's edge: the list keeps its share of the width (50 % by default), never under 360 px, and the detail never
-  under 460 px.
+  sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
+  across from a 1366 px window), never under 360 px, and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it

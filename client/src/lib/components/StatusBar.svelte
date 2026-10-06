@@ -19,14 +19,6 @@
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const recovering = $derived(store.effectiveConnectivity === "recovering");
-  const counters = handoff(
-    () => ({
-      run: store.runSeq,
-      elapsedMs,
-      bytes: fmtBytes(store.bytesTransferred, store.unitBase),
-    }),
-    (shown) => shown.run,
-  );
   const left = handoff(
     () => ({ show: showRemaining, recovering, ms: remainingMs }),
     (shown) => `${shown.show}:${shown.recovering}`,
@@ -42,14 +34,13 @@
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
 >
-<span
-  class="elapsed handoff"
-  class:secondary={left.shown.show}
-  class:handoff-out={counters.out}
-  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span></span
+<span class="elapsed" class:secondary={left.shown.show}
+  ><span class="readout">{fmtDuration(elapsedMs)}</span></span
 >
-<span class="transferred handoff" class:handoff-out={counters.out}
-  ><span class="readout">{counters.shown.bytes}</span></span
+<span class="transferred"
+  ><span class="readout"
+    >{fmtBytes(store.bytesTransferred, store.unitBase)}</span
+  ></span
 >
 {#if left.shown.show}
   <span

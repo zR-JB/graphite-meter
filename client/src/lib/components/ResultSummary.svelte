@@ -22,7 +22,6 @@
     cards,
     scale = null,
     head = null,
-    out = false,
     details,
     issues = [],
     scope = "",
@@ -33,8 +32,6 @@
     scale?: CardScale | null;
     /** The running stage's leading edge. */
     head?: { key: string; t: number; values: (number | null)[] } | null;
-    /** True while the cards hand off to a new run's view. */
-    out?: boolean;
     details?: MultiServerResult | null;
     issues?: {
       server: string;
@@ -80,7 +77,6 @@
       {@const noData = cardNoData(card)}
       <article
         class="card {card.status}"
-        class:out
         data-tone={card.key}
         data-flip="card-{card.key}"
       >
@@ -343,21 +339,6 @@
     margin-left: auto;
     color: var(--text-muted);
     font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
-  }
-  .headline,
-  /* A card's measured parts hand off together: out in 90 ms, in over 180, on the compositor. */
-  .line,
-  .facts,
-  .strip,
-  .status {
-    transition:
-      opacity var(--dur-handoff-in) var(--ease-out),
-      translate var(--dur-handoff-in) var(--ease-out);
-  }
-  .out :is(.headline, .line, .facts, .strip, .status) {
-    opacity: 0;
-    translate: 0 3px;
-    transition-duration: var(--dur-handoff-out);
   }
   .headline {
     display: flex;

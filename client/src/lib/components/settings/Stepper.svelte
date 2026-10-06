@@ -42,8 +42,8 @@
 
   const text = $derived(format(value));
   const clamp = (next: number) => Math.min(max, Math.max(min, next));
-  const HOLD_MS = 400;
-  const REPEAT_MS = 70;
+  const HOLD_MS = 500;
+  const REPEAT_MS = 150;
   let hold = 0;
   // A held key steps once, pauses, then repeats until it lifts or the value meets its limit.
   function press(event: PointerEvent, direction: 1 | -1) {
