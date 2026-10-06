@@ -164,10 +164,8 @@ async fn sign_in<B: http_body::Body>(
     if let Err(reason) = check_csrf(auth, headers, field(&form, "csrf")).and_then(|()| admitted()) {
         return rejected(auth, reason, challenge);
     }
-    match password
-        .verify(Zeroizing::new(field(&form, "password").to_owned()))
-        .await
-    {
+    let entered = Zeroizing::new(field(&form, "password").to_owned());
+    match password.verify(entered).await {
         Some(true) => {}
         Some(false) => return rejected(auth, Reason::PasswordMismatch, challenge),
         None => return rejected(auth, Reason::VerifierBusy, challenge),
@@ -298,25 +296,21 @@ pub(super) fn clear_cookie(answer: &mut Response<Body>, name: &str) {
 
 /// A form field's value; empty when absent.
 pub(super) fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
-    form.iter()
-        .find(|(key, _)| key == name)
-        .map_or("", |(_, value)| value.as_str())
+    let found = form.iter().find(|(key, _)| key == name);
+    found.map_or("", |(_, value)| value.as_str())
 }
 
 /// The request's head, and its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
 pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Option<Form>) {
     let (head, body) = request.into_parts();
-    let media = head
-        .headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|media| media.to_str().ok());
+    let content_type = head.headers.get(header::CONTENT_TYPE);
+    let media = content_type.and_then(|media| media.to_str().ok());
     let media = media.unwrap_or_default().split(';').next().unwrap_or_default().trim();
     if !media.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
         return (head, None);
     }
-    let form = self::body(body)
-        .await
-        .and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?));
+    let bytes = self::body(body).await;
+    let form = bytes.and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?));
     (head, form)
 }
 

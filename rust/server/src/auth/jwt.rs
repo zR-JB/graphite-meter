@@ -119,10 +119,8 @@ impl Jwks {
             let point =
                 |size: usize| Some([vec![4], bytes(&key.x)?, bytes(&key.y)?].concat()).filter(|p| p.len() == 1 + size);
             let signs = key.usage.as_deref().is_none_or(|usage| usage == "sig");
-            let verifies = key
-                .key_ops
-                .as_ref()
-                .is_none_or(|ops| ops.iter().any(|op| op == "verify"));
+            let ops = key.key_ops.as_ref();
+            let verifies = ops.is_none_or(|ops| ops.iter().any(|op| op == "verify"));
             let public = match (key.kty.as_str(), key.crv.as_deref()) {
                 _ if !signs || !verifies => return None,
                 ("RSA", _) => Ok((unsigned(bytes(&key.n)?), unsigned(bytes(&key.e)?))),
@@ -192,11 +190,8 @@ pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
     let Ok(claims) = serde_json::from_slice::<Addressed>(payload) else {
         return false;
     };
-    let audience = claims.aud == client
-        || claims
-            .aud
-            .as_array()
-            .is_some_and(|many| many.iter().any(|one| one == client));
+    let many = claims.aud.as_array();
+    let audience = claims.aud == client || many.is_some_and(|many| many.iter().any(|one| one == client));
     claims.iss == issuer && audience
 }
 

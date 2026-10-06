@@ -253,11 +253,8 @@ impl SendWindow {
 
 /// Two bandwidth-delay products of `sent` over `elapsed`, within the send window's bounds, sparing the queue.
 fn desired(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
-    let Some(demand) = u128::from(sent)
-        .saturating_mul(rtt.as_nanos())
-        .saturating_mul(2)
-        .checked_div(elapsed.as_nanos())
-    else {
+    let sent_rtt = u128::from(sent).saturating_mul(rtt.as_nanos());
+    let Some(demand) = sent_rtt.saturating_mul(2).checked_div(elapsed.as_nanos()) else {
         return MIN_SEND_WINDOW;
     };
     demand.clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64

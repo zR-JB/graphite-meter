@@ -150,11 +150,8 @@ impl Password {
     /// A device cookie's value, its expiry in seconds and their HMAC, and that expiry.
     pub fn device(&self, now: SystemTime) -> (String, SystemTime) {
         let expires = now + DEVICE_LIFETIME;
-        let seconds = expires
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .to_be_bytes();
+        let since_epoch = expires.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let seconds = since_epoch.as_secs().to_be_bytes();
         let tag = self.device.clone().chain_update(seconds).finalize().into_bytes();
         (URL_SAFE_NO_PAD.encode([&seconds[..], &tag[..]].concat()), expires)
     }

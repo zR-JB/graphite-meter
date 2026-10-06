@@ -113,11 +113,8 @@ fn hash_password() -> Result<(), String> {
 fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
     let mut line = Zeroizing::new(Vec::new());
     input.read_until(b'\n', &mut line)?;
-    let kept = line
-        .iter()
-        .rposition(|byte| !matches!(byte, b'\r' | b'\n'))
-        .map_or(0, |last| last + 1);
-    line.truncate(kept);
+    let last = line.iter().rposition(|byte| !matches!(byte, b'\r' | b'\n'));
+    line.truncate(last.map_or(0, |last| last + 1));
     Ok(line)
 }
 

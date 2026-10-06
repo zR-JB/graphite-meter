@@ -69,10 +69,8 @@ impl Lifecycle {
     /// The next event, given window raise and live request streams; unadmitted requests never hold credit open.
     pub fn poll(&mut self, cx: &mut Context<'_>, credited: bool, streams: bool) -> Poll<Event> {
         self.observe(credited);
-        let stale = self
-            .stale
-            .as_mut()
-            .is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
+        let timer = self.stale.as_mut();
+        let stale = timer.is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
         let quiet = self.quiet(cx, streams);
         if self.closing.is_none() && (self.stopping || stale || quiet) {
             self.closing = Some(Box::pin(sleep(SHUTDOWN_GRACE)));

@@ -111,11 +111,7 @@ impl Latch {
     pub fn update(&self, start: bool, end: bool) -> Option<bool> {
         let on = self.0.load(Ordering::Relaxed);
         let changed = if on { end } else { start };
-        (changed
-            && self
-                .0
-                .compare_exchange(on, !on, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok())
-        .then_some(!on)
+        let swap = || self.0.compare_exchange(on, !on, Ordering::Relaxed, Ordering::Relaxed);
+        (changed && swap().is_ok()).then_some(!on)
     }
 }

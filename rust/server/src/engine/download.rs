@@ -57,10 +57,8 @@ impl DownloadSource {
 
     /// The next chunk of at most `max` bytes without taking it.
     pub fn peek(&self, max: usize) -> Option<Bytes> {
-        let length = usize::try_from(self.remaining)
-            .unwrap_or(usize::MAX)
-            .min(max)
-            .min(self.block.len());
+        let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        let length = remaining.min(max).min(self.block.len());
         (length > 0).then(|| self.block.slice(..length))
     }
 

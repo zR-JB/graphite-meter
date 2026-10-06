@@ -179,10 +179,8 @@ impl Store {
             return None;
         }
         let state = lock(&self.0);
-        let grant = state
-            .grants
-            .get(&digest(token))
-            .filter(|grant| !grant.revoked.is_cancelled())?;
+        let found = state.grants.get(&digest(token));
+        let grant = found.filter(|grant| !grant.revoked.is_cancelled())?;
         let login = state.login(&grant.login.0)?;
         let (holder, via) = (Holder::Grant(grant.id.clone()), Via::Bearer(grant.browser.clone()));
         Some(login.lease(grant.login, holder, via, grant.revoked.clone()))
@@ -208,19 +206,16 @@ impl Store {
         if lease.is_ended(now) {
             return Err(MintRefusal::Ended);
         }
-        let held = state
-            .tickets
-            .values()
-            .filter(|ticket| ticket.lease.login == lease.login);
+        let tickets = state.tickets.values();
+        let held = tickets.filter(|ticket| ticket.lease.login == lease.login);
         if held.count() >= MAX_LOGIN_TICKETS {
             return Err(MintRefusal::Full);
         }
         let deadline = (now + TICKET_LIFETIME).min(lease.expires);
         let expires = SystemTime::now() + (deadline - now);
         let lease = AuthLease { via: Via::Bearer(lease.browser().cloned()), ..lease.clone() };
-        state
-            .tickets
-            .insert(digest(&token), Ticket { lease, target, origin, deadline });
+        let ticket = Ticket { lease, target, origin, deadline };
+        state.tickets.insert(digest(&token), ticket);
         let expires = expires.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
         Ok(SocketTicket { token, expires: u64::try_from(expires).unwrap_or(u64::MAX) })
     }

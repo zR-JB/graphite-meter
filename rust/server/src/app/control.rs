@@ -56,12 +56,8 @@ impl App {
             latency: vec![],
         };
         for listener in self.config.listeners.iter().filter(|listener| listener.advertised) {
-            let base = BaseUrl::Origin(
-                listener
-                    .public_origin
-                    .clone()
-                    .unwrap_or_else(|| native(listener, &host)),
-            );
+            let public = listener.public_origin.clone();
+            let base = BaseUrl::Origin(public.unwrap_or_else(|| native(listener, &host)));
             fetch_stream(&mut offered, &base, listener.kind.protocol());
             match listener.kind {
                 ListenerKind::H1 | ListenerKind::H1Tls => websocket(&mut offered, &base),
@@ -168,10 +164,8 @@ impl App {
 
 /// The host a request names in its URI or Host header, `localhost` without one.
 fn request_host<B>(request: &Request<B>) -> String {
-    let named = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|host| host.to_str().ok()?.parse().ok());
+    let host = request.headers().get(header::HOST);
+    let named = host.and_then(|host| host.to_str().ok()?.parse().ok());
     let authority: Option<Authority> = request.uri().authority().cloned().or(named);
     let authority = authority.filter(|authority| !authority.as_str().contains('@'));
     authority.map_or_else(|| "localhost".into(), |authority| authority.host().into())
@@ -191,10 +185,8 @@ fn native(listener: &Listener, host: &str) -> Origin {
 /// Offers `base` as a fetch-stream target; a base offered with two protocols becomes negotiated.
 fn fetch_stream(offered: &mut Capabilities, base: &BaseUrl, protocol: Protocol) {
     let transport = ThroughputTransport::FetchStream;
-    let known = offered
-        .throughput
-        .iter_mut()
-        .find(|target| target.transport == transport && target.base_url == *base);
+    let mut targets = offered.throughput.iter_mut();
+    let known = targets.find(|target| target.transport == transport && target.base_url == *base);
     match known {
         Some(target) if target.protocol != protocol => target.protocol = Protocol::Negotiated,
         Some(_) => {}
@@ -206,13 +198,9 @@ fn fetch_stream(offered: &mut Capabilities, base: &BaseUrl, protocol: Protocol) 
 
 fn websocket(offered: &mut Capabilities, base: &BaseUrl) {
     let transport = LatencyTransport::WebSocket;
-    if !offered
-        .latency
-        .iter()
-        .any(|target| target.transport == transport && target.base_url == *base)
-    {
-        offered
-            .latency
-            .push(LatencyTarget { base_url: base.clone(), transport });
+    let mut targets = offered.latency.iter();
+    if !targets.any(|target| target.transport == transport && target.base_url == *base) {
+        let target = LatencyTarget { base_url: base.clone(), transport };
+        offered.latency.push(target);
     }
 }

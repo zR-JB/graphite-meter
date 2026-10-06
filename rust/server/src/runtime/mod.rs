@@ -98,10 +98,8 @@ impl Server {
         let shutdown = CancellationToken::new();
         let app = Arc::new(App::new(config, shutdown.clone())?);
         if oidc_only {
-            app.auth()
-                .discover()
-                .await
-                .map_err(|error| format!("OIDC discovery: {error}"))?;
+            let discovery = app.auth().discover();
+            discovery.await.map_err(|error| format!("OIDC discovery: {error}"))?;
         }
         let companion = listeners
             .iter()
@@ -427,14 +425,12 @@ struct Terms {
 
 impl Terms {
     fn of(config: &Config) -> Result<Self, String> {
+        let h3 = config.listener(ListenerKind::H3);
         Ok(Self {
             limit: config.max_buffer_bytes,
             connections: config.limits.connections,
             h2: config.listener(ListenerKind::H2).is_some(),
-            quic: config
-                .listener(ListenerKind::H3)
-                .map(|_| quic::noq_floor(&config.limits))
-                .transpose()?,
+            quic: h3.map(|_| quic::noq_floor(&config.limits)).transpose()?,
         })
     }
 

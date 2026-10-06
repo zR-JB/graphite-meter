@@ -27,9 +27,8 @@ impl Address {
         if !is_trusted(socket, trusted) {
             return Self::Socket(socket);
         }
-        let chained = ["forwarded", "x-forwarded-for"]
-            .into_iter()
-            .any(|name| headers.get(name).is_some_and(|value| !value.is_empty()));
+        let mut forwarding = ["forwarded", "x-forwarded-for"].into_iter();
+        let chained = forwarding.any(|name| headers.get(name).is_some_and(|value| !value.is_empty()));
         let mut real = headers.get_all("x-real-ip").iter();
         let named = match (real.next(), real.next()) {
             (Some(value), None) if !chained => value.to_str().ok().and_then(|text| text.trim().parse().ok()),

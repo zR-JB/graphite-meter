@@ -35,9 +35,8 @@ pub(super) fn render(page: Page, fields: &[(&str, &str)]) -> String {
 
 /// Lets the page's forms post to the OIDC provider's authorization `origin` as well.
 pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
-    let policy = headers
-        .get(header::CONTENT_SECURITY_POLICY)
-        .and_then(|policy| policy.to_str().ok());
+    let declared = headers.get(header::CONTENT_SECURITY_POLICY);
+    let policy = declared.and_then(|policy| policy.to_str().ok());
     let policy = policy.unwrap_or_default();
     let policy = policy.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
     if let Ok(policy) = HeaderValue::from_str(&policy) {
@@ -89,10 +88,8 @@ impl Template {
     fn render(&self, fields: &[(&str, &str)]) -> String {
         let field = |name: &str| {
             let name = name.trim_start_matches('.');
-            fields
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map_or("", |(_, value)| *value)
+            let found = fields.iter().find(|(key, _)| *key == name);
+            found.map_or("", |(_, value)| *value)
         };
         let (mut page, mut branches) = (String::new(), Vec::<(bool, bool)>::new());
         let shown = |branches: &[(bool, bool)]| branches.iter().all(|&(_, on)| on);

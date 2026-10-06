@@ -72,10 +72,8 @@ impl fmt::Debug for Certificates {
 
 /// The hosts of the public origins configured for TLS listeners.
 pub fn covered_hosts(config: &Config) -> Vec<Host> {
-    let tls = config
-        .listeners
-        .iter()
-        .filter(|listener| listener.kind.scheme() == Scheme::Https);
+    let listeners = config.listeners.iter();
+    let tls = listeners.filter(|listener| listener.kind.scheme() == Scheme::Https);
     tls.filter_map(|listener| Some(listener.public_origin.as_ref()?.host.clone()))
         .collect()
 }

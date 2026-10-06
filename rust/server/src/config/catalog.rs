@@ -91,11 +91,8 @@ impl Entry {
             return Err("self is added automatically; omit it from servers".into());
         }
         let url = origin(&self.url).map_err(|error| format!("server {}: {error}", quote(&self.id)))?;
-        let additional_origins = self
-            .additional_origins
-            .iter()
-            .map(|text| origin(text))
-            .collect::<Result<_, _>>();
+        let origins = self.additional_origins.iter().map(|text| origin(text));
+        let additional_origins = origins.collect::<Result<_, _>>();
         Ok(ServerEntry {
             id: server_id(&self.id)?,
             url: BaseUrl::Origin(url),

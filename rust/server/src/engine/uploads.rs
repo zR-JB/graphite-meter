@@ -307,9 +307,8 @@ impl Uploads {
             }),
             changed: Notify::new(),
         });
-        entries
-            .live
-            .insert(id.into(), Entry { aggregate: aggregate.clone(), _capacity: capacity });
+        let entry = Entry { aggregate: aggregate.clone(), _capacity: capacity };
+        entries.live.insert(id.into(), entry);
         Ok(aggregate)
     }
 

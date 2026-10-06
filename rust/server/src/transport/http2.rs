@@ -87,9 +87,8 @@ impl Http2 {
                 return;
             };
             let connection = Connection::new(Endpoint::H2, peer.ip());
-            listener
-                .serve(Stalled { inner: stream, stalled: None }, connection)
-                .await;
+            let stalled = Stalled { inner: stream, stalled: None };
+            listener.serve(stalled, connection).await;
         }
     }
 
@@ -272,11 +271,8 @@ impl<S> Stalled<S> {
 
 impl<S: AsyncRead + Unpin> AsyncRead for Stalled<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        if self
-            .stalled
-            .as_mut()
-            .is_some_and(|stalled| stalled.as_mut().poll(cx).is_ready())
-        {
+        let timer = self.stalled.as_mut();
+        if timer.is_some_and(|stalled| stalled.as_mut().poll(cx).is_ready()) {
             return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
         }
         Pin::new(&mut self.inner).poll_read(cx, buffer)

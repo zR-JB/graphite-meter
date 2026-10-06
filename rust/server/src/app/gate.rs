@@ -96,10 +96,8 @@ fn host_byte(byte: u8) -> bool {
 
 /// Only POST may carry a body: a nonzero declared length, or an unknown one outside HTTP/3.
 fn carries_body<B: http_body::Body>(request: &Request<B>) -> bool {
-    let declared = request
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
+    let length = request.headers().get(header::CONTENT_LENGTH);
+    let declared = length.and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
     let unknown = declared.is_none() && request.version() != Version::HTTP_3 && !request.body().is_end_stream();
     request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown)
 }
