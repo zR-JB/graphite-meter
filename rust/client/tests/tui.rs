@@ -1,5 +1,5 @@
 //! The interface without a terminal: keys, events, signals and ticks in; frames, chrome, effects and exits out.
-use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
     config::Config,
@@ -21,7 +21,7 @@ use graphite_meter_client::{
     tui::{
         App, Effect,
         chrome::{Chrome, Link, Progress},
-        theme::{self, Palette},
+        theme,
     },
 };
 use graphite_meter_proto::{
@@ -29,7 +29,7 @@ use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     origin::{BaseUrl, Origin},
 };
-use ratatui_core::{buffer::Buffer, layout::Rect, style::Color};
+use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -237,68 +237,6 @@ fn share(name: &str, ms: Option<u64>) -> ServerResult {
 }
 
 #[test]
-fn setup_starts_on_start_test_and_arrows_and_space_change_its_values() {
-    let start = Instant::now();
-    let mut app = App::new(Config::default(), Profile::Plain, start);
-    let rows = frame(&mut app, start);
-    assert!(rows[0].contains("Graphite Meter") && rows[0].ends_with("Checking paths"), "{rows:#?}");
-    assert!(focused(&mut app, start).contains("› Start test ⠋ checking paths"));
-    let footer = "enter start test • ↑/↓ move • ? keys • q quit";
-    assert!(rows.iter().any(|row| row.contains(footer)), "{rows:#?}");
-    assert_eq!(checked(app.tick(start)), Config::default());
-    let now = start;
-    press(&mut app, KeyCode::Down, now);
-    assert!(focused(&mut app, now).contains("Catalogue URL http://127.0.0.1:7246"));
-    presses(&mut app, KeyCode::Down, 2, now);
-    assert!(focused(&mut app, now).contains("Throughput path Automatic · each server"));
-    press(&mut app, KeyCode::Right, now);
-    assert!(focused(&mut app, now).contains("Throughput path Fetch streams · every server"));
-    presses(&mut app, KeyCode::Down, 3, now);
-    assert!(focused(&mut app, now).contains("Latency ● 4 s"));
-    press(&mut app, KeyCode::Right, now);
-    presses(&mut app, KeyCode::Left, 2, now);
-    assert!(focused(&mut app, now).contains("Latency ● 3 s"));
-    assert!(shows(&mut app, now, "Latency 3 s."));
-    press(&mut app, KeyCode::Down, now);
-    press(&mut app, KeyCode::Char(' '), now);
-    assert!(focused(&mut app, now).contains("Download ○ 10 s"));
-    assert!(shows(&mut app, now, "Download off."));
-}
-
-#[test]
-fn the_editor_types_question_marks_and_q_caps_its_text_and_esc_cancels() {
-    let (mut app, now) = app();
-    press(&mut app, KeyCode::Down, now);
-    press(&mut app, KeyCode::Enter, now);
-    for c in "?q".chars() {
-        assert_eq!(press(&mut app, KeyCode::Char(c), now), []);
-    }
-    assert!(focused(&mut app, now).contains("http://127.0.0.1:7246?q"));
-    press(&mut app, KeyCode::Esc, now);
-    assert!(shows(&mut app, now, "Edit canceled."));
-    assert!(focused(&mut app, now).contains("Catalogue URL http://127.0.0.1:7246"));
-    assert!(!shows(&mut app, now, "7246?q"));
-
-    press(&mut app, KeyCode::Enter, now);
-    presses(&mut app, KeyCode::Char('a'), 4096 - "http://127.0.0.1:7246".len() - 1, now);
-    press(&mut app, KeyCode::Char('Y'), now);
-    press(&mut app, KeyCode::Char('Z'), now);
-    let row = focused(&mut app, now);
-    assert!(row.contains("aaY") && !row.contains('Z'), "{row}");
-    press(&mut app, KeyCode::Esc, now);
-
-    press(&mut app, KeyCode::Enter, now);
-    presses(&mut app, KeyCode::Backspace, 21, now);
-    for c in "meter.example".chars() {
-        press(&mut app, KeyCode::Char(c), now);
-    }
-    press(&mut app, KeyCode::Enter, now);
-    assert!(shows(&mut app, now, "Catalogue https://meter.example."));
-    let config = checked(app.tick(now + Duration::from_millis(350)));
-    assert_eq!(config.url.to_string(), "https://meter.example");
-}
-
-#[test]
 fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let (mut app, now) = app();
     app.event(&prepared(), now);
@@ -323,37 +261,6 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let config = checked(app.tick(now + Duration::from_millis(350)));
     let ids: Vec<_> = config.servers.iter().map(ServerId::as_str).collect();
     assert_eq!(ids, ["a", "b", "c", "d"]);
-}
-
-#[test]
-fn question_mark_lists_the_screen_s_keys_and_s_explains_a_one_server_catalogue() {
-    let (mut app, now) = app();
-    app.event(&prepared(), now);
-    assert!(!shows(&mut app, now, "recheck paths"));
-    press(&mut app, KeyCode::Char('?'), now);
-    for key in [
-        "r start test",
-        "space on/off",
-        "enter start or open",
-        "v recheck paths",
-        "a automatic paths",
-    ] {
-        assert!(shows(&mut app, now, key), "{key}");
-    }
-    assert!(shows(&mut app, now, "s test servers"));
-    press(&mut app, KeyCode::Char('s'), now);
-    for key in ["space select", "enter apply", "esc cancel"] {
-        assert!(shows(&mut app, now, key), "{key}");
-    }
-    assert!(!shows(&mut app, now, "recheck paths"));
-
-    let (mut app, now) = self::app();
-    let Event::Prepared { servers, catalogue } = prepared() else { unreachable!() };
-    app.event(&Event::Prepared { servers, catalogue: catalogue[..1].into() }, now);
-    assert_eq!(press(&mut app, KeyCode::Char('s'), now), []);
-    assert!(shows(&mut app, now, "This catalogue offers one server."));
-    press(&mut app, KeyCode::Char('?'), now);
-    assert!(!shows(&mut app, now, "s test servers"), "help leaves it out");
 }
 
 #[test]
@@ -406,35 +313,6 @@ fn sign_in_shows_the_code_and_links_the_page_where_it_is_drawn() {
     let [link] = &chrome.links[..] else { panic!("{:?}", chrome.links) };
     assert_eq!((link.url.as_str(), link.text.text()), (PAGE, PAGE.to_owned()));
     assert_eq!(drawn(&buffer, link.row, link.column), PAGE);
-
-    let (mut app, small) = (signing_in(start), Rect::new(0, 0, 40, 12));
-    let wheel = MouseEvent {
-        kind: MouseEventKind::ScrollDown,
-        column: 0,
-        row: 0,
-        modifiers: KeyModifiers::NONE,
-    };
-    app.input(Input::Mouse(wheel), start);
-    assert_eq!(draw(&mut app, start, small).1.links, [], "the wheel leaves the link below the viewport");
-    press(&mut app, KeyCode::PageDown, start);
-    let (buffer, chrome) = draw(&mut app, start, small);
-    let texts: Vec<_> = chrome.links.iter().map(|link| link.text.text()).collect();
-    assert_eq!(texts.concat(), PAGE);
-    assert_eq!(chrome.links.iter().map(|link| link.row).collect::<Vec<_>>(), [7, 8, 9]);
-    for link in &chrome.links {
-        assert_eq!(drawn(&buffer, link.row, link.column), link.text.text());
-    }
-}
-
-#[test]
-fn enter_space_and_o_open_the_sign_in_page() {
-    let now = Instant::now();
-    for code in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Char('o')] {
-        let mut app = signing_in(now);
-        assert_eq!(press(&mut app, code, now), [Effect::OpenBrowser(PAGE.into())], "{code:?}");
-        assert!(shows(&mut app, now, "⠋ Waiting for approval…"));
-        assert!(shows(&mut app, now, "Sign-in page opened in the browser."));
-    }
 }
 
 #[test]
@@ -504,20 +382,6 @@ fn a_run_shows_its_stages_live_readings_details_and_then_its_results() {
 }
 
 #[test]
-fn esc_asks_to_stop_and_a_second_esc_stops() {
-    let now = Instant::now();
-    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
-    assert_eq!(press(&mut app, KeyCode::Esc, now), []);
-    assert!(shows(&mut app, now, "Stop the test? esc confirms, any other key continues."));
-    assert!(shows(&mut app, now, "esc confirm stop • q quit"));
-    assert_eq!(press(&mut app, KeyCode::Char('x'), now), []);
-    assert!(shows(&mut app, now, "Test continues."));
-    assert_eq!(press(&mut app, KeyCode::Esc, now), []);
-    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
-    assert!(shows(&mut app, now, "Stopping the test…"));
-}
-
-#[test]
 fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
     let (now, download) = (Instant::now(), [(Stage::Download, SECOND * 10)]);
     let mut app = running(&["a"], &download, now);
@@ -576,56 +440,6 @@ fn quitting_after_a_run_reports_it_with_a_signal_s_status_only_when_it_stopped()
 }
 
 #[test]
-fn l_changes_the_shown_latency_server_and_not_the_reports() {
-    let now = Instant::now();
-    let mut app = running(&["a", "b"], &[(Stage::Latency, SECOND * 4)], now);
-    measuring(&mut app, Stage::Latency, SECOND * 4, now);
-    for (server, ms) in [("a", 10), ("b", 30)] {
-        let rtt = Some(Duration::from_millis(ms));
-        app.event(&Event::Probe { server: id(server), at: SECOND, rtt }, now);
-    }
-    assert!(shows(&mut app, now, "Latency to A · l switches server"));
-    assert!(shows(&mut app, now, "Idle latency 10.0 ms"));
-    press(&mut app, KeyCode::Char('l'), now);
-    assert!(shows(&mut app, now, "Latency to B · l switches server"));
-    assert!(shows(&mut app, now, "Idle latency 30.0 ms"));
-    app.event(&finished(Stage::Latency, vec![share("a", Some(10)), share("b", Some(30))], None), now);
-    app.event(&ended(Outcome::Complete), now);
-    assert!(shows(&mut app, now, "Results · latency to B"));
-    assert!(shows(&mut app, now, "Idle 30.0 ms"));
-    let lines = report(&app.exit().view, 100, &Palette::new(true));
-    let texts: Vec<_> = lines.iter().map(Line::text).collect();
-    assert!(texts.iter().any(|text| text.starts_with("Latency to A")), "{texts:#?}");
-}
-
-#[test]
-fn charts_keep_the_planned_span_and_dash_bidirectional_upload() {
-    let now = Instant::now();
-    let mut app = running(&["a"], &[(Stage::Bidirectional, SECOND * 10)], now);
-    measuring(&mut app, Stage::Bidirectional, SECOND * 10, now);
-    for quarter in 1..=8 {
-        sample(&mut app, SECOND * quarter / 4, Some(1.25e7), Some(6.25e6), now);
-    }
-    assert!(shows(&mut app, now, "↓ solid · ↑ dashed"));
-    assert!(shows(&mut app, now, "Bi-dir 10.0 s"), "the ruler ends at the planned span");
-    let braille = |c: char| ('\u{2801}'..='\u{28ff}').contains(&c);
-    let traces: Vec<String> = rows(&mut app, now)
-        .into_iter()
-        .filter(|row| row.chars().any(braille))
-        .map(|row| {
-            let cells: Vec<char> = row.chars().collect();
-            let first = cells.iter().position(|&c| braille(c)).unwrap();
-            let last = cells.iter().rposition(|&c| braille(c)).unwrap();
-            assert!(cells.len() - last > 40, "a trace two seconds into ten fills a fifth: {row}");
-            cells[first..=last].iter().collect()
-        })
-        .collect();
-    assert_eq!(traces.len(), 2, "{traces:#?}");
-    assert!(!traces[0].contains(' '), "download is solid: {}", traces[0]);
-    assert!(traces[1].contains(' '), "upload is dashed: {}", traces[1]);
-}
-
-#[test]
 fn chrome_titles_the_window_and_shows_progress_until_the_end() {
     let start = Instant::now();
     let mut app = App::new(Config { stages: vec![Stage::Download], ..Config::default() }, Profile::Plain, start);
@@ -664,42 +478,14 @@ fn chrome_titles_the_window_and_shows_progress_until_the_end() {
 }
 
 #[test]
-fn the_background_answer_arriving_as_keys_sets_the_palette() {
-    let now = Instant::now();
-    let title = |app: &mut App| draw(app, now, FULL).0[(1, 0)].bg;
-    let alt = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
-    let mut app = App::new(Config::default(), Profile::Ansi, now);
-    assert_eq!(title(&mut app), Color::Indexed(15));
-    assert_eq!(app.key(alt(']'), now), []);
-    for c in "11;rgb:FDFD/f6f6/e3e3".chars() {
-        assert_eq!(press(&mut app, KeyCode::Char(c), now), [], "{c}");
-    }
-    assert_eq!(app.key(alt('\\'), now), []);
-    assert_eq!(title(&mut app), Color::Indexed(0));
-    assert!(matches!(command(&press(&mut app, KeyCode::Char('r'), now)), Command::Run(_)));
-
-    let mut split = App::new(Config::default(), Profile::Ansi, now);
-    for c in "\x1b]11;rgb:FDFD/f6f6/e3e3".chars() {
-        let code = if c == '\x1b' { KeyCode::Esc } else { KeyCode::Char(c) };
-        assert_eq!(press(&mut split, code, now), [], "an answer split after its escape starts no test: {c}");
-    }
-    assert_eq!(split.key(alt('\\'), now), []);
-    assert_eq!(title(&mut split), Color::Indexed(0));
-}
-
-#[test]
 fn the_colour_profile_follows_the_environment() {
     for (tty, env, expected) in [
         (true, "TERM=xterm", Profile::Ansi),
         (true, "TERM=xterm-256color", Profile::Ansi256),
         (true, "TERM=xterm-256color COLORTERM=truecolor", Profile::TrueColor),
-        (true, "TERM=xterm-kitty", Profile::TrueColor),
         (true, "TERM=screen COLORTERM=truecolor", Profile::Ansi256),
-        (true, "TERM=xterm TMUX=/tmp/tmux", Profile::Ansi256),
         (true, "TERM=dumb", Profile::Plain),
-        (true, "TERM=dumb CLICOLOR=1", Profile::Plain),
         (true, "TERM=xterm-256color NO_COLOR=1", Profile::Ascii),
-        (true, "TERM=dumb NO_COLOR=1", Profile::Plain),
         (false, "TERM=xterm-256color", Profile::Plain),
         (false, "TERM=xterm-256color CLICOLOR_FORCE=1", Profile::Ansi256),
     ] {

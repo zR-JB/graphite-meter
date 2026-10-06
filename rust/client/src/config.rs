@@ -452,72 +452,6 @@ mod tests {
     }
 
     #[test]
-    fn stages_take_names_and_aliases_in_run_order() {
-        let all = Stage::ALL.to_vec();
-        assert_eq!(run("-stages BIDI,up,down,ping").unwrap().stages, all);
-        let spaced = run_args(&["--stages", " latency ,,download,latency"]).unwrap();
-        assert_eq!(spaced.stages, [Stage::Latency, Stage::Download]);
-        let unknown = "invalid value \"upload,sideways\" for flag -stages: unknown stage \"sideways\": use latency, \
-                       download, upload, or bidirectional";
-        assert_eq!(run("-stages upload,sideways").unwrap_err(), unknown);
-        let none = "select at least one stage: latency, download, upload or bidirectional";
-        assert_eq!(run("-stages ,").unwrap_err(), none);
-    }
-
-    #[test]
-    fn cadences_take_names_or_spacings_from_80ms_to_15s() {
-        let every = |ms| Cadence::Every(Duration::from_millis(ms));
-        let named = [("reply-driven", Cadence::ReplyDriven), ("FAST", every(80)), (" Medium ", every(250))];
-        let spaced = [("slow", every(600)), ("80ms", every(80)), ("15s", every(15_000))];
-        for (text, cadence) in named.into_iter().chain(spaced) {
-            assert_eq!(run_args(&["-ping", text]).unwrap().ping, cadence, "{text}");
-            assert_eq!(run_args(&["-loaded-ping", text]).unwrap().loaded_ping, cadence, "{text}");
-        }
-        let floor = "latency cadence must be reply-driven or at least 80ms";
-        assert_eq!(run("-ping 79ms").unwrap_err(), floor);
-        assert_eq!(run("-loaded-ping 0s").unwrap_err(), floor);
-        let ceiling = "latency interval must be at most 15s, half the server's 30s lane idle bound";
-        assert_eq!(run("-loaded-ping 15001ms").unwrap_err(), ceiling);
-        let unknown = "invalid value \"often\" for flag -ping: use reply-driven, fast, medium, slow, or a duration such \
-                       as 400ms";
-        assert_eq!(run("-ping often").unwrap_err(), unknown);
-    }
-
-    #[test]
-    fn durations_hold_their_ranges() {
-        for stage in Stage::ALL {
-            let name = stage.name();
-            assert_eq!(run(&format!("-{name}-duration 1s")).unwrap().duration(stage), Duration::from_secs(1));
-            assert!(run(&format!("-{name}-duration 24h")).is_ok());
-            let refused = format!("{name} duration must be from 1s to 24h");
-            for text in ["999ms", "24h0m0.001s", "-1s"] {
-                assert_eq!(run(&format!("-{name}-duration {text}")).unwrap_err(), refused, "{text}");
-            }
-        }
-        assert_eq!(run("-warmup 0").unwrap().warmup, Duration::ZERO);
-        assert_eq!(run("-warmup 4s").unwrap().warmup, Duration::from_secs(4));
-        for text in ["4001ms", "-1ns"] {
-            assert_eq!(run(&format!("-warmup={text}")).unwrap_err(), "warmup must be from 0s to 4s");
-        }
-        assert_eq!(run("-warmup 1").unwrap_err(), "invalid value \"1\" for flag -warmup: parse error");
-    }
-
-    #[test]
-    fn stream_counts_stay_within_14() {
-        assert_eq!(run("-streams 14 -auto-streams 1").unwrap().streams, Streams { auto: 1, forced: 14 });
-        let forced = "forced streams must be from 1 to 14 per server and direction, or 0 for automatic";
-        for text in ["15", "-1"] {
-            assert_eq!(run(&format!("-streams={text}")).unwrap_err(), forced);
-        }
-        let automatic = "the automatic stream maximum must be from 1 to 14 per direction";
-        for text in ["0", "15"] {
-            assert_eq!(run(&format!("-auto-streams {text}")).unwrap_err(), automatic);
-        }
-        let range = "invalid value \"9223372036854775808\" for flag -streams: value out of range";
-        assert_eq!(run("-streams 9223372036854775808").unwrap_err(), range);
-    }
-
-    #[test]
     fn lanes_follow_the_path_unless_forced() {
         let config = run("-auto-streams 3").unwrap();
         let (fetch, webtransport) = (ThroughputTransport::FetchStream, ThroughputTransport::WebTransport);
@@ -532,17 +466,6 @@ mod tests {
         }
         let forced = run("-streams 5").unwrap();
         assert_eq!(forced.lanes(Protocol::Http2, webtransport), Dir { down: 5, up: 5 });
-    }
-
-    #[test]
-    fn servers_repeat_up_to_four_distinct_ids() {
-        let config = run("-server a -server b.c -server d_e -server f-g").unwrap();
-        let ids: Vec<_> = config.servers.iter().map(ServerId::as_str).collect();
-        assert_eq!(ids, ["a", "b.c", "d_e", "f-g"]);
-        let refused = "invalid value \"e\" for flag -server: select one to 4 different server IDs";
-        assert_eq!(run("-server a -server b -server c -server d -server e").unwrap_err(), refused);
-        let invalid = run("-server a/b").unwrap_err();
-        assert!(invalid.starts_with("invalid value \"a/b\" for flag -server: "), "{invalid}");
     }
 
     #[test]

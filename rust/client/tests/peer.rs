@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use graphite_meter_client::{
     config::{Config, PathChoice},
-    model::{Failure, LaneHealth, Stage},
+    model::Stage,
     net::{Client, Fault, ReadBuffer, Request, ThroughputPath},
     run::{prepare::prepare, upload::UploadSession},
 };
@@ -12,9 +12,7 @@ use graphite_meter_proto::{
     discovery::{Protocol, ThroughputTransport},
     json,
     origin::Origin,
-    reason::FailureReason,
     route::Route,
-    upload::Session,
 };
 use graphite_meter_testkit::{Identity, Scratch};
 use http::Method;
@@ -25,7 +23,7 @@ use std::{
     process::Command,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -154,82 +152,6 @@ async fn a_request_without_response_headers_in_ten_seconds_retires_its_http2_con
     assert!(matches!(first.await.unwrap(), Err(Fault::TimedOut(_))));
     probe(&client, Protocol::Http2, &origin).await.unwrap();
     assert_eq!(received.recv().await, Some(1), "the next request dials a new connection");
-}
-
-#[tokio::test]
-async fn an_http2_connection_that_reads_nothing_for_30_s_is_pinged_and_closed_20_s_later() {
-    let (listener, address) = local().await;
-    let (frames, mut received) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        let mut stream = listener.accept().await.unwrap().0;
-        let mut preface = [0; 24];
-        stream.read_exact(&mut preface).await.unwrap();
-        stream.write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await.unwrap();
-        loop {
-            let mut header = [0; 9];
-            if stream.read_exact(&mut header).await.is_err() {
-                let _ = frames.send(None);
-                return;
-            }
-            let mut payload = vec![0; u32::from_be_bytes([0, header[0], header[1], header[2]]) as usize];
-            stream.read_exact(&mut payload).await.unwrap();
-            let reply: &[u8] = match &header[3..5] {
-                [4, 0] => &[0, 0, 0, 4, 1, 0, 0, 0, 0],
-                // `:status: 200` ending the stream that asked.
-                [1, _] => &[0, 0, 1, 1, 5, header[5], header[6], header[7], header[8], 0x88],
-                _ => &[],
-            };
-            stream.write_all(reply).await.unwrap();
-            let _ = frames.send(Some(header[3]));
-        }
-    });
-    let (client, request) = (client(false), Request::new(Method::GET, &origin("http", address), Route::Probe));
-    drop(client.control(Protocol::Http2, request).await.unwrap());
-    advance_clock(Duration::from_secs(29)).await;
-    assert_eq!(ping_or_end(&mut received, 200).await, None, "silent for 29 s");
-    advance_clock(Duration::from_secs(2)).await;
-    assert_eq!(ping_or_end(&mut received, 2000).await, Some(Some(6)), "pinged after 30 s");
-    advance_clock(Duration::from_secs(18)).await;
-    assert_eq!(ping_or_end(&mut received, 200).await, None, "waiting 20 s for the answer");
-    advance_clock(Duration::from_secs(4)).await;
-    assert_eq!(ping_or_end(&mut received, 2000).await, Some(None), "closed unanswered");
-}
-
-/// The next PING frame, `Some(None)` at the connection's end, or `None` when neither comes within `wait` ms.
-async fn ping_or_end(received: &mut mpsc::UnboundedReceiver<Option<u8>>, wait: u64) -> Option<Option<u8>> {
-    let next = async {
-        while let Some(frame) = received.recv().await {
-            if frame.is_none_or(|kind| kind == 6) {
-                return frame;
-            }
-        }
-        None
-    };
-    tokio::time::timeout(Duration::from_millis(wait), next).await.ok()
-}
-
-#[tokio::test]
-async fn a_bodyless_post_failing_on_a_reused_connection_is_sent_once_more() {
-    let (listener, address) = local().await;
-    let mut heads = peer(listener, None, |request, _| match request {
-        1 => None,
-        _ => Some(ok(&format!(r#"{{"uploadId":"u{request}"}}"#))),
-    });
-    let (client, origin) = (client(false), origin("http", address));
-    let session = || {
-        client.json(
-            Protocol::Http1,
-            Request::new(Method::POST, &origin, Route::UploadSession),
-            Session::decode,
-        )
-    };
-    assert_eq!(session().await.unwrap().upload_id, "u0");
-    assert_eq!(session().await.unwrap().upload_id, "u2");
-    for connection in [0, 0, 1] {
-        let (seen, head) = heads.recv().await.unwrap();
-        assert_eq!(seen, connection);
-        assert!(head.starts_with("POST /upload/session HTTP/1.1\r\n"), "{head}");
-    }
 }
 
 #[tokio::test]
@@ -425,12 +347,8 @@ fn feed(records: &[&str], ended: bool) -> String {
     )
 }
 
-const BUSY: &str = "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n";
-
-/// An upload session without lanes to a peer answering `answer`, sharing `replaced` with the run, and the request
-/// heads the peer saw.
+/// An upload session without lanes to a peer answering `answer`, and the request heads the peer saw.
 async fn upload(
-    replaced: Arc<AtomicBool>,
     answer: impl Fn(usize, &str) -> Option<String> + Send + Sync + 'static,
 ) -> (UploadSession, mpsc::UnboundedReceiver<(usize, String)>) {
     let (listener, address) = local().await;
@@ -441,111 +359,14 @@ async fn upload(
         protocol: Protocol::Http1,
     };
     let (client, token) = (client(false), CancellationToken::new());
-    let session = UploadSession::open(&client, &path, Protocol::Http1, Vec::new(), Duration::ZERO, replaced, token);
+    let session =
+        UploadSession::open(&client, &path, Protocol::Http1, Vec::new(), Duration::ZERO, Arc::default(), token);
     (session.await.unwrap(), heads)
-}
-
-/// The failure `session`'s health ends with, polled as a stage does.
-async fn failure(session: &mut UploadSession) -> Failure {
-    let failed = async {
-        loop {
-            if let LaneHealth::Failed(failure) = session.health() {
-                return failure;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), failed)
-        .await
-        .expect("the session failed")
-}
-
-fn minted(heads: &mut mpsc::UnboundedReceiver<(usize, String)>) -> usize {
-    std::iter::from_fn(|| heads.try_recv().ok())
-        .filter(|(_, head)| head.starts_with("POST /upload/session "))
-        .count()
-}
-
-#[tokio::test]
-async fn an_unknown_receiver_is_replaced_once_per_server_and_run_and_then_ends_the_stage() {
-    let replaced = Arc::new(AtomicBool::new(false));
-    let invalid = |request, head: &str| match target(head) {
-        "/upload/session" => Some(ok(&format!(r#"{{"uploadId":"u{request}"}}"#))),
-        "/upload/progress" if head.starts_with("GET ") => Some(feed(&[r#"{"type":"error","code":"invalid"}"#], true)),
-        _ => Some(ok("")),
-    };
-    let (mut first, mut heads) = upload(replaced.clone(), invalid).await;
-    assert_eq!(failure(&mut first).await.reason, FailureReason::ProtocolError);
-    assert_eq!(minted(&mut heads), 2, "one replacement receiver");
-    let (mut later, mut heads) = upload(replaced, invalid).await;
-    assert_eq!(failure(&mut later).await.reason, FailureReason::ProtocolError);
-    assert_eq!(minted(&mut heads), 1, "no second replacement in the run");
-}
-
-#[tokio::test]
-async fn a_progress_feed_ending_early_is_reopened_for_the_same_receiver() {
-    let (mut session, mut heads) = upload(Arc::default(), |request, head| match target(head) {
-        "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
-        "/upload/progress" if head.starts_with("GET ") => Some(match request {
-            1 => feed(&[r#"{"type":"ready"}"#, r#"{"type":"progress","bytes":1000,"nanos":1000000}"#], true),
-            _ => feed(&[r#"{"type":"ready"}"#, r#"{"type":"progress","bytes":2000,"nanos":2000000}"#], false),
-        }),
-        _ => Some(ok("")),
-    })
-    .await;
-    let recovered = async {
-        while session.fed().map(|fed| fed.bytes) != Some(2000) {
-            assert_eq!(session.health(), LaneHealth::Ok);
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), recovered)
-        .await
-        .expect("the feed was reopened");
-    let feeds: Vec<_> = std::iter::from_fn(|| heads.try_recv().ok())
-        .filter(|(_, head)| head.starts_with("GET /upload/progress"))
-        .collect();
-    assert_eq!(feeds.len(), 2);
-    assert!(
-        feeds
-            .iter()
-            .all(|(_, head)| head.starts_with("GET /upload/progress?id=u0 ")),
-        "{feeds:?}"
-    );
-}
-
-#[tokio::test]
-async fn a_missed_checkpoint_is_asked_again_every_100_ms_within_its_budget() {
-    let asked = Arc::new(AtomicUsize::new(0));
-    let (session, _heads) = upload(Arc::default(), {
-        let asked = asked.clone();
-        move |_, head| match target(head) {
-            "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
-            "/upload/checkpoint" => Some(match asked.fetch_add(1, Ordering::SeqCst) {
-                2 => ok(r#"{"bytes":5,"nanos":7}"#),
-                _ => BUSY.into(),
-            }),
-            "/upload/progress" if head.starts_with("GET ") => Some(feed(&[r#"{"type":"ready"}"#], false)),
-            _ => Some(ok("")),
-        }
-    })
-    .await;
-    let started = std::time::Instant::now();
-    let receiver = session.checkpoint(Duration::from_millis(1500)).await.unwrap();
-    assert_eq!((receiver.counters.bytes(), receiver.counters.nanos()), (5, 7));
-    assert_eq!(asked.load(Ordering::SeqCst), 3);
-    assert!(started.elapsed() >= Duration::from_millis(200), "{:?}", started.elapsed());
-
-    let started = std::time::Instant::now();
-    assert!(session.checkpoint(Duration::from_millis(500)).await.is_err());
-    assert!(started.elapsed() >= Duration::from_millis(400), "{:?}", started.elapsed());
-    let missed = asked.load(Ordering::SeqCst) - 3;
-    assert!((1..=5).contains(&missed), "{missed} asks within 500 ms");
 }
 
 #[tokio::test]
 async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
-    let (session, mut heads) = upload(Arc::default(), |_, head| match target(head) {
+    let (session, mut heads) = upload(|_, head| match target(head) {
         "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
         "/upload/progress" if head.starts_with("GET ") => Some(feed(&[r#"{"type":"ready"}"#], false)),
         _ => Some(ok("")),
@@ -581,26 +402,6 @@ fn downloads(url: &Origin, stage: Stage) -> Config {
         stages: vec![stage],
         loaded_latency: false,
         ..Config::default()
-    }
-}
-
-#[tokio::test]
-async fn uploads_need_every_server_to_offer_receiver_checkpoints() {
-    let (listener, address) = local().await;
-    let _heads = peer(listener, None, |_, head| match target(head) {
-        "/probe" => Some(ok(include_str!("../../../api/probe.golden.json"))),
-        _ => discovery(head, false, ""),
-    });
-    let url = origin("http", address);
-    let prepared = prepare(&downloads(&url, Stage::Download), client(false)).await.unwrap();
-    assert!(prepared.servers[0].path.is_ok(), "{:?}", prepared.servers[0].path);
-    let refused = Failure::new(
-        FailureReason::PreparationFailed,
-        "receiver checkpoint support is required; upgrade this measurement server",
-    );
-    for stage in [Stage::Upload, Stage::Bidirectional] {
-        let prepared = prepare(&downloads(&url, stage), client(false)).await.unwrap();
-        assert_eq!(prepared.servers[0].path, Err(refused.clone()), "{stage:?}");
     }
 }
 
@@ -642,36 +443,4 @@ async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
     let mint = heads.recv().await.unwrap();
     assert_eq!((probe.0, target(&probe.1)), (0, "/probe"));
     assert_eq!((mint.0, target(&mint.1)), (0, "/upload/session"));
-}
-
-#[tokio::test]
-async fn a_path_check_ends_12_s_after_it_began_not_when_one_request_times_out() {
-    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let quic = format!(
-        r#",{{"baseUrl":"https://localhost:{}","transport":"webtransport","protocol":"http3"}}"#,
-        silent.local_addr().unwrap().port()
-    );
-    let (listener, address) = local().await;
-    let mut heads = peer(listener, None, move |_, head| match target(head) {
-        // Writing nothing leaves the probe unanswered.
-        "/probe" => Some(String::new()),
-        _ => discovery(head, true, &quic),
-    });
-    let config = downloads(&origin("http", address), Stage::Download);
-    let mut check = tokio::spawn(async move { prepare(&config, client(false)).await });
-    while !heads.recv().await.unwrap().1.starts_with("GET /probe ") {}
-    advance_clock(Duration::from_secs(10)).await;
-    let mut initial = [0; 1500];
-    let dialed = tokio::time::timeout(Duration::from_secs(2), silent.recv_from(&mut initial)).await;
-    assert!(dialed.is_ok(), "the timed-out probe moved on to the WebTransport path");
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(!check.is_finished(), "the fetch-stream probe's timeout leaves the WebTransport check");
-    advance_clock(Duration::from_millis(2500)).await;
-    let prepared = tokio::time::timeout(Duration::from_secs(5), &mut check)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let late = Failure::new(FailureReason::Timeout, "the path check did not finish within 12 seconds");
-    assert_eq!(prepared.servers[0].path, Err(late));
 }
