@@ -192,9 +192,10 @@ impl Lanes {
 
     /// The upload refusal a lane's fault stood for, once `health` saw it.
     pub fn refusal(&self) -> Option<UploadRefusal> {
-        match self.failed {
-            Some(Fault::Refused(refusal)) => Some(refusal),
-            _ => None,
+        if let Some(Fault::Refused(refusal)) = self.failed {
+            Some(refusal)
+        } else {
+            None
         }
     }
 

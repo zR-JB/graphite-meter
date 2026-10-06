@@ -16,7 +16,7 @@ use graphite_meter_proto::{
 };
 use http::{HeaderValue, Method, StatusCode, header};
 use serde_json::Value;
-use std::{fmt::Write as _, time::Duration};
+use std::time::Duration;
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
 /// How long an approval waits for the operator.
@@ -56,10 +56,7 @@ impl Approval {
     pub fn new(origin: &Origin) -> Self {
         let mut entropy = [0; 32];
         getrandom::fill(&mut entropy).expect("the system provides randomness");
-        let verifier = entropy.iter().fold(String::new(), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        });
+        let verifier: String = entropy.iter().map(|byte| format!("{byte:02x}")).collect();
         let challenge = challenge(&verifier);
         Self {
             origin: origin.clone(),

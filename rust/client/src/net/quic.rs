@@ -47,18 +47,17 @@ impl Drop for Quic {
 }
 
 /// Dials `origin` on `runtime`, which then runs the connection, endpoint and driver; dropping the dial abandons it.
-pub(super) async fn dial(
-    origin: &Origin,
-    verify: Verify,
-    runtime: &Handle,
-) -> Result<(Arc<Quic>, client::SendRequest), Fault> {
+pub(super) async fn dial(origin: &Origin, verify: Verify, runtime: &Handle) -> Result<Dialed, Fault> {
     let origin = origin.clone();
     let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
     (&mut dialing.0).await.map_err(|error| Fault::Lost(error.to_string()))?
 }
 
+/// A connection and its request sender.
+type Dialed = (Arc<Quic>, client::SendRequest);
+
 /// A dial running on another runtime, aborted once nothing awaits it.
-struct Dialing(JoinHandle<Result<(Arc<Quic>, client::SendRequest), Fault>>);
+struct Dialing(JoinHandle<Result<Dialed, Fault>>);
 
 impl Drop for Dialing {
     fn drop(&mut self) {
@@ -67,7 +66,7 @@ impl Drop for Dialing {
 }
 
 /// Each address in turn, IPv4 first; the last address's fault if none connects.
-async fn connect(origin: &Origin, verify: Verify) -> Result<(Arc<Quic>, client::SendRequest), Fault> {
+async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
     let crypto =
         QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
     let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
@@ -89,11 +88,7 @@ async fn connect(origin: &Origin, verify: Verify) -> Result<(Arc<Quic>, client::
     Err(last)
 }
 
-async fn attempt(
-    config: &noq::ClientConfig,
-    address: SocketAddr,
-    name: &str,
-) -> Result<(Arc<Quic>, client::SendRequest), Fault> {
+async fn attempt(config: &noq::ClientConfig, address: SocketAddr, name: &str) -> Result<Dialed, Fault> {
     let local = match address {
         SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
         SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
