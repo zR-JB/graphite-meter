@@ -37,21 +37,11 @@ use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-/// What the policy decided for a request.
-pub enum Decision {
-    /// Serve it, as the lease's holder when signed in.
-    Allow(Option<AuthLease>),
-    /// The policy's own answer from the head: a refusal, or an authenticated preflight.
-    Answer(Response<Body>),
-}
+/// What the policy decided: serve it, as the lease's holder when signed in, or its own answer from the head.
+pub type Decision = Result<Option<AuthLease>, Response<Body>>;
 
-/// The configured authentication.
-pub enum Auth {
-    /// Every request is allowed, anonymously.
-    Off,
-    /// Sign-in at the public origin.
-    On(Box<Enabled>),
-}
+/// The configured authentication; without it every request is allowed, anonymously.
+pub struct Auth(Option<Box<Enabled>>);
 
 /// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
 pub struct Enabled {
@@ -69,7 +59,7 @@ pub struct Enabled {
 impl Auth {
     /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
     pub fn new(config: Option<&config::Auth>, verbose: bool) -> Result<Self, String> {
-        let Some(config) = config else { return Ok(Self::Off) };
+        let Some(config) = config else { return Ok(Self(None)) };
         let (mode, settings) = match &config.methods {
             Methods::Password(_) => ("password", None),
             Methods::Oidc(oidc) => ("oidc", Some(oidc)),
@@ -101,7 +91,7 @@ impl Auth {
             settings.map_or(0, |oidc| oidc.allowed_groups.len()),
             duration::format(LOGIN_LIFETIME),
         );
-        Ok(Self::On(Box::new(Enabled {
+        Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),
             store: Store::default(),
             password,
@@ -109,12 +99,12 @@ impl Auth {
             browser_approvals: Attempts::new("browser-approval", 10),
             security,
             provider: config.provider.clone(),
-        })))
+        }))))
     }
 
     /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
-        let Self::On(auth) = self else { return Ok(()) };
+        let Some(auth) = &self.0 else { return Ok(()) };
         match &auth.oidc {
             Some(oidc) => oidc.discover(&auth.security).await,
             None => Ok(()),
@@ -123,36 +113,30 @@ impl Auth {
 
     /// Hybrid mode's discovery, retried in the background until the provider answers; it never completes.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
-        let Self::On(auth) = self else { return None };
+        let Some(auth) = &self.0 else { return None };
         let oidc = auth.oidc.as_ref().filter(|_| auth.password.is_some())?;
         Some(oidc.retry(&auth.security))
     }
 
     pub fn enabled(&self) -> bool {
-        matches!(self, Self::On(_))
+        self.0.is_some()
     }
 
     /// A test hook: the store of logins, grants and tickets, when enabled, for signing in without credentials.
     pub fn store(&self) -> Option<&Store> {
-        match self {
-            Self::Off => None,
-            Self::On(auth) => Some(&auth.store),
-        }
+        self.0.as_ref().map(|auth| &auth.store)
     }
 
     /// The security log's counts, when enabled.
     pub fn security(&self) -> Option<&Security> {
-        match self {
-            Self::Off => None,
-            Self::On(auth) => Some(&auth.security),
-        }
+        self.0.as_ref().map(|auth| &auth.security)
     }
 
     /// The policy every request passes, decided from its head alone.
     pub fn authorize<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Decision {
-        match self {
-            Self::Off => Decision::Allow(None),
-            Self::On(auth) => auth.policy.authorize(&auth.store, request, endpoint, peer),
+        match &self.0 {
+            None => Ok(None),
+            Some(auth) => auth.policy.authorize(&auth.store, request, endpoint, peer),
         }
     }
 
@@ -163,9 +147,9 @@ impl Auth {
 
     /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.
     pub async fn handle<B: http_body::Body>(&self, request: Request<B>, deadline: Instant, peer: &Peer) -> Outcome {
-        let response = match self {
-            Self::Off => response::status(StatusCode::NOT_FOUND),
-            Self::On(auth) => routes::handle(auth, request, deadline, peer).await,
+        let response = match &self.0 {
+            None => response::status(StatusCode::NOT_FOUND),
+            Some(auth) => routes::handle(auth, request, deadline, peer).await,
         };
         Outcome::Response(response)
     }
@@ -178,17 +162,17 @@ impl Auth {
         headers: &HeaderMap,
     ) -> Option<Access> {
         route?;
-        match self {
-            Self::Off => Some(Access::Public),
-            Self::On(auth) => auth.policy.access(lease?, headers),
+        match &self.0 {
+            None => Some(Access::Public),
+            Some(auth) => auth.policy.access(lease?, headers),
         }
     }
 
     /// The answer to a socket-ticket mint for routes of `kind`.
     pub(crate) fn ticket<B>(&self, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
-        match self {
-            Self::Off => response::json_of(&SocketTicket::unauthenticated()),
-            Self::On(auth) => routes::mint(auth, request, lease, kind),
+        match &self.0 {
+            None => response::json_of(&SocketTicket::unauthenticated()),
+            Some(auth) => routes::mint(auth, request, lease, kind),
         }
     }
 }
@@ -221,10 +205,6 @@ pub struct AuthLease {
 }
 
 impl AuthLease {
-    pub fn holder(&self) -> &Holder {
-        &self.holder
-    }
-
     pub fn via(&self) -> &Via {
         &self.via
     }

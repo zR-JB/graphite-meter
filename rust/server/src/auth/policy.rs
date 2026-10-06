@@ -90,7 +90,7 @@ impl Policy {
         }
         if endpoint.ui() && self.public(method, path) {
             return match trust {
-                Trust::Canonical => Decision::Allow(None),
+                Trust::Canonical => Ok(None),
                 _ => self.required(request, endpoint, secure),
             };
         }
@@ -117,7 +117,7 @@ impl Policy {
         if misplaced || !self.valid_origin(store, request, route, &lease) {
             return self.forbidden(true);
         }
-        Decision::Allow(Some(lease))
+        Ok(Some(lease))
     }
 
     /// Who may read a signed-in request's answer: a browser grant's origin, or the public origin with its cookie.
@@ -241,7 +241,7 @@ impl Policy {
             _ => return self.forbidden(secure),
         }
         crate::app::finalize::harden(answered, secure);
-        Decision::Answer(answer)
+        Err(answer)
     }
 
     /// Whether `method` reaches `path` without a session: the sign-in pages and their fonts, and the token exchanges.
@@ -260,7 +260,7 @@ impl Policy {
     fn forbidden(&self, secure: bool) -> Decision {
         let mut answer = response::empty(StatusCode::FORBIDDEN);
         protect(answer.headers_mut(), secure);
-        Decision::Answer(answer)
+        Err(answer)
     }
 
     /// The sign-in-required answer, readable by the public or a measuring browser origin; the app root redirects.
@@ -284,7 +284,7 @@ impl Policy {
         headers.insert("graphite-meter-browser-auth", HeaderValue::from_static("1"));
         headers.insert("graphite-meter-auth-url", self.login.clone());
         close(headers, request.version());
-        Decision::Answer(answer)
+        Err(answer)
     }
 }
 

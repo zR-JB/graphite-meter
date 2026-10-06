@@ -85,15 +85,11 @@ impl Quota {
 
     /// Charges `weight` to the total and to every key at once, or refuses without charging.
     pub fn acquire(&self, keys: &ClientKeys, weight: usize) -> Result<Hold, Refusal> {
-        self.acquire_inner(keys, weight, None)
+        self.acquire_within(keys, weight, None)
     }
 
     /// Charges this quota and `outer`'s total, checking this client share, then `outer`'s total, then this total.
-    pub fn acquire_within(&self, keys: &ClientKeys, weight: usize, outer: &Quota) -> Result<Hold, Refusal> {
-        self.acquire_inner(keys, weight, Some(outer))
-    }
-
-    fn acquire_inner(&self, keys: &ClientKeys, weight: usize, outer: Option<&Quota>) -> Result<Hold, Refusal> {
+    pub fn acquire_within(&self, keys: &ClientKeys, weight: usize, outer: Option<&Quota>) -> Result<Hold, Refusal> {
         let total = self.0.total();
         let mut state = lock(&self.0.state);
         if self.0.keys(keys).enumerate().any(|(index, key)| {

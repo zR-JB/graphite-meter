@@ -1,4 +1,6 @@
 //! The Graphite Meter server.
+// Refusals are responses, no larger than the outcomes they replace.
+#![allow(clippy::result_large_err)]
 
 pub mod app;
 pub mod assets;

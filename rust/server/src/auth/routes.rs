@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{
     app::{query, response},
+    limits::Refusal,
     log::{http_date, rfc3339},
     peer::Peer,
     transport::body::Body,
@@ -105,12 +106,7 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
     match auth.store.mint(lease, format!("{origin}{path}"), requester) {
         Ok(ticket) => response::json_of(&ticket),
         Err(MintRefusal::Ended) => response::status(StatusCode::FORBIDDEN),
-        Err(MintRefusal::Full) => {
-            let mut busy = response::status(StatusCode::TOO_MANY_REQUESTS);
-            busy.headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-            busy
-        }
+        Err(MintRefusal::Full) => response::busy(Refusal::Client),
     }
 }
 

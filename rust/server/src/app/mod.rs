@@ -18,7 +18,7 @@ use crate::{
     engine::{Block, Meter, Uploads},
     exchange::{EXCHANGE_BOUND, Exchange},
     lane::{Lane, Work},
-    limits::{Budget, Hold, Pressure, Quotas, Refusal, Transport},
+    limits::{Budget, Hold, Pressure, Quotas, Transport},
     peer::{ClientKeys, Peer},
     transport::{
         body::Body,
@@ -27,7 +27,6 @@ use crate::{
     },
 };
 use bytes::Buf;
-use gate::Gate;
 use graphite_meter_legal::Notices;
 use graphite_meter_proto::{
     lane::LaneEnding,
@@ -70,6 +69,9 @@ impl Connection {
     }
 }
 
+/// A request's outcome, or the answer refusing it.
+type Admitted = Result<Outcome, Response<Body>>;
+
 /// What a transport does for a request.
 pub enum Outcome {
     /// Writes the reply within the bound its body carries.
@@ -80,22 +82,6 @@ pub enum Outcome {
     WebTransport(Response<Body>, Lane, Plan),
     /// Ends the exchange without an answer: an HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
     Abort,
-}
-
-/// Why a metered request was not admitted.
-pub(super) enum Unadmitted {
-    /// A trusted proxy named no single client.
-    Ambiguous,
-    Busy(Refusal),
-}
-
-impl From<Unadmitted> for Response<Body> {
-    fn from(unadmitted: Unadmitted) -> Self {
-        match unadmitted {
-            Unadmitted::Ambiguous => response::ambiguous(),
-            Unadmitted::Busy(refusal) => response::busy(refusal),
-        }
-    }
 }
 
 impl App {
@@ -174,28 +160,23 @@ impl App {
     ) -> Outcome {
         let (version, deadline) = (request.version(), exchange.deadline());
         let mut response = match self.gate(&request, connection) {
-            Gate::Answer(answer) => answer,
-            Gate::Pass { route, peer } => {
+            Err(answer) => answer,
+            Ok((route, peer)) => {
                 let bootstrap = connection.endpoint.bootstrap()
                     && route == Some(Route::Probe)
                     && request.method() != Method::OPTIONS;
                 let access = self.auth.access(route, peer.auth(), request.headers());
                 let access = access.as_ref();
-                match self.dispatch(request, route, &peer, connection, exchange).await {
-                    Outcome::Response(mut response) => {
-                        self.finalize(&mut response, access, bootstrap, version);
-                        response
-                    }
-                    Outcome::WebSocket(mut response, lane) => {
-                        self.finalize(&mut response, access, bootstrap, version);
-                        return Outcome::WebSocket(response, lane);
-                    }
-                    Outcome::WebTransport(mut response, lane, plan) => {
-                        self.finalize(&mut response, access, bootstrap, version);
-                        return Outcome::WebTransport(response, lane, plan);
-                    }
-                    Outcome::Abort => return Outcome::Abort,
+                let outcome = self.dispatch(request, route, &peer, connection, exchange).await;
+                let mut outcome = outcome.unwrap_or_else(Outcome::Response);
+                if let Outcome::Response(response)
+                | Outcome::WebSocket(response, _)
+                | Outcome::WebTransport(response, ..) = &mut outcome
+                {
+                    self.finalize(response, access, bootstrap, version);
                 }
+                let Outcome::Response(response) = outcome else { return outcome };
+                response
             }
         };
         response.body_mut().bound_by_default(deadline);
@@ -209,19 +190,19 @@ impl App {
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
-    ) -> Outcome {
+    ) -> Admitted {
         let Some(route) = route else {
             let endpoint = connection.endpoint;
             if endpoint.ui() && self.auth.claims(request.uri().path()) {
-                return self.auth.handle(request, exchange.deadline(), peer).await;
+                return Ok(self.auth.handle(request, exchange.deadline(), peer).await);
             }
-            return Outcome::Response(match endpoint.ui() {
+            return Ok(Outcome::Response(match endpoint.ui() {
                 true => self.page(&request),
                 false => response::status(StatusCode::NOT_FOUND),
-            });
+            }));
         };
         if request.method() == Method::OPTIONS {
-            return Outcome::Response(response::empty(StatusCode::NO_CONTENT));
+            return Ok(Outcome::Response(response::empty(StatusCode::NO_CONTENT)));
         }
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
@@ -229,8 +210,8 @@ impl App {
             Route::WtDownload | Route::WtUpload | Route::WtPing => {
                 return self.webtransport(&request, route, peer, connection, exchange);
             }
-            Route::Download => self.download(&request, peer, connection, exchange),
-            Route::UploadProgress => self.progress(&request, peer, connection, exchange),
+            Route::Download => self.download(&request, peer, connection, exchange)?,
+            Route::UploadProgress => self.progress(&request, peer, connection, exchange)?,
             Route::Probe => self.probe(peer, connection.endpoint),
             Route::Preflight => response::json_of(&self.preflight(&request)),
             Route::Servers => self.catalog(&request),
@@ -239,29 +220,24 @@ impl App {
             Route::WtSession => self.auth.ticket(&request, peer.auth(), Kind::WebTransport),
             Route::WsSession => self.auth.ticket(&request, peer.auth(), Kind::WebSocket),
         };
-        Outcome::Response(response)
-    }
-
-    /// Admits a request as a lane holding a measurement handler for the operation lifetime.
-    pub(super) fn admit(&self, peer: &Peer, connection: &Connection, exchange: Exchange) -> Result<Lane, Unadmitted> {
-        self.admit_as(peer, connection, exchange, false)
+        Ok(Outcome::Response(response))
     }
 
     /// Admits a lane holding a handler for the operation lifetime, or a `session` for the session lifetime.
-    fn admit_as(
+    pub(super) fn admit(
         &self,
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
         session: bool,
-    ) -> Result<Lane, Unadmitted> {
-        let keys = peer.keys().ok_or(Unadmitted::Ambiguous)?;
+    ) -> Result<Lane, Response<Body>> {
+        let keys = peer.keys().ok_or_else(response::ambiguous)?;
         let lifetimes = &self.config.lifetimes;
         let (hold, lifetime) = match session {
             true => (self.quotas.session(&keys), lifetimes.session),
             false => (self.quotas.operation(&keys), lifetimes.operation),
         };
-        let hold = hold.map_err(Unadmitted::Busy)?;
+        let hold = hold.map_err(response::busy)?;
         Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
     }
 
@@ -273,11 +249,8 @@ impl App {
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
-    ) -> Outcome {
-        let lane = match self.admit_as(peer, connection, exchange, route != Route::WtPing) {
-            Ok(lane) => lane,
-            Err(unadmitted) => return Outcome::Response(unadmitted.into()),
-        };
+    ) -> Admitted {
+        let lane = self.admit(peer, connection, exchange, route != Route::WtPing)?;
         let query = request.uri().query();
         let plan = match route {
             Route::WtDownload => Plan::Download {
@@ -293,20 +266,17 @@ impl App {
             }),
             _ => Plan::Ping,
         };
-        Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan)
+        Ok(Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan))
     }
 
     /// The WebSocket bus, admitted before its handshake is checked.
-    fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Outcome {
-        let lane = match self.admit(peer, connection, exchange) {
-            Ok(lane) => lane,
-            Err(unadmitted) => return Outcome::Response(unadmitted.into()),
-        };
+    fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Admitted {
+        let lane = self.admit(peer, connection, exchange, false)?;
         let answer = websocket::handshake(request);
-        match answer.status() == StatusCode::SWITCHING_PROTOCOLS {
+        Ok(match answer.status() == StatusCode::SWITCHING_PROTOCOLS {
             true => Outcome::WebSocket(answer, lane),
             false => Outcome::Response(answer),
-        }
+        })
     }
 
     /// `bytes=` payload bytes; HEAD and an empty download release their handler with the reply.
@@ -316,11 +286,8 @@ impl App {
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
-    ) -> Response<Body> {
-        let lane = match self.admit(peer, connection, exchange) {
-            Ok(lane) => lane,
-            Err(unadmitted) => return unadmitted.into(),
-        };
+    ) -> Result<Response<Body>, Response<Body>> {
+        let lane = self.admit(peer, connection, exchange, false)?;
         let bytes = query::transfer_bytes(request.uri().query());
         let body = match request.method() == Method::HEAD || bytes == 0 {
             true => Body::empty(),
@@ -331,7 +298,7 @@ impl App {
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
-        response
+        Ok(response)
     }
 
     /// Reads an upload into its aggregate until the body or the lane ends; every received byte counts.
@@ -341,16 +308,13 @@ impl App {
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
-    ) -> Outcome {
-        let lane = match self.admit(peer, connection, exchange) {
-            Ok(lane) => lane,
-            Err(unadmitted) => return Outcome::Response(unadmitted.into()),
-        };
+    ) -> Admitted {
+        let lane = self.admit(peer, connection, exchange, false)?;
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
         let transfer = self.uploads.meter().open();
         let mut sink = match self.uploads.begin(&id, peer.keys().as_ref(), lane.clone(), transfer) {
             Ok(sink) => sink,
-            Err(refusal) => return Outcome::Response(response::upload_refusal(refusal)),
+            Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
         let mut body = pin!(request.into_body());
         let mut ended = pin!(lane.ended());
@@ -362,7 +326,7 @@ impl App {
             };
             match frame {
                 Some(Ok(frame)) => sink.record(frame.data_ref().map_or(0, Buf::remaining)),
-                Some(Err(_)) => return Outcome::Abort,
+                Some(Err(_)) => return Ok(Outcome::Abort),
                 None => break lane.finish(),
             }
             if let Some(ending) = lane.due() {
@@ -372,10 +336,10 @@ impl App {
         let answer = match (ending, ending.upload_refusal()) {
             (LaneEnding::Finished, _) => response::json(format!("{{\"bytes\":{}}}", sink.bytes())),
             (_, Some(refusal)) => response::upload_refusal(refusal),
-            (_, None) => return Outcome::Abort,
+            (_, None) => return Ok(Outcome::Abort),
         };
         let deadline = Instant::now() + EXCHANGE_BOUND;
-        Outcome::Response(answer.map(|body| body.until(deadline)))
+        Ok(Outcome::Response(answer.map(|body| body.until(deadline))))
     }
 }
 

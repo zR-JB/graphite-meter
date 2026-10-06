@@ -344,32 +344,20 @@ impl Uploads {
             .strip_prefix(ID_PREFIX)
             .filter(|encoded| encoded.len() == (ID_BYTES * 4).div_ceil(3))
             .is_some_and(|encoded| URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES));
-        if !decoded
-            || self
-                .mac(&raw[..SIGNED_BYTES])
-                .verify_slice(&raw[SIGNED_BYTES..])
-                .is_err()
-        {
+        let (signed, tag) = raw.split_at(SIGNED_BYTES);
+        if !decoded || self.mac(signed).verify_slice(tag).is_err() {
             return false;
         }
         let issued = u64::from_be_bytes(raw[..8].try_into().expect("eight bytes"));
         let lifetime = u64::try_from(ID_LIFETIME.as_nanos()).expect("two minutes in nanoseconds");
-        self.0
-            .clock
-            .now()
-            .checked_sub(issued)
-            .is_some_and(|age| age <= lifetime)
+        let age = self.0.clock.now().checked_sub(issued);
+        age.is_some_and(|age| age <= lifetime)
     }
 
     fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.0.key).expect("HMAC takes keys of any length");
         mac.update(signed);
         mac
-    }
-
-    #[cfg(test)]
-    pub(super) fn live(&self) -> usize {
-        self.entries().live.len()
     }
 }
 

@@ -51,9 +51,8 @@ impl Budget {
 
     /// Charges `bytes` until the lease drops, if they fit.
     pub fn lease(&self, bytes: usize) -> Option<Lease> {
-        self.0
-            .charge(bytes)
-            .then(|| Lease { budget: self.clone(), bytes, kind: Kind::Load })
+        let charged = self.0.charge(bytes);
+        charged.then(|| Lease { budget: self.clone(), bytes, reserved: false })
     }
 
     /// Charges endpoint buffers, which the pressure thresholds and the clients' half leave out.
@@ -64,7 +63,7 @@ impl Budget {
             self.0.released.fetch_add(bytes, Ordering::Relaxed);
             return None;
         }
-        Some(Lease { budget: self.clone(), bytes, kind: Kind::Reserved })
+        Some(Lease { budget: self.clone(), bytes, reserved: true })
     }
 
     /// The pressure level; logs when growth is held back at three quarters and when usage falls below five eighths.
@@ -147,31 +146,20 @@ macro_rules! shared_budget {
 
 shared_budget!(noq, h2);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Load,
-    Reserved,
-}
-
 /// Bytes charged until dropped.
 #[derive(Debug)]
 #[must_use]
 pub struct Lease {
     budget: Budget,
     bytes: usize,
-    kind: Kind,
-}
-
-impl Lease {
-    pub fn bytes(&self) -> usize {
-        self.bytes
-    }
+    /// Endpoint buffers from `reserve`.
+    reserved: bool,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
         self.budget.0.give_back(self.bytes);
-        if self.kind == Kind::Reserved {
+        if self.reserved {
             self.budget.0.released.fetch_add(self.bytes, Ordering::Release);
         }
     }

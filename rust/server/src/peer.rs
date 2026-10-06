@@ -97,8 +97,7 @@ impl Peer {
 pub enum ClientKey {
     V4(Ipv4Addr),
     V6(Ipv6Net),
-    Login(Arc<str>),
-    Grant(Arc<str>),
+    Holder(Holder),
     Principal(Arc<str>),
 }
 
@@ -142,13 +141,11 @@ impl ClientKeys {
             Self::Exempt => [None, None, None],
             Self::V4(ip) => [Some(ClientKey::V4(*ip)), None, None],
             Self::V6(ip) => [64, 56, 48].map(|bits| Some(prefix(*ip, bits))),
-            Self::Auth(holder, principal) => {
-                let holder = match holder {
-                    Holder::Login(id) => ClientKey::Login(id.clone()),
-                    Holder::Grant(id) => ClientKey::Grant(id.clone()),
-                };
-                [Some(holder), Some(ClientKey::Principal(principal.clone())), None]
-            }
+            Self::Auth(holder, principal) => [
+                Some(ClientKey::Holder(holder.clone())),
+                Some(ClientKey::Principal(principal.clone())),
+                None,
+            ],
         };
         keys.into_iter().flatten()
     }
@@ -210,13 +207,13 @@ mod tests {
         let store = Store::default();
         let login = store.sign_in("alice", "Alice", "local").unwrap();
         let lease = store.bearer(&store.grant(login.key, None).unwrap()).unwrap();
-        let Holder::Grant(grant) = lease.holder().clone() else {
+        let ClientKeys::Auth(Holder::Grant(grant), _) = lease.keys() else {
             panic!("a grant's lease")
         };
         let peer = Peer::new(Address::Ambiguous("10.0.0.1".parse().unwrap()));
         assert_eq!(peer.keys(), None, "ambiguous evidence owns nothing");
         let signed_in = keys(peer.with_auth(Some(lease)).keys().unwrap());
-        assert_eq!(signed_in, [ClientKey::Grant(grant), ClientKey::Principal("alice".into())]);
+        assert_eq!(signed_in, [ClientKey::Holder(Holder::Grant(grant)), ClientKey::Principal("alice".into())]);
         let trusted = ["192.0.2.0/24".parse().unwrap()];
         assert_eq!(ClientKeys::connection("192.0.2.7".parse().unwrap(), &trusted), ClientKeys::Exempt);
         assert_eq!(keys(ClientKeys::Exempt), []);

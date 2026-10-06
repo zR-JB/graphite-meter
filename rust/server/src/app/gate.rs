@@ -6,7 +6,6 @@ use super::{
     response,
 };
 use crate::{
-    auth::Decision,
     peer::{Address, Peer},
     transport::body::Body,
 };
@@ -16,18 +15,13 @@ use http::{Method, Request, Response, StatusCode, Version, header};
 /// A request head, as parsed, holds at most this many bytes.
 pub(crate) const MAX_HEAD_BYTES: usize = 32 << 10;
 
-/// What the gate decided for a request.
-pub(super) enum Gate {
-    /// Dispatch it, to the route if this endpoint mounts one at its path, as the request of `peer`.
-    Pass { route: Option<Route>, peer: Peer },
-    /// The gate's own answer.
-    Answer(Response<Body>),
-}
+/// Dispatch a request to the route this endpoint mounts at its path, if any, as `peer`'s; or the gate's answer.
+pub(super) type Gate = Result<(Option<Route>, Peer), Response<Body>>;
 
 impl App {
     pub(super) fn gate<B: http_body::Body>(&self, request: &Request<B>, connection: &Connection) -> Gate {
         if let Some(answer) = validate(request) {
-            return Gate::Answer(answer);
+            return Err(answer);
         }
         let (endpoint, method) = (connection.endpoint, request.method());
         // Where the app is served, a method the route does not take falls through to it.
@@ -35,10 +29,8 @@ impl App {
             .filter(|&route| endpoint.mounts(route) && (!endpoint.ui() || allows(route, method)));
         let address = Address::resolve(connection.peer, request.headers(), &self.config.trusted_proxies);
         let peer = Peer::new(address);
-        let peer = match self.auth.authorize(request, endpoint, &peer) {
-            Decision::Allow(lease) => peer.with_auth(lease),
-            Decision::Answer(answer) => return Gate::Answer(answer),
-        };
+        let lease = self.auth.authorize(request, endpoint, &peer)?;
+        let peer = peer.with_auth(lease);
         match route {
             Some(route) if !allows(route, method) => {
                 let mut allow: Vec<_> = methods(route).collect();
@@ -47,9 +39,9 @@ impl App {
                 if self.auth.enabled() {
                     harden(answer.headers_mut(), true);
                 }
-                Gate::Answer(answer)
+                Err(answer)
             }
-            _ => Gate::Pass { route, peer },
+            _ => Ok((route, peer)),
         }
     }
 }

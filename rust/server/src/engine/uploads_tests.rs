@@ -3,6 +3,10 @@ use crate::{auth::Holder, exchange::Exchange, lane::Work};
 use tokio::time::advance;
 use tokio_util::sync::CancellationToken;
 
+fn live(uploads: &Uploads) -> usize {
+    uploads.entries().live.len()
+}
+
 fn client(address: &str) -> ClientKeys {
     ClientKeys::address(address.parse().unwrap())
 }
@@ -24,7 +28,7 @@ async fn ids_are_signed_by_their_store_and_create_state_only_while_fresh() {
     let (uploads, owner, id) = fixture();
     assert!(id.starts_with("gmu_") && id.len() == 79, "{id}");
     assert_ne!(uploads.mint(), id);
-    assert_eq!(uploads.live(), 0, "minting holds no state");
+    assert_eq!(live(&uploads), 0, "minting holds no state");
     let mut forged = id.clone().into_bytes();
     forged[20] = if forged[20] == b'A' { b'B' } else { b'A' };
     let forged = String::from_utf8(forged).unwrap();
@@ -83,5 +87,5 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     assert_eq!(uploads.subscribe(&fresh, None).err(), Some(UploadRefusal::OwnerMismatch));
     assert_eq!(uploads.checkpoint(&fresh, None).err(), Some(UploadRefusal::Invalid));
     assert_eq!(uploads.finish(&id, None).err(), Some(UploadRefusal::OwnerMismatch));
-    assert_eq!(uploads.live(), 2);
+    assert_eq!(live(&uploads), 2);
 }

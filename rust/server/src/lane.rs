@@ -25,7 +25,7 @@ struct State {
     deadline: Instant,
     /// Nanoseconds from `start` to the peer's last movement.
     moved: AtomicU64,
-    /// The index of the decided ending in `LaneEnding::ALL`, or `RUNNING`.
+    /// The decided ending, its index in `LaneEnding::ALL`, or `RUNNING`.
     ending: AtomicU8,
     decided: CancellationToken,
     shutdown: CancellationToken,
@@ -64,9 +64,8 @@ impl Lane {
     }
 
     pub fn ending(&self) -> Option<LaneEnding> {
-        LaneEnding::ALL
-            .get(usize::from(self.0.ending.load(Ordering::Acquire)))
-            .copied()
+        let index = usize::from(self.0.ending.load(Ordering::Acquire));
+        LaneEnding::ALL.get(index).copied()
     }
 
     /// The lane's first ending, same for every caller: revocation, shutdown, lifetime, `IDLE_BOUND`, `finish`.
@@ -124,16 +123,8 @@ impl Lane {
     }
 
     fn decide(&self, cause: LaneEnding) -> LaneEnding {
-        let index = LaneEnding::ALL
-            .iter()
-            .position(|ending| *ending == cause)
-            .expect("every ending is listed");
-        let index = u8::try_from(index).expect("five endings");
-        match self
-            .0
-            .ending
-            .compare_exchange(RUNNING, index, Ordering::AcqRel, Ordering::Acquire)
-        {
+        let ending = &self.0.ending;
+        match ending.compare_exchange(RUNNING, cause as u8, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => {
                 self.0.decided.cancel();
                 cause

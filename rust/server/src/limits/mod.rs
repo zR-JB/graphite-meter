@@ -73,7 +73,7 @@ impl Quotas {
 
     /// A WebTransport transfer session, which also takes a handler from the shared pool.
     pub fn session(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
-        self.sessions.acquire_within(keys, 1, &self.operations)
+        self.sessions.acquire_within(keys, 1, Some(&self.operations))
     }
 
     /// Receive-window credit for a connection an admitted client funds; none past its share or the clients' half.

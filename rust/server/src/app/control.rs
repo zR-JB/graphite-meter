@@ -142,14 +142,11 @@ impl App {
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
-    ) -> Response<Body> {
+    ) -> Result<Response<Body>, Response<Body>> {
         if request.method() == Method::HEAD {
-            return response::method_not_allowed("GET, DELETE");
+            return Ok(response::method_not_allowed("GET, DELETE"));
         }
-        let lane = match self.admit(peer, connection, exchange) {
-            Ok(lane) => lane,
-            Err(unadmitted) => return unadmitted.into(),
-        };
+        let lane = self.admit(peer, connection, exchange, false)?;
         let (id, owner) = (query::get(request.uri().query(), "id").unwrap_or_default(), peer.keys());
         let attached = match *request.method() {
             Method::DELETE => self.uploads.finish(&id, owner.as_ref()).map(|()| None),
@@ -157,15 +154,15 @@ impl App {
         };
         let feed = match attached {
             Ok(Some(feed)) => feed,
-            Ok(None) => return response::empty(StatusCode::NO_CONTENT),
-            Err(refusal) => return response::upload_refusal(refusal),
+            Ok(None) => return Ok(response::empty(StatusCode::NO_CONTENT)),
+            Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
         let mut response = Response::new(Body::feed(feed).with_lane(lane));
         let headers = response.headers_mut();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-ndjson"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));
         headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
-        response
+        Ok(response)
     }
 }
 
