@@ -206,10 +206,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) glides from its old place to its new one on the compositor, a wider one opens from its old
   width. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
-  arriving one waits for its neighbours to make room (140 ms) before it rises in. Nothing waits for a snapshot of
-  the old page, so the click is answered at once. Opening or closing a result in History moves its panes the same
-  way: the list keeps its place while its width changes, and the result rises in; closing, the result goes at once
-  and the list opens across its place from its old width, like a curtain.
+  arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
+  moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
+  in History moves its panes the same way: the list keeps its place while its width changes, so the result rises in
+  at once; closing, the result goes at once and the list opens across its place from its old width, like a curtain.
 - Live values and the running strip's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,

@@ -61,6 +61,8 @@ export function flip(update: () => void, only?: readonly string[]): void {
   update();
   flushSync();
   const after = boxes(only);
+  const arriving: HTMLElement[] = [];
+  let moved = false;
   for (const [key, { el, box }] of after) {
     const old = before.get(key);
     const edge = el.dataset.flipEdge;
@@ -73,30 +75,22 @@ export function flip(update: () => void, only?: readonly string[]): void {
       continue;
     }
     if (!old) {
-      el.animate(
-        [
-          { opacity: 0, translate: "0 8px" },
-          { opacity: 1, translate: "0 0" },
-        ],
-        {
-          duration: FLIP_MS - ROOM_MS,
-          delay: ROOM_MS,
-          easing: FLIP_EASE,
-          fill: "backwards",
-        },
-      );
+      arriving.push(el);
       continue;
     }
     const dx = old.box.left - box.left;
     const dy = old.box.top - box.top;
-    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5)
+    if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
+      moved = true;
       el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
         duration: edge ? SHEET_MS : FLIP_MS,
         easing: edge ? SHEET_EASE : FLIP_EASE,
       });
+    }
     // A wider element opens from its old width rather than jumping to the new one.
     const grew = box.width - old.box.width;
-    if (grew >= 1)
+    if (grew >= 1) {
+      moved = true;
       el.animate(
         [
           { clipPath: `inset(0 ${grew}px 0 0 round var(--r-surface))` },
@@ -104,7 +98,22 @@ export function flip(update: () => void, only?: readonly string[]): void {
         ],
         { duration: FLIP_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
       );
+    }
   }
+  // An arriving element waits only while neighbours move to make its room.
+  for (const el of arriving)
+    el.animate(
+      [
+        { opacity: 0, translate: "0 8px" },
+        { opacity: 1, translate: "0 0" },
+      ],
+      {
+        duration: FLIP_MS - ROOM_MS,
+        delay: moved ? ROOM_MS : 0,
+        easing: FLIP_EASE,
+        fill: "backwards",
+      },
+    );
   for (const [key, { el, box }] of before) {
     const edge = el.dataset.flipEdge;
     if (after.has(key) || !edge) continue;
