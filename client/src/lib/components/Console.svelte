@@ -309,10 +309,21 @@
       ? { ...next, panels: next.panels.slice(-1) }
       : next;
   }
+  // A close shows at once, in the frame of its click; the history step back lands later, and a route taken
+  // meanwhile waits for it to be written.
+  let traversing = false;
+  let queued: { route: Route; replace: boolean } | null = null;
   function routeTo(next: Route, replace = false) {
     next = panelsForLayout(next);
     const parent = serializeRoute(currentRoute);
     commitRoute(next);
+    if (traversing) {
+      queued = { route: next, replace };
+      return;
+    }
+    record(next, replace, parent);
+  }
+  function record(next: Route, replace: boolean, parent: string) {
     const hash = serializeRoute(next);
     if (replace)
       window.history.replaceState({ graphiteRoute: false }, "", hash);
@@ -324,9 +335,22 @@
       graphiteRoute?: boolean;
       parent?: string;
     } | null;
-    if (marker?.graphiteRoute && marker.parent === serializeRoute(next))
+    if (
+      !traversing &&
+      marker?.graphiteRoute &&
+      marker.parent === serializeRoute(next)
+    ) {
+      traversing = true;
+      commitRoute(panelsForLayout(next), true);
       window.history.back();
-    else routeTo(next, true);
+    } else routeTo(next, true);
+  }
+  function onPopState() {
+    if (!traversing) return onNavigate();
+    traversing = false;
+    const pending = queued;
+    queued = null;
+    if (pending) record(pending.route, pending.replace, window.location.hash);
   }
   function historyRoute(
     id: string | null = null,
@@ -625,7 +649,7 @@
 
 <svelte:window
   onpagehide={saveDockWidths}
-  onpopstate={onNavigate}
+  onpopstate={onPopState}
   onkeydown={onKeydown}
   onbeforeunload={onBeforeUnload}
 />

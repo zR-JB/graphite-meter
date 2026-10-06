@@ -36,8 +36,8 @@ const ROOM_MS = 140;
 const SHEET_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 // As `--dur-sheet`, which keeps a closing sheet displayed while it leaves.
 const SHEET_MS = 320;
-/** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
 let flipping = false;
+/** The rendered elements marked `data-flip`, by key; an element that is not displayed has no place. */
 const boxes = (only?: readonly string[]) =>
   new Map(
     Array.from(document.querySelectorAll<HTMLElement>("[data-flip]"))
@@ -68,6 +68,12 @@ export function flip(update: () => void, only?: readonly string[]): void {
     flipping = false;
   }
   const after = boxes(only);
+  // With a sheet in it, everything that moves moves as one surface with the sheet.
+  const sheet = [...before.values(), ...after.values()].some(
+    ({ el }) => el.dataset.flipEdge,
+  );
+  const moveMs = sheet ? SHEET_MS : FLIP_MS;
+  const moveEase = sheet ? SHEET_EASE : FLIP_EASE;
   const arriving: HTMLElement[] = [];
   let moved = false;
   for (const [key, { el, box }] of after) {
@@ -90,8 +96,8 @@ export function flip(update: () => void, only?: readonly string[]): void {
     if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
       moved = true;
       el.animate([{ translate: `${dx}px ${dy}px` }, { translate: "0 0" }], {
-        duration: edge ? SHEET_MS : FLIP_MS,
-        easing: edge ? SHEET_EASE : FLIP_EASE,
+        duration: moveMs,
+        easing: moveEase,
       });
     }
     // A wider element opens from its old width rather than jumping to the new one.
@@ -103,7 +109,7 @@ export function flip(update: () => void, only?: readonly string[]): void {
           { clipPath: `inset(0 ${grew}px 0 0 round var(--r-surface))` },
           { clipPath: "inset(0 0 0 0 round var(--r-surface))" },
         ],
-        { duration: FLIP_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+        { duration: moveMs, easing: SHEET_EASE },
       );
     }
   }
