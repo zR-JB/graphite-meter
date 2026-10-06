@@ -1,20 +1,19 @@
-//! UDP sockets for QUIC, with quic-go's buffer sizes and warning.
-use graphite_meter_proto::flag::parse_bool;
+//! UDP sockets for QUIC, with large buffers and one warning when the host caps them.
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
 };
 
-/// quic-go's desired UDP buffer size.
+/// The UDP buffer each QUIC socket asks for.
 const BUFFER_BYTES: usize = 7 << 20;
 /// The least each of several sockets on one address keeps: a single fast connection's headroom.
 const SHARED_BUFFER_FLOOR: usize = 2 << 20;
 /// Whether a socket of this process has returned the warning.
 static WARNED: AtomicBool = AtomicBool::new(false);
 
-/// Binds one of `sockets` sharing `address` through `SO_REUSEPORT` (Linux only), returning quic-go's warning for
-/// the first socket whose buffers stay short unless `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` is true.
+/// Binds one of `sockets` sharing `address` through `SO_REUSEPORT` (Linux only), returning a warning for the first
+/// socket of this process whose buffers stay short.
 pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
@@ -27,12 +26,13 @@ pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, O
     let bytes = buffer_bytes(sockets);
     let receive = grow(&socket, Buffer::Receive, bytes);
     let send = grow(&socket, Buffer::Send, bytes);
-    let silenced =
-        std::env::var("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING").is_ok_and(|value| parse_bool(&value) == Some(true));
     let shortfall = receive.and(send).err();
-    let reported = shortfall.filter(|_| !silenced && !WARNED.swap(true, Ordering::Relaxed));
+    let reported = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed));
     let warning = reported.map(|shortfall| {
-        format!("{shortfall}. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.")
+        format!(
+            "[gm:udp] {shortfall}, so QUIC above about 1 Gbit/s may drop packets; raise net.core.rmem_max and \
+             net.core.wmem_max on the host (docs/DEPLOYMENT.md, UDP buffers)"
+        )
     });
     if sockets > 1 {
         #[cfg(target_os = "linux")]
@@ -82,19 +82,10 @@ fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), St
             Buffer::Send => rustix::net::sockopt::set_socket_send_buffer_size_force(socket, bytes),
         };
     }
-    shortfall(name, before, size()?, bytes).map_or(Ok(()), Err)
+    shortfall(name, size()?, bytes).map_or(Ok(()), Err)
 }
 
-/// quic-go's message for a buffer that stayed below `bytes`.
-fn shortfall(name: &str, before: usize, after: usize, bytes: usize) -> Option<String> {
-    let (was, wanted, got) = (before / 1024, bytes / 1024, after / 1024);
-    match after {
-        _ if after >= bytes => None,
-        _ if after == before => {
-            Some(format!("failed to increase {name} buffer size (wanted: {wanted} kiB, got {got} kiB)"))
-        }
-        _ => Some(format!(
-            "failed to sufficiently increase {name} buffer size (was: {was} kiB, wanted: {wanted} kiB, got: {got} kiB)"
-        )),
-    }
+/// The shortfall of a buffer that stayed below `bytes`.
+fn shortfall(name: &str, after: usize, bytes: usize) -> Option<String> {
+    (after < bytes).then(|| format!("the UDP {name} buffer is {} KiB of the {} KiB wanted", after / 1024, bytes / 1024))
 }

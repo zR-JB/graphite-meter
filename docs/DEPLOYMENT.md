@@ -303,19 +303,19 @@ group. The footer explains the focused row and its steps, then names what enter 
 current screen. Every selected server is probed for latency; the run's latency is the first selected server's, and
 if it leaves the test a surviving one takes over. `l` switches the server shown; the printed report keeps the run's.
 
-| Key                       | Where              | Action                                                                                                                                                       |
-| ------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ↑/↓ (k/j, tab), ←/→       | setup              | Move; change the focused value.                                                                                                                              |
-| enter, space              | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
-| r, v, s, u, a             | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
-| ←/→, home/end, enter, esc | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
-| space, enter, esc         | server chooser     | Select, apply, cancel.                                                                                                                                       |
-| enter, space (o), esc     | sign-in            | Open the approval page, cancel.                                                                                                                              |
-| esc                       | running            | Stop test; a second esc confirms.                                                                                                                            |
-| enter (r), esc            | finished           | Run again; back to setup.                                                                                                                                    |
-| d, l                      | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
-| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                                 |
-| ?, q, ctrl+c              | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
+| Key                        | Where              | Action                                                                                                                                                       |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ↑/↓ (k/j, tab), ←/→        | setup              | Move; change the focused value.                                                                                                                              |
+| enter, space               | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
+| r, v, s, u, a              | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
+| ←/→, home/end, enter, esc  | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
+| space, enter, esc          | server chooser     | Select, apply, cancel.                                                                                                                                       |
+| enter, space (o), esc      | sign-in            | Open the approval page, cancel.                                                                                                                              |
+| esc                        | running            | Stop test; a second esc confirms.                                                                                                                            |
+| enter (r), esc             | finished           | Run again; back to setup.                                                                                                                                    |
+| d, l                       | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
+| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                               |
+| ?, q, ctrl+c               | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 
@@ -341,6 +341,21 @@ cannot read their keys.
 | Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests.                  |
 | Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener.         |
 | Timeouts or "—" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
+
+### UDP buffers
+
+HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket. Linux caps an unprivileged request at
+`net.core.rmem_max` and `net.core.wmem_max`, and the server then logs one line at startup: the Go server prints
+quic-go's "failed to sufficiently increase receive buffer size …", the Rust server `[gm:udp] the UDP receive
+buffer is … KiB of the 7168 KiB wanted …`. Below about 1 Gbit/s of QUIC the smaller buffer is enough; above it,
+bursts can overflow the socket and lower HTTP/3 and WebTransport results. Raise the caps on the host, which also
+covers containers:
+
+```sh
+sysctl --write net.core.rmem_max=7500000 net.core.wmem_max=7500000
+```
+
+Add both keys to a file under `/etc/sysctl.d/` to keep them after a reboot.
 
 ## Server reference
 
