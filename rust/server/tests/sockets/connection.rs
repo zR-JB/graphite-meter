@@ -16,21 +16,10 @@ async fn closes_after(client: &mut Client<TcpStream>) -> Duration {
         std::thread::sleep(Duration::from_millis(1));
         if let Some(answer) = client.answer().now_or_never() {
             assert!(answer.is_none(), "the server closed the connection");
+            tokio::time::resume();
             return started.elapsed();
         }
     }
-}
-
-#[tokio::test]
-async fn an_idle_keep_alive_connection_closes_after_fifteen_seconds() {
-    let server = start(&[]).await;
-    let mut client = server.connect().await;
-    assert_eq!(client.request("GET /probe", "").await.status, 200);
-    let elapsed = closes_after(&mut client).await;
-    assert!(
-        elapsed > Duration::from_secs(14) && elapsed < Duration::from_millis(15_100),
-        "{elapsed:?}"
-    );
 }
 
 /// Sends part of a head after `idle` seconds without traffic, and returns how long the server then took to close.
@@ -44,22 +33,20 @@ async fn partial_head_closes_after(client: &mut Client<TcpStream>, idle: u64) ->
 }
 
 #[tokio::test]
-async fn the_first_request_has_fifteen_seconds_from_the_connection_start() {
+async fn keep_alive_idleness_and_request_heads_have_fifteen_seconds() {
     let server = start(&[]).await;
+    let fifteen = |elapsed: Duration| elapsed > Duration::from_secs(14) && elapsed < Duration::from_millis(15_100);
+    let mut idle = server.connect().await;
+    assert_eq!(idle.request("GET /probe", "").await.status, 200);
+    let elapsed = closes_after(&mut idle).await;
+    assert!(fifteen(elapsed), "an idle keep-alive connection: {elapsed:?}");
     let elapsed = partial_head_closes_after(&mut server.connect().await, 10).await;
-    assert!(elapsed > Duration::from_secs(4) && elapsed < Duration::from_millis(5_100), "{elapsed:?}");
-}
-
-#[tokio::test]
-async fn a_later_request_head_has_fifteen_seconds_from_its_first_byte() {
-    let server = start(&[]).await;
-    let mut client = server.connect().await;
-    assert_eq!(client.request("GET /probe", "").await.status, 200);
-    let elapsed = partial_head_closes_after(&mut client, 10).await;
-    assert!(
-        elapsed > Duration::from_secs(14) && elapsed < Duration::from_millis(15_100),
-        "{elapsed:?}"
-    );
+    let five = elapsed > Duration::from_secs(4) && elapsed < Duration::from_millis(5_100);
+    assert!(five, "the first head counts from the connection start: {elapsed:?}");
+    let mut later = server.connect().await;
+    assert_eq!(later.request("GET /probe", "").await.status, 200);
+    let elapsed = partial_head_closes_after(&mut later, 10).await;
+    assert!(fifteen(elapsed), "a later head counts from its first byte: {elapsed:?}");
 }
 
 #[tokio::test]

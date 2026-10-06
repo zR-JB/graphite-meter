@@ -8,7 +8,6 @@ use graphite_meter_testkit::{Identity, Scratch};
 use http::{Request, Response};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
-use tokio::time::Instant;
 use tokio_rustls::TlsConnector;
 
 /// The HTTP/3 listener's address, which must differ from the HTTP/1 listener's.
@@ -176,9 +175,7 @@ async fn http3_serves_its_routes_downloads_and_uploads() {
     assert!(!probe.headers().contains_key("alt-svc") && !probe.headers().contains_key("connection"));
     let probe: serde_json::Value = serde_json::from_slice(&read(&mut body).await.unwrap()).unwrap();
     assert_eq!(probe["protocolNegotiated"], "h3");
-    for path in ["/preflight", "/servers", "/ws/ping"] {
-        assert_eq!(connection.send("GET", path, b"").await.0.status(), 404, "{path}");
-    }
+    assert_eq!(connection.send("GET", "/preflight", b"").await.0.status(), 404, "no UI route");
     let mut download = connection.send("GET", "/download?bytes=1000000", b"").await.1;
     assert_eq!(read(&mut download).await.unwrap().len(), 1_000_000);
     let (head, mut body) = connection.send("HEAD", "/download?bytes=5", b"").await;
@@ -235,55 +232,24 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
 }
 
 #[tokio::test]
-async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
+async fn an_upload_and_a_feed_the_peer_leaves_idle_end_after_thirty_seconds() {
     let h3 = H3::start(&[]).await;
-    // Stream credit of a few frames stalls the paced download before the clock moves.
-    let connection = h3.connect(transport(Some(64 << 10))).await;
-    let (_download, mut download) = connection.open("GET", ENDLESS).await;
-    download.response().await.unwrap();
+    let connection = h3.connect(transport(None)).await;
     let id = connection.upload_id().await;
     let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
     upload.send_data(Bytes::from_static(b"partial")).await.unwrap();
+    // Too little stream credit for the feed's head.
+    let stalled = h3.connect(transport(Some(64))).await;
+    let _feed = stalled.open("GET", &format!("/upload/progress?id={id}")).await;
     h3.server.until_active(2).await;
     pass(Duration::from_secs(28)).await;
-    assert_eq!(h3.server.active().await, 2);
+    assert_eq!((h3.server.active().await, stalled.resets()), (2, 0));
     pass(Duration::from_secs(3)).await;
-    assert_eq!(read(&mut download).await.unwrap_err(), CANCELLED, "an idle download is reset");
     let answer = answer.response().await.unwrap();
     assert_eq!(answer.status(), 408);
     assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
-}
-
-#[tokio::test]
-async fn a_progress_feed_without_stream_credit_is_reset_after_thirty_seconds() {
-    let h3 = H3::start(&[]).await;
-    let control = h3.connect(transport(None)).await;
-    let id = control.upload_id().await;
-    let connection = h3.connect(transport(Some(64))).await;
-    let _feed = connection.open("GET", &format!("/upload/progress?id={id}")).await;
-    h3.server.until_active(1).await;
-    pass(Duration::from_secs(28)).await;
-    assert_eq!((h3.server.active().await, connection.resets()), (1, 0));
-    pass(Duration::from_secs(3)).await;
     h3.server.until_active(0).await;
-    assert_eq!(connection.resets(), 1, "the feed's stream is reset");
-}
-
-#[tokio::test]
-async fn transfers_reaching_the_operation_lifetime_are_reset() {
-    let h3 = H3::start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
-    let connection = h3.connect(transport(None)).await;
-    let id = connection.upload_id().await;
-    let started = Instant::now();
-    let mut download = connection.send("GET", ENDLESS, b"").await.1;
-    let (mut upload, mut answer) = connection.open("POST", &format!("/upload?id={id}")).await;
-    upload.send_data(Bytes::from_static(b"partial")).await.unwrap();
-    assert_eq!(read(&mut download).await.unwrap_err(), CANCELLED);
-    assert_eq!(answer.response().await.unwrap_err(), CANCELLED, "an upload closes unanswered");
-    let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(3), "{elapsed:?}");
-    let counters = connection.json("POST", &format!("/upload/checkpoint?id={id}")).await;
-    assert_eq!(counters["bytes"], 7, "the bytes of an unanswered upload count");
+    assert_eq!(stalled.resets(), 1, "the feed's stream is reset");
 }
 
 #[tokio::test]

@@ -39,6 +39,10 @@ async fn a_stop_closes_every_listener_and_ends_the_work_on_each_transport() {
         .send(&format!("GET {ENDLESS} HTTP/1.1\r\nHost: test\r\n\r\n"))
         .await;
     download.head().await.unwrap();
+    let id = server.upload_id().await;
+    let mut upload = server.connect().await;
+    let head = format!("POST /upload?id={id} HTTP/1.1\r\nHost: test\r\nContent-Length: 1000\r\n\r\npartial");
+    upload.send(&head).await;
 
     let socket = TcpStream::connect(server.tls.unwrap()).await.unwrap();
     let tls = TlsConnector::from(Arc::new(h3.identity.client(&[b"http/1.1"])));
@@ -61,7 +65,7 @@ async fn a_stop_closes_every_listener_and_ends_the_work_on_each_transport() {
     let (_, mut h3_download) = quic.send("GET", ENDLESS, b"").await;
     let sessions = h3.connect(transport(None)).await;
     let session = sessions.session("/wt/ping").await;
-    server.until_active(5).await;
+    server.until_active(6).await;
 
     let addresses = [Some(server.address), server.tls, server.h2, server.companion].map(Option::unwrap);
     let stopped = h3.server.stop();
@@ -69,6 +73,8 @@ async fn a_stop_closes_every_listener_and_ends_the_work_on_each_transport() {
     tokio::time::timeout(bound, download.drain())
         .await
         .expect("the HTTP/1 download ends");
+    let answer = tokio::time::timeout(bound, upload.answer()).await.unwrap();
+    assert!(answer.is_none(), "an HTTP/1 upload ending with shutdown closes unanswered");
     let Some(Ok(Message::Close(Some(close)))) = bus.next().await else {
         panic!("the bus closes");
     };

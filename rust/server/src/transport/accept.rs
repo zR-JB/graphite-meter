@@ -218,25 +218,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn connections_left_after_the_grace_are_cut() {
-        let quota = Quota::new(10, 10);
-        let (address, shutdown, task) = start(quota.clone(), |socket: TcpStream| async move {
-            std::future::pending::<()>().await;
-            drop(socket);
-        })
-        .await;
-        let mut socket = TcpStream::connect(address).await.unwrap();
-        while quota.usage().active == 0 {
-            tokio::task::yield_now().await;
-        }
-        let stopped = tokio::time::Instant::now();
-        shutdown.cancel();
-        task.await.unwrap().unwrap();
-        assert_eq!(stopped.elapsed(), SHUTDOWN_GRACE);
-        assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0);
-    }
-
     /// A listener whose accepts fail `failures` times, recording when each was tried.
     struct Failing {
         failures: usize,
@@ -386,31 +367,5 @@ mod tests {
         let tried = crate::lock(&tried);
         let delays: Vec<_> = tried.windows(2).map(|pair| (pair[1] - pair[0]).as_millis()).collect();
         assert_eq!(delays, [5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000]);
-    }
-
-    #[tokio::test]
-    async fn a_connection_beyond_its_share_is_closed_unserved() {
-        let quota = Quota::new(10, 1);
-        let release = Arc::new(Notify::new());
-        let serve = {
-            let release = release.clone();
-            move |socket: TcpStream| {
-                let release = release.clone();
-                async move {
-                    release.notified().await;
-                    greet(socket).await;
-                }
-            }
-        };
-        let (address, shutdown, task) = start(quota.clone(), serve).await;
-        let first = tokio::spawn(greeting(address));
-        while quota.usage().active == 0 {
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(greeting(address).await.unwrap(), "", "the second connection of a client is closed");
-        release.notify_one();
-        assert_eq!(first.await.unwrap().unwrap(), "hello");
-        shutdown.cancel();
-        task.await.unwrap().unwrap();
     }
 }

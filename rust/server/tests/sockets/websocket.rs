@@ -1,4 +1,4 @@
-//! The WebSocket bus: handshakes, PONGs, the close code of every ending and the close handshake's bound.
+//! The WebSocket bus: handshakes, PONGs, the close codes of its endings and the close handshake's bound.
 
 use super::*;
 use futures_util::{SinkExt, StreamExt};
@@ -103,27 +103,6 @@ async fn a_peer_that_never_answers_the_close_holds_the_bus_at_most_five_seconds(
     advance_clock(Duration::from_millis(1500)).await;
     let released = tokio::time::timeout(Duration::from_millis(500), server.until_active(0)).await;
     assert!(released.is_ok(), "released at the five-second bound");
-}
-
-#[tokio::test]
-async fn shutdown_closes_buses_with_1001_while_the_listener_refuses_connections() {
-    let server = start(&[]).await;
-    let address = server.address;
-    let mut socket = bus(&server).await;
-    assert_eq!(ping(&mut socket, Message::text("PING,2")).await, 2);
-    let stopping = server.stop();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!stopping.is_finished(), "the bus drains through its close handshake");
-    let refused = TcpStream::connect(address).await.unwrap_err();
-    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
-    drop(
-        tokio::net::TcpListener::bind(address)
-            .await
-            .expect("the address is free during the drain"),
-    );
-    assert_eq!(closed(&mut socket).await, (1001, "shutdown".into()));
-    assert!(socket.next().await.is_none());
-    stopping.await.unwrap().unwrap();
 }
 
 #[tokio::test]

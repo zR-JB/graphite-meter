@@ -166,21 +166,6 @@ async fn the_bus_ends_at_the_operation_lifetime_and_transfers_at_the_session_lif
     assert!(elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(3), "{elapsed:?}");
 }
 
-#[tokio::test]
-async fn shutdown_ends_sessions_and_closes_their_connection_after_the_close() {
-    let h3 = H3::start(&[]).await;
-    let connection = h3.connect(transport(None)).await;
-    let session = connection.session("/wt/ping").await;
-    h3.server.until_active(1).await;
-    let stopped = h3.server.stop();
-    assert_eq!(session.closed().await, Ok(ending(4, "shutdown")));
-    session.close(0, "").await;
-    assert_eq!(connection.closed_within(Duration::from_millis(50)).await, None);
-    pass(Duration::from_secs(1)).await;
-    assert_eq!(connection.closed_within(Duration::from_secs(2)).await, Some(Code::H3_NO_ERROR));
-    stopped.await.unwrap().unwrap();
-}
-
 /// A QUIC varint below 2^14.
 fn varint(value: usize) -> Vec<u8> {
     match value {

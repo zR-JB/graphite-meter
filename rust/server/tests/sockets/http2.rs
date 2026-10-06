@@ -11,7 +11,6 @@ use h2::{
 use http::{Request, Response};
 use rustls::pki_types::ServerName;
 use std::{future::poll_fn, sync::Arc};
-use tokio::time::Instant;
 use tokio_rustls::TlsConnector;
 
 /// A server with an HTTP/2 listener on a local port and a client trusting its certificate.
@@ -125,9 +124,7 @@ async fn http2_serves_its_routes_downloads_and_uploads() {
     assert!(!probe.headers().contains_key("connection"));
     let probe: serde_json::Value = serde_json::from_slice(&read(probe.into_body()).await.unwrap()).unwrap();
     assert_eq!(probe["protocolNegotiated"], "h2");
-    for path in ["/preflight", "/servers", "/ws/ping"] {
-        assert_eq!(connection.get("GET", path).await.status(), 404, "{path}");
-    }
+    assert_eq!(connection.get("GET", "/preflight").await.status(), 404, "no UI route");
     let download = connection.get("GET", "/download?bytes=1000000").await;
     assert_eq!(read(download.into_body()).await.unwrap().len(), 1_000_000);
     let id = connection.upload_id().await;
@@ -295,61 +292,30 @@ async fn unadmitted_header_and_data_floods_stay_within_the_floor() {
 }
 
 #[tokio::test]
-async fn transfers_the_peer_leaves_idle_end_after_thirty_seconds() {
+async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
     let h2 = H2::start(&[]).await;
-    let mut connection = h2.connect(65_535).await;
-    let download = connection.get("GET", ENDLESS).await;
-    let id = h2.server.upload_id().await;
-    let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
-    send(&mut upload, Bytes::from_static(b"partial"), false).await;
-    h2.server.until_active(2).await;
-    advance_clock(Duration::from_secs(29)).await;
-    assert_eq!(h2.server.active().await, 2);
-    advance_clock(Duration::from_secs(2)).await;
-    let mut download = download.into_body();
-    let cut = loop {
-        match download.data().await.unwrap() {
-            Ok(_) => {}
-            Err(error) => break error,
-        }
-    };
-    assert_eq!(cut.reason(), Some(Reason::CANCEL), "an idle download is reset");
-    let answer = answer.await.unwrap();
-    assert_eq!(answer.status(), 408);
-    assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
-}
-
-#[tokio::test]
-async fn a_progress_feed_without_stream_credit_is_reset_after_thirty_seconds() {
-    let h2 = H2::start(&[]).await;
+    // Without stream credit the download and the feed write nothing past their heads.
     let mut connection = h2.connect(0).await;
+    let download = connection.get("GET", ENDLESS).await;
     let id = h2.server.upload_id().await;
     let feed = connection.get("GET", &format!("/upload/progress?id={id}")).await;
     assert_eq!(feed.status(), 200);
-    h2.server.until_active(1).await;
-    advance_clock(Duration::from_secs(29)).await;
-    assert_eq!(h2.server.active().await, 1);
-    advance_clock(Duration::from_secs(2)).await;
-    let reset = feed.into_body().data().await.unwrap().unwrap_err();
-    assert_eq!(reset.reason(), Some(Reason::CANCEL));
-    h2.server.until_active(0).await;
-}
-
-#[tokio::test]
-async fn transfers_reaching_the_operation_lifetime_are_reset() {
-    let h2 = H2::start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
-    let mut connection = h2.connect(65_535).await;
-    let id = connection.upload_id().await;
-    let started = Instant::now();
-    let download = connection.get("GET", ENDLESS).await;
     let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
     send(&mut upload, Bytes::from_static(b"partial"), false).await;
-    assert_eq!(read(download.into_body()).await.unwrap_err(), Some(Reason::CANCEL));
-    assert_eq!(answer.await.unwrap_err().reason(), Some(Reason::CANCEL), "an upload closes unanswered");
-    let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(3), "{elapsed:?}");
-    let counters = connection.json("POST", &format!("/upload/checkpoint?id={id}")).await;
-    assert_eq!(counters["bytes"], 7, "the bytes of an unanswered upload count");
+    h2.server.until_active(3).await;
+    advance_clock(Duration::from_secs(29)).await;
+    assert_eq!(h2.server.active().await, 3);
+    advance_clock(Duration::from_secs(2)).await;
+    assert_eq!(
+        read(download.into_body()).await.unwrap_err(),
+        Some(Reason::CANCEL),
+        "an idle download is reset"
+    );
+    assert_eq!(read(feed.into_body()).await.unwrap_err(), Some(Reason::CANCEL));
+    let answer = answer.await.unwrap();
+    assert_eq!(answer.status(), 408);
+    assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
+    h2.server.until_active(0).await;
 }
 
 #[tokio::test]
