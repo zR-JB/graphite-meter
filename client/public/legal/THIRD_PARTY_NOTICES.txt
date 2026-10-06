@@ -1251,7 +1251,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: svelte
-Version: 5.57.1
+Version: 5.57.2
 Source: https://github.com/sveltejs/svelte
 License: MIT
 Modified by Graphite Meter: yes

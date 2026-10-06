@@ -1,13 +1,8 @@
 diff --git a/src/internal/client/runtime.js b/src/internal/client/runtime.js
-index 27def053008cc438af3186a5d939668c786e871d..0f4392265ea77f231eb8138a9bd86305552b2496 100644
+index f09aaf34eec5babc118de54ff9087b95eda69906..73e118c6310ac5384edbd1bf1b6ad5c447be4320 100644
 --- a/src/internal/client/runtime.js
 +++ b/src/internal/client/runtime.js
-@@ -686,10 +686,15 @@ export function get(signal) {
- 			(derived.f & CONNECTED) === 0 &&
- 			!untracking &&
- 			active_reaction !== null &&
--			(is_updating_effect || (active_reaction.f & CONNECTED) !== 0);
-+			(active_reaction.f & CONNECTED) !== 0;
+@@ -681,6 +681,11 @@ export function get(signal) {
  
  		var is_new = (derived.f & REACTION_RAN) === 0;
  
@@ -19,7 +14,7 @@ index 27def053008cc438af3186a5d939668c786e871d..0f4392265ea77f231eb8138a9bd86305
  		if (is_dirty(derived)) {
  			if (should_connect) {
  				// set the flag before `update_derived`, so that the derived
-@@ -700,10 +705,6 @@ export function get(signal) {
+@@ -691,10 +696,6 @@ export function get(signal) {
  			update_derived(derived);
  		}
  
