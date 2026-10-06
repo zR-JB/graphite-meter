@@ -97,6 +97,12 @@
   initial-value: 1;
 }
 /* The running stage's hue lighting the console; a typed colour, so a stage change glides between hues. */
+/* A result arc's length, so a rescale or a unit switch glides it instead of replaying the result sweep. */
+@property --fraction {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
 @property --ambient {
   syntax: "<color>";
   inherits: true;

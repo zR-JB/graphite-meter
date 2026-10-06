@@ -35,9 +35,20 @@ export function ceilStep(value: number, steps: readonly number[]): number {
   return (step ?? 10) * base;
 }
 
-/** A throughput ceiling above the highest plotted rate, chosen in bit/s so bits and bytes share it. */
-const rateCeiling = (bytesPerSec: number, steps = RATE_STEPS) =>
-  ceilStep(bytesPerSec * 8 * RATE_HEADROOM, steps) / 8;
+/** A throughput ceiling above the highest plotted rate on the shown unit's own ladder: bits or bytes, in powers
+ *  of 1000 or 1024, so the dial's labels are round in whichever unit it reads. */
+function rateCeiling(
+  bytesPerSec: number,
+  base: UnitBase,
+  kind: UnitKind,
+  steps = RATE_STEPS,
+): number {
+  const perByte = kind === "bits" ? 8 : 1;
+  const value = bytesPerSec * perByte * RATE_HEADROOM;
+  const k = base === "base10" ? 1000 : 1024;
+  const tier = value >= 1 ? k ** Math.floor(Math.log(value) / Math.log(k)) : 1;
+  return (ceilStep(value / tier, steps) * tier) / perByte;
+}
 
 /** The highest rate drawn on one lane, and the highest two concurrent lanes add up to. */
 function peaks(series: readonly ThroughputSample[]) {
@@ -90,13 +101,14 @@ export function throughputScales(
     base,
     kind,
   );
-  // From the mega tier up the dial starts at 1 Gbit/s, where most connections fit.
-  const floor = unitIndex >= 2 ? 1_000_000_000 / 8 : 0;
+  // From the mega tier up the dial starts at 1 Gbit/s, where most connections fit, on the unit's own ladder.
+  const floor =
+    unitIndex >= 2 ? rateCeiling(1e9 / 8 / RATE_HEADROOM, base, kind) : 0;
   return {
     chartBytesPerSec: chartPeak
-      ? rateCeiling(chartPeak, CHART_RATE_STEPS)
+      ? rateCeiling(chartPeak, base, kind, CHART_RATE_STEPS)
       : DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
-    gaugeBytesPerSec: Math.max(floor, rateCeiling(gaugePeak)),
+    gaugeBytesPerSec: Math.max(floor, rateCeiling(gaugePeak, base, kind)),
     unitIndex,
   };
 }

@@ -137,7 +137,8 @@
         phase === "complete")
         ? gaugeTicks.map((tick) => tick.label)
         : [],
-    (labels) => labels.join(),
+    // Labels change in place with the scale or the unit; only a switch between rate and time ticks hands off.
+    (labels) => (labels.length ? msTicksActive : null),
   );
 
   // While the latency stage's probes go unanswered, for how long: from the last reply to the newest bucket.
@@ -201,11 +202,12 @@
         live: store.isRunning ? store.phaseStage : null,
       };
     },
-    // A new stage hands the figure and its name off together.
+    // A new stage hands the figure and its name off together. The unit is not part of a view: switching it
+    // relabels the same measurement in place, and the arcs glide to the new scale.
     ({ terminal, display, live }) =>
       terminal
-        ? `${terminal.phase}:${terminal.value}`
-        : `${live}:${display.value === MISSING}:${display.unit}`,
+        ? `${terminal.phase}:${store.result?.startedAt ?? ""}`
+        : `${live}:${display.value === MISSING}`,
     // A result leaves as its arcs drain back to zero (GaugeDial), so the next run starts from an empty ring.
     (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );

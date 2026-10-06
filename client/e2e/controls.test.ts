@@ -6,6 +6,7 @@ import {
   openSettings,
   phase,
   ready,
+  run,
   runButton,
   savedResult,
   spawnPeer,
@@ -49,6 +50,38 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await pressed("Bits");
   await pressed("Decimal");
   expect(await checked(wire)).toBe(true);
+});
+
+test("a unit switch relabels the dial in place, on round ticks, without replaying the result", async (page) => {
+  await open(page);
+  await ready(page);
+  await run(page);
+  const sweeps = () =>
+    page.evaluate(
+      () =>
+        document
+          .getAnimations()
+          .filter(
+            (animation) =>
+              (animation as CSSAnimation).animationName === "result-sweep" &&
+              animation.playState === "running",
+          ).length,
+    );
+  await expect.poll(sweeps).toBe(0);
+  const settings = await openSettings(page);
+  await settings.getByRole("button", { name: "Bytes", exact: true }).click();
+  await expect(page.locator(".metric-wrap")).toContainText("B/s");
+  expect(await sweeps()).toBe(0);
+  const labels = await page
+    .locator(".gauge-ticks")
+    .evaluate((el: HTMLElement) =>
+      Array.from(
+        el.querySelectorAll(".gauge-tick"),
+        (tick) => tick.textContent,
+      ),
+    );
+  expect(labels.length).toBeGreaterThan(1);
+  for (const label of labels) expect(label).toMatch(/^\d+(\.\d{1,2})?$/);
 });
 
 test("Escape closes a settings confirmation; Back closes it with its panel", async (page) => {

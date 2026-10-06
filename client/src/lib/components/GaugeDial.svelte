@@ -237,7 +237,7 @@
                 class="result-arc"
                 d={track}
                 pathLength="1"
-                style:stroke-dasharray={`min(${result.fraction}, var(--sweep)) 1`}
+                style:--fraction={result.fraction}
                 stroke="white"
                 stroke-width={layout.arcWidth + 2}
               />
@@ -459,10 +459,19 @@
      shows up to the shared front, so the front changes hue as it passes each shorter result, and each bead lands
      on the spring as the front reaches it. Once, as the result arrives; the bead's moment follows the sweep's
      ease-out-cubic (SWEEP_MS). */
+  /* A result arc shows up to the shared front; its own length and its bead glide when the scale or the unit
+     moves them, as the needle does, so a unit switch never replays the sweep. */
+  .result-arc {
+    stroke-dasharray: min(var(--fraction), var(--sweep)) 1;
+  }
   @media (prefers-reduced-motion: no-preference) {
     .result-arc {
+      transition: --fraction 360ms var(--ease-out);
       animation: result-sweep 900ms cubic-bezier(0.33, 1, 0.68, 1) var(--drain)
         backwards;
+    }
+    .head.result {
+      transition: transform 360ms var(--ease-out);
     }
     .bead {
       transform-box: fill-box;
