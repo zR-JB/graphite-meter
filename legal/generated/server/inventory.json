@@ -353,7 +353,7 @@
     },
     {
       "name": "svelte",
-      "version": "5.57.1",
+      "version": "5.57.2",
       "ecosystem": "npm",
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",

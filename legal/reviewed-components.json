@@ -710,7 +710,7 @@
   {
     "ecosystem": "npm",
     "name": "svelte",
-    "reviewedVersion": "5.57.1",
+    "reviewedVersion": "5.57.2",
     "upstream": "https://github.com/sveltejs/svelte",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",

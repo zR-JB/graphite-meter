@@ -861,8 +861,9 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		t.Fatalf("a sole server refused mid-window must keep its finished interval's rate: %+v; run error: %v",
 			result, err)
 	}
-	// Whichever detector wins, the error names the lost session or its stalled lane.
-	if !strings.Contains(result.Err.Error(), "webtransport session lost and not replaced within 2s") &&
+	// Whichever detector wins, the error names the lost session or its stalled lane; the window is what was left of the
+	// 2 s replacement deadline when restoring began, so a loaded runner reports slightly less.
+	if !strings.Contains(result.Err.Error(), "webtransport session lost and not replaced within ") &&
 		!strings.Contains(result.Err.Error(), "stopped delivering bytes") {
 		t.Fatalf("stage err = %q, want it to name the unreplaced session or its stall", result.Err)
 	}

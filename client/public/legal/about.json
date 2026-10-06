@@ -255,7 +255,7 @@
     },
     {
       "name": "svelte",
-      "version": "5.57.1",
+      "version": "5.57.2",
       "ecosystem": "npm",
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",
@@ -268,7 +268,7 @@
         },
         {
           "label": "Changes",
-          "url": "https://github.com/zR-JB/graphite-meter/blob/HEAD/client/patches/svelte%405.57.1.patch"
+          "url": "https://github.com/zR-JB/graphite-meter/blob/HEAD/client/patches/svelte%405.57.2.patch"
         }
       ]
     }
