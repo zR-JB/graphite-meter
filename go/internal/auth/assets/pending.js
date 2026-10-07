@@ -25,7 +25,7 @@ function setBusy(form, busy) {
  * What needs script in a card: the host it belongs to and the show-password keys.
  * @param {ParentNode} root
  */
-function enhance(root) {
+function wake(root) {
   for (const host of root.querySelectorAll("[data-host]"))
     host.textContent = location.host;
   for (const toggle of root.querySelectorAll("[data-reveal]"))
@@ -129,7 +129,7 @@ document.addEventListener("submit", (event) => {
         if (card && current) {
           const next = document.importNode(card, true);
           current.replaceWith(next);
-          enhance(next);
+          wake(next);
           document.title = page.title;
           // Inserted nodes ignore autofocus: focus the retry field, else the
           // heading, so the outcome is announced and focus stays on the card.
@@ -147,4 +147,4 @@ document.addEventListener("submit", (event) => {
     .catch(() => setBusy(form, false));
 });
 
-enhance(document);
+wake(document);

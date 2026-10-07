@@ -8,11 +8,13 @@ import {
   open,
   openSettings,
   password,
+  passwordHash,
   phase,
   ready,
   run,
   runButton,
   savedResult,
+  spawnPeer,
 } from "./fleet";
 import { Locator, Page, expect, test } from "./webview";
 
@@ -50,6 +52,36 @@ test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
 
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });
+
+// A server of its own, so the wrong attempt spends none of the shared one's sign-in budget.
+test("a wrong password keeps the card's host, show key and focus", async (page) => {
+  const vault = await spawnPeer("Vault", (server) => ({
+    GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
+    GM_AUTH_MODE: "password",
+    GM_AUTH_PUBLIC_URL: server.url,
+    GM_AUTH_PASSWORD_HASH: passwordHash,
+  }));
+  try {
+    await open(page, `${vault.server.url}/login`, {
+      servers: [{ id: "self", url: vault.server.url }],
+    });
+    const field = page.getByRole("textbox", { name: "Operator password" });
+    await field.fill("not the password");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("Incorrect password");
+    await expect(field).toBeFocused();
+    await expect(page.locator("[data-host]")).toHaveText(
+      new URL(vault.server.url).host,
+    );
+    await page.getByRole("button", { name: "Show password" }).click();
+    await expect(field).toHaveAttribute("type", "text");
+    await expect(
+      page.getByRole("button", { name: "Hide password" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  } finally {
+    vault.kill("SIGKILL");
+  }
+});
 
 test("signing out lands on the signed-out notice", async (page) => {
   await open(page, `${locked.url}/login`, {

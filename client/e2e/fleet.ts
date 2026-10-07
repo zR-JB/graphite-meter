@@ -10,6 +10,7 @@ const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
 export const [home, frankfurt, amsterdam, helsinki, locked] = fleet;
 export const password: string = env.password;
+export const passwordHash: string = env.passwordHash;
 export const harness: string = env.harness;
 
 export const catalog = (...servers: Server[]) => ({
@@ -18,12 +19,17 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-export async function spawnPeer(name: string, env = {}) {
+/** A server of its own; `env` may depend on it, such as a public URL for sign-in. */
+export async function spawnPeer(
+  name: string,
+  env:
+    Record<string, string> | ((server: Server) => Record<string, string>) = {},
+) {
   const server = await describe(name.toLowerCase(), name);
   const child = await launch(
     JSON.parse(process.env.GM_E2E_LAUNCH!),
     server,
-    env,
+    typeof env === "function" ? env(server) : env,
   );
   return Object.assign(child, { server });
 }
