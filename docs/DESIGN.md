@@ -88,9 +88,14 @@ page, white panels, ink controls. **Gamut.** Base values fit sRGB; `@media (colo
 status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more` strengthens subtle
 edges and `--text-soft`.
 
-The auth pages keep a pinned copy of the page, ink and text tokens and of the Plex Sans and Plex Mono 600 faces
-(`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
-app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
+The auth pages keep a pinned copy of the page, ink, text and latency tokens and of the Plex Sans and Plex Mono 600
+faces (`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
+app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. The sign-in card is a
+faceplate: the dial at rest with a lock at its centre, over a centred title and the host the page was reached at in
+Plex Mono, filled by script so nothing is disclosed. While a sign-in is checked the ring sweeps in the latency hue,
+its bead ahead, and the key dims rather than spin; a dial that a short screen hides leaves the spinner to the key. The
+password's label stands over its entry, which ends in a show key that keeps the caret and the keyboard, and a wrong
+password nudges the field once. A finger gets 44 px targets and 16 px text, so a phone never zooms into the field. `client/index.html`
 repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
 tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text colours are each hue mixed 80 % into
 `--text`; graph strokes use the unmixed stage tokens. A few values sit a unit or three off their token so that

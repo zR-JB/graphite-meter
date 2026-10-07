@@ -1,4 +1,4 @@
-/* Submit feedback and in-place errors for the server-rendered auth pages.
+/* Submit feedback, in-place errors, the host line and show-password keys for the server-rendered auth pages.
    A native sign-in POST leaves a dead spinner: password verification is
    deliberately slow, and the browser freezes animations the instant a
    navigation commits. Same-origin password and CLI-approval forms submit with
@@ -19,6 +19,41 @@ function setBusy(form, busy) {
   if (busy) form.dataset.busy = "1";
   else delete form.dataset.busy;
   for (const button of form.querySelectorAll("button")) button.disabled = busy;
+}
+
+/**
+ * What needs script in a card: the host it belongs to and the show-password keys.
+ * @param {ParentNode} root
+ */
+function enhance(root) {
+  for (const host of root.querySelectorAll("[data-host]"))
+    host.textContent = location.host;
+  for (const toggle of root.querySelectorAll("[data-reveal]"))
+    if (toggle instanceof HTMLElement) toggle.hidden = false;
+}
+
+/**
+ * The field a show-password key belongs to.
+ * @param {EventTarget | null} target
+ */
+function revealed(target) {
+  const toggle =
+    target instanceof Element ? target.closest("[data-reveal]") : null;
+  const field = toggle
+    ? document.getElementById(toggle.getAttribute("data-reveal") ?? "")
+    : null;
+  return toggle && field instanceof HTMLInputElement ? { toggle, field } : null;
+}
+
+/**
+ * @param {Element} toggle
+ * @param {HTMLInputElement} field
+ * @param {boolean} shown
+ */
+function reveal(toggle, field, shown) {
+  field.type = shown ? "text" : "password";
+  toggle.setAttribute("aria-pressed", String(shown));
+  toggle.setAttribute("aria-label", shown ? "Hide password" : "Show password");
 }
 
 /**
@@ -45,9 +80,24 @@ function leftThisPage(response, here) {
   );
 }
 
+// A press on the key keeps the caret, and a phone's keyboard, in the field.
+document.addEventListener("pointerdown", (event) => {
+  const pair = revealed(event.target);
+  if (pair && document.activeElement === pair.field) event.preventDefault();
+});
+document.addEventListener("click", (event) => {
+  const pair = revealed(event.target);
+  if (pair) reveal(pair.toggle, pair.field, pair.field.type === "password");
+});
+
 document.addEventListener("submit", (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || form.dataset.busy) return;
+  // A shown password goes back under its dots before it leaves, as a password manager expects.
+  for (const toggle of form.querySelectorAll("[data-reveal]")) {
+    const pair = revealed(toggle);
+    if (pair) reveal(pair.toggle, pair.field, false);
+  }
   setBusy(form, true);
 
   const action = new URL(form.action, location.href);
@@ -77,7 +127,9 @@ document.addEventListener("submit", (event) => {
         const card = page.querySelector("main.card");
         const current = document.querySelector("main.card");
         if (card && current) {
-          current.replaceWith(document.importNode(card, true));
+          const next = document.importNode(card, true);
+          current.replaceWith(next);
+          enhance(next);
           document.title = page.title;
           // Inserted nodes ignore autofocus: focus the retry field, else the
           // heading, so the outcome is announced and focus stays on the card.
@@ -94,3 +146,5 @@ document.addEventListener("submit", (event) => {
     })
     .catch(() => setBusy(form, false));
 });
+
+enhance(document);
