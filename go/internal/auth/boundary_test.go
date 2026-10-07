@@ -127,6 +127,7 @@ func TestAuthRoutesShareThePageBoundary(t *testing.T) {
 		method, path, _ := strings.Cut(pattern, " ")
 		rr := testkit.Record(mux.ServeHTTP, secureRequest(method, path, nil))
 		if h := rr.Header(); h.Get("X-Frame-Options") != "DENY" || h.Get("Cache-Control") != "no-store" ||
+			h.Get("X-Robots-Tag") != "noindex, nofollow" ||
 			!strings.HasPrefix(h.Get("Content-Security-Policy"), "default-src 'none'") {
 			t.Errorf("%s answered %d without the page headers: %v", pattern, rr.Code, h)
 		}

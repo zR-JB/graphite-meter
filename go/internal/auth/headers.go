@@ -19,6 +19,8 @@ const (
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Frame-Options", "DENY")
+	// A private server's sign-in and approval pages stay out of search indexes.
+	h.Set("X-Robots-Tag", "noindex, nofollow")
 	HardeningHeaders(h)
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
