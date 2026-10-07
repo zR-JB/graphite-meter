@@ -41,7 +41,7 @@ const STEPS = 30;
 const DECAY = DAMPING * OMEGA;
 const RING = OMEGA * Math.sqrt(1 - DAMPING ** 2);
 /** A spring released `x0` from rest at `v0` per ms: its offset and velocity `t` ms later. */
-function spring([x0, v0]: Axis, t: number): Axis {
+export function spring([x0, v0]: Axis, t: number): Axis {
   const b = (v0 + DECAY * x0) / RING;
   const [e, c, s] = [
     Math.exp(-DECAY * t),
@@ -50,7 +50,7 @@ function spring([x0, v0]: Axis, t: number): Axis {
   ];
   return [e * (x0 * c + b * s), e * (v0 * c - (x0 * RING + DECAY * b) * s)];
 }
-type Axis = [offset: number, velocity: number];
+export type Axis = [offset: number, velocity: number];
 type Axes = { x: Axis; y: Axis; w: Axis };
 /** Each moving element's spring, so a move that interrupts it starts at its speed. */
 const moving = new WeakMap<

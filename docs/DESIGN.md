@@ -129,7 +129,11 @@ titles and controls, 700 only for `.caps`.
 - **Panels** are 420 px by default (360–720, resizable). They dock from 1200 px, two side by side from 1520 px, and
   below that the last one opened stays. Docked, a sheet is its column: flush with the bars, cut from the stage
   by one hairline, no corner; below 1200 px it is a flyout of the same width, and on a portrait phone a bottom
-  sheet. A docked sheet's inner edge is a handle
+  sheet. A finger drags a flyout out toward its side and a bottom sheet down by its grip, its head, or its body
+  scrolled to the top; pulled the other way it gives half as far and ever less. It leaves when its offset plus
+  0.4 s at the finger's speed over the last 0.1 s passes 40 % of its size, at most 240 px, so a short quick flick
+  and a slow long drag both send it away and a flick back keeps it; released, it carries the finger's speed into
+  the console's spring, out past its edge or back to rest, and a touch catches it where it is. A docked sheet's inner edge is a handle
   (`.resize-handle`): drag it or step it 16 px with the arrows (48 with Shift), Home and End reach its limits, Enter
   or a double-click resets it, and a 2 px ink line lights the edge on hover or focus.
 - **One text edge per sheet.** Plates sit on `--panel-pad` (16 px); text sits `--row-inset` (12 px) inside a plate,
