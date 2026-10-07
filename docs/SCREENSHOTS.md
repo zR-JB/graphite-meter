@@ -2,7 +2,7 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-Every capture is a real run of version 0.10.0. The servers are local, each behind a link shaper that models one
+Every capture is a real run of version 0.10.1. The servers are local, each behind a link shaper that models one
 client's path into a 10 GbE home network: a laptop on Wi-Fi 7 for the completed views, a workstation wired at 10 GbE
 in the README's hero, and a phone on Wi-Fi 6E. The figures are what the meter measured over those paths, not a
 benchmark of a network.
@@ -13,7 +13,7 @@ The dial carries the run's headline and every stage's result on one ring; the la
 latency side by side with what each load added; one card per stage, under its key, keeps the stage's graph with
 the latency its load caused underneath.
 
-<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.25 Gbit/s down, 1.81 Gbit/s up, 2.6 ms idle latency, the latency lanes and one card per stage" width="1080">
+<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.26 Gbit/s down, 1.81 Gbit/s up, 2.5 ms idle latency, the latency lanes and one card per stage" width="1080">
 
 <img src="assets/light.png" alt="The same completed test in the light theme" width="1080">
 
@@ -49,12 +49,23 @@ the live meter's stage and latency cards, its server selector and the evidence s
 
 ## Phone
 
-A phone keeps the whole run on one screen: the dial, the key, the stages and a compact card per stage with every
-fact, the latency lanes under them.
+A phone gives the dial most of its width, then the key, the stages and a compact card per stage with every fact,
+the latency lanes under them; nothing overlaps whatever the stages, servers or settings. Turned on its side, it keeps
+the dial in view while the rest scrolls beside it, and a sheet follows the finger and leaves on a flick.
 
 <p align="center">
-<img src="assets/mobile.png" alt="Phone view of a completed test over Wi-Fi 6E: 1.57 Gbit/s down, 0.82 Gbit/s up, 3.6 ms idle latency, all three cards on one screen" width="320">
+<img src="assets/mobile.png" alt="Phone view of a completed test over Wi-Fi 6E: 1.55 Gbit/s down, 0.82 Gbit/s up, 3.6 ms idle latency, the dial over the stages and their cards" width="320">
 <img src="assets/mobile-history.png" alt="Phone view of a saved result" width="320">
+</p>
+
+## Signing in
+
+A private server asks for its operator password on a faceplate: the dial at rest behind a lock, the host the page was
+reached at, and the password with a key to show it. While the server checks it, the ring sweeps as a stage's would.
+
+<p align="center">
+<img src="assets/signin.png" alt="Phone sign-in page in the light theme: the dial at rest with a lock, the server's host and the operator password field" width="320">
+<img src="assets/signin-checking.png" alt="The same sign-in page in the dark theme while the password is checked, its ring sweeping in the latency hue" width="320">
 </p>
 
 ## Native terminal client
@@ -63,7 +74,7 @@ The TUI runs the same measurement against the same servers and ends with the res
 
 <img src="assets/tui.png" alt="Native terminal client after a complete latency, download and upload run" width="1080">
 
-Browser captures: production build of 0.10.0 over HTTPS, Chrome 154, 1600 × 1000 (workspace 1920 × 1080) at 2×
+Browser captures: production build of 0.10.1 over HTTPS, Chrome 154, 1600 × 1000 (workspace 1920 × 1080) at 2×
 density, and 430 × 839 at 3× (the screen of a 430 × 932 phone between its status bar and home indicator); stages
 latency 4 s, download and upload 8 s, bidirectional 6 s, a 1 s warmup; the dial's maximum automatic.
 Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-way delay; the workstation's
@@ -72,5 +83,6 @@ down and 0.86 Gbit/s up with 1.5 ms. Each queues up to 4 ms of data, so latency 
 queueing. The three servers of the multi-server run each have their own path (1.3, 1.1 and 1.0 Gbit/s down with 1,
 1.5 and 2 ms), together about the laptop's, and the partial run stops the Mini PC's server during download. The
 terminal capture is the TUI's own 120 × 40 screen on the workstation's path, replayed in a terminal emulator. Each
-capture is shown as a plain screen; the README's hero sets two in a laptop and a phone outline.
+capture is shown as a plain screen; the README's hero sets two in a laptop and a phone outline. The sign-in pages
+come from a local server with password sign-in, at the phone's size.
 To measure your own network, follow [deployment and configuration](DEPLOYMENT.md).
