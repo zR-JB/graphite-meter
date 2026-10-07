@@ -254,13 +254,24 @@ function factor(
   return { key, label, contributionPct: ratio * 100 };
 }
 
+// Layers top-down, in the order they wrap the payload.
+const STACK: readonly FactorKey[] = [
+  "application-framing",
+  "tls-records",
+  "transport",
+  "ip",
+  "ethernet",
+];
+
+/** Each header layer's share as an aligned row, then the MTU the estimate assumes. */
 export function compensationTooltip(estimate: CompensationBreakdown): string {
   return [
     ...estimate.factors
       .filter((factor) => factor.contributionPct > 0)
+      .sort((a, b) => STACK.indexOf(a.key) - STACK.indexOf(b.key))
       .map(
-        (factor) => `${factor.label} +${factor.contributionPct.toFixed(2)}%`,
+        (factor) => `${factor.label}\t+${factor.contributionPct.toFixed(2)}%`,
       ),
-    `MTU ${fmtCount(estimate.mtuBytes)} B assumed`,
+    `Estimated at a ${fmtCount(estimate.mtuBytes)} B MTU`,
   ].join("\n");
 }

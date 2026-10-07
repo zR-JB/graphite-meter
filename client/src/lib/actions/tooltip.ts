@@ -74,6 +74,40 @@ export const tipGroup: Attachment<HTMLElement> = (node) => {
   };
 };
 
+/** Text an ellipsis may cut: while it is cut, its whole text (or `full`) is its tip, so a rest, a tap on plain text
+ *  or a long press on a control reads it. */
+export function clipTip(node: HTMLElement, full?: string) {
+  let text = full;
+  let tip: ReturnType<typeof tooltipAction> | null = null;
+  const check = () => {
+    const whole =
+      node.scrollWidth > node.clientWidth + 1
+        ? (text ?? node.textContent ?? "").replace(/\s+/g, " ").trim()
+        : "";
+    if (whole && tip) tip.update(whole);
+    else if (whole) tip = tooltipAction(node, whole);
+    else {
+      tip?.destroy();
+      tip = null;
+    }
+  };
+  const resized = new ResizeObserver(check);
+  resized.observe(node);
+  const edited = new MutationObserver(check);
+  edited.observe(node, { childList: true, characterData: true, subtree: true });
+  return {
+    update(next?: string) {
+      text = next;
+      check();
+    },
+    destroy() {
+      resized.disconnect();
+      edited.disconnect();
+      tip?.destroy();
+    },
+  };
+}
+
 /** Live measurement views keep one action per element instead of rebuilding attachment factories on each frame. */
 export const termAction = (node: HTMLElement, text: string) =>
   tooltipAction(node, text, true);

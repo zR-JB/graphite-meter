@@ -8,7 +8,9 @@ type Classifier = (response: Landing, here: { pathname: string }) => boolean;
 const { leftThisPage } = new Function(
   "document",
   `${source}\nreturn { leftThisPage };`,
-)({ addEventListener() {} }) as { leftThisPage: Classifier };
+)({ addEventListener() {}, querySelectorAll: () => [] }) as {
+  leftThisPage: Classifier;
+};
 
 test("only a redirect to another page leaves this page", () => {
   for (const [redirected, url, pathname, left] of [

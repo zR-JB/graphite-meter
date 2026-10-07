@@ -36,6 +36,8 @@ export interface GaugeLayout {
   arcSweep: number;
   /** Where a note hung under the ring starts: just under the tick ends. */
   noteTop: number;
+  /** How wide a hung note may be and stay between the lowest tick labels. */
+  noteWidth: number;
   majorTicks: ReadonlyArray<{
     angle: number;
     from: GaugePoint;
@@ -117,6 +119,10 @@ export function gaugeLayout(
     center,
     radius,
     noteTop: center.y + Math.SQRT1_2 * tickOuter + NOTE_GAP,
+    noteWidth: Math.max(
+      0,
+      2 * Math.SQRT1_2 * (tickOuter + LABEL_CLEARANCE) - 2 * NOTE_GAP,
+    ),
     arcWidth,
     arcStart: ARC_START,
     arcSweep: ARC_SWEEP,

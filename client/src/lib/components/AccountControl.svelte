@@ -149,7 +149,7 @@
       color: var(--err);
     }
   }
-  /* Narrow and touch layouts keep only the sign-out action, as a top-bar button of its own. */
+  /* Narrow and touch layouts keep only the sign-out action, as a top-bar key like its neighbours. */
   @media (max-width: 759px), (pointer: coarse) {
     .account {
       display: contents;
@@ -157,6 +157,13 @@
     .identity,
     .everywhere {
       display: none;
+    }
+    .signout {
+      --btn-line: var(--border);
+      box-shadow:
+        inset 0 0 0 var(--hairline) var(--btn-line),
+        var(--elev-tile);
+      color: var(--text);
     }
   }
 </style>

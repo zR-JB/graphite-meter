@@ -3,7 +3,7 @@
   // Editable selection stays separate from the retained run's execution.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { tooltipAction } from "../actions/tooltip";
+  import { clipTip, tooltipAction } from "../actions/tooltip";
   import {
     lockReason,
     stageShown,
@@ -172,7 +172,7 @@
         <span class="chip-row">
           <span class="chip-ico" aria-hidden="true"><Icon name={s.icon} /></span
           >
-          <span class="chip-label">{s.label}</span>
+          <span class="chip-label" use:clipTip>{s.label}</span>
           {#if look.state === "complete"}
             <span class="chip-check handoff" class:handoff-out={view.out}
               ><Icon name="check" /></span
@@ -198,6 +198,7 @@
   /* The key over the chips, both as wide as the chip row: as many chips to a line as fit, 140–172 px each,
      with the caption on the first chip's edge. */
   .stage-track {
+    container: track / inline-size;
     display: grid;
     gap: var(--space-3);
     width: min(
@@ -213,10 +214,17 @@
   .legend {
     grid-column: 1 / -1;
   }
+  /* Four chips that cannot stand in one row stand two and two, never three and one. */
+  @container track (max-width: 583px) {
+    .chips:has(> :nth-child(5)) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
 
   /* A chip: its stage's bar along the top, then its glyph, name and, at the end, its time, word or check. */
   .chip {
     display: grid;
+    container-type: inline-size;
     gap: 7px;
     align-content: center;
     min-width: 0;
@@ -388,9 +396,16 @@
   .chip-tag .short {
     display: none;
   }
-  /* Narrow rows: two chips to a line, the running one with the time into its stage alone. */
-  /* A phone keeps up to three chips on one line and sets four as two and two; a chip too narrow for its glyph
-     keeps its name and its time. */
+  /* A chip without room for the time into the stage and its length keeps the time alone. */
+  @container (max-width: 172px) {
+    .chip-tag .full {
+      display: none;
+    }
+    .chip-tag .short {
+      display: inline;
+    }
+  }
+  /* A phone keeps up to three chips on one line and sets four as two and two. */
   :global(.gauge-panel.tight) {
     .chips {
       grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
@@ -400,28 +415,29 @@
       display: none;
     }
     .chip {
-      container-type: inline-size;
+      gap: 5px;
       padding: 6px 8px;
     }
-    .chip-tag .full {
-      display: none;
-    }
-    .chip-tag .short {
-      display: inline;
-    }
   }
+  /* A chip too narrow for its glyph sets its name over its time, word or check, so neither is cut. */
   @container (max-width: 124px) {
     .chip-ico {
       display: none;
     }
+    .chip-row {
+      flex-wrap: wrap;
+      row-gap: 3px;
+      height: auto;
+    }
     .chip-label {
+      flex-basis: 100%;
       font-size: var(--type-xs);
     }
     .chip-tag.time {
       font-size: 10px;
     }
     .chip-tag:not(.time) {
-      padding-inline: 3px;
+      padding: 1px 3px;
       font-size: 9px;
     }
   }

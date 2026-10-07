@@ -88,9 +88,14 @@ page, white panels, ink controls. **Gamut.** Base values fit sRGB; `@media (colo
 status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more` strengthens subtle
 edges and `--text-soft`.
 
-The auth pages keep a pinned copy of the page, ink and text tokens and of the Plex Sans and Plex Mono 600 faces
-(`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
-app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. `client/index.html`
+The auth pages keep a pinned copy of the page, ink, text and latency tokens and of the Plex Sans and Plex Mono 600
+faces (`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
+app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. The sign-in card is a
+faceplate: the dial at rest with a lock at its centre, over a centred title and the host the page was reached at in
+Plex Mono, filled by script so nothing is disclosed. While a sign-in is checked the ring sweeps in the latency hue,
+its bead ahead, and the key dims rather than spin; a dial that a short screen hides leaves the spinner to the key. The
+password's label stands over its entry, which ends in a show key that keeps the caret and the keyboard, and a wrong
+password nudges the field once. A finger gets 44 px targets and 16 px text, so a phone never zooms into the field. `client/index.html`
 repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink, stage and status
 tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`). Its light stage text colours are each hue mixed 80 % into
 `--text`; graph strokes use the unmixed stage tokens. A few values sit a unit or three off their token so that
@@ -129,7 +134,11 @@ titles and controls, 700 only for `.caps`.
 - **Panels** are 420 px by default (360–720, resizable). They dock from 1200 px, two side by side from 1520 px, and
   below that the last one opened stays. Docked, a sheet is its column: flush with the bars, cut from the stage
   by one hairline, no corner; below 1200 px it is a flyout of the same width, and on a portrait phone a bottom
-  sheet. A docked sheet's inner edge is a handle
+  sheet. A finger drags a flyout out toward its side and a bottom sheet down by its grip, its head, or its body
+  scrolled to the top; pulled the other way it gives half as far and ever less. It leaves when its offset plus
+  0.4 s at the finger's speed over the last 0.1 s passes 40 % of its size, at most 240 px, so a short quick flick
+  and a slow long drag both send it away and a flick back keeps it; released, it carries the finger's speed into
+  the console's spring, out past its edge or back to rest, and a touch catches it where it is. A docked sheet's inner edge is a handle
   (`.resize-handle`): drag it or step it 16 px with the arrows (48 with Shift), Home and End reach its limits, Enter
   or a double-click resets it, and a 2 px ink line lights the edge on hover or focus.
 - **One text edge per sheet.** Plates sit on `--panel-pad` (16 px); text sits `--row-inset` (12 px) inside a plate,
@@ -240,12 +249,15 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   beside the latency lanes with the controls under them, the run key over the stage chips, centred in the room
   the lanes leave; the dial is as tall as its ring wants or as the lanes and the controls together; under both
   one card per stage across the console. What is measured live lies on the page (dial, lanes, keys); what is
-  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the dial keeps under a third
-  of the screen with the controls under it, up to three chips to a row (four as two and two, a narrow chip
-  without its glyph) and no legend, the cards one to a row in stage order, each whole from Start so nothing moves
-  as the stages run and compact so a default run's three fit the screen of a large phone (the figure at the right
-  beside the name and its detail, a 36 px strip, the facts as one row of label-over-value columns), and the
-  lanes come last.
+  kept is a card. Without the latency stage the dial stands centred and wider with the controls under it. A complete run fits 1024 × 768 without scrolling. On a phone the server lens takes a line
+  of its own and the face under it is 0.72 of the panel's width tall, at most 44 % of the screen's height, so the
+  ring is about as wide as half the screen; then the controls, up to three chips to a row (four as two and two; a
+  chip under 124 px sets its name over its time, without its glyph) and no legend, the cards one to a row in stage
+  order, each whole from Start so nothing moves as the stages run (the figure at the right of the name, under it
+  when both do not fit, then the detail line, a 36 px strip, and the facts as a row of label-over-value columns
+  that wraps rather than overflows), and the lanes come last. A phone on its side, under 520 px tall, keeps the
+  dial in view at the left, as tall as the screen leaves, while the lanes, the controls and the cards scroll beside
+  it.
   The dial is a 270° ring with an arc 0.13 of its radius wide, ticks and five labels; every result's
   arc lies on the ring, the longest underneath, so each shows from where the next shorter one ends, and ends in
   a bead in its hue; a bead moved inward off a close neighbour hangs on a stalk; the stage's mark and name sit
@@ -260,8 +272,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   above the cards moves from Start to the result.
 - **Top bar and status strip**: 48 px on the canvas and 28 px in `--surface-1`, each with a hairline, their
   text on the console's gutter (`--gutter`, 24 px, 16 under 1024 px), so the brand, the panels' edges and the
-  status word share one line. A phone has no status strip: its chips, key and cards already show the phase, the
-  time and the bytes. The bar carries the brand, whose hexagon is the latency hue as the favicon's
+  status word share one line. A phone, either way up, has no status strip: its chips, key and cards already show
+  the phase, the time and the bytes. The bar carries the brand, whose hexagon is the latency hue as the favicon's
   is, a Settings key, the connection dot, and at the right History, Details and the theme; a key is a 32 px
   square glyph plate with a hairline. The brand's hover dims its word, no plate. The strip reads from the left
   the status word, the elapsed time, the bytes moved and the time left while a stage runs, each figure in a cell
@@ -273,7 +285,7 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   per stage in a row. A chip is a switch: along its top a 3 px bar in the stage's hue that fills as the stage runs
   and stays full once measured (hatched for a partial stage, failed in `--err`, a sweep while warming up); under
   it the stage's glyph and name and, at the end, its time: the stage's length while it waits ("4 s"), the time
-  into it while it runs ("1.9 / 4 s", counting in place; the time alone on a phone), a check once complete, or
+  into it while it runs ("1.9 / 4 s", counting in place; the time alone on a chip under 172 px), a check once complete, or
   its state as a small engraved tag (Skipped, Recovering, Partial, Failed). As many chips stand in a row as fit,
   140–172 px each. The running chip takes its hue as its
   edge, like the running card. One off stays operable, so it reads soft, and only a locked chip dims. The chip's
@@ -367,7 +379,9 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
   stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
-  viewport would cut flips below its word, then aligns to the word's edge.
+  viewport would cut flips below its word, then aligns to the word's edge. Text an ellipsis cuts carries its whole
+  text as its tip while it is cut (`clipTip`), so a rest, a tap on plain text or a long press on a control reads
+  it; a setting's name and note wrap instead.
 
 | Primitive                | Height         | Radius             | Type              | States                                              |
 | ------------------------ | -------------- | ------------------ | ----------------- | --------------------------------------------------- |

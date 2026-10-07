@@ -257,7 +257,11 @@
     display: none;
     flex: none;
     justify-content: center;
-    padding-top: 6px;
+    padding-block: 8px 2px;
+  }
+  /* A floating sheet's grip and head always drag it, never scroll the page behind. */
+  .panel-layer:not(.docked) :is(.sheet-handle, .sheet-head) {
+    touch-action: none;
   }
   .sheet-grip {
     width: 36px;

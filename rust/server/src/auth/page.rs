@@ -60,6 +60,8 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     });
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    // A private server's sign-in and approval pages stay out of search indexes.
+    headers.insert("x-robots-tag", HeaderValue::from_static("noindex, nofollow"));
     crate::app::finalize::harden(headers, secure);
     headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
 }
@@ -184,7 +186,7 @@ mod tests {
         assert!(page.contains("Incorrect password. Check it and try again."));
         assert!(!page.contains("Too many attempts") && !page.contains("Sign-in failed"));
         assert!(page.contains("action=\"/auth/password\"") && !page.contains("/auth/oidc/start"));
-        assert!(page.contains("autocomplete=\"current-password\" autofocus required"));
+        assert!(page.contains("spellcheck=\"false\" autofocus required"));
         assert!(!page.contains("<!--") && !page.replace(PENDING, "").contains("{{"));
         assert!(
             page.contains(&format!("<style>{STYLES}</style>")) && page.contains(&format!("<script>{PENDING}</script>"))

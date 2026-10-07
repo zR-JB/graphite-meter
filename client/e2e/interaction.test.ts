@@ -132,3 +132,48 @@ test("a finger scrolls past graphs, reads one by dragging sideways and toggles j
   await tap(page, stability);
   await expect(tip(page)).toHaveCount(0);
 });
+
+test("a phone's sheet leaves on a short quick flick and springs back from a slow short drag", async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.cdp("Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 1,
+  });
+  await open(page, home.http);
+  const sheet = page.locator("dialog.panel[open]");
+  // Each move carries its own time, so the page reads the finger's speed whatever the delivery takes.
+  async function drag(distance: number, ms: number) {
+    const head = await page
+      .locator("dialog.panel[open] .sheet-head")
+      .evaluate((el: Element) => {
+        const box = el.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      });
+    let clock = Date.now();
+    const at = (type: string, y?: number) =>
+      page.cdp("Input.dispatchTouchEvent", {
+        type,
+        timestamp: clock / 1000,
+        touchPoints: y === undefined ? [] : [{ x: head.x, y }],
+      });
+    await at("touchStart", head.y);
+    const steps = Math.round(ms / 8);
+    for (let step = 1; step <= steps; step++) {
+      clock += ms / steps;
+      await at("touchMove", head.y + (distance * step) / steps);
+    }
+    clock += 8;
+    await at("touchEnd");
+  }
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(sheet).toHaveCount(1);
+  await drag(120, 1200);
+  await expect
+    .poll(() => sheet.evaluate((el: Element) => getComputedStyle(el).transform))
+    .toBe("none");
+  await expect(sheet).toHaveCount(1);
+
+  await drag(60, 50);
+  await expect(sheet).toHaveCount(0);
+});

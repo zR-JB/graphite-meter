@@ -262,32 +262,36 @@
       >
         <g fill="none" stroke-linecap="round">
           {#each results as result (result.phase)}
-            <mask
-              id={`${shadeId}-${result.phase}`}
-              maskUnits="userSpaceOnUse"
-              x="0"
-              y="0"
-              width={layout.width}
-              height={layout.height}
-            >
-              <path
-                class="result-arc"
-                d={track}
-                pathLength="1"
-                style:--fraction={result.fraction}
-                stroke="white"
-                stroke-width={layout.arcWidth + 2}
-              />
-            </mask>
-            <!-- Round caps add an arc width to every dash, so a partial arc's gap stays open. -->
+            <!-- The arc draws its own length; a partial one shows through a still mask of dashes, as nothing that
+                 moves lies in a mask, whose paint may lag its style. Round caps add an arc width to every dash, so
+                 a partial arc's gap stays open. -->
+            {#if result.dashed}
+              <mask
+                id={`${shadeId}-${result.phase}`}
+                maskUnits="userSpaceOnUse"
+                x="0"
+                y="0"
+                width={layout.width}
+                height={layout.height}
+              >
+                <path
+                  d={track}
+                  stroke="white"
+                  stroke-width={layout.arcWidth}
+                  stroke-dasharray={`${layout.arcWidth * 0.5} ${layout.arcWidth * 2}`}
+                />
+              </mask>
+            {/if}
             <path
+              class="result-arc"
               d={track}
-              mask={`url(#${shadeId}-${result.phase})`}
+              pathLength="1"
+              mask={result.dashed
+                ? `url(#${shadeId}-${result.phase})`
+                : undefined}
+              style:--fraction={result.fraction}
               stroke={`var(--phase-${result.phase})`}
               stroke-width={layout.arcWidth}
-              stroke-dasharray={result.dashed
-                ? `${layout.arcWidth * 0.5} ${layout.arcWidth * 2}`
-                : undefined}
             />
           {/each}
         </g>

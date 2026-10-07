@@ -11,8 +11,12 @@
   <body>
     <main class="card">
       <p class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.1" fill="currentColor"/></svg>Graphite Meter</p>
+      <!-- The instrument at rest, locked; while a sign-in is checked its ring sweeps as the console's does. -->
+      <div class="face" aria-hidden="true"><svg viewBox="0 0 120 104"><path class="ticks" d="M23.94 96.06L21.11 98.89M9.98 69.95L6.06 70.73M12.88 40.48L9.19 38.95M31.67 17.60L29.44 14.27M60 9L60 5M88.33 17.60L90.56 14.27M107.12 40.48L110.81 38.95M110.02 69.95L113.94 70.73M96.06 96.06L98.89 98.89"/><path class="track" d="M28.89 91.11A44 44 0 1 1 91.11 91.11"/><path class="sweep" d="M28.89 91.11A44 44 0 1 1 91.11 91.11" pathLength="1"/><g class="needle"><circle cx="28.89" cy="91.11" r="5"/></g><path class="lock" d="M54 55v-5a6 6 0 0 1 12 0v5M51.5 55h17v12h-17z"/></svg></div>
       <h1>Sign in</h1>
       <p>This measurement server is private.</p>
+      <!-- Filled from the address bar by pending.js, so a visitor sees which server asks, and nothing is disclosed. -->
+      <p class="host" data-host></p>
       {{if eq .Status "signed_out"}}<p class="notice" role="status">You're signed out.</p>{{end}}
       {{if eq .Status "expired"}}<p class="notice" role="status">Your session ended. Sign in again.</p>{{end}}
       {{if eq .Status "renew"}}<p class="notice" role="status">Sign in again before starting this long test.</p>{{end}}
@@ -48,9 +52,13 @@
           <label class="sr-only" for="username">Account</label>
           <input class="sr-only" id="username" name="username" type="text" value="operator" autocomplete="username" readonly tabindex="-1">
           <!-- Beside a working provider the caret stays out of the operator's field. -->
+          <!-- Shown as text, the password stays out of the keyboard's corrections and dictionary. -->
           <div class="field">
             <label for="password">Operator password</label>
-            <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" {{if not (and .OIDC .OIDCReady)}}autofocus{{end}} required>
+            <div class="entry">
+              <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" {{if not (and .OIDC .OIDCReady)}}autofocus{{end}} required>
+              <button class="reveal" type="button" data-reveal="password" aria-label="Show password" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path class="strike" d="M4 4l16 16"/></svg></button>
+            </div>
           </div>
           <button type="submit">Sign in</button>
         </form>

@@ -3,7 +3,7 @@
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { termAction, tooltipAction } from "../actions/tooltip";
+  import { clipTip, termAction, tooltipAction } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
   import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -278,11 +278,11 @@
     </h3>
     <!-- Whose latency this is when several servers ran, or why the idle stage failed. -->
     {#if failure && idle?.center == null}
-      <span class="aside failure">{failure}</span>
+      <span class="aside failure" use:clipTip>{failure}</span>
     {:else if sourcePicker}
       <span class="source">{@render sourcePicker()}</span>
     {:else if source}
-      <span class="aside">{source}</span>
+      <span class="aside" use:clipTip>{source}</span>
     {/if}
   </header>
   <div class="body">

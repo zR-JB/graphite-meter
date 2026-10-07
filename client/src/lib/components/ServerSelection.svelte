@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tooltip } from "../actions/tooltip";
+  import { clipTip, tooltip } from "../actions/tooltip";
   import { fmtMs } from "../format";
   import {
     serverLabel,
@@ -111,7 +111,7 @@
                     : [...store.selectedServers, server.id],
                 )}
             />
-            <span class="server-name"
+            <span class="server-name" use:clipTip
               >{server.name}{#if serverLabel(server) !== server.name}
                 <small>{server.location}</small>{/if}</span
             >
