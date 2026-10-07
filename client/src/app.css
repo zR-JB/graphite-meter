@@ -1704,6 +1704,18 @@
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
   }
+  /* A tip's pairs: a quieter label, its figure aligned at the right; a line after them is a footnote. */
+  .tooltip .inspect-row > :first-child {
+    color: color-mix(in oklab, var(--text-inverse) 72%, transparent);
+  }
+  .tooltip .inspect-row > :last-child {
+    font-weight: var(--w-normal);
+    font-variant-numeric: tabular-nums;
+  }
+  .tooltip .inspect-row + :not(.inspect-row) {
+    margin-top: var(--space-1);
+    color: color-mix(in oklab, var(--text-inverse) 72%, transparent);
+  }
   .tooltip[data-show="true"] {
     opacity: 1;
   }
