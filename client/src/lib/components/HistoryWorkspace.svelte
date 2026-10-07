@@ -32,7 +32,7 @@
   import type { IconName } from "../presentation/icons";
   import { onMount, tick, untrack } from "svelte";
   import { resize } from "../actions/resize";
-  import { tooltip } from "../actions/tooltip";
+  import { clipTip, tooltip } from "../actions/tooltip";
   import { nextFrame, wallNow } from "../presentation/motion.svelte";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { createUuid } from "../uuid";
@@ -740,7 +740,9 @@
                           title={row.exact}
                         >
                           {row.primary}
-                          {#if row.secondary}<small>{row.secondary}</small>{/if}
+                          {#if row.secondary}<small use:clipTip
+                              >{row.secondary}</small
+                            >{/if}
                         </time>
                         <span class="outcome">
                           {#if row.outcome !== "complete"}<span

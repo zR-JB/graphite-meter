@@ -1183,7 +1183,7 @@
   }
 
   /* A phone's chips, key and cards already say what the strip would: the phase, the time and the bytes. */
-  @media (max-width: 520px) {
+  @media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {
     #console {
       grid-template-rows: var(--topbar-h) minmax(0, 1fr) env(
           safe-area-inset-bottom,

@@ -187,11 +187,10 @@
     min-width: 0;
     margin-top: var(--space-3);
   }
+  /* A narrow sheet wraps a choice's name and note rather than cutting them. */
   .choice-label {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .unavailable {
     cursor: not-allowed;

@@ -858,7 +858,7 @@
   }
   :is(.btn-quiet, .head-actions .btn) {
     --btn-line: transparent;
-    background: transparent;
+    background: transparent padding-box;
     box-shadow: none;
   }
   @media (hover: hover) {

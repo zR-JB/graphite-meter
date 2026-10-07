@@ -10,7 +10,12 @@
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import type { TransportRole } from "../runner/contract";
-  import { termAction, tooltipAction, tipGroup } from "../actions/tooltip";
+  import {
+    clipTip,
+    termAction,
+    tooltipAction,
+    tipGroup,
+  } from "../actions/tooltip";
   import {
     MISSING,
     STAGE,
@@ -122,7 +127,7 @@
         </span>
         <span class="line">
           {#if reason && !quiet}
-            <span class="reason">{reason}</span>
+            <span class="reason" use:clipTip>{reason}</span>
           {:else if card.wire}
             {@const wire = card.wire}
             <span class="wire"
@@ -475,10 +480,11 @@
     font-weight: var(--w-normal);
   }
   /* A phone stacks the cards in stage order, each whole from Start, so nothing moves as the stages run. Each is
-     compact, so all of them fit under the dial: the figure beside the name, a short strip, and the facts as one
-     row of columns, every one still there. */
+     compact: the name and the figure share a line, the figure wrapping under the name when both do not fit, then
+     the quiet line, a short strip and the facts in a row that wraps rather than overflows. */
   @container results (max-width: 520px) {
-    .result-cards {
+    .result-cards,
+    .result-cards:has(> :nth-child(4)) {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-2);
     }
@@ -486,42 +492,36 @@
       gap: 2px;
       padding: 7px var(--space-3) 8px;
     }
-    /* The figure stands at the right across the name's line and its detail's. */
-    .card {
-      grid-template-columns: minmax(0, 1fr) auto;
-      grid-template-areas: "name value" "line value" "strip strip" "facts facts";
-    }
     .card:has(> .strip) {
-      grid-template-rows: 20px 16px 36px auto;
+      grid-template-rows: auto auto 36px auto;
     }
     .face {
-      display: contents;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0 var(--space-3);
     }
     .name {
-      grid-area: name;
+      align-self: center;
+    }
+    .status {
+      margin-left: var(--space-1);
     }
     .headline {
-      grid-area: value;
-      align-self: center;
+      margin-left: auto;
       font-size: 22px;
-    }
-    .line {
-      grid-area: line;
-    }
-    .strip {
-      grid-area: strip;
+      line-height: 26px;
     }
     .strip {
       min-height: 36px;
       max-height: 36px;
     }
     .facts {
-      grid-area: facts;
-      grid-template-columns: none;
-      grid-auto-columns: max-content;
-      grid-auto-flow: column;
+      display: flex;
+      flex-wrap: wrap;
       justify-content: space-between;
-      column-gap: var(--space-3);
+      gap: 0 var(--space-3);
       margin-top: 2px;
     }
     .facts > div {
@@ -536,9 +536,6 @@
     }
     .facts dt {
       font-size: var(--type-xs);
-    }
-    .wire .delta {
-      display: none;
     }
   }
 </style>

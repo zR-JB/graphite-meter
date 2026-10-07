@@ -69,7 +69,15 @@
   // Beside the latency card (landscape, from a 760 px panel), the ring centres on the card's axis and its
   // note hangs just under it; portrait and phones keep the note in the column's flow.
   const portrait = new MediaQuery("(orientation: portrait)");
-  const hung = $derived(panelWidth >= 760 && !portrait.current);
+  // A phone on its side sets the dial beside the lanes and controls too: stacked, the ring alone fills its height.
+  const short = new MediaQuery(
+    "(max-height: 520px) and (orientation: landscape)",
+  );
+  const wide = $derived(
+    panelWidth >= 760 || (short.current && panelWidth >= 560),
+  );
+  // Short, the note keeps to the column under the ring, as wide as the dial, clear of the tick labels.
+  const hung = $derived(wide && !portrait.current && !short.current);
   const liveReadout = new LiveReadout();
   onDestroy(() => liveReadout.dispose());
   $effect(() => {
@@ -263,7 +271,8 @@
 
 <section
   class="gauge-panel"
-  class:wide={panelWidth >= 760}
+  class:wide
+  class:short={wide && short.current}
   class:compact={panelWidth <= 520}
   class:tight={panelWidth <= 430}
   style:--panel-width="{panelWidth}px"
@@ -283,7 +292,11 @@
         bind:clientHeight={gaugeHeight}
         class="gauge-face"
         style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
-        style:--face-min="{Math.min(gaugeWidth, gaugeHeight)}px"
+        style:--face-min="{Math.min(
+          gaugeWidth,
+          gaugeHeight,
+          layout.radius * 2.4,
+        )}px"
       >
         <GaugeDial
           input={dialState}
@@ -369,6 +382,9 @@
         class:handoff-out={footer.out}
         style:top={hung
           ? `calc(100% - ${layout.height - layout.noteTop}px)`
+          : null}
+        style:--note-width={hung && ticks.shown.length > 1
+          ? `${layout.noteWidth}px`
           : null}
       >
         {#if footer.shown.status || footer.shown.hint}
@@ -473,10 +489,49 @@
     justify-self: center;
     width: var(--dial-width);
   }
-  /* A phone's ring leaves room for its stages: the dial, the key and every card share one screen. */
+  /* A phone on its side keeps the dial in view at the left, as tall as the screen leaves, while the lanes, the
+     controls and the cards scroll beside it; its note takes the lines it needs, so one line costs the ring one. */
+  .wide.short .instrument,
+  .wide.short .instrument:not(:has(.latency-panel)) {
+    --dial-width: clamp(240px, var(--panel-width) * 0.38, 360px);
+    min-height: 0;
+    align-content: start;
+    grid-template:
+      "dial latency" auto
+      "dial controls" auto
+      "dial results" auto
+      / var(--dial-width) minmax(0, 1fr);
+  }
+  .wide.short .instrument .dial {
+    position: sticky;
+    top: var(--space-4);
+    align-self: start;
+    justify-self: stretch;
+    width: auto;
+    height: calc(100svh - var(--topbar-h) - var(--space-4) - var(--space-2));
+    min-height: 0;
+  }
+  .wide.short .latency-panel {
+    margin-top: 0;
+  }
+  .wide.short .gauge-footer {
+    min-height: 0;
+  }
+  /* A phone's ring is as wide as the face allows up to a share of the screen's height. On a phone either way up,
+     the lens takes a line of its own above the ring, so the two never meet. */
   .compact .instrument {
-    --dial-height: clamp(228px, 29svh, 290px);
+    --dial-height: auto;
+    --face-height: clamp(184px, calc(var(--panel-width) * 0.72), 44svh);
     gap: var(--space-2);
+  }
+  .compact .server-indicator,
+  .wide.short .server-indicator {
+    position: static;
+    padding: var(--space-1) 0 0;
+  }
+  .compact .gauge-face {
+    flex: none;
+    height: var(--face-height);
   }
   /* The dial's panel: the face, and the note under the ring; the face ends on the note, so a hung note measures
      from it. */
@@ -521,8 +576,8 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
-    /* The hero's type scales with --face-min, the measured dimension that sizes the ring: measured, not a
-       container query, which a flex item answers late. */
+    /* The hero's type scales with --face-min, the face's shorter side or the ring's span when the ring is the
+       smaller: measured, not a container query, which a flex item answers late. */
   }
   .gauge-ticks,
   .metric-wrap {
@@ -667,9 +722,12 @@
     align-items: start;
     height: calc(var(--space-2) + 2.7 * var(--type-body));
   }
+  /* Hung between the lowest tick labels, a note wraps rather than reach them. */
   .gauge-notes {
     display: grid;
     gap: 2px;
+    max-width: var(--note-width, none);
+    margin-inline: auto;
     text-align: center;
   }
   .gauge-hint {
