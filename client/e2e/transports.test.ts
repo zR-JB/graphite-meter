@@ -11,9 +11,10 @@ const paths = [
   ["WebTransport datagrams", home.h3, "webtransport-datagram", "h3"],
 ] as const;
 
-// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on).
+// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on). Firefox 157 can wedge an abandoned
+// HTTP/2 worker download on a slow runner (a Firefox networking bug), so its HTTP/2 cell stays Chrome's.
 for (const [name, origin, transport, protocol] of paths)
-  (protocol === "h3" ? test.chrome : test)(
+  (protocol === "h3" || protocol === "h2" ? test.chrome : test)(
     `${name} carries both directions over ${protocol}`,
     async (page) => {
       await page.goto(`${harness}/bench/harness.html`);
