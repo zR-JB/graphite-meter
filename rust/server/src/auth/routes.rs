@@ -115,7 +115,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     let (challenge, error, reason) = (read("challenge"), read("error"), read("reason"));
     let challenge = if verification_code(&challenge).is_some() { challenge.as_str() } else { "" };
     let notice = match error.as_str() {
-        notice @ ("" | "provider" | "busy" | "stale" | "throttled" | "password") => notice,
+        notice @ ("" | "provider" | "busy" | "stale" | "throttled" | "password" | "proxy") => notice,
         _ => "failed",
     };
     let status = match reason.as_str() {
@@ -158,6 +158,7 @@ async fn sign_in<B: http_body::Body>(
     let challenge = field(&form, "challenge");
     let admitted = || match password.admit(peer.keys(), cookie(headers, DEVICE_COOKIE)) {
         true => Ok(()),
+        false if peer.keys().is_none() => Err(Reason::ClientAddress),
         false => Err(Reason::Throttled),
     };
     if let Err(reason) = check_csrf(auth, headers, field(&form, "csrf")).and_then(|()| admitted()) {

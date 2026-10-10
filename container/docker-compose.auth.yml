@@ -3,8 +3,9 @@
 #   docker compose -f container/docker-compose.yml -f container/docker-compose.auth.yml up -d
 #
 # It assumes a reverse proxy on this host owns TLS on GM_AUTH_PUBLIC_URL and
-# forwards to 127.0.0.1:7246. The proxy must set X-Real-IP from its connection
-# peer, drop Forwarded and X-Forwarded-For, and overwrite X-Forwarded-Proto and
+# forwards to 127.0.0.1:7246 (docker-compose.traefik.yml stacks Traefik on it
+# instead). The proxy must set X-Real-IP from its connection peer, end any
+# X-Forwarded-For with that same address, and overwrite X-Forwarded-Proto and
 # X-Forwarded-Host - see docs/DEPLOYMENT.md. Variable semantics and the
 # terminal-client grant flow are documented there as well.
 #

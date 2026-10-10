@@ -37,7 +37,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.allowAttempt(r) {
-		s.loginRejected(w, r, reasonThrottled)
+		s.loginRejected(w, r, s.budgetRefusal(r))
 		return
 	}
 	select {

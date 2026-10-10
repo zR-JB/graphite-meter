@@ -163,6 +163,8 @@ GM_TRUSTED_PROXIES=172.30.0.2/32
 `GM_TRUSTED_PROXIES` is the proxy's own address as Graphite Meter sees it, here a proxy container with a fixed
 address. A trusted peer names the client and, for authentication, the HTTPS origin, so trust no address that other
 clients share: a published container port's loopback and IPv6 clients arrive from the network gateway.
+`GM_ADVERTISED_NATIVE_ENDPOINTS=none` only stops discovery from offering the native listeners; they still listen, so
+publish no ports for them when the proxy should be the only way in.
 
 WebTransport is HTTP/3 extended CONNECT over UDP, which a TCP proxy cannot carry; expose the native H3 endpoint
 directly when it is required.
@@ -188,8 +190,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $http_host;
-        proxy_set_header Forwarded "";
-        proxy_set_header X-Forwarded-For "";
 
         proxy_buffering off;
         proxy_request_buffering off;
@@ -213,17 +213,43 @@ omits its default location, whose `$host` would drop a nonstandard port. Check t
 meter.example {
     reverse_proxy graphite-meter:7246 {
         header_up X-Real-IP {remote_host}
-        header_up -Forwarded
-        header_up -X-Forwarded-For
     }
 }
 ```
 
+### Traefik
+
+[`docker-compose.traefik.yml`](../container/docker-compose.traefik.yml) runs Traefik v3 in front of the default
+compose, with a Let's Encrypt certificate and Graphite Meter reachable only through it:
+
+```sh
+docker compose -f container/docker-compose.yml -f container/docker-compose.traefik.yml up -d
+```
+
+Traefik needs no header middleware. For a client outside `forwardedHeaders.trustedIPs` it drops the client's
+`X-Real-Ip` and `X-Forwarded-*` headers, sets `X-Real-Ip` to the connection peer and appends the same address to
+`X-Forwarded-For`. It sends a WebSocket upgrade's protocol as `wss`, which counts as HTTPS. Two settings exist only in
+Traefik's static configuration, never in labels, and the overlay sets both as flags:
+
+- `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`: Traefik's 60 s default cuts an upload stage
+  that streams one request body for longer.
+- `--serversTransport.forwardingTimeouts.idleConnTimeout=10s`: Traefik keeps idle upstream connections for 90 s by
+  default, past the 15 s after which Graphite Meter closes them.
+
+With authentication, stack `docker-compose.auth.yml` before the Traefik overlay; Traefik's address replaces the
+gateway as the trusted proxy. Do not list Traefik's clients in `forwardedHeaders.trustedIPs` or set `insecure`: their
+own `X-Real-Ip` would then pass through, and Graphite Meter refuses those requests.
+
 ### Proxy requirements
 
-- Preserve `Host`; overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`; set `X-Real-IP` from the connection peer.
-- Remove client-supplied `Forwarded` and `X-Forwarded-For`; set `GM_TRUSTED_PROXIES` to the proxy peers only. Without
-  it every client counts as the proxy, and with authentication no request counts as HTTPS, so sign-in fails.
+- Preserve `Host`; overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`; set `GM_TRUSTED_PROXIES` to the proxy peers
+  only. Without it every client counts as the proxy, and with authentication no request counts as HTTPS, so sign-in
+  fails.
+- Set `X-Real-IP` to the connection peer, replacing any the client sent. `X-Forwarded-For` may stay, but its last entry
+  must be the same address, as Traefik, Caddy and nginx's `$proxy_add_x_forwarded_for` write it: a proxy that passes a
+  client's own `X-Real-IP` on still appends the peer it saw, so a different last entry shows the header was forged,
+  and Graphite Meter refuses the request rather than attribute it to an address the client chose. `Forwarded` is
+  ignored.
 - Allow WebSocket Upgrade to `/ws/ping`; do not buffer, cache, compress or transform `/upload/progress`.
 - Expire idle upstream connections within 15 s; Graphite Meter closes them then.
 - Keep the whole route family on one backend; do not add `forward_auth`; Graphite Meter owns authentication.
@@ -423,7 +449,8 @@ _env only_ have no flag, so secrets stay out of process arguments.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at a
   trusted proxy or firewall.
 - `GM_TRUSTED_PROXIES` rejects default routes (`0.0.0.0/0`, `::/0`). A trusted peer names its client with exactly one
-  `X-Real-IP`; a missing or repeated header, or one with `Forwarded`/`X-Forwarded-For`, is refused by sign-in and
-  measurement admission.
+  `X-Real-IP`, which an `X-Forwarded-For` must end in. Measurement admission refuses any other request from it with
+  HTTP 400, the sign-in page says the proxy names no client, and the server logs the fault under `proxy` at most once
+  a minute.
 - The browser keeps history in its own IndexedDB; its own choice overrides `GM_RESULT_HISTORY_DEFAULT`. Stopped and
   Failed runs are not saved.
