@@ -132,7 +132,8 @@ func main() {
 // rememberedPath is where the last server that prepared is kept, so a later start needs no --url.
 func rememberedPath() string {
 	dir, err := os.UserConfigDir()
-	if err != nil {
+	// A configuration directory that climbs with .. is refused, so the file stays where it belongs.
+	if err != nil || strings.Contains(dir, "..") {
 		return ""
 	}
 	return filepath.Join(dir, "graphite-meter", "server")

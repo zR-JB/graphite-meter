@@ -337,10 +337,11 @@ fn local(authority: &str) -> bool {
 
 /// Where the last server that prepared is kept, so a later start needs no `-url`: the user's configuration directory.
 pub fn kept_server() -> Option<PathBuf> {
+    // A directory that climbs with `..` is refused, so the file stays where it belongs.
     let var = |name| {
         std::env::var_os(name)
             .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
+            .filter(|path| path.is_absolute() && !path.components().any(|part| part == std::path::Component::ParentDir))
     };
     let home = || var("HOME");
     let directory = match () {
