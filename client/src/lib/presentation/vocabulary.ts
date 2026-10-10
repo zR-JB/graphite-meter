@@ -188,7 +188,8 @@ export const JARGON = {
   latencyPath: "Latency path\nTransport of the probes, on its own connection",
   pathEvidence: "Evidence\nThe HTTP version each side observed",
   uploadFeed: "Upload feed\nHow the server reports upload bytes back",
-  clientAddress: "Your address\nAs the server saw it: proxy header or socket",
+  clientAddress:
+    "Your address\nAs the server saw it: proxy header or socket\nHidden until you point at it or tap it",
   serverLoad:
     "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   serverInstance: "Server\nEngine version; the instance changes on restart",
