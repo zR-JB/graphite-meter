@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"image/color"
 	"math"
 	"slices"
 	"strconv"
@@ -81,45 +82,83 @@ type dial struct {
 // The dial opens downward over 270°, as the browser's does.
 const dialStart, dialTurn = 225.0, 270.0
 
-// dial draws the ring in braille with its ticks outside it and the readout in large figures inside it. Where arcs
-// overlap the shorter one shows, so every arc's head stays visible.
+// The ring's thickness, a share of its radius, and its heads' beads, wider by this much.
+const ringThick, ringBead, ringSamples = 0.13, 1.45, 4
+
+// dial draws the ring in half-block pixels, two to a cell, with its ticks outside it and the readout in large
+// figures inside it. Where arcs overlap the shorter one shows, and each ends in a bead, so every arc's head stays
+// visible. Each pixel mixes the arcs, track and canvas its samples land on, so the ring's edges are smooth.
 func (s styles) dial(d dial, w, h int) []string {
 	const margin = 5
 	cols, rows := max(w-2*margin, 12), max(h-1, 6)
-	dotW, dotH := cols*2, rows*4
-	radius := min(float64(dotW)/2-1, (float64(dotH)-2)/(1+math.Sin(math.Pi/4)))
-	cx, cy := float64(dotW)/2, radius+1
-	thick := max(radius/9, 2)
-	dots := make([]rune, cols*rows)
-	owner := make([]int, cols*rows)
-	for i := range owner {
-		owner[i] = -1
+	pw, ph := float64(cols), float64(rows*2)
+	radius := min((pw/2-0.5)/(1+ringThick/2), (ph-1)/(1+math.Sin(math.Pi/4)+ringThick))
+	thick := radius * ringThick
+	cx, cy := pw/2, radius+thick/2+0.5
+	point := func(f float64) [2]float64 {
+		a := (dialStart - f*dialTurn) * math.Pi / 180
+		return [2]float64{cx + radius*math.Cos(a), cy - radius*math.Sin(a)}
 	}
-	for y := range dotH {
-		for x := range dotW {
-			dx, dy := float64(x)+0.5-cx, cy-(float64(y)+0.5)
-			if math.Abs(math.Hypot(dx, dy)-radius) > thick/2 {
-				continue
-			}
-			f := math.Mod(dialStart-math.Atan2(dy, dx)*180/math.Pi+360, 360) / dialTurn
-			if f > 1 {
-				continue
-			}
-			cell := y/4*cols + x/2
-			dots[cell] |= brailleDots[y%4][x%2]
-			for i, a := range d.arcs {
-				if f <= a.to && (owner[cell] < 0 || a.to < d.arcs[owner[cell]].to) {
-					owner[cell] = i
+	start, end := point(0), point(1)
+	// on reports a point on the sweep up to `to`, with round ends: the start as wide as the ring, the head `head` wide.
+	on := func(x, y, to float64, tip [2]float64, head float64) bool {
+		dx, dy := x-cx, cy-y
+		f := math.Mod(dialStart-math.Atan2(dy, dx)*180/math.Pi+360, 360) / dialTurn
+		return f <= to && math.Abs(math.Hypot(dx, dy)-radius) <= thick/2 ||
+			math.Hypot(x-start[0], y-start[1]) <= thick/2 || math.Hypot(x-tip[0], y-tip[1]) <= head/2
+	}
+	type layer struct {
+		to  float64
+		tip [2]float64
+		hue color.Color
+	}
+	var arcs []layer
+	for _, a := range d.arcs {
+		to := min(max(a.to, 0), 1)
+		arcs = append(arcs, layer{to, point(to), a.hue.GetForeground()})
+	}
+	slices.SortFunc(arcs, func(a, b layer) int { return cmp.Compare(a.to, b.to) })
+	track := s.border.GetForeground()
+	pixel := func(x, y int) (color.Color, bool) {
+		// Only pixels within a bead's reach of the ring are sampled.
+		if math.Abs(math.Hypot(float64(x)+0.5-cx, cy-float64(y)-0.5)-radius) > thick*ringBead/2+1 {
+			return nil, false
+		}
+		var sum [3]uint32
+		covered := 0
+		for i := range ringSamples * ringSamples {
+			sx := float64(x) + (float64(i%ringSamples)+0.5)/ringSamples
+			sy := float64(y) + (float64(i/ringSamples)+0.5)/ringSamples
+			var c color.Color
+			for _, a := range arcs {
+				if on(sx, sy, a.to, a.tip, thick*ringBead) {
+					c = a.hue
+					break
 				}
 			}
+			if c == nil && on(sx, sy, 1, end, thick) {
+				c = track
+			}
+			if c == nil {
+				c = s.canvas
+			} else {
+				covered++
+			}
+			r, g, b, _ := c.RGBA()
+			sum[0], sum[1], sum[2] = sum[0]+r>>8, sum[1]+g>>8, sum[2]+b>>8
 		}
+		if covered == 0 {
+			return nil, false
+		}
+		const n = ringSamples * ringSamples
+		return color.RGBA{uint8(sum[0] / n), uint8(sum[1] / n), uint8(sum[2] / n), 0xff}, true
 	}
 	readout := []string{d.hue.Render(d.label), ""}
 	for _, row := range bigFigures(d.value) {
 		readout = append(readout, s.value.Render(row))
 	}
 	readout = append(readout, s.muted.Render(d.unit), d.note)
-	first := int(cy/4) - len(readout)/2 + 1
+	first := int(cy/2) - len(readout)/2 + 1
 	lines := make([]string, rows)
 	for r := range rows {
 		var b strings.Builder
@@ -134,14 +173,18 @@ func (s styles) dial(d dial, w, h int) []string {
 				c += textW - 1
 				continue
 			}
-			cell := r*cols + c
+			// The upper pixel is the glyph, the lower its background; a bare canvas half stays the terminal's.
+			upper, up := pixel(c, 2*r)
+			lower, low := pixel(c, 2*r+1)
 			switch {
-			case dots[cell] == 0:
-				b.WriteByte(' ')
-			case owner[cell] >= 0:
-				b.WriteString(d.arcs[owner[cell]].hue.Render(string(0x2800 + dots[cell])))
+			case up && low:
+				b.WriteString(lipgloss.NewStyle().Foreground(upper).Background(lower).Render("▀"))
+			case up:
+				b.WriteString(lipgloss.NewStyle().Foreground(upper).Render("▀"))
+			case low:
+				b.WriteString(lipgloss.NewStyle().Foreground(lower).Render("▄"))
 			default:
-				b.WriteString(s.border.Render(string(0x2800 + dots[cell])))
+				b.WriteByte(' ')
 			}
 		}
 		lines[r] = b.String()
@@ -152,7 +195,7 @@ func (s styles) dial(d dial, w, h int) []string {
 	for i, f := range [5]float64{0, 0.25, 0.5, 0.75, 1} {
 		label := s.muted.Render(ansi.Truncate(d.ticks[i], margin-1, ""))
 		a := (dialStart - f*dialTurn) * math.Pi / 180
-		x, y := (cx+(radius+thick+3)*math.Cos(a))/2, (cy-(radius+thick+3)*math.Sin(a))/4
+		x, y := cx+(radius+thick+1.5)*math.Cos(a), (cy-(radius+thick+1.5)*math.Sin(a))/2
 		row := min(max(int(y), 0), rows-1)
 		switch {
 		case i == 2:

@@ -17,6 +17,7 @@ type styles struct {
 	trace                                map[goclient.Stage]lipgloss.Style
 	outcome                              map[goclient.Outcome]lipgloss.Style
 	shades                               map[goclient.Stage][6]lipgloss.Style
+	canvas                               color.Color
 	plate, plateNote, plateOff           lipgloss.Style
 }
 
@@ -73,6 +74,7 @@ func newStyles(dark bool) styles {
 	if dark {
 		canvas = "#0d1013"
 	}
+	s.canvas = lipgloss.Color(canvas)
 	s.shades = map[goclient.Stage][6]lipgloss.Style{}
 	for stage, trace := range s.trace {
 		var shades [6]lipgloss.Style

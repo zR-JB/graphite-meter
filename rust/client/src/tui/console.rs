@@ -1,14 +1,14 @@
 //! The console's parts, drawn as the browser's are (`docs/DESIGN.md`): the dial, strips and lines, cards and facts, the
 //! key, the latency lanes, the stage track and sections; flat, with colour only where it names a stage or a state.
-use super::theme::Palette;
+use super::theme::{self, Palette};
 use crate::{
     events::Point,
     measure::{format, latency::Population},
     model::Stage,
     report::vocabulary as words,
-    text::{self, Line, Style},
+    text::{self, Color, Line, Style},
 };
-use std::time::Duration;
+use std::{f64::consts::FRAC_PI_4, time::Duration};
 
 /// The browser's dial transfer curve (`client/src/lib/components/gaugeScale.ts`): equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
@@ -88,35 +88,84 @@ fn braille(dots: u8) -> char {
     char::from_u32(0x2800 + u32::from(dots)).unwrap_or(' ')
 }
 
-/// The ring in braille `width` × `height` cells with its ticks outside it and the readout in large figures inside.
-/// Where arcs overlap the shorter one shows, so every arc's head stays visible.
+/// The ring's thickness, a share of its radius; an arc's head is a bead this much wider.
+const THICK: f64 = 0.13;
+const BEAD: f64 = 1.45;
+/// Samples per pixel side; a pixel's colour is what its samples see, so the ring's edges are smooth.
+const SAMPLES: usize = 4;
+
+/// The ring in half-block pixels, two to a cell, with its ticks outside it and the readout in large figures inside.
+/// Where arcs overlap the shorter one shows, and each ends in a bead, so every arc's head stays visible. Each pixel
+/// mixes the arcs, track and canvas its samples land on, over the terminal's own background where it said.
 pub fn dial(palette: &Palette, d: &Dial, width: usize, height: usize) -> Vec<Line> {
     const MARGIN: usize = 5;
     let (cols, rows) = (width.saturating_sub(2 * MARGIN).max(12), height.saturating_sub(1).max(6));
-    let (dot_w, dot_h) = (cols as f64 * 2.0, rows as f64 * 4.0);
-    let radius = (dot_w / 2.0 - 1.0).min((dot_h - 2.0) / (1.0 + std::f64::consts::FRAC_PI_4.sin()));
-    let (cx, cy, thick) = (dot_w / 2.0, radius + 1.0, (radius / 9.0).max(2.0));
-    let (mut dots, mut owner) = (vec![0_u8; cols * rows], vec![None::<usize>; cols * rows]);
-    for y in 0..rows * 4 {
-        for x in 0..cols * 2 {
-            let (dx, dy) = (x as f64 + 0.5 - cx, cy - (y as f64 + 0.5));
-            let f = (START - dy.atan2(dx).to_degrees()).rem_euclid(360.0) / TURN;
-            if (dx.hypot(dy) - radius).abs() > thick / 2.0 || f > 1.0 {
-                continue;
+    let (w, h) = (cols as f64, rows as f64 * 2.0);
+    let radius = ((w / 2.0 - 0.5) / (1.0 + THICK / 2.0)).min((h - 1.0) / (1.0 + FRAC_PI_4.sin() + THICK));
+    let thick = radius * THICK;
+    let (cx, cy) = (w / 2.0, radius + thick / 2.0 + 0.5);
+    let point = |f: f64| {
+        let angle = (START - f * TURN).to_radians();
+        (cx + radius * angle.cos(), cy - radius * angle.sin())
+    };
+    let start = point(0.0);
+    // On the sweep from its start to `to`, with round ends: the start's as wide as the ring, the head's `head` wide.
+    let on = |x: f64, y: f64, to: f64, (hx, hy): (f64, f64), head: f64| {
+        let (dx, dy) = (x - cx, cy - y);
+        let f = (START - dy.atan2(dx).to_degrees()).rem_euclid(360.0) / TURN;
+        f <= to && (dx.hypot(dy) - radius).abs() <= thick / 2.0
+            || (x - start.0).hypot(y - start.1) <= thick / 2.0
+            || (x - hx).hypot(y - hy) <= head / 2.0
+    };
+    let mut arcs: Vec<(f64, (f64, f64), Color)> = d
+        .arcs
+        .iter()
+        .filter_map(|arc| {
+            let to = arc.to.clamp(0.0, 1.0);
+            Some((to, point(to), arc.hue.fg?))
+        })
+        .collect();
+    arcs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (canvas, track, end) = (palette.canvas(), palette.border.fg.unwrap_or(palette.canvas()), point(1.0));
+    let pixel = |x: usize, y: usize| {
+        // Only pixels within a bead's reach of the ring are sampled.
+        let (dx, dy) = (x as f64 + 0.5 - cx, cy - (y as f64 + 0.5));
+        if (dx.hypot(dy) - radius).abs() > thick * BEAD / 2.0 + 1.0 {
+            return None;
+        }
+        let (mut sum, mut seen) = ([0_u32; 3], Vec::<(Color, u32)>::new());
+        for sample in 0..SAMPLES * SAMPLES {
+            let at = |index: usize, origin: usize| origin as f64 + (index as f64 + 0.5) / SAMPLES as f64;
+            let (sx, sy) = (at(sample % SAMPLES, x), at(sample / SAMPLES, y));
+            let color = arcs
+                .iter()
+                .find(|&&(to, head, _)| on(sx, sy, to, head, thick * BEAD))
+                .map(|&(_, _, color)| color)
+                .or_else(|| on(sx, sy, 1.0, end, thick).then_some(track))
+                .unwrap_or(canvas);
+            for (channel, shift) in sum.iter_mut().zip([16, 8, 0]) {
+                *channel += (color.rgb >> shift) & 0xff;
             }
-            let cell = y / 4 * cols + x / 2;
-            dots[cell] |= DOTS[y % 4][x % 2];
-            for (index, arc) in d.arcs.iter().enumerate() {
-                if f <= arc.to && owner[cell].is_none_or(|owner: usize| arc.to < d.arcs[owner].to) {
-                    owner[cell] = Some(index);
-                }
+            match seen.iter_mut().find(|(seen, _)| *seen == color) {
+                Some((_, count)) => *count += 1,
+                None => seen.push((color, 1)),
             }
         }
-    }
+        // Sixteen colours cannot mix, so a pixel takes the one most of its samples saw.
+        let most = seen
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map_or(canvas, |&(color, _)| color);
+        if most == canvas && seen.len() == 1 {
+            return None;
+        }
+        let rgb = sum.map(|channel| (channel / (SAMPLES * SAMPLES) as u32) as u8);
+        Some(theme::nearest(rgb, if most == canvas { canvas.ansi } else { most.ansi }))
+    };
     let mut readout = vec![Line::styled(&d.label, d.hue), Line::default()];
     readout.extend(figures(&d.value).map(|row| Line::styled(row, palette.value)));
     readout.extend([Line::styled(d.unit, palette.muted), d.note.clone()]);
-    let first = (cy / 4.0) as isize - readout.len() as isize / 2 + 1;
+    let first = (cy / 2.0) as isize - readout.len() as isize / 2 + 1;
     let ring = (0..rows).map(|row| {
         let text = usize::try_from(row as isize - first)
             .ok()
@@ -132,11 +181,11 @@ pub fn dial(palette: &Palette, d: &Dial, width: usize, height: usize) -> Vec<Lin
                 column += text.width();
                 continue;
             }
-            let cell = row * cols + column;
-            match (dots[cell], owner[cell]) {
-                (0, _) => line.push(' ', Style::default()),
-                (dots, Some(owner)) => line.push(braille(dots), d.arcs[owner].hue),
-                (dots, None) => line.push(braille(dots), palette.border),
+            // The upper pixel is the glyph, the lower its background; a bare canvas half stays the terminal's.
+            match (pixel(column, 2 * row), pixel(column, 2 * row + 1)) {
+                (None, None) => line.push(' ', Style::default()),
+                (Some(upper), lower) => line.push('▀', Style { fg: Some(upper), bg: lower, bold: false }),
+                (None, Some(lower)) => line.push('▄', Style::fg(lower)),
             }
             column += 1;
         }
@@ -149,8 +198,8 @@ pub fn dial(palette: &Palette, d: &Dial, width: usize, height: usize) -> Vec<Lin
     for (index, tick) in d.ticks.iter().enumerate() {
         let label = Line::styled(tick.chars().take(MARGIN - 1).collect::<String>(), palette.muted);
         let angle = (START - index as f64 / 4.0 * TURN).to_radians();
-        let reach = radius + thick + 3.0;
-        let (x, y) = ((cx + reach * angle.cos()) / 2.0, (cy - reach * angle.sin()) / 4.0);
+        let reach = radius + thick + 1.5;
+        let (x, y) = (cx + reach * angle.cos(), (cy - reach * angle.sin()) / 2.0);
         let row = (y as isize).clamp(0, rows as isize - 1) as usize;
         match () {
             _ if index == 2 => {

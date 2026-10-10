@@ -434,7 +434,7 @@ func TestConsoleFollowsTheStage(t *testing.T) {
 				t.Errorf("%s console lost %q:\n%s", c.stage, want, console)
 			}
 		}
-		if !strings.ContainsFunc(console, func(r rune) bool { return r > 0x2800 && r <= 0x28ff }) {
+		if !strings.ContainsAny(console, "▀▄") {
 			t.Errorf("%s console drew no dial:\n%s", c.stage, console)
 		}
 	}

@@ -405,10 +405,11 @@ Both terminal clients draw the same console, in cells: the browser's structure w
 
 - **Flat sections.** No boxes: a section is a heavy rule over its title, in the stage's hue for a stage's card and in
   the border tone otherwise, then its body. One line of space separates sections; columns sit four apart.
-- **The dial** is a braille ring over 270°, opening downward, on the browser's transfer curve and scale, with its five
-  ticks outside it. Each finished transfer stage keeps an arc, the shorter one on top so every head shows. Inside it,
-  the stage over large figures three rows tall in rounded strokes, over the unit. Under 96 columns the readout stays
-  and the ring goes.
+- **The dial** is a solid ring over 270°, opening downward, on the browser's transfer curve and scale, with its five
+  ticks outside it: half-block pixels, two to a cell, each the mix of what sixteen samples see, so its edges are
+  smooth. It is 0.13 of its radius thick, as the browser's is, and each arc ends in a bead. Each finished transfer
+  stage keeps an arc, the shorter one on top so every head shows. Inside it, the stage over large figures three rows
+  tall in rounded strokes, over the unit. Under 96 columns the readout stays and the ring goes.
 - **The right column** holds the latency lanes (figures, then a lane from the median to the 95th percentile, the idle
   median marked down every lane), the key and the stage track. The track's rules fill in each stage's hue as it runs;
   a cramped track names its stages in their hues instead of beside icons.
@@ -422,7 +423,8 @@ Both terminal clients draw the same console, in cells: the browser's structure w
 - **First run.** There is no default server: the client opens on the server's address with a greyed example, keeps
   the last one that prepared, and its key stays dim until it has one.
 - **Glyphs** come from the box-drawing, block, braille and arrow ranges that DejaVu Sans Mono, Noto Sans Mono, Meslo
-  and Cascadia all carry; icons are `≈ ↓ ↑ ↕`. Input paints at once; measurement repaints at 30 fps.
+  and Cascadia all carry; icons are `≈ ↓ ↑ ↕`. Input paints at once; measurement repaints at 30 fps in Go and 60
+  in Rust, whose blends also land on the background the terminal names.
 
 ## Do and don't
 
