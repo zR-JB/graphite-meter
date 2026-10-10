@@ -1,5 +1,6 @@
 import { X509Certificate, createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
@@ -93,10 +94,30 @@ const harness = Bun.serve({
   },
 });
 
+// A test worker can exit without its cleanup hooks, leaving its browser running; every browser profile lives in
+// this run's directory, so whatever still runs from it is this run's (Linux /proc).
+async function stopBrowsers() {
+  const left = (await readdir("/proc").catch(() => []))
+    .filter((pid) => /^\d+$/.test(pid))
+    .filter((pid) => {
+      try {
+        return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(dir);
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
+  for (const pid of left)
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+}
+
 async function stop() {
   harness.stop(true);
   children.forEach((child) => child.kill());
   await Promise.all(children.map((child) => child.exited));
+  await stopBrowsers();
   await rm(dir, { recursive: true, force: true });
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const)
