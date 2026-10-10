@@ -851,9 +851,9 @@ export class Run {
         server.latencyStall = null;
         run.#updateStalled();
       },
-      // A closed window's evidence is final; tearing down its lanes cannot fail the stage.
+      // Tearing down lanes that moved to the window's end cannot fail the stage; a server that stopped earlier can.
       fail(reason, message) {
-        if (run.#measuring || !run.#ending)
+        if (run.#measuring || !run.#ending || !run.#movedToEnd(server))
           run.#remove(server, reason, message);
       },
       authenticationRequired(role) {
@@ -1014,6 +1014,14 @@ export class Run {
     return this.#participants().some(
       (server) =>
         server !== silent && at - server.progressAt[dir] < STALL_QUIET_MS,
+    );
+  }
+
+  /** Every direction of the stage moved within a moment of its window's end, where the held clock stands. */
+  #movedToEnd(server: Participant): boolean {
+    const at = this.#clock.active();
+    return (this.#activity?.transfer ?? []).every(
+      (dir) => at - server.progressAt[dir] < STALL_QUIET_MS,
     );
   }
 
