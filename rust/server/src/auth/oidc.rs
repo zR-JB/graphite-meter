@@ -277,8 +277,10 @@ pub(super) async fn start<B: http_body::Body>(
     let started = (|| {
         oidc.provider().ok_or(Reason::ProviderNotReady)?;
         check_csrf(auth, &head.headers, field(form.as_deref().ok_or(Reason::MalformedForm)?, "csrf"))?;
-        let keys = peer.keys().filter(|keys| oidc.starts.allow(keys, false, None));
-        let keys = keys.ok_or(Reason::Throttled)?;
+        let keys = peer.keys().ok_or(Reason::ClientAddress)?;
+        let keys = Some(keys)
+            .filter(|keys| oidc.starts.allow(keys, false, None))
+            .ok_or(Reason::Throttled)?;
         let approval = if approval::verification_code(challenge).is_some() { challenge } else { "" };
         oidc.start(&keys, approval, cookie_lease(&auth.store, &head.headers).map(|lease| lease.login()))
     })();

@@ -66,6 +66,14 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 	return true
 }
 
+// budgetRefusal names why a sign-in budget refused: a proxy that names no client, else too many attempts.
+func (s *Service) budgetRefusal(r *http.Request) reason {
+	if _, ok := ClientKeys(r, s.trusted); !ok {
+		return reasonClientAddress
+	}
+	return reasonThrottled
+}
+
 func (s *Service) allowAttempt(r *http.Request) bool {
 	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, &s.globalAttempts, s.knownDevice(r))
 }

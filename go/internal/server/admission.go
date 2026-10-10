@@ -131,7 +131,7 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 		keys, ok := auth.ClientKeys(r, trusted)
 		if !ok {
 			authn.MeasurementCORS(w.Header(), r)
-			http.Error(w, "ambiguous client address", http.StatusBadRequest)
+			http.Error(w, transport.RefusedAddress, http.StatusBadRequest)
 			return
 		}
 		release, status := a.acquire(session, keys...)

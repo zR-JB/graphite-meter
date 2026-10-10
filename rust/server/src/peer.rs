@@ -1,13 +1,17 @@
 //! Who a request comes from: socket or trusted-proxy address, sign-in, and the client keys limits and uploads use.
 
 use crate::auth::{AuthLease, Holder};
+use crate::log::{Level, RateLimited};
 use graphite_meter_proto::discovery::ClientIpSource;
 use http::HeaderMap;
 use ipnet::{IpNet, Ipv6Net};
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
+
+/// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
+static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests");
 
 /// A client's address and where it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,20 +25,22 @@ pub enum Address {
 }
 
 impl Address {
-    /// A trusted peer's client is its one parsable `X-Real-IP` absent `Forwarded`/`X-Forwarded-For`; else the peer.
+    /// A trusted peer's client is its one `X-Real-IP` (see `forwarded_client`); else the peer.
     pub fn resolve(socket: IpAddr, headers: &HeaderMap, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
         if !is_trusted(socket, trusted) {
             return Self::Socket(socket);
         }
-        let mut forwarding = ["forwarded", "x-forwarded-for"].into_iter();
-        let chained = forwarding.any(|name| headers.get(name).is_some_and(|value| !value.is_empty()));
-        let mut real = headers.get_all("x-real-ip").iter();
-        let named = match (real.next(), real.next()) {
-            (Some(value), None) if !chained => value.to_str().ok().and_then(|text| text.trim().parse().ok()),
-            _ => None,
-        };
-        named.map_or(Self::Ambiguous(socket), |client: IpAddr| Self::Forwarded(client.to_canonical()))
+        match forwarded_client(headers) {
+            Ok(client) => Self::Forwarded(client),
+            Err(fault) => {
+                REFUSALS.write(format_args!(
+                    "request from trusted proxy {socket} names no client: {fault}; set the proxy to overwrite \
+                     X-Real-IP with the address it accepted the connection from (docs/DEPLOYMENT.md, Reverse proxies)"
+                ));
+                Self::Ambiguous(socket)
+            }
+        }
     }
 
     pub fn ip(self) -> IpAddr {
@@ -51,6 +57,38 @@ impl Address {
             Self::Ambiguous(_) => None,
         }
     }
+}
+
+/// A trusted proxy's single `X-Real-IP`. `X-Forwarded-For`, when sent, must end in that address: a proxy appends the
+/// peer it saw, so a different last hop means the `X-Real-IP` came from further out, such as a client whose own header
+/// the proxy passed on. `Forwarded` is ignored: no common proxy writes it, and some pass a client's on.
+fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
+    let mut real = headers.get_all("x-real-ip").iter();
+    let (Some(value), None) = (real.next(), real.next()) else {
+        return Err("the proxy must send X-Real-IP once".into());
+    };
+    let client = value
+        .to_str()
+        .ok()
+        .and_then(|text| text.trim().parse::<IpAddr>().ok())
+        .ok_or("X-Real-IP is not one IP address")?
+        .to_canonical();
+    if let Some(chain) = headers.get_all("x-forwarded-for").iter().next_back() {
+        let chain = chain.to_str().map_err(|_| "X-Forwarded-For is not text")?;
+        let last = chain.rsplit(',').next().unwrap_or_default().trim();
+        if !last.is_empty() && hop(last) != Some(client) {
+            return Err(format!("X-Forwarded-For ends in {last}, not X-Real-IP {client}"));
+        }
+    }
+    Ok(client)
+}
+
+/// An `X-Forwarded-For` entry, which some proxies write with a port.
+fn hop(text: &str) -> Option<IpAddr> {
+    let ip = text
+        .parse::<IpAddr>()
+        .or_else(|_| text.parse::<SocketAddr>().map(|address| address.ip()));
+    ip.ok().map(|ip| ip.to_canonical())
 }
 
 fn is_trusted(ip: IpAddr, trusted: &[IpNet]) -> bool {
@@ -179,15 +217,23 @@ mod tests {
             &[real, real],
             &[("x-real-ip", "192.0.2.1, 192.0.2.2")],
             &[("x-real-ip", "unknown")],
-            &[real, ("forwarded", "for=192.0.2.1")],
-            &[real, ("x-forwarded-for", "192.0.2.1")],
+            // A proxy that passed a client's X-Real-IP on still appended the address it saw.
+            &[real, ("x-forwarded-for", "2001:db8::1, 192.0.2.1")],
+            &[real, ("x-forwarded-for", "unknown")],
+            &[("x-forwarded-for", "2001:db8::1")],
         ] {
             assert_eq!(resolve("10.1.2.3", pairs), proxy, "{pairs:?}");
         }
-        assert_eq!(
-            resolve("10.1.2.3", &[real, ("x-forwarded-for", "")]),
-            Address::Forwarded(ip("2001:db8::1"))
-        );
+        // Traefik, Caddy and nginx's $proxy_add_x_forwarded_for append the peer they saw: the same address. A client's
+        // own Forwarded passes some proxies untouched, so it never counts.
+        for pairs in [
+            &[real, ("x-forwarded-for", "")][..],
+            &[real, ("x-forwarded-for", "192.0.2.1, 2001:db8::1")],
+            &[real, ("x-forwarded-for", "192.0.2.1"), ("x-forwarded-for", "[2001:db8::1]:443")],
+            &[real, ("forwarded", "for=192.0.2.1")],
+        ] {
+            assert_eq!(resolve("10.1.2.3", pairs), Address::Forwarded(ip("2001:db8::1")), "{pairs:?}");
+        }
         assert_eq!(proxy.source(), None);
         assert_eq!(Address::Forwarded(ip("::1")).source(), Some(ClientIpSource::Forwarded));
     }

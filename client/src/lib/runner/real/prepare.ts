@@ -262,7 +262,15 @@ async function pathProbe(
       cache: "no-store",
       signal,
     });
-    if (!response.ok) throw new Error(`probe returned HTTP ${response.status}`);
+    if (!response.ok) {
+      // A plain refusal's first line says why, such as a proxy that names no client.
+      const why = response.headers.get("Content-Type")?.startsWith("text/plain")
+        ? (await response.text()).split("\n", 1)[0]!.slice(0, 200)
+        : "";
+      throw new Error(
+        `probe returned HTTP ${response.status}${why && `: ${why}`}`,
+      );
+    }
     return { response, probe: parseProbe(await readJSONResponse(response)) };
   } catch (cause) {
     signal.throwIfAborted();
