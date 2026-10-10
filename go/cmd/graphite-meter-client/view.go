@@ -301,6 +301,8 @@ func (m model) startNote() string {
 		return m.st.warn.Render(err.Error())
 	case m.prepare == prepareSignIn:
 		return m.st.warn.Render("sign in first; v requests a new code")
+	case m.prepare == prepareFailed && len(m.readyServers()) == 0 && strings.HasPrefix(m.cfg.BaseURL, "https://"):
+		return m.st.warn.Render("check the address, or type http:// for a server without HTTPS; v checks again")
 	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
 		return m.st.warn.Render("check the server's address; v checks again")
 	case m.prepare == prepareChecking:

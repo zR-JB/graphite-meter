@@ -638,3 +638,29 @@ func TestTheLastPreparedServerIsRemembered(t *testing.T) {
 		t.Fatal("recalled a server that does not parse")
 	}
 }
+
+func TestPastedAddressesNameTheirServer(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{
+		"  https://Meter.Example/#/history\n": "https://meter.example",
+		"meter.example":                       "https://meter.example",
+		"meter.example:8443/servers?x=1":      "https://meter.example:8443",
+		"user:secret@meter.example/":          "https://meter.example",
+		"HTTP://meter.example:80":             "http://meter.example",
+		"192.168.1.20:7246":                   "http://192.168.1.20:7246",
+		"[fe80::1]:7246":                      "http://[fe80::1]:7246",
+		"nas:7246":                            "http://nas:7246",
+		"meter.home.arpa":                     "http://meter.home.arpa",
+		"localhost:7246":                      "http://localhost:7246",
+		"203.0.113.7":                         "https://203.0.113.7",
+	} {
+		if got, err := serverOrigin(raw); err != nil || got != want {
+			t.Errorf("%q gave %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", "ftp://meter.example", "https://", "two words"} {
+		if got, err := serverOrigin(raw); err == nil {
+			t.Errorf("%q gave %q, want an error", raw, got)
+		}
+	}
+}

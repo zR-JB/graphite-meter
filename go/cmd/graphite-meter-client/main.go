@@ -85,6 +85,10 @@ func main() {
 	remembered := rememberedPath()
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = recall(remembered)
+	} else if origin, err := serverOrigin(cfg.BaseURL); err == nil {
+		cfg.BaseURL = origin
+	} else {
+		fail(2, err)
 	}
 	headless := report || !term.IsTerminal(os.Stdout.Fd())
 	if err := cfg.Validate(); err != nil && (headless || !errors.Is(err, goclient.ErrNoServer)) {

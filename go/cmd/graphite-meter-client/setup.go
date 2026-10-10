@@ -73,12 +73,9 @@ var (
 				help: "The Graphite Meter server to test; it lists its test servers. enter types its address."}
 		},
 		parse: func(m *model, raw string) error {
-			if !strings.Contains(raw, "://") {
-				raw = defaultScheme(raw) + raw
-			}
-			canonical, err := wire.CatalogOrigin(raw)
+			canonical, err := serverOrigin(raw)
 			if err != nil {
-				return errors.New("use an http:// or https:// origin, for example https://meter.example")
+				return err
 			}
 			if canonical != m.cfg.BaseURL {
 				m.cfg.ServerIDs = nil
@@ -589,14 +586,32 @@ func (m model) selectedThroughputPath() *wire.ThroughputTarget {
 	return &pf.Capabilities.ThroughputTargets[i]
 }
 
-func defaultScheme(raw string) string {
-	u, err := url.Parse("//" + raw)
-	if err != nil {
-		return "https://"
+// serverOrigin is the server an entered or pasted address names: its origin, whatever path, query, fragment or
+// credentials came with it. An address without a scheme gets HTTPS, or HTTP where TLS is all but unheard of:
+// loopback, private and link-local addresses, and names only a local network resolves. A failed HTTPS never falls
+// back to HTTP, which would let anyone on the path force a plaintext test.
+func serverOrigin(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+		if u, err := url.Parse(raw); err == nil && localHost(u.Hostname()) {
+			raw = "http" + strings.TrimPrefix(raw, "https")
+		}
 	}
-	ip := net.ParseIP(u.Hostname())
-	if strings.EqualFold(u.Hostname(), "localhost") || ip != nil && ip.IsLoopback() {
-		return "http://"
+	u, err := url.Parse(raw)
+	if err == nil && u.Host != "" {
+		if origin, err := wire.CatalogOrigin(u.Scheme + "://" + u.Host); err == nil {
+			return origin, nil
+		}
 	}
-	return "https://"
+	return "", errors.New("use the server's address, for example https://meter.example or 192.168.1.20:7246")
+}
+
+func localHost(host string) bool {
+	host = strings.ToLower(host)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return !strings.Contains(host, ".") || slices.ContainsFunc([]string{".localhost", ".local", ".lan", ".home.arpa",
+		".internal"}, func(suffix string) bool { return strings.HasSuffix(host, suffix) })
 }
