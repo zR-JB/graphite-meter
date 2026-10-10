@@ -159,6 +159,7 @@
         location: server.location,
         url: server.url,
         failure: failure && reasonLabel(failure.reason),
+        ipVersion: measured?.throughput.clientIpVersion,
         down: rate(measured?.download?.reportedBytesPerSec),
         up: rate(measured?.upload?.reportedBytesPerSec),
         latency: formatLatency(measured?.latency?.reportedMs),
@@ -175,10 +176,6 @@
           : unmeasured,
       };
     }),
-  );
-  const ipVersion = $derived(
-    run.servers.find((server) => server.server.id === run.latencyFocus)
-      ?.throughput.clientIpVersion,
   );
   const environment = $derived(
     [
@@ -335,9 +332,9 @@
                   ></span>{row.failure}
                 </dd>
               </div>{/if}
-            {#if ipVersion && row.id === run.latencyFocus}<div>
+            {#if row.ipVersion}<div>
                 <dt>IP family</dt>
-                <dd>IPv{ipVersion}</dd>
+                <dd>IPv{row.ipVersion}</dd>
               </div>{/if}
             {#if multiple}
               <div>
