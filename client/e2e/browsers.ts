@@ -247,9 +247,7 @@ function launchFirefox(): Promise<Bidi> {
     await bidi.send("session.new", {
       capabilities: { alwaysMatch: { acceptInsecureCerts: true } },
     });
-    await bidi.send("session.subscribe", {
-      events: ["log.entryAdded", "network.beforeRequestSent"],
-    });
+    await bidi.send("session.subscribe", { events: ["log.entryAdded"] });
     return bidi;
   })());
 }
@@ -276,19 +274,39 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
     }));
     await bidi.send("browsingContext.setViewport", { context, viewport });
     for (const source of scripts) await preload(source);
-    intercept = blocked.length
-      ? (
-          await bidi.send("network.addIntercept", {
-            phases: ["beforeRequestSent"],
-            contexts: [context],
-          })
-        ).intercept
-      : undefined;
+    await intercept(blocked.length > 0);
     if (previous)
       await bidi.send("browser.removeUserContext", { userContext: previous });
   }
   let blocked: RegExp[] = [];
-  let intercept: string | undefined;
+  // Network events tee every response through Firefox's network observer, which can wedge HTTP/2 downloads.
+  let interception: { intercept: string; subscription: string } | undefined;
+  async function intercept(on: boolean) {
+    if (interception) {
+      await bidi.send("network.removeIntercept", {
+        intercept: interception.intercept,
+      });
+      await bidi.send("session.unsubscribe", {
+        subscriptions: [interception.subscription],
+      });
+      interception = undefined;
+    }
+    if (on)
+      interception = {
+        subscription: (
+          await bidi.send("session.subscribe", {
+            events: ["network.beforeRequestSent"],
+            contexts: [context],
+          })
+        ).subscription,
+        intercept: (
+          await bidi.send("network.addIntercept", {
+            phases: ["beforeRequestSent"],
+            contexts: [context],
+          })
+        ).intercept,
+      };
+  }
   await begin();
   const off = bidi.on((method, params) => {
     if (
@@ -425,15 +443,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
               .join(".*")}$`,
           ),
       );
-      if (blocked.length && !intercept)
-        ({ intercept } = await bidi.send("network.addIntercept", {
-          phases: ["beforeRequestSent"],
-          contexts: [context],
-        }));
-      else if (!blocked.length && intercept) {
-        await bidi.send("network.removeIntercept", { intercept });
-        intercept = undefined;
-      }
+      if (!blocked.length || !interception) await intercept(blocked.length > 0);
     },
     screenshot: async () =>
       Buffer.from(
@@ -443,6 +453,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       ),
     async close() {
       off();
+      await intercept(false);
       await bidi.send("browser.removeUserContext", { userContext });
     },
   };
