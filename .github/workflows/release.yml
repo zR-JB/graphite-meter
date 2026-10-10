@@ -57,12 +57,12 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.10.7
           install_args: --locked python
           cache: false
 
       - name: Download the untrusted request artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*-${{ github.event.workflow_run.id }}
           path: ${{ runner.temp }}/request
@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload verified image handoff
         if: steps.verify.outputs.publish == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-image
           path: ${{ runner.temp }}/handoff/image/graphite-meter.oci.tar
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload verified stable asset handoff
         if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.stable == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: ${{ runner.temp }}/handoff/assets/*
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload verified Rust image handoff
         if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.rust == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rust-image
           path: ${{ runner.temp }}/handoff/rust-image/graphite-meter.oci.tar
@@ -143,26 +143,26 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.10.7
           install_args: --locked python
           cache: false
 
       - name: Download verified image handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-image
           path: ${{ runner.temp }}/handoff/image
 
       - name: Download verified stable asset handoff
         if: needs.verify.outputs.stable == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
           path: ${{ runner.temp }}/handoff/assets
 
       - name: Download verified Rust image handoff
         if: needs.verify.outputs.rust == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-rust-image
           path: ${{ runner.temp }}/handoff/rust-image
