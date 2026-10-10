@@ -363,15 +363,20 @@ impl Engine {
         self.fail(index, Scope::Latency, failure, at, leaves, out);
     }
 
-    /// A member whose lanes failed for good leaves.
+    /// A member whose lanes failed for good leaves, unless they failed after the window closed while it was moving.
     fn check_lanes(&mut self, input: &Input, out: &mut Vec<Decision>) {
         let directions = self.plan.stage.directions();
+        let closed = self.window.map(|(_, end)| end).filter(|&end| input.now >= end);
         for sample in input.samples {
             let failed = directions.iter().find_map(|&direction| match &sample.lanes[direction] {
                 LaneHealth::Failed(failure) => Some(failure.clone()),
                 _ => None,
             });
             if let (Some(index), Some(failure)) = (self.index(&sample.reading.server), failed) {
+                let seat = &self.seats[index];
+                if closed.is_some_and(|end| directions.iter().all(|&direction| seat.quiet(direction, end) < QUIET)) {
+                    continue;
+                }
                 self.fail(index, Scope::Throughput, failure, input.now, true, out);
             }
         }
@@ -507,7 +512,9 @@ impl Engine {
         if let Some(failure) = self.missed(index, sample, input.now, last) {
             return Some(failure);
         }
-        let (seat, now) = (&self.seats[index], input.now);
+        // The final checkpoint can answer well after the window closed; silence counts up to the window's end.
+        let closed = self.window.map(|(_, end)| end.min(input.now));
+        let (seat, now) = (&self.seats[index], if last { closed.unwrap_or(input.now) } else { input.now });
         for &direction in self.plan.stage.directions() {
             if seat.quiet(direction, now) >= SILENCE && (last || self.moving(index, direction, now)) {
                 let name = if direction == Direction::Down { "download" } else { "upload" };

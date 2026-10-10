@@ -72,7 +72,18 @@ test("mixed transports estimate each simultaneous component with its own protoco
     a.estimatedBytesPerSec + b.estimatedBytesPerSec,
   );
   expect(wire.componentCount).toBe(2);
-  expect(compensationTooltip(wire)).toContain("2");
+  // Each family keeps its row, weighted by its server's bytes, and the rows add up to the whole overhead.
+  const ip = (e: typeof a, label: string) =>
+    e.factors.find((factor) => factor.label === label)!.contributionPct;
+  const tip = compensationTooltip(wire);
+  expect(tip).toContain(`IPv4\t+${(ip(a, "IPv4") / 4).toFixed(2)}%`);
+  expect(tip).toContain(`IPv6\t+${((ip(b, "IPv6") * 3) / 4).toFixed(2)}%`);
+  expect(tip).toContain("Each server's headers, weighted by its bytes");
+  const total = wire.factors.reduce(
+    (sum, factor) => sum + factor.contributionPct,
+    0,
+  );
+  expect(1 + total / 100).toBeCloseTo(wire.totalMultiplier, 6);
 });
 test("missing evidence or an insufficient final interval cannot reuse another component's wire estimate", () => {
   const details = fixture();
