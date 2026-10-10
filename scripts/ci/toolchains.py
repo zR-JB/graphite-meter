@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL_KEYS = {
     "bun": "bun", "python": "python", "go": "go",
     "gitleaks": "aqua:gitleaks/gitleaks",
-    "staticcheck": "aqua:dominikh/go-tools/staticcheck",
+    "staticcheck": "go:honnef.co/go/tools/cmd/staticcheck",
     "govulncheck": "go:golang.org/x/vuln/cmd/govulncheck",
     "ty": "aqua:astral-sh/ty",
     "actionlint": "aqua:rhysd/actionlint",
@@ -52,7 +52,9 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
     pins: dict[str, dict[str, str]] = {"tools": {}}
     for name, key in TOOL_KEYS.items():
         value = tools[key]
-        if not isinstance(value, str) or re.fullmatch(r"\d+\.\d+\.\d+", value) is None:
+        # A Go-built tool may pin a commit's pseudo-version until a release carries the fix it needs.
+        exact = r"\d+\.\d+\.\d+" + (r"(?:-0\.dev\.0\.\d{14}-[0-9a-f]{12})?" if key.startswith("go:") else "")
+        if not isinstance(value, str) or re.fullmatch(exact, value) is None:
             raise ValueError(f"mise.toml tools.{name} must select an exact major.minor.patch version")
         pins["tools"][name] = value
     metadata = data.get("vars", {})

@@ -101,7 +101,7 @@ FROM scratch AS server-artifacts
 COPY --from=server-build /src/rust/target/server-notices/*_third-party-source.tar.gz /
 
 # Go's image takes the CA roots and their copyright from this builder, so both images trust the same roots.
-FROM docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS ca-certificates
+FROM docker.io/library/golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS ca-certificates
 
 # As Go's image: one static binary, its notices and the CA roots, with no libc, shell or package manager.
 FROM scratch AS server
