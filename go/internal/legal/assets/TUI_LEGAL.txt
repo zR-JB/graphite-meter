@@ -707,7 +707,7 @@ SOFTWARE.
 ============================================================
 
 Component: charm.land/bubbletea/v2
-Version: v2.0.10
+Version: v2.1.0
 Source: https://github.com/charmbracelet/bubbletea
 License: MIT
 Modified by Graphite Meter: no
@@ -841,7 +841,7 @@ SOFTWARE.
 ============================================================
 
 Component: github.com/charmbracelet/ultraviolet
-Version: v0.0.0-20260929091141-666ce5eec9fc
+Version: v0.0.0-20261008173134-6b8d4baf91b4
 Source: https://github.com/charmbracelet/ultraviolet
 License: MIT
 Modified by Graphite Meter: no
@@ -873,7 +873,7 @@ SOFTWARE.
 ============================================================
 
 Component: github.com/charmbracelet/x/ansi
-Version: v0.11.8
+Version: v0.11.9
 Source: https://github.com/charmbracelet/x
 License: MIT
 Modified by Graphite Meter: no
@@ -1371,7 +1371,7 @@ SOFTWARE.
 ============================================================
 
 Component: golang.org/x/crypto
-Version: v0.57.0
+Version: v0.58.0
 Source: https://go.googlesource.com/crypto
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1434,7 +1434,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/net
-Version: v0.59.0
+Version: v0.61.0
 Source: https://go.googlesource.com/net
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1497,7 +1497,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/sync
-Version: v0.23.0
+Version: v0.24.0
 Source: https://go.googlesource.com/sync
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1560,7 +1560,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/sys
-Version: v0.48.0
+Version: v0.49.0
 Source: https://go.googlesource.com/sys
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1623,7 +1623,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/text
-Version: v0.42.0
+Version: v0.43.0
 Source: https://go.googlesource.com/text
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1686,7 +1686,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: Go standard library
-Version: go1.27.1
+Version: go1.27.2
 Source: https://go.dev/
 License: BSD-3-Clause
 Modified by Graphite Meter: no
