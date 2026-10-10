@@ -31,10 +31,24 @@ func TestResolveClientAddress(t *testing.T) {
 			map[string][]string{"X-Real-IP": {"203.0.113.4", "198.51.100.9"}}, "10.0.0.2", ClientIPSocket, false},
 		{"comma-joined X-Real-IP", "10.0.0.2:1234",
 			map[string][]string{"X-Real-IP": {"203.0.113.4,198.51.100.9"}}, "10.0.0.2", ClientIPSocket, false},
-		{"alongside X-Forwarded-For", "10.0.0.2:1234", map[string][]string{
-			"X-Real-IP": {"203.0.113.4"}, "X-Forwarded-For": {"198.51.100.9"}}, "10.0.0.2", ClientIPSocket, false},
+		// Traefik, Caddy and nginx's $proxy_add_x_forwarded_for append the peer they saw: the same address.
+		{"X-Forwarded-For ending in X-Real-IP", "10.0.0.2:1234", map[string][]string{
+			"X-Real-IP": {"203.0.113.4"}, "X-Forwarded-For": {"198.51.100.9, 203.0.113.4"}}, "203.0.113.4",
+			ClientIPForwarded, true},
+		{"last X-Forwarded-For line with a port", "10.0.0.2:1234", map[string][]string{
+			"X-Real-IP": {"2001:db8::4"}, "X-Forwarded-For": {"198.51.100.9", "[2001:db8::4]:443"}}, "2001:db8::4",
+			ClientIPForwarded, true},
+		{"empty X-Forwarded-For", "10.0.0.2:1234", map[string][]string{
+			"X-Real-IP": {"203.0.113.4"}, "X-Forwarded-For": {""}}, "203.0.113.4", ClientIPForwarded, true},
+		// A client's own Forwarded passes some proxies untouched, so it never counts.
 		{"alongside Forwarded", "10.0.0.2:1234", map[string][]string{
-			"X-Real-IP": {"203.0.113.4"}, "Forwarded": {"for=198.51.100.9"}}, "10.0.0.2", ClientIPSocket, false},
+			"X-Real-IP": {"203.0.113.4"}, "Forwarded": {"for=198.51.100.9"}}, "203.0.113.4", ClientIPForwarded, true},
+		// A proxy that passed a client's X-Real-IP on still appended the address it saw.
+		{"X-Forwarded-For ending elsewhere", "10.0.0.2:1234", map[string][]string{
+			"X-Real-IP": {"203.0.113.4"}, "X-Forwarded-For": {"203.0.113.4, 198.51.100.9"}}, "10.0.0.2",
+			ClientIPSocket, false},
+		{"unreadable last hop", "10.0.0.2:1234", map[string][]string{
+			"X-Real-IP": {"203.0.113.4"}, "X-Forwarded-For": {"unknown"}}, "10.0.0.2", ClientIPSocket, false},
 		{"only X-Forwarded-For", "10.0.0.2:1234",
 			map[string][]string{"X-Forwarded-For": {"203.0.113.4"}}, "10.0.0.2", ClientIPSocket, false},
 	} {

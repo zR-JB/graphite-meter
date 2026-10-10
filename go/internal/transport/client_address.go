@@ -7,6 +7,10 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/logx"
 )
 
 type ClientIPSource string
@@ -22,6 +26,10 @@ type ClientAddress struct {
 	Source  ClientIPSource
 }
 
+// RefusedAddress answers a trusted proxy's request that names no client; the server log says why.
+const RefusedAddress = "client address unknown: the trusted reverse proxy's X-Real-IP is missing or does not match " +
+	"its X-Forwarded-For; the server log names the fault"
+
 // ResolveClientAddress uses the peer, or a trusted proxy's single X-Real-IP; ok reports usable evidence.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddress, bool) {
 	peer, ok := Peer(r.RemoteAddr)
@@ -32,15 +40,59 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddres
 	if !Trusted(peer, trusted) {
 		return socket, true
 	}
-	values := r.Header.Values("X-Real-IP")
-	if len(values) != 1 || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-For") != "" {
+	addr, fault := forwardedClient(r.Header)
+	if fault != "" {
+		warnRefusal(peer, fault)
 		return socket, false
 	}
-	addr, err := netip.ParseAddr(strings.TrimSpace(values[0]))
+	return clientAddress(addr, ClientIPForwarded), true
+}
+
+// forwardedClient reads a trusted proxy's single X-Real-IP. X-Forwarded-For, when sent, must end in that address: a
+// proxy appends the peer it saw, so a different last hop means the X-Real-IP came from further out, such as a client
+// whose own header the proxy passed on. Forwarded is ignored: no common proxy writes it, and some pass a client's on.
+func forwardedClient(h http.Header) (netip.Addr, string) {
+	real := h.Values("X-Real-IP")
+	if len(real) != 1 {
+		return netip.Addr{}, "the proxy must send X-Real-IP once"
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(real[0]))
 	if err != nil {
-		return socket, false
+		return netip.Addr{}, "X-Real-IP is not one IP address"
 	}
-	return clientAddress(addr.Unmap(), ClientIPForwarded), true
+	addr = addr.Unmap()
+	if chain := h.Values("X-Forwarded-For"); len(chain) > 0 {
+		hops := strings.Split(chain[len(chain)-1], ",")
+		if last := strings.TrimSpace(hops[len(hops)-1]); last != "" {
+			if hop, ok := hopAddress(last); !ok || hop != addr {
+				return netip.Addr{}, "X-Forwarded-For ends in " + last + ", not X-Real-IP " + addr.String()
+			}
+		}
+	}
+	return addr, ""
+}
+
+// hopAddress reads an X-Forwarded-For entry, which some proxies write with a port.
+func hopAddress(hop string) (netip.Addr, bool) {
+	if addr, err := netip.ParseAddr(hop); err == nil {
+		return addr.Unmap(), true
+	}
+	if addrPort, err := netip.ParseAddrPort(hop); err == nil {
+		return addrPort.Addr().Unmap(), true
+	}
+	return netip.Addr{}, false
+}
+
+// The last refusal warning's Unix second; a misconfigured proxy refuses every request, so one line a minute is enough.
+var refusalWarned atomic.Int64
+
+func warnRefusal(proxy netip.Addr, fault string) {
+	now, last := time.Now().Unix(), refusalWarned.Load()
+	if now-last < 60 || !refusalWarned.CompareAndSwap(last, now) {
+		return
+	}
+	logx.Warnf("proxy", "request from trusted proxy %s names no client: %s; set the proxy to overwrite X-Real-IP "+
+		"with the address it accepted the connection from (docs/DEPLOYMENT.md, Reverse proxies)", proxy, fault)
 }
 
 func Peer(addr string) (netip.Addr, bool) {

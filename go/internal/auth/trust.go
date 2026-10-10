@@ -33,9 +33,10 @@ func (s *Service) requestTrust(r *http.Request) trust {
 	if peer, ok := transport.Peer(r.RemoteAddr); !ok || !transport.Trusted(peer, s.trusted) {
 		return trust{}
 	}
+	// Traefik names a WebSocket upgrade's TLS "wss".
 	proto := singleHeader(r.Header, "X-Forwarded-Proto")
 	host := singleHeader(r.Header, "X-Forwarded-Host")
-	forwarded := proto == "https" && equalHost(host, s.public.Host)
+	forwarded := (proto == "https" || proto == "wss") && equalHost(host, s.public.Host)
 	return trust{Secure: forwarded, Canonical: forwarded}
 }
 

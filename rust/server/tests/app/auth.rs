@@ -143,6 +143,8 @@ async fn only_https_at_the_public_hostname_is_trusted() {
     };
     let proxied = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("https"))).await;
     assert_eq!(proxied.status(), StatusCode::OK);
+    let upgrade = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("wss"))).await;
+    assert_eq!(upgrade.status(), StatusCode::OK, "Traefik names a WebSocket upgrade's TLS wss");
     let plain = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("http"))).await;
     assert_eq!(plain.status(), StatusCode::FORBIDDEN);
     let spoofed = send_from(&app, Endpoint::H1, "192.0.2.1", empty(forwarded("https"))).await;

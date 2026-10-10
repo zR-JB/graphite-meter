@@ -94,7 +94,11 @@ pub fn busy(refusal: Refusal) -> Response<Body> {
 
 /// A metered request whose trusted proxy named no single client.
 pub fn ambiguous() -> Response<Body> {
-    text(StatusCode::BAD_REQUEST, "ambiguous client address")
+    text(
+        StatusCode::BAD_REQUEST,
+        "client address unknown: the trusted reverse proxy's X-Real-IP is missing or does not match its \
+         X-Forwarded-For; the server log names the fault",
+    )
 }
 
 /// An upload refusal's message, status and name (`api/uploadrefusals.txt`).

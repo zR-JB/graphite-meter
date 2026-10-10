@@ -45,6 +45,8 @@ func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 		{"foreign host", "192.0.2.10:40000", v("https"), v("evil.example"), false},
 		{"http", "192.0.2.10:40000", v("http"), v("meter.example"), false},
 		{"documented header pair", "192.0.2.10:40000", v("https"), v("meter.example"), true},
+		{"Traefik's WebSocket upgrade", "192.0.2.10:40000", v("wss"), v("meter.example"), true},
+		{"clear WebSocket upgrade", "192.0.2.10:40000", v("ws"), v("meter.example"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := clearRequest(http.MethodGet, "/login", tc.remote)
@@ -59,7 +61,7 @@ func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 	}
 }
 
-// Sign-in budgets use the one client resolver and refuse a proxied request whose client is ambiguous.
+// Sign-in budgets use the one client resolver and refuse a proxied request that names no client.
 func TestSignInBudgetsFailClosedBehindATrustedProxy(t *testing.T) {
 	s := proxiedService(t)
 	for _, tc := range []struct {
@@ -69,7 +71,8 @@ func TestSignInBudgetsFailClosedBehindATrustedProxy(t *testing.T) {
 		{"198.51.100.9:40000", "", "", true},
 		{"192.0.2.10:40000", "203.0.113.1", "", true},
 		{"192.0.2.10:40000", "", "", false},
-		{"192.0.2.10:40000", "203.0.113.1", "203.0.113.1", false},
+		{"192.0.2.10:40000", "203.0.113.1", "203.0.113.1", true},
+		{"192.0.2.10:40000", "203.0.113.1", "203.0.113.1, 198.51.100.9", false},
 	} {
 		r := clearRequest(http.MethodPost, "/auth/password", tc.remote)
 		for name, value := range map[string]string{"X-Real-IP": tc.realIP, "X-Forwarded-For": tc.forwardedFor} {
@@ -79,6 +82,10 @@ func TestSignInBudgetsFailClosedBehindATrustedProxy(t *testing.T) {
 		}
 		if got := s.allowAttempt(r); got != tc.allowed {
 			t.Errorf("%+v allowed = %t", tc, got)
+		}
+		// The page blames the proxy, not the visitor's attempts.
+		if !tc.allowed && s.budgetRefusal(r) != reasonClientAddress {
+			t.Errorf("%+v refusal = %s", tc, s.budgetRefusal(r))
 		}
 	}
 }
