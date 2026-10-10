@@ -1,6 +1,6 @@
 <script module lang="ts">
   import type { SweepTargetInput } from "./gaugeSweep";
-  import type { ResultArcPhase } from "./resultGauge";
+  import type { ResultArcPhase, ResultGaugeHead } from "./resultGauge";
   export interface GaugeDialState extends SweepTargetInput {
     showValue: boolean;
     /** The latest idle reply's time while the latency stage runs; the head beats on each new one. */
@@ -34,7 +34,7 @@
   import { Smoothed, still } from "../presentation/motion.svelte";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
-  import { resultGaugeHeadPlacements } from "./resultGauge";
+  import { resultGaugeHeads } from "./resultGauge";
 
   let {
     input,
@@ -57,21 +57,16 @@
   const headExtent = $derived(Math.ceil(headRadius * 1.2) + 1);
   // Readout frames change the handoff object while the result arcs stay put.
   const arcs = $derived(result.arcs);
-  const placements = $derived(
-    resultGaugeHeadPlacements(
+  const heads = $derived(
+    resultGaugeHeads(
       arcs.map((arc) => arc.fraction),
-      {
-        baseRadius: layout.radius,
-        arcSweep: layout.arcSweep,
-        headRadius,
-        borderWidth: 0,
-      },
+      { radius: layout.radius, arcSweep: layout.arcSweep, headRadius },
     ),
   );
   const results = $derived(
     arcs.map((arc, index) => ({
       ...arc,
-      ...placements[index],
+      head: heads[index]!,
       fraction: Math.min(1, Math.max(0, arc.fraction)),
     })),
   );
@@ -191,35 +186,33 @@
 </script>
 
 <!-- Every result's arc lies on the ring, the longest underneath, so each shows from where the next shorter one
-     ends; its head is a bead in its hue at its arc's end. One moved inward off a close neighbour hangs on a stalk
-     of its hue, and a partial one is a ring. -->
+     ends; its head is a bead in its hue at its arc's end, and a partial one is a ring. Heads never leave the ring:
+     a lower one lies over a close neighbour (resultGaugeHeads). -->
 {#snippet head(
   fraction: number,
-  radius: number,
   color: string,
+  kind: ResultGaugeHead,
   hollow = false,
-  lane = 0,
 )}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
       class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
-      {#if lane !== 0}
-        <path
-          d={`M ${layout.radius} 0 H ${radius}`}
-          stroke={color}
-          stroke-width="2"
-        />
-      {/if}
       <circle
         class="bead"
+        class:split={kind === "split"}
         style:--at="{reachMs(fraction)}ms"
-        cx={radius}
+        cx={layout.radius}
         r={hollow ? headRadius - 1 : headRadius}
         fill={hollow ? "none" : color}
-        stroke={hollow ? color : undefined}
-        stroke-width={hollow ? 2 : undefined}
+        stroke={hollow
+          ? color
+          : kind === "stacked"
+            ? "var(--canvas)"
+            : undefined}
+        stroke-width={hollow ? 2 : kind === "stacked" ? 3 : undefined}
+        paint-order="stroke"
       />
     </g>
   </g>
@@ -285,7 +278,7 @@
             <path
               class="result-arc"
               d={track}
-              pathLength="1"
+              style:--arc="{layout.radius * layout.arcSweep}px"
               mask={result.dashed
                 ? `url(#${shadeId}-${result.phase})`
                 : undefined}
@@ -295,13 +288,12 @@
             />
           {/each}
         </g>
-        {#each results.toReversed() as result (result.phase)}
+        {#each results as result (result.phase)}
           {@render head(
             result.fraction,
-            result.radius,
             `var(--phase-${result.phase})`,
+            result.head,
             result.dashed,
-            result.lane,
           )}
         {/each}
       </svg>
@@ -317,8 +309,8 @@
         class="head-target"
         aria-hidden="true"
         tabindex="-1"
-        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
-        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
+        style:left={`${layout.center.x + Math.cos(angle) * layout.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * layout.radius}px`}
         {@attach tooltip(() => result.description)}
       ></span>
     {/each}
@@ -501,8 +493,14 @@
      spring as the front reaches it, on the sweep's ease-out-cubic (--sweep-ms). */
   /* A result arc shows up to the shared front; its own length and its bead glide when the scale or the unit
      moves them, as the needle does, so a unit switch never replays the sweep. */
+  /* In lengths: Firefox drops a dash array that computes over bare numbers, and the arc would draw whole. */
   .result-arc {
-    stroke-dasharray: min(var(--fraction), var(--sweep)) 1;
+    stroke-dasharray: calc(var(--arc) * min(var(--fraction), var(--sweep)))
+      var(--arc);
+  }
+  /* Almost level with the head beneath, a bead shows its trailing half: one bead in both hues. */
+  .bead.split {
+    clip-path: inset(0 0 50% 0);
   }
   @media (prefers-reduced-motion: no-preference) {
     .result-arc {
