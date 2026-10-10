@@ -3,25 +3,33 @@ import {
   GrowingRateEstimator,
   LiveRates,
   presentationWindowMs,
+  PRESENTATION_FIRST_MS,
 } from "./liveRates";
 
 const push = (estimator: GrowingRateEstimator, rate: number, ms = 100) =>
   estimator.observe((rate * ms) / 1_000, ms);
 
-function boundaries(rates: number[], durations?: number[]): number {
+// The first delivery only anchors an estimator.
+const anchored = () => {
   const estimator = new GrowingRateEstimator();
+  estimator.observe(1, 1);
+  return estimator;
+};
+
+function boundaries(rates: number[], durations?: number[]): number {
+  const estimator = anchored();
   return rates.filter((rate, i) => push(estimator, rate, durations?.[i] ?? 100))
     .length;
 }
 
-test("a stationary rate is exact from the first observation at every cadence", () => {
+test("a stationary rate is exact once presented, at every cadence", () => {
   for (const cadence of [20, 60, 100, 137]) {
-    const estimator = new GrowingRateEstimator();
+    const estimator = anchored();
     for (let elapsed = 0; elapsed < 10_000; elapsed += cadence)
       push(estimator, 75_000_000, Math.min(cadence, 10_000 - elapsed));
     expect(estimator.presented).toBeCloseTo(75_000_000, 4);
   }
-  const prorated = new GrowingRateEstimator();
+  const prorated = anchored();
   push(prorated, 1_000, 600);
   push(prorated, 2_000, 600);
   expect(prorated.presented).toBeCloseTo(1_620 / 1.02, 8);
@@ -57,7 +65,7 @@ test("noise, bursts, dips, ramps and transient drops keep one regime", () => {
 });
 
 test("long irregular traces preserve fractional window accounting after pruning and reset", () => {
-  const estimator = new GrowingRateEstimator();
+  const estimator = anchored();
   const spans: { start: number; end: number; bytes: number }[] = [];
   let elapsed = 0;
   for (let i = 0; i < 5_000; i++) {
@@ -66,7 +74,7 @@ test("long irregular traces preserve fractional window accounting after pruning 
     spans.push({ start: elapsed, end: elapsed + ms, bytes });
     elapsed += ms;
     expect(estimator.observe(bytes, ms)).toBe(false);
-    if (i % 137 !== 0) continue;
+    if (i % 137 !== 0 || elapsed < PRESENTATION_FIRST_MS) continue;
     const from = elapsed - presentationWindowMs(elapsed);
     let total = 0;
     for (const span of spans)
@@ -83,6 +91,9 @@ test("long irregular traces preserve fractional window accounting after pruning 
   expect(estimator.presented).toBeCloseTo(1_000, 5);
   estimator.reset();
   push(estimator, 2_000, 137);
+  push(estimator, 2_000, 499);
+  expect(estimator.presented).toBe(0);
+  push(estimator, 2_000, 1);
   expect(estimator.presented).toBeCloseTo(2_000, 8);
 });
 
@@ -90,7 +101,7 @@ test.each([
   [1_000, 400],
   [400, 1_000],
 ])("a sustained step from %d to %d confirms once and settles", (from, to) => {
-  const estimator = new GrowingRateEstimator();
+  const estimator = anchored();
   for (let i = 0; i < 50; i++) push(estimator, from);
   let confirmed = 0;
   for (let i = 0; i < 30; i++) if (push(estimator, to)) confirmed++;
@@ -102,8 +113,11 @@ test("servers present independently, and only an irregular receiver is bridged b
   const live = new LiveRates();
   live.reset({ a: 0, b: 0 }, 0);
   expect(live.rate("down")).toBeNull();
-  live.download("a", 1_000, 1_000);
-  live.download("b", 3_000, 1_000);
+  live.download("a", 500, 500);
+  live.download("b", 1_500, 500);
+  expect(live.rate("down")).toBeNull();
+  live.download("a", 1_500, 1_500);
+  live.download("b", 4_500, 1_500);
   expect(live.rate("down")).toBe(4_000);
 
   const frame = (at: number, bytes: number) => ({
@@ -112,21 +126,49 @@ test("servers present independently, and only an irregular receiver is bridged b
     nanos: at * 1e6,
     receivedAtMs: at,
   });
-  for (let at = 0; at <= 400; at += 100)
+  for (let at = 0; at <= 700; at += 100)
     live.receiver("a", frame(at, at * 10), at);
   expect(live.rate("up")).toBeCloseTo(10_000, 6);
   const lanes = () => 2;
   // Regular arrivals need no bridge.
-  expect(live.bridgedUpload(450, lanes)).toBeNull();
-  live.hint("a", 0, 7_000, 1_000, 900);
-  expect(live.bridgedUpload(950, lanes)).toBeNull();
-  live.hint("a", 1, 8_000, 1_000, 950);
+  expect(live.bridgedUpload(750, lanes)).toBeNull();
+  live.hint("a", 0, 7_000, 1_000, 1_200);
+  expect(live.bridgedUpload(1_250, lanes)).toBeNull();
+  live.hint("a", 1, 8_000, 1_000, 1_250);
   // A long pause with fresh hints from both lanes bounds the estimate to +25%.
-  expect(live.bridgedUpload(1_000, lanes)).toBeCloseTo(12_500, 6);
+  expect(live.bridgedUpload(1_300, lanes)).toBeCloseTo(12_500, 6);
   // Stale hints return the display to the receiver's rate.
-  expect(live.bridgedUpload(1_300, lanes)).toBeNull();
-  live.receiver("a", frame(1_400, 14_000), 1_400);
-  live.hint("a", 0, 1_000, 1_000, 1_400);
-  live.hint("a", 1, 1_000, 1_000, 1_400);
-  expect(live.bridgedUpload(1_450, lanes)).toBeNull();
+  expect(live.bridgedUpload(1_600, lanes)).toBeNull();
+  live.receiver("a", frame(1_700, 17_000), 1_700);
+  live.hint("a", 0, 1_000, 1_000, 1_700);
+  live.hint("a", 1, 1_000, 1_000, 1_700);
+  expect(live.bridgedUpload(1_750, lanes)).toBeNull();
+});
+
+test("a slow receiver counting 64 KiB reads never opens with a peak", () => {
+  // 9.3 Mbit/s into a server that counts whole reads, a feed record every 100 ms and the boundary's checkpoint 2 ms
+  // after the first record, with a read completing between them: that pair alone once showed 28 times the rate.
+  const rate = 1_162_500;
+  const read = 65_536;
+  const counted = (ms: number) =>
+    Math.floor((rate * (ms + 55)) / 1000 / read) * read;
+  const live = new LiveRates();
+  live.reset({ s: 0 }, 0);
+  const shown: number[] = [];
+  for (const at of [
+    0,
+    2,
+    ...Array.from({ length: 60 }, (_, i) => 100 * (i + 1)),
+  ]) {
+    live.receiver(
+      "s",
+      { id: "u", bytes: counted(at), nanos: at * 1e6, receivedAtMs: at },
+      at,
+    );
+    const value = live.rate("up");
+    if (value !== null) shown.push(value);
+  }
+  expect(shown.length).toBeGreaterThan(50);
+  expect(Math.max(...shown) / rate).toBeLessThan(1.15);
+  expect(shown.at(-1)! / rate).toBeCloseTo(1, 1);
 });

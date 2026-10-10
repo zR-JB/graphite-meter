@@ -2,6 +2,8 @@
 import type { FlowDirection, ReceiverCheckpoint } from "./contract";
 
 export const PRESENTATION_MIN_WINDOW_MS = 800;
+/** A rate shows once this much evidence follows the delivery that anchored it. */
+export const PRESENTATION_FIRST_MS = 500;
 const FAST_WINDOW_MS = 750;
 const REGIME_READY_MS = 2_000;
 export const REGIME_DOWNSHIFT_CONFIRM_MS = 750;
@@ -22,8 +24,11 @@ export function presentationWindowMs(regimeAgeMs: number): number {
   return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.85));
 }
 
-/** A regime-restarting growing average: a confirmed 25% drop or 20% rise starts a new window. */
+/** A regime-restarting growing average: a confirmed 25% drop or 20% rise starts a new window. The first delivery
+    only anchors it: its bytes arrived over a span no window bounds (a socket buffer drained at once, a receiver's
+    read of up to 64 KiB), and on a slow link they alone would lift the first readings well above the rate. */
 export class GrowingRateEstimator {
+  #anchored = false;
   #spans: Span[] = [];
   #head = 0;
   #bytes = 0;
@@ -38,11 +43,16 @@ export class GrowingRateEstimator {
     this.#head = this.#bytes = 0;
     this.#evidence = this.#regimeStart = this.presented = this.#fast = 0;
     this.#candidate = null;
+    this.#anchored = false;
   }
 
   /** True when this observation confirmed a new regime. */
   observe(bytes: number, durationMs: number): boolean {
     if (!(durationMs > 0) || !Number.isFinite(durationMs)) return false;
+    if (!this.#anchored) {
+      this.#anchored = bytes > 0;
+      return false;
+    }
     const start = this.#evidence;
     this.#evidence += durationMs;
     bytes = Math.max(0, bytes) || 0;
@@ -75,7 +85,10 @@ export class GrowingRateEstimator {
 
   #recalculate(): void {
     const window = presentationWindowMs(this.#evidence - this.#regimeStart);
-    this.presented = this.#rateSince(this.#evidence - window);
+    this.presented =
+      this.#evidence < PRESENTATION_FIRST_MS
+        ? 0
+        : this.#rateSince(this.#evidence - window);
     const fastStart = Math.max(
       this.#regimeStart,
       this.#evidence - FAST_WINDOW_MS,
