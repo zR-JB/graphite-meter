@@ -95,7 +95,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "graphite-meter-client: "+m.notice)
 		}
 	} else {
-		program := tea.NewProgram(m, tea.WithFPS(fps), tea.WithoutSignalHandler())
+		program := tea.NewProgram(m, tea.WithFPS(paintFPS), tea.WithoutSignalHandler())
 		go func() {
 			for caughtSignal := range signals {
 				caught.Store(caughtSignal)

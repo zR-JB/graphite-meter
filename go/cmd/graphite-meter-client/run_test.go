@@ -348,9 +348,8 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	}
 	screen := view(m)
 	for _, want := range []string{
-		"Bi-dir ↓: Connection lost",
-		"Loaded latency · Bidirectional",
-		"Bi-dir ↓",
+		"Connection lost",
+		"Loaded bi-dir",
 		missing,
 	} {
 		if !strings.Contains(screen, want) {
@@ -412,17 +411,16 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	}
 }
 
-func TestLiveViewFollowsTheStage(t *testing.T) {
+func TestConsoleFollowsTheStage(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
-	m.run.latest["a"] = goclient.LatencySample{RTT: 3 * time.Millisecond}
 	for _, c := range []struct {
-		stage         goclient.Stage
-		want, without []string
+		stage goclient.Stage
+		want  []string
 	}{
-		{goclient.StageLatency, []string{"Idle latency", "3.0 ms"}, []string{"↓", "↑"}},
-		{goclient.StageDownload, []string{"↓", "Loaded latency"}, []string{"↑"}},
-		{goclient.StageBidirectional, []string{"↓", "↑", "Loaded latency"}, nil},
+		{goclient.StageLatency, []string{"Idle", "measuring, now 3.0 ms"}},
+		{goclient.StageDownload, []string{"↓ Download", "Loaded down measuring"}},
+		{goclient.StageBidirectional, []string{"↕ Bidirectional", "measuring"}},
 	} {
 		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{
 			{Kind: goclient.EventStage, Stage: c.stage, Phase: goclient.PhaseMeasuring, At: time.Now()},
@@ -430,19 +428,14 @@ func TestLiveViewFollowsTheStage(t *testing.T) {
 				Throughput: goclient.ThroughputSample{BytesPerSec: 1e6}},
 			{Kind: goclient.EventLatency, ServerID: "a", At: time.Now(), Latency: goclient.LatencySample{RTT: 3e6}},
 		}}))
-		live := m.liveView(60, 16)
+		console := ansi.Strip(m.consoleView(120, 36))
 		for _, want := range c.want {
-			if !strings.Contains(live, want) {
-				t.Errorf("%s live view lost %q: %q", c.stage, want, live)
+			if !strings.Contains(console, want) {
+				t.Errorf("%s console lost %q:\n%s", c.stage, want, console)
 			}
 		}
-		for _, unwanted := range c.without {
-			if strings.Contains(live, unwanted) {
-				t.Errorf("%s live view drew %q: %q", c.stage, unwanted, live)
-			}
-		}
-		if !strings.ContainsFunc(live, func(r rune) bool { return r > 0x2800 && r <= 0x28ff }) {
-			t.Errorf("%s live view drew no chart: %q", c.stage, live)
+		if !strings.ContainsFunc(console, func(r rune) bool { return r > 0x2800 && r <= 0x28ff }) {
+			t.Errorf("%s console drew no dial:\n%s", c.stage, console)
 		}
 	}
 }
@@ -462,16 +455,16 @@ func TestIdleReadingHoldsTheLastReplyThroughTimeouts(t *testing.T) {
 		events        []goclient.Event
 		want, without string
 	}{
-		{"reply", []goclient.Event{stage(goclient.PhaseMeasuring), reply}, "12.0 ms", "probe timeout"},
-		{"timeouts hold the reply", []goclient.Event{timeout, timeout}, "12.0 ms  probe timeout ×2", ""},
-		{"a reply ends the streak", []goclient.Event{reply}, "12.0 ms", "probe timeout"},
+		{"reply", []goclient.Event{stage(goclient.PhaseMeasuring), reply}, "now 12.0 ms", "probe timeout"},
+		{"timeouts hold the reply", []goclient.Event{timeout, timeout}, "now 12.0 ms  probe timeout ×2", ""},
+		{"a reply ends the streak", []goclient.Event{reply}, "now 12.0 ms", "probe timeout"},
 		{"a new stage starts empty", []goclient.Event{stage(goclient.PhasePreparing), stage(goclient.PhaseMeasuring)},
-			"Idle latency —", "12.0 ms"},
+			"measuring", "12.0 ms"},
 	} {
 		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: c.events}))
-		live := ansi.Strip(m.liveView(60, 16))
-		if !strings.Contains(live, c.want) || c.without != "" && strings.Contains(live, c.without) {
-			t.Errorf("%s: live view %q, want %q without %q", c.name, live, c.want, c.without)
+		console := ansi.Strip(m.consoleView(120, 36))
+		if !strings.Contains(console, c.want) || c.without != "" && strings.Contains(console, c.without) {
+			t.Errorf("%s: console\n%s\nwant %q without %q", c.name, console, c.want, c.without)
 		}
 	}
 }
@@ -489,10 +482,10 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m.apply(stage(goclient.StageLatency, goclient.PhaseFinished))
 	m.apply(stage(goclient.StageDownload, goclient.PhaseMeasuring))
 	m.apply(stage(goclient.StageUpload, goclient.Phase(99)))
-	track := ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4.0 ms median", "2.5 s / 10 s", "○ 10 s"} {
+	track := ansi.Strip(m.consoleView(120, 36))
+	for _, want := range []string{"Latency       ✓", "Download  2.5 s", "Upload     10 s", "4.0 ms"} {
 		if !strings.Contains(track, want) {
-			t.Errorf("stage track lost %q: %q", want, track)
+			t.Errorf("console lost %q:\n%s", want, track)
 		}
 	}
 	if m.run.stages[2].state != stagePending {
@@ -503,10 +496,10 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m.apply(stage(goclient.StageDownload, goclient.PhaseFinished))
 	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
 	m.apply(stage(goclient.StageUpload, goclient.PhaseFinished))
-	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4.0 ms median", "Download      ✗ Failed", "Upload        ! Partial"} {
+	track = ansi.Strip(m.consoleView(120, 36))
+	for _, want := range []string{"✗ Failed", "! Partial", "4.0 ms"} {
 		if !strings.Contains(track, want) {
-			t.Errorf("stage track lost %q: %q", want, track)
+			t.Errorf("console lost %q:\n%s", want, track)
 		}
 	}
 }
@@ -539,12 +532,12 @@ func TestMultiServerRunViews(t *testing.T) {
 		t.Fatalf("failure notice = %q, want the server's name and reason", m.notice)
 	}
 	m.run.outcome = goclient.OutcomeComplete
-	if screen := view(m); !strings.Contains(screen, "latency to A") || !strings.Contains(screen, "10.0 ms") {
+	if screen := view(m); !strings.Contains(screen, "To A, l switches server") || !strings.Contains(screen, "10.0 ms") {
 		t.Fatalf("focus A: %q", screen)
 	}
 	m, _ = modelAndCmd(m.Update(press("l")))
 	if screen := view(m); m.run.latencyServer() != "b" ||
-		!strings.Contains(screen, "latency to B") ||
+		!strings.Contains(screen, "To B, l switches server") ||
 		!strings.Contains(screen, "90.0 ms") {
 		t.Fatalf("focus did not move to B")
 	}
@@ -554,7 +547,7 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 	m, _ = modelAndCmd(m.Update(press("d")))
 	details := ansi.Strip(view(m))
-	all, perServer := strings.Index(details, "│ All servers "), strings.Index(details, "│ A ")
+	all, perServer := strings.Index(details, "All servers  24.00"), strings.Index(details, "A            8.00")
 	if m.popup != popupDetails || all < 0 || perServer < all || !strings.Contains(details, "24.00 Mbit/s") {
 		t.Fatalf("details must lead with the result table: %s", details)
 	}
@@ -706,7 +699,7 @@ func TestViewFitsTheTerminal(t *testing.T) {
 				t.Errorf("%s at %dx%d: %d lines", name, width, height, len(lines))
 			}
 			if !strings.Contains(lines[0], "Graphite Meter") ||
-				!strings.HasSuffix(strings.TrimSpace(ansi.Strip(lines[len(lines)-1])), "quit") {
+				!strings.Contains(ansi.Strip(lines[len(lines)-1]), "quit") {
 				t.Errorf("%s at %dx%d lost its chrome:\n%s", name, width, height, ansi.Strip(frame))
 			}
 			for _, line := range lines {
@@ -778,7 +771,7 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 			t.Errorf("failed run still shows %q:\n%s\n%s", stale, screen, report)
 		}
 	}
-	if !strings.Contains(screen, "— Skipped") || !strings.HasSuffix(report, "refused") {
+	if !strings.Contains(screen, "Skipped") || !strings.HasSuffix(report, "refused") {
 		t.Errorf("failed run hides its unrun stages or error:\n%s\n%s", screen, report)
 	}
 }
@@ -840,7 +833,7 @@ func TestResetAsksFirst(t *testing.T) {
 	}
 }
 
-func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
+func TestLineJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 	t.Parallel()
 	var tr trace
 	for i := range 200 {
@@ -854,28 +847,24 @@ func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 		tr = tr.add(float64(i)*0.1, v)
 	}
 	st := newStyles(true)
-	marks := []mark{{0, goclient.StageLatency}, {4, goclient.StageDownload}, {19.5, goclient.StageUpload}}
-	for _, w := range []int{36, 76, 116} {
-		chart := ansi.Strip(st.chart([]series{{style: st.stage[goclient.StageDownload], points: tr.points}}, marks, rateAxis, 20, w, 12))
-		lines := strings.Split(chart, "\n")
+	for _, w := range []int{25, 65, 105} {
+		lines := st.line(tr.points, 2e6, 0, 20, w, 10, st.trace[goclient.StageDownload])
 		inked := map[int]bool{}
-		for _, line := range lines[:len(lines)-2] {
-			for x, r := range []rune(line)[chartAxis:] {
+		for _, line := range lines {
+			for x, r := range []rune(ansi.Strip(line)) {
 				if bits := int(r) - 0x2800; bits > 0 && bits <= 0xff {
 					inked[2*x] = inked[2*x] || bits&0x47 != 0
 					inked[2*x+1] = inked[2*x+1] || bits&0xb8 != 0
 				}
 			}
+			if lipgloss.Width(line) != w {
+				t.Errorf("width %d: %q spans %d cells", w, line, lipgloss.Width(line))
+			}
 		}
-		dot := func(t float64) int { return int(t / 20 * float64(2*(w-chartAxis))) }
+		dot := func(t float64) int { return int(t / 20 * float64(2*w)) }
 		for x := range dot(19.9) + 1 {
 			if gap := x > dot(9.9) && x < dot(13); inked[x] == gap {
 				t.Errorf("width %d: dot column %d inked=%v, gap %d–%d", w, x, inked[x], dot(9.9), dot(13))
-			}
-		}
-		for _, line := range lines {
-			if lipgloss.Width(line) > w {
-				t.Errorf("width %d: %q spans %d cells", w, line, lipgloss.Width(line))
 			}
 		}
 	}
@@ -884,32 +873,50 @@ func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 func TestLiveRatesWaitForEvidence(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
-	stage := goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring}
+	stage := goclient.Event{Kind: goclient.EventStage, At: m.run.started, Stage: goclient.StageDownload,
+		Phase: goclient.PhaseMeasuring}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{stage}}))
-	if live := ansi.Strip(m.liveView(60, 16)); !strings.Contains(live, "↓ —") {
-		t.Fatalf("a rate before the first sample: %q", live)
+	shown := func() bool { return strings.Contains(ansi.Strip(m.consoleView(120, 36)), "8.00 Mbit/s") }
+	if shown() {
+		t.Fatal("a rate before the first sample")
 	}
-	sample := goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down,
-		Throughput: goclient.ThroughputSample{BytesPerSec: 1e6, TotalBytes: 1e6}}
-	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{sample}}))
-	if live := ansi.Strip(m.liveView(60, 16)); !strings.Contains(live, "↓ 8.00 Mbit/s") {
-		t.Fatalf("the first sample did not show as measured: %q", live)
+	// The first window only anchors the rate; it shows once half a second of evidence follows.
+	at := stage.At
+	sample := func() {
+		at = at.Add(250 * time.Millisecond)
+		e := goclient.Event{Kind: goclient.EventThroughput, At: at, Direction: goclient.Down,
+			Throughput: goclient.ThroughputSample{BytesPerSec: 1e6}}
+		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{e}}))
+	}
+	for range 2 {
+		sample()
+	}
+	if shown() {
+		t.Fatal("a rate before half a second of evidence")
+	}
+	sample()
+	if !shown() {
+		t.Fatalf("half a second of evidence did not show as measured:\n%s", ansi.Strip(m.consoleView(120, 36)))
 	}
 }
 
-func TestFinishedRunGivesTheRoomToTheTimeline(t *testing.T) {
+func TestFinishedConsoleFitsTheTerminal(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
 	m.run.outcome = goclient.OutcomeComplete
-	m.run.results = []goclient.Result{{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e9}}
+	m.run.results = []goclient.Result{{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 2e9 / 8}}
 	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency,
 		Latency: goclient.LatencyStats{Count: 3, P50: time.Millisecond}})
-	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+	for _, size := range [][2]int{{80, 24}, {100, 30}, {120, 40}} {
 		m.width, m.height = size[0], size[1]
 		screen := ansi.Strip(view(m))
-		if !strings.Contains(screen, "Timeline") || !strings.Contains(screen, "Results") ||
-			strings.Contains(screen, "✓") {
+		if !strings.Contains(screen, "Run again") || !strings.Contains(screen, "2.00 Gbit/s") {
 			t.Errorf("%dx%d finished screen:\n%s", size[0], size[1], screen)
+		}
+		for _, line := range strings.Split(screen, "\n") {
+			if lipgloss.Width(line) > size[0] {
+				t.Errorf("%dx%d: %q overflows", size[0], size[1], line)
+			}
 		}
 	}
 }
@@ -931,7 +938,7 @@ func TestMissingEvidenceIsNeverShownAsMeasured(t *testing.T) {
 			t.Errorf("unmeasured evidence reads %q:\n%s\n%s", wrong, details, report)
 		}
 	}
-	if chart := ansi.Strip(m.st.chart(nil, nil, rateAxis, 1, 40, 6)); strings.Contains(chart, "bit/s") {
-		t.Errorf("an empty chart claims a scale:\n%s", chart)
+	if strip := ansi.Strip(strings.Join(m.st.strip(goclient.StageUpload, nil, 1, 0, 1, 20, 4), "")); strings.ContainsRune(strip, '█') {
+		t.Errorf("an empty strip draws a rate: %q", strip)
 	}
 }

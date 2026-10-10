@@ -341,6 +341,23 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 	}
 }
 
+func TestClickingStartStartsTheTest(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	lines := strings.Split(ansi.Strip(view(m)), "\n")
+	y := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, "▶ Start test") })
+	if y < 0 {
+		t.Fatal("no Start button on the setup screen")
+	}
+	x := ansi.StringWidth(lines[y][:strings.Index(lines[y], "▶")]) + 3
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y + 3, Button: tea.MouseLeft})); m.next != nil {
+		t.Fatal("a click below the key started the test")
+	}
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y - 1, Button: tea.MouseLeft})); m.next == nil {
+		t.Fatal("clicking the key's cap did not start the test")
+	}
+}
+
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
 	stages, advanced := setupGroups[2].rows, setupGroups[3].rows

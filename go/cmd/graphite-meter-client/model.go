@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"math"
+	"image/color"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -10,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
@@ -41,6 +43,8 @@ type (
 const (
 	fps           = 30
 	frameInterval = time.Second / fps
+	// paintFPS paints input within a frame of a 120 Hz display; an unchanged view costs one string compare.
+	paintFPS = 120
 )
 
 type prepareState int
@@ -111,7 +115,7 @@ func newModel(cfg goclient.Config) model {
 	dial := spinner.MiniDot
 	dial.FPS = frameInterval
 	h := help.New()
-	h.Styles = st.helpStyles()
+	h.Styles, h.ShortSeparator = st.helpStyles(), "   "
 	return model{
 		controller:   controller,
 		preparation:  controller.NewPreparation(cfg, nil),
@@ -130,11 +134,41 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 
-func (m model) running() bool  { return m.next != nil || m.run != nil && m.run.live() }
+func (m model) running() bool  { return m.next != nil || m.run != nil && m.run.running() }
 func (m model) finished() bool { return m.run != nil && !m.running() }
 
 func (m model) animating() bool {
 	return m.running() || m.run == nil && (m.prepare == prepareChecking || m.auth != nil)
+}
+
+// onKey reports whether a click lands on a key's plate. It reads the plate's colour off the drawn line, so it follows
+// every layout and scroll position.
+func (m model) onKey(x, y int) bool {
+	lines := strings.Split(m.render(), "\n")
+	if y < 0 || y >= len(lines) {
+		return false
+	}
+	w, _ := m.size()
+	line := uv.NewScreenBuffer(w, 1)
+	uv.NewStyledString(lines[y]).Draw(line, line.Bounds())
+	cell := line.CellAt(x, 0)
+	if cell == nil {
+		return false
+	}
+	// A plate fills a cell's background; its half-block caps fill the foreground.
+	paint := cell.Style.Bg
+	if cell.Content == "▄" || cell.Content == "▀" {
+		paint = cell.Style.Fg
+	}
+	if paint == nil {
+		return false
+	}
+	same := func(a, b color.Color) bool {
+		ar, ag, ab, _ := a.RGBA()
+		br, bg, bb, _ := b.RGBA()
+		return ar == br && ag == bg && ab == bb
+	}
+	return same(paint, m.st.plate.GetBackground()) || same(paint, m.st.plateOff.GetBackground())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -150,6 +184,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.body = m.bodyViewport(m.layout())
 			m.body, _ = m.body.Update(msg)
 		}
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft || m.popup != popupNone || m.edit != nil || m.auth != nil || !m.onKey(msg.X, msg.Y) {
+			break
+		}
+		// A key does what its cap says: Stop while running, otherwise start or run again.
+		if m.running() {
+			return m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+		}
+		return m.handleKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case spinner.TickMsg:
@@ -313,14 +356,7 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if cmd == nil {
 		return m, nil
 	}
-	dt := max(msg.Time.Sub(m.now).Seconds(), 0)
 	m.now = msg.Time
-	weight := 1 - math.Exp(-dt/0.12)
-	if m.run != nil {
-		for dir, sample := range m.run.rates {
-			m.run.shown[dir] += (sample.BytesPerSec - m.run.shown[dir]) * weight
-		}
-	}
 	return m, cmd
 }
 

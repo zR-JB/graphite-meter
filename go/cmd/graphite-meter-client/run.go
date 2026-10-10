@@ -155,7 +155,9 @@ type runState struct {
 	details  *goclient.RunDetails
 	results  []goclient.Result
 	rates    map[goclient.Direction]goclient.ThroughputSample
-	shown    map[goclient.Direction]float64
+	live     map[goclient.Direction]*liveRate
+	sampled  map[goclient.Direction]time.Time
+	shown    map[goclient.Direction]glide
 	history  map[goclient.Direction]trace
 	rtt      map[string]trace
 	latest   map[string]goclient.LatencySample
@@ -165,8 +167,35 @@ type runState struct {
 	pick     string
 	outcome  goclient.Outcome
 	err      error
-	span     float64
-	charts   [2]chartCache
+	// Scales only grow during a run, so nothing rescales under the eye: the highest combined rate in bytes per second,
+	// which sets the strips' top and the dial's scale, and the dial's scale while idle latency is measured.
+	peak     float64
+	rttScale time.Duration
+}
+
+// glide moves a shown value to each new sample over the time between samples, as the browser's readout does.
+type glide struct {
+	from, to float64
+	at       time.Time
+	over     time.Duration
+}
+
+func (g glide) value(now time.Time) float64 {
+	if g.over <= 0 {
+		return g.to
+	}
+	u := min(max(now.Sub(g.at).Seconds()/g.over.Seconds(), 0), 1)
+	return g.from + (g.to-g.from)*u
+}
+
+// show glides toward v from where the value stands at `at`; a first value snaps.
+func (r *runState) show(dir goclient.Direction, v float64, at time.Time, gap time.Duration) {
+	g, seen := r.shown[dir]
+	if !seen || g.to == 0 {
+		r.shown[dir] = glide{to: v}
+		return
+	}
+	r.shown[dir] = glide{from: g.value(at), to: v, at: at, over: min(max(gap, 50*time.Millisecond), 400*time.Millisecond)}
 }
 
 type stageState int
@@ -194,7 +223,9 @@ func newRunState(cfg goclient.Config, started time.Time) *runState {
 		plan:     cfg.Plan(),
 		started:  started,
 		rates:    map[goclient.Direction]goclient.ThroughputSample{},
-		shown:    map[goclient.Direction]float64{},
+		live:     map[goclient.Direction]*liveRate{},
+		sampled:  map[goclient.Direction]time.Time{},
+		shown:    map[goclient.Direction]glide{},
 		history:  map[goclient.Direction]trace{},
 		rtt:      map[string]trace{},
 		latest:   map[string]goclient.LatencySample{},
@@ -203,7 +234,6 @@ func newRunState(cfg goclient.Config, started time.Time) *runState {
 	}
 	for _, stage := range r.plan {
 		r.stages = append(r.stages, stageProgress{name: stage.Name, duration: stage.Duration})
-		r.span += stage.Duration.Seconds() + cfg.Warmup.Seconds()
 	}
 	return r
 }
@@ -290,9 +320,6 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	m.stopPrompt = false
 	r := m.run
-	for dir, sample := range r.rates {
-		r.shown[dir] = sample.BytesPerSec
-	}
 	r.adopt(done.Servers)
 	r.outcome, r.finished = done.Outcome(), done.At
 	m.last = r.outcome
@@ -330,6 +357,8 @@ func (m *model) apply(e goclient.Event) {
 			clear(r.latest)
 			clear(r.timeouts)
 			clear(r.rates)
+			clear(r.live)
+			clear(r.sampled)
 			clear(r.shown)
 		}
 		state := map[goclient.Phase]stageState{
@@ -352,6 +381,9 @@ func (m *model) apply(e goclient.Event) {
 			r.stages[i].state, r.stages[i].since = state, e.At
 		}
 		if e.Phase == goclient.PhaseMeasuring {
+			for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
+				r.sampled[dir] = e.At
+			}
 			r.marks = append(r.marks, mark{at, e.Stage})
 			for dir := range r.history {
 				r.history[dir] = r.history[dir].add(at, math.NaN())
@@ -361,16 +393,31 @@ func (m *model) apply(e goclient.Event) {
 			}
 		}
 	case goclient.EventThroughput:
-		last, sampled := r.rates[e.Direction]
-		r.rates[e.Direction] = e.Throughput
-		v := e.Throughput.BytesPerSec
-		switch {
-		case e.Throughput.Unavailable:
-			r.shown[e.Direction], v = 0, math.NaN()
-		case !sampled || last.Unavailable:
-			r.shown[e.Direction] = v
+		dir, sample := e.Direction, e.Throughput
+		r.rates[dir] = sample
+		since, sampled := r.sampled[dir]
+		r.sampled[dir] = e.At
+		if sample.Unavailable {
+			// The window restarts, and so does what it presents.
+			delete(r.live, dir)
+			r.shown[dir] = glide{}
+			r.history[dir] = r.history[dir].add(at, math.NaN())
+			break
 		}
-		r.history[e.Direction] = r.history[e.Direction].add(at, v)
+		if r.live[dir] == nil {
+			r.live[dir] = &liveRate{}
+		}
+		live, gap := r.live[dir], e.At.Sub(since)
+		if !sampled || !live.observeRate(sample.BytesPerSec, gap) {
+			break
+		}
+		r.show(dir, live.presented, e.At, gap)
+		r.history[dir] = r.history[dir].add(at, live.presented)
+		total := 0.0
+		for _, l := range r.live {
+			total += l.presented
+		}
+		r.peak = max(r.peak, total)
 	case goclient.EventLatency:
 		v := math.NaN()
 		if e.Latency.TimedOut {
@@ -378,15 +425,54 @@ func (m *model) apply(e goclient.Event) {
 		} else {
 			r.timeouts[e.ServerID] = 0
 			r.latest[e.ServerID] = e.Latency
+			if r.stage == goclient.StageLatency && e.ServerID == r.latencyServer() {
+				r.rttScale = max(r.rttScale, time.Duration(ceilStep(float64(e.Latency.RTT)*1.25/1e6, 1, 2, 4)*1e6))
+			}
 			v = float64(e.Latency.RTT)
 		}
 		r.rtt[e.ServerID] = r.rtt[e.ServerID].add(at, v)
 	case goclient.EventResult:
 		r.results = append(r.results, *e.Result)
+		r.peak = max(r.peak, r.mean(e.Result.Stage))
 	}
 }
 
-func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
+func (r *runState) running() bool { return r.outcome == goclient.OutcomeRunning }
+
+// mean is a stage's measured rate, its directions added.
+func (r *runState) mean(stage goclient.Stage) float64 {
+	total := 0.0
+	for _, result := range r.results {
+		if result.Stage == stage && !result.Unavailable {
+			total += result.MeanBps
+		}
+	}
+	return total
+}
+
+// stripTop is the strips' shared top: the browser's chart step above the highest combined rate.
+func (r *runState) stripTop() float64 { return niceCeil(max(r.peak, 1)*8*1.03) / 8 }
+
+// gaugeCeiling is the browser's dial scale for a combined rate: its 1-2-5 step above it with 3% headroom, and from
+// a megabit up never under 1 Gbit/s, where most connections fit.
+func gaugeCeiling(bytesPerSec float64) float64 {
+	bits := bytesPerSec * 8 * 1.03
+	top := ceilStep(bits, 1, 2, 5)
+	if bits >= 1e6 {
+		top = max(top, 1e9)
+	}
+	return top / 8
+}
+
+// window is when `stage` measured: from its mark for its planned duration, or false before it started.
+func (r *runState) window(stage goclient.Stage) (float64, float64, bool) {
+	i := slices.IndexFunc(r.marks, func(m mark) bool { return m.stage == stage })
+	j := slices.IndexFunc(r.plan, func(s goclient.StagePlan) bool { return s.Name == stage })
+	if i < 0 || j < 0 {
+		return 0, 0, false
+	}
+	return r.marks[i].t, r.marks[i].t + r.plan[j].Duration.Seconds(), true
+}
 
 func (r *runState) measuredLatency() bool {
 	if r.details == nil {
