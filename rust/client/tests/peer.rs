@@ -299,7 +299,7 @@ fn discovery(head: &str, checkpoints: bool, extra: &str) -> Option<String> {
 
 fn downloads(url: &Origin, stage: Stage) -> Config {
     Config {
-        url: url.clone(),
+        url: Some(url.clone()),
         stages: vec![stage],
         loaded_latency: false,
         ..Config::default()

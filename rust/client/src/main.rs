@@ -37,7 +37,20 @@ fn main() -> ExitCode {
         Ok(Parsed::Help) => eprint!("{}", usage()),
         Ok(Parsed::Version) => return written(format!("graphite-meter-client {VERSION}\n").as_bytes()),
         Ok(Parsed::Legal) => return legal(),
-        Ok(Parsed::Run(config)) => return run(*config).unwrap_or_else(|error| fail(&error.to_string())),
+        Ok(Parsed::Run(mut config)) => {
+            if config.url.is_none() {
+                config.url = config::kept_server().and_then(|path| config::recall(&path));
+            }
+            let interactive = io::stdout().is_terminal() && !config.report;
+            if config.url.is_none() && !interactive {
+                eprintln!(
+                    "graphite-meter-client: no server address: pass --url with your Graphite Meter server, for example \
+                     https://meter.example"
+                );
+                return ExitCode::from(USAGE_ERROR);
+            }
+            return run(*config).unwrap_or_else(|error| fail(&error.to_string()));
+        }
         Err(Refusal::Flag(error)) => {
             eprint!("{error}\n{}", usage());
             return ExitCode::from(USAGE_ERROR);

@@ -112,8 +112,6 @@ pub struct Tick {
     pub decisions: Vec<Decision>,
     /// The boundary's live-trace rates: a window of at least half a tick, or any at a restart; none breaks the trace.
     pub live: Option<Dir<Option<f64>>>,
-    /// Silence every member shares: nobody leaves for it.
-    pub recovering: bool,
     /// When the engine wants its next tick.
     pub next: Instant,
 }
@@ -202,7 +200,7 @@ impl Engine {
 
     pub fn tick(&mut self, input: Input) -> Tick {
         let next = input.now + TICK;
-        let mut tick = Tick { decisions: Vec::new(), live: None, recovering: false, next };
+        let mut tick = Tick { decisions: Vec::new(), live: None, next };
         if self.phase == Phase::Done {
             return tick;
         }
@@ -499,8 +497,6 @@ impl Engine {
                 self.fail(index, Scope::Throughput, failure, input.now, true, &mut tick.decisions);
             }
         }
-        let shared = |direction| self.present().all(|seat| seat.quiet(direction, input.now) >= SILENCE);
-        tick.recovering = !last && self.plan.stage.directions().iter().any(|&direction| shared(direction));
     }
 
     /// Why a present member leaves at this boundary, if it does.

@@ -25,7 +25,9 @@ const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
 const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
 const CAUTION: Tone = tone((0x85671f, 94, 1), (0xe8cf83, 186, 11));
 const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
-const BADGE: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
+/// The canvas strips fade into and plates write on.
+const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
+const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
 const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
 const SELECTED: Tone = tone((0xe6e6e9, 254, 15), (0x303236, 236, 0));
 const STAGES: [Tone; 4] = [
@@ -55,18 +57,24 @@ pub struct Palette {
     pub border: Style,
     /// The focused row.
     pub selected: Style,
-    /// The title badge, and the status pill without a colour of its own.
-    pub title: Style,
-    pub pill: Style,
     /// The editor's block cursor.
     pub cursor: Style,
+    /// The key: canvas on ink, its faint note and cap, and the key while it cannot be pressed.
+    pub plate: Style,
+    pub plate_note: Style,
+    pub plate_off: Style,
+    /// Each stage's strip, fading by row from its trace into the canvas.
+    shades: [[Style; 6]; 4],
     dark: bool,
 }
 
 impl Palette {
     pub fn new(dark: bool) -> Self {
-        let shade = |tone: Tone| Style::fg(tone[usize::from(dark)]);
-        let on = |style: Style, tone: Tone| Style { bg: Some(tone[usize::from(dark)]), ..style };
+        let pick = |tone: Tone| tone[usize::from(dark)];
+        let shade = |tone: Tone| Style::fg(pick(tone));
+        let on = |style: Style, tone: Tone| Style { bg: Some(pick(tone)), ..style };
+        let fade =
+            |trace: Tone| std::array::from_fn(|row| Style::fg(mix(pick(trace), pick(CANVAS), 0.8 - 0.12 * row as f64)));
         Self {
             text: shade(TEXT),
             value: shade(TEXT).bold(),
@@ -78,9 +86,11 @@ impl Palette {
             err: shade(BAD).bold(),
             border: shade(BORDER),
             selected: on(shade(TEXT).bold(), SELECTED),
-            title: on(shade(BADGE).bold(), INK),
-            pill: on(shade(BADGE).bold(), SOFT),
-            cursor: on(shade(BADGE), TEXT),
+            cursor: on(shade(CANVAS), TEXT),
+            plate: on(shade(CANVAS), INK),
+            plate_note: on(Style::fg(mix(pick(INK), pick(CANVAS), 0.4)), INK),
+            plate_off: on(shade(SOFT), PLATE_OFF),
+            shades: TRACES.map(fade),
             dark,
         }
     }
@@ -94,15 +104,44 @@ impl Palette {
         Style::fg(TRACES[stage as usize][usize::from(self.dark)])
     }
 
-    /// A pill on `style`'s colour.
-    pub fn badge(&self, style: Style) -> Style {
-        Style { bg: style.fg, ..self.pill }
+    /// A stage's strip shades, from the top row down.
+    pub fn shades(&self, stage: Stage) -> &[Style; 6] {
+        &self.shades[stage as usize]
     }
 
     /// An outcome's label: bold in its badge's colour.
     pub fn outcome(&self, outcome: Outcome) -> Style {
         let tone = [GOOD, CAUTION, CAUTION, SOFT, BAD][outcome as usize];
         Style::fg(tone[usize::from(self.dark)]).bold()
+    }
+}
+
+/// `share` of `color` over `canvas` in sRGB, at the nearest of the 256 colours, and `color`'s own of the 16.
+fn mix(color: Color, canvas: Color, share: f64) -> Color {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let channel = |at: u32| {
+        let (over, under) = (f64::from((color.rgb >> at) as u8), f64::from((canvas.rgb >> at) as u8));
+        (over * share + under * (1.0 - share)).round() as u8
+    };
+    let rgb = [channel(16), channel(8), channel(0)];
+    let distance = |to: [u8; 3]| {
+        rgb.iter()
+            .zip(to)
+            .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
+            .sum::<u32>()
+    };
+    // The 6×6×6 cube's nearest colour or the grey ramp's, whichever lies closer.
+    let cube = rgb.map(|value| (0..6).min_by_key(|&index| value.abs_diff(LEVELS[index])).unwrap_or(0));
+    let grey = (rgb.iter().map(|&value| u16::from(value)).sum::<u16>() / 3).saturating_sub(3) / 10;
+    let grey = grey.min(23) as u8;
+    let ansi256 = match distance(cube.map(|index| LEVELS[index])) <= distance([8 + 10 * grey; 3]) {
+        true => 16 + (36 * cube[0] + 6 * cube[1] + cube[2]) as u8,
+        false => 232 + grey,
+    };
+    Color {
+        rgb: rgb.iter().fold(0, |rgb, &value| rgb << 8 | u32::from(value)),
+        ansi256,
+        ansi: color.ansi,
     }
 }
 

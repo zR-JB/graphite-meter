@@ -1,5 +1,6 @@
 //! The terminal interface: the `App` whose screens the event loop in `terminal` draws.
 pub mod chrome;
+mod console;
 mod dialogs;
 mod frame;
 mod keys;
@@ -22,11 +23,13 @@ use crate::{
     report,
     text::Profile,
 };
-use crossterm::event::{Event as Input, KeyEvent, KeyEventKind, MouseEventKind};
+use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 use dialogs::{Chooser, SignIn};
+use graphite_meter_proto::origin::Origin;
 use keys::{Action, Key};
+use ratatui_core::layout::Rect;
 use settings::Editor;
-use setup::Setup;
+use setup::{Row, Setup};
 use std::time::{Duration, Instant};
 use theme::{Answer, Palette, Taken};
 
@@ -59,6 +62,8 @@ pub enum Effect {
     Command(Box<Command>),
     /// Opens the sign-in page at this address in a browser.
     OpenBrowser(String),
+    /// Keeps this server for the next start.
+    Remember(Origin),
     Quit,
 }
 
@@ -103,18 +108,22 @@ pub struct App {
     /// What the latest operation prepared for, and when its paths arrived.
     asked: Option<PrepKey>,
     checked: Option<(PrepKey, Instant)>,
+    /// The server last kept for the next start.
+    kept: Option<Origin>,
     /// The body's first shown line, whether it follows the focused row, and the lines it shows.
     scroll: usize,
     follow: bool,
     rows: usize,
+    /// The last frame's size.
+    area: Rect,
     since: Instant,
     now: Instant,
 }
 
 impl App {
-    /// Setup for `config` in `profile`; its first tick checks the paths.
+    /// Setup for `config` in `profile`; its first tick checks the paths, or it asks for the server without one.
     pub fn new(config: Config, profile: Profile, now: Instant) -> Self {
-        Self {
+        let mut app = Self {
             config,
             view: View::default(),
             profile,
@@ -129,28 +138,49 @@ impl App {
             quitting: false,
             interrupted: false,
             caught: None,
-            recheck: Some(now),
+            recheck: None,
             stale: None,
             asked: None,
             checked: None,
+            kept: None,
             scroll: 0,
             follow: false,
             rows: 0,
+            area: Rect::default(),
             since: now,
             now,
+        };
+        match app.config.url.clone() {
+            Some(url) => (app.recheck, app.kept) = (Some(now), Some(url)),
+            None => app.ask_for_server(),
         }
+        app
+    }
+
+    /// Opens the server's address for typing: nothing can be checked or tested without one.
+    fn ask_for_server(&mut self) {
+        self.screen = Screen::Setup;
+        self.setup.row = self.rows().iter().position(|row| *row == Row::Catalogue).unwrap_or(0);
+        self.edit(Row::Catalogue, "");
+        self.notice = "Enter your Graphite Meter server's address, then press enter.".into();
     }
 
     /// Takes `event`; a run ending while the interface quits ends it.
     pub fn event(&mut self, event: &Event, now: Instant) -> Vec<Effect> {
         self.now = now;
+        let shown = self.latency_server().cloned();
         self.view.apply(event);
-        self.live.event(event, now);
+        self.live.event(event, self.view.run.as_ref(), shown.as_ref(), now);
         match event {
-            Event::Prepared { .. } => {
+            Event::Prepared { servers, .. } => {
                 (self.checked, self.stale) = (self.asked.clone().map(|key| (key, now)), Some(now + FRESH));
                 if std::mem::take(&mut self.setup.chooser) {
                     self.open_chooser();
+                }
+                let prepared = !servers.is_empty() && servers.iter().all(|server| server.path.is_ok());
+                if prepared && self.config.url != self.kept {
+                    self.kept.clone_from(&self.config.url);
+                    return self.kept.clone().map(Effect::Remember).into_iter().collect();
                 }
             }
             Event::CheckFailed(_) => self.setup.chooser = false,
@@ -192,18 +222,27 @@ impl App {
         Vec::new()
     }
 
-    /// Reacts to terminal input: keys, pasted text and the mouse wheel.
+    /// Reacts to terminal input: keys, pasted text, the mouse wheel and clicks on the key.
     pub fn input(&mut self, input: Input, now: Instant) -> Vec<Effect> {
+        self.now = now;
         match input {
             Input::Key(key) if key.kind != KeyEventKind::Release => return self.key(key, now),
             Input::Paste(text) => {
                 if let Overlay::Edit(editor) = &mut self.overlay {
-                    editor.insert(&text);
+                    editor.insert(text.trim());
                 }
             }
             Input::Mouse(mouse) if self.wheels() => match mouse.kind {
                 MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(3),
                 MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(3),
+                // A key does what its cap says: Stop while running, otherwise start or run again.
+                MouseEventKind::Down(MouseButton::Left)
+                    if matches!((&self.screen, &self.overlay), (Screen::Setup | Screen::Run, Overlay::None))
+                        && self.on_key(mouse.column, mouse.row) =>
+                {
+                    let cap = if self.running() { KeyCode::Esc } else { KeyCode::Char('r') };
+                    return self.press(Key::Code(cap));
+                }
                 _ => {}
             },
             _ => {}
@@ -222,7 +261,11 @@ impl App {
                 return Vec::new();
             }
         }
-        let Some(key) = Key::of(event) else { return Vec::new() };
+        Key::of(event).map_or_else(Vec::new, |key| self.press(key))
+    }
+
+    /// Does what `key` does on the screen, or in the overlay over it.
+    fn press(&mut self, key: Key) -> Vec<Effect> {
         if let Overlay::Edit(_) = self.overlay {
             return self.edit_key(key);
         }
@@ -273,12 +316,9 @@ impl App {
         if self.quitting { vec![Effect::Quit] } else { self.quit() }
     }
 
-    /// Eases the shown rates, and checks the paths once their settings have rested.
+    /// Checks the paths once their settings have rested.
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.now = now;
-        if let Some(run) = &self.view.run {
-            self.live.ease(run.rates, now);
-        }
         match self.recheck {
             Some(due) if due <= now => {
                 self.recheck = None;
@@ -355,6 +395,10 @@ impl App {
 
     /// Runs the settings when they are valid.
     fn start(&mut self) -> Vec<Effect> {
+        if self.config.url.is_none() {
+            self.ask_for_server();
+            return Vec::new();
+        }
         if let Err(error) = self.config.validate() {
             self.notice = format!("Test cannot start: {error}.");
             self.setup.row = self.first_stage();

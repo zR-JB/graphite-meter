@@ -1,17 +1,18 @@
 //! The setup screen: its rows, what each shows, and the setup and servers panels.
 use super::{
-    App, Overlay,
+    App, Overlay, console,
     frame::{beside, highlight, unique},
     keys::{self, Binding},
     paths::{LATENCY, Readiness, THROUGHPUT},
 };
 use crate::{
-    config::MAX_STREAMS,
+    config::{MAX_STREAMS, NO_SERVER},
     events::Check,
     model::Stage,
     report::vocabulary as words,
     text::{Line, Style, fill},
 };
+use graphite_meter_proto::origin::Scheme;
 use std::time::Duration;
 
 /// A setup row.
@@ -39,7 +40,8 @@ pub enum Row {
 #[rustfmt::skip]
 const ROWS: [(Option<&str>, Row, &str, &str); 19] = [
     (Some(""), Row::Start, "Start test", "Runs the checked stages in order. r starts from any row."),
-    (Some("Connection"), Row::Catalogue, "Catalogue URL", "Origin that lists the test servers. enter types one."),
+    (Some("Connection"), Row::Catalogue, "Server address",
+        "The Graphite Meter server to test; it lists its test servers. enter types its address."),
     (None, Row::Servers, "Test servers", "Measured at once; their speeds add up. enter picks up to 4."),
     (None, Row::Throughput, "Throughput path", "How transfers reach the server"),
     (None, Row::Protocol, "HTTP version", "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
@@ -60,6 +62,9 @@ const ROWS: [(Option<&str>, Row, &str, &str); 19] = [
     (None, Row::Insecure, "Skip TLS verify", "Accepts any certificate. Unsafe; sign-in is refused. space on/off."),
     (None, Row::Reset, "Reset settings", "Restores defaults; keeps the catalogue and servers."),
 ];
+
+/// What the empty server address and its editor show.
+pub const PLACEHOLDER: &str = "type the server's address";
 
 impl Row {
     /// The row's label and what the footer says of it.
@@ -150,7 +155,10 @@ impl App {
         let (mut help, mut inert) = (help.to_owned(), false);
         let (checkbox, text) = match row {
             Row::Start | Row::Reset => (None, String::new()),
-            Row::Catalogue => (None, config.url.to_string()),
+            Row::Catalogue => {
+                inert = config.url.is_none();
+                (None, config.url.as_ref().map_or(PLACEHOLDER.into(), ToString::to_string))
+            }
             Row::Servers => {
                 inert = self.view.catalogue.len() < 2;
                 (None, self.selection())
@@ -234,10 +242,29 @@ impl App {
                 lines.extend((!heading.is_empty()).then(|| Line::styled(*heading, self.palette.heading)));
             }
             let focused = index == self.setup.row;
+            if *row == Row::Start {
+                let [above, key, below] = self.start_key(focused);
+                lines.push(above);
+                focus = if focused { lines.len() } else { focus };
+                lines.extend([Line::plain(if focused { "› " } else { "  " }).with(key), below]);
+                continue;
+            }
             focus = if focused { lines.len() } else { focus };
             lines.push(self.setting(*row, shown, focused, label_width, width));
         }
         (lines, focus)
+    }
+
+    /// The run screen's key at one row between half-block caps, sized to its label, its plan beside it.
+    fn start_key(&self, focused: bool) -> [Line; 3] {
+        let enabled = self.config.validate().is_ok() && self.view.check != Check::SignIn;
+        let [_, key, _] =
+            console::key(&self.palette, "▶ Start test", "", if focused { "enter" } else { "r" }, 34, enabled);
+        let plate = if enabled { self.palette.plate } else { self.palette.plate_off };
+        let edge = Style { fg: plate.bg, ..Style::default() };
+        let cells = key.width();
+        let cap = |glyph: &str| Line::plain("  ").and(glyph.repeat(cells), edge);
+        [cap("▄"), key.and("  ", Style::default()).with(self.start_note()), cap("▀")]
     }
 
     fn setting(&self, row: Row, shown: &Shown, focused: bool, label_width: usize, width: usize) -> Line {
@@ -245,12 +272,9 @@ impl App {
         let label = Line::styled(shown.label, palette.text);
         let label = label.fit(label_width).pad(label_width).and("  ", Style::default());
         let line = match (row, &self.overlay) {
-            (Row::Start, _) => {
-                let button = Line::styled(" Start test ", if focused { palette.title } else { palette.heading });
-                button.and("  ", Style::default()).with(self.start_note())
-            }
             (_, Overlay::Edit(editor)) if editor.row == row => {
-                label.with(editor.line(width.saturating_sub(label_width + 5), palette))
+                let placeholder = if row == Row::Catalogue { PLACEHOLDER } else { "" };
+                label.with(editor.line(width.saturating_sub(label_width + 5), palette, placeholder))
             }
             _ if focused => highlight(label.with(shown.value.clone()).fit(width.saturating_sub(2)), palette.selected),
             _ => label.with(shown.value.clone()),
@@ -261,19 +285,32 @@ impl App {
     /// Beside Start test: why the settings cannot run, the check in progress, or the plan's length.
     fn start_note(&self) -> Line {
         let palette = &self.palette;
-        if let Err(error) = self.config.validate() {
-            return Line::styled(error, palette.warn);
+        let https = self.config.url.as_ref().is_some_and(|url| url.scheme == Scheme::Https);
+        match self.config.validate() {
+            Err(error) if error == NO_SERVER => Line::styled("needs a server", palette.muted),
+            Err(error) => Line::styled(error, palette.warn),
+            Ok(()) if self.view.check == Check::SignIn => {
+                Line::styled("sign in first; v requests a new code", palette.warn)
+            }
+            Ok(()) if self.checking() => {
+                Line::styled(self.spinner(), palette.accent).and(" checking paths", palette.muted)
+            }
+            Ok(()) if self.could_not_start() && https => Line::styled(
+                "check the address, or type http:// for a server without HTTPS; v checks again",
+                palette.warn,
+            ),
+            Ok(()) if self.could_not_start() => {
+                Line::styled("check the server's address; v checks again", palette.warn)
+            }
+            Ok(()) => Line::styled(format!("{} stages, {}", self.config.plan().len(), self.plan_time()), palette.muted),
         }
-        if self.view.check == Check::SignIn {
-            return Line::styled("sign in first; v requests a new code", palette.warn);
-        }
-        if self.checking() {
-            return Line::styled(self.spinner(), palette.accent).and(" checking paths", palette.muted);
-        }
+    }
+
+    /// How long the configured stages take with their warmups.
+    pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
         let total: Duration = plan.iter().map(|(_, duration)| *duration + self.config.warmup).sum();
-        let about = words::setting(Duration::from_secs(total.as_secs_f64().round() as u64));
-        Line::styled(format!("{} stages · about {about}", plan.len()), palette.muted)
+        format!("about {}", words::setting(Duration::from_secs(total.as_secs_f64().round() as u64)))
     }
 
     /// The setup and servers panels, side by side when wide enough, and the focused row's line.
@@ -291,6 +328,13 @@ impl App {
     /// Each selected server's readiness, why the check failed, and the paths it found.
     fn servers_panel(&self, width: usize) -> Vec<Line> {
         let (palette, servers) = (&self.palette, &self.view.servers);
+        if self.config.url.is_none() {
+            let sentence = "Its test servers and the paths to them show here once it has an address.";
+            return fill(sentence, width.max(4))
+                .into_iter()
+                .map(|line| Line::styled(line, palette.muted))
+                .collect();
+        }
         let mut lines = Vec::new();
         if self.checking() && servers.is_empty() {
             lines.push(self.checking_line());

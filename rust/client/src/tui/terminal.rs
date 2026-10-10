@@ -54,6 +54,11 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: Unbou
             match effect {
                 Effect::Command(command) => controller.command(*command),
                 Effect::OpenBrowser(url) => dialogs::browse(&url),
+                Effect::Remember(origin) => {
+                    if let Some(path) = crate::config::kept_server() {
+                        tokio::task::spawn_blocking(move || crate::config::remember(&path, &origin));
+                    }
+                }
                 Effect::Quit => return Ok(app.exit()),
             }
         }
