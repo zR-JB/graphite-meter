@@ -204,7 +204,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.body, _ = m.body.Update(msg)
 		}
 	case tea.MouseClickMsg:
-		if msg.Button != tea.MouseLeft || m.popup != popupNone || m.edit != nil || m.auth != nil || !m.onKey(msg.X, msg.Y) {
+		// While paths are checked before a run, or the stop is asked, the key on screen is not the one that acts.
+		if msg.Button != tea.MouseLeft || m.popup != popupNone || m.edit != nil || m.auth != nil || m.next != nil ||
+			m.stopPrompt || !m.onKey(msg.X, msg.Y) {
 			break
 		}
 		// A key does what its cap says: Stop while running, otherwise start or run again.

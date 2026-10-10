@@ -400,9 +400,17 @@ func (s styles) key(label, note, cap string, w int, enabled bool) []string {
 		text += plate.Render("  ") + faint.Render(note)
 	}
 	capW := lipgloss.Width(cap) + 2
+	if lipgloss.Width(text)+2*capW > w {
+		// Too narrow for the cap and the label both: the label stays.
+		cap, capW = "", 1
+		text = ansi.Truncate(text, max(w-2, 1), "…")
+	}
 	gap := max(w-lipgloss.Width(text)-2*capW, 0)
-	middle := plate.Render(strings.Repeat(" ", capW+gap/2)) + text + plate.Render(strings.Repeat(" ", gap-gap/2)) +
-		faint.Render(cap) + plate.Render("  ")
+	tail := plate.Render(" ")
+	if cap != "" {
+		tail = faint.Render(cap) + plate.Render("  ")
+	}
+	middle := plate.Render(strings.Repeat(" ", capW+gap/2)) + text + plate.Render(strings.Repeat(" ", gap-gap/2)) + tail
 	blank := plate.Render(strings.Repeat(" ", max(w, lipgloss.Width(middle))))
 	return []string{blank, middle, blank}
 }
@@ -521,7 +529,8 @@ func (s styles) chips(chips []chip, w int) []string {
 			title = s.stage[c.stage].Render(compactStage(c.stage))
 		}
 		title = ansi.Truncate(title, max(room, 1), "…")
-		name.WriteString(title + strings.Repeat(" ", max(cw-lipgloss.Width(title)-lipgloss.Width(c.status), 1)) + c.status)
+		chipName := title + strings.Repeat(" ", max(cw-lipgloss.Width(title)-lipgloss.Width(c.status), 1)) + c.status
+		name.WriteString(pad(ansi.Truncate(chipName, cw, ""), cw))
 	}
 	return []string{rule.String(), name.String()}
 }

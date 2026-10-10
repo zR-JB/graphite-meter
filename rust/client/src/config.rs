@@ -327,7 +327,10 @@ fn local(authority: &str) -> bool {
     let host = host.to_ascii_lowercase();
     match host.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => match ip.to_ipv4_mapped() {
+            Some(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+            None => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
+        },
         Err(_) => {
             let suffixes = [".localhost", ".local", ".lan", ".home.arpa", ".internal"];
             !host.contains('.') || suffixes.iter().any(|suffix| host.ends_with(suffix))
@@ -542,6 +545,7 @@ mod tests {
             ("meter.home.arpa", "http://meter.home.arpa"),
             ("localhost:7246", "http://localhost:7246"),
             ("203.0.113.7", "https://203.0.113.7"),
+            ("[::ffff:192.168.1.2]:7246", "http://[::ffff:192.168.1.2]:7246"),
         ] {
             assert_eq!(server_origin(raw).map(|origin| origin.to_string()), Ok(expected.into()), "{raw:?}");
         }

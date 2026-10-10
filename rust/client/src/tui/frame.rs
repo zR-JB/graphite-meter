@@ -168,12 +168,15 @@ impl App {
     }
 
     /// Whether the cell at `column` and `row` shows a key's plate: its background, or a half-block cap's foreground.
+    /// It paints in full colour, since 256 or 16 colours would give other cells the plates' colour.
     pub(super) fn on_key(&mut self, column: u16, row: u16) -> bool {
+        let profile = std::mem::replace(&mut self.profile, Profile::TrueColor);
         let mut buffer = Buffer::empty(self.area);
         self.paint(&mut buffer);
+        self.profile = profile;
         let Some(cell) = buffer.cell((column, row)) else { return false };
         let shown = if matches!(cell.symbol(), "▄" | "▀") { cell.fg } else { cell.bg };
-        let plates = [self.palette.plate, self.palette.plate_off].map(|plate| paint(plate, self.profile).bg);
+        let plates = [self.palette.plate, self.palette.plate_off].map(|plate| paint(plate, Profile::TrueColor).bg);
         plates.contains(&Some(shown))
     }
 

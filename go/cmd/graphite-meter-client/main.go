@@ -83,8 +83,9 @@ func main() {
 		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
 	}
 	remembered := rememberedPath()
+	recalled := recall(remembered)
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = recall(remembered)
+		cfg.BaseURL = recalled
 	} else if origin, err := serverOrigin(cfg.BaseURL); err == nil {
 		cfg.BaseURL = origin
 	} else {
@@ -102,7 +103,7 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	m := newModel(cfg)
-	m.remembered, m.recalled = remembered, cfg.BaseURL
+	m.remembered, m.recalled = remembered, recalled
 	if headless {
 		onSignal(signals, &caught, m.controller.CancelRun)
 		if m = runHeadless(m); m.run == nil {

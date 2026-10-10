@@ -359,6 +359,9 @@ func TestClickingStartStartsTheTest(t *testing.T) {
 	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y - 1, Button: tea.MouseLeft})); m.next == nil {
 		t.Fatal("clicking the key's cap did not start the test")
 	}
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})); m.stopPrompt || m.next == nil {
+		t.Fatal("a second click on Start, while paths are checked, asked to stop")
+	}
 }
 
 func TestRowActivation(t *testing.T) {

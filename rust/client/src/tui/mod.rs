@@ -111,7 +111,7 @@ pub struct App {
     /// What the latest operation prepared for, and when its paths arrived.
     asked: Option<PrepKey>,
     checked: Option<(PrepKey, Instant)>,
-    /// The server last kept for the next start.
+    /// The server this session last kept for the next start.
     kept: Option<Origin>,
     /// The body's first shown line, whether it follows the focused row, and the lines it shows.
     scroll: usize,
@@ -153,8 +153,8 @@ impl App {
             since: now,
             now,
         };
-        match app.config.url.clone() {
-            Some(url) => (app.recheck, app.kept) = (Some(now), Some(url)),
+        match app.config.url {
+            Some(_) => app.recheck = Some(now),
             None => app.ask_for_server(),
         }
         app
@@ -180,7 +180,9 @@ impl App {
                 if std::mem::take(&mut self.setup.chooser) {
                     self.open_chooser();
                 }
-                let prepared = !servers.is_empty() && servers.iter().all(|server| server.path.is_ok());
+                // Only the address this check was for, which a later edit may already have replaced.
+                let current = self.asked == Some(self.config.key());
+                let prepared = current && !servers.is_empty() && servers.iter().all(|server| server.path.is_ok());
                 if prepared && self.config.url != self.kept {
                     self.kept.clone_from(&self.config.url);
                     return self.kept.clone().map(Effect::Remember).into_iter().collect();

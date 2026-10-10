@@ -392,11 +392,21 @@ fn the_console_follows_a_download_and_its_key_takes_clicks() {
         let kind = MouseEventKind::Down(MouseButton::Left);
         Input::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
     };
-    let rows = rows(&mut app, now);
-    let row = rows.iter().position(|row| row.contains("▶ Start test")).unwrap();
+    let shown = rows(&mut app, now);
+    let row = shown.iter().position(|row| row.contains("▶ Start test")).unwrap();
     assert_eq!(app.input(click(1, row as u16), now), [], "the marker beside the key is not the key");
     assert!(
         matches!(command(&app.input(click(10, row as u16 - 1), now)), Command::Run(_)),
         "its cap is"
     );
+
+    // In 256 colours the selected row and the dimmed key share an index; only the key presses.
+    let mut app = App::new(config(), Profile::Ansi256, now);
+    app.event(&prepared(), now);
+    press(&mut app, KeyCode::Down, now);
+    let shown = rows(&mut app, now);
+    let selected = shown.iter().position(|row| row.contains("Server address")).unwrap();
+    assert_eq!(app.input(click(10, selected as u16), now), [], "the selected row is not the key");
+    let key = shown.iter().position(|row| row.contains("▶ Start test")).unwrap();
+    assert!(matches!(command(&app.input(click(10, key as u16), now)), Command::Run(_)));
 }

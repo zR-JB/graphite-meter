@@ -942,3 +942,24 @@ func TestMissingEvidenceIsNeverShownAsMeasured(t *testing.T) {
 		t.Errorf("an empty strip draws a rate: %q", strip)
 	}
 }
+
+func TestNarrowConsolesKeepEveryLineOnScreen(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	m.cfg.BidirectionalDuration = 2 * time.Minute
+	m.run.outcome = goclient.OutcomeFailed
+	for i := range m.run.stages {
+		m.run.stages[i].state = []stageState{stageFailed, stagePartial, stageStopped, stageFailed}[i%4]
+	}
+	for _, width := range []int{40, 44, 48, 60, 80} {
+		m.width, m.height = width, 24
+		for _, line := range strings.Split(view(m), "\n") {
+			if lipgloss.Width(line) > width {
+				t.Fatalf("%d columns: %q is %d wide", width, ansi.Strip(line), lipgloss.Width(line))
+			}
+		}
+		if row := m.st.key("Run again", m.planTime(), "enter", width-4, true)[1]; lipgloss.Width(row) != width-4 {
+			t.Errorf("%d columns: the key is %d wide, not %d", width, lipgloss.Width(row), width-4)
+		}
+	}
+}

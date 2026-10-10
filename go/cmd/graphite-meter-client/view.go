@@ -95,7 +95,8 @@ func (m model) render() string {
 	var b strings.Builder
 	b.Grow(len(content) + len(lines)*2)
 	for line := range strings.SplitSeq(content, "\n") {
-		b.WriteString(" " + pad(line, w-2) + " \n")
+		// A line wider than the screen would wrap and push every line under it down.
+		b.WriteString(" " + pad(ansi.Truncate(line, w-2, ""), w-2) + " \n")
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
