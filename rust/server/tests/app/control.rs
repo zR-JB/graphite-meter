@@ -118,7 +118,11 @@ async fn full_handler_pools_and_client_shares_ask_for_a_retry() {
     let response = download("10.0.0.1").await;
     assert_eq!(
         (response.status(), text(response).await.as_str()),
-        (StatusCode::BAD_REQUEST, "ambiguous client address\n")
+        (
+            StatusCode::BAD_REQUEST,
+            "client address unknown: the trusted reverse proxy's X-Real-IP is missing or does not match its \
+             X-Forwarded-For; the server log names the fault\n"
+        )
     );
     drop((held, other));
     assert_eq!(download("192.0.2.3").await.status(), StatusCode::OK);

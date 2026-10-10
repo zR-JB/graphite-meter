@@ -143,7 +143,8 @@ impl Policy {
         }
         let headers = request.headers();
         let forwarded = !matches!(peer.address(), Address::Socket(_))
-            && single(headers, "x-forwarded-proto") == Some("https")
+            // Traefik names a WebSocket upgrade's TLS "wss".
+            && matches!(single(headers, "x-forwarded-proto"), Some("https" | "wss"))
             && single(headers, "x-forwarded-host").is_some_and(|host| same_host(host, authority));
         if forwarded { Trust::Canonical } else { Trust::Insecure }
     }

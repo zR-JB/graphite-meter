@@ -167,7 +167,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.allowOIDCStart(r) {
-		s.oidcLoginFailure(w, r, reasonThrottled)
+		s.oidcLoginFailure(w, r, s.budgetRefusal(r))
 		return
 	}
 	clients, _ := ClientKeys(r, s.trusted) // allowOIDCStart refused ambiguous evidence

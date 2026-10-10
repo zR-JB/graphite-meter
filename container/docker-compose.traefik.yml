@@ -1,0 +1,74 @@
+# Traefik overlay: Traefik terminates HTTPS and forwards to Graphite Meter over
+# clear HTTP/1.1. Stack it on the default compose from the repository root, after
+# docker-compose.auth.yml when authentication is on:
+#   docker compose -f container/docker-compose.yml -f container/docker-compose.traefik.yml up -d
+#
+# Edit the host name and the ACME e-mail before starting. Traefik needs no
+# header middleware: for clients outside its forwardedHeaders.trustedIPs it
+# drops their X-Real-Ip and X-Forwarded-* headers, sets X-Real-Ip to the
+# address it accepted the connection from and appends the same address to
+# X-Forwarded-For, which is what Graphite Meter requires (docs/DEPLOYMENT.md).
+services:
+  traefik:
+    image: traefik:v3.7
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entryPoints.web.address=:80
+      - --entryPoints.web.http.redirections.entryPoint.to=websecure
+      - --entryPoints.websecure.address=:443
+      # An upload streams one request body for the whole stage; Traefik's 60 s
+      # read timeout would cut longer stages.
+      - --entryPoints.websecure.transport.respondingTimeouts.readTimeout=0
+      # Graphite Meter closes idle connections after 15 s; Traefik drops its own
+      # first, so it never sends a request on one being closed. Static
+      # configuration only: labels cannot set it.
+      - --serversTransport.forwardingTimeouts.idleConnTimeout=10s
+      # Let's Encrypt over port 443; use a certificate of your own through the
+      # file provider instead when the host is not reachable from the internet.
+      - --certificatesResolvers.le.acme.tlsChallenge=true
+      - --certificatesResolvers.le.acme.email=admin@example.com
+      - --certificatesResolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/letsencrypt
+    networks:
+      proxy:
+        # Graphite Meter trusts this address alone.
+        ipv4_address: 172.30.1.2
+    restart: unless-stopped
+
+  graphite-meter:
+    # Reached through Traefik only.
+    ports: !reset []
+    environment:
+      # Discovery then offers the HTTPS origin the browser reached through
+      # Traefik. `none` only stops advertising the native listeners; the
+      # container still serves them, unpublished here.
+      GM_ADVERTISED_NATIVE_ENDPOINTS: none
+      GM_PUBLIC_ORIGINS: self
+      GM_TRUSTED_PROXIES: "172.30.1.2/32"
+    networks:
+      - default
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=graphite-meter-proxy
+      - traefik.http.routers.graphite-meter.rule=Host(`meter.example.com`)
+      - traefik.http.routers.graphite-meter.entrypoints=websecure
+      - traefik.http.routers.graphite-meter.tls.certresolver=le
+      - traefik.http.services.graphite-meter.loadbalancer.server.port=7246
+
+# Traefik's own network: its fixed subnet makes the proxy address predictable.
+networks:
+  proxy:
+    name: graphite-meter-proxy
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
+
+volumes:
+  traefik-acme:
