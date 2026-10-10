@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -81,7 +82,15 @@ func main() {
 	if flag.NArg() > 0 {
 		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
 	}
-	if err := cfg.Validate(); err != nil {
+	remembered := rememberedPath()
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = recall(remembered)
+	}
+	headless := report || !term.IsTerminal(os.Stdout.Fd())
+	if err := cfg.Validate(); err != nil && (headless || !errors.Is(err, goclient.ErrNoServer)) {
+		if errors.Is(err, goclient.ErrNoServer) {
+			err = errors.New("no server address: pass --url with your Graphite Meter server, for example https://meter.example")
+		}
 		fail(2, err)
 	}
 
@@ -89,7 +98,8 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	m := newModel(cfg)
-	if report || !term.IsTerminal(os.Stdout.Fd()) {
+	m.remembered, m.recalled = remembered, cfg.BaseURL
+	if headless {
 		onSignal(signals, &caught, m.controller.CancelRun)
 		if m = runHeadless(m); m.run == nil {
 			fmt.Fprintln(os.Stderr, "graphite-meter-client: "+m.notice)
@@ -113,6 +123,38 @@ func main() {
 		lipgloss.Println(report)
 	}
 	os.Exit(exitStatus(m, caught.Load()))
+}
+
+// rememberedPath is where the last server that prepared is kept, so a later start needs no --url.
+func rememberedPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "graphite-meter", "server")
+}
+
+// recall is the remembered server, or "" when there is none or it no longer parses.
+func recall(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	origin, err := wire.CatalogOrigin(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return ""
+	}
+	return origin
+}
+
+// remember keeps origin for the next start; it is a convenience, so a failure only costs that.
+func remember(path, origin string) tea.Cmd {
+	return func() tea.Msg {
+		if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+			_ = os.WriteFile(path, []byte(origin+"\n"), 0o600)
+		}
+		return nil
+	}
 }
 
 func onSignal(signals chan os.Signal, caught *atomic.Value, react func()) {

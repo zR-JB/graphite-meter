@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -56,7 +57,9 @@ func quits(cmd tea.Cmd) bool {
 
 func testModel(t *testing.T) model {
 	t.Helper()
-	m := newModel(goclient.DefaultConfig())
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = "http://127.0.0.1:7246"
+	m := newModel(cfg)
 	t.Cleanup(m.controller.Close)
 	m.width, m.height = 120, 40
 	m.prepare = prepareReady
@@ -450,10 +453,10 @@ func TestCommitEdit(t *testing.T) {
 func TestEditKeysDiscardAndQuit(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
+	before := m.cfg.BaseURL
 	m.beginEdit(catalogueRow, m.cfg.BaseURL)
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil ||
-		m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
+	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil || m.cfg.BaseURL != before {
 		t.Fatal("esc applied the edit")
 	}
 	m.beginEdit(catalogueRow, "")
@@ -586,5 +589,52 @@ func TestTransportErrorsReadAsReasons(t *testing.T) {
 		if got := errorText(err); got != want {
 			t.Errorf("errorText(%v) = %q, want %q", err, got, want)
 		}
+	}
+}
+
+func TestFirstStartAsksForTheServer(t *testing.T) {
+	t.Parallel()
+	m := newModel(goclient.DefaultConfig())
+	t.Cleanup(m.controller.Close)
+	m.width, m.height = 120, 40
+	if m.edit == nil || m.edit.row != catalogueRow || m.prepare != prepareNoServer {
+		t.Fatal("a start without a server does not open its address")
+	}
+	m, _ = modelAndCmd(m.Update(press("esc")))
+	screen := ansi.Strip(view(m))
+	if !strings.Contains(screen, "https://meter.example") || !strings.Contains(screen, "enter the server's address first") ||
+		strings.Contains(screen, "Checking paths") {
+		t.Fatalf("setup without a server:\n%s", screen)
+	}
+	if m, _ = modelAndCmd(m.Update(press("r"))); m.next != nil || m.edit == nil {
+		t.Fatal("start without a server did not ask for one")
+	}
+	m, _ = modelAndCmd(m.Update(tea.PasteMsg{Content: "meter.example"}))
+	if m, cmd := modelAndCmd(m.Update(press("enter"))); m.cfg.BaseURL != "https://meter.example" ||
+		m.prepare != prepareChecking || cmd == nil {
+		t.Fatalf("an entered server is not prepared: %q, state %v", m.cfg.BaseURL, m.prepare)
+	}
+}
+
+func TestTheLastPreparedServerIsRemembered(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "graphite-meter", "server")
+	if recall(path) != "" {
+		t.Fatal("recalled a server before any was kept")
+	}
+	m := testModel(t)
+	m.remembered = path
+	m, cmd := modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, run: &goclient.PreparedRun{}}))
+	for _, msg := range drain(cmd) {
+		m, _ = modelAndCmd(m.Update(msg))
+	}
+	if got := recall(path); got != m.cfg.BaseURL {
+		t.Fatalf("recalled %q, want %q", got, m.cfg.BaseURL)
+	}
+	if err := os.WriteFile(path, []byte("not a server\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if recall(path) != "" {
+		t.Fatal("recalled a server that does not parse")
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"image/color"
+	"slices"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ const (
 	prepareReady
 	prepareSignIn
 	prepareFailed
+	prepareNoServer
 )
 
 type popup int
@@ -73,13 +75,15 @@ type signIn struct {
 type model struct {
 	controller *goclient.Controller
 	cfg        goclient.Config
-	width      int
-	height     int
-	now        time.Time
-	st         styles
-	spin       spinner.Model
-	help       help.Model
-	notice     string
+	// remembered is where the last server that prepared is kept, recalled the origin kept there.
+	remembered, recalled string
+	width                int
+	height               int
+	now                  time.Time
+	st                   styles
+	spin                 spinner.Model
+	help                 help.Model
+	notice               string
 
 	row         int
 	advanced    bool
@@ -116,7 +120,7 @@ func newModel(cfg goclient.Config) model {
 	dial.FPS = frameInterval
 	h := help.New()
 	h.Styles, h.ShortSeparator = st.helpStyles(), "   "
-	return model{
+	m := model{
 		controller:   controller,
 		preparation:  controller.NewPreparation(cfg, nil),
 		cfg:          cfg,
@@ -128,9 +132,24 @@ func newModel(cfg goclient.Config) model {
 		body:         viewport.New(),
 		now:          time.Now(),
 	}
+	if cfg.BaseURL == "" {
+		m = m.askForServer()
+	}
+	return m
+}
+
+// askForServer opens the server's address for typing: nothing can be prepared or tested without one.
+func (m model) askForServer() model {
+	m.prepare, m.row = prepareNoServer, slices.Index(m.rows(), catalogueRow)
+	m.beginEdit(catalogueRow, m.cfg.BaseURL)
+	m.notice = "Enter your Graphite Meter server's address, then press enter."
+	return m
 }
 
 func (m model) Init() tea.Cmd {
+	if m.prepare == prepareNoServer {
+		return tea.RequestBackgroundColor
+	}
 	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 

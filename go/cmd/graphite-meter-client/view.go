@@ -150,7 +150,7 @@ func (m model) header(w int) string {
 		tone = lipgloss.NewStyle().Foreground(m.st.outcome[r.outcome].GetBackground())
 	case r != nil && r.phase == goclient.PhaseMeasuring:
 		tone = m.st.stage[r.stage]
-	case m.cfg.Validate() != nil || m.prepare == prepareFailed:
+	case m.cfg.Validate() != nil && m.cfg.BaseURL != "" || m.prepare == prepareFailed:
 		tone = m.st.warn
 	}
 	status := tone.Render("● " + m.statusLabel())
@@ -270,6 +270,8 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 		row := s.row(m)
 		value := m.st.value.Render(row.value)
 		switch {
+		case row.value == "" && row.placeholder != "":
+			value = m.st.muted.Render(row.placeholder)
 		case m.edit != nil && m.edit.row == s:
 			input := m.edit.input
 			input.SetWidth(max(w-labelWidth-5, 1))
@@ -293,10 +295,14 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 
 func (m model) startNote() string {
 	switch err := m.cfg.Validate(); {
+	case errors.Is(err, goclient.ErrNoServer):
+		return m.st.muted.Render("enter the server's address first")
 	case err != nil:
 		return m.st.warn.Render(err.Error())
 	case m.prepare == prepareSignIn:
 		return m.st.warn.Render("sign in first; v requests a new code")
+	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
+		return m.st.warn.Render("check the server's address; v checks again")
 	case m.prepare == prepareChecking:
 		return m.spin.View() + m.st.muted.Render(" checking paths")
 	}
@@ -304,6 +310,9 @@ func (m model) startNote() string {
 }
 
 func (m model) planView(w int) string {
+	if m.prepare == prepareNoServer {
+		return m.st.muted.Width(max(w, 4)).Render("Its test servers and the paths to them show here once it has an address.")
+	}
 	var lines []string
 	if m.prepare == prepareChecking && m.preparedRun == nil {
 		lines = append(lines, m.spin.View()+" "+m.st.muted.Render("Checking paths…"))

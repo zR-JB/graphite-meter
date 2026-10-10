@@ -151,7 +151,7 @@ func TestTUIEndToEnd(t *testing.T) {
 	send("\x01")
 	await("edit start", func(f tuiSnapshot) bool {
 		for line := range strings.SplitSeq(f.content, "\n") {
-			if f.editing && strings.Contains(line, "Catalogue URL") && strings.Contains(line, origin) {
+			if f.editing && strings.Contains(line, "Server address") && strings.Contains(line, origin) {
 				return true
 			}
 		}

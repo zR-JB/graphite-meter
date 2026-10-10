@@ -36,6 +36,10 @@ func (m *model) invalidatePreparation() {
 
 func (m model) reprepare() (tea.Model, tea.Cmd) {
 	m.invalidatePreparation()
+	if m.cfg.BaseURL == "" {
+		m.prepare, m.prepareErr = prepareNoServer, ""
+		return m, nil
+	}
 	m.prepare, m.prepareErr = prepareChecking, ""
 	return m, tea.Batch(m.prepareAfter(prepareDebounce), m.spin.Tick)
 }
@@ -73,6 +77,10 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		}
 	default:
 		m.prepare, m.prepareErr = prepareReady, ""
+		if m.remembered != "" && m.cfg.BaseURL != m.recalled {
+			m.recalled = m.cfg.BaseURL
+			expiry = tea.Batch(expiry, remember(m.remembered, m.recalled))
+		}
 	}
 	if m.openChooser && msg.run != nil {
 		m.openChooser = false
@@ -263,6 +271,10 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 }
 
 func (m model) startRun() (tea.Model, tea.Cmd) {
+	if errors.Is(m.cfg.Validate(), goclient.ErrNoServer) {
+		m.run = nil
+		return m.askForServer(), nil
+	}
 	if err := m.cfg.Validate(); err != nil {
 		m.notice = blocked + ": " + err.Error() + "."
 		m.run, m.row = nil, slices.Index(m.rows(), setupGroups[2].rows[0])
@@ -561,6 +573,8 @@ func (m model) statusLabel() string {
 		return stageLabels[r.stage]
 	}
 	switch {
+	case m.prepare == prepareNoServer:
+		return notStarted
 	case m.cfg.Validate() != nil:
 		return blocked
 	case m.auth != nil && m.auth.opened:

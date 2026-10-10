@@ -19,6 +19,7 @@ import (
 
 type setupRow struct {
 	label, value, help string
+	placeholder        string // Shown greyed while the value is empty, and in its editor.
 	inert              bool
 }
 
@@ -68,8 +69,8 @@ var (
 	}
 	catalogueRow = &setting{
 		view: func(m model) setupRow {
-			return setupRow{label: "Catalogue URL", value: m.cfg.BaseURL,
-				help: "Origin that lists the test servers. enter types one."}
+			return setupRow{label: "Server address", value: m.cfg.BaseURL, placeholder: "https://meter.example",
+				help: "The Graphite Meter server to test; it lists its test servers. enter types its address."}
 		},
 		parse: func(m *model, raw string) error {
 			if !strings.Contains(raw, "://") {
@@ -83,7 +84,7 @@ var (
 				m.cfg.ServerIDs = nil
 			}
 			m.cfg.BaseURL = canonical
-			m.notice = "Catalogue " + canonical + "."
+			m.notice = "Server " + canonical + "."
 			return nil
 		},
 	}
@@ -322,10 +323,11 @@ func (m *model) beginEdit(s *setting, value string) {
 	in := textinput.New()
 	in.Prompt = ""
 	styles := in.Styles()
-	styles.Focused.Text = m.st.value
+	styles.Focused.Text, styles.Focused.Placeholder = m.st.value, m.st.muted
 	styles.Cursor.Blink = false
 	in.SetStyles(styles)
 	in.SetValue(value)
+	in.Placeholder = s.row(*m).placeholder
 	in.Focus()
 	m.edit = &editState{row: s, input: in}
 	m.notice = "Enter applies, esc cancels."
