@@ -4,35 +4,35 @@
 locked = true
 
 [tools]
-bun = "1.4.2"
+bun = "1.4.3"
 python = "3.14.8"
 go = "1.27.2"
 "aqua:gitleaks/gitleaks" = "8.30.1"
-"aqua:astral-sh/ty" = "0.0.84"
+"aqua:astral-sh/ty" = "0.0.86"
 "aqua:rhysd/actionlint" = "1.7.12"
 "aqua:zizmorcore/zizmor" = "1.30.1"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 # Released staticcheck (2026.2.1) cannot read Go 1.27.2's export data (version 5); this commit builds on x/tools 0.51.
 "go:honnef.co/go/tools/cmd/staticcheck" = "0.7.0-0.dev.0.20261009230814-452d5bb86b45"
 
 [vars]
-mise_version = "2026.9.14"
+mise_version = "2026.10.7"
 
 browser_chrome = "154.0.8037.92"
 
-codeql = "2.27.1"
+codeql = "2.27.2"
 
 image_skopeo = """
 quay.io/containers/skopeo:v1.22.3-immutable\
 @sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"""
-image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
+image_bun = "docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598"
 image_golang = "docker.io/library/golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The Rust image's builder (container/Dockerfile.rust).
 image_python = "docker.io/library/python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83"
-image_rust = "docker.io/library/rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0"
+image_rust = "docker.io/library/rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6"
 
 # SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
 rust_manifest_sha256 = "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"

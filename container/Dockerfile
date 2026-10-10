@@ -13,7 +13,7 @@ ARG CLIENT_VERSION
 # ---------------------------------------------------------------------------
 # Stage: client - build the Svelte app with bun.
 # ---------------------------------------------------------------------------
-FROM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS client
+FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
 # Build-time client config (override with --build-arg). ARG must be promoted
 # to ENV so it reaches `bun run build`'s process.env.
 ARG GM_CLIENT_BUILD_PROFILE=prod

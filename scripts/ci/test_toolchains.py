@@ -62,9 +62,10 @@ class ToolchainBoundaryTests(unittest.TestCase):
                 path.write_text(re.sub(pattern, replacement, original))
                 with self.assertRaisesRegex(ValueError, error):
                     load_pins(root)
-        dockerfile = root / "container/Dockerfile.rust"
-        dockerfile.write_text(dockerfile.read_text().replace("@sha256:5903", "@sha256:0003"))
         path.write_text(original)
+        digest = load_pins(root)["images"]["rust"].rsplit("@sha256:", 1)[1]
+        dockerfile = root / "container/Dockerfile.rust"
+        dockerfile.write_text(dockerfile.read_text().replace(digest, "0" * 64))
         with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
             check(root)
 
