@@ -11,10 +11,9 @@ const paths = [
   ["WebTransport datagrams", home.h3, "webtransport-datagram", "h3"],
 ] as const;
 
-// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on). Firefox 157's socket thread can spin
-// at full load after back-to-back HTTP/2 transfers at loopback rates, stalling the session.
+// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on).
 for (const [name, origin, transport, protocol] of paths)
-  (protocol === "h3" || protocol === "h2" ? test.chrome : test)(
+  (protocol === "h3" ? test.chrome : test)(
     `${name} carries both directions over ${protocol}`,
     async (page) => {
       await page.goto(`${harness}/bench/harness.html`);
