@@ -24,7 +24,9 @@ TOOL_KEYS = {
     "cargo-nextest": "aqua:nextest-rs/nextest/cargo-nextest",
 }
 PIN_PATTERNS = {
-    "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+", "firefox": r"\d+\.\d+(?:\.\d+)?"},
+    "browser": {
+        "chrome": r"\d+\.\d+\.\d+\.\d+", "firefox": r"\d+\.\d+(?:\.\d+)?", "firefox_sha256": r"[0-9a-f]{64}",
+    },
     "images": {
         "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+(?:-immutable)?@sha256:[0-9a-f]{64}",
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",

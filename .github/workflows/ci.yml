@@ -128,12 +128,20 @@ jobs:
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
           install-dependencies: true
+      # Mozilla's release archive, held to the SHA-256 mise.toml pins beside its version.
       - id: firefox
         name: Install pinned Firefox
         if: matrix.browser == 'firefox'
-        uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
-        with:
-          firefox-version: ${{ steps.toolchain.outputs.firefox-version }}
+        env:
+          FIREFOX_VERSION: ${{ steps.toolchain.outputs.firefox-version }}
+          FIREFOX_SHA256: ${{ steps.toolchain.outputs.firefox-sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/firefox.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://ftp.mozilla.org/pub/firefox/releases/$FIREFOX_VERSION/linux-x86_64/en-US/firefox-$FIREFOX_VERSION.tar.xz"
+          printf '%s  %s\n' "$FIREFOX_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          printf 'firefox-path=%s\n' "$RUNNER_TEMP/firefox/firefox" >> "$GITHUB_OUTPUT"
       - name: Run the browser against one local server fleet
         env:
           GM_E2E_BROWSER: ${{ matrix.browser }}
