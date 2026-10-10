@@ -125,8 +125,12 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 
 const started = performance.now();
 const command = process.argv.slice(2);
+// A Firefox worker weighs more than Chrome's; three of them starve a CI runner's measurements.
+const workers = process.env.GM_E2E_BROWSER === "firefox" ? 2 : 3;
 const suite = Bun.spawn(
-  command.length ? command : [process.execPath, "run", "test:e2e"],
+  command.length
+    ? command
+    : [process.execPath, "run", "test:e2e", `--parallel=${workers}`],
   {
     cwd: resolve(import.meta.dir, ".."),
     stdio: ["inherit", "inherit", "inherit"],
