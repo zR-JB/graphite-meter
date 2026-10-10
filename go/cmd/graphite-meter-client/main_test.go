@@ -602,7 +602,7 @@ func TestFirstStartAsksForTheServer(t *testing.T) {
 	}
 	m, _ = modelAndCmd(m.Update(press("esc")))
 	screen := ansi.Strip(view(m))
-	if !strings.Contains(screen, "https://meter.example") || !strings.Contains(screen, "enter the server's address first") ||
+	if !strings.Contains(screen, "type the server's address") || !strings.Contains(screen, "needs a server") ||
 		strings.Contains(screen, "Checking paths") {
 		t.Fatalf("setup without a server:\n%s", screen)
 	}

@@ -296,7 +296,7 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 func (m model) startNote() string {
 	switch err := m.cfg.Validate(); {
 	case errors.Is(err, goclient.ErrNoServer):
-		return m.st.muted.Render("enter the server's address first")
+		return m.st.muted.Render("needs a server")
 	case err != nil:
 		return m.st.warn.Render(err.Error())
 	case m.prepare == prepareSignIn:

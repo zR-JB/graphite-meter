@@ -69,7 +69,7 @@ var (
 	}
 	catalogueRow = &setting{
 		view: func(m model) setupRow {
-			return setupRow{label: "Server address", value: m.cfg.BaseURL, placeholder: "https://meter.example",
+			return setupRow{label: "Server address", value: m.cfg.BaseURL, placeholder: "type the server's address",
 				help: "The Graphite Meter server to test; it lists its test servers. enter types its address."}
 		},
 		parse: func(m *model, raw string) error {
