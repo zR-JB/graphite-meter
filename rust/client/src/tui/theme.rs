@@ -65,16 +65,29 @@ pub struct Palette {
     pub plate_off: Style,
     /// Each stage's strip, fading by row from its trace into the canvas.
     shades: [[Style; 6]; 4],
+    /// The terminal's own background when it said, so blends land on it exactly.
+    canvas: Color,
     dark: bool,
 }
 
 impl Palette {
     pub fn new(dark: bool) -> Self {
+        Self::on(dark, CANVAS[usize::from(dark)])
+    }
+
+    /// The palette over the background a terminal named.
+    pub fn over(background: Background) -> Self {
+        let dark = background.dark();
+        let canvas = CANVAS[usize::from(dark)];
+        Self::on(dark, background.0.map_or(canvas, |rgb| nearest(rgb, canvas.ansi)))
+    }
+
+    fn on(dark: bool, canvas: Color) -> Self {
         let pick = |tone: Tone| tone[usize::from(dark)];
         let shade = |tone: Tone| Style::fg(pick(tone));
         let on = |style: Style, tone: Tone| Style { bg: Some(pick(tone)), ..style };
         let fade =
-            |trace: Tone| std::array::from_fn(|row| Style::fg(mix(pick(trace), pick(CANVAS), 0.8 - 0.12 * row as f64)));
+            |trace: Tone| std::array::from_fn(|row| Style::fg(mix(pick(trace), canvas, 0.8 - 0.12 * row as f64)));
         Self {
             text: shade(TEXT),
             value: shade(TEXT).bold(),
@@ -86,13 +99,18 @@ impl Palette {
             err: shade(BAD).bold(),
             border: shade(BORDER),
             selected: on(shade(TEXT).bold(), SELECTED),
-            cursor: on(shade(CANVAS), TEXT),
-            plate: on(shade(CANVAS), INK),
-            plate_note: on(Style::fg(mix(pick(INK), pick(CANVAS), 0.4)), INK),
+            cursor: Style { bg: Some(pick(TEXT)), ..Style::fg(canvas) },
+            plate: Style { bg: Some(pick(INK)), ..Style::fg(canvas) },
+            plate_note: on(Style::fg(mix(pick(INK), canvas, 0.4)), INK),
             plate_off: on(shade(SOFT), PLATE_OFF),
             shades: TRACES.map(fade),
+            canvas,
             dark,
         }
+    }
+
+    pub fn canvas(&self) -> Color {
+        self.canvas
     }
 
     pub fn stage(&self, stage: Stage) -> Style {
@@ -118,12 +136,16 @@ impl Palette {
 
 /// `share` of `color` over `canvas` in sRGB, at the nearest of the 256 colours, and `color`'s own of the 16.
 fn mix(color: Color, canvas: Color, share: f64) -> Color {
-    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let channel = |at: u32| {
         let (over, under) = (f64::from((color.rgb >> at) as u8), f64::from((canvas.rgb >> at) as u8));
         (over * share + under * (1.0 - share)).round() as u8
     };
-    let rgb = [channel(16), channel(8), channel(0)];
+    nearest([channel(16), channel(8), channel(0)], color.ansi)
+}
+
+/// `rgb` with the nearest of the 256 colours and `ansi` of the 16.
+pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
         rgb.iter()
             .zip(to)
@@ -141,7 +163,7 @@ fn mix(color: Color, canvas: Color, share: f64) -> Color {
     Color {
         rgb: rgb.iter().fold(0, |rgb, &value| rgb << 8 | u32::from(value)),
         ansi256,
-        ansi: color.ansi,
+        ansi,
     }
 }
 
@@ -206,8 +228,8 @@ pub struct Answer {
 pub enum Taken {
     Not,
     Part,
-    /// The answer's end, naming a dark background or not.
-    Background(bool),
+    /// The answer's end, naming the background.
+    Background(Background),
 }
 
 impl Answer {
@@ -232,15 +254,29 @@ impl Answer {
             }
         };
         answer.extend_from_slice(end);
-        let (dark, _) = scan(answer);
+        let (background, _) = scan(answer);
         self.answer = None;
-        dark.map_or(Taken::Part, Taken::Background)
+        background.map_or(Taken::Part, Taken::Background)
+    }
+}
+
+/// What a terminal says its background is: its colour, unless it could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Background(pub Option<[u8; 3]>);
+
+impl Background {
+    /// Whether the background has an HSL lightness under one half; an unreadable one is dark.
+    pub fn dark(self) -> bool {
+        self.0.is_none_or(|rgb| {
+            let (high, low) = (rgb.iter().max().copied().unwrap_or(0), rgb.iter().min().copied().unwrap_or(0));
+            u16::from(high) + u16::from(low) < 255
+        })
     }
 }
 
 /// The answers so far: OSC 11's background, if any, and whether DA1's reply ended them.
-pub fn scan(answers: &[u8]) -> (Option<bool>, bool) {
-    let (mut dark, mut rest) = (None, answers);
+pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
+    let (mut background, mut rest) = (None, answers);
     while let Some(escape) = rest.iter().position(|&byte| byte == 0x1b) {
         rest = &rest[escape + 1..];
         if let Some(body) = rest.strip_prefix(b"]") {
@@ -254,7 +290,7 @@ pub fn scan(answers: &[u8]) -> (Option<bool>, bool) {
             if (body[end] == 0x07 || body[end + 1] == b'\\')
                 && let Some(color) = body[..end].strip_prefix(b"11;")
             {
-                dark = Some(!bright(color));
+                background = Some(Background(rgb(color)));
             }
             rest = &body[end..];
         } else if let Some(body) = rest.strip_prefix(b"[") {
@@ -262,16 +298,16 @@ pub fn scan(answers: &[u8]) -> (Option<bool>, bool) {
                 break;
             };
             if body[0] == b'?' && body[end] == b'c' {
-                return (dark, true);
+                return (background, true);
             }
             rest = &body[end + 1..];
         }
     }
-    (dark, false)
+    (background, false)
 }
 
-/// Whether an `rgb:`/`rgba:` or `#` colour has an HSL lightness of at least one half; an unreadable one is dark.
-fn bright(color: &[u8]) -> bool {
+/// An `rgb:`/`rgba:` or `#` colour's channels.
+fn rgb(color: &[u8]) -> Option<[u8; 3]> {
     let hex = |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
     let color = std::str::from_utf8(color).unwrap_or_default();
     let channels: Option<Vec<u8>> = match color.strip_prefix('#') {
@@ -292,10 +328,7 @@ fn bright(color: &[u8]) -> bool {
                 .then(|| components[..3].iter().map(|part| channel(part)).collect())
         }
     };
-    channels.is_some_and(|rgb| {
-        let (high, low) = (rgb.iter().max().copied().unwrap_or(0), rgb.iter().min().copied().unwrap_or(0));
-        u16::from(high) + u16::from(low) >= 255
-    })
+    channels.and_then(|rgb| rgb.try_into().ok())
 }
 
 #[cfg(test)]
@@ -305,15 +338,22 @@ mod tests {
     #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {
         for (answers, expected) in [
-            (&b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..], (Some(false), true)),
-            (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(true), true)),
-            (b"\x1b]11;#fdf6e3\x07\x1b[?6c", (Some(false), true)),
+            (&b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..], (Some(Some([255; 3])), true)),
+            (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(Some([0; 3])), true)),
+            (b"\x1b]11;#fdf6e3\x07\x1b[?6c", (Some(Some([0xfd, 0xf6, 0xe3])), true)),
+            (b"\x1b]11;rgb:1010/1414/1818\x07\x1b[?6c", (Some(Some([0x10, 0x14, 0x18])), true)),
+            (b"\x1b]11;nonsense\x07\x1b[?6c", (Some(None), true)),
             (b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?6c", (None, true)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1bx\x1b[?6c", (None, true)),
-            (b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", (Some(false), false)),
+            (b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", (Some(Some([255; 3])), false)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1b", (None, false)),
         ] {
-            assert_eq!(scan(answers), expected, "{}", answers.escape_ascii());
+            let (background, ended) = scan(answers);
+            assert_eq!((background.map(|background| background.0), ended), expected, "{}", answers.escape_ascii());
         }
+        assert!(!Background(Some([0xfd, 0xf6, 0xe3])).dark() && Background(Some([0x10, 0x14, 0x18])).dark());
+        assert!(Background(None).dark());
+        let named = Palette::over(Background(Some([0x10, 0x14, 0x18])));
+        assert_eq!(named.canvas().rgb, 0x101418, "blends land on the terminal's own background");
     }
 }

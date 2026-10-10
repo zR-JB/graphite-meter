@@ -37,7 +37,10 @@ use theme::{Answer, Palette, Taken};
 const RECHECK: Duration = Duration::from_millis(350);
 /// How long a check's paths serve a run.
 const FRESH: Duration = Duration::from_secs(30);
-const FRAME: Duration = Duration::from_millis(33);
+/// Animation repaints at 60 fps, so the dial and readouts glide; input paints at once regardless.
+const FRAME: Duration = Duration::from_millis(16);
+/// How long the spinner shows each of its glyphs.
+const SPIN: Duration = Duration::from_millis(33);
 /// The smallest terminal the interface draws in, in columns and rows.
 const SMALLEST: (usize, usize) = (40, 12);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -256,8 +259,8 @@ impl App {
         match self.answer.take(event) {
             Taken::Not => {}
             Taken::Part => return Vec::new(),
-            Taken::Background(dark) => {
-                self.palette = Palette::new(dark);
+            Taken::Background(background) => {
+                self.palette = Palette::over(background);
                 return Vec::new();
             }
         }

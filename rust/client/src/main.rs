@@ -86,18 +86,18 @@ fn run(config: Config) -> io::Result<ExitCode> {
         }
         let columns = columns(terminal);
         #[cfg(unix)]
-        let dark = match columns.is_some() && io::stdin().is_terminal() {
+        let named = match columns.is_some() && io::stdin().is_terminal() {
             true => background(std::time::Duration::from_secs(2)).await,
             false => None,
         };
         #[cfg(not(unix))]
-        let dark = None;
+        let named = None;
         let (view, status) = headless(config, pool, first(signals)).await;
         if let Some(reason) = report::unreported(&view) {
             eprintln!("graphite-meter-client: {reason}");
             return Ok(ExitCode::from(status));
         }
-        print(&view, &Palette::new(dark.unwrap_or(true)), columns, terminal, status)
+        print(&view, &named.map_or_else(|| Palette::new(true), Palette::over), columns, terminal, status)
     })
 }
 
@@ -186,9 +186,9 @@ fn written(bytes: &[u8]) -> ExitCode {
     }
 }
 
-/// Asks the terminal in raw mode for its background until the DA1 reply or `limit`; whether it is dark, if answered.
+/// Asks the terminal in raw mode for its background until the DA1 reply or `limit`, if answered.
 #[cfg(unix)]
-async fn background(limit: std::time::Duration) -> Option<bool> {
+async fn background(limit: std::time::Duration) -> Option<theme::Background> {
     use std::{
         io::{Read, Write},
         os::fd::AsFd,
@@ -197,7 +197,7 @@ async fn background(limit: std::time::Duration) -> Option<bool> {
     let input = tokio::io::unix::AsyncFd::with_interest(input, tokio::io::Interest::READABLE).ok()?;
     crossterm::terminal::enable_raw_mode().ok()?;
     let mut output = std::io::stdout();
-    let (mut answers, mut dark) = (Vec::new(), None);
+    let (mut answers, mut background) = (Vec::new(), None);
     if output.write_all(theme::QUERY).and_then(|()| output.flush()).is_ok() {
         let _ = tokio::time::timeout(limit, async {
             let mut chunk = [0; 1024];
@@ -207,7 +207,7 @@ async fn background(limit: std::time::Duration) -> Option<bool> {
                 ready.clear_ready();
                 answers.extend_from_slice(&chunk[..read]);
                 let ended;
-                (dark, ended) = theme::scan(&answers);
+                (background, ended) = theme::scan(&answers);
                 if ended {
                     return;
                 }
@@ -216,5 +216,5 @@ async fn background(limit: std::time::Duration) -> Option<bool> {
         .await;
     }
     let _ = crossterm::terminal::disable_raw_mode();
-    dark
+    background
 }

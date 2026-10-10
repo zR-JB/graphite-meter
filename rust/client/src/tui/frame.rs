@@ -1,6 +1,6 @@
 //! The frame: header, the body in a scrolled viewport, footer keys and sections, written into the terminal's buffer.
 use super::{
-    App, FRAME, Overlay, SMALLEST, SPINNER, Screen,
+    App, Overlay, SMALLEST, SPIN, SPINNER, Screen,
     chrome::{Chrome, Link},
     console, dialogs, keys,
 };
@@ -196,7 +196,7 @@ impl App {
     }
 
     pub(super) fn spinner(&self) -> &'static str {
-        let frames = self.now.saturating_duration_since(self.since).as_millis() / FRAME.as_millis();
+        let frames = self.now.saturating_duration_since(self.since).as_millis() / SPIN.as_millis();
         SPINNER[(frames % SPINNER.len() as u128) as usize]
     }
 }
