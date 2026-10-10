@@ -181,6 +181,31 @@ fn an_upload_server_falls_silent_when_its_ledger_stops_growing_on_the_client_clo
     assert!(script.removed().is_empty());
 }
 
+#[test]
+fn a_lane_that_fails_as_the_window_closes_never_fails_a_moving_member() {
+    let failing = |at: Duration, from: Duration| {
+        let mut sample = up("a", moved(at, STAGE), at);
+        if at >= from {
+            sample.lanes.up = LaneHealth::Failed(Failure::new(FailureReason::ConnectionLost, "stream reset"));
+        }
+        vec![sample]
+    };
+    let mut script = Script::new(plan(Stage::Upload, &["a"], false));
+    script.run(|at| failing(at, STAGE));
+    assert!(script.removed().is_empty());
+    let mut script = Script::new(plan(Stage::Upload, &["a"], false));
+    script.run(|at| failing(at, ms(5000)));
+    assert_eq!(script.removed(), [(ms(5000), "a", FailureReason::ConnectionLost)]);
+
+    // The final checkpoint answers within its budget after the window; silence counts to the window's end.
+    let mut script = Script::new(plan(Stage::Upload, &["a"], false));
+    let stop = STAGE - ms(1700);
+    let samples = |at: Duration| vec![up("a", moved(at, stop), at.min(stop))];
+    script.run_until(STAGE - ms(250), samples);
+    script.step(STAGE + ms(400), &samples(STAGE + ms(400)), &[]);
+    assert!(script.removed().is_empty());
+}
+
 fn intervals(result: &StageResult) -> Vec<(Reason, bool)> {
     let intervals = result.intervals.iter();
     intervals.map(|interval| (interval.reason, interval.complete)).collect()

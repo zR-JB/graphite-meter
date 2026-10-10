@@ -745,6 +745,11 @@ export class Run {
     const recovering = participants.filter((server) =>
       this.#recovering(server),
     );
+    // Judged as the window closed: a final checkpoint answered late over a full uplink must not make a server that
+    // was moving look silent.
+    const silentAtEnd = participants.filter((server) =>
+      this.#silent(server, at),
+    );
     this.#measuring = false;
     const results = await Promise.allSettled(
       participants.map((server) =>
@@ -775,7 +780,9 @@ export class Run {
         );
     // Whoever is still silent, or still retrying a failure, leaves here as it would have mid-stage.
     for (const server of participants) {
-      const silent = this.#silent(server, at);
+      const silent = silentAtEnd.includes(server)
+        ? this.#silent(server, at)
+        : undefined;
       if (silent || (recovering.includes(server) && this.#recovering(server)))
         this.#leave(server, silent);
     }
@@ -844,7 +851,11 @@ export class Run {
         server.latencyStall = null;
         run.#updateStalled();
       },
-      fail: (reason, message) => run.#remove(server, reason, message),
+      // A closed window's evidence is final; tearing down its lanes cannot fail the stage.
+      fail(reason, message) {
+        if (run.#measuring || !run.#ending)
+          run.#remove(server, reason, message);
+      },
       authenticationRequired(role) {
         const message = `Sign in to ${server.server.name}`;
         // Loaded latency alone never removes a throughput participant.
