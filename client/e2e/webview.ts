@@ -121,10 +121,27 @@ function reportPolicyViolations() {
   );
 }
 
-/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed. */
+/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed, and where
+ *  the pointer last moved, so a hover that opened nothing shows what it was over. */
 function recordClicks() {
   const clicks: string[] = [];
-  Object.assign(window, { clicks });
+  const pointer = { x: -1, y: -1, over: "" };
+  Object.assign(window, { clicks, pointer });
+  const describe = (el: Element | null) =>
+    el
+      ? `${el.tagName}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}`
+      : "nothing";
+  document.addEventListener(
+    "pointermove",
+    (event) => {
+      Object.assign(pointer, {
+        x: event.clientX,
+        y: event.clientY,
+        over: `${describe(event.target as Element)} (${event.pointerType})`,
+      });
+    },
+    true,
+  );
   document.addEventListener(
     "click",
     (event) => {
@@ -495,6 +512,15 @@ export class Page {
         // A refused or failed start shows its reason only in the gauge's footer.
         gauge: text(document.querySelector(".gauge-footer")),
         clicks: (window as any).clicks,
+        pointer: (() => {
+          const { x, y, over } = (window as any).pointer ?? {};
+          const at = document.elementFromPoint(x, y);
+          return {
+            over,
+            at: at && `${at.tagName}.${String(at.className).split(" ")[0]}`,
+            hover: matchMedia("(hover: hover)").matches,
+          };
+        })(),
         notices: [
           ...document.querySelectorAll('[role="alert"], [role="status"]'),
         ]
