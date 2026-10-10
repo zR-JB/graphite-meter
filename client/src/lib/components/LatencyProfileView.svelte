@@ -510,8 +510,11 @@
     width: 10px;
     height: 10px;
   }
+  /* The clip box reaches past a one-em line by a descender's depth, which Firefox would cut. */
   .aside {
     min-width: 0;
+    margin-block: -0.2em;
+    padding-block: 0.2em;
     overflow: hidden;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
@@ -862,10 +865,11 @@
     .lane-head > :nth-child(5) {
       display: none;
     }
+    /* Tall enough that an overflow's value under its whisker clears the row's rule. */
     .track {
       grid-column: 1 / -1;
       grid-row: 2;
-      height: 28px;
+      height: 34px;
     }
     .ticks {
       grid-column: 1 / -1;
