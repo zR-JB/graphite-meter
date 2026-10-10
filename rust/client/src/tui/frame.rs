@@ -1,8 +1,8 @@
-//! The frame: header, the body in a scrolled viewport, footer keys and panels, written into the terminal's buffer.
+//! The frame: header, the body in a scrolled viewport, footer keys and sections, written into the terminal's buffer.
 use super::{
-    App, FRAME, Overlay, SMALLEST, SPINNER, Screen,
+    App, Overlay, SMALLEST, SPIN, SPINNER, Screen,
     chrome::{Chrome, Link},
-    dialogs, keys,
+    console, dialogs, keys,
 };
 use crate::{
     VERSION,
@@ -21,7 +21,7 @@ use std::time::Instant;
 impl App {
     /// Draws a frame into `buffer`, and returns what the terminal shows beside it.
     pub fn draw(&mut self, buffer: &mut Buffer, now: Instant) -> Chrome {
-        self.now = now;
+        (self.now, self.area) = (now, buffer.area);
         self.stale = self.stale.filter(|at| *at >= now);
         let links = self.paint(buffer);
         let title = format!("Graphite Meter · {}", self.status().0);
@@ -72,46 +72,45 @@ impl App {
         shown.collect()
     }
 
-    /// The title, the status and what the test reaches.
+    /// The app and what it tests, with the state at the right in its stage's or outcome's tone.
     fn header(&self, width: usize) -> Vec<Line> {
         let palette = &self.palette;
-        let (status, pill) = self.status();
-        let (title, status) = (" Graphite Meter ", format!(" {status} "));
-        let used = crate::text::width(title) + crate::text::width(&status);
-        let gap = width.saturating_sub(used).max(1);
+        let (status, tone) = self.status();
+        let status = Line::styled(format!("● {status}"), tone);
         let context = match self.screen {
             Screen::Run => self.labels().join(", "),
-            _ => self.config.url.to_string(),
+            _ => self.config.url.as_ref().map(ToString::to_string).unwrap_or_default(),
         };
-        let first = Line::styled(title, palette.title).and(" ".repeat(gap), Style::default());
-        let first = first.and(status, pill);
-        let second = Line::styled(format!("native client {VERSION}  "), palette.muted).and(context, palette.accent);
-        vec![first.fit(width), second.fit(width)]
+        let left = Line::styled("◆ Graphite Meter", palette.value)
+            .and("  ", Style::default())
+            .and(context, palette.muted);
+        let left = left.fit(width.saturating_sub(status.width() + 2));
+        let gap = width.saturating_sub(left.width() + status.width()).max(1);
+        vec![left.and(" ".repeat(gap), Style::default()).with(status).fit(width)]
     }
 
-    /// What the header's pill says, in its colour: the outcome's, or the measuring stage's.
+    /// The state and its tone: the outcome's, the measuring stage's, the warning's when the test cannot start.
     pub(super) fn status(&self) -> (&'static str, Style) {
         let (run, palette) = (self.view.run.as_ref().filter(|_| matches!(self.screen, Screen::Run)), &self.palette);
         let label = match run.map(|run| (run.outcome, &run.stage)) {
             Some((Some(outcome), _)) => {
-                return (words::outcome_label(outcome), palette.badge(palette.outcome(outcome)));
+                return (words::outcome_label(outcome), Style { bold: false, ..palette.outcome(outcome) });
             }
-            Some((None, Some((plan, Some(_))))) => {
-                return (words::label(plan.stage), palette.badge(palette.stage(plan.stage)));
-            }
+            Some((None, Some((plan, Some(_))))) => return (words::label(plan.stage), palette.stage(plan.stage)),
             Some((None, Some((_, None)))) => "Warmup",
             Some((None, None)) => "Checking paths",
-            None if self.config.validate().is_err() => "Test cannot start",
+            None if self.config.url.is_none() => "Not started",
+            None if self.config.validate().is_err() => return ("Test cannot start", palette.warn),
             None => match &self.screen {
                 Screen::SignIn(sign_in) if sign_in.opened => "Checking sign-in",
                 Screen::SignIn(_) => "Sign in",
                 _ if self.view.check == Check::SignIn => "Sign in",
                 _ if self.checking() => "Checking paths",
-                _ if self.could_not_start() => "Test could not start",
+                _ if self.could_not_start() => return ("Test could not start", palette.warn),
                 _ => "Not started",
             },
         };
-        (label, palette.pill)
+        (label, palette.muted)
     }
 
     /// The notice, or the focused row's help, over the keys the screen offers.
@@ -139,7 +138,12 @@ impl App {
         while dialogs::line(&shown, palette).width() > width && shown.len() > 2 {
             shown.remove(shown.len() - 2);
         }
-        vec![notice.fit(width), dialogs::line(&shown, palette).fit(width)]
+        let (mut hints, version) = (dialogs::line(&shown, palette), format!("native {VERSION}"));
+        let gap = width.saturating_sub(hints.width() + crate::text::width(&version));
+        if gap >= 3 {
+            hints = hints.and(" ".repeat(gap), Style::default()).and(version, palette.muted);
+        }
+        vec![notice.fit(width), hints.fit(width)]
     }
 
     /// The screen's lines, and the focused one's.
@@ -155,26 +159,25 @@ impl App {
         }
     }
 
-    /// `body` in a rounded border `width` wide under `title`, at least `height` lines tall.
+    /// `body` as a section `width` wide under `title`, padded to `width` and at least `height` lines tall.
     pub(super) fn panel(&self, title: &str, body: Vec<Line>, width: usize, height: usize) -> Vec<Line> {
-        let (border, inner) = (self.palette.border, width.saturating_sub(4).max(1));
-        let title = Line::styled(title, self.palette.heading).fit(width.saturating_sub(6));
-        let fill = width.saturating_sub(5 + title.width());
-        let mut lines = vec![
-            Line::styled("╭─ ", border)
-                .with(title)
-                .and(format!(" {}╮", "─".repeat(fill)), border),
-        ];
-        let rows = body.len().max(height.saturating_sub(2));
-        for line in body.into_iter().chain(std::iter::repeat(Line::default())).take(rows) {
-            lines.push(
-                Line::styled("│ ", border)
-                    .with(line.fit(inner).pad(inner))
-                    .and(" │", border),
-            );
-        }
-        lines.push(Line::styled(format!("╰{}╯", "─".repeat(inner + 2)), border));
-        lines
+        let mut lines = console::section(&self.palette, title, width).to_vec();
+        lines.extend(body.into_iter().map(|line| line.fit(width)));
+        lines.resize(lines.len().max(height), Line::default());
+        lines.into_iter().map(|line| line.pad(width)).collect()
+    }
+
+    /// Whether the cell at `column` and `row` shows a key's plate: its background, or a half-block cap's foreground.
+    /// It paints in full colour, since 256 or 16 colours would give other cells the plates' colour.
+    pub(super) fn on_key(&mut self, column: u16, row: u16) -> bool {
+        let profile = std::mem::replace(&mut self.profile, Profile::TrueColor);
+        let mut buffer = Buffer::empty(self.area);
+        self.paint(&mut buffer);
+        self.profile = profile;
+        let Some(cell) = buffer.cell((column, row)) else { return false };
+        let shown = if matches!(cell.symbol(), "▄" | "▀") { cell.fg } else { cell.bg };
+        let plates = [self.palette.plate, self.palette.plate_off].map(|plate| paint(plate, Profile::TrueColor).bg);
+        plates.contains(&Some(shown))
     }
 
     pub(super) fn checkbox(&self, on: bool) -> Line {
@@ -196,7 +199,7 @@ impl App {
     }
 
     pub(super) fn spinner(&self) -> &'static str {
-        let frames = self.now.saturating_duration_since(self.since).as_millis() / FRAME.as_millis();
+        let frames = self.now.saturating_duration_since(self.since).as_millis() / SPIN.as_millis();
         SPINNER[(frames % SPINNER.len() as u128) as usize]
     }
 }

@@ -93,7 +93,8 @@ impl App {
                 true => Line::plain("› ").with(highlight(line, palette.selected)),
                 false => Line::plain("  ").with(line),
             });
-            lines.push(Line::plain("    ").and(entry.url.resolve(&self.config.url).to_string(), palette.muted));
+            let address = self.config.url.as_ref().map(|url| entry.url.resolve(url).to_string());
+            lines.push(Line::plain("    ").and(address.unwrap_or_default(), palette.muted));
         }
         let title = format!("Test servers · {} selected", chooser.draft.len());
         self.panel(&title, lines, width, 0)
@@ -191,7 +192,7 @@ pub fn line(bindings: &[Binding], palette: &Palette) -> Line {
     let mut line = Line::default();
     for (key, does) in bindings.iter().filter_map(|binding| binding.help) {
         if !line.0.is_empty() {
-            line = line.and(" • ", palette.border);
+            line = line.and("   ", Style::default());
         }
         line = line
             .and(key, palette.text)

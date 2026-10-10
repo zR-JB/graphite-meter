@@ -408,7 +408,7 @@ cd go && go build -trimpath -o graphite-meter-client \
 # task's arguments to its script's last line, so each of these scripts ends by running "$@".
 [tasks.tui]
 shell = "bash -e -o pipefail -c"
-description = "Run the native TUI (GM_IMPLEMENTATION=go|rust); arguments after -- go to the client"
+description = "Run the native TUI against the dev server (GM_IMPLEMENTATION=go|rust); arguments after -- go to the client"
 raw = true
 run = '''
 version=$(scripts/build-version.sh)
@@ -423,7 +423,8 @@ case "${GM_IMPLEMENTATION:-go}" in
     set -- target/ci/graphite-meter-client ;;
   *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
 esac
-exec "$@"'''
+# The dev server's address; a later --url overrides it.
+exec "$@" --url http://127.0.0.1:7246'''
 
 [tasks.dev]
 shell = "bash -e -o pipefail -c"

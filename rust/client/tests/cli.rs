@@ -61,3 +61,16 @@ fn version_into_a_closed_pipe_exits_141_quietly() {
     let output = Command::new(CLIENT).arg("--version").stdout(writer).output().unwrap();
     assert_eq!((output.status.code(), text(output.stderr)), (Some(141), String::new()));
 }
+
+#[test]
+fn a_report_without_a_server_asks_for_one() {
+    let scratch = graphite_meter_testkit::Scratch::new().unwrap();
+    let mut command = Command::new(CLIENT);
+    for home in ["XDG_CONFIG_HOME", "HOME", "APPDATA"] {
+        command.env(home, scratch.path());
+    }
+    let output = command.arg("-report").output().unwrap();
+    let expected = "graphite-meter-client: no server address: pass --url with your Graphite Meter server, for example \
+                    https://meter.example\n";
+    assert_eq!((output.status.code(), text(output.stderr)), (Some(2), expected.into()));
+}

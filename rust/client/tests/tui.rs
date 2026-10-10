@@ -1,14 +1,18 @@
 //! The interface without a terminal: keys, events, signals and ticks in; frames, chrome, effects and exits out.
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
-    config::Config,
+    config::{self, Config},
     controller::Command,
     events::{Event, SignInEnd, SignInPrompt},
-    model::{Outcome, Stage},
+    measure::aggregate::Rate,
+    model::{Dir, Outcome, Stage, StageResult, Throughput},
     net::{ThroughputPath, approval::Unapproved},
     report::report,
-    run::prepare::{Paths, ServerPath},
+    run::{
+        engine::StagePlan,
+        prepare::{Paths, ServerPath},
+    },
     status,
     text::Profile,
     tui::{App, Effect, chrome::Chrome},
@@ -32,11 +36,19 @@ fn id(name: &str) -> ServerId {
     ServerId::parse(name).unwrap()
 }
 
+/// The default settings for a server at meter.example.
+fn config() -> Config {
+    Config {
+        url: Origin::parse("https://meter.example").ok(),
+        ..Config::default()
+    }
+}
+
 /// Setup for the default settings, its first check already asked for.
 fn app() -> (App, Instant) {
     let start = Instant::now();
-    let mut app = App::new(Config::default(), Profile::Plain, start);
-    assert_eq!(checked(app.tick(start)), Config::default());
+    let mut app = App::new(config(), Profile::Plain, start);
+    assert_eq!(checked(app.tick(start)), config());
     (app, start)
 }
 
@@ -148,7 +160,7 @@ fn prompt(now: Instant) -> SignInPrompt {
 /// A run of `plan` over `names`, started from a row below Start test and prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
-    let mut app = App::new(Config { stages, ..Config::default() }, Profile::Plain, now);
+    let mut app = App::new(Config { stages, ..config() }, Profile::Plain, now);
     press(&mut app, KeyCode::Down, now);
     assert!(matches!(command(&press(&mut app, KeyCode::Char('r'), now)), Command::Run(_)));
     let origin = Origin::parse("https://meter.example").unwrap();
@@ -223,11 +235,11 @@ fn a_cancelled_or_expired_sign_in_asks_to_sign_in_before_a_test() {
         app.event(&Event::CheckFailed(Unapproved::Expired.failure()), now);
         assert!(shows(&mut app, now, notice) && !shows(&mut app, now, "Match this code"), "{end:?}");
         assert!(frame(&mut app, now)[0].ends_with(" Sign in"), "{end:?}");
-        assert!(focused(&mut app, now).contains("› Start test sign in first; v requests a new code"));
+        assert!(focused(&mut app, now).contains("› ▶ Start test enter sign in first; v requests"));
         assert_eq!(press(&mut app, KeyCode::Char('r'), now), []);
         assert!(shows(&mut app, now, "Test cannot start: sign in first. Press v to request a new code."));
         press(&mut app, KeyCode::Char('v'), now);
-        assert_eq!(checked(app.tick(now + Duration::from_millis(350))), Config::default());
+        assert_eq!(checked(app.tick(now + Duration::from_millis(350))), config());
     }
 }
 
@@ -287,4 +299,114 @@ fn quitting_after_a_run_reports_it_with_a_signal_s_status_only_when_it_stopped()
     press(&mut app, KeyCode::Esc, now);
     assert_eq!(app.key(ctrl_c(), now), [Effect::Quit]);
     assert!(!app.exit().report, "setup shows no run to report");
+}
+
+#[test]
+fn a_first_start_asks_for_the_server_and_keeps_the_one_that_prepared() {
+    let now = Instant::now();
+    let mut app = App::new(Config::default(), Profile::Plain, now);
+    assert_eq!(app.tick(now), [], "nothing is checked without a server");
+    assert!(focused(&mut app, now).contains("› Server address type the server's address"));
+    assert!(shows(&mut app, now, "Enter your Graphite Meter server's address, then press enter."));
+    press(&mut app, KeyCode::Esc, now);
+    assert!(frame(&mut app, now)[0].ends_with("● Not started"));
+    assert!(shows(&mut app, now, "▶ Start test r needs a server") && !shows(&mut app, now, "Checking paths"));
+    assert!(shows(&mut app, now, "Its test servers and the paths to them show"));
+    assert_eq!(press(&mut app, KeyCode::Char('r'), now), [], "a start without a server asks for one");
+    assert!(shows(&mut app, now, "Enter your Graphite Meter server's address, then press enter."));
+    app.input(Input::Paste("meter.example/history\n".into()), now);
+    press(&mut app, KeyCode::Enter, now);
+    assert!(
+        focused(&mut app, now).contains("› ▶ Start test enter"),
+        "a first server moves the focus to Start"
+    );
+    assert_eq!(checked(app.tick(now + Duration::from_millis(350))), config());
+    let kept = Origin::parse("https://meter.example").unwrap();
+    assert_eq!(
+        app.event(&prepared(), now),
+        [Effect::Remember(kept.clone())],
+        "a prepared server is kept once"
+    );
+    assert_eq!(app.event(&prepared(), now), []);
+    let scratch = graphite_meter_testkit::Scratch::new().unwrap();
+    let path = scratch.path().join("graphite-meter").join("server");
+    assert_eq!(config::recall(&path), None);
+    config::remember(&path, &kept);
+    assert_eq!(config::recall(&path), Some(kept));
+    std::fs::write(&path, "not a server\n").unwrap();
+    assert_eq!(config::recall(&path), None, "a kept address that no longer parses is ignored");
+}
+
+#[test]
+fn the_console_follows_a_download_and_its_key_takes_clicks() {
+    let now = Instant::now();
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    let plan = StagePlan {
+        stage: Stage::Download,
+        members: Vec::new(),
+        duration: SECOND * 10,
+        latency: None,
+    };
+    app.event(&Event::StageStarted(plan), now);
+    app.event(&Event::Measuring(Stage::Download), now);
+    for tick in 1..=20 {
+        let rates = Dir { down: Some(12.5e6), up: None };
+        app.event(
+            &Event::Sample { at: Duration::from_millis(100 * tick), rates },
+            now + Duration::from_millis(100 * tick),
+        );
+    }
+    let later = now + SECOND * 3;
+    assert!(shows(&mut app, later, "↓ Download"), "{:#?}", frame(&mut app, later));
+    assert!(shows(&mut app, later, "100.0 Mbit/s") && shows(&mut app, later, "measuring"));
+    let rate = Rate { mean: 12.5e6, peak: 13e6 };
+    let throughput = Dir {
+        down: Some(Throughput { rate: Some(rate), bytes: 125_000_000 }),
+        up: None,
+    };
+    let result = StageResult {
+        stage: Stage::Download,
+        measured: SECOND * 10,
+        stopped: false,
+        throughput,
+        servers: Vec::new(),
+        failures: Vec::new(),
+        intervals: Vec::new(),
+        omitted: 0,
+    };
+    app.event(&Event::StageFinished(result), later);
+    app.event(&ended(Outcome::Complete), later);
+    for fact in [
+        "Peak 104.0 Mbit/s",
+        "Transferred 125.0 MB",
+        "Duration 10.0 s",
+        "Run again about 11 s enter",
+    ] {
+        assert!(shows(&mut app, later, fact), "{fact}: {:#?}", frame(&mut app, later));
+    }
+
+    // A click on the key's plate presses it, in a profile that paints one.
+    let mut app = App::new(config(), Profile::TrueColor, now);
+    app.event(&prepared(), now);
+    let click = |column, row| {
+        let kind = MouseEventKind::Down(MouseButton::Left);
+        Input::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+    };
+    let shown = rows(&mut app, now);
+    let row = shown.iter().position(|row| row.contains("▶ Start test")).unwrap();
+    assert_eq!(app.input(click(1, row as u16), now), [], "the marker beside the key is not the key");
+    assert!(
+        matches!(command(&app.input(click(10, row as u16 - 1), now)), Command::Run(_)),
+        "its cap is"
+    );
+
+    // In 256 colours the selected row and the dimmed key share an index; only the key presses.
+    let mut app = App::new(config(), Profile::Ansi256, now);
+    app.event(&prepared(), now);
+    press(&mut app, KeyCode::Down, now);
+    let shown = rows(&mut app, now);
+    let selected = shown.iter().position(|row| row.contains("Server address")).unwrap();
+    assert_eq!(app.input(click(10, selected as u16), now), [], "the selected row is not the key");
+    let key = shown.iter().position(|row| row.contains("▶ Start test")).unwrap();
+    assert!(matches!(command(&app.input(click(10, key as u16), now)), Command::Run(_)));
 }

@@ -63,6 +63,14 @@ impl Line {
         self
     }
 
+    /// Adds `c` in `style`, to the last span when it has that style.
+    pub fn push(&mut self, c: char, style: Style) {
+        match self.0.last_mut() {
+            Some(last) if last.style == style => last.text.push(c),
+            _ => self.0.push(Span { text: c.into(), style }),
+        }
+    }
+
     /// The line with `other`'s spans added.
     pub fn with(mut self, other: Self) -> Self {
         self.0.extend(other.0);

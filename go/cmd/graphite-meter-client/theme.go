@@ -16,6 +16,18 @@ type styles struct {
 	stage                                map[goclient.Stage]lipgloss.Style
 	trace                                map[goclient.Stage]lipgloss.Style
 	outcome                              map[goclient.Outcome]lipgloss.Style
+	shades                               map[goclient.Stage][6]lipgloss.Style
+	canvas                               color.Color
+	plate, plateNote, plateOff           lipgloss.Style
+}
+
+// mix is share of c over the canvas, in sRGB.
+func mix(c color.Color, canvas string, share float64) color.Color {
+	r, g, b, _ := c.RGBA()
+	under := lipgloss.Color(canvas)
+	ur, ug, ub, _ := under.RGBA()
+	blend := func(a, b uint32) uint8 { return uint8((float64(a>>8)*share + float64(b>>8)*(1-share)) + 0.5) }
+	return color.RGBA{blend(r, ur), blend(g, ug), blend(b, ub), 0xff}
 }
 
 func newStyles(dark bool) styles {
@@ -57,16 +69,26 @@ func newStyles(dark bool) styles {
 			goclient.OutcomeFailed:     badge.Background(bad),
 		},
 	}
+	// A strip fades from its hue at the edge into the canvas below it.
+	canvas := "#fdfdfd"
+	if dark {
+		canvas = "#0d1013"
+	}
+	s.canvas = lipgloss.Color(canvas)
+	s.shades = map[goclient.Stage][6]lipgloss.Style{}
+	for stage, trace := range s.trace {
+		var shades [6]lipgloss.Style
+		for i := range shades {
+			shades[i] = fg(mix(trace.GetForeground(), canvas, 0.8-0.12*float64(i)))
+		}
+		s.shades[stage] = shades
+	}
+	s.plate = lipgloss.NewStyle().Foreground(lipgloss.Color(canvas)).Background(ink)
+	s.plateNote = s.plate.Foreground(mix(ink, canvas, 0.4))
+	s.plateOff = lipgloss.NewStyle().Foreground(soft).Background(tone("#dcdde0", "#2a2d31"))
 	s.selected = s.text.Bold(true).Background(tone("#e6e6e9", "#303236"))
 	s.heading = s.accent.Bold(true)
 	return s
-}
-
-func (s styles) button(label string, focused bool) string {
-	if focused {
-		return s.title.Render(label)
-	}
-	return s.heading.Padding(0, 1).Render(label)
 }
 
 func (s styles) helpStyles() help.Styles {

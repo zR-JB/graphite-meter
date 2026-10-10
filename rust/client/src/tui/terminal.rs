@@ -11,59 +11,79 @@ use graphite_meter_net::Pool;
 use ratatui_core::terminal::Terminal;
 use ratatui_crossterm::CrosstermBackend;
 use std::{
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     pin::pin,
     sync::Arc,
     time::Instant,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-/// Runs the interface until it quits, fed events, input, ticks and `signals`' statuses; writes chrome after each draw.
+/// Runs the interface until it quits, fed events, input, ticks and `signals`' statuses. Input paints at once; measurement
+/// events wait for the next frame, so a burst of them costs one draw.
 pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
     let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
-    let (mut app, mut chrome, mut shown) = (App::new(config, profile, Instant::now()), io::stdout(), None);
+    let (mut app, mut shown) = (App::new(config, profile, Instant::now()), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut changed = true;
     loop {
-        let effects = tokio::select! {
+        let (effects, paint) = tokio::select! {
             Some(event) = received.recv() => {
                 changed = true;
-                app.event(&event, Instant::now())
+                (app.event(&event, Instant::now()), false)
             }
             input = input.next() => {
                 changed = true;
-                input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now()))
+                (input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now())), true)
             }
             _ = frames.tick() => {
-                let now = Instant::now();
-                if std::mem::take(&mut changed) || app.animating() {
-                    let mut drawn = Chrome::default();
-                    terminal.draw(|frame| drawn = app.draw(frame.buffer_mut(), now))?;
-                    let bytes = drawn.bytes(shown.as_ref(), app.profile);
-                    let _ = chrome.write_all(&bytes).and_then(|()| chrome.flush());
-                    shown = Some(drawn);
-                }
-                app.tick(now)
+                let effects = app.tick(Instant::now());
+                (effects, std::mem::take(&mut changed) || app.animating())
             }
             Some(status) = signals.recv() => {
                 changed = true;
-                app.signal(status)
+                (app.signal(status), true)
             }
         };
         for effect in effects {
             match effect {
                 Effect::Command(command) => controller.command(*command),
                 Effect::OpenBrowser(url) => dialogs::browse(&url),
+                Effect::Remember(origin) => {
+                    if let Some(path) = crate::config::kept_server() {
+                        tokio::task::spawn_blocking(move || crate::config::remember(&path, &origin));
+                    }
+                }
                 Effect::Quit => return Ok(app.exit()),
             }
         }
+        if paint {
+            changed = false;
+            draw(&mut terminal, &mut app, &mut shown)?;
+        }
     }
+}
+
+type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
+
+/// Draws one frame and the chrome after it as a synchronized update, so a terminal never shows half of it.
+fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<Chrome>) -> io::Result<()> {
+    terminal.backend_mut().write_all(b"\x1b[?2026h")?;
+    let mut drawn = Chrome::default();
+    let now = Instant::now();
+    terminal.draw(|frame| drawn = app.draw(frame.buffer_mut(), now))?;
+    let bytes = drawn.bytes(shown.as_ref(), app.profile);
+    let out = terminal.backend_mut();
+    out.write_all(&bytes)?;
+    out.write_all(b"\x1b[?2026l")?;
+    out.flush()?;
+    *shown = Some(drawn);
+    Ok(())
 }
 
 /// Pushes the window title and reports mouse buttons and the wheel, without plain moves, in SGR form.

@@ -5,7 +5,7 @@ use crate::{
         format,
         latency::{Population, Summary, added},
     },
-    model::{Cadence, Direction, Outcome, Stage, StageResult, Throughput},
+    model::{Cadence, Direction, Outcome, Stage, Throughput},
     net::{LatencyPath, ThroughputPath},
 };
 use graphite_meter_proto::{
@@ -64,17 +64,6 @@ pub fn latency_facts(summary: Summary, measured: Duration) -> Vec<String> {
     facts.extend((summary.unresolved > 0).then(|| format!("unfinished probes {}", count(summary.unresolved))));
     facts.extend((summary.send_failures > 0).then(|| format!("failed sends {}", count(summary.send_failures))));
     facts
-}
-
-/// A stage's mean rate per direction, `↓ 94.1 Mbit/s  ↑ 20.0 Mbit/s`; empty without throughput.
-pub fn mean_rates(result: &StageResult) -> String {
-    let directions = result.stage.directions().iter();
-    let rates = directions.filter_map(|&direction| {
-        let rate = result.throughput[direction]?.rate;
-        let mean = rate.map_or(MISSING.into(), |rate| format::rate(rate.mean));
-        Some(format!("{} {mean}", arrow(direction)))
-    });
-    rates.collect::<Vec<_>>().join("  ")
 }
 
 pub fn label(stage: Stage) -> &'static str {

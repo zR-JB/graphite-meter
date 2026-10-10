@@ -10,9 +10,10 @@ use graphite_meter_proto::{
     origin::Origin,
     text::quote,
 };
-use std::{ffi::OsString, num::IntErrorKind, time::Duration};
+use std::{ffi::OsString, num::IntErrorKind, path::PathBuf, time::Duration};
 
-pub const DEFAULT_URL: &str = "http://127.0.0.1:7246";
+/// Why settings without a server address cannot run; nothing has a sensible default one.
+pub const NO_SERVER: &str = "enter the server's address";
 /// Forced and automatic lanes per server and direction stay within this many.
 pub const MAX_STREAMS: usize = 14;
 const MAX_WARMUP: Duration = Duration::from_secs(4);
@@ -22,7 +23,8 @@ const SLOWEST_CADENCE: Duration = Duration::from_secs(IDLE_BOUND.as_secs() / 2);
 /// One run's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    pub url: Origin,
+    /// The server whose catalogue lists the test servers; none until one is given.
+    pub url: Option<Origin>,
     /// Catalogue IDs; empty selects the operator's default.
     pub servers: Vec<ServerId>,
     pub paths: PathChoice,
@@ -59,7 +61,7 @@ pub struct Streams {
 /// What a path check depends on; a run reuses a check whose key is equal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrepKey {
-    url: Origin,
+    url: Option<Origin>,
     servers: Vec<ServerId>,
     paths: PathChoice,
     cadences: [Cadence; 2],
@@ -72,7 +74,7 @@ pub struct PrepKey {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            url: Origin::parse(DEFAULT_URL).expect("the default origin parses"),
+            url: None,
             servers: Vec::new(),
             paths: PathChoice::default(),
             stages: vec![Stage::Latency, Stage::Download, Stage::Upload],
@@ -138,6 +140,9 @@ impl Config {
 
     /// Why the settings cannot run, if they cannot.
     pub fn validate(&self) -> Result<(), String> {
+        if self.url.is_none() {
+            return Err(NO_SERVER.into());
+        }
         if self.stages.is_empty() {
             return Err("select at least one stage: latency, download, upload or bidirectional".into());
         }
@@ -218,8 +223,11 @@ struct Flags {
 }
 
 impl Flags {
+    /// The settings; a missing server is for `main` to recall or refuse.
     fn finish(mut self) -> Result<Config, String> {
-        self.config.validate()?;
+        self.config
+            .validate()
+            .or_else(|error| if error == NO_SERVER { Ok(()) } else { Err(error) })?;
         let paths = &mut self.config.paths;
         let protocols = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
         paths.protocol = choice("throughput protocol", &self.protocol, &protocols, Protocol::name)?;
@@ -281,11 +289,95 @@ fn origin(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The catalogue origin, empty being the default.
-fn url(text: &str) -> Result<Origin, String> {
+/// The catalogue origin, empty being none.
+fn url(text: &str) -> Result<Option<Origin>, String> {
     match text {
-        "" => Ok(Config::default().url),
-        text => Origin::parse(text).map_err(|error| error.to_string()),
+        "" => Ok(None),
+        text => server_origin(text).map(Some),
+    }
+}
+
+/// The server an entered or pasted address names: its origin, whatever path, query, fragment or credentials came with
+/// it. An address without a scheme gets HTTPS, or HTTP where TLS is all but unheard of: loopback, private and
+/// link-local addresses, and names only a local network resolves. A failed HTTPS never falls back to HTTP, which would
+/// let anyone on the path force a plaintext test.
+pub fn server_origin(raw: &str) -> Result<Origin, String> {
+    let raw = raw.trim();
+    let (scheme, rest) = raw.split_once("://").unwrap_or(("", raw));
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let scheme = match scheme {
+        "" if local(authority) => "http",
+        "" => "https",
+        scheme => scheme,
+    };
+    let origin = Origin::parse(&format!("{scheme}://{authority}"))
+        .ok()
+        .filter(|_| !authority.is_empty());
+    origin.ok_or_else(|| "use the server's address, for example https://meter.example or 192.168.1.20:7246".into())
+}
+
+/// Whether `authority` names a host on the local network: a loopback, private or link-local address, or a name without
+/// a dot or under a local-only suffix.
+fn local(authority: &str) -> bool {
+    let host = match authority.strip_prefix('[') {
+        Some(literal) => literal.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    let host = host.to_ascii_lowercase();
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => match ip.to_ipv4_mapped() {
+            Some(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+            None => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
+        },
+        Err(_) => {
+            let suffixes = [".localhost", ".local", ".lan", ".home.arpa", ".internal"];
+            !host.contains('.') || suffixes.iter().any(|suffix| host.ends_with(suffix))
+        }
+    }
+}
+
+/// Where the last server that prepared is kept, so a later start needs no `-url`: the user's configuration directory.
+pub fn kept_server() -> Option<PathBuf> {
+    // A directory that climbs with `..` is refused, so the file stays where it belongs.
+    let var = |name| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && !path.components().any(|part| part == std::path::Component::ParentDir))
+    };
+    let home = || var("HOME");
+    let directory = match () {
+        _ if cfg!(windows) => var("APPDATA"),
+        _ if cfg!(target_os = "macos") => home().map(|home| home.join("Library/Application Support")),
+        _ => var("XDG_CONFIG_HOME").or_else(|| home().map(|home| home.join(".config"))),
+    };
+    Some(directory?.join("graphite-meter").join("server"))
+}
+
+/// The server kept at `path`, if one is and it still parses.
+pub fn recall(path: &std::path::Path) -> Option<Origin> {
+    Origin::parse(std::fs::read_to_string(path).ok()?.trim()).ok()
+}
+
+/// Keeps `origin` at `path` for the next start; it is a convenience, so a failure only costs that.
+pub fn remember(path: &std::path::Path, origin: &Origin) {
+    #[cfg(unix)]
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let mut directory = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    directory.mode(0o700);
+    let mut file = std::fs::OpenOptions::new();
+    file.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    file.mode(0o600);
+    let parent = path
+        .parent()
+        .map_or(Ok(()), |parent| directory.recursive(true).create(parent));
+    if parent.is_ok()
+        && let Ok(mut file) = file.open(path)
+    {
+        let _ = std::io::Write::write_all(&mut file, format!("{origin}\n").as_bytes());
     }
 }
 
@@ -405,7 +497,7 @@ const FLAGS: [Flag<Flags>; 22] = [
         |f, v| v.clone_into(&mut f.throughput_transport), |_f| "auto".into()),
     stage_duration!("upload-duration", Upload, "upload measurement duration"),
     row!("url", String, "origin of the operator server catalogue",
-        |f, v| f.config.url = url(v)?, |f| f.config.url.to_string()),
+        |f, v| f.config.url = url(v)?, |_f| String::new()),
     row!("version", Bool, "print version and exit", |f, v| f.version = boolean(v)?, |f| f.version.to_string()),
     row!("warmup", Duration, "per-stage warmup duration",
         |f, v| f.config.warmup = span(v, Duration::MAX)?, |f| duration::format(f.config.warmup)),
@@ -428,13 +520,37 @@ mod tests {
     }
 
     #[test]
-    fn no_flags_test_the_local_server_with_go_defaults() {
+    fn no_flags_take_go_defaults_without_a_server() {
         let config = run("").unwrap();
         assert_eq!(config, Config::default());
-        assert_eq!(config.url.to_string(), DEFAULT_URL);
-        assert_eq!(run("-url=").unwrap().url, config.url);
+        assert_eq!((config.url.as_ref(), config.validate()), (None, Err(NO_SERVER.into())));
+        assert_eq!(run("-url=").unwrap().url, None);
         let plan = [(Stage::Latency, 4), (Stage::Download, 10), (Stage::Upload, 10)];
         assert_eq!(config.plan(), plan.map(|(stage, seconds)| (stage, Duration::from_secs(seconds))));
         assert!(run("-url http://bücher.example").is_err());
+        assert_eq!(run("-url meter.example").unwrap().url, Origin::parse("https://meter.example").ok());
+    }
+
+    #[test]
+    fn pasted_addresses_name_their_server() {
+        for (raw, expected) in [
+            ("  https://Meter.Example/#/history\n", "https://meter.example"),
+            ("meter.example", "https://meter.example"),
+            ("meter.example:8443/servers?x=1", "https://meter.example:8443"),
+            ("user:secret@meter.example/", "https://meter.example"),
+            ("HTTP://meter.example:80", "http://meter.example"),
+            ("192.168.1.20:7246", "http://192.168.1.20:7246"),
+            ("[fe80::1]:7246", "http://[fe80::1]:7246"),
+            ("nas:7246", "http://nas:7246"),
+            ("meter.home.arpa", "http://meter.home.arpa"),
+            ("localhost:7246", "http://localhost:7246"),
+            ("203.0.113.7", "https://203.0.113.7"),
+            ("[::ffff:192.168.1.2]:7246", "http://[::ffff:192.168.1.2]:7246"),
+        ] {
+            assert_eq!(server_origin(raw).map(|origin| origin.to_string()), Ok(expected.into()), "{raw:?}");
+        }
+        for raw in ["", "ftp://meter.example", "https://", "two words"] {
+            assert!(server_origin(raw).is_err(), "{raw:?}");
+        }
     }
 }

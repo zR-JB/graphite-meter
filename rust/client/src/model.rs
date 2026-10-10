@@ -161,6 +161,12 @@ pub enum StageStatus {
 }
 
 impl StageResult {
+    /// The measured mean rate in bytes per second, its directions added.
+    pub fn mean(&self) -> f64 {
+        let directions = [self.throughput.down, self.throughput.up].into_iter().flatten();
+        directions.filter_map(|throughput| Some(throughput.rate?.mean)).sum()
+    }
+
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
         let missing =
             |direction: &Direction| self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none());

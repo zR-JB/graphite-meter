@@ -293,13 +293,15 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 
 ## Native terminal client
 
-`graphite-meter-client` with no arguments tests `http://127.0.0.1:7246` interactively. Releases attach archives for
+`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it opens on the
+server's address, and after a server prepares it keeps that address in `graphite-meter/server` under the user's
+configuration directory, so the next start needs none. Releases attach archives for
 Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the container image or a
 [source build](#build-from-source).
 
 | Flag                                             | Default                   | Meaning                                                                                         |
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `--url`                                          | `http://127.0.0.1:7246`   | Origin of the operator server catalogue.                                                        |
+| `--url`                                          | the last server prepared  | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
 | `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
 | `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
 | `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
