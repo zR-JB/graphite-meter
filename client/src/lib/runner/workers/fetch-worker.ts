@@ -2,6 +2,7 @@
 
 import {
   redirectForCredentials,
+  grantAuthenticationRequired,
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
@@ -165,11 +166,15 @@ ctx.onmessage = (e: MessageEvent<unknown>) => {
   }
 };
 
-/** A failure after session expiry is a sign-in failure, not a transport one. */
-async function failed(error: unknown): Promise<void> {
+/** A failure after the session expired or the grant was withdrawn is a sign-in failure, not a transport one: a
+    broken stream is how a withdrawn grant first shows, before any retry could be refused. */
+async function failed(error: unknown, url: string): Promise<void> {
+  const grant = new Headers(init.headers).has("Authorization");
   if (
-    init.credentials === "include" &&
-    (await sessionAuthenticationRequired(self.location.origin))
+    grant
+      ? await grantAuthenticationRequired(new URL(url).origin, init.headers!)
+      : init.credentials === "include" &&
+        (await sessionAuthenticationRequired(self.location.origin))
   )
     post({ type: "auth-required" });
   else post({ type: "error", detail: String(error), ...LOST });
@@ -194,7 +199,7 @@ async function download(url: string): Promise<void> {
     } catch (err) {
       postProgress(progress.flush());
       // The main thread decides whether to restart this lane.
-      return failed(err);
+      return failed(err, url);
     }
   }
 }
@@ -255,7 +260,7 @@ async function upload(url: string, poolBytes: number): Promise<void> {
         poolBytes,
       ));
     } catch (err) {
-      return failed(err);
+      return failed(err, url);
     }
   }
 }

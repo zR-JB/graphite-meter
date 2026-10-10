@@ -542,15 +542,20 @@ export class Run {
       }),
     );
     if (epoch !== this.#epoch) return;
-    for (const [index, result] of results.entries())
-      if (result.status === "rejected")
-        this.#remove(
-          participants[index],
-          classify(result.reason, "preparation-failed"),
-          result.reason instanceof Error
-            ? result.reason.message
-            : "Measurement preparation failed",
-        );
+    for (const [index, result] of results.entries()) {
+      if (result.status !== "rejected") continue;
+      // A grant withdrawn between stages surfaces here first, wrapped by whatever it refused.
+      const signIn = findCause(result.reason, ServerAuthenticationRequired);
+      this.#remove(
+        participants[index],
+        signIn
+          ? "sign-in-required"
+          : classify(result.reason, "preparation-failed"),
+        (signIn ?? result.reason) instanceof Error
+          ? (signIn ?? result.reason).message
+          : "Measurement preparation failed",
+      );
+    }
   }
 
   #measureStage(): void {
