@@ -98,57 +98,67 @@ async function observe(page: Page, hold: string[] = []) {
   };
 }
 
-test("settings discovery is bounded, reused and cancelled on close", async (page) => {
-  const activity = await observe(page);
-  await open(page, home.url, {
-    config: {
-      transports: { throughputTarget: "protocol:http1", latencyTarget: "auto" },
-    },
-  });
-  const settings = await openSettings(page);
-  const choices = settings.getByRole("group", { name: "Test servers" });
-  const ready = settings.locator('[data-readiness="verified"]');
-  await expect(ready).toBeVisible({ timeout: 15_000 });
-  await expect(choices.locator(".server-preflight")).toHaveCount(4);
-  await expect(choices).toHaveAttribute("aria-busy", "false");
-  const first = await activity.read();
-  expect(first.requests).toEqual(fleet.map((server) => server.url));
-  expect(first.peak).toBeLessThanOrEqual(4);
-  expect([first.probes, first.workers, first.activeWorkers]).toEqual([2, 1, 1]);
-  await closeSettings(page);
-  await openSettings(page);
-  expect(await activity.read()).toEqual(first);
+test.chrome(
+  "settings discovery is bounded, reused and cancelled on close",
+  async (page) => {
+    const activity = await observe(page);
+    await open(page, home.url, {
+      config: {
+        transports: {
+          throughputTarget: "protocol:http1",
+          latencyTarget: "auto",
+        },
+      },
+    });
+    const settings = await openSettings(page);
+    const choices = settings.getByRole("group", { name: "Test servers" });
+    const ready = settings.locator('[data-readiness="verified"]');
+    await expect(ready).toBeVisible({ timeout: 15_000 });
+    await expect(choices.locator(".server-preflight")).toHaveCount(4);
+    await expect(choices).toHaveAttribute("aria-busy", "false");
+    const first = await activity.read();
+    expect(first.requests).toEqual(fleet.map((server) => server.url));
+    expect(first.peak).toBeLessThanOrEqual(4);
+    expect([first.probes, first.workers, first.activeWorkers]).toEqual([
+      2, 1, 1,
+    ]);
+    await closeSettings(page);
+    await openSettings(page);
+    expect(await activity.read()).toEqual(first);
 
-  const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
-  await peer.click();
-  await expect(ready).toBeVisible({ timeout: 15_000 });
-  await expect.poll(async () => (await activity.read()).activeWorkers).toBe(1);
-  const selected = await activity.read();
-  expect(selected.requests).toEqual(first.requests);
-  expect([selected.probes, selected.workers]).toEqual([4, 2]);
-  await peer.click();
-  await closeSettings(page);
+    const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
+    await peer.click();
+    await expect(ready).toBeVisible({ timeout: 15_000 });
+    await expect
+      .poll(async () => (await activity.read()).activeWorkers)
+      .toBe(1);
+    const selected = await activity.read();
+    expect(selected.requests).toEqual(first.requests);
+    expect([selected.probes, selected.workers]).toEqual([4, 2]);
+    await peer.click();
+    await closeSettings(page);
 
-  await activity.set({ nowOffset: 121_000 });
-  await openSettings(page);
-  await expect
-    .poll(async () => (await activity.read()).requests.length)
-    .toBe(8);
-  await expect(choices).toHaveAttribute("aria-busy", "false");
-  const refreshed = await activity.read();
-  const signIn = refreshed.requests.filter((origin) => origin === locked.url);
-  expect(signIn).toHaveLength(1);
-  expect([refreshed.probes, refreshed.workers]).toEqual([4, 2]);
-  expect(refreshed.peak).toBeLessThanOrEqual(4);
+    await activity.set({ nowOffset: 121_000 });
+    await openSettings(page);
+    await expect
+      .poll(async () => (await activity.read()).requests.length)
+      .toBe(8);
+    await expect(choices).toHaveAttribute("aria-busy", "false");
+    const refreshed = await activity.read();
+    const signIn = refreshed.requests.filter((origin) => origin === locked.url);
+    expect(signIn).toHaveLength(1);
+    expect([refreshed.probes, refreshed.workers]).toEqual([4, 2]);
+    expect(refreshed.peak).toBeLessThanOrEqual(4);
 
-  await closeSettings(page);
-  await activity.set({ nowOffset: 121_000, hold: [frankfurt.url] });
-  await openSettings(page);
-  await expect.poll(async () => (await activity.read()).inFlight).toBe(1);
-  await closeSettings(page);
-  await expect.poll(async () => (await activity.read()).aborted).toBe(1);
-  expect((await activity.read()).catalogs).toEqual([home.url]);
-});
+    await closeSettings(page);
+    await activity.set({ nowOffset: 121_000, hold: [frankfurt.url] });
+    await openSettings(page);
+    await expect.poll(async () => (await activity.read()).inFlight).toBe(1);
+    await closeSettings(page);
+    await expect.poll(async () => (await activity.read()).aborted).toBe(1);
+    expect((await activity.read()).catalogs).toEqual([home.url]);
+  },
+);
 
 test("metadata timeouts back off without starving later servers", async (page) => {
   const activity = await observe(page, [frankfurt.url, fleet[2].url]);

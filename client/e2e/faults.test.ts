@@ -12,7 +12,7 @@ import {
 } from "./fleet";
 import { incoherence } from "../src/lib/history/types";
 import { launch } from "./servers";
-import { expect, test, type Page } from "./webview";
+import { browser, expect, test, type Page } from "./webview";
 
 type Peer = Awaited<ReturnType<typeof spawnPeer>>;
 interface Fault {
@@ -102,7 +102,10 @@ async function editDownload(page: Page, value: number) {
   }, value);
 }
 
-for (const fault of faults)
+// Freezing a page is Chrome's lifecycle control; no other browser offers it.
+for (const fault of faults.filter(
+  (fault) => browser === "chrome" || !fault.name.includes("frozen"),
+))
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");
     const peers = [frankfurt, victim.server];

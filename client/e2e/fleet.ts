@@ -56,12 +56,7 @@ export interface Seed {
 }
 
 export async function open(page: Page, origin = home.url, seed: Seed = {}) {
-  await page.cdp("Network.clearBrowserCookies");
-  for (const origin of fleet.flatMap((server) => [server.http, server.url]))
-    await page.cdp("Storage.clearDataForOrigin", {
-      origin,
-      storageTypes: "local_storage,indexeddb",
-    });
+  await page.clearStorage(fleet.flatMap((server) => [server.http, server.url]));
   await page.addInitScript(
     ({ servers, config }) => {
       if (localStorage.getItem("graphite-meter:v1")) return;

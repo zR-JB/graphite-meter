@@ -9,7 +9,7 @@ wire implementation, native client, generated legal data and the embedded browse
 
 Install [mise](https://mise.jdx.dev/installing-mise.html) at the version in `mise.toml` (`vars.mise_version`); it
 provides the pinned Go, Bun, Python and checkers. You also need Git, Bash and jq; browser tests need the pinned
-Chrome for Testing, container checks Docker or Podman. On Windows, put Git for Windows' `bash.exe` and `sh.exe` on
+Chrome for Testing or Firefox, container checks Docker or Podman. On Windows, put Git for Windows' `bash.exe` and `sh.exe` on
 `PATH` (task execution there is unverified).
 
 ```sh
@@ -80,13 +80,16 @@ browser's version from the `CLIENT_VERSION` build argument, so `VERSION` alone s
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
 | Go unit and integration | `mise run server-test` (race + coverage: `server-race`) | Server, wire, auth, native client, TUI.                |
 | Browser unit            | `mise run client-ci`                                    | Types, format, measurement math, codecs, state.        |
-| Real-server E2E         | `mise run e2e`                                          | Pinned Chromium against a local fleet of real servers. |
+| Real-server E2E         | `mise run e2e`                                          | Chrome or Firefox against a local fleet of real servers. |
 
 `mise run e2e` builds the production client and server, then `client/scripts/e2e.ts` starts five servers with an
 ephemeral certificate: a home server with a catalogue, three public peers (native TLS, plain, second catalogue) and
 a password-protected peer. Tests seed settings through `localStorage`, spawn their own server when they stop one,
-and drive Chrome through `client/e2e/webview.ts`. Servers listen on `127.0.0.1` at TCP+UDP ports drawn from a
-per-process slice of 20000–31999; the harness uses an OS-assigned port.
+and drive the browser through `client/e2e/webview.ts`: Chrome over its DevTools Protocol, or with
+`GM_E2E_BROWSER=firefox` Firefox over WebDriver BiDi (`GM_FIREFOX_PATH` names another build). CI runs both. Tests
+written `test.chrome` need the DevTools Protocol (heap counters, CPU throttling, forced QUIC) and Firefox skips them.
+Servers listen on `127.0.0.1` at TCP+UDP ports drawn from a per-process slice of 20000–31999; the harness uses an
+OS-assigned port.
 
 Failures keep a screenshot, console, page errors and DOM under `client/test-results/webview`, and server logs under
 `client/test-results/servers`. Rerun a subset against the built binary, and set `GM_WEBVIEW_DEBUG=1` for Chrome
@@ -142,7 +145,7 @@ Never create or move release tags in ordinary work.
 | Go, Bun, Python, standalone checkers | `mise.toml` `[tools]`                    | Local tasks, CI, commit hook              |
 | Tool downloads                       | `mise.lock`                              | Exact artifacts and checksums             |
 | mise bootstrap                       | `mise.toml` `vars.mise_version`          | The SHA-pinned CI action                  |
-| Chrome for Testing                   | `mise.toml` `vars.browser_chrome`        | CI install and identity check             |
+| Chrome for Testing, Firefox          | `mise.toml` `vars.browser_*`             | CI install and identity check             |
 | CodeQL bundle                        | `mise.toml` `vars.codeql`                | `mise run codeql`                         |
 | Utility container images             | `mise.toml` `vars.image_*`               | Image build, verification and publication |
 | Go dependencies                      | `go/go.mod`, `go/go.sum`                 | Module resolution and checksums           |

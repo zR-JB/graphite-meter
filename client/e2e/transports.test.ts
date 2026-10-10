@@ -11,31 +11,36 @@ const paths = [
   ["WebTransport datagrams", home.h3, "webtransport-datagram", "h3"],
 ] as const;
 
+// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on). Firefox 157's socket thread can spin
+// at full load after back-to-back HTTP/2 transfers at loopback rates, stalling the session.
 for (const [name, origin, transport, protocol] of paths)
-  test(`${name} carries both directions over ${protocol}`, async (page) => {
-    await page.goto(`${harness}/bench/harness.html`);
-    for (const dir of ["down", "up"] as const) {
-      const spec: CellSpec = {
+  (protocol === "h3" || protocol === "h2" ? test.chrome : test)(
+    `${name} carries both directions over ${protocol}`,
+    async (page) => {
+      await page.goto(`${harness}/bench/harness.html`);
+      for (const dir of ["down", "up"] as const) {
+        const spec: CellSpec = {
+          origin,
+          transport,
+          dir,
+          lanes: 1,
+          warmupMs: 250,
+          measureMs: 500,
+        };
+        const result = await page.evaluate<CellResult>(
+          (cell) => (window as any).__gmBench.run(cell),
+          spec,
+        );
+        expect(result.errors).toEqual([]);
+        expect(result.bytes).toBeGreaterThan(0);
+      }
+      const negotiated = await page.evaluate(
+        (base) =>
+          fetch(`${base}/probe`, { cache: "no-store" })
+            .then((response) => response.json())
+            .then((probe) => probe.protocolNegotiated),
         origin,
-        transport,
-        dir,
-        lanes: 1,
-        warmupMs: 250,
-        measureMs: 500,
-      };
-      const result = await page.evaluate<CellResult>(
-        (cell) => (window as any).__gmBench.run(cell),
-        spec,
       );
-      expect(result.errors).toEqual([]);
-      expect(result.bytes).toBeGreaterThan(0);
-    }
-    const negotiated = await page.evaluate(
-      (base) =>
-        fetch(`${base}/probe`, { cache: "no-store" })
-          .then((response) => response.json())
-          .then((probe) => probe.protocolNegotiated),
-      origin,
-    );
-    expect(negotiated).toBe(protocol);
-  });
+      expect(negotiated).toBe(protocol);
+    },
+  );

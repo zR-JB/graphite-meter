@@ -9,13 +9,23 @@ const bin =
   resolve(import.meta.dir, "../test-results/graphite-meter");
 if (!(await Bun.file(bin).exists()))
   throw new Error(`${bin} is missing; build it with mise run e2e`);
-const chrome = process.env.BUN_CHROME_PATH;
-const expected = process.env.GM_EXPECTED_CHROME_VERSION;
-if (expected) {
-  const version = Bun.spawnSync([chrome ?? "chrome", "--version"]);
-  const actual = version.stdout.toString().trim();
-  if (actual !== `Google Chrome for Testing ${expected}`)
-    throw new Error(`Chrome is ${actual}; expected ${expected}`);
+// CI runs the browser mise.toml pins; a local run takes whichever is installed.
+for (const [path, expected, name] of [
+  [
+    process.env.BUN_CHROME_PATH ?? "chrome",
+    process.env.GM_EXPECTED_CHROME_VERSION,
+    "Google Chrome for Testing",
+  ],
+  [
+    process.env.GM_FIREFOX_PATH ?? "firefox",
+    process.env.GM_EXPECTED_FIREFOX_VERSION,
+    "Mozilla Firefox",
+  ],
+] as const) {
+  if (!expected) continue;
+  const actual = Bun.spawnSync([path, "--version"]).stdout.toString().trim();
+  if (actual !== `${name} ${expected}`)
+    throw new Error(`${actual} is not ${name} ${expected}`);
 }
 
 const dir = await mkdtemp(join(tmpdir(), "gm-e2e-"));

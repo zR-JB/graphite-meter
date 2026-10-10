@@ -49,6 +49,9 @@ outputs:
   chrome-version:
     description: Exact Chrome for Testing version from mise.toml
     value: ${{ steps.versions.outputs.chrome }}
+  firefox-version:
+    description: Exact Firefox version from mise.toml
+    value: ${{ steps.versions.outputs.firefox }}
 runs:
   using: composite
   steps:
@@ -99,9 +102,10 @@ runs:
       run: |
         printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
         chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)
+        firefox=$(python3 scripts/ci/toolchains.py get browser.firefox)
         go=$(python3 scripts/ci/toolchains.py get runtime.go)
         bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
-        printf 'chrome=%s\ngo=%s\nbun=%s\n' "$chrome" "$go" "$bun" >> "$GITHUB_OUTPUT"
+        printf 'chrome=%s\nfirefox=%s\ngo=%s\nbun=%s\n' "$chrome" "$firefox" "$go" "$bun" >> "$GITHUB_OUTPUT"
 
     - id: go-cache
       name: Locate Go caches

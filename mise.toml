@@ -20,6 +20,7 @@ go = "1.27.1"
 mise_version = "2026.9.14"
 
 browser_chrome = "154.0.8037.92"
+browser_firefox = "157.0.1"
 
 codeql = "2.27.1"
 
@@ -267,7 +268,7 @@ run = [
 ]
 
 [tasks.e2e]
-description = "Run Chromium against one local server fleet"
+description = "Run the browser suite against one local server fleet (GM_E2E_BROWSER=chrome|firefox)"
 dir = "client"
 run = [{ task = "_e2e-build" }, "bun run scripts/e2e.ts"]
 
