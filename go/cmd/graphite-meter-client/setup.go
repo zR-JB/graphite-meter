@@ -344,6 +344,10 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.edit = nil
+		if before.BaseURL == "" && m.cfg.BaseURL != "" {
+			// A first server is entered to be tested, so the next enter starts.
+			m.row = slices.Index(m.rows(), startRow)
+		}
 		return m.recheckIfPathsChanged(before)
 	}
 	return m.updateEdit(msg)

@@ -610,9 +610,12 @@ func TestFirstStartAsksForTheServer(t *testing.T) {
 		t.Fatal("start without a server did not ask for one")
 	}
 	m, _ = modelAndCmd(m.Update(tea.PasteMsg{Content: "meter.example"}))
-	if m, cmd := modelAndCmd(m.Update(press("enter"))); m.cfg.BaseURL != "https://meter.example" ||
-		m.prepare != prepareChecking || cmd == nil {
+	m, cmd := modelAndCmd(m.Update(press("enter")))
+	if m.cfg.BaseURL != "https://meter.example" || m.prepare != prepareChecking || cmd == nil {
 		t.Fatalf("an entered server is not prepared: %q, state %v", m.cfg.BaseURL, m.prepare)
+	}
+	if m.currentRow() != startRow {
+		t.Fatal("a first server leaves the focus on its address instead of Start")
 	}
 }
 
