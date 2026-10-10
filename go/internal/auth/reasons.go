@@ -10,7 +10,8 @@ const (
 	reasonCSRFTokenMismatch  reason = "csrf_token_mismatch"
 
 	reasonFormMalformed    reason = "malformed_form"
-	reasonThrottled        reason = "rate_limited_or_client_address"
+	reasonThrottled        reason = "rate_limited"
+	reasonClientAddress    reason = "client_address"
 	reasonVerifierBusy     reason = "verifier_busy"
 	reasonPasswordMismatch reason = "password_mismatch"
 	reasonSessionCapacity  reason = "session_capacity"
@@ -41,6 +42,7 @@ const (
 	noticeStale     notice = "stale"
 	noticeThrottled notice = "throttled"
 	noticePassword  notice = "password"
+	noticeProxy     notice = "proxy"
 )
 
 func noticeFor(why reason) notice {
@@ -53,6 +55,8 @@ func noticeFor(why reason) notice {
 		return noticeThrottled
 	case reasonPasswordMismatch:
 		return noticePassword
+	case reasonClientAddress:
+		return noticeProxy
 	case reasonCSRFCookieMissing, reasonCSRFTokenMissing, reasonTransactionCookie:
 		return noticeStale
 	}
@@ -62,7 +66,7 @@ func noticeFor(why reason) notice {
 func parseNotice(raw string) notice {
 	n := notice(raw)
 	switch n {
-	case "", noticeProvider, noticeBusy, noticeStale, noticeThrottled, noticePassword:
+	case "", noticeProvider, noticeBusy, noticeStale, noticeThrottled, noticePassword, noticeProxy:
 		return n
 	}
 	return noticeGeneric

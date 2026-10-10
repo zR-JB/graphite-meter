@@ -31,7 +31,7 @@ func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := transport.ResolveClientAddress(r, p.trusted)
 	if !ok {
-		http.Error(w, "ambiguous client address", http.StatusBadRequest)
+		http.Error(w, transport.RefusedAddress, http.StatusBadRequest)
 		return
 	}
 	noStoreJSON(w)

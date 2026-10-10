@@ -24,6 +24,8 @@
         <p class="notice" data-tone="err" role="alert">Incorrect password. Check it and try again.</p>
       {{else if eq .Notice "throttled"}}
         <p class="notice" data-tone="warn" role="alert">Too many attempts. Wait a minute and try again.</p>
+      {{else if eq .Notice "proxy"}}
+        <p class="notice" data-tone="err" role="alert">This server cannot tell your address from its reverse proxy. Ask its operator to check the proxy's X-Real-IP.</p>
       {{else if eq .Notice "provider"}}
         <p class="notice" data-tone="warn" role="alert">{{.Provider}} is unavailable right now.{{if .Password}} Sign in with the operator password.{{end}}</p>
       {{else if eq .Notice "busy"}}
