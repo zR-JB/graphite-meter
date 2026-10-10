@@ -50,13 +50,6 @@ export function wireModel(estimate: CompensationEstimate): WireModel {
 }
 
 const CONFIDENCE: CompensationConfidence[] = ["high", "medium", "low"];
-const MIXED_LABELS: Record<FactorKey, string> = {
-  "application-framing": "Application framing",
-  "tls-records": "TLS records",
-  ethernet: "Ethernet",
-  ip: "IP headers",
-  transport: "Transport headers",
-};
 
 /* Bidirectional wire occupancy is the sum of its lanes even when their measured rates differ. */
 export function combineCompensationEstimates(
@@ -70,29 +63,19 @@ export function combineCompensationEstimates(
     estimates.reduce((total, estimate) => total + pick(estimate), 0);
   const measuredBytesPerSec = sum((e) => e.measuredBytesPerSec);
   const estimatedBytesPerSec = sum((e) => e.estimatedBytesPerSec);
-  const keys = [
-    ...new Set(active.flatMap((e) => e.factors.map((factor) => factor.key))),
-  ];
-  const factors =
-    measuredBytesPerSec > 0
-      ? keys.map((key) => {
-          const matching = active.flatMap((e) =>
-            e.factors.filter((factor) => factor.key === key),
-          );
-          const labels = new Set(matching.map((factor) => factor.label));
-          const weighted = active.reduce((total, e) => {
-            const factor = e.factors.find((candidate) => candidate.key === key);
-            return (
-              total + e.measuredBytesPerSec * (factor?.contributionPct ?? 0)
-            );
-          }, 0);
-          return {
-            key,
-            label: labels.size === 1 ? [...labels][0] : MIXED_LABELS[key],
-            contributionPct: weighted / measuredBytesPerSec,
-          };
-        })
-      : [];
+  // One row per header as labelled, so servers on IPv4 and IPv6 (or TCP and QUIC) each show their part, weighted by
+  // their bytes; the rows still sum to the whole overhead.
+  const rows = new Map<string, CompensationFactor>();
+  if (measuredBytesPerSec > 0)
+    for (const e of active)
+      for (const factor of e.factors) {
+        const row = rows.get(factor.label) ?? { ...factor, contributionPct: 0 };
+        row.contributionPct +=
+          (factor.contributionPct * e.measuredBytesPerSec) /
+          measuredBytesPerSec;
+        rows.set(factor.label, row);
+      }
+  const factors = [...rows.values()];
   return {
     componentCount: sum((e) => e.componentCount ?? 1),
     measuredBytesPerSec,
@@ -265,13 +248,19 @@ const STACK: readonly FactorKey[] = [
 
 /** Each header layer's share as an aligned row, then the MTU the estimate assumes. */
 export function compensationTooltip(estimate: CompensationBreakdown): string {
+  const shown = estimate.factors
+    .filter((factor) => factor.contributionPct > 0)
+    .sort(
+      (a, b) =>
+        STACK.indexOf(a.key) - STACK.indexOf(b.key) ||
+        b.contributionPct - a.contributionPct,
+    );
+  const split = new Set(shown.map((factor) => factor.key)).size < shown.length;
   return [
-    ...estimate.factors
-      .filter((factor) => factor.contributionPct > 0)
-      .sort((a, b) => STACK.indexOf(a.key) - STACK.indexOf(b.key))
-      .map(
-        (factor) => `${factor.label}\t+${factor.contributionPct.toFixed(2)}%`,
-      ),
+    ...shown.map(
+      (factor) => `${factor.label}\t+${factor.contributionPct.toFixed(2)}%`,
+    ),
+    ...(split ? ["Each server's headers, weighted by its bytes"] : []),
     `Estimated at a ${fmtCount(estimate.mtuBytes)} B MTU`,
   ].join("\n");
 }
