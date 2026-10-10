@@ -1,5 +1,6 @@
 import { X509Certificate, createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
@@ -9,13 +10,23 @@ const bin =
   resolve(import.meta.dir, "../test-results/graphite-meter");
 if (!(await Bun.file(bin).exists()))
   throw new Error(`${bin} is missing; build it with mise run e2e`);
-const chrome = process.env.BUN_CHROME_PATH;
-const expected = process.env.GM_EXPECTED_CHROME_VERSION;
-if (expected) {
-  const version = Bun.spawnSync([chrome ?? "chrome", "--version"]);
-  const actual = version.stdout.toString().trim();
-  if (actual !== `Google Chrome for Testing ${expected}`)
-    throw new Error(`Chrome is ${actual}; expected ${expected}`);
+// CI runs the browser mise.toml pins; a local run takes whichever is installed.
+for (const [path, expected, name] of [
+  [
+    process.env.BUN_CHROME_PATH ?? "chrome",
+    process.env.GM_EXPECTED_CHROME_VERSION,
+    "Google Chrome for Testing",
+  ],
+  [
+    process.env.GM_FIREFOX_PATH ?? "firefox",
+    process.env.GM_EXPECTED_FIREFOX_VERSION,
+    "Mozilla Firefox",
+  ],
+] as const) {
+  if (!expected) continue;
+  const actual = Bun.spawnSync([path, "--version"]).stdout.toString().trim();
+  if (actual !== `${name} ${expected}`)
+    throw new Error(`${actual} is not ${name} ${expected}`);
 }
 
 const dir = await mkdtemp(join(tmpdir(), "gm-e2e-"));
@@ -83,10 +94,30 @@ const harness = Bun.serve({
   },
 });
 
+// A test worker can exit without its cleanup hooks, leaving its browser running; every browser profile lives in
+// this run's directory, so whatever still runs from it is this run's (Linux /proc).
+async function stopBrowsers() {
+  const left = (await readdir("/proc").catch(() => []))
+    .filter((pid) => /^\d+$/.test(pid))
+    .filter((pid) => {
+      try {
+        return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(dir);
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
+  for (const pid of left)
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+}
+
 async function stop() {
   harness.stop(true);
   children.forEach((child) => child.kill());
   await Promise.all(children.map((child) => child.exited));
+  await stopBrowsers();
   await rm(dir, { recursive: true, force: true });
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const)
@@ -94,8 +125,12 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 
 const started = performance.now();
 const command = process.argv.slice(2);
+// A Firefox worker weighs more than Chrome's; three of them starve a CI runner's measurements.
+const workers = process.env.GM_E2E_BROWSER === "firefox" ? 2 : 3;
 const suite = Bun.spawn(
-  command.length ? command : [process.execPath, "run", "test:e2e"],
+  command.length
+    ? command
+    : [process.execPath, "run", "test:e2e", `--parallel=${workers}`],
   {
     cwd: resolve(import.meta.dir, ".."),
     stdio: ["inherit", "inherit", "inherit"],

@@ -66,7 +66,7 @@
     </div>
     <button
       bind:this={everywhere}
-      class="btn btn-icon btn-quiet signout everywhere"
+      class="btn btn-icon key signout everywhere"
       type="submit"
       name="scope"
       value="all"
@@ -80,7 +80,7 @@
       <Icon name="power" />
     </button>
     <button
-      class="btn btn-icon btn-quiet signout"
+      class="btn btn-icon key signout"
       type="submit"
       {@attach tooltip(() => "Sign out")}
       aria-label={`Sign out ${label}`}
@@ -105,12 +105,12 @@
 {/if}
 
 <style>
-  /* Quiet like the rest of the top bar: who is signed in, then the two sign-out scopes.
+  /* Who is signed in, then the two sign-out scopes as top-bar keys like their neighbours.
      The provider lives in the tooltip and the form's accessible name. */
   .account {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-2);
     min-width: 0;
     max-width: min(36vw, 300px);
   }
@@ -149,7 +149,7 @@
       color: var(--err);
     }
   }
-  /* Narrow and touch layouts keep only the sign-out action, as a top-bar key like its neighbours. */
+  /* Narrow and touch layouts keep only the sign-out action. */
   @media (max-width: 759px), (pointer: coarse) {
     .account {
       display: contents;
@@ -157,13 +157,6 @@
     .identity,
     .everywhere {
       display: none;
-    }
-    .signout {
-      --btn-line: var(--border);
-      box-shadow:
-        inset 0 0 0 var(--hairline) var(--btn-line),
-        var(--elev-tile);
-      color: var(--text);
     }
   }
 </style>

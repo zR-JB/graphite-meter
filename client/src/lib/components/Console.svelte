@@ -933,9 +933,6 @@
   .topbar :global(.btn) {
     background-color: var(--surface-1);
   }
-  .key {
-    color: var(--text);
-  }
   /* The bar keeps the connection's dot; its reply trace belongs to the instrument. */
   .connectivity :global(.spark) {
     display: none;

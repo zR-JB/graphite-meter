@@ -103,7 +103,7 @@ async function churnSurfaces(cycles: number) {
 }
 
 for (const width of [1600, 1000, 390]) {
-  test(
+  test.chrome(
     `rapid surface reversals release resources at ${width}px, including during a run`,
     async (page) => {
       await page.setViewportSize({ width, height: 900 });
@@ -204,7 +204,7 @@ for (const width of [1000, 390]) {
     expect(target.receivesInput).toBe(true);
     // Bypass the locator's actionability retry: the first click must land while
     // the closed sheet and scrim are still fading.
-    await page.raw.click(target.x, target.y);
+    await page.click(target.x, target.y);
     await expect(runButton(page, "Stop test")).toBeVisible();
     await runButton(page, "Stop test").click();
     await expect(phase(page, "aborted")).toHaveCount(1);
@@ -239,60 +239,66 @@ test("panels build as the pointer reaches their key and retain their state after
   await expect(page.locator(".infra")).toHaveCount(1);
 });
 
-test("rapid settings disclosures finish without duplicated rows or retained listeners", async (page) => {
-  await open(page, home.http);
-  await ready(page);
-  await openSettings(page);
-  const cycle = async (repetitions: number) => {
-    const frame = () =>
-      new Promise<void>((done) => requestAnimationFrame(() => done()));
-    const presets = document.querySelector('[aria-label="Duration preset"]')!;
-    const medium = Array.from(presets.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Medium",
-    )!;
-    const custom = Array.from(presets.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Custom",
-    )!;
-    for (let i = 0; i < repetitions; i++) {
-      custom.click();
-      await frame();
-      medium.click();
-      await frame();
-      for (const fold of document.querySelectorAll<HTMLButtonElement>(
-        ".picker button.fold",
-      )) {
-        fold.click();
-        await frame();
-        fold.click();
-        await frame();
-      }
-    }
-  };
-  await page.evaluate(cycle, 1);
-  await page.evaluate(settled);
-  await page.cdp("HeapProfiler.collectGarbage");
-  const before = await page.cdp("Memory.getDOMCounters");
-  await page.cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await page.evaluate(cycle, 30);
-  await page.evaluate(settled);
-  await page.cdp("HeapProfiler.collectGarbage");
-  const after = await page.cdp("Memory.getDOMCounters");
-  expect(after.nodes - before.nodes).toBeLessThan(50);
-  expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(5);
-  expect(
-    await page.evaluate(() => {
+test.chrome(
+  "rapid settings disclosures finish without duplicated rows or retained listeners",
+  async (page) => {
+    await open(page, home.http);
+    await ready(page);
+    await openSettings(page);
+    const cycle = async (repetitions: number) => {
+      const frame = () =>
+        new Promise<void>((done) => requestAnimationFrame(() => done()));
       const presets = document.querySelector('[aria-label="Duration preset"]')!;
-      return presets.closest("section")!.querySelectorAll(".stage-row").length;
-    }),
-  ).toBe(1);
-  expect(
-    await page.evaluate(() =>
-      Array.from(document.querySelectorAll(".picker button.fold"), (button) =>
-        button.getAttribute("aria-expanded"),
+      const medium = Array.from(presets.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Medium",
+      )!;
+      const custom = Array.from(presets.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Custom",
+      )!;
+      for (let i = 0; i < repetitions; i++) {
+        custom.click();
+        await frame();
+        medium.click();
+        await frame();
+        for (const fold of document.querySelectorAll<HTMLButtonElement>(
+          ".picker button.fold",
+        )) {
+          fold.click();
+          await frame();
+          fold.click();
+          await frame();
+        }
+      }
+    };
+    await page.evaluate(cycle, 1);
+    await page.evaluate(settled);
+    await page.cdp("HeapProfiler.collectGarbage");
+    const before = await page.cdp("Memory.getDOMCounters");
+    await page.cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await page.evaluate(cycle, 30);
+    await page.evaluate(settled);
+    await page.cdp("HeapProfiler.collectGarbage");
+    const after = await page.cdp("Memory.getDOMCounters");
+    expect(after.nodes - before.nodes).toBeLessThan(50);
+    expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(5);
+    expect(
+      await page.evaluate(() => {
+        const presets = document.querySelector(
+          '[aria-label="Duration preset"]',
+        )!;
+        return presets.closest("section")!.querySelectorAll(".stage-row")
+          .length;
+      }),
+    ).toBe(1);
+    expect(
+      await page.evaluate(() =>
+        Array.from(document.querySelectorAll(".picker button.fold"), (button) =>
+          button.getAttribute("aria-expanded"),
+        ),
       ),
-    ),
-  ).not.toContain("true");
-});
+    ).not.toContain("true");
+  },
+);
 
 test("reopening legal notices retains the loaded rows", async (page) => {
   await open(page, home.http);
@@ -328,75 +334,84 @@ test("reopening legal notices retains the loaded rows", async (page) => {
   expect(retained).toEqual({ same: true, removed: 0 });
 });
 
-test("a live stage keeps its open tooltip through progress and phase changes", async (page) => {
-  await open(page, home.http, {
-    config: { duration: { ...baseConfig.duration, downloadMs: 2_500 } },
-  });
-  await ready(page);
-  const started = Date.now();
-  await runButton(page, "Start test").click();
-  await expect(phase(page, "download")).toHaveCount(1);
-  const chip = page.locator(
-    '.stage-track [data-tone="download"][role="switch"]',
-  );
-  const point = await chip.evaluate((node: Element) => {
-    const box = node.getBoundingClientRect();
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  });
-  await page.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
-  const tip = page.locator('[role="tooltip"]');
-  await expect(tip).toHaveCount(1);
-  const id = await tip.getAttribute("id");
-  await Bun.sleep(500);
-  expect(await tip.getAttribute("id")).toBe(id);
-  await savedResult(page, started, 20_000);
-  await page.cdp("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: 0,
-    y: 0,
-  });
-  await expect(tip).toHaveCount(0);
-});
-
-test("repeated runs release their views and keep tooltip anchor styles bounded", async (page) => {
-  await open(page, home.http, {
-    config: {
-      stages: {
-        latency: true,
-        download: true,
-        upload: true,
-        bidirectional: true,
-      },
-      transports: {
-        throughputTarget: "protocol:http1",
-        latencyTarget: "transport:websocket",
-      },
-    },
-  });
-  await ready(page);
-  const counters = [];
-  for (let i = 0; i < 3; i++) {
-    await run(page);
-    const anchors = await page.evaluate(() =>
-      Array.from(
-        document.querySelectorAll<HTMLElement>("[style]"),
-        (node) =>
-          node.style
-            .getPropertyValue("anchor-name")
-            .split(",")
-            .filter((name) => name.trim().startsWith("--gm-tt-")).length,
-      ),
+test.chrome(
+  "a live stage keeps its open tooltip through progress and phase changes",
+  async (page) => {
+    await open(page, home.http, {
+      config: { duration: { ...baseConfig.duration, downloadMs: 2_500 } },
+    });
+    await ready(page);
+    const started = Date.now();
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "download")).toHaveCount(1);
+    const chip = page.locator(
+      '.stage-track [data-tone="download"][role="switch"]',
     );
-    expect(Math.max(0, ...anchors)).toBeLessThanOrEqual(1);
-    await page.goto(`${home.http}/#/history`);
-    await expect(page.locator(".result-row")).toHaveCount(i + 1);
-    await page.goto(`${home.http}/#/`);
-    await page.evaluate(settled);
-    await page.cdp("HeapProfiler.collectGarbage");
-    counters.push(await page.cdp("Memory.getDOMCounters"));
-  }
-  expect(counters[2].nodes - counters[0].nodes).toBeLessThan(100);
-  expect(
-    counters[2].jsEventListeners - counters[0].jsEventListeners,
-  ).toBeLessThan(10);
-});
+    const point = await chip.evaluate((node: Element) => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    });
+    await page.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...point,
+    });
+    const tip = page.locator('[role="tooltip"]');
+    await expect(tip).toHaveCount(1);
+    const id = await tip.getAttribute("id");
+    await Bun.sleep(500);
+    expect(await tip.getAttribute("id")).toBe(id);
+    await savedResult(page, started, 20_000);
+    await page.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: 0,
+      y: 0,
+    });
+    await expect(tip).toHaveCount(0);
+  },
+);
+
+test.chrome(
+  "repeated runs release their views and keep tooltip anchor styles bounded",
+  async (page) => {
+    await open(page, home.http, {
+      config: {
+        stages: {
+          latency: true,
+          download: true,
+          upload: true,
+          bidirectional: true,
+        },
+        transports: {
+          throughputTarget: "protocol:http1",
+          latencyTarget: "transport:websocket",
+        },
+      },
+    });
+    await ready(page);
+    const counters = [];
+    for (let i = 0; i < 3; i++) {
+      await run(page);
+      const anchors = await page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll<HTMLElement>("[style]"),
+          (node) =>
+            node.style
+              .getPropertyValue("anchor-name")
+              .split(",")
+              .filter((name) => name.trim().startsWith("--gm-tt-")).length,
+        ),
+      );
+      expect(Math.max(0, ...anchors)).toBeLessThanOrEqual(1);
+      await page.goto(`${home.http}/#/history`);
+      await expect(page.locator(".result-row")).toHaveCount(i + 1);
+      await page.goto(`${home.http}/#/`);
+      await page.evaluate(settled);
+      await page.cdp("HeapProfiler.collectGarbage");
+      counters.push(await page.cdp("Memory.getDOMCounters"));
+    }
+    expect(counters[2].nodes - counters[0].nodes).toBeLessThan(100);
+    expect(
+      counters[2].jsEventListeners - counters[0].jsEventListeners,
+    ).toBeLessThan(10);
+  },
+);

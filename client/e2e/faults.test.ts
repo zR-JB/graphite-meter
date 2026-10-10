@@ -12,7 +12,7 @@ import {
 } from "./fleet";
 import { incoherence } from "../src/lib/history/types";
 import { launch } from "./servers";
-import { expect, test, type Page } from "./webview";
+import { browser, expect, test, type Page } from "./webview";
 
 type Peer = Awaited<ReturnType<typeof spawnPeer>>;
 interface Fault {
@@ -32,7 +32,9 @@ interface Fault {
 const faults: Fault[] = [
   {
     name: "a stopped peer leaves the download it stalled",
-    downloadMs: 3_000,
+    // The fault lands once the page shows the stage, which a busy browser can show late; a stall must still end the
+    // window well before it closes to fail the stage rather than the next one.
+    downloadMs: 5_000,
     during: "download",
     act: async (_page, victim) => void victim.kill("SIGSTOP"),
     outcome: "partial",
@@ -40,7 +42,7 @@ const faults: Fault[] = [
   },
   {
     name: "a killed peer leaves the upload it was in",
-    uploadMs: 3_000,
+    uploadMs: 5_000,
     during: "upload",
     act: async (_page, victim) => void victim.kill("SIGKILL"),
     outcome: "partial",
@@ -102,7 +104,10 @@ async function editDownload(page: Page, value: number) {
   }, value);
 }
 
-for (const fault of faults)
+// Freezing a page is Chrome's lifecycle control; no other browser offers it.
+for (const fault of faults.filter(
+  (fault) => browser === "chrome" || !fault.name.includes("frozen"),
+))
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");
     const peers = [frankfurt, victim.server];

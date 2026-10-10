@@ -834,6 +834,10 @@
     width: calc(var(--control-h) + 2 * var(--hit-pad));
     padding: 0;
   }
+  /* A top-bar key: a glyph plate in full ink, whichever component owns it. */
+  .btn.key {
+    color: var(--text);
+  }
   .btn-inset {
     background-color: var(--surface-inset);
   }

@@ -104,31 +104,55 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   expect(saved.result.outcome).toBe("complete");
 });
 
-test("reduced motion still updates every readout and completes", async (page) => {
-  await page.cdp("Emulation.setEmulatedMedia", {
-    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
-  });
+test("a completed run's arcs draw each result's share of the ring", async (page) => {
   await open(page);
   await ready(page);
-  await runButton(page, "Start test").click();
-  await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
-  const elapsed = page.locator(".elapsed .readout");
-  const first = await elapsed.textContent();
-  await expect
-    .poll(async () => (await elapsed.textContent()) !== first)
-    .toBe(true);
-  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
-  await expect(
-    page.locator('.results .card[data-tone="download"] .graph'),
-  ).toBeVisible();
-  const saved = await savedResult(page);
-  expect(saved.result.outcome).toBe("complete");
-  await expect(
-    page.locator('.results .card[data-tone="download"] .facts'),
-  ).toContainText("Peak");
+  await run(page);
+  await page.evaluate(settled);
+  const arcs = await page
+    .locator(".result-arc")
+    .all((paths: SVGPathElement[]) =>
+      paths.map((path) => ({
+        drawn: parseFloat(getComputedStyle(path).strokeDasharray),
+        wanted:
+          path.getTotalLength() *
+          Number(getComputedStyle(path).getPropertyValue("--fraction")),
+      })),
+    );
+  expect(arcs.length).toBeGreaterThan(0);
+  // A browser that drops the dash array draws the whole ring.
+  for (const arc of arcs)
+    expect(Math.abs(arc.drawn - arc.wanted)).toBeLessThan(1);
 });
 
-test("a run in a hidden tab completes and saves", async (page) => {
+test.chrome(
+  "reduced motion still updates every readout and completes",
+  async (page) => {
+    await page.cdp("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    await open(page);
+    await ready(page);
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+    const elapsed = page.locator(".elapsed .readout");
+    const first = await elapsed.textContent();
+    await expect
+      .poll(async () => (await elapsed.textContent()) !== first)
+      .toBe(true);
+    await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+    await expect(
+      page.locator('.results .card[data-tone="download"] .graph'),
+    ).toBeVisible();
+    const saved = await savedResult(page);
+    expect(saved.result.outcome).toBe("complete");
+    await expect(
+      page.locator('.results .card[data-tone="download"] .facts'),
+    ).toContainText("Peak");
+  },
+);
+
+test.chrome("a run in a hidden tab completes and saves", async (page) => {
   await open(page);
   await ready(page);
   // Closing Settings leaves its toggle's wash fading on the compositor; Chrome freezes a page minimized mid-fade.
@@ -161,13 +185,11 @@ test("a completed run fits every layout and theme without serious violations", a
   for (const [width, height] of viewports)
     for (const scheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });
-      // Contrast is judged on settled values; a fade in flight would lower it.
-      await page.cdp("Emulation.setEmulatedMedia", {
-        features: [
-          { name: "prefers-color-scheme", value: scheme },
-          { name: "prefers-reduced-motion", value: "reduce" },
-        ],
-      });
+      // The theme as the app stamps it; contrast waits for fades to settle (seriousViolations).
+      await page.evaluate(
+        (theme) => document.documentElement.setAttribute("data-theme", theme),
+        scheme,
+      );
       await openSettings(page);
       const layout = () =>
         page.evaluate(() => {
@@ -270,7 +292,7 @@ test("a completed run fits every layout and theme without serious violations", a
     );
   }
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(about).toBeFocused();
 });

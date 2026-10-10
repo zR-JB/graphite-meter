@@ -739,6 +739,32 @@ test("a 0 ms stage is not planned, and a plan without a stage is refused", async
   expect(result.outcome).toBe("complete");
 });
 
+test("a grant refused while the next stage prepares asks for sign-in", async () => {
+  const server = { id: "a", name: "a", url: "https://a.example" };
+  const h = await harness(
+    two({
+      prepare: (activity) => {
+        if (activity.stage === "upload")
+          throw new Error("upload session could not be established", {
+            cause: new ServerAuthenticationRequired(server),
+          });
+      },
+    }),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toMatchObject([
+    {
+      serverId: "a",
+      stage: "upload",
+      reason: "sign-in-required",
+      message: "Sign in to a",
+    },
+  ]);
+});
+
 test("a lane that fails while a measured stage shuts down never fails the stage", async () => {
   const torn = {
     finish: (host: ParticipantHost) =>
