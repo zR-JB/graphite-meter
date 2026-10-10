@@ -206,6 +206,10 @@ func (s *stageRun) handle(outcome resourceOutcome) error {
 		outcome.role == roleLatency && outcome.server.latencyFailed {
 		return nil
 	}
+	// After the window closed, a transfer that was still moving then keeps its stage, as at teardown.
+	if s.ending && !s.failedAtEnd(outcome) {
+		return nil
+	}
 	before := len(c.ids())
 	s.fail(outcome.server, outcome.role, outcome.err, outcome.at)
 	if err := s.lost(); err != nil {
@@ -487,8 +491,13 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			removed = true
 			continue
 		}
+		// The final checkpoint can answer well after the window closed; silence counts up to the window's end.
+		at := collected
+		if final {
+			at = s.ended
+		}
 		for _, dir := range s.plan.Directions {
-			if collected.Sub(s.lastMovement[id].of(dir)) >= redialWindow && (final || s.moving(dir, server, collected)) {
+			if at.Sub(s.lastMovement[id].of(dir)) >= redialWindow && (final || s.moving(dir, server, at)) {
 				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
 				s.fail(server, string(dir), err, time.Now())
 				removed = true

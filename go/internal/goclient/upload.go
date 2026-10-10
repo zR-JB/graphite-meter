@@ -47,13 +47,21 @@ func (r *runner) uploadReceiver(ctx context.Context, gate *stageGate) error {
 	}
 	progressURL = withUploadID(progressURL, id)
 	progress := newUploadProgress(ctx, id)
-	defer func() { r.endUpload(progress, progressURL, errors.Is(context.Cause(ctx), errHandover)) }()
+	// The upload ends while its WebTransport session still carries the feed, then the session closes.
+	var host *wtStageSession
+	defer func() {
+		r.endUpload(progress, progressURL, errors.Is(context.Cause(ctx), errHandover))
+		if host != nil {
+			host.close()
+		}
+	}()
 
 	lane := func(ctx context.Context, i int, ready func()) error {
 		return r.uploadLane(ctx, id, i, block, ready)
 	}
 	if r.target.Transport == wire.TransportWebTransport {
-		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
+		var err error
+		host, err = newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
 			return wtDial(ctx, r.cred, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
 		}, func(ctx context.Context, sess *wtSession) error {
 			feed, err := wtProgressFeed(ctx, progress.ctx, sess)
@@ -65,7 +73,6 @@ func (r *runner) uploadReceiver(ctx context.Context, gate *stageGate) error {
 		if err != nil {
 			return err
 		}
-		defer host.close()
 		lane = func(ctx context.Context, _ int, ready func()) error {
 			return runWTLane(ctx, host, func(ctx context.Context, sess *wtSession) (bool, error) {
 				return uploadLaneWT(ctx, sess, block, ready)

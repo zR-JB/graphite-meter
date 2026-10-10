@@ -739,6 +739,57 @@ test("a 0 ms stage is not planned, and a plan without a stage is refused", async
   expect(result.outcome).toBe("complete");
 });
 
+test("a lane that fails while a measured stage shuts down never fails the stage", async () => {
+  const torn = {
+    finish: (host: ParticipantHost) =>
+      host.fail("connection-lost", "upload stream closed"),
+  };
+  const h = await harness(
+    [{ id: "a", ...torn }],
+    { upload: true },
+    {
+      uploadMs: 1_000,
+    },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.stages.upload).toBe("complete");
+  expect(result.multiServer.failures).toEqual([]);
+  near(result.upload?.reportedBytesPerSec, 1_000);
+});
+
+test("a final checkpoint answered late over a full uplink keeps a server that was moving", async () => {
+  // The feed's last record comes at 900 ms; the checkpoint asked as the window closed answers 1.2 s later with that
+  // count on the receiver's later clock, so the server seems to have stood still for two seconds it was not measured.
+  const late: Partial<Peer> = {
+    silent: (_activity, ms) => ms > 900,
+    checkpoint: () =>
+      new Promise((resolve) =>
+        setTimeout(
+          () =>
+            resolve({
+              id: "a:upload",
+              bytes: 900,
+              nanos: 900e6 + 1 + 2e9,
+              receivedAtMs: performance.now(),
+            }),
+          1_200,
+        ),
+      ),
+  };
+  const h = await harness(
+    [{ id: "a", ...late }],
+    { upload: true },
+    {
+      uploadMs: 1_000,
+    },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.participants).toEqual(["a"]);
+  expect(result.multiServer.failures).toEqual([]);
+});
+
 test("an expired grant at the final checkpoint asks for sign-in and removes only that server", async () => {
   const server = { id: "a", name: "a", url: "https://a.example" };
   const h = await harness(

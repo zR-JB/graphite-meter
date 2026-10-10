@@ -141,7 +141,7 @@ func TestSilenceRemovesAServerOnlyWhileAnotherMoves(t *testing.T) {
 			s.c.aggregate.observe(nativeBoundary(0, start, nil))
 			s.beginSampling(time.Now().Add(-redialWindow))
 			boundary := nativeBoundary(1000, end, nil)
-			boundary.final = c.final
+			boundary.final, s.ended = c.final, time.Now()
 			s.observe(sampledBoundary{boundary: boundary})
 			s.sampler.cancel()
 			s.sampling.Wait()
@@ -151,6 +151,41 @@ func TestSilenceRemovesAServerOnlyWhileAnotherMoves(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A run's last moments: evidence that moved shortly before the window closed keeps its server, however late the final
+// checkpoint answers and whatever its transfer reports while shutting down.
+func TestAServerMovingAsTheWindowClosesKeepsItsStage(t *testing.T) {
+	t.Parallel()
+	stage := func(sinceMovement time.Duration) (*stageRun, *participant) {
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}},
+			transport: &runner{coordinated: &participantCounters{}}}
+		s := testStage(p, StagePlan{Name: StageDownload, Directions: []Direction{Down}}, func(Event) {})
+		s.ctx, s.sampler = t.Context(), &sampler{cancel: func() {}}
+		s.c.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
+		s.ending, s.ended = true, time.Now()
+		s.beginSampling(s.ended.Add(-sinceMovement))
+		return s, p
+	}
+	// The final checkpoint is collected a second after the window closed, with nothing new.
+	s, p := stage(redialWindow - 100*time.Millisecond)
+	final := nativeBoundary(int(time.Since(s.c.started).Milliseconds())+1000, map[string]uint64{"a": 100}, nil)
+	final.final = true
+	s.observe(sampledBoundary{boundary: final})
+	if p.removed {
+		t.Fatal("a late final checkpoint removed a server that moved within the window")
+	}
+	for _, c := range []struct {
+		sinceMovement time.Duration
+		removed       bool
+	}{{0, false}, {time.Second, true}} {
+		s, p := stage(c.sinceMovement)
+		_ = s.handle(resourceOutcome{server: s.servers[0], role: string(Down), err: errors.New("stream reset"),
+			at: time.Now()})
+		if p.removed != c.removed {
+			t.Errorf("a failure %v after movement removed = %v, want %v", c.sinceMovement, p.removed, c.removed)
+		}
 	}
 }
 

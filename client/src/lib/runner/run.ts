@@ -745,6 +745,11 @@ export class Run {
     const recovering = participants.filter((server) =>
       this.#recovering(server),
     );
+    // Judged as the window closed: a final checkpoint answered late over a full uplink must not make a server that
+    // was moving look silent.
+    const silentAtEnd = participants.filter((server) =>
+      this.#silent(server, at),
+    );
     this.#measuring = false;
     const results = await Promise.allSettled(
       participants.map((server) =>
@@ -775,7 +780,9 @@ export class Run {
         );
     // Whoever is still silent, or still retrying a failure, leaves here as it would have mid-stage.
     for (const server of participants) {
-      const silent = this.#silent(server, at);
+      const silent = silentAtEnd.includes(server)
+        ? this.#silent(server, at)
+        : undefined;
       if (silent || (recovering.includes(server) && this.#recovering(server)))
         this.#leave(server, silent);
     }
@@ -844,7 +851,11 @@ export class Run {
         server.latencyStall = null;
         run.#updateStalled();
       },
-      fail: (reason, message) => run.#remove(server, reason, message),
+      // Tearing down lanes that moved to the window's end cannot fail the stage; a server that stopped earlier can.
+      fail(reason, message) {
+        if (run.#measuring || !run.#ending || !run.#movedToEnd(server))
+          run.#remove(server, reason, message);
+      },
       authenticationRequired(role) {
         const message = `Sign in to ${server.server.name}`;
         // Loaded latency alone never removes a throughput participant.
@@ -1003,6 +1014,14 @@ export class Run {
     return this.#participants().some(
       (server) =>
         server !== silent && at - server.progressAt[dir] < STALL_QUIET_MS,
+    );
+  }
+
+  /** Every direction of the stage moved within a moment of its window's end, where the held clock stands. */
+  #movedToEnd(server: Participant): boolean {
+    const at = this.#clock.active();
+    return (this.#activity?.transfer ?? []).every(
+      (dir) => at - server.progressAt[dir] < STALL_QUIET_MS,
     );
   }
 
