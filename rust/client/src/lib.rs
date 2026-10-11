@@ -13,6 +13,7 @@ pub mod measure {
     pub mod format;
     pub mod latency;
     pub mod live;
+    pub mod wire;
 }
 
 pub mod run {

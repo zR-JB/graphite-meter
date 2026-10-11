@@ -1,5 +1,5 @@
 //! The path choices the checked servers offer, and how ready each selected server is.
-use super::{App, FRESH};
+use super::App;
 use crate::{
     config::PathChoice,
     events::Check,
@@ -12,21 +12,19 @@ use graphite_meter_proto::{
     origin::Origin,
     reason::FailureReason,
 };
-use std::time::Instant;
 
 /// A selected server's paths as setup shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Readiness {
     Ready,
     Checking,
-    Stale,
     Failed,
     SignIn,
 }
 
 impl Readiness {
     pub(super) fn label(self) -> &'static str {
-        ["Ready", "Checking", "Recheck needed", "Failed", "Sign in"][self as usize]
+        ["Ready", "Checking", "Failed", "Sign in"][self as usize]
     }
 }
 
@@ -37,39 +35,26 @@ impl App {
     }
 
     pub(super) fn readiness(&self, server: &ServerPath) -> Readiness {
-        let outdated = |(_, at): &(_, Instant)| self.now.saturating_duration_since(*at) > FRESH;
-        let stale = self.checked.as_ref().is_none_or(outdated);
         match &server.path {
             _ if self.checking() => Readiness::Checking,
             Err(failure) if failure.reason == FailureReason::SignInRequired => Readiness::SignIn,
             Err(_) => Readiness::Failed,
-            Ok(_) if stale => Readiness::Stale,
             Ok(_) => Readiness::Ready,
         }
     }
 
     /// The selected servers whose paths a run can take.
     pub(super) fn ready(&self) -> Vec<ServerId> {
-        let usable = |server: &&ServerPath| matches!(self.readiness(server), Readiness::Ready | Readiness::Stale);
+        let usable = |server: &&ServerPath| self.readiness(server) == Readiness::Ready;
         let servers = self.view.servers.iter().filter(usable);
         servers.map(|server| server.id.clone()).collect()
     }
 
-    pub(super) fn can_use_available(&self) -> bool {
-        let ready = self.ready().len();
-        !self.checking() && ready > 0 && ready < self.view.servers.len()
-    }
-
     /// Whether the last check left no server to run with.
     pub(super) fn could_not_start(&self) -> bool {
-        matches!(self.view.check, Check::Failed(_)) || self.view.check == Check::Ready && self.ready().is_empty()
-    }
-
-    /// Whether the last check's paths serve the settings as they are now.
-    pub(super) fn fresh(&self) -> bool {
-        let fresh =
-            |(key, at): &(_, Instant)| *key == self.config.key() && self.now.saturating_duration_since(*at) <= FRESH;
-        self.checked.as_ref().is_some_and(fresh)
+        let failed =
+            matches!(self.view.check, Check::Failed(_)) || self.view.check == Check::Ready && self.ready().is_empty();
+        failed && !self.checking()
     }
 
     /// The single selected server and what its preflight offered.
@@ -81,7 +66,7 @@ impl App {
     }
 
     /// A path row's choices: automatic, then the single server's offers or the transports servers may share.
-    fn choices<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> Vec<Choice<T>> {
+    pub(super) fn choices<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> Vec<Choice<T>> {
         let automatic = |note| Choice::new(None, None, "Automatic".into(), note);
         let Some((server, offered)) = self.single() else {
             let mut choices = vec![automatic("each server".into())];
@@ -115,17 +100,15 @@ impl App {
         choices
     }
 
-    /// A path row's value; its help gains the count of choices.
-    pub(super) fn path_value<T: Copy + PartialEq>(&self, kind: &Kind<T>, help: &mut String) -> String {
+    /// A path row's value: the chosen path, or what was chosen though the checked server does not offer it.
+    pub(super) fn path_value<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> String {
         let (choices, chosen) = (self.choices(kind), (kind.chosen)(&self.config.paths));
-        *help = format!("{help}. ←/→ picks one of {}.", choices.len());
         match choices.iter().find(|choice| choice.selects(chosen)) {
             Some(choice) if choice.note.is_empty() => choice.label.clone(),
             Some(choice) => format!("{} · {}", choice.label, choice.note),
             None => {
-                *help = format!("Not offered by the checked server. {help}");
                 let origin = chosen.0.map_or_else(|| "automatic origin".into(), Origin::to_string);
-                format!("{} · {origin}", chosen.1.map_or("auto", kind.label))
+                format!("{} · {origin} (not offered)", chosen.1.map_or("auto", kind.label))
             }
         }
     }
@@ -209,7 +192,7 @@ pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
 };
 
 /// A path row's choice: an origin and a transport, each automatic when none.
-struct Choice<T> {
+pub(super) struct Choice<T> {
     origin: Option<Origin>,
     transport: Option<T>,
     label: String,

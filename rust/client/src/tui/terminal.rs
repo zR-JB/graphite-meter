@@ -2,7 +2,7 @@
 use super::{App, Effect, Exit, FRAME, chrome::Chrome, dialogs, theme};
 use crate::{config::Config, controller::Controller, events::Events, text::Profile};
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, EventStream},
+    event::{DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream, MouseEventKind},
     execute,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -38,8 +38,13 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: Unbou
                 (app.event(&event, Instant::now()), false)
             }
             input = input.next() => {
-                changed = true;
-                (input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now())), true)
+                // A pointer move repaints only when it reaches another pressable region.
+                let moved = matches!(&input, Some(Input::Mouse(mouse)) if matches!(mouse.kind, MouseEventKind::Moved));
+                let hovered = app.hovered();
+                let effects = input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now()));
+                let paint = !moved || app.hovered() != hovered;
+                changed |= paint;
+                (effects, paint)
             }
             _ = frames.tick() => {
                 let effects = app.tick(Instant::now());
@@ -86,10 +91,11 @@ fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<Chrome>) -> io:
     Ok(())
 }
 
-/// Pushes the window title and reports mouse buttons and the wheel, without plain moves, in SGR form.
-const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1002h\x1b[?1006h";
+/// Pushes the window title and reports every pointer move, button and wheel turn in SGR form, so what the pointer rests
+/// on lights up.
+const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1003h\x1b[?1006h";
 /// Undoes `ENTER`, putting back the pushed title.
-const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1002l\x1b[23;0t";
+const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1003l\x1b[23;0t";
 
 /// The terminal raw on the alternate screen with mouse, pastes and a background query; dropping it restores it all.
 struct Session {

@@ -301,6 +301,7 @@ mod tests {
             latency: None,
             stage_limit,
             idle_rtt,
+            ip_version: 4,
         };
         let (id, name) = (ServerId::parse(name).unwrap(), name.to_uppercase());
         let path = failure.map_or(Ok(paths), Err);

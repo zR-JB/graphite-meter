@@ -12,6 +12,9 @@ pub use fault::{Class, Fault};
 pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
+/// What a check says of a server no connection reached.
+pub const UNREACHABLE: &str = "Server could not be reached";
+
 use conn::{Answer, Failed};
 use graphite_meter_net::{Connector, Pool, Proxy, Verify};
 use graphite_meter_proto::{
@@ -104,15 +107,20 @@ impl Client {
         Ok(self.exchange(via, request, decode).await?.1)
     }
 
-    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved.
-    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<Protocol, Fault> {
+    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family,
+    /// 4 or 6, the server saw the probe arrive from.
+    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<(Protocol, u8), Fault> {
         let request = Request::new(Method::GET, origin, Route::Probe);
-        match (via, self.exchange(via, request, Probe::decode).await?.0) {
-            (Protocol::Negotiated, Version::HTTP_11) => Ok(Protocol::Http1),
-            (Protocol::Negotiated, Version::HTTP_2) => Ok(Protocol::Http2),
-            (Protocol::Negotiated, _) => Err(Fault::Malformed("probe used an unsupported HTTP protocol".into())),
-            (via, _) => Ok(via),
-        }
+        let (version, probe) = self.exchange(via, request, Probe::decode).await?;
+        let protocol = match (via, version) {
+            (Protocol::Negotiated, Version::HTTP_11) => Protocol::Http1,
+            (Protocol::Negotiated, Version::HTTP_2) => Protocol::Http2,
+            (Protocol::Negotiated, _) => {
+                return Err(Fault::Malformed("probe used an unsupported HTTP protocol".into()));
+            }
+            (via, _) => via,
+        };
+        Ok((protocol, probe.client_ip_version))
     }
 
     /// A control request's answer, its head within the control timeout; the caller bounds its body.

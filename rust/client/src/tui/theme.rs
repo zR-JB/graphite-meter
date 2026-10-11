@@ -25,11 +25,10 @@ const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
 const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
 const CAUTION: Tone = tone((0x85671f, 94, 1), (0xe8cf83, 186, 11));
 const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
-/// The canvas strips fade into and plates write on.
+/// The canvas when the terminal does not name its background.
 const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
 const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
 const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
-const SELECTED: Tone = tone((0xe6e6e9, 254, 15), (0x303236, 236, 0));
 const STAGES: [Tone; 4] = [
     tone((0x1d7a73, 30, 6), (0x70dbc4, 80, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
@@ -43,7 +42,7 @@ const TRACES: [Tone; 4] = [
     tone((0x9b2065, 125, 1), (0xe472ac, 169, 9)),
 ];
 
-/// The styles views draw with.
+/// The styles and fills views draw with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     pub text: Style,
@@ -55,17 +54,19 @@ pub struct Palette {
     pub warn: Style,
     pub err: Style,
     pub border: Style,
-    /// The focused row.
-    pub selected: Style,
     /// The editor's block cursor.
     pub cursor: Style,
-    /// The key: canvas on ink, its faint note and cap, and the key while it cannot be pressed.
+    /// The run key: ink with the canvas on it, its faint note, and the quiet plate of Stop and of a key that cannot
+    /// be pressed.
     pub plate: Style,
     pub plate_note: Style,
     pub plate_off: Style,
-    /// Each stage's strip, fading by row from its trace into the canvas.
-    shades: [[Style; 6]; 4],
-    /// The terminal's own background when it said, so blends land on it exactly.
+    /// Tiles one step over the canvas, plates and key caps two; the pointer's wash and the focused row's.
+    pub surface: Color,
+    pub raised: Color,
+    pub hover: Color,
+    pub selected: Color,
+    /// The terminal's own background when it said, so fills land on it exactly.
     canvas: Color,
     dark: bool,
 }
@@ -85,9 +86,7 @@ impl Palette {
     fn on(dark: bool, canvas: Color) -> Self {
         let pick = |tone: Tone| tone[usize::from(dark)];
         let shade = |tone: Tone| Style::fg(pick(tone));
-        let on = |style: Style, tone: Tone| Style { bg: Some(pick(tone)), ..style };
-        let fade =
-            |trace: Tone| std::array::from_fn(|row| Style::fg(mix(pick(trace), canvas, 0.8 - 0.12 * row as f64)));
+        let lift = |share| mix(pick(TEXT), canvas, share);
         Self {
             text: shade(TEXT),
             value: shade(TEXT).bold(),
@@ -98,12 +97,17 @@ impl Palette {
             warn: shade(CAUTION),
             err: shade(BAD).bold(),
             border: shade(BORDER),
-            selected: on(shade(TEXT).bold(), SELECTED),
             cursor: Style { bg: Some(pick(TEXT)), ..Style::fg(canvas) },
             plate: Style { bg: Some(pick(INK)), ..Style::fg(canvas) },
-            plate_note: on(Style::fg(mix(pick(INK), canvas, 0.4)), INK),
-            plate_off: on(shade(SOFT), PLATE_OFF),
-            shades: TRACES.map(fade),
+            plate_note: Style {
+                bg: Some(pick(INK)),
+                ..Style::fg(mix(pick(INK), canvas, 0.45))
+            },
+            plate_off: Style { bg: Some(pick(PLATE_OFF)), ..shade(SOFT) },
+            surface: lift(if dark { 0.045 } else { 0.03 }),
+            raised: lift(if dark { 0.09 } else { 0.07 }),
+            hover: lift(if dark { 0.07 } else { 0.05 }),
+            selected: lift(if dark { 0.13 } else { 0.1 }),
             canvas,
             dark,
         }
@@ -118,13 +122,13 @@ impl Palette {
     }
 
     /// A stage's chart trace.
-    pub fn trace(&self, stage: Stage) -> Style {
-        Style::fg(TRACES[stage as usize][usize::from(self.dark)])
+    pub fn trace(&self, stage: Stage) -> Color {
+        TRACES[stage as usize][usize::from(self.dark)]
     }
 
-    /// A stage's strip shades, from the top row down.
-    pub fn shades(&self, stage: Stage) -> &[Style; 6] {
-        &self.shades[stage as usize]
+    /// `share` of a stage's hue over `under`: a tile's wash, a chart's field, a box plot's box.
+    pub fn wash(&self, stage: Stage, share: f64, under: Color) -> Color {
+        mix(self.trace(stage), under, share)
     }
 
     /// An outcome's label: bold in its badge's colour.
@@ -134,11 +138,11 @@ impl Palette {
     }
 }
 
-/// `share` of `color` over `canvas` in sRGB, at the nearest of the 256 colours, and `color`'s own of the 16.
-fn mix(color: Color, canvas: Color, share: f64) -> Color {
+/// `share` of `color` over `under` in sRGB, at the nearest of the 256 colours, and `color`'s own of the 16.
+pub fn mix(color: Color, under: Color, share: f64) -> Color {
     let channel = |at: u32| {
-        let (over, under) = (f64::from((color.rgb >> at) as u8), f64::from((canvas.rgb >> at) as u8));
-        (over * share + under * (1.0 - share)).round() as u8
+        let (over, below) = (f64::from((color.rgb >> at) as u8), f64::from((under.rgb >> at) as u8));
+        (over * share + below * (1.0 - share)).round() as u8
     };
     nearest([channel(16), channel(8), channel(0)], color.ansi)
 }
