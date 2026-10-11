@@ -74,6 +74,8 @@ var (
 			return nil
 		},
 	}
+	rememberRow = &setting{label: "Remember server",
+		help: "Keeps the address on this computer, so the next start needs none. Off deletes it."}
 	serversRow = &setting{view: func(m model) setupRow {
 		value := m.selectedServerNames()
 		if summary := m.readinessSummary(); summary != "" {
@@ -187,7 +189,7 @@ var setupGroups = []struct {
 	label string
 	rows  []*setting
 }{
-	{"Server", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow}},
+	{"Server", []*setting{catalogueRow, rememberRow, serversRow, throughputPathRow, protocolRow, latencyPathRow}},
 	{"Stages", append(slices.Clone(stageRows), loadedLatencyRow)},
 	{"Advanced", []*setting{warmupRow, idleCadenceRow, loadedCadenceRow, forceStreamsRow, streamsRow, insecureRow,
 		resetRow}},
@@ -204,12 +206,14 @@ func (m model) rows() []*setting {
 func (m model) currentRow() *setting { return m.rows()[min(m.row, len(m.rows())-1)] }
 
 // flagOf is the switch a row turns on or off, if any.
-func (s *setting) flagOf(c *goclient.Config) (bool, bool) {
+func (m model) flagOf(s *setting) (bool, bool) {
 	switch {
 	case s.flag != nil:
-		return *s.flag(c), true
+		return *s.flag(&m.cfg), true
 	case s == forceStreamsRow:
-		return c.TransferStreams.Forced > 0, true
+		return m.cfg.TransferStreams.Forced > 0, true
+	case s == rememberRow:
+		return m.remembering, true
 	}
 	return false, false
 }
@@ -264,7 +268,7 @@ func (m model) settingsEntries() ([]entry, int) {
 			if s == resetRow && m.resetPrompt {
 				value = styled("enter again resets", m.pal.warn)
 			}
-			if on, ok := s.flagOf(&m.cfg); ok {
+			if on, ok := m.flagOf(s); ok {
 				if row.value == "" {
 					value = m.switchMark(on)
 				} else {
@@ -294,7 +298,7 @@ func (m model) settingsFooter() []line {
 		help += fmt.Sprintf(" ←→ picks one of %d.", len(m.pathChoices(s == latencyPathRow)))
 	case s.flag != nil && s.span != nil:
 		help += " ←→ steps its time, space switches it."
-	case s.flag != nil || s == forceStreamsRow:
+	case s.flag != nil || s == forceStreamsRow || s == rememberRow:
 		help += " space switches it."
 	}
 	return []line{styled(help, m.pal.muted)}
@@ -305,6 +309,14 @@ func (m model) handleSettingsKey(a action, msg tea.KeyPressMsg) (tea.Model, tea.
 	s := m.currentRow()
 	confirmed := m.resetPrompt
 	m.resetPrompt = false
+	switch {
+	case s == rememberRow && a == actAdjust:
+		m.setRemembering(delta(msg) > 0)
+		return m, nil
+	case s == rememberRow && (a == actToggle || a == actOpen):
+		m.setRemembering(!m.remembering)
+		return m, nil
+	}
 	switch a {
 	case actMove:
 		m.moveFocus(delta(msg))
@@ -312,7 +324,7 @@ func (m model) handleSettingsKey(a action, msg tea.KeyPressMsg) (tea.Model, tea.
 	case actAdjust:
 		return m.adjust(s, delta(msg))
 	case actToggle:
-		if on, ok := s.flagOf(&m.cfg); ok {
+		if on, ok := m.flagOf(s); ok {
 			before := m.cfg
 			m.setFlag(s, !on)
 			return m.recheckIfPathsChanged(before)
@@ -386,7 +398,14 @@ func (m model) adjust(s *setting, step int) (tea.Model, tea.Cmd) {
 	return m.recheckIfPathsChanged(before)
 }
 
-func (m *model) setFlag(s *setting, on bool) { *s.flag(&m.cfg) = on }
+func (m *model) setFlag(s *setting, on bool) {
+	switch {
+	case s.flag != nil:
+		*s.flag(&m.cfg) = on
+	case s == forceStreamsRow && (m.cfg.TransferStreams.Forced > 0) != on:
+		s.cycle(m, 1)
+	}
+}
 
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
@@ -436,6 +455,9 @@ func (m model) editLine(w int) line {
 // stays open while its check runs, and closes once it prepared.
 func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.overlay == overlayConnect && msg.String() == "tab":
+		m.setRemembering(!m.remembering)
+		return m, nil
 	case key.Matches(msg, keys.discard):
 		m.edit = nil
 		if m.overlay == overlayConnect {

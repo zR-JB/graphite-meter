@@ -86,9 +86,9 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		}
 	default:
 		m.prepare, m.prepareErr = prepareReady, ""
-		if m.remembered != "" && m.cfg.BaseURL != m.recalled {
+		if m.remembering && m.cfg.BaseURL != m.recalled {
 			m.recalled = m.cfg.BaseURL
-			expiry = tea.Batch(expiry, remember(m.remembered, m.recalled))
+			remember(m.remembered, m.recalled)
 		}
 	}
 	switch ready := len(m.readyServers()) > 0; {

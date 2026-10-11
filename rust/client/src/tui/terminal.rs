@@ -8,6 +8,7 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use graphite_meter_net::Pool;
+use graphite_meter_proto::origin::Origin;
 use ratatui_core::terminal::Terminal;
 use ratatui_crossterm::CrosstermBackend;
 use std::{
@@ -20,14 +21,19 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Runs the interface until it quits, fed events, input, ticks and `signals`' statuses. Input paints at once; measurement
 /// events wait for the next frame, so a burst of them costs one draw.
-pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
+pub async fn interactive(
+    config: Config,
+    kept: Option<Origin>,
+    runtimes: Arc<Pool>,
+    mut signals: UnboundedReceiver<u8>,
+) -> io::Result<Exit> {
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
     let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
-    let (mut app, mut shown) = (App::new(config, profile, Instant::now()), None);
+    let (mut app, mut shown) = (App::new(config, kept, profile, Instant::now()), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut changed = true;
@@ -59,9 +65,15 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: Unbou
             match effect {
                 Effect::Command(command) => controller.command(*command),
                 Effect::OpenBrowser(url) => dialogs::browse(&url),
+                // A few bytes on local disk, written in order, so turning remembering off never loses to an earlier on.
                 Effect::Remember(origin) => {
                     if let Some(path) = crate::config::kept_server() {
-                        tokio::task::spawn_blocking(move || crate::config::remember(&path, &origin));
+                        crate::config::remember(&path, &origin);
+                    }
+                }
+                Effect::Forget => {
+                    if let Some(path) = crate::config::kept_server() {
+                        crate::config::forget(&path);
                     }
                 }
                 Effect::Quit => return Ok(app.exit()),

@@ -433,7 +433,8 @@ share its layout, words and keys.
   Rate fields share one top; the idle track has its own, the loaded tracks share one, each the 1-2-4 step over 2.5×
   the 75th percentile of the cells' slowest replies, so a burst cannot flatten the rest.
 - **First run.** There is no default server: a card asks for the address (typed or pasted), checks it in place and
-  closes once it prepared; the last address that did is remembered, and the card returns when no server answers.
+  closes once it prepared, and returns when no server answers. The address is kept for later starts only once the user
+  turns on Remember this server, on the card (Tab) or in the settings; turning it off deletes it.
 - **Keys.** Enter, space or `r` starts; Esc stops at once; `1`–`4` turn stages on or off; `s`, `d` and `?` open the
   sheets; `l` switches the latency server; `v` checks the server again; `q` quits after stopping a run.
 - **Glyphs** come from the box-drawing, braille and arrow ranges that DejaVu Sans Mono, Noto Sans Mono, Meslo, Adwaita

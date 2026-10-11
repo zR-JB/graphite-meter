@@ -103,7 +103,7 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	m := newModel(cfg)
-	m.remembered, m.recalled = remembered, recalled
+	m.remembered, m.recalled, m.remembering = remembered, recalled, recalled != ""
 	if headless {
 		onSignal(signals, &caught, m.controller.CancelRun)
 		if m = runHeadless(m); m.run == nil && m.toast != nil {
@@ -130,7 +130,7 @@ func main() {
 	os.Exit(exitStatus(m, caught.Load()))
 }
 
-// rememberedPath is where the last server that prepared is kept, so a later start needs no --url.
+// rememberedPath is where the server is kept once the user asks to remember it, so a later start needs no --url.
 func rememberedPath() string {
 	dir, err := os.UserConfigDir()
 	// A configuration directory that climbs with .. is refused, so the file stays where it belongs.
@@ -153,13 +153,13 @@ func recall(path string) string {
 	return origin
 }
 
+// forget deletes the kept server; one never kept is already forgotten.
+func forget(path string) { _ = os.Remove(path) }
+
 // remember keeps origin for the next start; it is a convenience, so a failure only costs that.
-func remember(path, origin string) tea.Cmd {
-	return func() tea.Msg {
-		if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
-			_ = os.WriteFile(path, []byte(origin+"\n"), 0o600)
-		}
-		return nil
+func remember(path, origin string) {
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		_ = os.WriteFile(path, []byte(origin+"\n"), 0o600)
 	}
 }
 

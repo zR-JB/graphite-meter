@@ -293,15 +293,16 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 
 ## Native terminal client
 
-`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it opens on the
-server's address, and after a server prepares it keeps that address in `graphite-meter/server` under the user's
-configuration directory, so the next start needs none. Releases attach archives for
+`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it asks for the
+server's address. Nothing is kept unless asked: with **Remember server** on (Tab on that card, or in the settings) it
+keeps the address in `graphite-meter/server` under the user's configuration directory (`~/.config` on Linux), so the
+next start needs none, and turning it off deletes the file. Releases attach archives for
 Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the container image or a
 [source build](#build-from-source).
 
 | Flag                                             | Default                   | Meaning                                                                                         |
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `--url`                                          | the last server prepared  | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
+| `--url`                                          | the remembered server     | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
 | `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
 | `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
 | `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
@@ -348,6 +349,7 @@ report keeps the run's. A selected server that fails its check leaves the run, w
 | ↑/↓ (k/j, tab), ←/→        | settings        | Move; change the focused value.                                                                                   |
 | enter, space, r            | settings        | Edit or open the row (the test servers open their chooser); space switches a row on or off; r starts the test.    |
 | ←/→, home/end, enter, esc  | editing a value | Move the cursor, apply, cancel.                                                                                   |
+| tab                        | connect card    | Remember the server for later starts, or forget it.                                                               |
 | space, enter, esc          | server chooser  | Select, apply, cancel.                                                                                            |
 | enter (o), esc             | sign-in         | Open the approval page, cancel.                                                                                   |
 | pgup/pgdn, home/end, wheel | sheets          | Scroll; in the settings the wheel moves the focus.                                                                |

@@ -32,6 +32,9 @@ impl App {
         let before = self.config.key();
         match action {
             Action::Move => self.move_focus(step),
+            // Remembering writes or deletes a file, which the loop does.
+            Action::Adjust if row == Row::Remember => return self.remember(step > 0),
+            Action::Toggle | Action::Open if row == Row::Remember => return self.remember(!self.remembering),
             Action::Adjust => self.adjust(row, step),
             Action::Toggle => match self.flag(row) {
                 Some(on) => self.set_flag(row, !on),
@@ -70,7 +73,8 @@ impl App {
             }
             Row::LoadedLatency => self.config.loaded_latency = on,
             Row::ForceStreams => self.config.streams.forced = if on { self.config.streams.auto } else { 0 },
-            _ => self.config.insecure = on,
+            Row::Insecure => self.config.insecure = on,
+            _ => {}
         }
         if self.config.key() != before {
             self.recheck_soon();
@@ -166,6 +170,9 @@ impl App {
 
     /// A key while typing: enter applies, esc cancels, others edit the text.
     pub(super) fn edit_key(&mut self, key: Key) -> Vec<Effect> {
+        if matches!(self.overlay, Overlay::Connect) && key == Key::Code(KeyCode::Tab) {
+            return self.remember(!self.remembering);
+        }
         let Some(editor) = &mut self.editor else { return Vec::new() };
         match keys::find(keys::EDIT, key, |_| true) {
             Some(Action::Abort) => return vec![Effect::Quit],

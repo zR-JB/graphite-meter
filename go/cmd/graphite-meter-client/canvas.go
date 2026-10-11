@@ -90,6 +90,8 @@ const (
 	targetRow
 	targetEntry
 	targetLink
+	// targetRemember is the connect card's switch that remembers the server for later starts.
+	targetRemember
 	// targetSheet is a sheet's own ground; targetBackdrop, the dimmed console around it, closes it.
 	targetSheet
 	targetBackdrop

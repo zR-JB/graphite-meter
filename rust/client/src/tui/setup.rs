@@ -15,6 +15,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
     Catalogue,
+    Remember,
     Servers,
     Throughput,
     Protocol,
@@ -32,9 +33,10 @@ pub enum Row {
 
 /// Every row in order: the heading of the group it starts, the row, its label and what the sheet's foot says of it.
 #[rustfmt::skip]
-const ROWS: [(Option<&str>, Row, &str, &str); 17] = [
+const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
     (Some("Server"), Row::Catalogue, "Address",
         "The Graphite Meter server to test, which lists its test servers. enter edits it; a pasted address works too."),
+    (None, Row::Remember, "Remember server", "Keeps the address on this computer, so the next start needs none. Off deletes it."),
     (None, Row::Servers, "Test servers", "Measured at once; their speeds add up. enter picks up to 4."),
     (None, Row::Throughput, "Throughput path", "How transfers reach the server."),
     (None, Row::Protocol, "HTTP version", "Where the path negotiates. ←→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
@@ -99,6 +101,7 @@ impl App {
             Row::LoadedLatency => Some(self.config.loaded_latency),
             Row::ForceStreams => Some(self.config.streams.forced > 0),
             Row::Insecure => Some(self.config.insecure),
+            Row::Remember => Some(self.remembering),
             _ => None,
         }
     }
@@ -135,7 +138,7 @@ impl App {
             Row::Streams if config.streams.forced > 0 => config.streams.forced.to_string(),
             Row::Streams => config.streams.auto.to_string(),
             Row::Reset if self.setup.resetting => return Line::styled("enter again resets", palette.warn),
-            Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
+            Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
         };
         let style = if inert { palette.muted } else { palette.value };
         match self.flag(row) {
@@ -148,7 +151,7 @@ impl App {
     }
 
     /// A switch: on in ink, off as a quiet ring.
-    fn switch_mark(&self, on: bool) -> Line {
+    pub(super) fn switch_mark(&self, on: bool) -> Line {
         match on {
             true => Line::styled("● on ", self.palette.accent),
             false => Line::styled("○ off", self.palette.muted),

@@ -76,6 +76,8 @@ pub enum Target {
     Entry(usize),
     /// The sign-in page's address.
     Link,
+    /// The connect card's switch that remembers the server for later starts.
+    Remember,
     /// A sheet's own ground, and the dimmed console around it, which closes it.
     Sheet,
     Backdrop,
@@ -89,6 +91,8 @@ pub enum Effect {
     OpenBrowser(String),
     /// Keeps this server for the next start.
     Remember(Origin),
+    /// Deletes the server kept for the next start.
+    Forget,
     Quit,
 }
 
@@ -138,7 +142,8 @@ pub struct App {
     recheck: Option<Instant>,
     /// What the latest operation prepared for.
     asked: Option<PrepKey>,
-    /// The server this session last kept for the next start.
+    /// Whether the server is kept for later starts: it was at start, or the user turned it on; and the one kept.
+    remembering: bool,
     kept: Option<Origin>,
     /// A sheet's first shown line, and how many it shows.
     scroll: usize,
@@ -153,8 +158,9 @@ pub struct App {
 }
 
 impl App {
-    /// The console for `config` in `profile`; its first tick checks the paths, or it asks for the server without one.
-    pub fn new(config: Config, profile: Profile, now: Instant) -> Self {
+    /// The console for `config` in `profile`, with the server `kept` for later starts if one is; its first tick checks
+    /// the paths, or it asks for the server without one.
+    pub fn new(config: Config, kept: Option<Origin>, profile: Profile, now: Instant) -> Self {
         let mut app = Self {
             config,
             view: View::default(),
@@ -172,7 +178,8 @@ impl App {
             caught: None,
             recheck: None,
             asked: None,
-            kept: None,
+            remembering: kept.is_some(),
+            kept,
             scroll: 0,
             rows: 0,
             hits: Vec::new(),
@@ -186,6 +193,23 @@ impl App {
             None => app.ask_for_server(),
         }
         app
+    }
+
+    /// Remembers the server for later starts, keeping a ready one at once, or forgets it, deleting the file.
+    pub(super) fn remember(&mut self, on: bool) -> Vec<Effect> {
+        if on == self.remembering {
+            return Vec::new();
+        }
+        self.remembering = on;
+        if !on {
+            self.kept = None;
+            return vec![Effect::Forget];
+        }
+        if self.view.check == crate::events::Check::Ready && self.config.url.is_some() {
+            self.kept.clone_from(&self.config.url);
+            return self.kept.clone().map(Effect::Remember).into_iter().collect();
+        }
+        Vec::new()
     }
 
     /// Opens the server's address for typing, with the one set so far.
@@ -225,7 +249,7 @@ impl App {
                 if current && !self.running() && servers.iter().all(|server| server.path.is_err()) {
                     self.unreachable();
                 }
-                if prepared && self.config.url != self.kept {
+                if prepared && self.remembering && self.config.url != self.kept {
                     self.kept.clone_from(&self.config.url);
                     return self.kept.clone().map(Effect::Remember).into_iter().collect();
                 }
@@ -353,6 +377,7 @@ impl App {
                     return vec![Effect::OpenBrowser(prompt.url.clone())];
                 }
             }
+            Target::Remember => return self.remember(!self.remembering),
             Target::Backdrop => (self.overlay, self.editor) = (Overlay::None, None),
             Target::Sheet => {}
         }

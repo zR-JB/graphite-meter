@@ -338,7 +338,8 @@ fn local(authority: &str) -> bool {
     }
 }
 
-/// Where the last server that prepared is kept, so a later start needs no `-url`: the user's configuration directory.
+/// Where the server is kept once the user asks to remember it, so a later start needs no `-url`: the user's
+/// configuration directory.
 pub fn kept_server() -> Option<PathBuf> {
     // A directory that climbs with `..` is refused, so the file stays where it belongs.
     let var = |name| {
@@ -358,6 +359,11 @@ pub fn kept_server() -> Option<PathBuf> {
 /// The server kept at `path`, if one is and it still parses.
 pub fn recall(path: &std::path::Path) -> Option<Origin> {
     Origin::parse(std::fs::read_to_string(path).ok()?.trim()).ok()
+}
+
+/// Deletes the server kept at `path`; one never kept is already forgotten.
+pub fn forget(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
 }
 
 /// Keeps `origin` at `path` for the next start; it is a convenience, so a failure only costs that.

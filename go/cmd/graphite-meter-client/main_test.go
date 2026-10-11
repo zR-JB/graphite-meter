@@ -330,7 +330,7 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 		key  string
 		want *setting
 	}{
-		{"up", catalogueRow}, {"down", serversRow}, {"tab", throughputPathRow}, {"shift+tab", serversRow},
+		{"up", catalogueRow}, {"down", rememberRow}, {"tab", serversRow}, {"shift+tab", rememberRow},
 	} {
 		if keys(c.key); m.currentRow() != c.want {
 			t.Fatalf("after %s: row %q, want %q", c.key, m.currentRow().row(m).label, c.want.row(m).label)
@@ -639,26 +639,48 @@ func TestFirstStartAsksForTheServer(t *testing.T) {
 	}
 }
 
-func TestTheLastPreparedServerIsRemembered(t *testing.T) {
+func TestServersAreRememberedOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "graphite-meter", "server")
-	if recall(path) != "" {
-		t.Fatal("recalled a server before any was kept")
-	}
 	m := testModel(t)
 	m.remembered = path
-	m, cmd := modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, run: &goclient.PreparedRun{}}))
-	for _, msg := range drain(cmd) {
-		m, _ = modelAndCmd(m.Update(msg))
+	do := func(msg tea.Msg) { m, _ = modelAndCmd(m.Update(msg)) }
+	do(preparationMsg{seq: m.prepareSeq, run: &goclient.PreparedRun{}})
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a server that prepared was kept unasked")
 	}
-	if got := recall(path); got != m.cfg.BaseURL {
-		t.Fatalf("recalled %q, want %q", got, m.cfg.BaseURL)
+	if screen := ansi.Strip(view(m.askForServer())); !strings.Contains(screen, "Remember this server  ○ off") {
+		t.Fatalf("the connect card does not offer remembering:\n%s", screen)
+	}
+	m = m.openSettings(rememberRow)
+	if do(press("space")); recall(path) != m.cfg.BaseURL {
+		t.Fatalf("turning remembering on kept %q, want %q", recall(path), m.cfg.BaseURL)
+	}
+	do(press("space"))
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("turning remembering off left the file")
+	}
+	m = m.askForServer()
+	if do(press("tab")); !m.remembering || recall(path) != m.cfg.BaseURL {
+		t.Fatal("tab on the connect card did not remember the ready server")
 	}
 	if err := os.WriteFile(path, []byte("not a server\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if recall(path) != "" {
 		t.Fatal("recalled a server that does not parse")
+	}
+}
+
+func TestEveryRowTakesEveryKey(t *testing.T) {
+	t.Parallel()
+	for i := range testModel(t).rows() {
+		for _, k := range []string{"space", "enter", "left", "right"} {
+			m := testModel(t)
+			m.row, m.overlay = i, overlaySettings
+			m, _ = modelAndCmd(m.Update(press(k)))
+			view(m)
+		}
 	}
 }
 

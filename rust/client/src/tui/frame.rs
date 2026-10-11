@@ -367,7 +367,7 @@ impl App {
     /// The server's address asked for: the field, and how its check stands.
     fn connect_card(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
-        let inner = self.card_over(canvas, area, 12);
+        let inner = self.card_over(canvas, area, 13);
         canvas.line(inner.x, inner.y, inner.width, &Line::styled("Connect to a server", palette.heading));
         let lead = "Enter the address of your Graphite Meter server, or paste it.";
         canvas.line(inner.x, inner.y + 2, inner.width, &Line::styled(lead, palette.muted));
@@ -410,11 +410,20 @@ impl App {
         };
         canvas.line(inner.x, inner.y + 6, inner.width, &said.fit(usize::from(inner.width)));
         canvas.line(inner.x, inner.y + 7, inner.width, &next.fit(usize::from(inner.width)));
+        // Remembering is the user's choice: the switch, lit under the pointer, and its key.
+        let switch = Rect::new(inner.x, inner.y + 9, inner.width, 1);
+        if self.hover == Some(Target::Remember) {
+            canvas.fill(Rect::new(switch.x - 1, switch.y, switch.width + 2, 1), palette.hover);
+        }
+        let remember = Line::styled("Remember this server  ", palette.text).with(self.switch_mark(self.remembering));
+        canvas.line(switch.x, switch.y, switch.width, &remember);
+        canvas.right(switch.x, switch.y, switch.width, &Line::styled("tab", palette.muted));
+        canvas.hit(switch, Target::Remember);
         let keys = Line::styled("enter", palette.text)
             .and(" connects    ", palette.muted)
             .and("esc", palette.text)
             .and(" closes", palette.muted);
-        canvas.line(inner.x, inner.y + 9, inner.width, &keys);
+        canvas.line(inner.x, inner.y + 10, inner.width, &keys);
     }
 
     /// The sign-in card: the code to match, the time waited and left, and the page's address as a link.

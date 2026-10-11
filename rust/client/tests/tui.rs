@@ -49,7 +49,7 @@ fn config() -> Config {
 /// The console for the default settings, its first check already asked for.
 fn app() -> (App, Instant) {
     let start = Instant::now();
-    let mut app = App::new(config(), Profile::Plain, start);
+    let mut app = App::new(config(), None, Profile::Plain, start);
     assert_eq!(checked(app.tick(start)), config());
     (app, start)
 }
@@ -168,7 +168,7 @@ fn prompt(now: Instant) -> SignInPrompt {
 /// A run of `plan` over `names`, started with enter and prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
-    let mut app = App::new(Config { stages, ..config() }, Profile::Plain, now);
+    let mut app = App::new(Config { stages, ..config() }, None, Profile::Plain, now);
     assert!(matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_)));
     let origin = Origin::parse("https://meter.example").unwrap();
     let servers = names.iter().map(|name| prepared_server(name, &origin)).collect();
@@ -192,7 +192,7 @@ fn ended(outcome: Outcome) -> Event {
 fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
     let (mut app, now) = app();
     app.event(&prepared(), now);
-    for code in [KeyCode::Char('s'), KeyCode::Down, KeyCode::Enter] {
+    for code in [KeyCode::Char('s'), KeyCode::Down, KeyCode::Down, KeyCode::Enter] {
         press(&mut app, code, now);
     }
     assert!(shows(&mut app, now, "Test servers · 1 selected"));
@@ -204,7 +204,7 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
 
     let (mut app, now) = self::app();
     app.event(&prepared(), now);
-    for code in [KeyCode::Char('s'), KeyCode::Down, KeyCode::Enter] {
+    for code in [KeyCode::Char('s'), KeyCode::Down, KeyCode::Down, KeyCode::Enter] {
         press(&mut app, code, now);
     }
     for _ in 0..4 {
@@ -327,18 +327,24 @@ fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
 }
 
 #[test]
-fn a_first_start_asks_for_the_server_and_keeps_the_one_that_prepared() {
+fn a_first_start_asks_for_the_server_and_remembers_it_only_when_asked() {
     let now = Instant::now();
-    let mut app = App::new(Config::default(), Profile::Plain, now);
+    let mut app = App::new(Config::default(), None, Profile::Plain, now);
     assert_eq!(app.tick(now), [], "nothing is checked without a server");
     assert!(shows(&mut app, now, "Connect to a server"));
     assert!(shows(&mut app, now, "Enter the address of your Graphite Meter server, or paste it."));
+    assert!(
+        shows(&mut app, now, "Remember this server ○ off tab"),
+        "remembering waits to be asked for"
+    );
     press(&mut app, KeyCode::Esc, now);
     assert!(frame(&mut app, now)[0].ends_with("○ No server"));
     assert!(shows(&mut app, now, "Start test needs a server"));
     assert!(shows(&mut app, now, "Add a server to measure your connection"));
     assert_eq!(press(&mut app, KeyCode::Char('r'), now), [], "a start without a server asks for one");
     assert!(shows(&mut app, now, "Connect to a server"));
+    assert_eq!(press(&mut app, KeyCode::Tab, now), [], "nothing is kept before a server prepared");
+    assert!(shows(&mut app, now, "Remember this server ● on"));
     app.input(Input::Paste("meter.example/history\n".into()), now);
     press(&mut app, KeyCode::Enter, now);
     assert_eq!(checked(app.tick(now)), config(), "the address is checked at once");
@@ -348,15 +354,36 @@ fn a_first_start_asks_for_the_server_and_keeps_the_one_that_prepared() {
     assert_eq!(
         app.event(&prepared(), now),
         [Effect::Remember(kept.clone())],
-        "a prepared server is kept once"
+        "an asked-for server is kept once"
     );
     assert!(!shows(&mut app, now, "Connect to a server") && shows(&mut app, now, "Ready A"));
     assert_eq!(app.event(&prepared(), now), []);
+    press(&mut app, KeyCode::Char('s'), now);
+    press(&mut app, KeyCode::Down, now);
+    assert!(shows(&mut app, now, "Remember server ● on"));
+    assert_eq!(
+        press(&mut app, KeyCode::Char(' '), now),
+        [Effect::Forget],
+        "turning it off deletes the file"
+    );
+    assert_eq!(app.event(&prepared(), now), [], "a forgotten server is not kept again");
+    assert_eq!(
+        press(&mut app, KeyCode::Right, now),
+        [Effect::Remember(kept.clone())],
+        "a ready server is kept at once"
+    );
+    let mut later = App::new(config(), Some(kept.clone()), Profile::Plain, now);
+    later.tick(now);
+    press(&mut later, KeyCode::Char('s'), now);
+    assert!(shows(&mut later, now, "Remember server ● on"), "a kept server starts remembered");
+
     let scratch = graphite_meter_testkit::Scratch::new().unwrap();
     let path = scratch.path().join("graphite-meter").join("server");
     assert_eq!(config::recall(&path), None);
     config::remember(&path, &kept);
     assert_eq!(config::recall(&path), Some(kept));
+    config::forget(&path);
+    assert!(!path.exists(), "forgetting deletes the kept server");
     std::fs::write(&path, "not a server\n").unwrap();
     assert_eq!(config::recall(&path), None, "a kept address that no longer parses is ignored");
 

@@ -421,7 +421,7 @@ func (m model) cardOver(c *canvas, area rect, height int) rect {
 // connectCard asks for the server's address: the field, and how its check stands.
 func (m model) connectCard(c *canvas, area rect) {
 	p := m.pal
-	inner := m.cardOver(c, area, 12)
+	inner := m.cardOver(c, area, 13)
 	c.text(inner.x, inner.y, inner.w, styled("Connect to a server", p.heading))
 	c.text(inner.x, inner.y+2, inner.w, styled("Enter the address of your Graphite Meter server, or paste it.", p.muted))
 	field := rect{inner.x, inner.y + 4, inner.w, 1}
@@ -453,8 +453,16 @@ func (m model) connectCard(c *canvas, area rect) {
 	}
 	c.text(inner.x, inner.y+6, inner.w, said.fit(inner.w))
 	c.text(inner.x, inner.y+7, inner.w, next.fit(inner.w))
+	// Remembering is the user's choice: the switch, lit under the pointer, and its key.
+	row := rect{inner.x, inner.y + 9, inner.w, 1}
+	if m.hover == (target{kind: targetRemember}) {
+		c.fill(rect{row.x - 1, row.y, row.w + 2, 1}, p.hover)
+	}
+	c.text(row.x, row.y, row.w, styled("Remember this server  ", p.text).with(m.switchMark(m.remembering)))
+	c.right(row.x, row.y, row.w, styled("tab", p.muted))
+	c.hit(row, target{kind: targetRemember})
 	keys := styled("enter", p.text).and(" connects    ", p.muted).and("esc", p.text).and(" closes", p.muted)
-	c.text(inner.x, inner.y+9, inner.w, keys)
+	c.text(inner.x, inner.y+10, inner.w, keys)
 }
 
 // firstFailure is the first selected server's failure, or that none answered.

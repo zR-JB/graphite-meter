@@ -11,7 +11,7 @@ use graphite_meter_client::{
     },
 };
 use graphite_meter_net::Pool;
-use graphite_meter_proto::text;
+use graphite_meter_proto::{origin::Origin, text};
 use std::{
     io::{self, IsTerminal},
     process::ExitCode,
@@ -38,8 +38,9 @@ fn main() -> ExitCode {
         Ok(Parsed::Version) => return written(format!("graphite-meter-client {VERSION}\n").as_bytes()),
         Ok(Parsed::Legal) => return legal(),
         Ok(Parsed::Run(mut config)) => {
+            let kept = config::kept_server().and_then(|path| config::recall(&path));
             if config.url.is_none() {
-                config.url = config::kept_server().and_then(|path| config::recall(&path));
+                config.url.clone_from(&kept);
             }
             let interactive = io::stdout().is_terminal() && !config.report;
             if config.url.is_none() && !interactive {
@@ -49,7 +50,7 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(USAGE_ERROR);
             }
-            return run(*config).unwrap_or_else(|error| fail(&error.to_string()));
+            return run(*config, kept).unwrap_or_else(|error| fail(&error.to_string()));
         }
         Err(Refusal::Flag(error)) => {
             eprint!("{error}\n{}", usage());
@@ -69,7 +70,8 @@ fn fail(error: &str) -> ExitCode {
 }
 
 /// Shows the interface on a terminal, else or with `-report` runs `config` once; prints the finished report to stdout.
-fn run(config: Config) -> io::Result<ExitCode> {
+/// `kept` is the server remembered for later starts, if any.
+fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::beside(runtime.handle())?);
     runtime.block_on(async {
@@ -77,7 +79,7 @@ fn run(config: Config) -> io::Result<ExitCode> {
         let interactive = terminal && !config.report;
         let signals = signals(!interactive)?;
         if interactive {
-            let exit = tui::interactive(config, pool, signals).await?;
+            let exit = tui::interactive(config, kept, pool, signals).await?;
             let status = status(&exit.view, exit.signal);
             if exit.report {
                 return print(&exit.view, &exit.palette, columns(terminal), terminal, status);

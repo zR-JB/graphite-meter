@@ -93,8 +93,10 @@ type frameCache struct {
 type model struct {
 	controller *goclient.Controller
 	cfg        goclient.Config
-	// remembered is where the last server that prepared is kept, recalled the origin kept there.
+	// remembered is where the server is kept for later starts, and recalled the origin kept there; remembering is
+	// whether it is kept: it was at start, or the user turned it on.
 	remembered, recalled string
+	remembering          bool
 	width                int
 	height               int
 	now, since           time.Time
@@ -167,6 +169,23 @@ func (m model) askForServer() model {
 	m.overlay = overlayConnect
 	m.beginEdit(catalogueRow, m.cfg.BaseURL)
 	return m
+}
+
+// setRemembering remembers the server for later starts, keeping a ready one at once, or forgets it, deleting the file.
+// The file is a few bytes on local disk, changed here in order, so turning it off never loses to an earlier on.
+func (m *model) setRemembering(on bool) {
+	if on == m.remembering || m.remembered == "" {
+		return
+	}
+	m.remembering = on
+	switch {
+	case !on:
+		m.recalled = ""
+		forget(m.remembered)
+	case m.prepare == prepareReady && m.cfg.BaseURL != "":
+		m.recalled = m.cfg.BaseURL
+		remember(m.remembered, m.recalled)
+	}
 }
 
 // notify shows text in the bottom bar for a while.
@@ -283,6 +302,8 @@ func (m model) click(t target) (tea.Model, tea.Cmd) {
 		if m.auth != nil {
 			return m.openSignIn()
 		}
+	case targetRemember:
+		m.setRemembering(!m.remembering)
 	case targetBackdrop:
 		m.overlay, m.edit = overlayNone, nil
 	}
