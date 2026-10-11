@@ -40,7 +40,13 @@ const SVG_TAGS = new Set([
   "use",
   "text",
   "tspan",
+  "textPath",
   "marker",
+  "ellipse",
+  "image",
+  "symbol",
+  "filter",
+  "foreignObject",
 ]);
 // Live state that an attribute only seeds.
 const PROPERTIES = new Set(["value", "checked"]);
@@ -50,14 +56,16 @@ type Component<P> = (props: P) => Node;
 export function jsx(type: string | Component<any>, props: Record<string, unknown>): Node {
   if (typeof type === "function") return untrack(() => type(props));
   const element = SVG_TAGS.has(type) ? document.createElementNS(SVG_NS, type) : document.createElement(type);
+  // Children first, so a select's value finds its option; the ref last, so it sees the finished element.
+  insert(element, props.children as Child);
   for (const name in props) {
     const value = props[name];
-    if (name === "children") insert(element, value as Child);
-    else if (name === "ref") (value as (element: Element) => void)(element);
-    else if (name.startsWith("on")) element.addEventListener(name.slice(2), value as EventListener);
+    if (name === "children" || name === "ref") continue;
+    if (name.startsWith("on")) element.addEventListener(name.slice(2), value as EventListener);
     else if (typeof value === "function") effect(() => assign(element, name, (value as () => Primitive)()));
     else assign(element, name, value as Primitive);
   }
+  (props.ref as ((element: Element) => void) | undefined)?.(element);
   return element;
 }
 export { jsx as jsxs, jsx as jsxDEV };
@@ -69,7 +77,11 @@ export function Fragment(props: { children?: Child }): Node {
 }
 
 function assign(element: Element, name: string, value: Primitive): void {
-  if (PROPERTIES.has(name)) (element as unknown as Record<string, Primitive>)[name] = value;
+  if (name === "value") (element as HTMLInputElement).value = value == null ? "" : String(value);
+  else if (PROPERTIES.has(name)) (element as unknown as Record<string, Primitive>)[name] = value;
+  // The page's policy refuses style attributes; the CSSOM is allowed.
+  else if (name === "style")
+    (element as HTMLElement).style.cssText = value == null || value === false ? "" : String(value);
   else if (value === false || value == null) element.removeAttribute(name);
   else element.setAttribute(name, value === true ? "" : String(value));
 }
@@ -82,23 +94,28 @@ export function insert(parent: Node, child: Child): void {
   else parent.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
 }
 
-// The region's effect owns what it builds, so a rerun disposes the previous content's bindings.
+// The region's effect owns what it builds, so a rerun disposes the previous content's bindings. Its content is
+// everything between its two markers, including what nested regions add later.
 function region(parent: Node, fn: () => Child): void {
+  const start = parent.appendChild(document.createComment(""));
   const end = parent.appendChild(document.createComment(""));
-  let nodes: ChildNode[] = [];
   effect(() => {
     const value = fn();
-    const [only] = nodes;
-    if ((typeof value === "string" || typeof value === "number") && nodes.length === 1 && only instanceof Text) {
+    const only = start.nextSibling;
+    if ((typeof value === "string" || typeof value === "number") && only instanceof Text && only.nextSibling === end) {
       only.data = String(value);
       return;
     }
-    for (const node of nodes) node.remove();
+    clear(start, end);
     const fragment = document.createDocumentFragment();
     untrack(() => insert(fragment, value));
-    nodes = [...fragment.childNodes];
     end.before(fragment);
   });
+}
+
+/** Removes the nodes between two markers. */
+export function clear(start: Node, end: Node): void {
+  while (start.nextSibling && start.nextSibling !== end) start.nextSibling.remove();
 }
 
 export namespace JSX {

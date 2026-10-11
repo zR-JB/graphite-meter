@@ -28,7 +28,12 @@ export async function readJSON(response: Response): Promise<unknown> {
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) bytes.set(chunk, (offset += chunk.byteLength) - chunk.byteLength);
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  // Malformed text is the server's fault, never a network failure.
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new DecodeError("the response is not a JSON document");
+  }
 }
 
 // Controls and bidirectional overrides could disguise a server's displayed identity.
