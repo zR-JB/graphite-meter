@@ -13,6 +13,7 @@ import {
   CADENCE_MS,
   ServerBusyError,
   SignInRequired,
+  StageFailure,
   type OpenStage,
   type PreparedServer,
   type ServerIdentity,
@@ -225,6 +226,8 @@ function* causes(error: unknown): Generator<Error> {
 /** A busy server wins over a nested timeout; offline or a network failure is a lost connection. */
 function classify(cause: unknown, fallback: FailureReason, online: boolean): FailureReason {
   const chain = [...causes(cause)];
+  const known = chain.find((error) => error instanceof StageFailure);
+  if (known) return known.reason;
   if (chain.some((error) => error instanceof ServerBusyError)) return "server-busy";
   if (!online || chain.some((error) => error.name === "NetworkError" || NETWORK_FAILURE.test(error.message)))
     return "connection-lost";

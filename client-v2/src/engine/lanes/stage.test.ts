@@ -1,0 +1,191 @@
+import { expect, test } from "bun:test";
+import type { Activity } from "../run/schedule";
+import {
+  ServerBusyError,
+  type FetchTarget,
+  type PreparedServer,
+  type ServerAuth,
+  type SessionTarget,
+  type StageEvents,
+} from "../types";
+import { elapse, FakeWorker, outcome, useFakeWorkers } from "./fakes.testutil";
+import { openStage } from "./stage";
+
+useFakeWorkers();
+
+const ORIGIN = "https://peer.example";
+const FETCH: FetchTarget = { id: ORIGIN, origin: ORIGIN, transport: "fetch-stream", protocol: "http2", tls: true };
+const SESSION: SessionTarget = {
+  id: `${ORIGIN}::wt`,
+  origin: ORIGIN,
+  transport: "webtransport",
+  protocol: "http3",
+  tls: true,
+};
+const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
+
+/** One server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order. */
+function stage(activity: Activity, auth: Partial<ServerAuth> = {}, target: FetchTarget | SessionTarget = FETCH) {
+  const events: [keyof StageEvents, ...unknown[]][] = [];
+  const spawned = FakeWorker.spawned.length;
+  let checks = 0;
+  const credentials: ServerAuth = {
+    kind: "grant",
+    deadline: null,
+    request: () => ({ headers: { authorization: "Bearer g" }, credentials: "omit", redirect: "error" }),
+    fetch: async () => new Response(null, { status: 500 }),
+    ticket: () => null,
+    ended: async () => (checks++, false),
+    ...auth,
+  };
+  const resources = openStage({
+    server: {
+      server: { id: "peer", url: ORIGIN, name: "Peer" },
+      auth: credentials,
+      throughput: { target, fetch: FETCH },
+      latency: null,
+    } as unknown as PreparedServer,
+    activity,
+    streams: { down: activity.transfer.includes("down") ? 3 : 0, up: activity.transfer.includes("up") ? 1 : 0 },
+    gating: { down: 2, up: 0 },
+    cadence: "fast",
+    seed: "s",
+    events: new Proxy({} as StageEvents, {
+      get:
+        (_, type: keyof StageEvents) =>
+        (...args: unknown[]) =>
+          events.push([type, ...args]),
+    }),
+    now: () => performance.now(),
+  });
+  const workers = (url: string) => FakeWorker.spawned.slice(spawned).filter((worker) => worker.url === url);
+  return {
+    resources,
+    events,
+    lanes: () => workers("lane"),
+    session: () => workers("session")[0]!,
+    checks: () => checks,
+  };
+}
+
+const bytes = (lane: FakeWorker, epoch: number) => lane.report({ type: "bytes", bytes: 1_000, epoch });
+
+test("readiness waits for the gating lanes; a lane's failure keeps its reason; one budget bounds a hung mint", async () => {
+  const ready = stage(DOWNLOAD);
+  const prepared = outcome(ready.resources.prepare(new AbortController().signal));
+  await elapse(150);
+  const [first, second, third] = ready.lanes();
+  expect(ready.lanes().map(({ commands }) => commands[0]?.type)).toEqual(["download", "download", "download"]);
+  bytes(first!, 0);
+  await elapse(5);
+  expect(prepared.at).toBeUndefined();
+  bytes(third!, 0);
+  await elapse(5);
+  expect(prepared).toEqual({ at: 155 });
+  expect(second!.terminated).toBe(false);
+
+  // An unexpected answer fails the preparation with its own reason, which the run reports.
+  const refused = stage(DOWNLOAD);
+  const failed = outcome(refused.resources.prepare(new AbortController().signal));
+  refused.lanes()[0]!.report({
+    type: "ended",
+    ending: { reason: "protocol-error", retry: false, detail: "HTTP 400" },
+  });
+  await elapse(5);
+  expect(failed.error).toMatchObject({ reason: "protocol-error", message: "down stream 0 failed: HTTP 400" });
+  expect(refused.lanes().every(({ terminated }) => terminated)).toBe(true);
+
+  // The mint gives up at 3 s; its sign-in check answers 2.9 s later, long after the stage's 3.5 s.
+  const hung = stage(
+    { stage: "upload", transfer: ["up"], loadedLatency: false },
+    {
+      fetch: (_, init) =>
+        new Promise((_, reject) => init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason))),
+      ended: () => new Promise((resolve) => setTimeout(() => resolve(false), 2_900)),
+    },
+  );
+  const lapsed = outcome(hung.resources.prepare(new AbortController().signal));
+  await elapse(7_000);
+  expect(lapsed.at).toBe(3_500);
+  expect(lapsed.error).toMatchObject({ message: "Primed measurement connections did not become ready" });
+});
+
+test("lanes refused as busy back off 300, 600, 1 200 ms, and the lapsed budget names the server busy", async () => {
+  const busy = stage(DOWNLOAD);
+  const prepared = outcome(busy.resources.prepare(new AbortController().signal));
+  const [lane] = busy.lanes();
+  const opened: number[] = [];
+  for (let at = 0; at < 3_500; at += 5) {
+    if (lane!.commands.length > opened.length) {
+      opened.push(at);
+      lane!.report({ type: "ended", ending: { reason: "server-busy", retry: true, detail: "HTTP 503" } });
+    }
+    await elapse(5);
+  }
+  expect(opened).toEqual([0, 300, 900, 2_100, 3_300]);
+  await elapse(5);
+  expect(prepared.error).toBeInstanceOf(ServerBusyError);
+});
+
+test("one download outage stalls once, checks the sign-in once, and resumes only when a reopened lane delivers", async () => {
+  const outage = stage(DOWNLOAD);
+  const prepared = outcome(outage.resources.prepare(new AbortController().signal));
+  await elapse(150);
+  const lanes = outage.lanes();
+  for (const lane of lanes) bytes(lane, 0);
+  await elapse(5);
+  expect(prepared.error).toBeUndefined();
+  outage.resources.measure();
+  expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "measure", epoch: 1 }));
+  // A report counted before the window belongs to no measurement.
+  bytes(lanes[0]!, 0);
+  // Each lane reports the bytes it read before it saw the break, then the break.
+  for (const lane of lanes) {
+    bytes(lane, 1);
+    lane.report({ type: "broken", detail: "TypeError: network error" });
+  }
+  // The outage lasts 2.5 s: every reopening breaks again.
+  for (let round = 0; round < 8; round++) {
+    await elapse(300);
+    for (const lane of lanes) {
+      expect(lane.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
+      lane.report({ type: "broken", detail: "TypeError: network error" });
+    }
+  }
+  await elapse(300);
+  bytes(lanes[1]!, 1);
+  const transitions = outage.events.filter(([type]) => type === "stalled" || type === "resumed");
+  expect(transitions).toEqual([
+    ["stalled", { reason: "connection-lost", detail: "TypeError: network error", direction: "down" }],
+    ["resumed"],
+  ]);
+  expect(outage.events.filter(([type]) => type === "download")).toHaveLength(4);
+  expect(outage.checks()).toBe(1);
+  outage.resources.discard();
+  expect(lanes.every(({ terminated }) => terminated)).toBe(true);
+});
+
+test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", async () => {
+  for (const acknowledged of [true, false]) {
+    const session = stage(DOWNLOAD, {}, SESSION);
+    void session.resources.prepare(new AbortController().signal);
+    const worker = session.session();
+    expect(worker.commands).toEqual([
+      {
+        type: "download",
+        url: `${ORIGIN}/wt/download?bytes=${64 * 1024 ** 3}&streams=3`,
+        ticket: null,
+        datagrams: false,
+        epoch: 0,
+      },
+    ]);
+    bytes(worker, 0);
+    await elapse(0);
+    const finished = outcome(session.resources.finish());
+    expect(worker.commands.at(-1)).toEqual({ type: "stop" });
+    if (acknowledged) worker.report({ type: "stopped" });
+    await elapse(3_000);
+    expect(finished.at).toBe(acknowledged ? 0 : 2_500);
+    expect(worker.terminated).toBe(true);
+  }
+});

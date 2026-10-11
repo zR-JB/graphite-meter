@@ -1,0 +1,250 @@
+// One WebTransport session per direction (api/wire.md#webtransport-routes): server-opened download streams or a
+// datagram flood counted into one report window, or client upload streams or datagrams with the server's progress
+// feed relayed. The worker dials within one budget, ticket included, redials on its owner's command, and finalizes
+// an upload when it stops.
+import type { EndReport, SessionCommand, SessionReport } from "../../protocol/messages";
+import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
+import { aborted, Tickets, withToken } from "../lanes/dial";
+import { CLOSE_GRACE_MS, ESTABLISH_MS, lost, refusal, sessionClosed } from "../lanes/endings";
+import { FINAL_GRACE_MS, readRecords } from "../lanes/records";
+
+type Dial = Extract<SessionCommand, { type: "download" | "upload" }>;
+type Upload = Extract<SessionCommand, { type: "upload" }>;
+
+/** A datagram loop settled within one microtask checkpoint would outrun the task carrying its own stop. */
+const YIELD_MS = 4;
+const UNESTABLISHED: EndReport = {
+  type: "ended",
+  ending: { reason: "timeout", retry: true, detail: "webtransport session did not establish" },
+};
+
+const post = (report: SessionReport) => postMessage(report);
+const ignore = () => {};
+const tickets = new Tickets();
+const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
+let session: Session | null = null;
+
+onmessage = ({ data }: MessageEvent<SessionCommand>) => {
+  if (data.type === "measure") reports.measure(data.epoch);
+  else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
+  else session = new Session(data);
+};
+
+// A full task: a message, then a timer.
+const turn = new MessageChannel();
+const turning: (() => void)[] = [];
+turn.port1.onmessage = () => setTimeout(turning.shift()!);
+const taskTurn = () =>
+  new Promise<void>((resolve) => {
+    turning.push(resolve);
+    turn.port2.postMessage(null);
+  });
+
+class Session {
+  #state: "dialing" | "open" | "stopping" | "ended" = "dialing";
+  #stopping: Promise<void> | null = null;
+  /** Aborting closes the transport and ends the dial. */
+  readonly #closed = new AbortController();
+  /** The feed's terminal record, or the end of its grace. */
+  readonly #completed = Promise.withResolvers<void>();
+  #grace: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(readonly command: Dial) {
+    if (command.type === "download") reports.measure(command.epoch);
+    void this.#dial().catch(this.#broken);
+  }
+
+  /** Stops moving bytes. An upload id is finalized whatever became of the session; only a live feed can bring the
+      terminal record, so only an open session waits for it before closing. */
+  stop(): Promise<void> {
+    return (this.#stopping ??= this.#stop());
+  }
+
+  async #stop(): Promise<void> {
+    const open = this.#state === "open";
+    if (open || this.#state === "dialing") this.#state = "stopping";
+    reports.flush();
+    if (!open) this.#closed.abort();
+    if (this.command.type === "upload") await this.#finalize(this.command.finalize, open);
+    this.#closed.abort();
+  }
+
+  /** The first ending is the session's; the rest are its echoes. */
+  #end(report: EndReport): void {
+    clearTimeout(this.#grace);
+    if (this.#state !== "dialing" && this.#state !== "open") return;
+    this.#state = "ended";
+    reports.flush();
+    post(report);
+    this.#closed.abort();
+  }
+
+  /** An open session's broken stream may be the session closing, whose code then names the ending. */
+  #broken = (error: unknown): void => {
+    const report: EndReport = { type: "broken", detail: String(error) };
+    if (this.#state !== "open") return this.#end(report);
+    this.#grace ??= setTimeout(() => this.#end(report), CLOSE_GRACE_MS);
+  };
+
+  async #dial(): Promise<void> {
+    const { command } = this;
+    const expired = AbortSignal.timeout(ESTABLISH_MS);
+    const budget = AbortSignal.any([this.#closed.signal, expired]);
+    let token = "";
+    if (command.ticket) {
+      const minted = await tickets.take(command.ticket, budget);
+      if (this.#state !== "dialing") return;
+      if (minted.type !== "token") return this.#end(budget.aborted ? UNESTABLISHED : minted);
+      token = minted.token;
+    }
+    let transport: WebTransport;
+    try {
+      transport = new WebTransport(withToken(command.url, token), { congestionControl: "throughput" });
+    } catch (error) {
+      return this.#broken(error);
+    }
+    this.#closed.signal.addEventListener("abort", () => {
+      try {
+        transport.close();
+      } catch {}
+    });
+    transport.closed.then(
+      ({ closeCode }) => this.#end(endOf(closeCode)),
+      () => this.#end(endOf(undefined)),
+    );
+    try {
+      // A black-holed handshake can leave `ready` and `closed` pending, so the budget ends the dial.
+      await Promise.race([transport.ready, aborted(budget)]);
+    } catch (error) {
+      return this.#end(budget.aborted ? UNESTABLISHED : { type: "broken", detail: String(error) });
+    } finally {
+      // An answer, a refusal too, spent the ticket; a dial that lapsed may never have reached the server.
+      if (!expired.aborted) tickets.spent(token);
+    }
+    if (this.#state !== "dialing") return;
+    this.#state = "open";
+    if (command.type === "upload") return this.#upload(transport, command);
+    void (command.datagrams ? this.#readDatagrams(transport) : this.#acceptStreams(transport));
+  }
+
+  /** Each server-opened stream is one sized request, replaced when exhausted. */
+  async #acceptStreams(transport: WebTransport): Promise<void> {
+    try {
+      const incoming = transport.incomingUnidirectionalStreams.getReader();
+      for (let next = await incoming.read(); !next.done; next = await incoming.read())
+        countBytes(next.value, reports.count).catch(this.#broken);
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  async #readDatagrams(transport: WebTransport): Promise<void> {
+    try {
+      const reader = transport.datagrams.readable.getReader();
+      let yielded = performance.now();
+      for (let next = await reader.read(); !next.done; next = await reader.read()) {
+        // One clock read per datagram serves the report window and the yield.
+        const now = performance.now();
+        reports.count(next.value.byteLength, now);
+        if (now - yielded < YIELD_MS) continue;
+        await taskTurn();
+        yielded = performance.now();
+      }
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  #upload(transport: WebTransport, { datagrams, streams }: Upload): void {
+    // The feed is read first, so the server reports before the first byte.
+    void this.#relay(transport);
+    const block = randomBlock();
+    if (datagrams) void this.#sendDatagrams(transport, block);
+    else for (let i = 0; i < streams; i++) void this.#writeStream(transport, block);
+  }
+
+  /** The first server-opened stream is the feed; a later one carries a refusal for a lane. */
+  async #relay(transport: WebTransport): Promise<void> {
+    try {
+      const incoming = transport.incomingUnidirectionalStreams.getReader();
+      for (let next = await incoming.read(); !next.done; next = await incoming.read()) void this.#follow(next.value);
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session; a feed that ends
+      before it can be recovered by a fresh session, as the server reopens the feed. */
+  async #follow(stream: ReadableStream<Uint8Array>): Promise<void> {
+    try {
+      const last = await readRecords(stream, (record) => post({ type: "record", record }));
+      if (last?.type === "complete") return this.#completed.resolve();
+      this.#end({
+        type: "ended",
+        ending: last
+          ? refusal(null, last.code, last.message || "upload progress error")
+          : lost("upload progress stream ended early"),
+      });
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  async #writeStream(transport: WebTransport, block: Uint8Array<ArrayBuffer>): Promise<void> {
+    try {
+      const writer = (await transport.createUnidirectionalStream()).getWriter();
+      while (this.#state === "open") {
+        await writer.ready;
+        await writer.write(block);
+      }
+      // A stop ends the stream with its FIN.
+      await writer.close();
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  async #sendDatagrams(transport: WebTransport, block: Uint8Array<ArrayBuffer>): Promise<void> {
+    const { datagrams } = transport;
+    try {
+      const writer = datagrams.writable.getWriter();
+      let payload = block.subarray(0, 0);
+      let yielded = performance.now();
+      while (this.#state === "open") {
+        await writer.ready;
+        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write.
+        const size = Math.min(block.length, datagrams.maxDatagramSize);
+        if (!size) return this.#end({ type: "ended", ending: lost("webtransport datagram size collapsed") });
+        if (payload.length !== size) payload = block.subarray(0, size);
+        writer.write(payload).catch(ignore);
+        const now = performance.now();
+        if (now - yielded < YIELD_MS) continue;
+        await taskTurn();
+        yielded = performance.now();
+      }
+    } catch (error) {
+      this.#broken(error);
+    }
+  }
+
+  /** One DELETE ends the upload id; the server then drains the lanes and sends its terminal record. */
+  async #finalize({ url, request }: Upload["finalize"], feeding: boolean): Promise<void> {
+    try {
+      const signal = AbortSignal.timeout(FINAL_GRACE_MS);
+      const response = await fetch(url, { ...request, method: "DELETE", cache: "no-store", signal });
+      response.body?.cancel().catch(ignore);
+      if (!response.ok || !feeding) return;
+    } catch {
+      return;
+    }
+    const timer = setTimeout(this.#completed.resolve, FINAL_GRACE_MS);
+    await this.#completed.promise;
+    clearTimeout(timer);
+  }
+}
+
+/** A close the server named, or a break. */
+function endOf(code: number | undefined): EndReport {
+  const ending = sessionClosed(code);
+  return ending ? { type: "ended", ending } : { type: "broken", detail: "webtransport session closed" };
+}

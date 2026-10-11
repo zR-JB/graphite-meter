@@ -241,6 +241,16 @@ export type OpenStage = (setup: StageSetup) => StageResources;
 
 export class ServerBusyError extends Error {}
 
+/** A failure that ended a stage's preparation, with the reason it would have reported as an event. */
+export class StageFailure extends Error {
+  constructor(
+    readonly reason: FailureReason,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /** A latency bus to one server: a WebSocket, or WebTransport datagrams, driven from a worker. */
 export interface ProbeChannelOptions {
   target: LatencyTarget;

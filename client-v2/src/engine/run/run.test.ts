@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { ServerBusyError, SignInRequired, type StageEvents } from "../types";
+import { ServerBusyError, SignInRequired, StageFailure, type StageEvents } from "../types";
 import { incoherence, type RunResult } from "./result";
 import { Run, type RunEvent, type RunPlan } from "./run";
 import type { Activity, Stage } from "./schedule";
@@ -1129,4 +1129,17 @@ test("stopping from the phase event of a preparing stage leaves no resources ope
   await h.elapse(5_000);
   const begun = h.calls.indexOf("begin:self:upload");
   expect(begun < 0 || h.calls.slice(begun).some((call) => call === "end:self" || call === "discard:self")).toBe(true);
+});
+
+test("a stage that cannot prepare reports the reason its lanes gave", async () => {
+  const h = setup(
+    [{ id: "self", prepare: () => Promise.reject(new StageFailure("protocol-error", "HTTP 400")) }],
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  await expect(h.result()).rejects.toMatchObject({
+    reason: "protocol-error",
+    message: expect.stringContaining("HTTP 400"),
+  });
 });
