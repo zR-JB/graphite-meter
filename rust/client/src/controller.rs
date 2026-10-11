@@ -219,7 +219,7 @@ impl Work {
                 client.grant(origin, grant);
             }
             let mut prepared = self.stop.run_until_cancelled(prepare(config, client.clone())).await?;
-            let Some((origin, issuer)) = asking(&prepared, &config.url) else {
+            let Some((origin, issuer)) = asking(&prepared, config.url.as_ref()) else {
                 return Some(prepared);
             };
             let refusal = match approval::refusal(&origin, config.insecure) {
@@ -271,10 +271,10 @@ async fn guarded(events: &Events, run: bool, started: Instant, work: impl Future
 }
 
 /// The first origin asking for sign-in, the catalogue's or a server's, with the name a prompt gives it.
-fn asking(prepared: &Result<Prepared, Failure>, url: &Origin) -> Option<(Origin, String)> {
+fn asking(prepared: &Result<Prepared, Failure>, url: Option<&Origin>) -> Option<(Origin, String)> {
     let asks = |failure: &Failure| failure.reason == FailureReason::SignInRequired;
     match prepared {
-        Err(failure) => asks(failure).then(|| (url.clone(), url.to_string())),
+        Err(failure) => url.filter(|_| asks(failure)).map(|url| (url.clone(), url.to_string())),
         Ok(prepared) => prepared
             .servers
             .iter()

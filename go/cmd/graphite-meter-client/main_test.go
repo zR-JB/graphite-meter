@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -56,7 +57,9 @@ func quits(cmd tea.Cmd) bool {
 
 func testModel(t *testing.T) model {
 	t.Helper()
-	m := newModel(goclient.DefaultConfig())
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = "http://127.0.0.1:7246"
+	m := newModel(cfg)
 	t.Cleanup(m.controller.Close)
 	m.width, m.height = 120, 40
 	m.prepare = prepareReady
@@ -341,6 +344,26 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 	}
 }
 
+func TestClickingStartStartsTheTest(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	lines := strings.Split(ansi.Strip(view(m)), "\n")
+	y := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, "▶ Start test") })
+	if y < 0 {
+		t.Fatal("no Start button on the setup screen")
+	}
+	x := ansi.StringWidth(lines[y][:strings.Index(lines[y], "▶")]) + 3
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y + 3, Button: tea.MouseLeft})); m.next != nil {
+		t.Fatal("a click below the key started the test")
+	}
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y - 1, Button: tea.MouseLeft})); m.next == nil {
+		t.Fatal("clicking the key's cap did not start the test")
+	}
+	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})); m.stopPrompt || m.next == nil {
+		t.Fatal("a second click on Start, while paths are checked, asked to stop")
+	}
+}
+
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
 	stages, advanced := setupGroups[2].rows, setupGroups[3].rows
@@ -433,10 +456,10 @@ func TestCommitEdit(t *testing.T) {
 func TestEditKeysDiscardAndQuit(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
+	before := m.cfg.BaseURL
 	m.beginEdit(catalogueRow, m.cfg.BaseURL)
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil ||
-		m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
+	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil || m.cfg.BaseURL != before {
 		t.Fatal("esc applied the edit")
 	}
 	m.beginEdit(catalogueRow, "")
@@ -568,6 +591,82 @@ func TestTransportErrorsReadAsReasons(t *testing.T) {
 	for err, want := range map[error]string{refused: "Server could not be reached", lost: "Connection lost"} {
 		if got := errorText(err); got != want {
 			t.Errorf("errorText(%v) = %q, want %q", err, got, want)
+		}
+	}
+}
+
+func TestFirstStartAsksForTheServer(t *testing.T) {
+	t.Parallel()
+	m := newModel(goclient.DefaultConfig())
+	t.Cleanup(m.controller.Close)
+	m.width, m.height = 120, 40
+	if m.edit == nil || m.edit.row != catalogueRow || m.prepare != prepareNoServer {
+		t.Fatal("a start without a server does not open its address")
+	}
+	m, _ = modelAndCmd(m.Update(press("esc")))
+	screen := ansi.Strip(view(m))
+	if !strings.Contains(screen, "type the server's address") || !strings.Contains(screen, "needs a server") ||
+		strings.Contains(screen, "Checking paths") {
+		t.Fatalf("setup without a server:\n%s", screen)
+	}
+	if m, _ = modelAndCmd(m.Update(press("r"))); m.next != nil || m.edit == nil {
+		t.Fatal("start without a server did not ask for one")
+	}
+	m, _ = modelAndCmd(m.Update(tea.PasteMsg{Content: "meter.example"}))
+	m, cmd := modelAndCmd(m.Update(press("enter")))
+	if m.cfg.BaseURL != "https://meter.example" || m.prepare != prepareChecking || cmd == nil {
+		t.Fatalf("an entered server is not prepared: %q, state %v", m.cfg.BaseURL, m.prepare)
+	}
+	if m.currentRow() != startRow {
+		t.Fatal("a first server leaves the focus on its address instead of Start")
+	}
+}
+
+func TestTheLastPreparedServerIsRemembered(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "graphite-meter", "server")
+	if recall(path) != "" {
+		t.Fatal("recalled a server before any was kept")
+	}
+	m := testModel(t)
+	m.remembered = path
+	m, cmd := modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, run: &goclient.PreparedRun{}}))
+	for _, msg := range drain(cmd) {
+		m, _ = modelAndCmd(m.Update(msg))
+	}
+	if got := recall(path); got != m.cfg.BaseURL {
+		t.Fatalf("recalled %q, want %q", got, m.cfg.BaseURL)
+	}
+	if err := os.WriteFile(path, []byte("not a server\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if recall(path) != "" {
+		t.Fatal("recalled a server that does not parse")
+	}
+}
+
+func TestPastedAddressesNameTheirServer(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{
+		"  https://Meter.Example/#/history\n": "https://meter.example",
+		"meter.example":                       "https://meter.example",
+		"meter.example:8443/servers?x=1":      "https://meter.example:8443",
+		"user:secret@meter.example/":          "https://meter.example",
+		"HTTP://meter.example:80":             "http://meter.example",
+		"192.168.1.20:7246":                   "http://192.168.1.20:7246",
+		"[fe80::1]:7246":                      "http://[fe80::1]:7246",
+		"nas:7246":                            "http://nas:7246",
+		"meter.home.arpa":                     "http://meter.home.arpa",
+		"localhost:7246":                      "http://localhost:7246",
+		"203.0.113.7":                         "https://203.0.113.7",
+	} {
+		if got, err := serverOrigin(raw); err != nil || got != want {
+			t.Errorf("%q gave %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", "ftp://meter.example", "https://", "two words"} {
+		if got, err := serverOrigin(raw); err == nil {
+			t.Errorf("%q gave %q, want an error", raw, got)
 		}
 	}
 }

@@ -69,7 +69,6 @@ struct Script {
     base: Instant,
     next: Duration,
     log: Vec<(Duration, Decision)>,
-    recovering: Vec<Duration>,
     /// When the live trace got rates.
     live: Vec<Duration>,
     /// Departures the next tick passes in.
@@ -85,7 +84,6 @@ impl Script {
             base,
             next: Duration::ZERO,
             log: Vec::new(),
-            recovering: Vec::new(),
             live: Vec::new(),
             departed: Vec::new(),
         }
@@ -99,9 +97,6 @@ impl Script {
         self.next = tick.next - self.base;
         self.log
             .extend(tick.decisions.into_iter().map(|decision| (at, decision)));
-        if tick.recovering {
-            self.recovering.push(at);
-        }
         if tick.live.is_some() {
             self.live.push(at);
         }

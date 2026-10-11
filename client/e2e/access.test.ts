@@ -106,6 +106,17 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
 test("a saved unreachable peer stays selected through cancel and retry", async (page) => {
   await limit(page, [], [frankfurt]);
   await open(page, home.url, { servers: [home, frankfurt], config: http1 });
+  // Start waits for the server list; a busy runner may not have it yet.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          !document
+            .querySelector(".gauge-footer")
+            ?.textContent?.includes("still loading"),
+      ),
+    )
+    .toBe(true);
   await runButton(page, "Start test").click();
   await runButton(page, "Cancel").click();
   await expect(runButton(page, "Start test")).toBeVisible();

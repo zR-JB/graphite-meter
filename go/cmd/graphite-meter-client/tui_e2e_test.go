@@ -151,7 +151,7 @@ func TestTUIEndToEnd(t *testing.T) {
 	send("\x01")
 	await("edit start", func(f tuiSnapshot) bool {
 		for line := range strings.SplitSeq(f.content, "\n") {
-			if f.editing && strings.Contains(line, "Catalogue URL") && strings.Contains(line, origin) {
+			if f.editing && strings.Contains(line, "Server address") && strings.Contains(line, origin) {
 				return true
 			}
 		}
@@ -168,19 +168,12 @@ func TestTUIEndToEnd(t *testing.T) {
 	await("cancel edit", func(f tuiSnapshot) bool { return !f.editing })
 	send("r")
 	await("measuring", func(f tuiSnapshot) bool { return f.phase == goclient.PhaseMeasuring })
-	live := await("download readings", func(f tuiSnapshot) bool {
-		return f.phase == goclient.PhaseMeasuring && strings.Contains(f.content, "Timeline · Download")
+	await("download on the dial", func(f tuiSnapshot) bool {
+		return f.phase == goclient.PhaseMeasuring && strings.Contains(f.content, "↓ Download") && strings.Contains(f.content, "Stop")
 	})
-	combined := false
-	for line := range strings.SplitSeq(live.content, "\n") {
-		combined = combined || strings.Contains(line, "↓ ") && strings.Contains(line, "Loaded latency")
-	}
-	if !combined {
-		t.Fatalf("live readings wrapped despite fitting on one row:\n%s", live.content)
-	}
 	program.Send(tea.WindowSizeMsg{Width: 80, Height: 24})
 	complete := await("complete", func(f tuiSnapshot) bool { return f.finished && f.outcome == goclient.OutcomeComplete })
-	for _, word := range []string{"Results", "Timeline", "Median", "Download", "Upload", "↓ solid · ↑ dashed"} {
+	for _, word := range []string{"Run again", "Download", "Upload", "Peak", "Transferred"} {
 		if !strings.Contains(complete.content, word) {
 			t.Fatalf("completed screen lost %s:\n%s", word, complete.content)
 		}

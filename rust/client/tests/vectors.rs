@@ -5,6 +5,7 @@ use graphite_meter_client::{
         aggregate::{Aggregate, Boundary, Fed, Rate, Reading, Receiver},
         format,
         latency::{Deadline, Latency, ProbeOutcome},
+        live::LiveRate,
     },
     model::{Direction, Stage},
 };
@@ -203,6 +204,22 @@ fn formatting() {
                 _ => panic!("unknown format {kind}"),
             };
             assert_eq!(actual, case["out"].as_str().unwrap(), "{kind}: {case}");
+        }
+    }
+}
+
+/// The terminal presents the rate the browser does, step for step.
+#[test]
+fn live_rate() {
+    let vectors = cases(include_str!("../../../api/liverate.testvectors.json"));
+    for case in vectors["cases"].as_array().unwrap() {
+        let mut rate = LiveRate::default();
+        for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+            let number = |at: usize| step[at].as_f64().unwrap();
+            let changed = rate.observe(number(0), number(1));
+            let (presented, expected) = (rate.presented(), number(2));
+            let close = (presented - expected).abs() <= 1e-9 * expected.max(1.0);
+            assert!(close && changed == step[3], "{} step {index}: {presented} {changed}", case["name"]);
         }
     }
 }

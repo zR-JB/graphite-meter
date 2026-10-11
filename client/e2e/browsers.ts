@@ -181,7 +181,14 @@ function launchFirefox(): Promise<Bidi> {
     // JSON loads as a plain document of its origin, as in Chrome, so a test can work on that origin from it.
     writeFileSync(
       join(profile, "user.js"),
-      'user_pref("devtools.jsonview.enabled", false);\n',
+      [
+        'user_pref("devtools.jsonview.enabled", false);',
+        // A runner has no pointing device, so Firefox would report a pointer without hover and the app would act as on
+        // a phone; the suite tests a desktop with a mouse, as Chrome reports one (fine pointer 2 + hover 4).
+        'user_pref("ui.primaryPointerCapabilities", 6);',
+        'user_pref("ui.allPointerCapabilities", 6);',
+        "",
+      ].join("\n"),
     );
     const child = Bun.spawn(
       [

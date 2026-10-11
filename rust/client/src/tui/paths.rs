@@ -154,7 +154,9 @@ impl App {
 
     /// An origin by its authority, or by its port alone on the catalogue's host.
     fn short(&self, origin: &Origin) -> String {
-        if origin.host == self.config.url.host && origin.port != origin.scheme.default_port() {
+        if self.config.url.as_ref().is_some_and(|url| url.host == origin.host)
+            && origin.port != origin.scheme.default_port()
+        {
             return format!(":{}", origin.port);
         }
         let text = origin.to_string();

@@ -5,6 +5,8 @@ const tip = (page: Page) => page.locator('[role="tooltip"]');
 
 async function centre(locator: Locator) {
   return locator.evaluate(async (el: Element) => {
+    // A web font that arrives late reflows the top bar, moving the control from under a measured point.
+    await document.fonts.ready;
     el.scrollIntoView({ block: "center" });
     await new Promise((done) => requestAnimationFrame(done));
     const box = el.getBoundingClientRect();

@@ -6,7 +6,7 @@ use super::{
     setup::Row,
 };
 use crate::{
-    config::{Config, MAX_STREAMS, PathChoice, Streams},
+    config::{Config, MAX_STREAMS, PathChoice, Streams, server_origin},
     events::Check,
     report::vocabulary::{self as words, CADENCES},
     text::Line,
@@ -16,7 +16,6 @@ use crossterm::event::KeyCode;
 use graphite_meter_proto::{
     discovery::{Protocol, STAGE_LIMITS},
     duration,
-    origin::Origin,
     text::safe,
 };
 use std::{ops::RangeInclusive, time::Duration};
@@ -74,8 +73,9 @@ impl App {
         Vec::new()
     }
 
+    /// Checks the paths once the settings rest; without a server there are none to check.
     pub(super) fn recheck_soon(&mut self) {
-        self.recheck = Some(self.now + RECHECK);
+        self.recheck = self.config.url.as_ref().map(|_| self.now + RECHECK);
     }
 
     fn reset(&mut self, confirmed: bool) {
@@ -97,7 +97,8 @@ impl App {
                 let value = span(&mut self.config, row).map(|(value, ..)| duration::format(*value));
                 self.edit(row, &value.unwrap_or_default());
             }
-            Row::Catalogue | Row::Streams => self.edit(row, &self.show(row).value.text()),
+            Row::Catalogue => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
+            Row::Streams => self.edit(row, &self.show(row).value.text()),
             _ => match self.flag(row) {
                 Some(on) => self.set_flag(row, !on),
                 None => self.cycle(row, 1),
@@ -174,7 +175,7 @@ impl App {
         };
     }
 
-    fn edit(&mut self, row: Row, value: &str) {
+    pub(super) fn edit(&mut self, row: Row, value: &str) {
         let mut editor = Editor { row, text: Vec::new(), cursor: 0, error: None };
         editor.insert(value);
         (self.overlay, self.notice) = (Overlay::Edit(editor), "Enter applies, esc cancels.".into());
@@ -210,14 +211,16 @@ impl App {
     fn parse(&mut self, row: Row, raw: &str) -> Result<String, String> {
         let config = &mut self.config;
         if row == Row::Catalogue {
-            let scheme = if raw.contains("://") { "" } else { default_scheme(raw) };
-            let url = Origin::parse(&format!("{scheme}{raw}"))
-                .map_err(|_| "use an http:// or https:// origin, for example https://meter.example")?;
-            if url != config.url {
+            let url = server_origin(raw)?;
+            if config.url.is_none() {
+                // A first server is entered to be tested, so the next enter starts.
+                self.setup.row = 0;
+            } else if config.url.as_ref() != Some(&url) {
                 config.servers.clear();
             }
-            config.url = url;
-            return Ok(format!("Catalogue {}.", config.url));
+            let notice = format!("Server {url}.");
+            config.url = Some(url);
+            return Ok(notice);
         }
         if row == Row::Streams {
             let count = raw.parse().ok().filter(|count| (1..=MAX_STREAMS).contains(count));
@@ -266,21 +269,6 @@ fn streams_notice(streams: Streams, maximum: bool) -> String {
     }
 }
 
-/// The scheme a typed catalogue address without one takes: http on a loopback host, else https.
-fn default_scheme(raw: &str) -> &'static str {
-    let authority = raw.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
-    let host = match host.rsplit_once(':') {
-        Some((name, port)) if port.bytes().all(|byte| byte.is_ascii_digit()) => name,
-        _ => host,
-    };
-    let bracketed = host.strip_prefix('[').and_then(|host| host.strip_suffix(']'));
-    let host = bracketed.unwrap_or(host);
-    let loopback = host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    let local = loopback || host.eq_ignore_ascii_case("localhost");
-    if local { "http://" } else { "https://" }
-}
-
 /// The inline editor: up to 4096 characters, a cursor, and the error its last apply found.
 pub(super) struct Editor {
     pub row: Row,
@@ -327,9 +315,17 @@ impl Editor {
         self.error = None;
     }
 
-    /// The text around the cursor in `width` cells, the cursor a block over its character.
-    pub fn line(&self, width: usize, palette: &Palette) -> Line {
+    /// The text around the cursor in `width` cells, the cursor a block over its character; `placeholder` greyed while
+    /// the text is empty.
+    pub fn line(&self, width: usize, palette: &Palette, placeholder: &str) -> Line {
         let cell = |c: &char| c.width().unwrap_or(0);
+        if self.text.is_empty() && !placeholder.is_empty() {
+            let mut rest = placeholder.chars();
+            let under = rest.next().unwrap_or(' ').to_string();
+            return Line::styled(under, palette.cursor)
+                .and(rest.as_str(), palette.muted)
+                .fit(width);
+        }
         let under = self.text.get(self.cursor).copied().unwrap_or(' ');
         let mut room = width.max(1).saturating_sub(cell(&under));
         let mut start = self.cursor;
