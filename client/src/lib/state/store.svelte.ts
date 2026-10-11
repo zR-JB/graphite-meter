@@ -61,6 +61,7 @@ import {
   DEFAULT_HISTORY_SPLIT,
   STORAGE_KEY,
   type ThemePref,
+  type Explanations,
   type ResultHistoryPreference,
   DEFAULT_HISTORY_COLUMNS,
   type HistoryColumn,
@@ -136,6 +137,7 @@ type DisplayPreference =
   | "theme"
   | "showWireEstimates"
   | "keyShortcuts"
+  | "explanations"
   | "resultHistoryPreference"
   | "historyColumns"
   | "dockWidth"
@@ -368,6 +370,7 @@ class AppStore {
   theme = $state<ThemePref>("dark");
   showWireEstimates = $state(true);
   keyShortcuts = $state(true);
+  explanations = $state<Explanations>("hover");
   resultHistoryPreference = $state<ResultHistoryPreference>("default");
   historyColumns = $state.raw<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
@@ -733,6 +736,7 @@ class AppStore {
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
     this.keyShortcuts = defaults.keyShortcuts;
+    this.explanations = defaults.explanations;
     this.resultHistoryPreference = defaults.resultHistoryPreference;
   }
 
@@ -788,6 +792,12 @@ export function mountStoreEffects(store: AppStore): () => void {
       ))
         meta.media = meta.dataset.scheme === resolved ? "all" : "not all";
     });
+    $effect(() =>
+      document.documentElement.setAttribute(
+        "data-explanations",
+        store.explanations,
+      ),
+    );
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
@@ -798,6 +808,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
         keyShortcuts: store.keyShortcuts,
+        explanations: store.explanations,
         resultHistoryPreference: store.resultHistoryPreference,
         historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),

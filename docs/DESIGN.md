@@ -377,7 +377,11 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   and sheets read clean. No tip restates what its control already shows: a Close key and a connection path's
   row carry none. It also opens on keyboard focus, on a
   click or tap on jargon or an explained fact, or on a long press on a control; never after a click on a control. It
-  stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a
+  stays while the pointer is on its word, closes a moment after it leaves, and one tip shows at a time. Settings'
+  Explanations choose when a tip that explains a word or a figure opens: On hover, as above and by default, or On
+  click, where a rest opens none, a click or tap on the word opens its tip and the next closes it, a long press asks
+  one inside a control (a switch's or a column's name), and keyboard focus opens it as before. A control's own tip (its
+  name and key, why it is unavailable) and a cut text's open on a rest either way. A scroll or a
   tap elsewhere closes a pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the
   viewport would cut flips below its word, then aligns to the word's edge. Text an ellipsis cuts carries its whole
   text as its tip while it is cut (`clipTip`), so a rest, a tap on plain text or a long press on a control reads

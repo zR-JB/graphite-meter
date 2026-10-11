@@ -177,6 +177,8 @@ export const JARGON = {
   latencyRange: "Range\nFastest to slowest reply",
   keyShortcuts:
     "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
+  explanations:
+    "Explanations\nOn hover: as the pointer rests on a word or figure\nOn click: only when it is clicked or tapped",
   wireRate:
     "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   rateUnit:

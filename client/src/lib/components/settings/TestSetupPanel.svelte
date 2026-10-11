@@ -481,6 +481,23 @@
           >
         </div>
       </div>
+      <div class="units">
+        <span {@attach tooltip(() => JARGON.explanations)}>Explanations</span>
+        <div class="segmented" role="group" aria-label="Explanations">
+          <button
+            type="button"
+            aria-pressed={store.explanations === "hover"}
+            onclick={() => store.prefer({ explanations: "hover" })}
+            >On hover</button
+          >
+          <button
+            type="button"
+            aria-pressed={store.explanations === "click"}
+            onclick={() => store.prefer({ explanations: "click" })}
+            >On click</button
+          >
+        </div>
+      </div>
       {@render toggle(
         "Show estimated wire rate",
         JARGON.wireRate,
