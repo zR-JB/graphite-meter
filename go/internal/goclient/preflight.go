@@ -39,17 +39,18 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	return pf, nil
 }
 
-func getJSONProbe(ctx context.Context, hc *http.Client, origin, path string) (string, error) {
+// getJSONProbe is the protocol a valid probe answer came over, and the address family, 4 or 6, the server saw it from.
+func getJSONProbe(ctx context.Context, hc *http.Client, origin, path string) (string, int, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var p wire.Probe
 	response, err := controlJSON(ctx, hc, http.MethodGet, u, "probe", &p)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return response.Proto, p.Validate()
+	return response.Proto, p.ClientIPVersion, p.Validate()
 }
 
 func httpEndpoint(base, path string) (string, error) {

@@ -15,7 +15,9 @@ type ServerRunSummary struct {
 	Server        wire.ServerEntry
 	Throughput    wire.ThroughputTarget
 	LatencyTarget *wire.LatencyTarget
-	Results       []Result
+	// IPVersion is the address family, 4 or 6, the server saw the throughput check arrive from.
+	IPVersion int
+	Results   []Result
 }
 
 type RunDetails struct {
@@ -146,6 +148,7 @@ func (c *coordinator) details(outcome Outcome) *RunDetails {
 		summary := ServerRunSummary{Server: server.prepared.Server, Results: slices.Clone(server.results)}
 		if connection := server.prepared.Connection; connection != nil {
 			summary.Throughput, summary.LatencyTarget = connection.ThroughputTarget, connection.LatencyTarget
+			summary.IPVersion = connection.IPVersion
 		}
 		details.Servers = append(details.Servers, summary)
 	}

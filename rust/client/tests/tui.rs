@@ -242,10 +242,7 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
 
 #[test]
 fn a_cancelled_or_expired_sign_in_asks_again_on_the_next_start() {
-    for (end, notice) in [
-        (SignInEnd::Cancelled, "Sign-in canceled. v requests a new code."),
-        (SignInEnd::Expired, "Sign-in expired. Press v to request a new code."),
-    ] {
+    for (end, notice) in [(SignInEnd::Cancelled, "Sign-in canceled"), (SignInEnd::Expired, "Sign-in expired")] {
         let (mut app, now) = app();
         app.event(&Event::Checking { run: false }, now);
         app.event(&Event::SignIn(prompt(now)), now);

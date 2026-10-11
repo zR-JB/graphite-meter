@@ -56,5 +56,5 @@ cd go && go test ./cmd/graphite-meter-client -run '^$' -bench '^BenchmarkTUI' -b
 ```
 
 The frame workload retains four servers and 480 points per trace at 80×24, 120×40 and 160×50. Animation frames reuse
-unchanged samples; sample frames update throughput and latency. The chart workload measures braille rasterization
-separately. These measure Go rendering time and allocations, excluding terminal-emulator drawing and network traffic.
+unchanged samples; sample frames update throughput and latency. These measure Go rendering time and allocations,
+excluding terminal-emulator drawing and network traffic.

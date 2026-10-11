@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
-	"image/color"
 	"slices"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
@@ -42,10 +39,14 @@ type (
 )
 
 const (
-	fps           = 30
+	// fps is the animation's frame rate, so the needle and readouts glide on fast displays; input paints at once
+	// regardless.
+	fps           = 120
 	frameInterval = time.Second / fps
 	// paintFPS paints input within a frame of a 120 Hz display; an unchanged view costs one string compare.
 	paintFPS = 120
+	// toastFor is how long a notice stays.
+	toastFor = 3200 * time.Millisecond
 )
 
 type prepareState int
@@ -58,18 +59,35 @@ const (
 	prepareNoServer
 )
 
-type popup int
+// overlay is what opens over the console.
+type overlay int
 
 const (
-	popupNone popup = iota
-	popupServers
-	popupDetails
+	overlayNone overlay = iota
+	overlaySettings
+	overlayDetails
+	overlayHelp
+	overlayChooser
+	// overlayConnect asks for the server's address, at a first start or after its check could not reach it.
+	overlayConnect
 )
 
 type signIn struct {
 	pending *goclient.PendingAuthorization
 	since   time.Time
 	opened  bool
+}
+
+// toast is a notice in the bottom bar until it lapses.
+type toast struct {
+	text  line
+	until time.Time
+}
+
+// frameCache is what the last frame drew that input reads: its pressable regions and a sheet's scroll.
+type frameCache struct {
+	hits                    []hit
+	scroll, maxScroll, rows int
 }
 
 type model struct {
@@ -79,20 +97,23 @@ type model struct {
 	remembered, recalled string
 	width                int
 	height               int
-	now                  time.Time
+	now, since           time.Time
 	st                   styles
-	spin                 spinner.Model
-	help                 help.Model
-	notice               string
+	pal                  palette
+	// tiles is whether the terminal shows 256 colours or more, which tiles and washes need.
+	tiles bool
+	spin  spinner.Model
+	toast *toast
 
 	row         int
-	advanced    bool
 	edit        *editState
-	popup       popup
+	overlay     overlay
+	scroll      int
 	serverDraft []string
 	serverRow   int
 	openChooser bool
-	body        viewport.Model
+	hover       target
+	frame       *frameCache
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
@@ -106,7 +127,7 @@ type model struct {
 	events      <-chan goclient.Event
 	run         *runState
 	next        *runState
-	stopPrompt  bool
+	stopping    bool
 	quitting    bool
 	interrupted bool
 	resetPrompt bool
@@ -115,22 +136,22 @@ type model struct {
 
 func newModel(cfg goclient.Config) model {
 	controller := goclient.NewController(context.Background())
-	st := newStyles(true)
-	dial := spinner.MiniDot
-	dial.FPS = frameInterval
-	h := help.New()
-	h.Styles, h.ShortSeparator = st.helpStyles(), "   "
+	ticks := spinner.MiniDot
+	ticks.FPS = frameInterval
+	now := time.Now()
 	m := model{
 		controller:   controller,
 		preparation:  controller.NewPreparation(cfg, nil),
 		cfg:          cfg,
-		st:           st,
+		st:           newStyles(true),
+		pal:          newPalette(true, nil),
+		tiles:        true,
 		openApproval: (*goclient.PendingAuthorization).Open,
 		prepareSeq:   1,
-		spin:         spinner.New(spinner.WithSpinner(dial), spinner.WithStyle(st.accent)),
-		help:         h,
-		body:         viewport.New(),
-		now:          time.Now(),
+		spin:         spinner.New(spinner.WithSpinner(ticks)),
+		frame:        &frameCache{},
+		now:          now,
+		since:        now,
 	}
 	if cfg.BaseURL == "" {
 		m = m.askForServer()
@@ -138,82 +159,71 @@ func newModel(cfg goclient.Config) model {
 	return m
 }
 
-// askForServer opens the server's address for typing: nothing can be prepared or tested without one.
+// askForServer opens the server's address for typing, with the one set so far.
 func (m model) askForServer() model {
-	m.prepare, m.row = prepareNoServer, slices.Index(m.rows(), catalogueRow)
+	if m.cfg.BaseURL == "" {
+		m.prepare = prepareNoServer
+	}
+	m.overlay = overlayConnect
 	m.beginEdit(catalogueRow, m.cfg.BaseURL)
-	m.notice = "Enter your Graphite Meter server's address, then press enter."
+	return m
+}
+
+// notify shows text in the bottom bar for a while.
+func (m model) notify(text line) model {
+	m.toast = &toast{text, m.now.Add(toastFor)}
 	return m
 }
 
 func (m model) Init() tea.Cmd {
 	if m.prepare == prepareNoServer {
-		return tea.RequestBackgroundColor
+		return tea.Batch(tea.RequestBackgroundColor, m.spin.Tick)
 	}
 	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 
-func (m model) running() bool  { return m.next != nil || m.run != nil && m.run.running() }
-func (m model) finished() bool { return m.run != nil && !m.running() }
+func (m model) running() bool { return m.next != nil || m.run != nil && m.run.running() }
 
+// animating is whether frames change without input: a spinner turns, the needle moves, or a notice waits to lapse.
 func (m model) animating() bool {
-	return m.running() || m.run == nil && (m.prepare == prepareChecking || m.auth != nil)
-}
-
-// onKey reports whether a click lands on a key's plate. It reads the plate's colour off the drawn line, so it follows
-// every layout and scroll position.
-func (m model) onKey(x, y int) bool {
-	lines := strings.Split(m.render(), "\n")
-	if y < 0 || y >= len(lines) {
-		return false
-	}
-	w, _ := m.size()
-	line := uv.NewScreenBuffer(w, 1)
-	uv.NewStyledString(lines[y]).Draw(line, line.Bounds())
-	cell := line.CellAt(x, 0)
-	if cell == nil {
-		return false
-	}
-	// A plate fills a cell's background; its half-block caps fill the foreground.
-	paint := cell.Style.Bg
-	if cell.Content == "▄" || cell.Content == "▀" {
-		paint = cell.Style.Fg
-	}
-	if paint == nil {
-		return false
-	}
-	same := func(a, b color.Color) bool {
-		ar, ag, ab, _ := a.RGBA()
-		br, bg, bb, _ := b.RGBA()
-		return ar == br && ag == bg && ab == bb
-	}
-	return same(paint, m.st.plate.GetBackground()) || same(paint, m.st.plateOff.GetBackground())
+	moving := m.run != nil && m.run.moving(m.now)
+	return m.running() || m.prepare == prepareChecking || m.auth != nil || m.toast != nil || moving
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
-		m.st = newStyles(msg.IsDark())
-		m.help.Styles, m.spin.Style = m.st.helpStyles(), m.st.accent
+		m.st, m.pal = newStyles(msg.IsDark()), newPalette(msg.IsDark(), msg.Color)
+	case tea.ColorProfileMsg:
+		m.tiles = msg.Profile >= colorprofile.ANSI256
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.help.SetWidth(max(msg.Width-2, 1))
-	case tea.MouseWheelMsg:
-		if m.edit == nil && m.auth == nil && !m.stopPrompt {
-			m.body = m.bodyViewport(m.layout())
-			m.body, _ = m.body.Update(msg)
-		}
+	case tea.MouseMotionMsg:
+		m.hover = m.targetAt(msg.X, msg.Y)
 	case tea.MouseClickMsg:
-		// While paths are checked before a run, or the stop is asked, the key on screen is not the one that acts.
-		if msg.Button != tea.MouseLeft || m.popup != popupNone || m.edit != nil || m.auth != nil || m.next != nil ||
-			m.stopPrompt || !m.onKey(msg.X, msg.Y) {
-			break
+		if msg.Button == tea.MouseLeft {
+			return m.click(m.targetAt(msg.X, msg.Y))
 		}
-		// A key does what its cap says: Stop while running, otherwise start or run again.
-		if m.running() {
-			return m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	case tea.MouseWheelMsg:
+		step := 1
+		if msg.Button == tea.MouseWheelUp {
+			step = -1
 		}
-		return m.handleKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
+		switch m.overlay {
+		case overlaySettings:
+			m.moveFocus(step)
+		case overlayDetails, overlayHelp, overlayChooser:
+			m.scroll = min(max(m.frame.scroll+3*step, 0), m.frame.maxScroll)
+		}
+	case tea.PasteMsg:
+		// An address pasted over the console is the server to test.
+		if m.edit == nil && m.overlay == overlayNone && m.auth == nil && !m.running() {
+			m = m.askForServer()
+			m.edit.input.SetValue("")
+		}
+		if m.edit != nil {
+			return m.updateEdit(msg)
+		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case spinner.TickMsg:
@@ -241,6 +251,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// targetAt is the topmost pressable region at column x and row y in the last frame.
+func (m model) targetAt(x, y int) target {
+	for i := len(m.frame.hits) - 1; i >= 0; i-- {
+		if h := m.frame.hits[i]; h.area.contains(x, y) {
+			return h.target
+		}
+	}
+	return target{}
+}
+
+func (m model) click(t target) (tea.Model, tea.Cmd) {
+	switch t.kind {
+	case targetKey:
+		if m.running() {
+			return m.stop(), nil
+		}
+		return m.startRun()
+	case targetChip:
+		return m.switchStage(t.stage)
+	case targetCap:
+		return m.act(t.action, tea.KeyPressMsg{})
+	case targetServer:
+		m = m.openSettings(catalogueRow)
+	case targetRow:
+		return m.clickRow(t.index)
+	case targetEntry:
+		m.serverRow = t.index
+		m.selectEntry()
+	case targetLink:
+		if m.auth != nil {
+			return m.openSignIn()
+		}
+	case targetBackdrop:
+		m.overlay, m.edit = overlayNone, nil
+	}
+	return m, nil
+}
+
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
@@ -249,108 +297,110 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditKey(msg)
 	case key.Matches(msg, keys.quit):
 		return m.quit()
-	case key.Matches(msg, keys.help) && !m.stopPrompt:
-		m.help.ShowAll = !m.help.ShowAll
-		return m, nil
-	case m.popup == popupDetails:
-		return m.handleDetailsKey(msg)
-	case m.popup == popupServers:
-		return m.handleServerChooserKey(msg)
-	case m.stopPrompt:
-		m.stopPrompt = false
-		if key.Matches(msg, keys.confirmStop) {
-			m.controller.CancelRun()
-			m.notice = "Stopping the test…"
-		} else {
-			m.notice = "Test continues."
-		}
-		return m, nil
-	case key.Matches(msg, keys.page), m.run != nil && key.Matches(msg, keys.scroll):
-		m.scrollBody(msg)
-		return m, nil
-	case m.run != nil || m.next != nil:
-		return m.handleRunKey(msg)
 	case m.auth != nil:
 		return m.handleSignInKey(msg)
-	case m.prepare == prepareSignIn && key.Matches(msg, keys.start):
-		m.notice = blocked + ": sign in first. Press v to request a new code."
-		return m, nil
 	}
-	return m.handleSetupKey(msg)
-}
-
-func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, keys.details):
-		m.popup = popupDetails
-		m.body.SetYOffset(0)
-	case m.multipleRunServers() && key.Matches(msg, keys.latencyServer):
-		m.run.nextFocus()
-	case m.running() && key.Matches(msg, keys.stop):
-		m.stopPrompt = true
-		m.notice = "Stop the test? esc confirms, any other key continues."
-	case m.finished() && key.Matches(msg, keys.setup):
-		m.run, m.row = nil, 0
-		m.notice = ""
-		m.body.SetYOffset(0)
-		return m.reprepare()
-	case m.finished() && key.Matches(msg, keys.runAgain):
-		return m.startRun()
+	for _, binding := range m.table() {
+		if key.Matches(msg, binding.binding) && m.offers(binding.action) {
+			return m.act(binding.action, msg)
+		}
 	}
 	return m, nil
+}
+
+// act does what action does in the context on top.
+func (m model) act(a action, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch a {
+	case actQuit:
+		return m.quit()
+	case actHelp:
+		if m.overlay == overlayHelp {
+			m.overlay = overlayNone
+		} else {
+			m.overlay, m.scroll = overlayHelp, 0
+		}
+	case actSettings:
+		m = m.openSettings(nil)
+	case actDetails:
+		m.overlay, m.scroll = overlayDetails, 0
+	case actClose:
+		m.overlay = overlayNone
+	case actStart:
+		return m.startRun()
+	case actStop:
+		return m.stop(), nil
+	case actStage:
+		stages := []goclient.Stage{goclient.StageLatency, goclient.StageDownload, goclient.StageUpload,
+			goclient.StageBidirectional}
+		if i := strings.IndexRune("1234", rune(msg.Code)); i >= 0 {
+			return m.switchStage(stages[i])
+		}
+	case actLatency:
+		m.run.nextFocus()
+	case actRecheck:
+		m = m.notify(styled("Checking the server again…", m.pal.muted))
+		return m.reprepare()
+	case actScroll, actPage:
+		m.scroll = min(max(m.frame.scroll+scrollStep(msg, m.frame.rows), 0), m.frame.maxScroll)
+	default:
+		switch m.overlay {
+		case overlaySettings:
+			return m.handleSettingsKey(a, msg)
+		case overlayChooser:
+			return m.handleServerChooserKey(a, msg)
+		}
+	}
+	return m, nil
+}
+
+// scrollStep is how far a scroll key moves a sheet of rows lines.
+func scrollStep(msg tea.KeyPressMsg, rows int) int {
+	switch msg.String() {
+	case "pgup":
+		return -max(rows, 1)
+	case "pgdown":
+		return max(rows, 1)
+	case "home":
+		return -1 << 30
+	case "end":
+		return 1 << 30
+	}
+	return delta(msg)
+}
+
+// switchStage switches stage on or off for the next run.
+func (m model) switchStage(stage goclient.Stage) (tea.Model, tea.Cmd) {
+	if m.running() {
+		return m, nil
+	}
+	i := slices.IndexFunc(stageRows, func(s *setting) bool { return s.label == stageLabels[stage] })
+	if i < 0 {
+		return m, nil
+	}
+	before := m.cfg
+	m.setFlag(stageRows[i], !*stageRows[i].flag(&m.cfg))
+	return m.recheckIfPathsChanged(before)
 }
 
 func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.openSignIn):
-		launch, pending := m.openApproval, m.auth.pending
-		m.auth.opened = true
-		m.notice = "Sign-in page opened in the browser."
-		return m, func() tea.Msg {
-			launch(pending)
-			return nil
-		}
+		return m.openSignIn()
 	case key.Matches(msg, keys.cancelSignIn):
 		m.invalidatePreparation()
 		m.prepare, m.prepareErr = prepareSignIn, ""
-		m.notice = "Sign-in canceled. Press v to request a new code."
+		m = m.notify(styled("Sign-in canceled", m.pal.muted))
 	}
 	return m, nil
 }
 
-func (m model) handleSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.resetPrompt && !(key.Matches(msg, keys.change) && m.currentRow() == resetRow) {
-		m.resetPrompt = false
-		m.notice = "Settings kept."
-		return m, nil
+func (m model) openSignIn() (tea.Model, tea.Cmd) {
+	launch, pending := m.openApproval, m.auth.pending
+	m.auth.opened = true
+	return m, func() tea.Msg {
+		launch(pending)
+		return nil
 	}
-	row := m.currentRow()
-	switch {
-	case key.Matches(msg, keys.rows):
-		m.navigate(msg)
-	case key.Matches(msg, keys.adjust):
-		return m.adjust(row, delta(msg))
-	case key.Matches(msg, keys.toggle) && row.flag != nil:
-		before := m.cfg
-		m.setFlag(row, !*row.flag(&m.cfg))
-		return m.recheckIfPathsChanged(before)
-	case key.Matches(msg, keys.change):
-		return m.activate(row)
-	case key.Matches(msg, keys.start):
-		return m.startRun()
-	case key.Matches(msg, keys.recheck):
-		return m.reprepare()
-	case key.Matches(msg, keys.servers):
-		return m.openServerChooser()
-	case key.Matches(msg, keys.available) && m.canUseAvailable():
-		return m.useAvailableServers()
-	case key.Matches(msg, keys.automatic):
-		m.cfg.ThroughputTarget, m.cfg.ThroughputProtocol, m.cfg.ThroughputTransport = "auto", "auto", "auto"
-		m.cfg.LatencyTarget, m.cfg.LatencyTransport = "auto", "auto"
-		m.notice = "Automatic paths applied to every selected server."
-		return m.reprepare()
-	}
-	return m, nil
 }
 
 func delta(msg tea.KeyPressMsg) int {
@@ -360,15 +410,10 @@ func delta(msg tea.KeyPressMsg) int {
 	return 1
 }
 
-func (m *model) navigate(msg tea.KeyPressMsg) {
-	m.row, m.notice = min(max(m.row+delta(msg), 0), len(m.rows())-1), ""
-	lw, _, _ := columns(max(m.width, minWidth) - 2)
-	_, line := m.setupList(lw - 4)
-	m.body = m.bodyViewport(m.layout())
-	m.body.EnsureVisible(1+line, 0, 0)
-}
-
 func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
+	if m.toast != nil && !msg.Time.Before(m.toast.until) {
+		m.toast = nil
+	}
 	if !m.animating() {
 		return m, nil
 	}
@@ -381,12 +426,20 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// stop stops the run at once.
+func (m model) stop() model {
+	if m.running() && !m.stopping {
+		m.controller.CancelRun()
+		m.stopping = true
+	}
+	return m
+}
+
 func (m model) quit() (tea.Model, tea.Cmd) {
 	if m.running() {
-		m.controller.CancelRun()
-		m.quitting, m.stopPrompt = true, false
-		m.notice = "Stopping the test before quitting… ctrl+c quits at once."
-		return m, nil
+		m.quitting, m.overlay = true, overlayNone
+		m = m.notify(styled("Stopping the test before quitting… ctrl+c quits at once.", m.pal.muted))
+		return m.stop(), nil
 	}
 	return m, tea.Quit
 }
@@ -397,4 +450,19 @@ func (m model) interrupt() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m.quit()
+}
+
+// spinner is the spinner's glyph now.
+func (m model) spinner() string {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	return frames[int(m.now.Sub(m.since)/(80*time.Millisecond))%len(frames)]
+}
+
+// capLine is a key and what it does as a bar's cap: the key on a raised plate, its deed beside it.
+func (m model) capLine(key, does string, hovered bool) line {
+	plate := m.pal.raised
+	if hovered {
+		plate = m.pal.selected
+	}
+	return styled(" "+key+" ", m.pal.text.on(plate)).and(" "+does, m.pal.muted)
 }

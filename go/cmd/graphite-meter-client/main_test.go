@@ -47,6 +47,25 @@ func press(name string) tea.KeyPressMsg {
 
 func view(m model) string { return m.View().Content }
 
+// notice is the notice in the bottom bar, if any.
+func notice(m model) string {
+	if m.toast == nil {
+		return ""
+	}
+	return m.toast.text.text()
+}
+
+// clickText clicks the first cell of text on screen, and reports whether it was there.
+func clickText(m model, text string) (model, tea.Cmd, bool) {
+	for y, row := range strings.Split(ansi.Strip(view(m)), "\n") {
+		if i := strings.Index(row, text); i >= 0 {
+			next, cmd := modelAndCmd(m.Update(tea.MouseClickMsg{X: ansi.StringWidth(row[:i]), Y: y, Button: tea.MouseLeft}))
+			return next, cmd, true
+		}
+	}
+	return m, nil, false
+}
+
 func quits(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
@@ -182,8 +201,8 @@ func TestHeadlessRunsReportRefusalsAndSignals(t *testing.T) {
 			}()
 		}
 		m = runHeadless(m)
-		if got := exitStatus(m, caught.Load()); m.run != nil || m.notice == "" || got != c.want {
-			t.Errorf("%v: exit %d with notice %q, want %d and the reason", c.signal, got, m.notice, c.want)
+		if got := exitStatus(m, caught.Load()); m.run != nil || notice(m) == "" || got != c.want {
+			t.Errorf("%v: exit %d with notice %q, want %d and the reason", c.signal, got, notice(m), c.want)
 		}
 	}
 }
@@ -304,24 +323,27 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 		}
 	}
 	at := func(s *setting) { m.row = slices.Index(m.rows(), s) }
+	if keys("s"); m.overlay != overlaySettings || m.currentRow() != catalogueRow {
+		t.Fatal("s did not open the settings on the server's address")
+	}
 	for _, c := range []struct {
 		key  string
 		want *setting
 	}{
-		{"up", startRow}, {"down", catalogueRow}, {"tab", serversRow}, {"shift+tab", catalogueRow},
+		{"up", catalogueRow}, {"down", serversRow}, {"tab", throughputPathRow}, {"shift+tab", serversRow},
 	} {
 		if keys(c.key); m.currentRow() != c.want {
 			t.Fatalf("after %s: row %q, want %q", c.key, m.currentRow().row(m).label, c.want.row(m).label)
 		}
 	}
-	keys(slices.Repeat([]string{"down"}, 20)...)
-	if m.currentRow() != advancedRow {
-		t.Fatalf("collapsed list ended at %q", m.currentRow().row(m).label)
+	if keys(slices.Repeat([]string{"down"}, 30)...); m.currentRow() != resetRow {
+		t.Fatalf("the list ended at %q", m.currentRow().row(m).label)
 	}
-	if keys("right", "down", "right"); !m.advanced || m.cfg.Warmup != defaults.Warmup+100*time.Millisecond {
-		t.Fatalf("advanced=%v warmup=%v", m.advanced, m.cfg.Warmup)
+	at(warmupRow)
+	if keys("right"); m.cfg.Warmup != defaults.Warmup+100*time.Millisecond {
+		t.Fatalf("warmup %v", m.cfg.Warmup)
 	}
-	download := setupGroups[2].rows[1]
+	download := stageRows[1]
 	at(download)
 	keys("right", "space")
 	if m.cfg.DownloadDuration != defaults.DownloadDuration+time.Second || m.cfg.Stages.Download {
@@ -335,58 +357,50 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 	if keys("enter"); m.edit == nil || m.edit.row != download {
 		t.Fatal("enter on a stage did not open its duration")
 	}
-	m.edit = nil
-	if at(startRow); !strings.Contains(ansi.Strip(view(m)), "enter start test") {
-		t.Fatal("the start row does not offer enter")
+	if keys("esc", "esc"); m.edit != nil || m.overlay != overlayNone {
+		t.Fatal("esc did not leave the editor and then the settings")
 	}
 	if keys("enter"); m.next == nil {
-		t.Fatal("enter on Start test did not start")
+		t.Fatal("enter on the console did not start")
 	}
 }
 
-func TestClickingStartStartsTheTest(t *testing.T) {
+func TestClickingTheKeyStartsAndStopsTheTest(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	lines := strings.Split(ansi.Strip(view(m)), "\n")
-	y := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, "▶ Start test") })
-	if y < 0 {
-		t.Fatal("no Start button on the setup screen")
+	if m, _, _ = clickText(m, "Ready to measure"); m.next != nil {
+		t.Fatal("a click beside the key started the test")
 	}
-	x := ansi.StringWidth(lines[y][:strings.Index(lines[y], "▶")]) + 3
-	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y + 3, Button: tea.MouseLeft})); m.next != nil {
-		t.Fatal("a click below the key started the test")
+	m, _, found := clickText(m, "Start test")
+	if !found || m.next == nil {
+		t.Fatalf("clicking the key did not start the test:\n%s", ansi.Strip(view(m)))
 	}
-	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y - 1, Button: tea.MouseLeft})); m.next == nil {
-		t.Fatal("clicking the key's cap did not start the test")
-	}
-	if m, _ = modelAndCmd(m.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})); m.stopPrompt || m.next == nil {
-		t.Fatal("a second click on Start, while paths are checked, asked to stop")
+	if m, _, _ = clickText(m, "Stop test"); !m.stopping {
+		t.Fatal("clicking the key while paths are checked did not stop")
 	}
 }
 
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
-	stages, advanced := setupGroups[2].rows, setupGroups[3].rows
 	for _, c := range []struct {
 		row     *setting
 		key     string
 		check   func(model) bool
 		recheck bool
 	}{
-		{stages[2], "space", func(m model) bool { return !m.cfg.Stages.Upload }, true},
-		{stages[3], "space", func(m model) bool { return m.cfg.Stages.Bidirectional }, false},
-		{stages[4], "enter", func(m model) bool { return !m.cfg.LoadedLatency }, false},
-		{stages[1], "enter", func(m model) bool { return m.edit != nil && m.edit.row == stages[1] }, false},
+		{stageRows[2], "space", func(m model) bool { return !m.cfg.Stages.Upload }, true},
+		{stageRows[3], "space", func(m model) bool { return m.cfg.Stages.Bidirectional }, false},
+		{loadedLatencyRow, "enter", func(m model) bool { return !m.cfg.LoadedLatency }, false},
+		{stageRows[1], "enter", func(m model) bool { return m.edit != nil && m.edit.row == stageRows[1] }, false},
 		{idleCadenceRow, "enter", func(m model) bool { return m.cfg.PingInterval == goclient.PingFast }, true},
 		{loadedCadenceRow, "enter", func(m model) bool { return m.cfg.LoadedPingInterval == goclient.PingSlow }, true},
 		{forceStreamsRow, "enter", func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
-		{advanced[6], "enter", func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
+		{insecureRow, "enter", func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
 		{catalogueRow, "enter", func(m model) bool { return m.edit != nil && m.edit.row == catalogueRow }, false},
-		{advancedRow, "enter", func(m model) bool { return !m.advanced }, false},
+		{resetRow, "enter", func(m model) bool { return m.resetPrompt }, false},
 	} {
 		m := testModel(t)
-		m.advanced = true
-		m.row = slices.Index(m.rows(), c.row)
+		m = m.openSettings(c.row)
 		seq := m.prepareSeq
 		m, cmd := modelAndCmd(m.Update(press(c.key)))
 		if !c.check(m) || (m.prepareSeq != seq) != c.recheck || c.recheck && cmd == nil {
@@ -398,7 +412,7 @@ func TestRowActivation(t *testing.T) {
 
 func TestCommitEdit(t *testing.T) {
 	t.Parallel()
-	download, upload := setupGroups[2].rows[1], setupGroups[2].rows[2]
+	download, upload := stageRows[1], stageRows[2]
 	for _, c := range []struct {
 		row     *setting
 		forced  bool
@@ -479,36 +493,31 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	pending := &goclient.PendingAuthorization{Code: "ABCD", BrowserURL: "https://meter.example/auth/cli"}
 	m.auth = &signIn{pending: pending, since: time.Now()}
 	m.prepare = prepareSignIn
-	for _, k := range []string{"enter", "space", "o", "enter"} {
+	for _, k := range []string{"enter", "o", "enter"} {
 		var launch tea.Cmd
 		if m, launch = modelAndCmd(m.Update(press(k))); launch != nil {
 			launch()
 		}
 	}
-	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened || m.statusLabel() != "Checking sign-in" {
-		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit != nil, m.auth)
+	if label, _ := m.status(); opened != 3 || m.edit != nil || m.auth == nil || !m.auth.opened ||
+		label != "Checking sign-in" {
+		t.Fatalf("opened=%d edit=%v auth=%v status=%q", opened, m.edit != nil, m.auth, label)
 	}
-	for _, binding := range m.ShortHelp() {
-		if binding.Help().Desc == keys.change.Help().Desc {
-			t.Fatal("footer offered enter to a row while sign-in owns it")
-		}
-	}
-	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "ABCD") ||
-		!slices.Contains(strings.Split(screen, "\n"), pad(" "+pending.BrowserURL, 120)) {
-		t.Fatalf("sign-in link sits inside a frame: %q", screen)
+	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "ABCD") || !strings.Contains(screen, pending.BrowserURL) {
+		t.Fatalf("the sign-in card misses its code or page:\n%s", screen)
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
-	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "v") {
+	if label, _ := m.status(); m.auth != nil || m.prepareSeq == seq || label != "Sign in" || !strings.Contains(notice(m), "canceled") {
 		t.Fatalf("esc did not cancel sign-in: auth=%v prepare=%v", m.auth, m.prepare)
-	}
-	if m, _ = modelAndCmd(m.Update(press("r"))); m.run != nil {
-		t.Fatal("r started a run that still needs sign-in")
 	}
 	m.auth = &signIn{pending: pending, since: time.Now()}
 	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, err: goclient.ErrApprovalExpired}))
-	if m.auth != nil || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "expired") {
-		t.Fatalf("expiry reads %q / %q", m.statusLabel(), m.notice)
+	if label, _ := m.status(); m.auth != nil || label != "Sign in" || !strings.Contains(notice(m), "expired") {
+		t.Fatalf("expiry reads %q / %q", label, notice(m))
+	}
+	if m, _ = modelAndCmd(m.Update(press("r"))); m.next == nil {
+		t.Fatal("a start after a lapsed sign-in did not ask again")
 	}
 }
 
@@ -546,6 +555,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	multi, _ = modelAndCmd(multi.Update(eventsMsg{seq: multi.runSeq, events: []goclient.Event{
 		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
 	}}))
+	partial.overlay = overlayDetails
 	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120, true)}
 	for i, view := range views {
 		if i < 4 && !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
@@ -561,12 +571,12 @@ func TestAuthTokenIsBoundToTheChallengingIssuer(t *testing.T) {
 	m.preparedRun = preparedFixture(nil, &goclient.AuthRequiredError{})
 	m.auth = &signIn{pending: &goclient.PendingAuthorization{}}
 	m, cmd := modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "grant", origin: "https://a.example"}))
-	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(m.notice, "discarded") {
-		t.Fatalf("a grant from another issuer was accepted: %q", m.notice)
+	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(notice(m), "discarded") {
+		t.Fatalf("a grant from another issuer was accepted: %q", notice(m))
 	}
 	m, cmd = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "grant", origin: "https://b.example"}))
-	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(m.notice, "Signed in") {
-		t.Fatalf("the challenging issuer's grant was refused: %q", m.notice)
+	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(notice(m), "Signed in") {
+		t.Fatalf("the challenging issuer's grant was refused: %q", notice(m))
 	}
 }
 
@@ -600,14 +610,17 @@ func TestFirstStartAsksForTheServer(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	t.Cleanup(m.controller.Close)
 	m.width, m.height = 120, 40
-	if m.edit == nil || m.edit.row != catalogueRow || m.prepare != prepareNoServer {
-		t.Fatal("a start without a server does not open its address")
+	if m.edit == nil || m.edit.row != catalogueRow || m.overlay != overlayConnect || m.prepare != prepareNoServer {
+		t.Fatal("a start without a server does not ask for its address")
+	}
+	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "Connect to a server") {
+		t.Fatalf("no connect card:\n%s", screen)
 	}
 	m, _ = modelAndCmd(m.Update(press("esc")))
 	screen := ansi.Strip(view(m))
-	if !strings.Contains(screen, "type the server's address") || !strings.Contains(screen, "needs a server") ||
+	if !strings.Contains(screen, "No server") || !strings.Contains(screen, "needs a server") ||
 		strings.Contains(screen, "Checking paths") {
-		t.Fatalf("setup without a server:\n%s", screen)
+		t.Fatalf("console without a server:\n%s", screen)
 	}
 	if m, _ = modelAndCmd(m.Update(press("r"))); m.next != nil || m.edit == nil {
 		t.Fatal("start without a server did not ask for one")
@@ -617,8 +630,12 @@ func TestFirstStartAsksForTheServer(t *testing.T) {
 	if m.cfg.BaseURL != "https://meter.example" || m.prepare != prepareChecking || cmd == nil {
 		t.Fatalf("an entered server is not prepared: %q, state %v", m.cfg.BaseURL, m.prepare)
 	}
-	if m.currentRow() != startRow {
-		t.Fatal("a first server leaves the focus on its address instead of Start")
+	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "Checking meter.example") {
+		t.Fatalf("the card does not say the address is checked:\n%s", screen)
+	}
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, run: preparedFixture(nil)}))
+	if m.overlay != overlayNone || m.edit != nil || !strings.Contains(notice(m), "Ready") {
+		t.Fatalf("a server that prepared left its address open: overlay %v, notice %q", m.overlay, notice(m))
 	}
 }
 

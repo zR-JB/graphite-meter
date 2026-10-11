@@ -129,7 +129,7 @@ impl fmt::Display for Fault {
         match self {
             Self::Connect(ConnectError::Tls(rustls::Error::InvalidCertificate(certificate))) => write!(
                 formatter,
-                "Certificate not trusted: {}. Turn on Skip TLS verify (-insecure) only for a server you trust.",
+                "Certificate not trusted: {}. Turn on Skip TLS verification (--insecure) only for a server you trust.",
                 untrusted(certificate)
             ),
             Self::Connect(ConnectError::Unreachable(_)) => formatter.write_str(super::UNREACHABLE),

@@ -45,7 +45,7 @@ pub enum Unapproved {
 /// Why `origin` refuses sign-in: it is not HTTPS, or TLS goes unverified.
 pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
     match () {
-        _ if insecure => Some("sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)"),
+        _ if insecure => Some("sign-in refuses Skip TLS verification (--insecure)"),
         _ if origin.scheme == Scheme::Http => Some("authenticated operation requires an HTTPS -url"),
         _ => None,
     }
@@ -140,4 +140,4 @@ impl Unapproved {
 }
 
 /// What an expired approval asks the operator to do.
-pub const EXPIRED: &str = "Sign-in expired. Press v to request a new code.";
+pub const EXPIRED: &str = "Sign-in expired";

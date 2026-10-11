@@ -5,29 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
-
-func fit(s string, w int) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = ansi.Truncate(line, max(w, 1), "…")
-	}
-	return strings.Join(lines, "\n")
-}
-
-// panel is a section: its rule and title over the body, padded to h rows when h is set.
-func (s styles) panel(title, body string, w, h int) string {
-	lines := s.section(title, w)
-	for line := range strings.SplitSeq(body, "\n") {
-		lines = append(lines, fit(line, w))
-	}
-	for len(lines) < h {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
-}
 
 func (s styles) grid(headers []string, rows [][]string, w int) string {
 	widths := make([]int, len(headers))
@@ -71,10 +50,11 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 	return strings.Join(lines, "\n")
 }
 
+// point is a trace's merged values at one time: their mean, lowest and highest, and how many merged.
 type point struct {
-	t, v float64
-	peak float64
-	n    int
+	t, v      float64
+	low, peak float64
+	n         int
 }
 
 const historyPoints, traceStep = 480, 0.05
@@ -96,7 +76,7 @@ func (tr trace) add(t, v float64) trace {
 		if t-last.t < tr.step && !math.IsNaN(v) && !math.IsNaN(last.v) {
 			last.n++
 			last.v += (v - last.v) / float64(last.n)
-			last.peak = max(last.peak, v)
+			last.low, last.peak = min(last.low, v), max(last.peak, v)
 			return tr
 		}
 	}
@@ -107,7 +87,7 @@ func (tr trace) add(t, v float64) trace {
 	if !math.IsNaN(v) {
 		peak = max(v, 0)
 	}
-	tr.points = append(tr.points, point{t: t, v: v, peak: peak, n: 1})
+	tr.points = append(tr.points, point{t: t, v: v, low: peak, peak: peak, n: 1})
 	return tr
 }
 
@@ -117,7 +97,7 @@ func coarsen(points []point) []point {
 		p := points[i]
 		if i+1 < len(points) {
 			q := points[i+1]
-			p.peak = max(p.peak, q.peak)
+			p.low, p.peak = min(p.low, q.low), max(p.peak, q.peak)
 			switch {
 			case math.IsNaN(q.v):
 				p.v = q.v

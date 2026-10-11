@@ -16,15 +16,18 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// unreachable is what a check says of a server no connection reached.
+const unreachable = "Server could not be reached"
+
 func errorText(err error) string {
 	_, transport := errors.AsType[*url.Error](err)
 	op, network := errors.AsType[*net.OpError](err)
 	switch cert, untrusted := errors.AsType[*tls.CertificateVerificationError](err); {
 	case untrusted:
 		return "Certificate not trusted: " + wire.CleanText(strings.TrimPrefix(cert.Err.Error(), "x509: "), 200) +
-			". Turn on Skip TLS verify (-insecure) only for a server you trust."
+			". Turn on Skip TLS verification (--insecure) only for a server you trust."
 	case network && op.Op == "dial":
-		return "Server could not be reached"
+		return unreachable
 	case transport || network:
 		return failureLabels[goclient.ReasonOf(err)]
 	}
@@ -211,11 +214,4 @@ func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
 
 func pad(s string, w int) string {
 	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
-}
-
-func (s styles) checkbox(on bool) string {
-	if on {
-		return s.accent.Render("●")
-	}
-	return s.muted.Render("○")
 }

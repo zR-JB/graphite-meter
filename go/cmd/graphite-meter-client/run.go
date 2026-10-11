@@ -34,6 +34,13 @@ func (m *model) invalidatePreparation() {
 	m.preparation = m.controller.NewPreparation(m.cfg, m.preparedRun)
 }
 
+// reprepareNow checks the paths at once: an address just entered is waited on.
+func (m model) reprepareNow() (tea.Model, tea.Cmd) {
+	m.invalidatePreparation()
+	m.prepare, m.prepareErr = prepareChecking, ""
+	return m, tea.Batch(m.prepareAfter(0), m.spin.Tick)
+}
+
 func (m model) reprepare() (tea.Model, tea.Cmd) {
 	m.invalidatePreparation()
 	if m.cfg.BaseURL == "" {
@@ -60,7 +67,9 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	}
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
 		m.prepare, m.prepareErr = prepareSignIn, ""
-		m.notice = "Sign-in required. Preparing the sign-in page…"
+		if m.overlay == overlayConnect {
+			m.overlay, m.edit = overlayNone, nil
+		}
 		preparation, seq, origin := m.preparation, m.prepareSeq, m.challengedOrigin()
 		return m, func() tea.Msg {
 			pending, err := preparation.BeginAuthorization(origin, authErr.URL)
@@ -81,6 +90,14 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 			m.recalled = m.cfg.BaseURL
 			expiry = tea.Batch(expiry, remember(m.remembered, m.recalled))
 		}
+	}
+	switch ready := len(m.readyServers()) > 0; {
+	case ready && m.overlay == overlayConnect:
+		// A server that prepared closes the address and says so.
+		m.overlay, m.edit = overlayNone, nil
+		m = m.notify(styled("Ready  ", m.pal.ok).and(m.selectedServerNames(), m.pal.text))
+	case !ready && m.prepare == prepareFailed && m.overlay == overlayNone && !m.running():
+		m = m.askForServer()
 	}
 	if m.openChooser && msg.run != nil {
 		m.openChooser = false
@@ -118,7 +135,6 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 	}
 	m.auth = &signIn{pending: msg.pending, since: time.Now()}
 	m.now = m.auth.since
-	m.notice = "Check the code, then press enter to open the sign-in page."
 	preparation, pending, seq := m.preparation, msg.pending, msg.seq
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		token, err := preparation.PollAuthorization(pending)
@@ -134,22 +150,21 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case errors.Is(msg.err, goclient.ErrApprovalExpired):
 		m.prepare, m.prepareErr = prepareSignIn, ""
-		m.notice = "Sign-in expired. Press v to request a new code."
+		m = m.notify(styled("Sign-in expired", m.pal.warn))
 		return m, nil
 	case msg.err != nil:
 		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
-		m.notice = ""
 		return m, nil
 	}
 	if issuer, err := wire.CanonicalOrigin(m.challengedOrigin()); err != nil || !strings.EqualFold(issuer, msg.origin) {
-		m.notice = "The server changed while sign-in was pending, so the approval was discarded."
+		m = m.notify(styled("The server changed while sign-in was pending, so the approval was discarded.", m.pal.warn))
 		return m.reprepare()
 	}
 	if err := m.controller.AcceptAuthorization(msg.origin, msg.token); err != nil {
 		m.prepare, m.prepareErr = prepareFailed, errorText(err)
 		return m, nil
 	}
-	m.notice = "Signed in. Checking the authenticated paths…"
+	m = m.notify(styled("Signed in", m.pal.ok))
 	return m.reprepare()
 }
 
@@ -179,6 +194,14 @@ type runState struct {
 	// which sets the strips' top and the dial's scale, and the dial's scale while idle latency is measured.
 	peak     float64
 	rttScale time.Duration
+	// populations are each server's replies in each stage as they arrive; moved, the bytes moved so far.
+	populations map[populationKey]*goclient.LivePopulation
+	moved       float64
+	// needle is where the dial's needle stands, 0–1 of the sweep, and needleWhen when it last moved; sweepFrom is where
+	// it stood when the run finished, from where the result sweeps in.
+	needle     float64
+	needleWhen time.Time
+	sweepFrom  float64
 }
 
 // glide moves a shown value to each new sample over the time between samples, as the browser's readout does.
@@ -239,6 +262,8 @@ func newRunState(cfg goclient.Config, started time.Time) *runState {
 		latest:   map[string]goclient.LatencySample{},
 		timeouts: map[string]int{},
 		outcome:  goclient.OutcomeRunning,
+
+		populations: map[populationKey]*goclient.LivePopulation{},
 	}
 	for _, stage := range r.plan {
 		r.stages = append(r.stages, stageProgress{name: stage.Name, duration: stage.Duration})
@@ -276,17 +301,15 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 		return m.askForServer(), nil
 	}
 	if err := m.cfg.Validate(); err != nil {
-		m.notice = blocked + ": " + err.Error() + "."
-		m.run, m.row = nil, slices.Index(m.rows(), setupGroups[2].rows[0])
-		return m, nil
+		m.run = nil
+		return m.notify(styled(blocked+": "+err.Error()+".", m.pal.warn)), nil
 	}
 	m.invalidatePreparation()
 	m.runSeq++
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
 	m.next = newRunState(m.cfg, m.now)
-	m.stopPrompt, m.popup, m.edit = false, popupNone, nil
-	m.notice = "Checking paths before the test. Press esc to stop."
+	m.overlay, m.edit, m.stopping = overlayNone, nil, false
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
 
@@ -299,8 +322,7 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 		case m.next != nil && event.Kind == goclient.EventDone:
 			return m.startFailed(event)
 		case m.next != nil && event.Kind == goclient.EventServers:
-			m.run, m.next, m.notice = m.next, nil, "Test started. Press esc to stop."
-			m.body.SetYOffset(0)
+			m.run, m.next = m.next, nil
 		case m.next != nil:
 			continue
 		case event.Kind == goclient.EventDone:
@@ -312,44 +334,48 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
-	m.next, m.stopPrompt, m.last = nil, false, done.Outcome()
+	m.next, m.stopping, m.last = nil, false, done.Outcome()
 	switch {
 	case m.quitting:
 		return m, tea.Quit
 	case goclient.IsAuthRequired(done.Err):
+		// The check asks for the sign-in again.
 		m.run = nil
-		m.notice = "Sign-in required; run graphite-meter-client in a terminal to sign in."
-		return m.reprepare()
+		return m.reprepareNow()
 	case m.last == goclient.OutcomeStopped:
-		m.notice = "Test stopped before it started."
+		m = m.notify(styled("Test stopped before it started.", m.pal.muted))
 	default:
-		m.notice = startFailed + ": " + errorText(done.Err)
+		m = m.notify(styled(startFailed+": "+errorText(done.Err), m.pal.warn))
 		return m.reprepare()
 	}
 	return m, nil
 }
 
 func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
-	m.stopPrompt = false
+	m.stopping = false
 	r := m.run
 	r.adopt(done.Servers)
-	r.outcome, r.finished = done.Outcome(), done.At
+	r.outcome, r.finished, r.sweepFrom = done.Outcome(), done.At, r.needle
 	m.last = r.outcome
 	if done.Err != nil && !errors.Is(done.Err, context.Canceled) {
 		r.err = done.Err
 	}
+	// A stage the run ended in stopped with it, or failed with it.
+	cut := stageFailed
+	if r.outcome == goclient.OutcomeStopped {
+		cut = stageStopped
+	}
 	for i := range r.stages {
 		if s := r.stages[i].state; s == stagePreparing || s == stageWarmup || s == stageMeasuring {
-			r.stages[i].state = stageStopped
+			r.stages[i].state = cut
 		}
 	}
-	m.notice = ""
 	if m.quitting {
 		return m, tea.Quit
 	}
 	if goclient.IsAuthRequired(done.Err) {
 		m.run = nil
-		m.notice = "Sign-in expired. Checking the selected servers…"
+		m = m.notify(styled("Sign-in expired", m.pal.warn))
 		return m.reprepare()
 	}
 	return m, nil
@@ -362,7 +388,7 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
 	case goclient.EventServerFailure:
-		m.notice = m.serverName(e.ServerID) + ": " + failureLabels[e.Failure.Reason]
+		*m = m.notify(styled(m.serverName(e.ServerID)+": "+failureLabels[e.Failure.Reason], m.pal.warn))
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
 		if e.Phase == goclient.PhasePreparing {
@@ -420,6 +446,9 @@ func (m *model) apply(e goclient.Event) {
 			r.live[dir] = &liveRate{}
 		}
 		live, gap := r.live[dir], e.At.Sub(since)
+		if sampled {
+			r.moved += sample.BytesPerSec * gap.Seconds()
+		}
 		if !sampled || !live.observeRate(sample.BytesPerSec, gap) {
 			break
 		}
@@ -431,6 +460,13 @@ func (m *model) apply(e goclient.Event) {
 		}
 		r.peak = max(r.peak, total)
 	case goclient.EventLatency:
+		if r.phase == goclient.PhaseMeasuring {
+			key := populationKey{r.stage, e.ServerID}
+			if r.populations[key] == nil {
+				r.populations[key] = &goclient.LivePopulation{}
+			}
+			r.populations[key].Add(e.Latency)
+		}
 		v := math.NaN()
 		if e.Latency.TimedOut {
 			r.timeouts[e.ServerID]++
@@ -440,12 +476,16 @@ func (m *model) apply(e goclient.Event) {
 			if r.stage == goclient.StageLatency && e.ServerID == r.latencyServer() {
 				r.rttScale = max(r.rttScale, time.Duration(ceilStep(float64(e.Latency.RTT)*1.25/1e6, 1, 2, 4)*1e6))
 			}
-			v = float64(e.Latency.RTT)
+			v = float64(e.Latency.RTT) / float64(time.Millisecond)
 		}
 		r.rtt[e.ServerID] = r.rtt[e.ServerID].add(at, v)
 	case goclient.EventResult:
 		r.results = append(r.results, *e.Result)
 		r.peak = max(r.peak, r.mean(e.Result.Stage))
+		r.moved = 0
+		for _, result := range r.results {
+			r.moved += float64(result.TotalBytes)
+		}
 	}
 }
 
@@ -464,17 +504,6 @@ func (r *runState) mean(stage goclient.Stage) float64 {
 
 // stripTop is the strips' shared top: the browser's chart step above the highest combined rate.
 func (r *runState) stripTop() float64 { return niceCeil(max(r.peak, 1)*8*1.03) / 8 }
-
-// gaugeCeiling is the browser's dial scale for a combined rate: its 1-2-5 step above it with 3% headroom, and from
-// a megabit up never under 1 Gbit/s, where most connections fit.
-func gaugeCeiling(bytesPerSec float64) float64 {
-	bits := bytesPerSec * 8 * 1.03
-	top := ceilStep(bits, 1, 2, 5)
-	if bits >= 1e6 {
-		top = max(top, 1e9)
-	}
-	return top / 8
-}
 
 // window is when `stage` measured: from its mark for its planned duration, or false before it started.
 func (r *runState) window(stage goclient.Stage) (float64, float64, bool) {
@@ -555,36 +584,4 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 		}
 	}
 	return out
-}
-
-func (m model) statusLabel() string {
-	if m.next != nil {
-		return "Checking paths"
-	}
-	if r := m.run; r != nil {
-		switch {
-		case r.outcome != goclient.OutcomeRunning:
-			return outcomeLabels[r.outcome]
-		case r.stage == "" || r.phase == goclient.PhasePreparing:
-			return "Checking paths"
-		case r.phase == goclient.PhaseWarmup:
-			return "Warmup"
-		}
-		return stageLabels[r.stage]
-	}
-	switch {
-	case m.prepare == prepareNoServer:
-		return notStarted
-	case m.cfg.Validate() != nil:
-		return blocked
-	case m.auth != nil && m.auth.opened:
-		return checkingSignIn
-	case m.prepare == prepareSignIn:
-		return pathLabels[pathSignIn]
-	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
-		return startFailed
-	case m.prepare == prepareChecking:
-		return "Checking paths"
-	}
-	return notStarted
 }

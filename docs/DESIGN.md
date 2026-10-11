@@ -401,30 +401,43 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 
 ## Terminal
 
-Both terminal clients draw the same console, in cells: the browser's structure with a terminal's means.
+Both terminal clients draw the same console, in cells: the browser's structure with a terminal's means. Rust and Go
+share its layout, words and keys.
 
-- **Flat sections.** No boxes: a section is a heavy rule over its title, in the stage's hue for a stage's card and in
-  the border tone otherwise, then its body. One line of space separates sections; columns sit four apart.
-- **The dial** is a solid ring over 270°, opening downward, on the browser's transfer curve and scale, with its five
-  ticks outside it: half-block pixels, two to a cell, each the mix of what sixteen samples see, so its edges are
-  smooth. It is 0.13 of its radius thick, as the browser's is, and each arc ends in a bead. Each finished transfer
-  stage keeps an arc, the shorter one on top so every head shows. Inside it, the stage over large figures three rows
-  tall in rounded strokes, over the unit. Under 96 columns the readout stays and the ring goes.
-- **The right column** holds the latency lanes (figures, then a lane from the median to the 95th percentile, the idle
-  median marked down every lane), the key and the stage track. The track's rules fill in each stage's hue as it runs;
-  a cramped track names its stages in their hues instead of beside icons.
-- **Cards** hold each stage's figure, state, strip and facts, at one height from Start to the result. A strip fills to
-  an eighth of a cell and fades by row from the hue into the canvas; it has no axis, and every strip shares one top.
-  Latency draws as a braille line.
-- **The key** is the run screen's one plate: ink, three rows, its cap at the right; one row when the ring is gone. The
-  setup screen's Start is the same key at one row between half-block caps. A click anywhere on a plate presses it.
-- **Chrome.** One header line, `◆ Graphite Meter`, what is tested, and the state as a dot in the stage's or
-  outcome's tone; the footer's notice over the key hints, with the version at the right when it fits.
-- **First run.** There is no default server: the client opens on the server's address with a greyed example, keeps
-  the last one that prepared, and its key stays dim until it has one.
-- **Glyphs** come from the box-drawing, block, braille and arrow ranges that DejaVu Sans Mono, Noto Sans Mono, Meslo
-  and Cascadia all carry; icons are `≈ ↓ ↑ ↕`. Input paints at once; measurement repaints at 30 fps in Go and 60
-  in Rust, whose blends also land on the background the terminal names.
+- **Cells, not blocks.** At fractional scales VTE and others leave a seam at every cell edge of a block glyph, so
+  solid areas are cell backgrounds and fine detail is braille and box-drawing lines, which join cleanly. Tiles and
+  washes mix the stage tokens into the background the terminal reports and draw from 256 colours up; with fewer the
+  canvas stays flat and lines carry the hue.
+- **One screen.** A bar over the console names what is tested and how it stands, a dot and the selected servers'
+  names; the bar under it holds the state, the time and bytes so far, a notice in its middle for three seconds, and
+  the keys as caps. Settings, details and the key list open as sheets at the right over the dimmed console; a press
+  beside a sheet closes it. Every key, cap, chip, row and link answers hover and click.
+- **The dial**, at the left from 110×32, is a braille ring over 270° opening downward, on the browser's transfer
+  curve and scale: a track 0.03 of its radius thick, arcs 0.08, a bead 0.16 at the head, nine ticks and five labels.
+  Each finished transfer stage keeps an arc, the shorter on top. Inside, the stage over figures three rows tall drawn
+  in heavy box lines, over the unit; a note under the ring. The needle closes on its reading by e⁻¹ every 110 ms, and a
+  result sweeps in from where it stood. Below 110×32 the console stacks: the readout without its ring, the controls,
+  the cards, and the lanes when rows are left.
+- **Latency lanes** take a row each, two on a tall console: the median, jitter and timeouts, then a box plot from the
+  10th to the 90th percentile with whiskers to the fastest and slowest reply, the median a heavy tick, the latest
+  reply a mark in the second row, the idle median dotted down every loaded lane, and an arrow with its value where a
+  reply passes the axis. The axis steps 1-2-4 over the 90th percentiles with a quarter's room; `Added` ends each row.
+- **The key** is the console's one plate, three rows: `Start test`, `■ Stop test` while a run goes, `Run again` after,
+  with the plan's time and its cap; a key that cannot start says why on it. Under it a chip per stage fills a heavy
+  rule in the stage's hue as it runs, half a cell at a time, and sweeps through its warmup; it ends in the planned
+  time, the time into it, `✓` or how it ended. A press on a chip turns its stage on or off.
+- **Cards** keep one layout from Start to the result: a head washed in the stage's hue while it runs and after, the
+  figure, a quiet line (the wire rate and its overhead, jitter, a failure's reason or the warmup), a field and the
+  facts. The field draws the rate as a braille line with a tint fading down under it, and, with loaded latency on, a
+  two-row reply track: one bar a cell from its fastest to its slowest reply, an arrowhead where one passes the top.
+  Rate fields share one top; the idle track has its own, the loaded tracks share one, each the 1-2-4 step over 2.5×
+  the 75th percentile of the cells' slowest replies, so a burst cannot flatten the rest.
+- **First run.** There is no default server: a card asks for the address (typed or pasted), checks it in place and
+  closes once it prepared; the last address that did is remembered, and the card returns when no server answers.
+- **Keys.** Enter, space or `r` starts; Esc stops at once; `1`–`4` turn stages on or off; `s`, `d` and `?` open the
+  sheets; `l` switches the latency server; `v` checks the server again; `q` quits after stopping a run.
+- **Glyphs** come from the box-drawing, braille and arrow ranges that DejaVu Sans Mono, Noto Sans Mono, Meslo, Adwaita
+  Mono and Cascadia all carry; icons are `≈ ↓ ↑ ↕`. Input paints at once; animation repaints at 120 fps.
 
 ## Do and don't
 

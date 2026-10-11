@@ -80,8 +80,17 @@ func (s *latencyStats) snapshot() LatencyStats {
 		out.P50 += (s.nth(sorted, s.count/2+1) - out.P50) / 2
 	}
 	out.P95 = s.nth(sorted, max(1, int(math.Ceil(0.95*float64(s.count)))))
+	percentile := func(share int) time.Duration { return s.nth(sorted, max(1, (share*s.count+99)/100)) }
+	out.Min, out.P10, out.P90, out.Max = sorted[0], percentile(10), percentile(90), sorted[len(sorted)-1]
 	return out
 }
+
+// LivePopulation accounts one server's replies in one stage as they arrive, as the stage's own result will.
+type LivePopulation struct{ stats latencyStats }
+
+func (p *LivePopulation) Add(sample LatencySample) { p.stats.add(sample.RTT, sample.TimedOut, 0) }
+
+func (p *LivePopulation) Stats() LatencyStats { return p.stats.snapshot() }
 
 func (s *latencyStats) nth(sorted []time.Duration, rank int) time.Duration {
 	for _, rtt := range sorted {

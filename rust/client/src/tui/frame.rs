@@ -241,8 +241,13 @@ impl App {
             Some((None, Some((_, None)))) => ("Warmup", palette.muted),
             Some((None, None)) => ("Checking paths", palette.muted),
             None if self.config.url.is_none() => ("Not started", palette.muted),
-            None if self.could_not_start() => ("Test could not start", palette.warn),
-            None => ("Not started", palette.muted),
+            None => match &self.overlay {
+                Overlay::SignIn(sign_in) if sign_in.opened => ("Checking sign-in", palette.muted),
+                Overlay::SignIn(_) => ("Sign in", palette.warn),
+                _ if self.view.check == Check::SignIn => ("Sign in", palette.warn),
+                _ if self.could_not_start() => ("Test could not start", palette.warn),
+                _ => ("Not started", palette.muted),
+            },
         }
     }
 
@@ -349,15 +354,10 @@ impl App {
         }
     }
 
-    /// A card centred over the console, `height` rows tall, its ground filled; its inner area.
+    /// A card centred over the console, `height` rows tall at most, its ground filled; its inner area.
     fn card_over(&self, canvas: &mut Canvas, area: Rect, height: u16) -> Rect {
-        let width = area.width.saturating_sub(4).min(76);
-        let card = Rect::new(
-            area.x + (area.width - width) / 2,
-            area.y + area.height.saturating_sub(height) / 3,
-            width,
-            height,
-        );
+        let (width, height) = (area.width.saturating_sub(4).min(76), height.min(area.height));
+        let card = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 3, width, height);
         canvas.clear(card);
         canvas.fill(card, self.palette.surface);
         canvas.hit(card, Target::Sheet);
@@ -449,6 +449,9 @@ impl App {
         let mut links = Vec::new();
         for (index, part) in wrapped.into_iter().enumerate() {
             let (y, text) = (inner.y + 10 + index as u16, Line::styled(part, palette.accent));
+            if y >= inner.bottom() {
+                break;
+            }
             canvas.line(inner.x, y, inner.width, &text);
             canvas.hit(Rect::new(inner.x, y, text.width() as u16, 1), Target::Link);
             links.push(Link { row: y, column: inner.x, url: prompt.url.clone(), text });

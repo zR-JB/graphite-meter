@@ -106,8 +106,8 @@ func main() {
 	m.remembered, m.recalled = remembered, recalled
 	if headless {
 		onSignal(signals, &caught, m.controller.CancelRun)
-		if m = runHeadless(m); m.run == nil {
-			fmt.Fprintln(os.Stderr, "graphite-meter-client: "+m.notice)
+		if m = runHeadless(m); m.run == nil && m.toast != nil {
+			fmt.Fprintln(os.Stderr, "graphite-meter-client: "+m.toast.text.text())
 		}
 	} else {
 		program := tea.NewProgram(m, tea.WithFPS(paintFPS), tea.WithoutSignalHandler())

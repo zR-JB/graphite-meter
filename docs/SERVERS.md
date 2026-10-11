@@ -108,8 +108,8 @@ must work on every server it applies to; the client never downgrades it or drops
 recovers. Changing servers carries the chosen protocol or transport, not the old address. Exact origins can be
 chosen only with a single server.
 
-The terminal client takes `--url` as the catalogue and repeatable `--server ID`; **s** opens the same checklist and
-**u** keeps the available servers ([keys](DEPLOYMENT.md#native-terminal-client)). It probes latency on every server.
+The terminal client takes `--url` as the catalogue and repeatable `--server ID`; the **Test servers** row of its
+settings opens the same checklist ([keys](DEPLOYMENT.md#native-terminal-client)). It probes latency on every server.
 
 ## Independent sign-in
 

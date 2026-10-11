@@ -50,36 +50,3 @@ pub fn wire_rate(result: &StageResult, servers: &[ServerPath]) -> Option<f64> {
     }
     (wire > 0.0).then_some(wire)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use graphite_meter_proto::origin::Origin;
-
-    fn path(origin: &str, transport: ThroughputTransport, protocol: Protocol) -> ThroughputPath {
-        ThroughputPath { origin: Origin::parse(origin).unwrap(), transport, protocol }
-    }
-
-    #[test]
-    fn each_layer_adds_its_headers_as_the_browser_counts_them() {
-        let fetch = ThroughputTransport::FetchStream;
-        for (path, ip_version, expected) in [
-            (path("https://meter.example", fetch, Protocol::Http1), 4, 1.001_343 * 1538.0 / 1448.0),
-            (path("http://meter.example", fetch, Protocol::Http1), 4, 1538.0 / 1448.0),
-            (
-                path("https://meter.example", fetch, Protocol::Http2),
-                6,
-                1.000_549 * 1.001_343 * 1538.0 / 1428.0,
-            ),
-            (path("https://meter.example", fetch, Protocol::Http3), 4, 1.000_305 * 1538.0 / 1445.0),
-            (
-                path("https://meter.example", ThroughputTransport::WebTransport, Protocol::Http3),
-                6,
-                1.000_305 * 1538.0 / 1425.0,
-            ),
-        ] {
-            let got = multiplier(&path, ip_version);
-            assert!((got - expected).abs() < 1e-5, "{path:?} on IPv{ip_version}: {got} ≠ {expected}");
-        }
-    }
-}

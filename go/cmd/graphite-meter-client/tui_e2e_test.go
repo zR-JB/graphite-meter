@@ -23,7 +23,7 @@ import (
 type tuiSnapshot struct {
 	content                  string
 	ready, finished, editing bool
-	popup                    popup
+	overlay                  overlay
 	offset, seq              int
 	phase                    goclient.Phase
 	outcome                  goclient.Outcome
@@ -43,7 +43,8 @@ func (m observedTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m observedTUI) View() tea.View {
 	v := m.model.View()
 	f := tuiSnapshot{content: ansi.Strip(v.Content), ready: m.prepare == prepareReady,
-		finished: m.finished(), editing: m.edit != nil, popup: m.popup, offset: m.body.YOffset(), seq: m.runSeq}
+		finished: m.run != nil && !m.run.running(), editing: m.edit != nil, overlay: m.overlay, offset: m.frame.scroll,
+		seq: m.runSeq}
 	if m.run != nil {
 		f.phase, f.outcome = m.run.phase, m.run.outcome
 	}
@@ -138,8 +139,8 @@ func TestTUIEndToEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	await("ready", func(f tuiSnapshot) bool { return f.ready && strings.Contains(f.content, "ready") })
-	send("\x1b[B\r")
+	await("ready", func(f tuiSnapshot) bool { return f.ready && strings.Contains(f.content, "Ready to measure") })
+	send("s\r")
 	await("edit", func(f tuiSnapshot) bool { return f.editing })
 	send(strings.Repeat("x", 80) + "TAIL")
 	edited := await("long edit", func(f tuiSnapshot) bool { return f.editing && strings.Contains(f.content, "TAIL") })
@@ -149,52 +150,45 @@ func TestTUIEndToEnd(t *testing.T) {
 		}
 	}
 	send("\x01")
-	await("edit start", func(f tuiSnapshot) bool {
-		for line := range strings.SplitSeq(f.content, "\n") {
-			if f.editing && strings.Contains(line, "Server address") && strings.Contains(line, origin) {
-				return true
-			}
-		}
-		return false
-	})
+	await("edit start", func(f tuiSnapshot) bool { return f.editing && strings.Contains(f.content, origin) })
 	send("\x05")
 	await("edit end", func(f tuiSnapshot) bool { return f.editing && strings.Contains(f.content, "TAIL") })
-	program.Send(tea.WindowSizeMsg{Width: 40, Height: 12})
+	program.Send(tea.WindowSizeMsg{Width: smallest[0], Height: smallest[1]})
 	await("narrow edit", func(f tuiSnapshot) bool {
-		return f.editing && strings.Contains(f.content, "TAIL") && lipgloss.Width(strings.SplitN(f.content, "\n", 2)[0]) == 40
+		return f.editing && strings.Contains(f.content, "TAIL") &&
+			lipgloss.Width(strings.SplitN(f.content, "\n", 2)[0]) == smallest[0]
 	})
 	program.Send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	send("\x1b")
-	await("cancel edit", func(f tuiSnapshot) bool { return !f.editing })
+	await("cancel edit", func(f tuiSnapshot) bool { return !f.editing && f.overlay == overlaySettings })
 	send("r")
-	await("measuring", func(f tuiSnapshot) bool { return f.phase == goclient.PhaseMeasuring })
-	await("download on the dial", func(f tuiSnapshot) bool {
-		return f.phase == goclient.PhaseMeasuring && strings.Contains(f.content, "↓ Download") && strings.Contains(f.content, "Stop")
+	await("measuring", func(f tuiSnapshot) bool { return f.phase == goclient.PhaseMeasuring && f.overlay == overlayNone })
+	await("download running", func(f tuiSnapshot) bool {
+		return f.phase == goclient.PhaseMeasuring && strings.Contains(f.content, "Download") &&
+			strings.Contains(f.content, "Stop test")
 	})
 	program.Send(tea.WindowSizeMsg{Width: 80, Height: 24})
 	complete := await("complete", func(f tuiSnapshot) bool { return f.finished && f.outcome == goclient.OutcomeComplete })
-	for _, word := range []string{"Run again", "Download", "Upload", "Peak", "Transferred"} {
+	for _, word := range []string{"Run again", "Download", "Upload", "Bidirectional", "Complete"} {
 		if !strings.Contains(complete.content, word) {
 			t.Fatalf("completed screen lost %s:\n%s", word, complete.content)
 		}
 	}
-	program.Send(tea.WindowSizeMsg{Width: 40, Height: 12})
+	program.Send(tea.WindowSizeMsg{Width: smallest[0], Height: smallest[1]})
 	send("d")
-	await("details", func(f tuiSnapshot) bool { return f.popup == popupDetails })
+	await("details", func(f tuiSnapshot) bool { return f.overlay == overlayDetails })
 	program.Send(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	await("wheel scroll", func(f tuiSnapshot) bool { return f.popup == popupDetails && f.offset > 0 })
+	await("wheel scroll", func(f tuiSnapshot) bool { return f.overlay == overlayDetails && f.offset > 0 })
 	send("\x1b[6~")
-	await("scroll", func(f tuiSnapshot) bool { return f.popup == popupDetails && f.offset > 0 })
+	await("page", func(f tuiSnapshot) bool { return f.overlay == overlayDetails && f.offset > 3 })
 	program.Send(tea.WindowSizeMsg{Width: 30, Height: 10})
 	await("small terminal", func(f tuiSnapshot) bool { return strings.Contains(f.content, "Enlarge the terminal") })
 	program.Send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	await("resize recovery", func(f tuiSnapshot) bool { return strings.Contains(f.content, "Details") })
 	send("\x1b")
-	await("close details", func(f tuiSnapshot) bool { return f.popup == popupNone })
+	await("close details", func(f tuiSnapshot) bool { return f.overlay == overlayNone })
 	send("r")
 	await("run again", func(f tuiSnapshot) bool { return f.seq == 2 && f.phase == goclient.PhaseMeasuring && !f.finished })
-	send("\x1b")
-	await("stop prompt", func(f tuiSnapshot) bool { return strings.Contains(f.content, "Stop the test?") })
 	send("\x1b")
 	await("stopped", func(f tuiSnapshot) bool { return f.finished && f.outcome == goclient.OutcomeStopped })
 	send("q")

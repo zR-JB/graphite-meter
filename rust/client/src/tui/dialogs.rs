@@ -134,7 +134,7 @@ impl App {
             }
             Action::Cancel => {
                 self.overlay = Overlay::None;
-                self.notify(Line::styled("Sign-in canceled. v requests a new code.", self.palette.muted));
+                self.notify(Line::styled("Sign-in canceled", self.palette.muted));
                 Effect::command(Command::Stop)
             }
             _ => Vec::new(),

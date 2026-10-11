@@ -178,6 +178,8 @@ type PreparedConnection struct {
 	Preflight        wire.Preflight
 	ThroughputTarget wire.ThroughputTarget
 	LatencyTarget    *wire.LatencyTarget
+	// IPVersion is the address family, 4 or 6, the server saw the throughput check arrive from.
+	IPVersion int
 }
 
 type PreparationError struct {
@@ -267,10 +269,11 @@ func prepareThroughput(ctx context.Context, cfg Config, cred credential, prepare
 	}
 	transfer, closeTransfer := protocolClient(cred, target.Protocol)
 	defer closeTransfer()
-	clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe)
+	clientProtocol, ipVersion, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe)
 	if err != nil {
 		return err
 	}
+	prepared.IPVersion = ipVersion
 	if target.Protocol == "negotiated" {
 		target.Protocol = protocolFromEvidence(clientProtocol)
 	}

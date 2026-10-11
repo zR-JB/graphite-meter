@@ -143,11 +143,13 @@ impl App {
             self.cards(canvas, cards);
             return;
         }
-        // Stacked: the readout, the controls, the cards, and the lanes when room is left.
+        // Stacked: the readout, the controls, the cards, and the lanes when room is left; the shortest area drops the
+        // gap under the readout.
         let readout = Rect::new(area.x, area.y, area.width, 8);
         dial::readout(canvas, readout, &self.palette, &self.dial());
         let width = area.width.saturating_sub(4).min(CONTROLS);
-        let controls = Rect::new(area.x + (area.width - width) / 2, readout.bottom() + 1, width, 6);
+        let gap = area.height.saturating_sub(14).min(1);
+        let controls = Rect::new(area.x + (area.width - width) / 2, readout.bottom() + gap, width, 6);
         self.controls(canvas, controls);
         let rest = area.bottom().saturating_sub(controls.bottom() + 1);
         let lanes_height = 4 + lanes.len() as u16;
@@ -525,20 +527,17 @@ impl App {
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
         let unit = Unit::of(run.map_or(0.0, |run| run.peak));
         // Head, figure, quiet line, the traces' field and the facts; a roomy card adds a row of air around them, and a
-        // short one gives up its traces, then its facts.
+        // short one gives up its traces, then the facts that do not fit.
         let roomy = u16::from(area.height >= 16);
         let mut y = area.y + 1 + roomy;
-        for line in self.card_lines(stage, state, unit) {
+        for line in self.card_lines(stage, state, unit, inner) {
             if y < area.bottom() {
                 canvas.line(area.x + 1, y, inner, &line);
             }
             y += 1;
         }
         let mut facts = self.facts(stage, result, unit);
-        let room = area.bottom().saturating_sub(y + roomy);
-        if room < facts.len() as u16 {
-            facts.clear();
-        }
+        facts.truncate(usize::from(area.bottom().saturating_sub(y + roomy)));
         let first = area.bottom().saturating_sub(facts.len() as u16 + roomy);
         let (top, bottom) = (y + roomy, first.saturating_sub(u16::from(!facts.is_empty())));
         if bottom >= top + 2 {
@@ -548,9 +547,11 @@ impl App {
         }
         for (index, (label, value)) in facts.into_iter().enumerate() {
             let y = first + index as u16;
-            canvas.line(area.x + 1, y, inner, &Line::styled(label, palette.muted));
             let style = if value == MISSING { palette.muted } else { palette.text };
-            canvas.right(area.x + 1, y, inner, &Line::styled(value, style));
+            let value = Line::styled(value, style);
+            let room = inner.saturating_sub(value.width() as u16 + 1);
+            canvas.line(area.x + 1, y, room, &Line::styled(label, palette.muted).fit(usize::from(room)));
+            canvas.right(area.x + 1, y, inner, &value);
         }
     }
 
@@ -569,7 +570,7 @@ impl App {
     }
 
     /// The card's figure, and its quiet line: the wire rate, the jitter, a failure's reason or the warmup.
-    fn card_lines(&self, stage: Stage, state: State, unit: Unit) -> [Line; 2] {
+    fn card_lines(&self, stage: Stage, state: State, unit: Unit, width: u16) -> [Line; 2] {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
@@ -616,8 +617,11 @@ impl App {
             let mean = result.mean();
             if let Some(wire) = wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005) {
                 quiet = Line::styled("wire ", palette.muted)
-                    .and(format!("{} {}", unit.figure(wire), unit.name), palette.text)
-                    .and(format!("  +{:.1}%", (wire / mean - 1.0) * 100.0), palette.muted);
+                    .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
+                let overhead = format!("  +{:.1}%", (wire / mean - 1.0) * 100.0);
+                if quiet.width() + overhead.len() <= usize::from(width) {
+                    quiet = quiet.and(overhead, palette.muted);
+                }
             }
         }
         quiet = match state {
@@ -843,7 +847,7 @@ impl App {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
         match run.and_then(|run| run.outcome) {
-            Some(Outcome::Stopped) => Line::styled("Stopped. Press enter to run again.", palette.muted),
+            Some(Outcome::Stopped) => Line::styled("Stopped early", palette.muted),
             Some(Outcome::Failed) => {
                 let error = run.and_then(|run| run.error.as_ref());
                 Line::styled(error.map_or("Nothing was measured", |error| error.text.as_str()), palette.warn)
@@ -854,7 +858,7 @@ impl App {
 
     /// A lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
     pub(super) fn lanes(&self) -> Vec<Lane> {
-        let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency && self.config.probes();
+        let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency;
         let lanes = self
             .plan()
             .into_iter()

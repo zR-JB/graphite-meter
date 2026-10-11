@@ -16,7 +16,7 @@ use vocabulary::*;
 pub const WIDTH: usize = 100;
 const PARTIAL: &str = "Partial";
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
-const SIGNED_OUT: &str = "Sign-in expired. Checking the selected servers…";
+const SIGNED_OUT: &str = "Sign-in expired";
 
 /// The report of the view's finished run; none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
