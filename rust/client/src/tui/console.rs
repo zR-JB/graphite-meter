@@ -151,7 +151,7 @@ impl App {
         self.controls(canvas, controls);
         let rest = area.bottom().saturating_sub(controls.bottom() + 1);
         let lanes_height = 4 + lanes.len() as u16;
-        let lanes_room = !lanes.is_empty() && rest >= 8 + lanes_height + 1;
+        let lanes_room = !lanes.is_empty() && rest > 8 + lanes_height;
         let cards_height = if lanes_room { rest - lanes_height - 1 } else { rest };
         let cards = Rect::new(area.x + 1, controls.bottom() + 1, area.width - 2, cards_height);
         self.cards(canvas, cards);
@@ -710,7 +710,9 @@ impl App {
             let head = Some(head).filter(|&(_, value)| live && value > 0.0);
             let color = if index == 0 { hue } else { mix(hue, palette.surface, 0.55) };
             let points = between(&run.throughput[direction], span);
-            chart::line(canvas, rates, points, head, (scales.rate, span), (color, tip));
+            // The area fills under the first direction only, so a second line stays readable over it.
+            let field = (index == 0).then(|| palette.wash(stage, 0.05, palette.surface));
+            chart::line(canvas, rates, points, head, (scales.rate, span), (color, tip, field));
         }
         if let (true, Some(series)) = (loaded, rtt) {
             let track = Rect::new(field.x, field.bottom() - 2, field.width, 2);

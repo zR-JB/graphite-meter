@@ -8,14 +8,15 @@ use crate::{
 use ratatui_core::layout::Rect;
 
 /// `points` over `window` seconds as a line of dots up to `head`, the live value where the window stands now; a gap
-/// breaks it. The line's tip is lit in `tip`.
+/// breaks it. The line's tip is lit in `tip`; with a `field`, the area under the line fills with its hue fading down
+/// into the field, a cell at a time under the line's exact dots.
 pub fn line(
     canvas: &mut Canvas,
     area: Rect,
     points: &[Point],
     head: Option<(f64, f64)>,
     (top, window): (f64, (f64, f64)),
-    (color, tip): (Color, Color),
+    (color, tip, field): (Color, Color, Option<Color>),
 ) {
     let mut dots = Dots::new(area);
     let (across, down) = dots.size();
@@ -27,6 +28,8 @@ pub fn line(
     let last = points.last().map_or(f64::NEG_INFINITY, |point| point.at.as_secs_f64());
     let head = head.filter(|&(at, _)| at > last);
     let (mut next, mut previous, mut tipped) = (0, None::<isize>, None);
+    // Each cell column's highest dot of the line.
+    let mut crests = vec![None::<isize>; usize::from(area.width)];
     for x in 0..across {
         let at = window.0 + (x as f64 + 0.5) / across as f64 * span;
         while next < points.len() && points[next].at.as_secs_f64() <= at {
@@ -48,6 +51,8 @@ pub fn line(
             continue;
         };
         let y = height(value);
+        let crest = &mut crests[x / 2];
+        *crest = Some(crest.map_or(y, |crest| crest.min(y)));
         // A steep step fills the column between, so the line stays whole.
         let from = previous.map_or(y, |previous| if (previous - y).abs() > 1 { previous } else { y });
         for dot in from.min(y)..=from.max(y) {
@@ -57,6 +62,19 @@ pub fn line(
     }
     if let Some((x, y)) = tipped.filter(|_| head.is_some()) {
         dots.set(x as isize, y, tip, 2);
+    }
+    if let Some(field) = field {
+        // The area starts in the line's own cell when the line runs in its upper half, else in the cell under it.
+        let rows = area.height;
+        for (column, crest) in crests.iter().enumerate() {
+            let Some(crest) = *crest else { continue };
+            let first = (crest / 4 + isize::from(crest % 4 > 1)) as u16;
+            for row in first..rows {
+                let share = 0.05 + 0.2 * (1.0 - f64::from(row) / f64::from(rows));
+                let cell = Rect::new(area.x + column as u16, area.y + row, 1, 1);
+                canvas.fill(cell, super::theme::mix(color, field, share));
+            }
+        }
     }
     canvas.dots(&dots);
 }

@@ -19,6 +19,9 @@ use crate::{
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::time::Instant;
 
+/// A sheet's line, and for an item's its index and what a press on it does.
+type SheetLine = (Line, Option<(usize, Option<Target>)>);
+
 /// An entry of a sheet.
 pub(super) enum Entry {
     Heading(String),
@@ -270,7 +273,7 @@ impl App {
             Target::Cap(Action::Close),
         );
         // Every entry as the lines it takes, and where the focused one starts.
-        let mut lines: Vec<(Line, Option<(usize, Option<Target>)>)> = Vec::new();
+        let mut lines: Vec<SheetLine> = Vec::new();
         let mut focused_line = None;
         for (index, entry) in entries.iter().enumerate() {
             match entry {
