@@ -1,0 +1,24 @@
+{
+  "name": "graphite-meter-client-v2",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "imports": {
+    "#jsx/jsx-runtime": "./src/lib/jsx-runtime.ts",
+    "#jsx/jsx-dev-runtime": "./src/lib/jsx-runtime.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "npm:bun-types@1.4.3",
+    "axe-core": "4.14.0"
+  },
+  "scripts": {
+    "build:bundle": "bun build.ts",
+    "build": "bun run check && bun run build:bundle",
+    "check": "bun check",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "bun test src --parallel",
+    "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
+    "e2e": "bun run ../client/scripts/e2e.ts"
+  }
+}

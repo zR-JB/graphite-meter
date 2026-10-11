@@ -1,0 +1,156 @@
+@layer reset {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  dialog {
+    margin: auto;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    tab-size: 4;
+    line-height: 1.5;
+  }
+  img,
+  svg,
+  canvas {
+    display: block;
+    max-width: 100%;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: transparent;
+  }
+  button,
+  summary,
+  label:has(input:not(:disabled)) {
+    cursor: pointer;
+  }
+  :disabled {
+    cursor: not-allowed;
+  }
+  ol,
+  ul,
+  menu {
+    list-style: none;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-size: inherit;
+    font-weight: inherit;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  [hidden]:not([hidden="until-found"]) {
+    display: none !important;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    /* The centre workspace scrolls; browser chrome changes resize the shell. */
+    overflow: clip;
+    overscroll-behavior: none;
+  }
+  /* One thin scrollbar everywhere. Chromium draws step buttons for the standard properties on Linux, so engines
+     with the pseudo-elements use those. */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-color: var(--border-strong) transparent;
+    }
+    * {
+      scrollbar-width: thin;
+    }
+  }
+  /* A finger keeps the platform's overlay bars; a styled bar would take 10 px of every touch screen. */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: var(--r-full);
+      background: var(--border-strong) padding-box;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+  /* The canvas carries one soft light from the top: depth without a texture. */
+  body {
+    background:
+      radial-gradient(120% 70% at 50% 0%, light-dark(oklch(1 0 0 / 0.55), oklch(0.8 0.04 225 / 0.05)), transparent 70%),
+      var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* A pointer press hides rings until a real key; only focusable kinds are named, so the restyle stays small. */
+  [data-pointer] :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: none;
+  }
+  label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: var(--ring-offset, 2px);
+  }
+  label > :is([type="radio"], [type="checkbox"]):focus-visible,
+  :is(section, article, aside, h2)[tabindex="-1"]:focus-visible {
+    outline: none;
+  }
+  :is(p, dd) a:not(.btn) {
+    color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border: var(--hairline) solid var(--border-strong);
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 32%, transparent);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

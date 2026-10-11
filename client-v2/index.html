@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="The Graphite Meter — open-source network speed test" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1013" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f3f6" />
+    <link rel="preload" href="/fonts/ibm-plex-sans-var-latin1.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibm-plex-mono-500-latin1.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>The Graphite Meter</title>
+    <!-- The first paint happens before the stylesheet arrives: canvas and text repeat src/styles/tokens.css. -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        background: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
+        color: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
+        font: 450 14px/1.35 "IBM Plex Sans", system-ui, sans-serif;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+      }
+      noscript p {
+        max-width: 32rem;
+        margin: 20vh auto;
+        padding: 0 16px;
+      }
+    </style>
+    <!-- The saved theme applies before the first paint; settings own it afterwards. -->
+    <script>
+      try {
+        var theme = JSON.parse(localStorage.getItem("graphite-meter:v1") || "{}").theme;
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch (error) {}
+    </script>
+    <!-- bundle -->
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>
+      <p>The Graphite Meter measures your connection in the browser and needs JavaScript. Enable it, then reload.</p>
+    </noscript>
+  </body>
+</html>
