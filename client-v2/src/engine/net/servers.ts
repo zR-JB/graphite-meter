@@ -208,7 +208,8 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
 export function createServers(env: ServersEnv): Servers {
   const { page, config, now } = env;
   const catalogue = signal<Catalog | null>(null);
-  const loading = signal(false);
+  // The app loads the catalogue as it boots: until the first answer it is loading, never missing.
+  const loading = signal(true);
   const loadError = signal("");
   const selected = signal<readonly string[]>([]);
   const unresolved = signal<readonly SavedServer[]>([]);
