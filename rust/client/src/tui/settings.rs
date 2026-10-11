@@ -49,7 +49,7 @@ impl App {
         Vec::new()
     }
 
-    /// A click on row `index`: the first focuses it, a second does what enter does.
+    /// A click on row `index`: the first focuses it, a second does what space does.
     pub(super) fn click_row(&mut self, index: usize) -> Vec<Effect> {
         if self.setup.row != index {
             (self.setup.row, self.setup.resetting) = (index, false);
@@ -122,8 +122,9 @@ impl App {
             };
             let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bounds.start(), *bounds.end());
-        } else if self.flag(row).is_some() {
-            self.set_flag(row, step > 0);
+        } else if let Some(on) = self.flag(row) {
+            // The stream count's switch flips either way, as a cycle does.
+            self.set_flag(row, if row == Row::ForceStreams { !on } else { step > 0 });
         } else {
             self.cycle(row, step);
         }
@@ -175,7 +176,7 @@ impl App {
         }
         let Some(editor) = &mut self.editor else { return Vec::new() };
         match keys::find(keys::EDIT, key, |_| true) {
-            Some(Action::Abort) => return vec![Effect::Quit],
+            Some(Action::Abort) => return self.interrupt(),
             Some(Action::Cancel) => {
                 self.editor = None;
                 if matches!(self.overlay, Overlay::Connect) {

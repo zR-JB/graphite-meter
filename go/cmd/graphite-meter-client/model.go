@@ -116,6 +116,8 @@ type model struct {
 	openChooser bool
 	hover       target
 	frame       *frameCache
+	// ticking is whether a spinner tick is on its way; Init sends the first.
+	ticking bool
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
@@ -152,6 +154,7 @@ func newModel(cfg goclient.Config) model {
 		prepareSeq:   1,
 		spin:         spinner.New(spinner.WithSpinner(ticks)),
 		frame:        &frameCache{},
+		ticking:      true,
 		now:          now,
 		since:        now,
 	}
@@ -210,6 +213,19 @@ func (m model) animating() bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, tick := msg.(spinner.TickMsg); tick {
+		return m.update(msg)
+	}
+	m.now = time.Now()
+	next, cmd := m.update(msg)
+	if n, ok := next.(model); ok && n.animating() && !n.ticking {
+		n.ticking = true
+		return n, tea.Batch(cmd, n.spin.Tick)
+	}
+	return next, cmd
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.st, m.pal = newStyles(msg.IsDark()), newPalette(msg.IsDark(), msg.Color)
@@ -290,6 +306,15 @@ func (m model) click(t target) (tea.Model, tea.Cmd) {
 	case targetChip:
 		return m.switchStage(t.stage)
 	case targetCap:
+		if m.edit != nil && m.auth == nil {
+			switch t.action {
+			case actApply:
+				return m.handleEditKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			case actCancel:
+				return m.handleEditKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+			}
+			m.edit = nil
+		}
 		return m.act(t.action, tea.KeyPressMsg{})
 	case targetServer:
 		m = m.openSettings(catalogueRow)
@@ -314,12 +339,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
 		return m.interrupt()
+	case m.auth != nil:
+		return m.handleSignInKey(msg)
 	case m.edit != nil:
 		return m.handleEditKey(msg)
 	case key.Matches(msg, keys.quit):
 		return m.quit()
-	case m.auth != nil:
-		return m.handleSignInKey(msg)
 	}
 	for _, binding := range m.table() {
 		if key.Matches(msg, binding.binding) && m.offers(binding.action) {
@@ -345,7 +370,18 @@ func (m model) act(a action, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case actDetails:
 		m.overlay, m.scroll = overlayDetails, 0
 	case actClose:
-		m.overlay = overlayNone
+		// The chooser closes back to the settings, as esc does.
+		if m.overlay == overlayChooser {
+			m.overlay = overlaySettings
+		} else {
+			m.overlay = overlayNone
+		}
+	case actBrowse:
+		return m.openSignIn()
+	case actAbandon:
+		m.invalidatePreparation()
+		m.prepare, m.prepareErr = prepareSignIn, ""
+		m = m.notify(styled("Sign-in canceled", m.pal.muted))
 	case actStart:
 		return m.startRun()
 	case actStop:
@@ -404,13 +440,10 @@ func (m model) switchStage(stage goclient.Stage) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, keys.openSignIn):
-		return m.openSignIn()
-	case key.Matches(msg, keys.cancelSignIn):
-		m.invalidatePreparation()
-		m.prepare, m.prepareErr = prepareSignIn, ""
-		m = m.notify(styled("Sign-in canceled", m.pal.muted))
+	for _, binding := range signInKeys {
+		if key.Matches(msg, binding.binding) {
+			return m.act(binding.action, msg)
+		}
 	}
 	return m, nil
 }
@@ -436,6 +469,7 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 		m.toast = nil
 	}
 	if !m.animating() {
+		m.ticking = false
 		return m, nil
 	}
 	var cmd tea.Cmd

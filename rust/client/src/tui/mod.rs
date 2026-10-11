@@ -20,7 +20,7 @@ use crate::{
     INTERRUPTED,
     config::{Config, PrepKey},
     controller::Command,
-    events::{Event, Run, SignInEnd, View},
+    events::{Event, SignInEnd, View},
     model::{Outcome, Stage},
     net::approval,
     report,
@@ -110,7 +110,7 @@ pub struct Exit {
     pub report: bool,
 }
 
-/// A notice in the console's corner until it lapses.
+/// A notice in the bottom bar until it lapses.
 struct Toast {
     text: Line,
     until: Instant,
@@ -219,7 +219,7 @@ impl App {
         self.editor = Some(Editor::new(Row::Catalogue, &address));
     }
 
-    /// Shows `text` in the console's corner for a while.
+    /// Shows `text` in the bottom bar for a while.
     fn notify(&mut self, text: Line) {
         self.toast = Some(Toast { text, until: self.now + TOAST });
     }
@@ -229,7 +229,10 @@ impl App {
         self.now = now;
         let shown = self.latency_server().cloned();
         self.view.apply(event);
-        self.live.event(event, self.view.run.as_ref(), shown.as_ref(), now);
+        // A run refused at its start leaves the shown run, and its needle, as they were.
+        if !matches!(event, Event::RunFinished { .. }) || self.view.refused.is_none() {
+            self.live.event(event, self.view.run.as_ref(), shown.as_ref(), now);
+        }
         match event {
             Event::Prepared { servers, .. } => {
                 if std::mem::take(&mut self.setup.chooser) {
@@ -337,6 +340,10 @@ impl App {
                 match self.overlay {
                     Overlay::Settings => self.move_focus(step),
                     Overlay::Details | Overlay::Help => self.scroll = self.scroll.saturating_add_signed(3 * step),
+                    Overlay::Chooser(_) => {
+                        let key = if step < 0 { KeyCode::Up } else { KeyCode::Down };
+                        self.chooser_key(Action::Move, Key::Code(key));
+                    }
                     _ => {}
                 }
             }
@@ -365,7 +372,13 @@ impl App {
             Target::Key if self.running() => return self.stop(),
             Target::Key => return self.start(),
             Target::Chip(stage) => self.switch(stage),
-            Target::Cap(action) => return self.act(action, Key::Code(KeyCode::Null)),
+            // A cap pressed while typing does what its key does in the editor, and any other cap leaves the editor.
+            Target::Cap(Action::Apply) if self.editor.is_some() => return self.edit_key(Key::Code(KeyCode::Enter)),
+            Target::Cap(Action::Cancel) if self.editor.is_some() => return self.edit_key(Key::Code(KeyCode::Esc)),
+            Target::Cap(action) => {
+                self.editor = None;
+                return self.act(action, Key::Code(KeyCode::Null));
+            }
             Target::Server => self.open_settings(Some(Row::Catalogue)),
             Target::Row(index) => return self.click_row(index),
             Target::Entry(index) => self.click_entry(index),
@@ -378,6 +391,8 @@ impl App {
                 }
             }
             Target::Remember => return self.remember(!self.remembering),
+            // The sign-in card stays while its sign-in waits.
+            Target::Backdrop if matches!(self.overlay, Overlay::SignIn(_)) => {}
             Target::Backdrop => (self.overlay, self.editor) = (Overlay::None, None),
             Target::Sheet => {}
         }
@@ -418,6 +433,8 @@ impl App {
             Action::Close if matches!(self.overlay, Overlay::Settings | Overlay::Details | Overlay::Help) => {
                 self.overlay = Overlay::None;
             }
+            // The chooser closes back to the settings, as esc does.
+            Action::Close if matches!(self.overlay, Overlay::Chooser(_)) => self.overlay = Overlay::Settings,
             Action::Start => return self.start(),
             Action::Stop => return self.stop(),
             Action::Stage => {
@@ -495,8 +512,9 @@ impl App {
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.now = now;
         self.toast = self.toast.take().filter(|toast| toast.until > now);
+        // A check waits for the run to end: the newest operation would replace the run.
         match self.recheck {
-            Some(due) if due <= now => {
+            Some(due) if due <= now && !self.running() => {
                 self.recheck = None;
                 self.asked = Some(self.config.key());
                 Effect::command(Command::Check(self.config.clone()))
@@ -513,7 +531,7 @@ impl App {
 
     /// How the interface ends now: a signal's status after an interrupted run, or a caught one after a stopped run.
     pub fn exit(self) -> Exit {
-        let outcome = self.view.run.as_ref().and_then(|run| run.outcome);
+        let outcome = self.view.latest().and_then(|run| run.outcome);
         let report = outcome.is_some() && self.view.run.as_ref().is_some_and(|run| run.at.is_some());
         let interrupted = self.interrupted || self.caught.is_some() && outcome == Some(Outcome::Stopped);
         Exit {
@@ -570,7 +588,7 @@ impl App {
         }
         (self.recheck, self.asked) = (None, Some(self.config.key()));
         (self.overlay, self.editor, self.stopping) = (Overlay::None, None, false);
-        self.view.run = Some(Run::default());
+        self.view.starting = true;
         Effect::command(Command::Run(self.config.clone()))
     }
 

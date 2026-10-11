@@ -29,6 +29,9 @@ const (
 	actSelect
 	actApply
 	actCancel
+	// actBrowse opens the sign-in page; actAbandon cancels the sign-in.
+	actBrowse
+	actAbandon
 	actQuit
 )
 
@@ -88,7 +91,7 @@ var (
 	helpKeys    = []binding{{keys.scroll, actScroll}, {keys.close, actClose}, {keys.closeHelp, actHelp}, {keys.quit, actQuit}}
 	chooserKeys = []binding{{keys.rows, actMove}, {keys.toggleServer, actSelect}, {keys.apply, actApply},
 		{keys.discard, actCancel}}
-	signInKeys = []binding{{keys.openSignIn, actNone}, {keys.cancelSignIn, actNone}, {keys.quit, actQuit}}
+	signInKeys = []binding{{keys.openSignIn, actBrowse}, {keys.cancelSignIn, actAbandon}, {keys.quit, actQuit}}
 	editKeys   = []binding{{keys.cursor, actNone}, {keys.apply, actApply}, {keys.discard, actCancel}}
 )
 

@@ -95,14 +95,14 @@ pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Out
     }
     controller.settled().await;
     // The signal's status holds only for a run it stopped.
-    let stopped = matches!(view.run.as_ref().and_then(|run| run.outcome), None | Some(Outcome::Stopped));
+    let stopped = matches!(view.latest().and_then(|run| run.outcome), None | Some(Outcome::Stopped));
     let status = status(&view, signal.filter(|_| stopped));
     (view, status)
 }
 
 /// The status the process ends with: `signal` when set, 0 when complete or before any run, else 1.
 pub fn status(view: &View, signal: Option<u8>) -> u8 {
-    match (signal, view.run.as_ref().and_then(|run| run.outcome)) {
+    match (signal, view.latest().and_then(|run| run.outcome)) {
         (Some(code), _) => code,
         (None, None | Some(Outcome::Complete)) => 0,
         _ => 1,

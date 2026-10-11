@@ -471,3 +471,97 @@ fn the_console_follows_a_download_and_takes_presses() {
     app.input(moved, now);
     assert!(app.hovered().is_some(), "the key lights under the pointer");
 }
+
+/// A finished download of 125 MB over `a`.
+fn downloaded(now: Instant) -> App {
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    measuring(&mut app, Stage::Download, SECOND * 10, now);
+    let throughput = Dir {
+        down: Some(Throughput {
+            rate: Some(Rate { mean: 12.5e6, peak: 13e6 }),
+            bytes: 125_000_000,
+        }),
+        up: None,
+    };
+    let result = StageResult {
+        stage: Stage::Download,
+        measured: SECOND * 10,
+        stopped: false,
+        throughput,
+        servers: Vec::new(),
+        failures: Vec::new(),
+        intervals: Vec::new(),
+        omitted: 0,
+    };
+    app.event(&Event::StageFinished(result), now);
+    app.event(&ended(Outcome::Complete), now);
+    app
+}
+
+#[test]
+fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them() {
+    let now = Instant::now();
+    let mut app = downloaded(now);
+    assert!(matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_)));
+    app.event(&Event::Checking { run: true }, now);
+    assert!(shows(&mut app, now, "Transferred 125.0 MB"), "the results stay while the next run checks");
+    assert!(frame(&mut app, now).last().unwrap().starts_with("Checking paths"));
+    assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
+    app.event(&ended(Outcome::Stopped), now);
+    assert!(shows(&mut app, now, "Transferred 125.0 MB") && shows(&mut app, now, "Test stopped before it started."));
+    let exit = app.exit();
+    assert_eq!((exit.report, status(&exit.view, None)), (true, 1), "the report is the shown run's");
+
+    let mut app = downloaded(now);
+    press(&mut app, KeyCode::Enter, now);
+    app.event(&Event::Checking { run: true }, now);
+    app.event(
+        &Event::RunStarted {
+            plan: vec![(Stage::Upload, SECOND * 10)],
+            focus: id("a"),
+            at: now,
+        },
+        now,
+    );
+    assert!(!shows(&mut app, now, "Transferred 125.0 MB"), "a started run replaces them");
+}
+
+#[test]
+fn the_bidirectional_chip_follows_its_setting_after_a_run() {
+    let now = Instant::now();
+    let mut app = downloaded(now);
+    assert!(!shows(&mut app, now, "↕ Bidire"));
+    press(&mut app, KeyCode::Char('4'), now);
+    assert!(shows(&mut app, now, "↕ Bidire"), "{:#?}", frame(&mut app, now));
+    press(&mut app, KeyCode::Char('4'), now);
+    assert!(!shows(&mut app, now, "↕ Bidire"));
+}
+
+#[test]
+fn a_settings_change_during_a_run_is_checked_once_the_run_ends() {
+    let now = Instant::now();
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    for _ in 0..10 {
+        press(&mut app, KeyCode::Down, now);
+    }
+    assert!(shows(&mut app, now, "Round trips during transfers"), "{:#?}", frame(&mut app, now));
+    press(&mut app, KeyCode::Char(' '), now);
+    assert_eq!(app.tick(now + REST), [], "a check would replace the run");
+    app.event(&ended(Outcome::Complete), now + REST);
+    assert!(!checked(app.tick(now + REST)).loaded_latency);
+}
+
+#[test]
+fn the_sign_in_card_stays_for_a_press_beside_it_and_ctrl_c_while_typing_stops_a_run_first() {
+    let (mut app, now) = app();
+    app.event(&Event::Checking { run: false }, now);
+    app.event(&Event::SignIn(prompt(now)), now);
+    click(&mut app, now, (2, 20));
+    assert!(shows(&mut app, now, "Sign in to Meter"), "the sign-in still waits");
+
+    let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
+    press(&mut app, KeyCode::Char('s'), now);
+    press(&mut app, KeyCode::Enter, now);
+    assert_eq!(command(&app.key(ctrl_c(), now)), &Command::Stop);
+}

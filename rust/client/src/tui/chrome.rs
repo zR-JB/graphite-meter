@@ -29,8 +29,9 @@ pub struct Link {
 }
 
 impl Chrome {
-    /// The sequences that change what `shown` set, or set everything; links are rewritten as draws may cover them.
-    pub fn bytes(&self, shown: Option<&Self>, profile: Profile) -> Vec<u8> {
+    /// The sequences that change what `shown` set, or set everything; links are rewritten once `redrawn` cells may cover
+    /// them.
+    pub fn bytes(&self, shown: Option<&Self>, redrawn: bool, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {
             let title: String = self.title.chars().filter(|c| !c.is_control()).collect();
@@ -43,7 +44,8 @@ impl Chrome {
                 Progress::Share(share) => write!(out, "\x1b]9;4;1;{share}\x07"),
             };
         }
-        for link in &self.links {
+        let relink = redrawn || shown.is_none_or(|shown| shown.links != self.links);
+        for link in self.links.iter().filter(|_| relink) {
             let url: String = link.url.chars().filter(char::is_ascii_graphic).collect();
             let _ = write!(out, "\x1b[{};{}H\x1b]8;;{url}\x1b\\", link.row + 1, link.column + 1);
             let _ = text::write(std::slice::from_ref(&link.text), profile, &mut out);

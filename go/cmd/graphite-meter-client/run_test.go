@@ -957,3 +957,25 @@ func TestNarrowConsolesKeepEveryLineOnScreen(t *testing.T) {
 		}
 	}
 }
+
+func TestRefusedStartKeepsResults(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	m.run = newRunState(m.cfg, time.Now())
+	m.cfg.Stages = goclient.StageSet{}
+	m, _ = modelAndCmd(m.startRun())
+	if m.run == nil {
+		t.Fatal("a start refused for its settings erased the results")
+	}
+}
+
+func TestRunSettlesTheCheckItReplaced(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	m.prepare = prepareChecking
+	m.next = newRunState(m.cfg, time.Now())
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{{Kind: goclient.EventServers, At: time.Now()}}}))
+	if m.prepare != prepareReady {
+		t.Fatalf("prepare = %v after the run checked the paths", m.prepare)
+	}
+}
