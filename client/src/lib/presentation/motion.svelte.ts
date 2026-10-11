@@ -187,8 +187,8 @@ export function flip(update: () => void, only?: readonly string[]): void {
   for (const [key, { el, box }] of before) {
     const edge = el.dataset.flipEdge;
     if (after.has(key) || !edge) continue;
-    // A sheet no longer displayed (where a browser cannot keep a closing dialog displayed through its slide) leaves
-    // to its edge as a copy at its old place, at the speed it had: an open copy beside it, so its styles still draw it.
+    // A sheet no longer displayed (where a browser cannot keep a closing dialog displayed) leaves to its edge as a copy
+    // pinned to its old box, at the speed it had: an open copy beside it, so its styles draw it but never place it.
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.removeAttribute("data-flip");
     ghost.toggleAttribute("open", el instanceof HTMLDialogElement);
@@ -196,8 +196,8 @@ export function flip(update: () => void, only?: readonly string[]): void {
     ghost.inert = true;
     Object.assign(ghost.style, {
       position: "fixed",
-      left: `${box.left}px`,
-      top: `${box.top}px`,
+      inset: `${box.top}px auto auto ${box.left}px`,
+      placeSelf: "start",
       width: `${box.width}px`,
       height: `${box.height}px`,
       margin: "0",

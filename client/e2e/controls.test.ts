@@ -344,6 +344,61 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
   expect(Math.min(...travel.lefts)).toBeGreaterThan(travel.width / 2);
 });
 
+test("two docked sheets open and close beside the stage in every frame", async (page) => {
+  await page.setViewportSize({ width: 1700, height: 900 });
+  await open(page);
+  await ready(page);
+  const overlaps = await page.evaluate(async () => {
+    const key = (key: string) =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+    const found: string[] = [];
+    let sampling = true;
+    const sheets = (side: string) =>
+      [...document.querySelectorAll(`dialog.panel.${side}`)]
+        .filter((el) => el.checkVisibility())
+        .map((el) => el.getBoundingClientRect());
+    const sampled = (async () => {
+      while (sampling) {
+        await new Promise((done) => requestAnimationFrame(done));
+        const stage = document
+          .querySelector('[data-flip="stage"]')!
+          .getBoundingClientRect();
+        const run = document
+          .querySelector(".run-button")!
+          .getBoundingClientRect();
+        for (const box of sheets("left"))
+          if (box.right > stage.left + 1.5)
+            found.push(`left ${box.left}–${box.right}, stage ${stage.left}`);
+        for (const box of sheets("right"))
+          if (box.left < stage.right - 1.5)
+            found.push(`right ${box.left}–${box.right}, stage ${stage.right}`);
+        if (run.left < stage.left - 1.5 || run.right > stage.right + 1.5)
+          found.push(`run key ${run.left}–${run.right} outside the stage`);
+      }
+    })();
+    for (const [name, ms] of [
+      ["s", 600],
+      ["d", 600],
+      ["s", 600],
+      ["d", 600],
+      ["s", 120],
+      ["d", 120],
+      ["s", 120],
+      ["d", 600],
+    ] as const) {
+      key(name);
+      await wait(ms);
+    }
+    sampling = false;
+    await sampled;
+    return found.slice(0, 5);
+  });
+  expect(overlaps).toEqual([]);
+});
+
 test("Details hides this browser's address until it is pointed at or pinned", async (page) => {
   await open(page);
   await ready(page);
