@@ -1,0 +1,995 @@
+import { expect, test } from "bun:test";
+import type { Checkpoint } from "../measure/aggregate";
+import {
+  ServerBusyError,
+  SignInRequired,
+  type Discovery,
+  type FetchTarget,
+  type PreparedServer,
+  type ServerAuth,
+  type StageEvents,
+  type StageResources,
+  type StageSetup,
+} from "../types";
+import type { Clock } from "./clock";
+import { incoherence, type RunResult } from "./result";
+import { Run, type RunEvent, type RunPlan } from "./run";
+import type { Activity, Stage } from "./schedule";
+
+interface Timer {
+  at: number;
+  id: number;
+  fn: () => void;
+}
+
+/** Page time that moves only when a test says so; promise continuations settle before each timer. */
+class FakeClock implements Clock {
+  t = 0;
+  #timers: Timer[] = [];
+  #ids = 0;
+  now = () => this.t;
+  epoch = () => 1_760_000_000_000 + this.t;
+  after = (ms: number, fn: () => void) => {
+    const timer = { at: this.t + Math.max(0, ms), id: ++this.#ids, fn };
+    this.#timers.push(timer);
+    return () => {
+      const index = this.#timers.indexOf(timer);
+      if (index >= 0) this.#timers.splice(index, 1);
+    };
+  };
+
+  every(ms: number, fn: () => void): () => void {
+    let cancel = () => {};
+    const tick = () => {
+      cancel = this.after(ms, tick);
+      fn();
+    };
+    cancel = this.after(ms, tick);
+    return () => cancel();
+  }
+
+  async advance(ms: number): Promise<void> {
+    const end = this.t + ms;
+    for (;;) {
+      await settled();
+      let next: Timer | undefined;
+      for (const timer of this.#timers) if (!next || timer.at < next.at) next = timer;
+      if (!next || next.at > end) break;
+      this.#timers.splice(this.#timers.indexOf(next), 1);
+      this.t = Math.max(this.t, next.at);
+      next.fn();
+    }
+    this.t = end;
+    await settled();
+  }
+}
+
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+interface Peer {
+  id: string;
+  /** Bytes per millisecond in each direction. */
+  rate?: number;
+  latency?: boolean;
+  silent?(activity: Activity, measuredMs: number, dir: "down" | "up"): boolean;
+  prepare?(activity: Activity, events: StageEvents): void | Promise<void>;
+  measure?(events: StageEvents, activity: Activity): void;
+  finish?(events: StageEvents): void | Promise<void>;
+  discard?(events: StageEvents, incomplete: boolean): void;
+  checkpoint?(): Promise<Checkpoint | null> | undefined;
+  /** A measuring checkpoint answers the count at the moment it was asked, this long after. */
+  checkpointLagMs?: number;
+  replaceUpload?(signal: AbortSignal): Promise<void>;
+  receives?: false;
+}
+
+function prepared(id: string, latency: boolean): PreparedServer {
+  const origin = `https://${id}.example`;
+  const fetch: FetchTarget = { id: origin, origin, transport: "fetch-stream", protocol: "http1", tls: true };
+  const probe = {
+    clientIp: "192.0.2.1",
+    clientIpVersion: 4,
+    clientIpSource: "socket",
+    protocolNegotiated: "http/1.1",
+  } as const;
+  const verified = { generation: "g", verifiedAt: 0, verifiedFor: { selection: "auto", head: origin } };
+  return {
+    server: { id, url: origin, name: id },
+    auth: {} as ServerAuth,
+    discovery: { engineVersion: "test" } as Discovery,
+    throughput: { target: fetch, fetch, probe, browserProtocol: "http/1.1", ...verified },
+    latency: latency
+      ? {
+          target: { id: origin, origin, transport: "websocket", protocol: "http1", tls: true },
+          probe,
+          rttMs: 10,
+          ...verified,
+        }
+      : null,
+  };
+}
+
+/** Lanes report every 20 ms at `rate` bytes per ms, receivers every 100 ms, from the window on. */
+function resources(peer: Peer, setup: StageSetup, calls: string[], clock: FakeClock): StageResources {
+  const { activity, events } = setup;
+  const rate = peer.rate ?? 1;
+  const tag = `${peer.id}:${activity.stage}`;
+  let measuring = false;
+  let started = 0;
+  let stopLanes = () => {};
+  const receiver = (): Checkpoint => {
+    const ms = clock.t - started;
+    return { id: tag, bytes: Math.round(ms * rate), nanos: Math.round(ms * 1e6) + 1, receivedAtMs: setup.now() };
+  };
+  const stop = () => {
+    measuring = false;
+    stopLanes();
+  };
+  return {
+    async prepare() {
+      calls.push(`begin:${tag}`);
+      await peer.prepare?.(activity, events);
+    },
+    measure() {
+      measuring = true;
+      started = clock.t;
+      calls.push(`measure:${peer.id}`);
+      if (activity.transfer.length)
+        stopLanes = clock.every(20, () => {
+          const ms = clock.t - started;
+          const moves = (dir: "down" | "up") => activity.transfer.includes(dir) && !peer.silent?.(activity, ms, dir);
+          if (moves("down")) events.download(rate * 20);
+          if (moves("up") && peer.receives !== false && ms % 100 < 20) events.receiver(receiver());
+        });
+      peer.measure?.(events, activity);
+    },
+    async finish() {
+      stop();
+      calls.push(`end:${peer.id}`);
+      await peer.finish?.(events);
+    },
+    discard(incomplete = false) {
+      stop();
+      calls.push(`discard:${peer.id}`);
+      peer.discard?.(events, incomplete);
+    },
+    // A receiver that is absent, or silent at this moment, answers no checkpoint either.
+    checkpoint() {
+      const answer = peer.receives === false || peer.silent?.(activity, clock.t - started, "up") ? null : receiver();
+      return (
+        peer.checkpoint?.() ??
+        (measuring && peer.checkpointLagMs
+          ? new Promise<Checkpoint | null>((resolve) => clock.after(peer.checkpointLagMs!, () => resolve(answer)))
+          : Promise.resolve(answer))
+      );
+    },
+    replaceUpload: (signal) => peer.replaceUpload?.(signal) ?? Promise.resolve(),
+  };
+}
+
+function harness(
+  peers: Peer[],
+  stages: Partial<RunPlan["stages"]>,
+  duration: Partial<RunPlan["duration"]>,
+  options: { focus?: string; adaptive?: boolean; loadedLatency?: boolean } = {},
+) {
+  const clock = new FakeClock();
+  const calls: string[] = [];
+  const events: RunEvent[] = [];
+  const plan: RunPlan = {
+    stages: { latency: false, download: false, upload: false, bidirectional: false, ...stages },
+    duration: { warmupMs: 0, latencyMs: 0, downloadMs: 0, uploadMs: 0, bidirectionalMs: 0, ...duration },
+    skipLoadedLatencyWhenStageOff: !options.loadedLatency,
+    pingCadence: "reply-driven",
+    loadedPingCadence: "medium",
+    adaptive: !!options.adaptive,
+  };
+  let run: Run | undefined;
+  const terminal = () => events.find((event) => event.type === "complete" || event.type === "error");
+  return {
+    clock,
+    calls,
+    events,
+    plan,
+    get run(): Run {
+      return run!;
+    },
+    start() {
+      run = new Run({
+        servers: peers.map((peer) => prepared(peer.id, peer.latency !== false)),
+        focus: options.focus ?? peers[0]!.id,
+        dropped: [],
+        plan,
+        open: (setup) => resources(peers.find(({ id }) => id === setup.server.server.id)!, setup, calls, clock),
+        streams: (servers, activity) =>
+          new Map(
+            servers.map(({ server }) => [
+              server.id,
+              { down: +activity.transfer.includes("down"), up: +activity.transfer.includes("up") },
+            ]),
+          ),
+        clock,
+        online: () => true,
+      });
+      run.on((event) => events.push(event));
+      run.start();
+    },
+    elapse: (ms: number) => clock.advance(ms),
+    /** The shown phases, each once per stretch. */
+    phases: () =>
+      events.flatMap((event, index) =>
+        event.type === "phase" &&
+        event.phase !== events.slice(0, index).findLast((each) => each.type === "phase")?.phase
+          ? [event.phase]
+          : [],
+      ),
+    async result(limitMs = 30_000): Promise<RunResult> {
+      for (let t = 0; t < limitMs && !terminal(); t += 50) await clock.advance(50);
+      const end = terminal();
+      if (end?.type === "complete") {
+        expect(incoherence(end.result, end.plans)).toEqual([]);
+        return end.result;
+      }
+      throw end?.type === "error" ? end : new Error("the run did not end");
+    },
+  };
+}
+
+/** Lanes report at the end of each 20 ms period, so rates are within 5%. */
+const near = (value: number | undefined, expected: number) =>
+  expect(Math.abs((value ?? 0) / expected - 1)).toBeLessThan(0.05);
+const two = (a: Partial<Peer> = {}, b: Partial<Peer> = {}): Peer[] => [
+  { id: "a", rate: 1, ...a },
+  { id: "b", rate: 3, ...b },
+];
+let clock: FakeClock;
+const later = (ms: number, fn: () => void) => void clock.after(ms, fn);
+const fail = (ms: number) => (events: StageEvents) => later(ms, () => events.failed("connection-lost", "fixture"));
+const probe =
+  (rttMs: number, count = 1) =>
+  (events: StageEvents) =>
+    events.probes(
+      Array.from({ length: count }, () => ({
+        rttMs,
+        timedOut: false,
+        handlingMs: null,
+        observedAt: clock.t,
+        inWindow: true,
+      })),
+    );
+/** Every direction of the named stage moves nothing from `from` to `to` ms into its window. */
+const hole = (stage: Stage, from: number, to: number) => (activity: Activity, ms: number) =>
+  activity.stage === stage && ms >= from && ms < to;
+
+function setup(...args: Parameters<typeof harness>) {
+  const h = harness(...args);
+  clock = h.clock;
+  return h;
+}
+
+test("warmup probes never enter a measured population", async () => {
+  const h = setup(
+    [{ id: "self", prepare: (_, events) => later(50, () => probe(900, 5)(events)), measure: probe(10, 4) }],
+    { latency: true },
+    { warmupMs: 200, latencyMs: 400 },
+  );
+  h.start();
+  expect((await h.result()).latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
+});
+
+test("replies delivered in separate batches stay adjacent for jitter", async () => {
+  const measure = (events: StageEvents) => {
+    for (const rttMs of [10, 20, 10]) {
+      probe(rttMs)(events);
+      events.latencyResumed();
+    }
+  };
+  const h = setup([{ id: "self", measure }], { latency: true }, { latencyMs: 400 });
+  h.start();
+  expect((await h.result()).latencyByStage.latency).toMatchObject({ jitterMs: 10 });
+});
+
+test("an aborted latency stage keeps its summary after the run releases its replies", async () => {
+  const h = setup([{ id: "self", measure: probe(10, 4) }], { latency: true }, { latencyMs: 1_000 });
+  h.start();
+  await h.elapse(300);
+  h.run.abort();
+  expect(h.events.at(-1)).toMatchObject({ type: "aborted" });
+  expect(h.run.details().servers[0]!.latencyByStage.latency).toMatchObject({ probeCount: 4, p50Ms: 10 });
+});
+
+test("one server runs every stage in order on one set of resources per stage", async () => {
+  const h = setup(
+    [{ id: "self", rate: 2, measure: probe(10, 4) }],
+    { latency: true, download: true, upload: true },
+    { warmupMs: 200, latencyMs: 400, downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(h.phases()).toEqual(["connecting", "warmup", "latency", "warmup", "download", "warmup", "upload"]);
+  expect(h.calls).toEqual(
+    ["latency", "download", "upload"].flatMap((stage) => [`begin:self:${stage}`, "measure:self", "end:self"]),
+  );
+  expect(result.latency?.reportedMs).toBe(10);
+  near(result.download?.reportedBytesPerSec, 2_000);
+  near(result.upload?.reportedBytesPerSec, 2_000);
+  expect(result.outcome).toBe("complete");
+  expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  expect(result.download?.wire?.totalMultiplier).toBeGreaterThan(1);
+});
+
+test("two servers sum their windows, and terminal evidence after the final boundary changes nothing", async () => {
+  const late = { finish: (events: StageEvents) => events.download(1_000_000) };
+  const h = setup(two(late, late), { download: true, upload: true }, { downloadMs: 1_400, uploadMs: 1_400 });
+  h.start();
+  const result = await h.result();
+  near(result.download?.reportedBytesPerSec, 4_000);
+  near(result.upload?.reportedBytesPerSec, 4_000);
+  expect(result.download!.totalBytes).toBeLessThan(10_000);
+  near(result.multiServer.servers[0]!.download?.reportedBytesPerSec, 1_000);
+  near(result.multiServer.servers[1]!.download?.reportedBytesPerSec, 3_000);
+});
+
+test("a server lost in the latency stage is not prepared for the later stages", async () => {
+  const lose = (how: (events: StageEvents) => unknown): Partial<Peer> => ({
+    measure: (events, { stage }) => void (stage === "latency" && how(events)),
+  });
+  const h = setup(
+    [...two(lose(fail(100))), { id: "c", ...lose((events) => events.latencyStalled("fixture")) }],
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  h.start();
+  const { multiServer, stages } = await h.result();
+  expect(h.calls).not.toContain("begin:a:download");
+  expect(h.calls).not.toContain("begin:c:download");
+  expect(multiServer.participants).toEqual(["b"]);
+  expect(multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "latency", scope: "latency" },
+    { serverId: "c", stage: "latency", scope: "latency" },
+  ]);
+  expect(stages.download).toBe("complete");
+});
+
+test("server failure text is bounded and dropped when it could disguise itself", async () => {
+  const say = (message: string) => (events: StageEvents) => later(100, () => events.failed("protocol-error", message));
+  const h = setup(
+    [{ id: "a", measure: say("paid ‮evil") }, { id: "b", measure: say("x".repeat(300)) }, { id: "c" }],
+    { download: true },
+    { downloadMs: 1_400 },
+  );
+  h.start();
+  const { failures } = (await h.result()).multiServer;
+  expect(failures.map(({ message }) => message)).toEqual(["", "x".repeat(256)]);
+});
+
+test("several servers that all fail end the run; a sole server skips to its next stage", async () => {
+  const drop = {
+    measure: (events: StageEvents, { stage }: Activity) => {
+      if (stage === "download") later(400, () => events.failed("connection-lost", "x"));
+    },
+  };
+  const h = setup(two(drop, drop), { download: true, upload: true }, { downloadMs: 1_400, uploadMs: 1_400 });
+  h.start();
+  const result = await h.result();
+  expect(h.phases()).not.toContain("upload");
+  expect(result.stages).toMatchObject({ download: "failed", upload: "failed" });
+  expect(result.multiServer.failures.map(({ serverId, stage, reason }) => [serverId, stage, reason])).toEqual([
+    ["a", "download", "connection-lost"],
+    ["b", "download", "connection-lost"],
+    ["a", "upload", "connection-lost"],
+    ["b", "upload", "connection-lost"],
+  ]);
+  expect(result.outcome).toBe("incomplete");
+  expect(result.multiServer.participants).toEqual([]);
+  expect(h.events.filter(({ type }) => type === "complete" || type === "aborted")).toHaveLength(1);
+
+  const sole = setup(
+    [{ id: "self", ...drop }],
+    { download: true, upload: true },
+    { downloadMs: 1_400, uploadMs: 1_400 },
+  );
+  sole.start();
+  const skipped = await sole.result();
+  expect(skipped.stages).toMatchObject({ download: "failed", upload: "complete" });
+  expect(skipped.outcome).toBe("incomplete");
+});
+
+test("a latency-only failure keeps both throughput participants", async () => {
+  const h = setup(
+    two({ measure: (events) => later(200, () => events.probesIncomplete()) }),
+    { download: true },
+    { downloadMs: 1_400 },
+    { loadedLatency: true },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  near(result.download?.reportedBytesPerSec, 4_000);
+  expect(result.multiServer.failures).toMatchObject([{ serverId: "a", scope: "latency" }]);
+  expect(result.outcome).toBe("partial");
+});
+
+test("a throughput dropout reports discarded loaded probes before the server is reduced", async () => {
+  const h = setup(
+    two(
+      {
+        measure: (events) => {
+          probe(10)(events);
+          fail(200)(events);
+        },
+        discard: (events, incomplete) => incomplete && events.probesIncomplete(),
+      },
+      { measure: probe(10) },
+    ),
+    { download: true },
+    { downloadMs: 1_400 },
+    { loadedLatency: true },
+  );
+  h.start();
+  const result = await h.result();
+  const [failed, healthy] = result.multiServer.servers;
+  expect(failed!.latencyByStage.download).toMatchObject({ accountingComplete: false, probeCount: 1 });
+  expect(healthy!.latencyByStage.download).toMatchObject({ accountingComplete: true, probeCount: 1 });
+  near(result.download?.reportedBytesPerSec, 3_000);
+});
+
+test("a server that cannot prepare is dropped; the run fails only when none survive", async () => {
+  const refuse = { prepare: () => Promise.reject(new Error("fixture")) };
+  const early = setup(two(refuse), { download: true }, { downloadMs: 1_000 });
+  early.start();
+  expect(early.phases()).toEqual(["connecting"]);
+  const survived = await early.result();
+  near(survived.download?.reportedBytesPerSec, 3_000);
+  expect(survived.outcome).toBe("partial");
+  expect(survived.multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "download", reason: "preparation-failed" },
+  ]);
+
+  const none = setup(two(refuse, refuse), { download: true }, { downloadMs: 1_000 });
+  none.start();
+  expect(none.result()).rejects.toMatchObject({
+    reason: "preparation-failed",
+    message: expect.stringMatching(/^All selected servers failed/),
+  });
+  for (const [cause, reason] of [
+    [new TypeError("Failed to fetch"), "connection-lost"],
+    [new DOMException("late", "TimeoutError"), "timeout"],
+    [new ServerBusyError("busy", { cause: new DOMException("late", "TimeoutError") }), "server-busy"],
+  ] as const) {
+    const reject = { prepare: () => Promise.reject(new Error("no", { cause })) };
+    const refused = setup(two(reject, reject), { download: true }, { downloadMs: 1_000 });
+    refused.start();
+    await expect(refused.result()).rejects.toMatchObject({ reason });
+  }
+
+  const upload = setup(
+    two({ prepare: ({ stage }) => (stage === "upload" ? Promise.reject(new Error("fixture")) : undefined) }),
+    { download: true, upload: true },
+    { downloadMs: 1_400, uploadMs: 1_400 },
+  );
+  upload.start();
+  const result = await upload.result();
+  near(result.download?.reportedBytesPerSec, 4_000);
+  near(result.upload?.reportedBytesPerSec, 3_000);
+  expect(result.multiServer.failures).toMatchObject([{ serverId: "a", stage: "upload", reason: "preparation-failed" }]);
+});
+
+test("the headline latency source is fixed before the run and is not pooled", async () => {
+  const h = setup(
+    [
+      { id: "a", latency: false },
+      { id: "b", measure: probe(2, 4) },
+      { id: "c", measure: probe(40, 4) },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { focus: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(h.calls).not.toContain("begin:a:latency");
+  expect(result.latency?.reportedMs).toBe(40);
+  expect(result.multiServer.latencyFocus).toBe("c");
+  expect(result.multiServer.servers[0]!.latencyByStage.latency).toBeNull();
+  expect(result.multiServer.servers[1]!.latency?.reportedMs).toBe(2);
+});
+
+test("a focus server lost in the latency stage hands the headline to a survivor", async () => {
+  const h = setup(
+    [
+      { id: "b", measure: probe(2, 4) },
+      { id: "c", measure: (events) => (probe(40, 4)(events), fail(10)(events)) },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { focus: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.latency?.reportedMs).toBe(2);
+  expect(result.multiServer.latencyFocus).toBe("b");
+  expect(result.stages).toMatchObject({ latency: "partial" });
+  expect(result.outcome).toBe("partial");
+});
+
+test("a stable feed completes early, and each stage's result arrives before the next stage shows", async () => {
+  const h = setup(two(), { download: true, upload: true }, { downloadMs: 6_000, uploadMs: 6_000 }, { adaptive: true });
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeLessThan(11_000);
+  expect(result.stages).toMatchObject({ download: "complete", upload: "complete" });
+  near(result.upload?.reportedBytesPerSec, 4_000);
+  const ended = h.events.findIndex((event) => event.type === "stageEnd" && event.stage === "download");
+  const upload = h.events.findIndex((event) => event.type === "phase" && event.stage === "upload");
+  expect(ended).toBeGreaterThan(-1);
+  expect(ended).toBeLessThan(upload);
+});
+
+test("every stage end reports the status the result keeps, one-lane bidirectional included", async () => {
+  const h = setup(
+    [{ id: "self", rate: 2, receives: false }],
+    { download: true, bidirectional: true },
+    {
+      downloadMs: 1_000,
+      bidirectionalMs: 1_000,
+    },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.stages.bidirectional).toBe("failed");
+  expect(h.events.flatMap((event) => (event.type === "stageEnd" ? [[event.stage, event.status]] : []))).toEqual([
+    ["download", "complete"],
+    ["bidirectional", "failed"],
+  ]);
+  // Without a receiver no boundary is complete, so neither lane has a window.
+  expect(result.bidirectional).toEqual({ down: null, up: null, wire: null });
+});
+
+test("each server's stage statuses follow the run's rule on its own lanes and failures", async () => {
+  const h = setup(
+    [
+      {
+        id: "a",
+        measure: (events, { stage }) => {
+          if (stage === "latency") probe(10, 4)(events);
+          if (stage === "upload") fail(300)(events);
+        },
+      },
+      { id: "b", rate: 3, latency: false },
+    ],
+    { latency: true, download: true, upload: true },
+    { latencyMs: 400, downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const { multiServer } = await h.result();
+  expect(multiServer.servers.map(({ stages }) => stages)).toEqual([
+    { latency: "complete", download: "complete", upload: "failed", bidirectional: "not-run" },
+    { latency: "not-run", download: "complete", upload: "complete", bidirectional: "not-run" },
+  ]);
+});
+
+test("ending for sign-in keeps what was measured and names the reason for each unfinished stage", async () => {
+  const h = setup([{ id: "self", rate: 2 }], { download: true, upload: true }, { downloadMs: 2_000, uploadMs: 1_000 });
+  h.start();
+  await h.elapse(1_300);
+  h.run.end("sign-in-required", "Signed out");
+  const result = await h.result();
+  near(result.download?.reportedBytesPerSec, 2_000);
+  expect(result.stages).toMatchObject({ download: "partial", upload: "failed" });
+  expect(result.multiServer.failures.map(({ stage, reason }) => [stage, reason])).toEqual([
+    ["download", "sign-in-required"],
+    ["upload", "sign-in-required"],
+  ]);
+});
+
+test("ending while the first stage prepares completes the run instead of failing it", async () => {
+  const h = setup(
+    two({ prepare: () => new Promise<void>(() => {}) }, { prepare: () => new Promise<void>(() => {}) }),
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  await h.elapse(100);
+  h.run.end("sign-in-required", "Signed out");
+  const result = await h.result();
+  expect(result.stages.download).toBe("failed");
+  expect(result.outcome).toBe("incomplete");
+  expect(h.events.some(({ type }) => type === "error")).toBe(false);
+});
+
+test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {
+  const h = setup([{ id: "self", rate: 2 }], { latency: true, download: true, upload: true }, { downloadMs: 1_000 });
+  h.plan.duration.downloadMs = 0;
+  expect(() => h.start()).toThrow("Give at least one stage a duration");
+  h.plan.duration.downloadMs = 1_000;
+  h.start();
+  const result = await h.result();
+  expect(h.phases()).toEqual(["connecting", "download"]);
+  expect(result.stages).toEqual({
+    latency: "not-run",
+    download: "complete",
+    upload: "not-run",
+    bidirectional: "not-run",
+  });
+});
+
+test("a grant refused while the next stage prepares asks for sign-in", async () => {
+  const server = { id: "a", name: "a", url: "https://a.example" };
+  const h = setup(
+    two({
+      prepare: ({ stage }) => {
+        if (stage === "upload")
+          throw new Error("upload session could not be established", { cause: new SignInRequired(server) });
+      },
+    }),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "upload", reason: "sign-in-required", message: "Sign in to a" },
+  ]);
+});
+
+test("a lane that fails while a measured stage shuts down never fails the stage, however late", async () => {
+  const torn = (delayMs: number): Partial<Peer> => ({
+    checkpoint: () => new Promise((resolve) => later(delayMs, () => resolve(null))),
+    finish: (events) => events.failed("connection-lost", "upload stream closed"),
+  });
+  for (const delayMs of [0, 1_200]) {
+    const h = setup([{ id: "a", ...torn(delayMs) }], { upload: true }, { uploadMs: 1_000 });
+    h.start();
+    const result = await h.result();
+    expect(result.stages.upload).toBe("complete");
+    expect(result.multiServer.failures).toEqual([]);
+    near(result.upload?.reportedBytesPerSec, 1_000);
+  }
+});
+
+test("a final checkpoint answered late over a full uplink keeps a server that was moving", async () => {
+  // The feed's last record comes at 900 ms; the checkpoint asked as the window closed answers 1.2 s later with that
+  // count on the receiver's later clock, so the server seems to have stood still for two seconds it was not measured.
+  const late: Partial<Peer> = {
+    silent: (_activity, ms) => ms > 900,
+    checkpoint: () =>
+      new Promise((resolve) =>
+        later(1_200, () => resolve({ id: "a:upload", bytes: 900, nanos: 900e6 + 1 + 2e9, receivedAtMs: 0 })),
+      ),
+  };
+  const h = setup([{ id: "a", ...late }], { upload: true }, { uploadMs: 1_000 });
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.participants).toEqual(["a"]);
+  expect(result.multiServer.failures).toEqual([]);
+});
+
+test("an expired grant at the final checkpoint asks for sign-in and removes only that server", async () => {
+  const server = { id: "a", name: "a", url: "https://a.example" };
+  const h = setup(
+    two({ checkpoint: () => Promise.reject(new SignInRequired(server)) }),
+    { upload: true, download: true },
+    { uploadMs: 1_000, downloadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "upload", reason: "sign-in-required", message: "Sign in to a" },
+  ]);
+  expect(result.multiServer.participants).toEqual(["b"]);
+});
+
+test("removing one server keeps the outcomes the others report in the same preparation or final checkpoint", async () => {
+  const preparing = setup(
+    two(
+      { prepare: (_, events) => events.failed("sign-in-required", "fixture") },
+      { prepare: () => new Promise((_, reject) => later(10, () => reject(new ServerBusyError("busy")))) },
+    ),
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  preparing.start();
+  await expect(preparing.result()).rejects.toMatchObject({ reason: "server-busy" });
+
+  let b: StageEvents;
+  const server = { id: "a", name: "a", url: "https://a.example" };
+  const ending = setup(
+    two(
+      { checkpoint: () => Promise.reject(new SignInRequired(server)) },
+      {
+        measure: (events) => (b = events),
+        checkpoint: () => {
+          b.failed("protocol-error", "fixture");
+          return Promise.resolve(null);
+        },
+      },
+    ),
+    { upload: true },
+    { uploadMs: 1_000 },
+  );
+  ending.start();
+  const result = await ending.result();
+  expect(result.multiServer.failures.map(({ serverId, reason }) => [serverId, reason])).toEqual([
+    ["b", "protocol-error"],
+    ["a", "sign-in-required"],
+  ]);
+});
+
+test("a live change while a stage ends measures no warmup and never runs a stage turned off", async () => {
+  const slow = { finish: () => new Promise<void>((resolve) => later(300, resolve)) };
+  for (const upload of [true, false]) {
+    const h = setup(
+      two(slow, slow),
+      { download: true, upload: true, bidirectional: true },
+      { warmupMs: 400, downloadMs: 1_000, uploadMs: 1_000, bidirectionalMs: 1_000 },
+    );
+    h.start();
+    const ending = () => h.calls.filter((call) => call.startsWith("end:")).length === 2;
+    for (let t = 0; t < 6_000 && !ending(); t += 5) await h.elapse(5);
+    expect(h.run.canChange("upload")).toBe(true);
+    expect(h.run.canChange("download")).toBe(false);
+    h.run.reconfigure({ stages: { ...h.plan.stages, upload }, duration: h.plan.duration, adaptive: false });
+    const result = await h.result();
+    expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(upload ? 3 : 2);
+    expect(result.stages.upload).toBe(upload ? "complete" : "not-run");
+    expect(result.multiServer.intervals.map(({ stage, reason }) => `${stage}:${reason}`)).toEqual([
+      "download:stage-start",
+      ...(upload ? ["upload:stage-start"] : []),
+      "bidirectional:stage-start",
+    ]);
+  }
+});
+
+test("a finished stage keeps the plan it ran with when a later change lengthens it", async () => {
+  const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  await h.elapse(1_500);
+  h.run.reconfigure({ stages: h.plan.stages, duration: { ...h.plan.duration, downloadMs: 20_000 }, adaptive: true });
+  const result = await h.result();
+  expect(result.outcome).toBe("complete");
+});
+
+test("an unknown upload id replaces the receiver once, even while the server is already recovering", async () => {
+  const replaced: AbortSignal[] = [];
+  const measure = (events: StageEvents) =>
+    later(300, () => {
+      events.stalled({ reason: "connection-lost", detail: "", direction: "up" });
+      for (let i = 0; i < 2; i++)
+        events.stalled({ reason: "connection-lost", detail: "", direction: "up", rotate: true });
+      events.resumed();
+    });
+  const h = setup(
+    [{ id: "a", measure, replaceUpload: async (signal) => void replaced.push(signal) }],
+    { upload: true },
+    { uploadMs: 1_000 },
+  );
+  h.start();
+  await h.result();
+  expect(replaced).toHaveLength(1);
+  expect(replaced[0]!.aborted).toBe(true);
+});
+
+test("a measurement checkpoint answered after a newer feed record never takes the count back", async () => {
+  const h = setup(two({ checkpointLagMs: 300 }), { upload: true }, { uploadMs: 2_000 });
+  h.start();
+  const upload = (await h.result()).multiServer.intervals.filter(({ stage }) => stage === "upload");
+  expect(upload).toHaveLength(1);
+  expect(upload[0]!.complete).toBe(true);
+});
+
+test("each server ends its stage as soon as its own final evidence arrives", async () => {
+  let slow = false;
+  const h = setup(
+    two({
+      checkpoint: () =>
+        slow
+          ? new Promise((resolve) => later(1_000, () => resolve({ id: "a", bytes: 0, nanos: 1, receivedAtMs: 0 })))
+          : undefined,
+      measure: () => later(1_050, () => (slow = true)),
+    }),
+    { upload: true },
+    { uploadMs: 1_100 },
+  );
+  h.start();
+  await h.elapse(1_400);
+  expect(h.calls.filter((call) => call.startsWith("end:"))).toEqual(["end:b"]);
+  await h.result();
+});
+
+test("an aborted stage end delivers no late events", async () => {
+  let release!: () => void;
+  const hold = { finish: () => new Promise<void>((resolve) => (release = resolve)) };
+  const h = setup(two(hold, hold), { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  await h.elapse(1_100);
+  expect(h.calls).toContain("end:a");
+  h.run.abort();
+  const count = h.events.length;
+  expect(h.events.at(-1)).toMatchObject({ type: "aborted" });
+  release();
+  await h.elapse(500);
+  expect(h.events).toHaveLength(count);
+});
+
+test("no progress runs ahead of the segment shown, and a finalizing stage stops its clock", async () => {
+  const slow = { finish: () => new Promise<void>((resolve) => later(800, resolve)) };
+  const h = setup(
+    [{ id: "self", ...slow }],
+    { download: true, upload: true },
+    { warmupMs: 300, downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  await h.result();
+  let step = "";
+  for (const event of h.events) {
+    if (event.type === "phase") step = event.step;
+    if (event.type === "progress" && step !== "running")
+      expect({ step, progress: event }).toMatchObject({ step: "finalizing", progress: { elapsedMs: 1_000 } });
+  }
+});
+
+test("evidence that stops below the silence limit ends with its stage unless a failure is still unrecovered there", async () => {
+  const silent = (activity: Activity, ms: number) => activity.stage === "download" && ms >= 400;
+  const stall = (events: StageEvents, { stage }: Activity) => {
+    if (stage === "download") later(400, () => events.stalled({ reason: "connection-lost", detail: "quiet" }));
+  };
+  const quiet = setup(two({ silent }), { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  quiet.start();
+  const kept = await quiet.result();
+  expect(kept.multiServer.failures).toEqual([]);
+  expect(kept.multiServer.participants).toEqual(["a", "b"]);
+
+  const h = setup(
+    two({ silent, measure: stall }),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures[0]).toMatchObject({
+    serverId: "a",
+    stage: "download",
+    reason: "connection-lost",
+    message: "quiet",
+  });
+  expect(result.multiServer.participants).toEqual(["b"]);
+  expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(1);
+  expect(h.events.some(({ type }) => type === "stall")).toBe(false);
+  const [download] = result.multiServer.intervals;
+  expect(download!.endMs - download!.startMs).toBeLessThan(500);
+
+  // Evidence silent past the limit leaves the interval within the stage, reported or not.
+  const early = setup(two({ silent }), { download: true }, { downloadMs: 3_500 });
+  early.start();
+  const dropped = await early.result();
+  expect(dropped.multiServer.failures).toMatchObject([
+    { serverId: "a", reason: "timeout", message: "down direction carried no data" },
+  ]);
+  const [, survivors] = dropped.multiServer.intervals;
+  expect(survivors).toMatchObject({ reason: "dropout", participants: ["b"] });
+  expect(survivors!.startMs).toBeLessThan(2_300);
+  near(dropped.download?.reportedBytesPerSec, 3_000);
+
+  const sole = setup([{ id: "self", silent, measure: stall }], { download: true }, { downloadMs: 2_000 });
+  sole.start();
+  await sole.elapse(1_000);
+  const stalls = sole.events.flatMap((event) => (event.type === "stall" ? [event.stall] : []));
+  expect(stalls).toEqual([{ reason: "connection-lost", detail: "quiet" }]);
+  await sole.result();
+});
+
+test("a stall report while evidence still flows keeps the server at its stage end", async () => {
+  const stall = (events: StageEvents) =>
+    later(900, () => events.stalled({ reason: "connection-lost", detail: "feed", direction: "up" }));
+  const h = setup(two({ measure: stall }), { upload: true }, { uploadMs: 1_000 });
+  h.start();
+  const result = await h.result();
+  expect(result.outcome).toBe("complete");
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+});
+
+test("a quiet link keeps its stage to the planned end, and its silence counts in the result", async () => {
+  const h = setup([{ id: "self", silent: hole("download", 1_000, 3_000) }], { download: true }, { downloadMs: 4_000 });
+  h.start();
+  const result = await h.result();
+  expect(result.durationMs).toBeGreaterThanOrEqual(4_000);
+  expect(result.stages.download).toBe("complete");
+  expect(result.multiServer.failures).toEqual([]);
+  // Two of the four seconds carried nothing: the headline averages them in and the result says how long.
+  near(result.download?.reportedBytesPerSec, 500);
+  expect(result.download!.quietMs).toBeGreaterThan(1_800);
+  expect(result.download!.quietMs).toBeLessThanOrEqual(2_000);
+  expect(h.events.flatMap((event) => (event.type === "stall" ? [event.stall] : []))).toEqual([
+    { reason: "timeout", detail: "" },
+    null,
+  ]);
+  const quiet = h.events.flatMap((event) =>
+    event.type === "live" && event.sample.quietMs !== null ? [event.sample] : [],
+  );
+  expect(quiet.every((sample) => sample.stalled && sample.down === 0)).toBe(true);
+  expect(Math.max(...quiet.map((sample) => sample.quietMs!))).toBeGreaterThan(1_800);
+});
+
+test("silence the servers share removes none; silence one has alone while another moves removes it", async () => {
+  const quiet = hole("download", 1_000, 3_000);
+  const shared = setup(two({ silent: quiet }, { silent: quiet }), { download: true }, { downloadMs: 4_000 });
+  shared.start();
+  const kept = await shared.result();
+  expect(kept.multiServer.failures).toEqual([]);
+  expect(kept.multiServer.participants).toEqual(["a", "b"]);
+  near(kept.download?.reportedBytesPerSec, 2_000);
+
+  const own = setup(two({ silent: quiet }), { download: true }, { downloadMs: 4_000 });
+  own.start();
+  const dropped = await own.result();
+  expect(dropped.multiServer.failures).toMatchObject([{ serverId: "a", reason: "timeout" }]);
+  expect(dropped.multiServer.participants).toEqual(["b"]);
+  near(dropped.download?.reportedBytesPerSec, 3_000);
+});
+
+test("a receiver feed that lags keeps its server, whose bytes arrive with its next record", async () => {
+  // a's receiver sends no record for 2 s while b moves, then reports every byte it received meanwhile.
+  const h = setup(two({ silent: hole("upload", 1_000, 3_000) }), { upload: true }, { uploadMs: 4_000 });
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toEqual([]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  near(result.upload?.reportedBytesPerSec, 4_000);
+  expect(result.upload?.quietMs).toBe(0);
+});
+
+test("a stage with a hole never finishes early, however steady it runs after", async () => {
+  const h = setup(
+    [{ id: "self", silent: hole("download", 500, 1_200) }],
+    { download: true },
+    { downloadMs: 12_000 },
+    { adaptive: true },
+  );
+  h.start();
+  expect((await h.result()).durationMs).toBeGreaterThanOrEqual(12_000);
+});
+
+test("a result spanning too little of its stage settles Partial, as History judges it", async () => {
+  // The receiver's first record arrives 3 s into a 4 s upload, so its result spans one second.
+  const h = setup([{ id: "self", silent: hole("upload", 0, 3_000) }], { upload: true }, { uploadMs: 4_000 });
+  h.start();
+  const result = await h.result();
+  near(result.upload?.reportedBytesPerSec, 1_000);
+  expect(result.stages.upload).toBe("partial");
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "self", stage: "upload", reason: "insufficient-evidence" },
+  ]);
+});
+
+test("one long page suspension still enters every segment in order", async () => {
+  const h = setup(
+    [{ id: "self" }],
+    { download: true, upload: true },
+    { warmupMs: 200, downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  await h.elapse(20);
+  h.clock.t += 5_000;
+  const result = await h.result();
+  expect(h.phases()).toEqual(["connecting", "warmup", "download", "warmup", "upload"]);
+  expect(result.outcome).toBe("complete");
+});
+
+test("a bidirectional stage whose download never moves fails however long upload flows", async () => {
+  for (const [bidirectionalMs, reason] of [
+    [1_000, "insufficient-evidence"],
+    [4_000, "timeout"],
+  ] as const) {
+    const h = setup(
+      [{ id: "self", silent: (_, __, dir) => dir === "down" }],
+      { bidirectional: true },
+      { bidirectionalMs },
+    );
+    h.start();
+    const result = await h.result();
+    expect(result.stages.bidirectional).toBe("failed");
+    expect(result.bidirectional?.down).toBeNull();
+    expect(result.multiServer.failures).toMatchObject([{ stage: "bidirectional", reason }]);
+  }
+});
