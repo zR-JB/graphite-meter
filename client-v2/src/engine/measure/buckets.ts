@@ -5,7 +5,8 @@ import type { Stage } from "../run/schedule";
 /** Points a presented series keeps. */
 export const SERIES_LIMIT = 1_200;
 const MIN_WIDTH_MS = 200;
-const REVISION_MS = 10_000;
+/** How far back a late outcome may still revise a closed bucket. */
+export const REVISION_MS = 10_000;
 
 export interface LatencyBucket {
   /** The stage the probes belong to; "idle" between runs. */
