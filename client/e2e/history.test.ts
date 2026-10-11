@@ -258,7 +258,7 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
     .getByRole("button", { name: "Choose columns and sort order" })
     .click();
   await expect(options).toBeVisible();
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await page.locator(".result-row").click();
   await expect(page.locator(".result-detail")).toBeVisible();
 });
@@ -281,7 +281,7 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
     ["Enter", 538],
     ["ArrowLeft", 522],
   ] as const) {
-    await page.raw.press(key);
+    await page.press(key);
     await expect.poll(list).toBe(width);
   }
   await expect(handle).toHaveAttribute("aria-valuenow", "522");

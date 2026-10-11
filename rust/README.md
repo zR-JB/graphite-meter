@@ -36,8 +36,8 @@ mise run rust-client-run -- --report --url https://meter.example
 | `rust-container-build` | The server image `graphite-meter:latest-rust` (amd64 build host). |
 | `rust-client-package` | The Linux and Windows TUI archives and their source offers in the pinned builder (amd64 build host). |
 
-- CI checks the browser path in Chromium only (Chrome for Testing); Firefox and a WebKitGTK negative control are not
-  run.
+- CI checks the Rust server's browser path in Chromium only (Chrome for Testing); the Go server's runs in Chrome and
+  Firefox. A WebKitGTK negative control is not run.
 - CI's Rust image and TUI package checks build without a Cargo cache; only the jobs that build in the runner
   workspace (rust, rust-interop, rust-windows) cache Cargo.
 
