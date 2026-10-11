@@ -129,7 +129,9 @@ it. Build arguments carry no secrets because max provenance records them.
 
 ## Workflow policy
 
-`actionlint` checks workflow syntax and expressions. `zizmor` (configured in
+`jactionlint` (configured in `.github/jactionlint.yaml`) checks workflow syntax,
+expressions and GitHub's parallel steps, and its default security and policy
+rules. `zizmor` (configured in
 `.github/zizmor.yml`) requires full-SHA action pins, non-persisted checkout
 credentials and no dangerous triggers other than the reviewed `workflow_run`.
 `workflow_policy.py` holds the project's own trust rules, and
