@@ -4,9 +4,10 @@
 import type { Readiness } from "../engine/net/connection";
 import type { Outcome, StageStatus } from "../engine/run/result";
 import type { Phase } from "../engine/run/run";
-import type { Stage } from "../engine/run/schedule";
-import type { HttpProtocol, LatencyTarget, Role, ThroughputTarget } from "../engine/types";
+import { planned, STAGES, type Stage } from "../engine/run/schedule";
+import type { HttpProtocol, LatencyTarget, Role, TestConfig, ThroughputTarget } from "../engine/types";
 import { FAILURE_REASONS, type FailureReason } from "../protocol/reasons";
+import { fmtDuration } from "./format";
 
 /** The hues `[data-tone]` maps (styles/tokens.css): each stage's own, the warmup's, and the status tones. */
 export type Tone = Stage | "warmup" | "ok" | "warn" | "err" | "neutral";
@@ -191,4 +192,15 @@ export function serverLabel({ name, location = "" }: { name: string; location?: 
 export function allServersLabel(total: number, stayed: number, measured: number): string {
   const shown = stayed || measured;
   return shown < total ? `${shown} of ${total} servers` : `All ${total} servers`;
+}
+
+const LIST = new Intl.ListFormat("en-GB", { type: "conjunction" });
+
+/** Why Start is refused when planned stages outlast the shortest stage limit of the selected servers; "" when none
+    does. */
+export function stageLimitError(config: TestConfig, limit: { ms: number; server: string | null }): string {
+  const over = STAGES.filter((stage) => planned(config, stage) && config.duration[`${stage}Ms`] > limit.ms);
+  if (!limit.server || !over.length) return "";
+  const stages = LIST.format(over.map((stage) => STAGE[stage].label));
+  return `${limit.server} allows stages up to ${fmtDuration(limit.ms, 0)}; shorten the ${stages} stage${over.length > 1 ? "s" : ""}.`;
 }

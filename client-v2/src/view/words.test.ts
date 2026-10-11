@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { rows } from "../protocol/pins.testutil";
-import { allServersLabel, reasonLabel, serverLabel, stageState, type StageFacts, type StageState } from "./words";
+import { DEFAULT_CONFIG } from "../app/preferences";
+import {
+  allServersLabel,
+  reasonLabel,
+  serverLabel,
+  stageLimitError,
+  stageState,
+  type StageFacts,
+  type StageState,
+} from "./words";
 
 test("failure labels match the pin Go and Rust load, and any other reason reads as a measurement issue", async () => {
   for (const [reason, label] of await rows("failurereasons.txt")) expect(reasonLabel(reason!)).toBe(label!);
@@ -50,4 +59,18 @@ test("a server reads its name and location once, and all servers count who staye
     [3, 0, 0, "0 of 3 servers"],
   ];
   for (const [total, stayed, measured, label] of counts) expect(allServersLabel(total, stayed, measured)).toBe(label);
+});
+
+test("the stage limit names the server and each planned stage past it", () => {
+  const oslo = { ms: 2_000, server: "Oslo" };
+  const only = (download: boolean, upload: boolean) => ({
+    ...DEFAULT_CONFIG,
+    stages: { latency: false, download, upload, bidirectional: false },
+  });
+  expect(stageLimitError(only(true, false), oslo)).toBe("Oslo allows stages up to 2 s; shorten the Download stage.");
+  expect(stageLimitError(DEFAULT_CONFIG, oslo)).toBe(
+    "Oslo allows stages up to 2 s; shorten the Latency, Download and Upload stages.",
+  );
+  expect(stageLimitError(DEFAULT_CONFIG, { ms: 300_000, server: "Oslo" })).toBe("");
+  expect(stageLimitError(DEFAULT_CONFIG, { ms: 86_400_000, server: null })).toBe("");
 });

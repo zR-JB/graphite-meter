@@ -85,10 +85,11 @@ export function createRun(env: RunEnvironment) {
   const startError = signal("");
   /** Why the latest live change was refused, until a change applies or the run goes. */
   const refusal = signal("");
+  /** The servers the current or last run measured, as Start prepared them. */
+  const prepared = signal<readonly PreparedServer[]>([]);
 
   let run: Run | null = null;
-  /** The current run's servers, and the RTT its warmup adapts to. */
-  let prepared: PreparedServer[] = [];
+  /** The RTT the current run's warmup adapts to. */
   let rttMs = 0;
   let release = () => {};
   let pending: AbortController | null = null;
@@ -133,6 +134,7 @@ export function createRun(env: RunEnvironment) {
       plan.set(null);
       startError.set("");
       refusal.set("");
+      prepared.set([]);
       preparation.set("idle");
     });
     stageBase = { stage: "", bytes: 0, last: 0 };
@@ -214,7 +216,8 @@ export function createRun(env: RunEnvironment) {
           });
         case "complete": {
           const { result: finished, plans } = event;
-          const focus = prepared.find(({ server }) => server.id === finished.multiServer.latencyFocus) ?? prepared[0];
+          const servers = prepared.peek();
+          const focus = servers.find(({ server }) => server.id === finished.multiServer.latencyFocus) ?? servers[0];
           batch(() => {
             live.set(null);
             stall.set(null);
@@ -276,11 +279,11 @@ export function createRun(env: RunEnvironment) {
       env.finished(null);
       reset();
       preparation.set("launching");
+      prepared.set(ready.servers);
       plan.set(runPlan);
       details.set(next.details());
     });
     run = next;
-    prepared = ready.servers;
     rttMs = focus.latency?.rttMs ?? 0;
     spanMs = total(runPlan);
     follow(next);
@@ -369,7 +372,7 @@ export function createRun(env: RunEnvironment) {
       const uploads = (each: RunPlan) => planned(each, "upload") || planned(each, "bidirectional");
       const lacking =
         uploads(runPlan) && !uploads(current.plan)
-          ? prepared.find(({ discovery }) => !discovery.uploadCheckpoint)
+          ? prepared.peek().find(({ discovery }) => !discovery.uploadCheckpoint)
           : undefined;
       if (lacking)
         return refuse(
@@ -433,6 +436,7 @@ export function createRun(env: RunEnvironment) {
     preparation: preparation as Read<Preparation>,
     startError: startError as Read<string>,
     refusal: refusal as Read<string>,
+    prepared: prepared as Read<readonly PreparedServer[]>,
     running,
     preparing,
     canToggle,
