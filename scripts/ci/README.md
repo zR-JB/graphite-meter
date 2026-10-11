@@ -12,7 +12,7 @@ commands.
 ## Working on the pipeline
 
 ```sh
-mise run workflow-check    # actionlint, zizmor, workflow_policy.py, tool pins
+mise run workflow-check    # jactionlint, zizmor, workflow_policy.py, tool pins
 mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
@@ -21,7 +21,9 @@ CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. Each job runs on the
 filter `workflow_policy.py` names for it, and a filter never selects a job
-without the jobs it needs, which the Gate would pass as skipped.
+without the jobs it needs, which the Gate would pass as skipped. The Checks job
+runs the quick gates together, each step on the filter the policy names for its
+task.
 
 ## Releases
 

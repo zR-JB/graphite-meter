@@ -9,7 +9,7 @@ python = "3.14.8"
 go = "1.27.2"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:astral-sh/ty" = "0.0.86"
-"aqua:rhysd/actionlint" = "1.7.12"
+"github:jdx/jactionlint" = "2.1.0"
 "aqua:zizmorcore/zizmor" = "1.30.1"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
@@ -64,7 +64,7 @@ run = "python3 scripts/ci/toolchains.py sync"
 [tasks.workflow-check]
 description = "Lint workflows and validate trust boundaries"
 run = [
-  "actionlint -shellcheck= -pyflakes=",
+  "jactionlint --no-online --shellcheck= --pyflakes=",
   "zizmor --offline --no-progress --config .github/zizmor.yml .github",
   "python3 scripts/ci/workflow_policy.py",
 ]

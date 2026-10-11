@@ -1,0 +1,8 @@
+# jactionlint runs its default profile: actionlint's correctness checks and the security and policy rules.
+ignores:
+  - rule: dangerous-triggers
+    file: .github/workflows/release.yml
+    reason: the trusted consumer of a release request never runs its source; zizmor ignores the trigger too
+  - rule: concurrency-limits
+    file: .github/workflows/release.yml
+    reason: only the publish job deploys, under its own concurrency group

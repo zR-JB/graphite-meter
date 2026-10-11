@@ -74,7 +74,7 @@ runs:
         tools=(python)
         if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
         if [[ "$INCLUDE_BUN" == true ]]; then tools+=(bun); fi
-        if [[ "$INCLUDE_PYTHON_TOOLS" == true ]]; then tools+=(aqua:astral-sh/ty aqua:rhysd/actionlint aqua:zizmorcore/zizmor); fi
+        if [[ "$INCLUDE_PYTHON_TOOLS" == true ]]; then tools+=(aqua:astral-sh/ty github:jdx/jactionlint aqua:zizmorcore/zizmor); fi
         if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(go:honnef.co/go/tools/cmd/staticcheck); fi
         if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
         if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
