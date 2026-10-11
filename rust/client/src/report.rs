@@ -39,31 +39,6 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     blocks.join(&Line::default()).into_iter().map(Line::trimmed).collect()
 }
 
-/// The finished run's results as the interface shows them, `focus` the latency server; none when nothing was measured.
-pub fn results(view: &View, focus: Option<&ServerId>, width: usize, palette: &Palette) -> Vec<Line> {
-    let measured = view.run.as_ref().filter(|run| run.at.is_some());
-    let Some(run) = measured else { return Vec::new() };
-    let report = Report { view, run, focus, width, palette };
-    let Some((latency, failures, _)) = report.results("Latency") else {
-        return Vec::new();
-    };
-    let mut rows = Vec::new();
-    for &(stage, _) in run.plan.iter().filter(|(stage, _)| !stage.directions().is_empty()) {
-        let rates = report.result(stage).map(mean_rates).filter(|rates| !rates.is_empty());
-        let mut cell = Line::plain(rates.as_deref().unwrap_or(report.unmeasured(stage)));
-        if report.status(stage) == Some(StageStatus::Partial) {
-            cell = cell.and("  ", Style::default()).and(PARTIAL, palette.warn);
-        }
-        rows.push(vec![Line::styled(compact_stage(stage), palette.stage(stage)), cell]);
-    }
-    let scope = if report.several() { "All servers" } else { "" };
-    let throughput = match rows.is_empty() {
-        true => Vec::new(),
-        false => report.grid(&["Throughput", scope], rows),
-    };
-    [throughput, latency, failures].concat()
-}
-
 /// Why the view's run has no report: it never started, or its sign-in expired.
 pub fn unreported(view: &View) -> Option<String> {
     let run = view.run.as_ref()?;

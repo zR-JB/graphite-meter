@@ -12,6 +12,7 @@ pub mod measure {
     pub mod aggregate;
     pub mod format;
     pub mod latency;
+    pub mod live;
 }
 
 pub mod run {

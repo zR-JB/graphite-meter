@@ -10,7 +10,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-var tuiFrame string
+var (
+	tuiFrame string
+	tuiLines []string
+)
 
 func benchmarkModel(b *testing.B, w, h int) model {
 	b.Helper()
@@ -33,7 +36,7 @@ func benchmarkModel(b *testing.B, w, h int) model {
 	}
 	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
 		r.rates[dir] = goclient.ThroughputSample{BytesPerSec: 1e8}
-		r.shown[dir] = 1e8
+		r.shown[dir] = glide{to: 1e8}
 		for i := range 480 {
 			v := 1e8 * (1 + .1*math.Sin(float64(i)/12))
 			if i%120 == 0 {
@@ -68,11 +71,11 @@ func BenchmarkTUIFrame(b *testing.B) {
 	}
 }
 
-func BenchmarkTUIChart(b *testing.B) {
+func BenchmarkTUIStrip(b *testing.B) {
 	m := benchmarkModel(b, 120, 40)
-	lines := []series{{style: m.st.stage[goclient.StageDownload], points: m.run.history[goclient.Down].points}}
+	bands := [][]point{m.run.history[goclient.Down].points}
 	b.ReportAllocs()
 	for b.Loop() {
-		tuiFrame = m.st.chart(lines, m.run.marks, rateAxis, 60, 100, 20)
+		tuiLines = m.st.strip(goclient.StageDownload, bands, m.run.stripTop(), 0, 60, 100, 4)
 	}
 }

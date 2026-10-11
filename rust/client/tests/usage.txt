@@ -38,7 +38,7 @@ Usage of graphite-meter-client:
   -upload-duration duration
     	upload measurement duration (default 10s)
   -url string
-    	origin of the operator server catalogue (default "http://127.0.0.1:7246")
+    	origin of the operator server catalogue
   -version
     	print version and exit
   -warmup duration

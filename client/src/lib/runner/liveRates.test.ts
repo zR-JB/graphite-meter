@@ -172,3 +172,19 @@ test("a slow receiver counting 64 KiB reads never opens with a peak", () => {
   expect(Math.max(...shown) / rate).toBeLessThan(1.15);
   expect(shown.at(-1)! / rate).toBeCloseTo(1, 1);
 });
+
+test("the estimator matches the vectors the terminal clients share", async () => {
+  const { cases } = await Bun.file(
+    new URL("../../../../api/liverate.testvectors.json", import.meta.url),
+  ).json();
+  for (const { name, steps } of cases as {
+    name: string;
+    steps: [number, number, number, boolean][];
+  }[]) {
+    const estimator = new GrowingRateEstimator();
+    for (const [bytes, ms, presented, changed] of steps) {
+      expect(estimator.observe(bytes, ms), name).toBe(changed);
+      expect(estimator.presented, name).toBe(presented);
+    }
+  }
+});

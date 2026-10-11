@@ -1,5 +1,6 @@
 //! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
+    measure::live::LiveRate,
     model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
 };
@@ -35,11 +36,10 @@ pub enum Event {
     StageStarted(StagePlan),
     /// The stage's measured window opened.
     Measuring(Stage),
-    /// A boundary's all-servers rates in bytes per second, `at` into the window.
+    /// A boundary's all-servers rates in bytes per second, `at` into the window; none restarts a direction.
     Sample {
         at: Duration,
         rates: Dir<Option<f64>>,
-        recovering: bool,
     },
     /// A probe sent `at` into the window: its round trip, or none for a timeout.
     Probe {
@@ -193,9 +193,14 @@ pub struct Run {
     pub focus: Option<ServerId>,
     /// The stage in progress, and its window's offset into the plan once open.
     pub stage: Option<(StagePlan, Option<Duration>)>,
-    pub rates: Dir<Option<f64>>,
-    pub recovering: bool,
+    /// Each direction's presented rate, as the browser estimates it from the samples.
+    pub live: Dir<LiveRate>,
+    /// The latest sample's offset into the window.
+    sampled: Duration,
+    /// Presented rates in bytes per second.
     pub throughput: Dir<Series>,
+    /// The highest combined rate presented or measured, in bytes per second; scales only grow during a run.
+    pub peak: f64,
     /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
     pub results: Vec<StageResult>,
@@ -264,15 +269,29 @@ impl Run {
         match event {
             Event::StageStarted(plan) => {
                 self.stage = Some((plan.clone(), None));
-                (self.rates, self.recovering) = (Dir::default(), false);
+                self.live = Dir::default();
             }
             Event::Measuring(stage) => self.measuring(*stage),
-            Event::Sample { at, rates, recovering } => {
+            Event::Sample { at, rates } => {
                 let Some((stage, offset)) = self.window() else { return };
+                let ms = at
+                    .saturating_sub(std::mem::replace(&mut self.sampled, *at))
+                    .as_secs_f64()
+                    * 1e3;
                 for &direction in stage.directions() {
-                    self.throughput[direction].push(offset + *at, rates[direction]);
+                    let Some(rate) = rates[direction] else {
+                        // The window restarts, and so does what it presents.
+                        self.live[direction] = LiveRate::default();
+                        self.throughput[direction].push(offset + *at, None);
+                        continue;
+                    };
+                    self.live[direction].observe(rate * ms / 1e3, ms);
+                    let presented = self.live[direction].presented();
+                    if presented > 0.0 {
+                        self.throughput[direction].push(offset + *at, Some(presented));
+                    }
                 }
-                (self.rates, self.recovering) = (*rates, *recovering);
+                self.peak = self.peak.max(self.live.down.presented() + self.live.up.presented());
             }
             Event::Probe { server, at, rtt } => {
                 let Some((_, offset)) = self.window() else { return };
@@ -298,6 +317,7 @@ impl Run {
         if let Some((_, window)) = &mut self.stage {
             *window = Some(offset);
         }
+        self.sampled = Duration::ZERO;
         for direction in Direction::BOTH {
             self.throughput[direction].push(offset, None);
         }
@@ -325,6 +345,7 @@ impl Run {
         self.issues.retain(|(stage, _)| *stage != result.stage);
         let failures = result.failures.iter().map(|failure| (result.stage, failure.clone()));
         self.issues.extend(failures);
+        self.peak = self.peak.max(result.mean());
         self.results.push(result.clone());
         self.focus = focus(&self.results).or(self.focus.take());
         self.stage = None;

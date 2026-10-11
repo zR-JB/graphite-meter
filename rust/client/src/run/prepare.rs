@@ -86,7 +86,8 @@ impl Prepared {
 pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failure> {
     let at = Instant::now();
     let deadline = time::Instant::now() + PREPARATION_TIMEOUT;
-    let request = Request::new(Method::GET, &config.url, Route::Servers);
+    let url = config.url.as_ref().ok_or_else(|| refused(crate::config::NO_SERVER))?;
+    let request = Request::new(Method::GET, url, Route::Servers);
     let catalogue = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
     let received = time::timeout_at(deadline, catalogue).await.map_err(|_| late())?;
     let received = received.map_err(|fault| fault.failure())?;
@@ -96,7 +97,7 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
             id: entry.id.clone(),
             name: entry.name.clone(),
             location: entry.location.clone(),
-            origin: entry.url.resolve(&config.url).clone(),
+            origin: entry.url.resolve(url).clone(),
             offered: None,
             path: Err(late()),
         };

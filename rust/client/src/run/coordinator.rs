@@ -305,7 +305,7 @@ impl Live<'_> {
             }
         }
         if let Some(rates) = tick.live {
-            events.send(Event::Sample { at, rates, recovering: tick.recovering });
+            events.send(Event::Sample { at, rates });
         }
     }
 }

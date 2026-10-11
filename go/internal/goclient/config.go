@@ -143,7 +143,13 @@ func shortDuration(d time.Duration) string {
 	return s
 }
 
+// ErrNoServer is a configuration without a server address; nothing has a sensible default one.
+var ErrNoServer = errors.New("enter the server's address")
+
 func (c Config) Validate() error {
+	if c.BaseURL == "" {
+		return ErrNoServer
+	}
 	if len(c.Plan()) == 0 {
 		return errors.New("select at least one stage: latency, download, upload or bidirectional")
 	}
@@ -211,7 +217,6 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		BaseURL:               "http://127.0.0.1:7246",
 		ThroughputTarget:      "auto",
 		ThroughputProtocol:    "auto",
 		ThroughputTransport:   "auto",
