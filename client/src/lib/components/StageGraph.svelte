@@ -282,10 +282,15 @@
     {/if}
   </div>
   {#if hover}
+    <!-- In the top layer, so a card's clip never cuts a reading taller than its strip. -->
+    {@const at = box!.getBoundingClientRect()}
     <span
       class="inspect-card readout"
       class:flip={hover.x > width / 2}
-      style:left="{hover.x}px"
+      popover="manual"
+      {@attach (node) => node.showPopover()}
+      style:left="{at.left + hover.x}px"
+      style:top="{at.top}px"
     >
       <span class="readout-time">{hover.time}</span>
       {#each hover.rows as row (row.label)}
@@ -359,8 +364,9 @@
     stroke-width: 1;
   }
   .readout {
-    z-index: 5;
-    top: 0;
+    position: fixed;
+    inset: auto;
+    margin: 0;
     min-width: 150px;
     white-space: nowrap;
     translate: 10px 0;

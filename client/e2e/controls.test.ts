@@ -11,7 +11,7 @@ import {
   savedResult,
   spawnPeer,
 } from "./fleet";
-import { expect, test, type Locator } from "./webview";
+import { browser, expect, test, type Locator } from "./webview";
 
 const checked = (locator: Locator) =>
   locator.evaluate((el: HTMLInputElement) => el.checked);
@@ -91,7 +91,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   const dialog = page.getByRole("alertdialog", { name: "Reset settings?" });
   await reset.click();
   await expect(dialog).toBeVisible();
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(reset).toBeFocused();
 
@@ -129,16 +129,16 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await settings
     .getByRole("button", { name: "Close Settings" })
     .evaluate((el: HTMLElement) => el.focus());
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await closed(settings);
   expect(
     await details.all((els: HTMLElement[]) => els.some((el) => !el.inert)),
   ).toBe(true);
   // Focus returns to the Settings button, whose tip takes the first Escape.
-  await page.raw.press("Escape");
-  await page.raw.press("Escape");
+  await page.press("Escape");
+  await page.press("Escape");
   await closed(details);
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
@@ -158,7 +158,7 @@ test("a docked panel's edge steps 16 px from the keyboard, within its limits", a
     ["End", "720"],
     ["Enter", "420"],
   ] as const) {
-    await page.raw.press(key);
+    await page.press(key);
     await expect(handle).toHaveAttribute("aria-valuenow", width);
   }
 });
@@ -170,14 +170,14 @@ test("Space and R run the test from page load; a focused control keeps Space", a
   await ready(page);
   // As after a fresh load: focus left the Settings button that ready() used.
   await page.evaluate(() => (document.activeElement as HTMLElement).blur());
-  await page.raw.press(" ");
+  await page.press(" ");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  await page.raw.press("r");
+  await page.press("r");
   await expect(phase(page, "aborted")).toHaveCount(1);
   await page
     .getByRole("switch", { name: /^Upload stage/ })
     .evaluate((el: HTMLElement) => el.focus());
-  await page.raw.press(" ");
+  await page.press(" ");
   await expect(runButton(page, "Run again")).toBeVisible();
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
@@ -189,7 +189,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await page.getByRole("button", { name: "About & legal" }).click();
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   await expect(dialog).toContainText("Unable to load legal notices.");
-  await page.cdp("Network.setBlockedURLs", { urls: [] });
+  await page.blockRequests([]);
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
 
@@ -213,12 +213,13 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   );
   const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());
-  // Past the last control a modal hands focus to the browser, never the page.
-  await page.raw.press("Tab");
+  // Past the last control a modal hands focus to the browser, never the page; only Chrome has its UI headless.
+  if (browser !== "chrome") return;
+  await page.press("Tab");
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe(
     "BODY",
   );
-  await page.raw.press("Tab");
+  await page.press("Tab");
   await expect(close).toBeFocused();
 });
 
@@ -248,7 +249,7 @@ test("a History chunk that fails to load settles and recovers through Retry", as
       }),
   );
   expect(mutations).toBe(0);
-  await page.cdp("Network.setBlockedURLs", { urls: [] });
+  await page.blockRequests([]);
   await stage.getByRole("button", { name: "Retry" }).click();
   await expect(page.locator(".history-workspace")).toHaveCount(1);
 });
@@ -260,18 +261,18 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
   const menu = page.getByRole("menu", { name: "More controls" });
   const items = menu.getByRole("menuitem");
   await trigger.evaluate((el: HTMLElement) => el.focus());
-  await page.raw.press("ArrowDown");
+  await page.press("ArrowDown");
   await expect(items.nth(0)).toBeFocused();
-  await page.raw.press("ArrowDown");
+  await page.press("ArrowDown");
   await expect(items.nth(1)).toBeFocused();
-  await page.raw.press("Escape");
+  await page.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(trigger).toBeFocused();
 
-  await page.raw.press("ArrowUp");
+  await page.press("ArrowUp");
   await expect(items.nth(1)).toContainText("Details");
   await expect(items.nth(1)).toBeFocused();
-  await page.raw.press("Enter");
+  await page.press("Enter");
   await expect(menu).toHaveCount(0);
   await expect
     .poll(() =>
@@ -303,4 +304,59 @@ test("the first result saves after the application server becomes unreachable", 
   } finally {
     oslo.kill();
   }
+});
+
+test("a docked sheet reopened while it leaves comes back from where it was", async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await open(page);
+  await ready(page);
+  const travel = await page.evaluate(async () => {
+    const key = (key: string) =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+    const sheet = () =>
+      document.querySelector<HTMLElement>(
+        'dialog[aria-label="Details"]:not([aria-hidden])',
+      )!;
+    key("d");
+    await wait(600);
+    key("d");
+    await wait(60);
+    // Mid-way out it is still on screen: the sheet itself, or a copy where a browser cannot keep it displayed.
+    const leaving = [
+      ...document.querySelectorAll('dialog[aria-label="Details"]'),
+    ].some(
+      (el) =>
+        el.checkVisibility() && el.getBoundingClientRect().left < innerWidth,
+    );
+    key("d");
+    const lefts: number[] = [];
+    const end = performance.now() + 500;
+    while (performance.now() < end) {
+      await new Promise((done) => requestAnimationFrame(done));
+      lefts.push(sheet().getBoundingClientRect().left);
+    }
+    return { leaving, lefts, width: innerWidth };
+  });
+  expect(travel.leaving).toBe(true);
+  expect(Math.min(...travel.lefts)).toBeGreaterThan(travel.width / 2);
+});
+
+test("Details hides this browser's address until it is pointed at or pinned", async (page) => {
+  await open(page);
+  await ready(page);
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  const address = page.locator(".secret");
+  await expect(address).toHaveAttribute("aria-pressed", "false");
+  const shown = () =>
+    address.evaluate(
+      (el: Element) =>
+        getComputedStyle(el.querySelector(".secret-value")!).visibility,
+    );
+  expect(await shown()).toBe("hidden");
+  await address.click();
+  await expect(address).toHaveAttribute("aria-pressed", "true");
+  expect(await shown()).toBe("visible");
 });

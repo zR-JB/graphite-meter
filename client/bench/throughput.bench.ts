@@ -2,6 +2,7 @@
 // It writes raw rows from fresh cell permutations, so session drift inflates spread rather than biasing one cell.
 import { afterAll, describe } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { browser } from "../e2e/browsers";
 import { harness, home } from "../e2e/fleet";
 import { expect, test, type Page } from "../e2e/webview";
 import type { CellSpec, CellResult } from "./harness";
@@ -30,6 +31,8 @@ const active = Object.fromEntries(
 
 const cells = buildCells(active);
 const DIR = "bench/results";
+// Chrome keeps its historical name so earlier result files stay comparable.
+const project = browser === "firefox" ? "firefox" : "chromium";
 // GM_BENCH_FILTER selects cells whose id contains any comma-separated literal term.
 const filterSource = process.env.GM_BENCH_FILTER ?? "";
 const terms = filterSource.split(",").filter(Boolean);
@@ -42,12 +45,7 @@ if (terms.length && selectedCells.length === 0)
   );
 
 /** Append each completed run because a failing test restarts the worker and loses module state. */
-function record(
-  project: string,
-  cell: string,
-  group: string,
-  r: CellResult,
-): void {
+function record(cell: string, group: string, r: CellResult): void {
   mkdirSync(DIR, { recursive: true });
   appendFileSync(
     `${DIR}/${project}.ndjson`,
@@ -81,7 +79,7 @@ describe("matrix", () => {
           warmupMs: WARMUP_MS,
           measureMs: MEASURE_MS,
         });
-        record("chromium", cell.id, cell.group, result);
+        record(cell.id, cell.group, result);
         // Zero bytes indicates engine stalling; only a lane error makes the cell broken.
         expect(result.errors).toEqual([]);
       });
@@ -90,7 +88,6 @@ describe("matrix", () => {
 });
 
 afterAll(() => {
-  const project = "chromium";
   const path = `${DIR}/${project}.ndjson`;
   if (!existsSync(path)) return;
   const rows = readFileSync(path, "utf8")

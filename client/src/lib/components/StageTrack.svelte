@@ -351,9 +351,12 @@
     width: 14px;
     height: 14px;
   }
+  /* The clip box reaches past a one-em line by a descender's depth, which Firefox would cut. */
   .chip-label {
     flex: 1 1 auto;
     min-width: 0;
+    margin-block: -0.2em;
+    padding-block: 0.2em;
     overflow: hidden;
     font: var(--w-heavy) var(--type-sm) / 1 var(--font-sans);
     letter-spacing: var(--track-tight);

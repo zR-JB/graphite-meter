@@ -111,9 +111,8 @@ test("one page stays responsive through repeated runs and History visits", async
     await Bun.write(process.env.GM_PERF_METRICS, JSON.stringify(samples));
   if (process.env.GM_PERF_HEAP) {
     const chunks: string[] = [];
-    page.raw.addEventListener(
-      "HeapProfiler.addHeapSnapshotChunk",
-      (event: any) => chunks.push(event.data.chunk),
+    page.onCdp("HeapProfiler.addHeapSnapshotChunk", (event: any) =>
+      chunks.push(event.data.chunk),
     );
     await page.cdp("HeapProfiler.takeHeapSnapshot");
     await Bun.write(process.env.GM_PERF_HEAP, chunks.join(""));

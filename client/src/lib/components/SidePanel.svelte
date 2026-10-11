@@ -165,7 +165,8 @@
   /* Docked, the sheet is its column, flush with the bars, cut from the stage by one hairline; the column's glide is its slide:
      the sheet and the page it makes room in move in the same layout pass, with no second animation to
      fall behind on a slow machine. Closed, the column is 0 wide and the sheet hangs off the viewport's
-     edge; it stays displayed for the glide out, then closes. */
+     edge; it stays displayed for the glide out, then closes (a browser that cannot keep it displayed slides out a
+     copy, flip). */
   .docked > :global(dialog.panel) {
     grid-area: rightdock;
     justify-self: start;
