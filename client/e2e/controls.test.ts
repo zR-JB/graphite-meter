@@ -359,7 +359,8 @@ test("two docked sheets open and close beside the stage in every frame", async (
     const sheets = (side: string) =>
       [...document.querySelectorAll(`dialog.panel.${side}`)]
         .filter((el) => el.checkVisibility())
-        .map((el) => el.getBoundingClientRect());
+        .map((el) => el.getBoundingClientRect())
+        .filter((box) => box.right > 0 && box.left < innerWidth);
     const sampled = (async () => {
       while (sampling) {
         await new Promise((done) => requestAnimationFrame(done));
