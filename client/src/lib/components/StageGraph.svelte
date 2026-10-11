@@ -257,18 +257,19 @@
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
-        <!-- A bar spans a bin's fastest to slowest reply, at least a dot's length. -->
+        <!-- A bar spans its bucket's fastest to slowest reply, at least a dot's length, on a whole pixel. -->
         {#each graph.dots as dot, index (index)}
+          {@const x = Math.round(dot.x)}
           <line
             class="reply"
-            x1={dot.x}
-            x2={dot.x}
+            x1={x}
+            x2={x}
             y1={dot.yLo}
             y2={Math.min(dot.yHi, dot.yLo - 1.5)}
           />
           {#if dot.over}<path
               class="reply-over"
-              d={`M ${dot.x - 2.5} 5.5 L ${dot.x} 0.5 L ${dot.x + 2.5} 5.5 Z`}
+              d={`M ${x - 2.5} 5.5 L ${x} 0.5 L ${x + 2.5} 5.5 Z`}
             />{/if}
         {/each}
         {#if hover}<line

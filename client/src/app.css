@@ -939,9 +939,8 @@
   /* A latency track: each reply bucket a bar in its stage's hue from the dashed idle median. */
   .reply {
     stroke: var(--tone);
-    stroke-width: 1.5;
+    stroke-width: 2;
     stroke-linecap: round;
-    opacity: 0.75;
   }
   /* A reply past the track's top ends in an arrowhead at the edge. */
   .reply-over {
