@@ -115,13 +115,14 @@ IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.output
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
 SELECTED_BY = {
     "e2e": "code", "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
+    "client-v2": "client-v2", "e2e-v2": "client-v2",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
 }
 ALWAYS = ("plan", "checks", "gate")
 # The plan output that selects each task of the checks job; its other tasks run on every change.
 CHECKS_SELECTED_BY = {
     "legal-check": "code", "release-check": "code", "container-smoke": "code", "core-check": "code",
-    "server-race": "go", "security": "deps", "client-audit": "deps",
+    "server-race": "go", "security": "deps", "client-audit": "deps", "client-v2-audit": "deps",
 }
 # Repository paths a Rust source includes: relative to the file, or to its crate's manifest directory.
 RUST_INCLUDE = re.compile(r'include_(?:str|bytes)!\("([^"]+)"\)|concat!\(env!\("CARGO_MANIFEST_DIR"\), "([^"]+)"\)')
@@ -308,8 +309,11 @@ def check_ci(root: Path) -> None:
     def steps(task: str) -> list[str]:
         return [step["task"] for step in tasks[task]["run"] if isinstance(step, dict)]
 
+    # Client v2's jobs repeat some of v1's gates, so a v1 gate counts only where client v2's jobs cannot stand in.
+    v1 = "".join(job for job in JOB.split(ci) if SELECTED_BY.get(job.split(":", 1)[0]) != "client-v2")
     for task in steps("ci"):
-        if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
+        v2 = tasks[task].get("env", {}).get("GM_CLIENT") == "v2"
+        if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci if v2 else v1):
             fail(f"CI must run the local gate step {task}")
     if "run: python3 -m scripts.legal.check_git_sources --verify\n" not in ci:
         fail("CI must verify the Cargo fork pins with check_git_sources --verify")

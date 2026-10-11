@@ -5,10 +5,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from precommit import staged_paths
+from precommit import plan_checks, staged_paths
 
 
 class PlanTests(unittest.TestCase):
+    def test_each_browser_client_selects_its_own_gate(self) -> None:
+        for paths, checks in (
+            (("client/src/app.ts",), ("client-ci", "legal-check")),
+            (("client-v2/src/main.tsx",), ("client-v2-ci", "legal-check")),
+            (("client/e2e/webview.ts",), ("client-ci", "client-v2-ci", "legal-check")),
+        ):
+            with self.subTest(paths=paths):
+                self.assertEqual(plan_checks(paths), checks)
+
     def test_deleted_and_renamed_paths_still_select_checks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)

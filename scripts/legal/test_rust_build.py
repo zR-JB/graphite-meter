@@ -13,10 +13,10 @@ from scripts.legal.test_rust import Scratch
 class BrowserCacheTests(Scratch):
     def test_the_browser_build_is_reused_until_a_browser_input_or_its_output_changes(self) -> None:
         self.write("client/src/app.ts", "app")
-        builds: list[str] = []
+        builds: list[tuple[Path, str]] = []
 
         def build(command: list[str], cwd: Path, check: bool, env: dict[str, str]) -> None:
-            builds.append(env["GM_CLIENT_BUILD_PROFILE"])
+            builds.append((cwd, env["GM_CLIENT_BUILD_PROFILE"]))
             (Path(env["GM_LEGAL_SCAN_DIR"]) / "assets").mkdir(parents=True)
             (Path(env["GM_LEGAL_SCAN_DIR"]) / "index.html").write_text(env.get("VERSION", "unversioned"))
             Path(env["GM_LEGAL_SCAN_OUT"]).write_text("[]")
@@ -31,9 +31,9 @@ class BrowserCacheTests(Scratch):
         self.enterContext(patch("subprocess.check_output", side_effect=output))
         self.enterContext(patch.dict(os.environ, {"VERSION": "1.2.3"}))
         self.enterContext(patch("sys.stdout", io.StringIO()))
-        assets, scan = rust_build.browser("prod")
+        assets, scan = rust_build.browser("client", "prod")
         self.assertEqual(((assets / "index.html").read_text(), scan.read_text()), ("1.2.3", "[]"))
-        self.assertEqual(rust_build.browser("dev")[0].joinpath("index.html").read_text(), "unversioned")
+        self.assertEqual(rust_build.browser("client", "dev")[0].joinpath("index.html").read_text(), "unversioned")
         for change, rebuilds in (
             (lambda: None, False),
             (lambda: os.environ.update(GM_LISTEN=":7000", GM_TLS_CERT="cert.pem"), False),
@@ -45,9 +45,15 @@ class BrowserCacheTests(Scratch):
         ):
             before = len(builds)
             change()
-            rust_build.browser("prod")
+            rust_build.browser("client", "prod")
             self.assertEqual(len(builds) - before, int(rebuilds))
-        self.assertEqual(builds.count("dev"), 1)
+        self.assertEqual([profile for _, profile in builds].count("dev"), 1)
+        # Client v2 builds in its own folder into its own cache, so v1's stays valid.
+        v2 = rust_build.browser("client-v2", "prod")[0]
+        self.assertEqual((v2, builds[-1]), (self.root / "rust/target/browser/client-v2/prod/assets",
+                                            (self.root / "client-v2", "prod")))
+        rust_build.browser("client", "prod")
+        self.assertEqual(builds[-1][0], self.root / "client-v2")
 
 
 if __name__ == "__main__":

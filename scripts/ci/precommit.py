@@ -7,8 +7,10 @@ import os
 import subprocess
 from pathlib import Path
 
-LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/", "scripts/legal/")
+LEGAL_PREFIXES = ("go/", "client/", "client-v2/", "legal/", "container/", "scripts/legal/")
 LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/tui-targets.txt"}
+# Client v2's type check covers the E2E harness modules it imports from v1.
+CLIENT_V2_INPUTS = ("client-v2/", "client/e2e/browsers.ts", "client/e2e/servers.ts", "client/e2e/webview.ts")
 
 
 def staged_paths(cwd: Path | None = None) -> tuple[str, ...]:
@@ -31,6 +33,8 @@ def plan_checks(paths: tuple[str, ...]) -> tuple[str, ...]:
         recipes += ["server-check", "server-test"]
     if touched("client/", "go/internal/auth/assets/"):
         recipes.append("client-ci")
+    if touched(*CLIENT_V2_INPUTS):
+        recipes.append("client-v2-ci")
     if touched(*LEGAL_PREFIXES) or LEGAL_FILES & set(paths):
         recipes.append("legal-check")
     return tuple(recipes)

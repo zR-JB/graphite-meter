@@ -7,12 +7,20 @@ import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
 const env = process.env;
 const root = import.meta.dir;
-const outdir = resolve(root, env.GM_LEGAL_SCAN_DIR ?? "dist");
+const outdir = env.GM_LEGAL_SCAN_DIR ? resolve(env.GM_LEGAL_SCAN_DIR) : join(root, "dist");
+// The build empties its output first: only dist/ or a directory inside the temporary one may be named.
+if (outdir !== join(root, "dist") && !outdir.startsWith(resolve(tmpdir()) + sep))
+  throw new Error("GM_LEGAL_SCAN_DIR must name a directory inside the temporary directory");
 const profile = env.GM_CLIENT_BUILD_PROFILE === "prod" ? "prod" : "dev";
 const version = env.VERSION || null;
-const revision =
-  env.GM_CLIENT_REVISION ??
-  (Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: root }).stdout.toString().trim() || "source");
+const gitRevision = () => {
+  try {
+    return Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: root }).stdout.toString().trim();
+  } catch {
+    return "";
+  }
+};
+const revision = env.GM_CLIENT_REVISION || gitRevision() || "source";
 const clientVersion = version ? `v${version}` : revision;
 
 const naming = "assets/[name]-[hash].[ext]";
@@ -55,16 +63,19 @@ const inline = async (code: string, loader: "js" | "css") => {
 let shell = await Bun.file(join(root, "index.html")).text();
 for (const tag of ["style", "script"] as const) {
   const [block, code] = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(shell) ?? [];
-  if (block) shell = shell.replace(block, `<${tag}>${await inline(code!, tag === "style" ? "css" : "js")}</${tag}>`);
+  const minified = block && `<${tag}>${await inline(code!, tag === "style" ? "css" : "js")}</${tag}>`;
+  if (minified) shell = shell.replace(block, () => minified);
 }
 const bundle = [
   ...styles.map((output) => `<link rel="stylesheet" href="${asset(output.path)}">`),
   `<script type="module" src="${asset(entry.path)}"></script>`,
 ].join("");
+// Line breaks between tags go; inside text they stay one space.
 shell = shell
-  .replace("<!-- bundle -->", bundle)
+  .replace("<!-- bundle -->", () => bundle)
   .replace(/<!--[\s\S]*?-->/g, "")
-  .replace(/\s*\n\s*/g, "")
+  .replace(/>\s*\n\s*</g, "><")
+  .replace(/\s*\n\s*/g, " ")
   .trim();
 await Bun.write(join(outdir, "index.html"), shell);
 
@@ -90,7 +101,7 @@ if (env.GM_LEGAL_SCAN_OUT) {
     throw new Error("GM_LEGAL_SCAN_OUT must name a file in the temporary directory");
   const modules = new Set<string>();
   for (const build of [workers, app])
-    for (const input of Object.keys(build.metafile!.inputs)) modules.add(resolve(root, input));
+    for (const input of Object.keys(build.metafile!.inputs)) modules.add(resolve(input));
   await Bun.write(scan, `${JSON.stringify([...modules].sort())}\n`);
 }
 

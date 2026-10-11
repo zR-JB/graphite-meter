@@ -11,8 +11,9 @@
     "check": "rm -rf .svelte-check && svelte-check --tsconfig ./tsconfig.check.json --tsgo",
     "build:e2e-harness": "vite build -c vite.e2e.config.ts",
     "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "e2e": "bun run build:e2e-harness && bun run scripts/e2e.ts",
+    "format": "prettier --write . ../go/internal/auth/assets",
+    "format:check": "prettier --check . ../go/internal/auth/assets"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
