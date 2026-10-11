@@ -76,6 +76,9 @@ runs:
       uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       env:
         MISE_AUTO_INSTALL: '0'
+        # Go tools build from a module cache of their own: Go's read-only module directories would make the Go
+        # cache below fail to restore.
+        GOMODCACHE: ${{ runner.temp }}/mise-go-modules
       with:
         version: 2026.10.7
         install_args: --locked ${{ steps.tools.outputs.install-args }}
