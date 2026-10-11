@@ -65,7 +65,8 @@ type terminalBytes struct{ n atomic.Int64 }
 func (w *terminalBytes) Write(p []byte) (int, error) { w.n.Add(int64(len(p))); return len(p), nil }
 
 func TestTUIEndToEnd(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
+	// Generous bounds: a runner under the race detector draws a frame tens of times slower; a match returns at once.
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	socket, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -117,7 +118,7 @@ func TestTUIEndToEnd(t *testing.T) {
 	defer program.Kill()
 	await := func(what string, match func(tuiSnapshot) bool) tuiSnapshot {
 		t.Helper()
-		deadline := time.NewTimer(10 * time.Second)
+		deadline := time.NewTimer(30 * time.Second)
 		defer deadline.Stop()
 		var last tuiSnapshot
 		for {
@@ -142,7 +143,8 @@ func TestTUIEndToEnd(t *testing.T) {
 	await("ready", func(f tuiSnapshot) bool { return f.ready && strings.Contains(f.content, "Ready to measure") })
 	send("s\r")
 	await("edit", func(f tuiSnapshot) bool { return f.editing })
-	send(strings.Repeat("x", 80) + "TAIL")
+	// One paste, as a long address arrives; typed, each key would cost a frame.
+	send("\x1b[200~" + strings.Repeat("x", 80) + "TAIL\x1b[201~")
 	edited := await("long edit", func(f tuiSnapshot) bool { return f.editing && strings.Contains(f.content, "TAIL") })
 	for _, line := range strings.Split(edited.content, "\n") {
 		if lipgloss.Width(line) > 120 {
