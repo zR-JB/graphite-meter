@@ -40,15 +40,6 @@ let read: Node[] = [];
 let depth = 0;
 let queue: Node[] = [];
 
-const report = (error: unknown) =>
-  (
-    globalThis.reportError ??
-    ((e) =>
-      queueMicrotask(() => {
-        throw e;
-      }))
-  )(error);
-
 function get<T>(node: Node<T>): T {
   // A reader subscribes on its first read, so a write it causes later in the same run reaches it.
   if (reader && !read.includes(node)) {
@@ -136,7 +127,7 @@ function flush(): void {
     for (let rounds = 0; queue.length; rounds++) {
       if (rounds > MAX_ROUNDS) {
         queue = [];
-        report(new Error("Effects kept re-triggering each other"));
+        reportError(new Error("Effects kept re-triggering each other"));
         break;
       }
       const effects = queue.sort((a, b) => a.depth - b.depth);
@@ -146,7 +137,7 @@ function flush(): void {
           try {
             refresh(effect);
           } catch (error) {
-            report(error);
+            reportError(error);
           }
     }
   } finally {

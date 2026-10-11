@@ -1028,6 +1028,7 @@ test("ending while a stage prepares ignores what tearing it down reports", async
     "a:Signed out",
     "b:Signed out",
   ]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
 });
 
 test("a stage turned on while the last one ends still runs", async () => {
@@ -1063,8 +1064,11 @@ test("a focus server lost after the latency stage hands every latency figure to 
   );
   h.start();
   const result = await h.result();
+  const b = result.multiServer.servers.find(({ server }) => server.id === "b")!;
   expect(result.multiServer.latencyFocus).toBe("b");
   expect(result.latency?.reportedMs).toBe(2);
+  expect(result.latencyByStage).toEqual(b.latencyByStage);
+  expect(result.stages.latency).toBe("complete");
 });
 
 test("a server still retrying a failure it did not describe names the direction it left", async () => {
@@ -1114,7 +1118,7 @@ test("a page gap while measuring starts a new interval and forbids an early fini
   expect(result.multiServer.intervals.map(({ reason }) => reason)).toEqual(["stage-start", "evidence-resumed"]);
 });
 
-test("a stage end handler that ends, stops or throws ends the run there", async () => {
+test("a stage end handler may end or stop the run there, and one that throws changes nothing", async () => {
   const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
   try {
     for (const act of ["end", "abort", "throw"] as const) {
@@ -1135,4 +1139,156 @@ test("a stage end handler that ends, stops or throws ends the run there", async 
   } finally {
     reported.mockRestore();
   }
+});
+
+test("ending or stopping from a summary handler during a stage end delivers nothing after the terminal event", async () => {
+  const late: Record<string, string[]> = {};
+  for (const act of ["end", "abort"] as const) {
+    const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+    h.start();
+    let done = false;
+    h.run.on((event) => {
+      if (done || event.type !== "summary" || event.stage !== "download") return;
+      done = true;
+      if (act === "end") h.run.end("sign-in-required", "Signed out");
+      else h.run.abort();
+    });
+    await h.elapse(5_000);
+    const i = h.events.findIndex(({ type }) => type === "complete" || type === "aborted");
+    late[act] = h.events.slice(i + 1).map(({ type }) => type);
+  }
+  expect(late).toEqual({ end: [], abort: [] });
+});
+
+test("turning the next stage off from a stage end handler never runs it", async () => {
+  const h = setup(
+    [{ id: "self" }],
+    { download: true, upload: true, bidirectional: true },
+    { warmupMs: 300, downloadMs: 1_000, uploadMs: 1_000, bidirectionalMs: 1_000 },
+  );
+  h.start();
+  h.run.on((event) => {
+    if (event.type === "stageEnd" && event.stage === "download")
+      h.run.reconfigure({ stages: { ...h.plan.stages, upload: false }, duration: h.plan.duration, adaptive: false });
+  });
+  const result = await h.result();
+  expect(h.calls).not.toContain("begin:self:upload");
+  expect(result.stages.upload).toBe("not-run");
+});
+
+test("turning the next stage on from a stage end handler runs the stages in order", async () => {
+  const h = setup(
+    [{ id: "self" }],
+    { download: true, bidirectional: true },
+    { warmupMs: 300, downloadMs: 1_000, uploadMs: 1_000, bidirectionalMs: 1_000 },
+  );
+  h.start();
+  h.run.on((event) => {
+    if (event.type === "stageEnd" && event.stage === "download")
+      h.run.reconfigure({ stages: { ...h.plan.stages, upload: true }, duration: h.plan.duration, adaptive: false });
+  });
+  const result = await h.result();
+  expect(h.calls.filter((call) => call.startsWith("begin:"))).toEqual([
+    "begin:self:download",
+    "begin:self:upload",
+    "begin:self:bidirectional",
+  ]);
+  expect(result.stages).toMatchObject({ download: "complete", upload: "complete", bidirectional: "complete" });
+});
+
+test("a focus that measured no latency and leaves later hands the headline and its status to a survivor", async () => {
+  const h = setup(
+    [
+      { id: "b", measure: (events, { stage }) => void (stage === "latency" && probe(2, 4)(events)) },
+      { id: "c", measure: (events, { stage }) => void (stage === "download" && fail(10)(events)) },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { focus: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  expect({
+    status: result.stages.latency,
+    latency: result.latency?.reportedMs ?? null,
+    focus: result.multiServer.latencyFocus,
+  }).toEqual({ status: "partial", latency: 2, focus: "b" });
+});
+
+test("a latency headline outlives every server that measured it leaving later", async () => {
+  const h = setup(
+    [
+      { id: "b", measure: (events, { stage }) => (stage === "latency" ? probe(2, 4)(events) : fail(10)(events)) },
+      {
+        id: "c",
+        measure: (events, { stage }) => void (stage === "latency" && (probe(40, 1)(events), fail(10)(events))),
+      },
+      { id: "e", latency: false },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { focus: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  const stageEnd = h.events.find((event) => event.type === "stageEnd" && event.stage === "latency");
+  expect({
+    status: result.stages.latency,
+    atStageEnd: stageEnd?.type === "stageEnd" ? stageEnd.results.latency?.reportedMs : undefined,
+    latency: result.latency?.reportedMs ?? null,
+    focus: result.multiServer.latencyFocus,
+  }).toEqual({ status: "partial", atStageEnd: 2, latency: 2, focus: "b" });
+});
+
+test("ending from the phase event of a preparing stage leaves no resources open", async () => {
+  const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  h.run.on((event) => {
+    if (event.type === "phase" && event.stage === "upload" && event.step === "preparing")
+      h.run.end("sign-in-required", "Signed out");
+  });
+  await h.result();
+  const upload = h.calls.slice(h.calls.indexOf("begin:self:upload"));
+  expect(upload.some((call) => call === "end:self" || call === "discard:self")).toBe(true);
+});
+
+test("a failure handler that ends the run while preparation results are removed completes it", async () => {
+  const refuse = { prepare: () => Promise.reject(new Error("fixture")) };
+  const h = setup(two(refuse, refuse), { download: true }, { downloadMs: 1_000 });
+  h.start();
+  let once = false;
+  h.run.on((event) => {
+    if (event.type !== "failure" || once) return;
+    once = true;
+    h.run.end("sign-in-required", "Signed out");
+  });
+  const result = await h.result();
+  expect(result.stages.download).toBe("failed");
+});
+
+test("a run that is finishing refuses to turn a stage on", async () => {
+  const h = setup([{ id: "self" }], { download: true }, { downloadMs: 2_000 });
+  h.start();
+  await h.elapse(500);
+  h.run.end("sign-in-required", "Signed out");
+  expect(h.run.canChange("upload")).toBe(false);
+  expect(() =>
+    h.run.reconfigure({
+      stages: { ...h.plan.stages, upload: true },
+      duration: { ...h.plan.duration, uploadMs: 1_000 },
+      adaptive: false,
+    }),
+  ).toThrow();
+  await h.result();
+});
+
+test("stopping from the phase event of a preparing stage leaves no resources open", async () => {
+  const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  h.run.on((event) => {
+    if (event.type === "phase" && event.stage === "upload" && event.step === "preparing") h.run.abort();
+  });
+  await h.elapse(5_000);
+  const begun = h.calls.indexOf("begin:self:upload");
+  expect(begun < 0 || h.calls.slice(begun).some((call) => call === "end:self" || call === "discard:self")).toBe(true);
 });

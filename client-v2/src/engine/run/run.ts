@@ -351,17 +351,15 @@ export class Run {
     this.#validate(plan, this.#participants());
     const stage = this.#stage;
     this.#plan = plan;
-    this.#segments = replan(this.#segments, this.#elapsed, plan, stage?.phase === "finalizing");
-    // Eligibility starts over on the reshaped timeline.
-    if (stage) stage.armedAt = null;
+    // A stage that ended, or is ending, keeps its segment: the change reshapes only what follows.
+    const ended = stage?.phase === "finalizing" || stage?.phase === "settled";
+    this.#segments = replan(this.#segments, this.#elapsed, plan, ended);
     const shown = this.#shown;
     const now = segmentAt(this.#segments, this.#elapsed);
-    if (
-      stage?.phase !== "finalizing" &&
-      shown &&
-      now?.phase === shown.phase &&
-      now.activity.stage === shown.activity.stage
-    ) {
+    const continued = !ended && shown && now?.phase === shown.phase && now.activity.stage === shown.activity.stage;
+    // An early finish stays armed only on the segment it armed on.
+    if (stage && !continued) stage.armedAt = null;
+    if (continued) {
       this.#shown = now;
       for (const server of this.#servers) server.buckets.widen(now.end - now.start);
       if (stage) this.#evaluate(stage);
@@ -425,7 +423,9 @@ export class Run {
   /** The latency source, or once it left, the first remaining server that measured idle latency. */
   #focus(): Participant {
     const source = this.#source;
-    return source.removed ? (this.#latencyParticipants().find((server) => server.latency.result()) ?? source) : source;
+    if (!source.removed) return source;
+    const measured = (server: Participant) => !!server.latency.result();
+    return this.#latencyParticipants().find(measured) ?? this.#servers.find(measured) ?? source;
   }
 
   #current(stage: StageRun): boolean {
@@ -541,6 +541,8 @@ export class Run {
     // The first stage shows as connecting until it works; a later one shows at once, without a countdown.
     if (first) this.#shown = segment;
     else this.#show(segment, "preparing");
+    // A phase handler may have ended the run.
+    if (!this.#current(stage) || stage.phase !== "preparing") return;
     const servers = this.#participants().filter((server) => activity.stage !== "latency" || server.prepared.latency);
     for (const server of this.#participants()) server.latency.failed.delete(activity.stage);
     const opened = servers.map(async (server) => {
@@ -991,8 +993,10 @@ export class Run {
       segment.phase === "warmup" ||
       stage.phase !== "measuring" ||
       !this.#plan.adaptive
-    )
+    ) {
+      stage.armedAt = null;
       return false;
+    }
     const latency = segment.phase === "latency";
     const seats = latency ? active(stage).filter((seat) => !seat.server.latency.failed.has("latency")) : active(stage);
     // Completion respects the least stable and least sampled path without pooling populations.
@@ -1075,10 +1079,12 @@ export class Run {
       seat.recovery = seat.latencyStall = null;
       const summary = seat.server.latency.summary(name);
       this.#emit({ type: "summary", serverId: seat.server.id, stage: name, summary });
+      if (!this.#current(stage)) return;
     }
     if (this.#stalled) {
       this.#stalled = false;
       this.#emit({ type: "stall", stall: null });
+      if (!this.#current(stage)) return;
     }
     const status = this.#settle(name);
     this.#emit({ type: "stageEnd", stage: name, status, results: { ...this.#results } });
@@ -1239,7 +1245,10 @@ export class Run {
     const plans = Object.fromEntries(STAGES.map((stage) => [stage, this.#settled.get(stage)!.plan])) as StagePlans;
     const focus = this.#focus().latency;
     // The latency headline, its stages and the added latency all come from the one focus the result names.
-    if (this.#stages.has("latency")) this.#results.latency = focus.result();
+    if (this.#stages.has("latency")) {
+      this.#results.latency = focus.result();
+      stages.latency = stageStatus([this.#results.latency], this.#failed("latency"));
+    }
     const result: RunResult = {
       ...this.#results,
       multiServer: this.details(),
