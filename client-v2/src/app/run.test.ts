@@ -143,3 +143,25 @@ test("a finished run is offered to History once, and the next start withdraws it
   await h.clock.advance(100);
   expect(h.offers).toEqual(["withdraw", "offer", "withdraw"]);
 });
+
+test("the gauge maximum changes while a start prepares, and the start goes on", async () => {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const h = setup(only({ download: true }, { downloadMs: 1_000 }), { authorize: promise });
+  h.run.toggle();
+  expect(h.run.configure({ visualization: { throughputMaxBytesPerSec: 125e6 } })).toBe(true);
+  expect(h.run.configure({ adaptive: true })).toBe(false);
+  resolve();
+  await h.clock.advance(3_000);
+  expect(h.run.phase()).toBe("complete");
+  expect(h.preferences.config().visualization.throughputMaxBytesPerSec).toBe(125e6);
+});
+
+test("a refusal speaks only for the change that caused it", async () => {
+  const h = setup(only({ download: true }, { downloadMs: 2_000 }));
+  h.run.toggle();
+  await h.clock.advance(500);
+  expect(h.run.toggleStage("bidirectional")).toBe(false);
+  expect(h.run.refusal()).not.toBe("");
+  expect(h.run.configure({ adaptive: true })).toBe(true);
+  expect(h.run.refusal()).toBe("");
+});

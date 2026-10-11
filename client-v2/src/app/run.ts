@@ -352,8 +352,11 @@ export function createRun(env: RunEnvironment) {
   /** The one writer of test settings: refused while a start prepares; while a run is live only stages, durations,
       early finish and the gauge maximum may change, a stage only until it begins. Returns whether it applied. */
   function configure(patch: Partial<TestConfig>): boolean {
-    if (preparing.peek()) return false;
     const keys = Object.keys(patch);
+    // A refusal speaks for the change that caused it, never for a later one.
+    refusal.set("");
+    // The gauge's maximum is the page's alone, so it may change even while a start prepares.
+    if (preparing.peek() && keys.some((key) => key !== "visualization")) return false;
     const current = run && running.peek() ? run : null;
     if (current && keys.some((key) => !["stages", "duration", "adaptive", "visualization"].includes(key))) return false;
     const candidate = { ...preferences.config.peek(), ...patch };
@@ -383,13 +386,11 @@ export function createRun(env: RunEnvironment) {
       } catch (cause) {
         return refuse(cause instanceof Error ? cause.message : "This change cannot be applied to the active test.");
       }
-      batch(() => {
-        plan.set(current.plan);
-        refusal.set("");
-      });
+      plan.set(current.plan);
       spanMs = total(current.plan);
     }
-    cancel();
+    // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
+    if (keys.some((key) => key !== "visualization")) cancel();
     preferences.set({ config: candidate });
     return true;
   }

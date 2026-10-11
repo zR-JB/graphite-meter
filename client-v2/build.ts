@@ -53,6 +53,11 @@ const app = await Bun.build({
 });
 const entry = app.outputs.find((output) => output.kind === "entry-point")!;
 const styles = app.outputs.filter((output) => output.path.endsWith(".css"));
+// Every browser the app supports has :is(); the prefixed copies Bun adds beside it would outrank it in Chrome.
+for (const output of styles) {
+  const css = await Bun.file(output.path).text();
+  await Bun.write(output.path, css.replace(/(?<=^|[{}])[^{}@]*:-(?:webkit|moz)-any\([^{}]*\{[^{}]*\}/g, ""));
+}
 
 // The servers hash the shell's one inline script and style into their content security policy and insert their meta
 // tags before its one </head>.
