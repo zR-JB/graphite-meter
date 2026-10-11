@@ -210,9 +210,17 @@
     (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
   const { terminal } = $derived(hero.shown);
-  // Live, the running stage's name and its figure hand off apart: the name once per stage, the figure when a
-  // stage brings its first value, so a dash that stays a dash never blinks.
-  const liveStage = handoff(() => (store.isRunning ? store.phaseStage : null));
+  // The running stage's name and figure hand off apart (the name once per stage, the figure on its first value, so
+  // a dash that stays never blinks); a finished run that reads its latency names it, as every result is named.
+  const liveStage = handoff(() =>
+    store.isRunning
+      ? store.phaseStage
+      : phase === "complete" &&
+          completedKind === "latency" &&
+          store.result?.latency
+        ? "latency"
+        : null,
+  );
   const liveValue = handoff(
     () => ({
       display: rateDisplay(liveRates),

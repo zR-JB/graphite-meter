@@ -177,6 +177,8 @@ export const JARGON = {
   latencyRange: "Range\nFastest to slowest reply",
   keyShortcuts:
     "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
+  explanations:
+    "Explanations\nOn hover: as the pointer rests on a word or figure\nOn click: only when it is clicked or tapped",
   wireRate:
     "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   rateUnit:
@@ -189,7 +191,7 @@ export const JARGON = {
   pathEvidence: "Evidence\nThe HTTP version each side observed",
   uploadFeed: "Upload feed\nHow the server reports upload bytes back",
   clientAddress:
-    "Your address\nAs the server saw it: proxy header or socket\nHidden until you point at it or tap it",
+    "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
   serverLoad:
     "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   serverInstance: "Server\nEngine version; the instance changes on restart",

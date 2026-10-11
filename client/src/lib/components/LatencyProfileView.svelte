@@ -91,13 +91,9 @@
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
   let readingWidth = $state(0);
-  // The reading stands clear of the marker on the side with room for it, else as far in from the edge as it can.
+  // The reading stands centred on its marker, as far in from the track's ends as it must.
   const readingLeft = (x: number, track: number) =>
-    x + 10 + readingWidth <= track
-      ? x + 10
-      : x - 10 - readingWidth >= 0
-        ? x - 10 - readingWidth
-        : Math.max(0, Math.min(x + 10, track - readingWidth));
+    Math.max(0, Math.min(x - readingWidth / 2, track - readingWidth));
 
   // Markers keep this margin, so one at either end of the scale stays whole.
   const EDGE = 7;
@@ -436,10 +432,10 @@
                 bind:clientWidth={readingWidth}
                 style:left="{readingLeft(x, hover.trackWidth)}px"
               >
-                <strong
-                  >{metricLabel(hover.metric)} {fmtMs(hoverValue)} ms</strong
+                <span
+                  ><small>{metricLabel(hover.metric)}</small>
+                  {fmtMs(hoverValue)} ms</span
                 >
-                <span>{metricMeaning(hover.metric)}</span>
               </span>
             {/if}
           </div>
@@ -803,35 +799,14 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
-  /* The reading stands beside the marker above the box's band, so it never covers the box it reads; it shows
-     once measured, in place. */
+  /* The reading stands on its marker above the box's band, so it never covers the box it reads; it shows once
+     measured, in place. */
   .hover-card {
     z-index: 10;
     bottom: calc(50% + 8px);
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    max-width: 100%;
-    padding-block: 2px;
-    white-space: nowrap;
   }
   .hover-card.unmeasured {
     visibility: hidden;
-  }
-  .hover-card strong {
-    font: var(--w-strong) var(--type-sm) var(--font-sans);
-    font-variant-numeric: tabular-nums;
-  }
-  .hover-card span {
-    overflow: hidden;
-    color: var(--text-soft);
-    text-overflow: ellipsis;
-  }
-  /* A narrower panel reads a marker by its value alone. */
-  @container latency (max-width: 720px) {
-    .hover-card span {
-      display: none;
-    }
   }
   /* Narrow: jitter leaves the row for the hover; the timeouts stay. */
   @container latency (max-width: 560px) {

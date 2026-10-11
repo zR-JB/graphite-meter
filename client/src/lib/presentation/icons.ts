@@ -26,6 +26,7 @@ export const ICON = {
   power: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M12 3.6v8.4"/><path d="M7.2 6.6a7.2 7.2 0 1 0 9.6 0"/></svg>`,
   exit: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 7l5 5-5 5M9 12h12"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16M9 4h6l1 3H8zM6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5"/></svg>`,
+  eye: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path class="strike" d="M4 4l16 16"/></svg>`,
 } as const;
 
 export type IconName = keyof typeof ICON;

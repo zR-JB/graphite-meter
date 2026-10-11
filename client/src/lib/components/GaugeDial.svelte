@@ -83,12 +83,16 @@
   $effect(() => {
     const next = (target ?? 0) * 270;
     const current = `${input.scaleBytesPerSec}:${input.latencyScaleMs}`;
-    // Between runs the needle keeps the hue of the stage it last showed.
+    // Between runs the needle keeps the hue of the stage it last showed; a finished run's latency takes its own.
     const hue =
       input.stage ??
-      (["latency", "download", "upload", "bidirectional"].includes(input.phase)
-        ? input.phase
-        : null);
+      (input.phase === "complete" && input.completedKind === "latency"
+        ? "latency"
+        : ["latency", "download", "upload", "bidirectional"].includes(
+              input.phase,
+            )
+          ? input.phase
+          : null);
     untrack(() => {
       if (hue) accent = `var(--phase-${hue})`;
       if (!visible) {

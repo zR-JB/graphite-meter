@@ -9,6 +9,7 @@ const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light" | "auto";
+export type Explanations = "hover" | "click";
 export type ResultHistoryPreference = "default" | "enabled" | "disabled";
 
 export function resolveResultHistoryPreference(
@@ -47,6 +48,7 @@ interface PersistedState {
   theme: ThemePref;
   showWireEstimates: boolean;
   keyShortcuts: boolean;
+  explanations: Explanations;
   resultHistoryPreference: ResultHistoryPreference;
   historyColumns: HistoryColumn[];
   dockWidth: { left: number; right: number };
@@ -68,6 +70,7 @@ export function defaultPersisted(): PersistedState {
     theme: "auto",
     showWireEstimates: true,
     keyShortcuts: true,
+    explanations: "hover",
     resultHistoryPreference: "default",
     historyColumns: [...DEFAULT_HISTORY_COLUMNS],
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
@@ -203,6 +206,11 @@ export function loadPersisted(): PersistedState {
     theme: choice(saved.theme, ["dark", "light", "auto"], defaults.theme),
     showWireEstimates: flag(saved.showWireEstimates, true),
     keyShortcuts: flag(saved.keyShortcuts, true),
+    explanations: choice(
+      saved.explanations,
+      ["hover", "click"],
+      defaults.explanations,
+    ),
     resultHistoryPreference: choice(
       saved.resultHistoryPreference,
       ["default", "enabled", "disabled"],

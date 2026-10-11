@@ -344,12 +344,67 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
   expect(Math.min(...travel.lefts)).toBeGreaterThan(travel.width / 2);
 });
 
-test("Details hides this browser's address until it is pointed at or pinned", async (page) => {
+test("two docked sheets open and close beside the stage in every frame", async (page) => {
+  await page.setViewportSize({ width: 1700, height: 900 });
+  await open(page);
+  await ready(page);
+  const overlaps = await page.evaluate(async () => {
+    const key = (key: string) =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+    const found: string[] = [];
+    let sampling = true;
+    const sheets = (side: string) =>
+      [...document.querySelectorAll(`dialog.panel.${side}`)]
+        .filter((el) => el.checkVisibility())
+        .map((el) => el.getBoundingClientRect())
+        .filter((box) => box.right > 0 && box.left < innerWidth);
+    const sampled = (async () => {
+      while (sampling) {
+        await new Promise((done) => requestAnimationFrame(done));
+        const stage = document
+          .querySelector('[data-flip="stage"]')!
+          .getBoundingClientRect();
+        const run = document
+          .querySelector(".run-button")!
+          .getBoundingClientRect();
+        for (const box of sheets("left"))
+          if (box.right > stage.left + 1.5)
+            found.push(`left ${box.left}–${box.right}, stage ${stage.left}`);
+        for (const box of sheets("right"))
+          if (box.left < stage.right - 1.5)
+            found.push(`right ${box.left}–${box.right}, stage ${stage.right}`);
+        if (run.left < stage.left - 1.5 || run.right > stage.right + 1.5)
+          found.push(`run key ${run.left}–${run.right} outside the stage`);
+      }
+    })();
+    for (const [name, ms] of [
+      ["s", 600],
+      ["d", 600],
+      ["s", 600],
+      ["d", 600],
+      ["s", 120],
+      ["d", 120],
+      ["s", 120],
+      ["d", 600],
+    ] as const) {
+      key(name);
+      await wait(ms);
+    }
+    sampling = false;
+    await sampled;
+    return found.slice(0, 5);
+  });
+  expect(overlaps).toEqual([]);
+});
+
+test("Details hides this browser's address until its key is pressed, whatever the pointer rests on", async (page) => {
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in; the address is pinned once it rests.
-  // A busy runner can still be sliding the sheet in; the address is pinned once it rests. Scroll-driven
+  // A busy runner can still be sliding the sheet in; the address is pressed once it rests. Scroll-driven
   // animations never finish, so only timed ones are waited for.
   await page.evaluate(() =>
     Promise.all(
@@ -359,15 +414,18 @@ test("Details hides this browser's address until it is pointed at or pinned", as
         .map((a) => a.finished),
     ),
   );
-  const address = page.locator(".secret");
-  await expect(address).toHaveAttribute("aria-pressed", "false");
-  const shown = () =>
-    address.evaluate(
-      (el: Element) =>
-        getComputedStyle(el.querySelector(".secret-value")!).visibility,
-    );
-  expect(await shown()).toBe("hidden");
-  await address.click();
-  await expect(address).toHaveAttribute("aria-pressed", "true");
-  expect(await shown()).toBe("visible");
+  const key = page.getByRole("button", { name: "Show your address" });
+  await expect(key).toHaveAttribute("aria-pressed", "false");
+  const address = page.locator(".secret-value");
+  await expect(address).toHaveCount(0);
+  await page.locator(".secret-mask").hover();
+  await key.hover();
+  await Bun.sleep(1_000);
+  await expect(address).toHaveCount(0);
+  await key.click();
+  await expect(key).toHaveAttribute("aria-pressed", "true");
+  await expect(address).toContainText(/\d/);
+  await key.click();
+  await expect(key).toHaveAttribute("aria-pressed", "false");
+  await expect(address).toHaveCount(0);
 });
