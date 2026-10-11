@@ -16,15 +16,15 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@types/bun": "npm:bun-types@^1.4.2",
+    "@types/bun": "npm:bun-types@^1.4.3",
     "@typescript/native": "npm:typescript@7.0.2",
     "axe-core": "^4.14.0",
-    "prettier": "^3.9.9",
+    "prettier": "^3.9.10",
     "prettier-plugin-svelte": "^4.1.1",
     "svelte": "5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
-    "vite": "^8.3.3"
+    "vite": "^8.3.4"
   },
   "patchedDependencies": {
     "svelte@5.57.2": "patches/svelte@5.57.2.patch"

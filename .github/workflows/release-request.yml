@@ -64,7 +64,7 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.10.7
           install_args: --locked python
           cache: false
 
@@ -140,9 +140,10 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.37.1
-          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          version: v0.38.0
+          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: 'false'
+          cleanup: 'false'
           # Supplying any explicit flags resets setup-buildx's default
           # security.insecure/network.host entitlements. This build needs neither.
           buildkitd-flags: --log-level=info
@@ -179,7 +180,7 @@ jobs:
         run: sha256sum graphite-meter.oci.tar >graphite-meter.oci.tar.sha256
 
       - name: Upload untrusted request and OCI archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-request-${{ github.run_id }}
           path: ${{ runner.temp }}/release-request/
@@ -189,7 +190,7 @@ jobs:
 
       - name: Upload untrusted stable assets
         if: steps.request.outputs.stable == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-${{ github.run_id }}
           path: ${{ runner.temp }}/release-assets/
@@ -218,16 +219,17 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.10.7
           install_args: --locked python
           cache: false
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.37.1
-          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          version: v0.38.0
+          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: 'false'
+          cleanup: 'false'
           # Supplying any explicit flags resets setup-buildx's default
           # security.insecure/network.host entitlements. This build needs neither.
           buildkitd-flags: --log-level=info
@@ -284,7 +286,7 @@ jobs:
         run: python3 scripts/ci/rust_release.py stage-image
 
       - name: Upload the untrusted Rust image and its staged source offers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rust-image-${{ github.run_id }}
           path: ${{ runner.temp }}/release-rust-image/
@@ -310,16 +312,17 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.14
+          version: 2026.10.7
           install_args: --locked python
           cache: false
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.37.1
-          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          version: v0.38.0
+          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: 'false'
+          cleanup: 'false'
           # Supplying any explicit flags resets setup-buildx's default
           # security.insecure/network.host entitlements. This build needs neither.
           buildkitd-flags: --log-level=info
@@ -351,7 +354,7 @@ jobs:
           python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check
 
       - name: Upload the untrusted Rust TUI archives and source offers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rust-tui-${{ github.run_id }}
           path: ${{ runner.temp }}/release-rust-tui/
