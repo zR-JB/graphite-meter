@@ -329,12 +329,12 @@ jobs:
     timeout-minutes: 20
     needs: [plan, rust-image]
     if: needs.plan.outputs.rust-image == 'true'
-    # The surface-reversal file runs its three widths serially under CPU throttling; alone it takes as long as the
-    # other files together.
+    # The surface-reversal file runs its three widths serially under CPU throttling; it and the other files each take
+    # two runners.
     strategy:
       fail-fast: false
       matrix:
-        group: [heavy, rest]
+        group: [reversals, heavy, rest-1, rest-2]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -362,7 +362,7 @@ jobs:
         run: chmod +x "$RUNNER_TEMP/rust-image/graphite-meter-server"
       # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
       - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's sharded server
-        if: matrix.group == 'rest'
+        if: matrix.group == 'heavy'
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
