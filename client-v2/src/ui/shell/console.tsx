@@ -1,0 +1,233 @@
+// The console: the page frame every view lives in. Top bar; Settings, then the workspaces, the status strip and
+// Details, in Tab order; the phase toast, the live region and the shell's dialogs. Views come from their owners.
+import "./shell.css";
+import type { App } from "../../app/app";
+import { markDocument } from "../../app/document";
+import { Show } from "../../lib/dom";
+import { nextFrame } from "../../lib/frame";
+import { insert } from "../../lib/jsx-runtime";
+import { computed, effect, onCleanup, scope, type Read } from "../../lib/signal";
+import { LegalDialog } from "../legal/legal";
+import { Announcements } from "../kit/announce";
+import { ConfirmDialog } from "../kit/dialog";
+import type { Shell } from "./api";
+import { BINDINGS, RUN_CAP } from "./keys";
+import { createLayout } from "./layout";
+import type { Panel } from "./navigation";
+import { Sheet } from "./sheet";
+import { createShell, SIDE, type Controller } from "./shell";
+import { TopBar } from "./topbar";
+
+export interface Views {
+  measurement(shell: Shell): Node;
+  settings(shell: Shell): Node;
+  details(shell: Shell): Node;
+  /** Built as History opens and disposed as it closes. */
+  history(shell: Shell, selectedId: Read<string | null>): Node;
+  /** The status strip's facts, before the keyboard hints. */
+  status(shell: Shell): Node;
+  toast(shell: Shell): Node;
+  /** The connection indicator in the top bar. */
+  connectivity(shell: Shell): Node;
+}
+
+const RESET = {
+  running: {
+    title: "Stop the running test?",
+    description: "The measurement in progress stops and its results are cleared.",
+    cancel: "Keep running",
+    confirm: "Stop test",
+  },
+  unsaved: {
+    title: "Clear this result?",
+    description: "It is not saved; starting over removes it.",
+    cancel: "Keep result",
+    confirm: "Clear result",
+  },
+};
+
+/** What the run key does now, as the Space hint names it. */
+const RUN_ACTION = { start: "Start test", stop: "Stop test", again: "Run again", cancel: "Cancel" };
+
+// Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
+const SETTLES = new Set(["result-sweep", "pop", "row-in", "grow-x"]);
+const finishSettled = (stage: HTMLElement) => {
+  for (const animation of stage.getAnimations({ subtree: true }))
+    if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName)) animation.finish();
+};
+/** Content that stops rendering never advances its animations, so what is still under way there lands at its end. */
+const land = (root: Element) => {
+  for (const animation of root.getAnimations({ subtree: true })) {
+    const end = animation.effect?.getComputedTiming().endTime;
+    if (animation.timeline === document.timeline && typeof end === "number" && Number.isFinite(end)) animation.finish();
+  }
+};
+
+/** Mounts the console into `root` and renders the URL it loaded with; the disposer takes it down again. */
+export function mountConsole(root: HTMLElement, app: App, views: Views): { shell: Shell; dispose(): void } {
+  const [shell, dispose] = scope(() => {
+    markDocument(app.preferences);
+    const frame = (<main id="console" data-phase={app.run.phase} />) as HTMLElement;
+    // In the page first, so the layout starts from the console's real width.
+    root.append(frame);
+    onCleanup(() => frame.remove());
+    const layout = createLayout(frame);
+    const ctl = createShell(app, layout);
+    const { shell } = ctl;
+
+    // Only the grid's columns change as a dock opens or a handle moves.
+    effect(() => {
+      const { left, right } = ctl.docks();
+      frame.style.gridTemplateColumns = `${left.column}px minmax(0, 1fr) ${right.column}px`;
+    });
+
+    const away = computed(() => ctl.workspace() !== "measurement");
+    const previous = computed(() => app.run.preparation() === "failed" && app.run.phase() !== "idle");
+    const measurement = (
+      <section
+        class={() => `stage measurement-stage${away() ? " away" : ""}${previous() ? " previous" : ""}`}
+        aria-label="Measurement workspace"
+        tabindex="-1"
+        data-flip={() => (away() ? undefined : "stage")}
+        data-flip-resize=""
+        data-stage={() => (app.run.running() ? (app.run.stage() ?? undefined) : undefined)}
+        aria-hidden={() => (away() ? "true" : undefined)}
+        inert={() => ctl.flyout() || away()}
+      >
+        {views.measurement(shell)}
+      </section>
+    ) as HTMLElement;
+    ctl.elements.measurement = measurement;
+    effect(() => {
+      if (away()) land(measurement);
+    });
+
+    insert(frame, [
+      <TopBar app={app} shell={shell} ctl={ctl} connectivity={views.connectivity(shell)} />,
+      sheet(app, ctl, "settings", "Settings", () => views.settings(shell)),
+      <Show when={() => ctl.workspace() === "history"}>
+        {() => (
+          <section
+            class="stage history-stage"
+            data-flip="stage"
+            data-flip-resize=""
+            inert={ctl.flyout}
+            ref={(node) => {
+              ctl.elements.history = node;
+              onCleanup(() => {
+                if (ctl.elements.history === node) ctl.elements.history = null;
+              });
+            }}
+          >
+            {views.history(shell, ctl.selectedId)}
+          </section>
+        )}
+      </Show>,
+      <Show when={() => ctl.workspace() === "not-found"}>
+        {() => (
+          <section class="stage history-stage" data-flip="stage" data-flip-resize="" inert={ctl.flyout}>
+            <div class="empty-state">
+              <h1>Page not found</h1>
+              <p>That client route does not exist.</p>
+              <a class="btn btn-accent" href="#/">
+                Return to measurement
+              </a>
+            </div>
+          </section>
+        )}
+      </Show>,
+      measurement,
+      <footer class="status" inert={ctl.flyout}>
+        {views.status(shell)}
+        <ShortcutHints app={app} />
+      </footer>,
+      sheet(app, ctl, "details", "Details", () => views.details(shell)),
+      views.toast(shell),
+      <Announcements />,
+      <ConfirmDialog
+        open={ctl.reset.open}
+        id="reset-confirm"
+        title={() => RESET[ctl.reset.reason()].title}
+        description={() => RESET[ctl.reset.reason()].description}
+        cancel={() => RESET[ctl.reset.reason()].cancel}
+        confirm={() => RESET[ctl.reset.reason()].confirm}
+        onCancel={() => ctl.reset.open.set(false)}
+        onConfirm={ctl.confirmStartOver}
+      />,
+      <LegalDialog open={ctl.legalOpen} invoker={ctl.legalInvoker} onClose={ctl.closeLegal} />,
+    ]);
+
+    finishSettled(measurement);
+    nextFrame(() => finishSettled(measurement));
+    ctl.start();
+    return shell;
+  });
+  return { shell, dispose };
+}
+
+function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: () => Node): Node {
+  const side = SIDE[panel];
+  return (
+    <Sheet
+      side={side}
+      title={title}
+      open={computed(() => ctl.panels().includes(panel))}
+      docked={ctl.docked}
+      bottomSheet={ctl.shell.layout.bottomSheet}
+      dock={computed(() => ctl.docks()[side])}
+      preferred={computed(() => app.preferences.dockWidth()[side])}
+      built={ctl.visited[panel]}
+      onClose={() => ctl.shell.close(panel)}
+      onResize={(px) => ctl.resize(side, px)}
+      onReset={() => ctl.resetWidth(side)}
+      ref={(node) => {
+        ctl.elements.sheets[panel] = node;
+      }}
+    >
+      {build}
+    </Sheet>
+  );
+}
+
+/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell holds every run word,
+    so a change never moves the strip. */
+function ShortcutHints(props: { app: App }): Node {
+  const { app } = props;
+  const current = computed(() =>
+    app.run.preparing()
+      ? RUN_ACTION.cancel
+      : app.run.running()
+        ? RUN_ACTION.stop
+        : ["complete", "aborted", "error"].includes(app.run.phase())
+          ? RUN_ACTION.again
+          : RUN_ACTION.start,
+  );
+  return (
+    <Show when={app.preferences.keyShortcuts}>
+      {() => (
+        <div class="command-hints" role="group" aria-label="Keyboard shortcuts">
+          <span>
+            <kbd>{RUN_CAP}</kbd>
+            <span class="run-word">
+              {Object.values(RUN_ACTION).map((word) => (
+                <span aria-hidden={() => (word === current() ? undefined : "true")}>{word}</span>
+              ))}
+            </span>
+          </span>
+          {Object.values(BINDINGS)
+            .filter((binding) => binding.hint)
+            .map((binding) => (
+              <Show when={() => binding.when({ saving: app.saving() })}>
+                {() => (
+                  <span>
+                    <kbd>{binding.cap}</kbd>
+                    {binding.label}
+                  </span>
+                )}
+              </Show>
+            ))}
+        </div>
+      )}
+    </Show>
+  );
+}

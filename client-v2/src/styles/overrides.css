@@ -1,0 +1,98 @@
+/* Rules every component yields to, and the motion vocabulary shared across components. */
+@layer utilities {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@layer overrides {
+  /* A finger pressing an explained word asks for its tip, not a text selection or callout. */
+  @media (pointer: coarse) {
+    [data-tip] {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+  }
+  /* An explained word is read, not pressed: the help cursor, whatever its row's cursor is. */
+  [data-tip]:not(button, a, label, [role="switch"]) {
+    cursor: help;
+  }
+  /* Curated jargon carries a mark. */
+  [data-tip="term"] {
+    text-decoration: underline dotted color-mix(in srgb, currentColor 50%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  /* Every explained word brightens; a word whose colour states something sets --tip-ink to keep it. */
+  @media (hover: hover) {
+    [data-tip]:is(:hover, :focus-visible) {
+      color: var(--tip-ink, var(--text));
+      text-decoration-color: currentColor;
+    }
+  }
+  /* Forced colours drop the selected wash; the system's selection colours mark a pressed segment. */
+  @media (forced-colors: active) {
+    .segmented > button[aria-pressed="true"] {
+      forced-color-adjust: none;
+      background-color: SelectedItem;
+      color: SelectedItemText;
+    }
+    /* A finger's transparent hit border would otherwise be forced to a thick text-coloured frame. */
+    .btn {
+      border-color: Canvas;
+    }
+  }
+  /* The focusable kinds are named so the attribute restyles those alone rather than the whole page. */
+  [data-pointer] :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
+  [data-pointer] label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
+    outline: none;
+  }
+}
+
+/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
+   only while the thing it describes is live. Reduced motion lands every one at its end state (above). */
+/* A settled figure's row slides in from under its label's line. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+/* A mark that confirms something (a check, a result's bead) pops in on the spring. */
+@keyframes pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+/* A measured span grows from its middle. */
+@keyframes grow-x {
+  from {
+    scale: 0 1;
+  }
+}
+
+/* A theme change fades the new theme in over the old, on the compositor alone. */
+/* The page stays clickable while the fade runs: the transition layer takes no pointer. */
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root:active-view-transition-type(theme)::view-transition-new(root) {
+  animation: theme-fade 200ms var(--ease-out);
+}
+@keyframes theme-fade {
+  from {
+    opacity: 0;
+  }
+}
