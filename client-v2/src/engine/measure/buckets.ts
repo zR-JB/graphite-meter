@@ -90,6 +90,8 @@ export class LatencyBuckets {
       // A page suspended for hours skips the empty time: only the revision horizon can still take late outcomes.
       const skipped = pending.pings ? 0 : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
       if (skipped > 0) {
+        // Everything closed before the pause ends outside the horizon.
+        this.#closed = [];
         this.#pending = this.#open(pending.startT + skipped * this.#width);
         continue;
       }

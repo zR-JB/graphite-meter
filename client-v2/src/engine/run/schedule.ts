@@ -61,7 +61,7 @@ export function timeline(plan: Plan): Segment[] {
   const segments: Segment[] = [];
   let cursor = 0;
   const push = (phase: Segment["phase"], ms: number, activity: Activity) => {
-    if (ms <= 0) return;
+    if (!(ms > 0)) return;
     segments.push({ phase, start: cursor, end: cursor + ms, activity });
     cursor += ms;
   };

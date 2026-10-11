@@ -346,7 +346,8 @@ export class Aggregate {
 
   /** Each direction's headline: the latest complete interval with enough evidence, and the window it came from.
       `stable` prefers the steady window an early finish chose when it suffices for every direction, so the rate,
-      peak, stability, quiet time and wire estimate of a stage all describe one window, the one its interval keeps. */
+      stability, quiet time and wire estimate of a stage describe one window, the one its interval keeps; the peak
+      spans the whole interval, never below the rate. */
   settle(stage: TransferStage, stable: boolean): Record<Direction, Headline | null> {
     const intervals = this.intervals.filter((interval) => interval.stage === stage);
     const dirs = directions(stage);

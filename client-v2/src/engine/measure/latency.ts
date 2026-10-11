@@ -96,7 +96,7 @@ export class Population {
 
   /** Probes the channel lost before a verdict, or could not send; neither is a timeout. */
   interrupt(count: number, reason: "unresolved" | "send-failed"): void {
-    if (!(count > 0)) return;
+    if (!Number.isSafeInteger(count) || count <= 0) return;
     this.#cached = undefined;
     if (reason === "unresolved") this.#unresolved += count;
     else this.#sendFailures += count;

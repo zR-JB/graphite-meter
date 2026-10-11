@@ -61,3 +61,23 @@ test("the coordinated throughput the terminal clients share", async () => {
       ).toEqual(expected);
   }
 });
+
+test("a steady window too short on one direction's clock gives way to the full window for both", () => {
+  const aggregate = new Aggregate();
+  aggregate.begin("bidirectional", ["a"], 0);
+  const at = (atMs: number, down: number, up: number, receiverMs: number) =>
+    aggregate.observe({
+      atMs,
+      down: { a: down },
+      up: { a: { id: "u", bytes: up, nanos: receiverMs * 1e6 + 1, receivedAtMs: atMs } },
+    });
+  at(0, 0, 0, 0);
+  at(1_000, 1_000, 1_000, 1_000);
+  aggregate.trackStable(0.9);
+  // From the steady boundary on, the receiver's clock runs only 500 ms: too short to stand alone.
+  at(2_000, 3_000, 1_500, 1_500);
+  const { down, up } = aggregate.settle("bidirectional", true);
+  expect([down?.result.reportedBytesPerSec, up?.result.reportedBytesPerSec]).toEqual([1_500, 1_000]);
+  expect(down?.window).toBe(up?.window);
+  expect(aggregate.intervals[0]!.headline).toBe(down!.window);
+});
