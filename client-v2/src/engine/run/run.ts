@@ -18,6 +18,7 @@ import {
   type ServerIdentity,
   type Stall,
   type StageEvents,
+  type StageLanes,
   type StageResources,
   type TestConfig,
 } from "../types";
@@ -88,8 +89,8 @@ export interface RunOptions {
   dropped: DroppedServer[];
   plan: RunPlan;
   open: OpenStage;
-  /** Lanes per server and direction for a stage; throws when servers sharing an origin cannot all get theirs. */
-  streams(servers: readonly PreparedServer[], activity: Activity): Map<string, Record<Direction, number>>;
+  /** Lanes per server for a stage; throws when servers sharing an origin cannot all get theirs. */
+  streams(servers: readonly PreparedServer[], activity: Activity): Map<string, StageLanes>;
   clock?: Clock;
   online?: () => boolean;
 }
@@ -171,7 +172,7 @@ interface StageRun {
   /** Readiness waits and checkpoints end with it. */
   abort: AbortController;
   seats: Map<string, Seat>;
-  streams: Map<string, Record<Direction, number>>;
+  streams: Map<string, StageLanes>;
   /** The measured window began. */
   measured: boolean;
   /** Active ms when finalization began; failures after it are judged against it. */
@@ -183,6 +184,8 @@ interface StageRun {
   /** Page ms of the last early-finish evaluation. */
   evaluatedAt: number;
   finishedEarly: boolean;
+  /** The plan as the window closed; later changes cannot reach a window that already ended. */
+  plan: StagePlans[Stage] | null;
 }
 
 const active = (stage: StageRun) => [...stage.seats.values()].filter((seat) => !seat.server.removed);
@@ -236,8 +239,8 @@ export class Run {
   readonly #open: OpenStage;
   readonly #streams: RunOptions["streams"];
   readonly #online: () => boolean;
-  readonly #after: Clock["after"];
-  readonly #clock: RunClock;
+  readonly #time: Clock;
+  #clock!: RunClock;
   #handlers = new Set<(event: RunEvent) => void>();
   #state: "created" | "running" | "completed" | "aborted" | "failed" = "created";
   #plan: RunPlan;
@@ -246,7 +249,7 @@ export class Run {
   #shown: Segment | null = null;
   /** Timeline ms at the last tick, and the page ms of that tick. */
   #elapsed = 0;
-  #tickAt: number;
+  #tickAt = 0;
   #timer: (() => void) | null = null;
   /** The stage being prepared, measured or finalized; the last settled one between stages. */
   #stage: StageRun | null = null;
@@ -285,13 +288,10 @@ export class Run {
     this.#open = options.open;
     this.#streams = options.streams;
     this.#online = options.online ?? (() => navigator.onLine !== false);
-    const clock = options.clock ?? pageClock;
-    this.#after = clock.after;
+    this.#time = options.clock ?? pageClock;
     this.#validate(options.plan, this.#servers);
     this.#plan = options.plan;
     this.#segments = timeline(options.plan);
-    this.#clock = new RunClock(clock);
-    this.#tickAt = this.#clock.start;
   }
 
   get plan(): RunPlan {
@@ -306,6 +306,8 @@ export class Run {
   start(): void {
     if (this.#state !== "created") return;
     this.#state = "running";
+    this.#clock = new RunClock(this.#time);
+    this.#tickAt = this.#clock.start;
     const first = this.#segments[0]!;
     this.#emit({ type: "phase", phase: "connecting", stage: first.activity.stage, t: 0, step: "preparing" });
     // A server that failed its start check counts against the first stage that moves bytes.
@@ -336,7 +338,7 @@ export class Run {
 
   /** Whether a stage may still be turned on or off. */
   canChange(stage: Stage): boolean {
-    return this.#state !== "running" || changeable(this.#stage?.activity.stage ?? null, stage);
+    return this.#state !== "running" || (!this.#finishing && changeable(this.#stage?.activity.stage ?? null, stage));
   }
 
   /** Reshapes what has not run yet; throws (changing nothing) when the plan is impossible. */
@@ -350,7 +352,8 @@ export class Run {
     const stage = this.#stage;
     this.#plan = plan;
     this.#segments = replan(this.#segments, this.#elapsed, plan, stage?.phase === "finalizing");
-    if (stage && !plan.adaptive) stage.armedAt = null;
+    // Eligibility starts over on the reshaped timeline.
+    if (stage) stage.armedAt = null;
     const shown = this.#shown;
     const now = segmentAt(this.#segments, this.#elapsed);
     if (
@@ -392,7 +395,12 @@ export class Run {
   }
 
   #emit(event: RunEvent): void {
-    for (const handler of this.#handlers) handler(event);
+    for (const handler of this.#handlers)
+      try {
+        handler(event);
+      } catch (error) {
+        reportError(error);
+      }
   }
 
   #validate(plan: RunPlan, servers: readonly Participant[]): void {
@@ -437,7 +445,7 @@ export class Run {
     // Buckets close on time without a later probe.
     for (const { buckets } of this.#servers)
       if (buckets.nextEnd !== null) ms = Math.min(ms, buckets.nextEnd - this.#elapsed);
-    this.#timer = this.#after(Math.max(1, ms), () => {
+    this.#timer = this.#time.after(Math.max(1, ms), () => {
       this.#timer = null;
       this.#tick();
       this.#arm();
@@ -467,7 +475,8 @@ export class Run {
     }
     for (const { buckets } of this.#servers) buckets.closeThrough(this.#elapsed);
     if (stage?.phase === "measuring" && now - this.#sampledAt >= TICK_MS - 1) this.#sample(stage, now);
-    if (this.#elapsed >= (this.#segments.at(-1)?.end ?? 0)) return this.#finish();
+    if (this.#elapsed >= (this.#segments.at(-1)?.end ?? 0))
+      return stage && stage.phase !== "settled" ? void this.#endStage(stage) : this.#complete();
     const segment = segmentAt(this.#segments, this.#elapsed);
     if (!segment) return;
     if (stage?.armedAt != null && this.#evaluate(stage)) return this.#tick();
@@ -524,6 +533,7 @@ export class Run {
       armedAt: null,
       evaluatedAt: -Infinity,
       finishedEarly: false,
+      plan: null,
     };
     this.#stage = stage;
     this.#stages.set(activity.stage, stage);
@@ -540,7 +550,7 @@ export class Run {
     void Promise.allSettled(opened).then((results) => {
       if (!this.#current(stage) || stage.phase !== "preparing") return;
       results.forEach((result, index) => {
-        if (result.status === "fulfilled") return;
+        if (result.status === "fulfilled" || !this.#current(stage) || stage.phase !== "preparing") return;
         // A grant withdrawn between stages surfaces here first, wrapped by whatever it refused.
         const signIn = [...causes(result.reason)].find((error) => error instanceof SignInRequired);
         const error = signIn ?? result.reason;
@@ -578,7 +588,7 @@ export class Run {
     seat.resources = this.#open({
       server: server.prepared,
       activity,
-      streams: stage.streams.get(server.id) ?? { down: 0, up: 0 },
+      ...(stage.streams.get(server.id) ?? { streams: { down: 0, up: 0 } }),
       cadence: activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence,
       seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),
@@ -645,6 +655,10 @@ export class Run {
     const measuring = () => stage.phase === "measuring" && live();
     // A leaving server's probe accounting still counts: its population reports what was lost.
     const counting = () => stage.measured && open();
+    // Tearing down lanes that moved to the window's end cannot fail the stage; a server that stopped earlier can.
+    const teardown = () =>
+      stage.phase === "finalizing" &&
+      (!stage.measured || stage.activity.transfer.every((dir) => stage.closedAt - seat.progressAt[dir] < QUIET_MS));
     return {
       download: (bytes) => {
         if (!measuring() || !stage.activity.transfer.includes("down") || !(bytes > 0)) return;
@@ -719,14 +733,10 @@ export class Run {
         this.#updateStalled();
       },
       failed: (reason, message) => {
-        if (!live()) return;
-        // Tearing down lanes that moved to the window's end cannot fail the stage; a server that stopped earlier can.
-        const movedToEnd = stage.activity.transfer.every((dir) => stage.closedAt - seat.progressAt[dir] < QUIET_MS);
-        if (stage.phase === "finalizing" && (!stage.measured || movedToEnd)) return;
-        this.#remove(server, reason, message);
+        if (live() && !teardown()) this.#remove(server, reason, message);
       },
       signInRequired: (role) => {
-        if (!live()) return;
+        if (!live() || teardown()) return;
         const message = `Sign in to ${server.prepared.server.name}`;
         // Loaded latency alone never removes a throughput participant.
         if (role === "throughput" || name === "latency") this.#remove(server, "sign-in-required", message);
@@ -804,7 +814,7 @@ export class Run {
     const rate = (dir: Direction) => (!transfer.includes(dir) ? null : this.#stalled ? 0 : this.#live.rate(dir));
     const lanes = (id: string) =>
       this.#servers.find((server) => server.id === id)?.prepared.throughput.target.transport === "fetch-stream"
-        ? (stage.streams.get(id)?.up ?? 0)
+        ? (stage.streams.get(id)?.streams.up ?? 0)
         : 1;
     const quietMs =
       this.#clock.activeMs() - Math.max(...seats.flatMap((seat) => transfer.map((dir) => seat.progressAt[dir])));
@@ -884,11 +894,8 @@ export class Run {
   /** A server leaves with the failure it last reported, else as silent in `dir`. */
   #leave(seat: Seat, dir?: Direction): void {
     const stall = seat.recovery?.stall;
-    this.#remove(
-      seat.server,
-      stall?.reason ?? "timeout",
-      stall?.detail || `${stall?.direction ?? dir} direction carried no data`,
-    );
+    const direction = stall?.direction ?? dir ?? this.#stage?.activity.transfer[0] ?? "down";
+    this.#remove(seat.server, stall?.reason ?? "timeout", stall?.detail || `${direction} direction carried no data`);
   }
 
   #remove(server: Participant, reason: FailureReason, message: string): void {
@@ -978,7 +985,14 @@ export class Run {
   /** Scores the measured window; true when that confirmed an early finish and cut the timeline there. */
   #evaluate(stage: StageRun): boolean {
     const segment = this.#shown;
-    if (!segment || segment.phase === "warmup" || stage.phase !== "measuring" || !this.#plan.adaptive) return false;
+    if (
+      !segment ||
+      !this.#segments.includes(segment) ||
+      segment.phase === "warmup" ||
+      stage.phase !== "measuring" ||
+      !this.#plan.adaptive
+    )
+      return false;
     const latency = segment.phase === "latency";
     const seats = latency ? active(stage).filter((seat) => !seat.server.latency.failed.has("latency")) : active(stage);
     // Completion respects the least stable and least sampled path without pooling populations.
@@ -1023,6 +1037,12 @@ export class Run {
     if (stage.phase === "finalizing" || stage.phase === "settled") return;
     const preparing = stage.phase === "preparing";
     stage.phase = "finalizing";
+    const name = stage.activity.stage;
+    stage.plan = {
+      planned: planned(this.#plan, name),
+      durationMs: this.#plan.duration[`${name}Ms`],
+      early: stage.finishedEarly,
+    };
     stage.closedAt = this.#clock.activeMs();
     this.#clock.hold();
     const shown = this.#shown!;
@@ -1049,7 +1069,6 @@ export class Run {
     await Promise.all(finishing.values());
     if (!this.#current(stage)) return;
     stage.phase = "settled";
-    const name = stage.activity.stage;
     for (const { buckets } of this.#servers) buckets.flush(this.#elapsed);
     for (const seat of stage.seats.values()) {
       seat.recovery?.abort.abort();
@@ -1063,6 +1082,8 @@ export class Run {
     }
     const status = this.#settle(name);
     this.#emit({ type: "stageEnd", stage: name, status, results: { ...this.#results } });
+    // A handler may have ended or stopped the run.
+    if (!this.#current(stage)) return;
     this.#tickAt = this.#clock.resume();
     // A live change during the stage end may have replaced or removed the next segment.
     const next = segmentAt(this.#segments, this.#elapsed);
@@ -1125,10 +1146,10 @@ export class Run {
     const settled = this.#settled.get(name);
     if (settled) return settled.status;
     const stage = this.#stages.get(name);
-    const plan = {
+    const plan = stage?.plan ?? {
       planned: planned(this.#plan, name),
       durationMs: this.#plan.duration[`${name}Ms`],
-      early: stage?.finishedEarly ?? false,
+      early: false,
     };
     if (!stage && !plan.planned) {
       this.#settled.set(name, { status: "not-run", plan });
@@ -1208,6 +1229,7 @@ export class Run {
   }
 
   #complete(): void {
+    if (this.#state !== "running") return;
     this.#state = "completed";
     const durationMs = this.#clock.runMs();
     const stages = Object.fromEntries(STAGES.map((stage) => [stage, this.#settle(stage)])) as Record<
@@ -1216,6 +1238,8 @@ export class Run {
     >;
     const plans = Object.fromEntries(STAGES.map((stage) => [stage, this.#settled.get(stage)!.plan])) as StagePlans;
     const focus = this.#focus().latency;
+    // The latency headline, its stages and the added latency all come from the one focus the result names.
+    if (this.#stages.has("latency")) this.#results.latency = focus.result();
     const result: RunResult = {
       ...this.#results,
       multiServer: this.details(),

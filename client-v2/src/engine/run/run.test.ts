@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import type { Checkpoint } from "../measure/aggregate";
 import {
   ServerBusyError,
@@ -205,7 +205,7 @@ function harness(
           new Map(
             servers.map(({ server }) => [
               server.id,
-              { down: +activity.transfer.includes("down"), up: +activity.transfer.includes("up") },
+              { streams: { down: +activity.transfer.includes("down"), up: +activity.transfer.includes("up") } },
             ]),
           ),
         clock,
@@ -991,5 +991,148 @@ test("a bidirectional stage whose download never moves fails however long upload
     expect(result.stages.bidirectional).toBe("failed");
     expect(result.bidirectional?.down).toBeNull();
     expect(result.multiServer.failures).toMatchObject([{ stage: "bidirectional", reason }]);
+  }
+});
+
+test("a grant that lapses as a measured stage shuts down never fails the stage", async () => {
+  const h = setup(
+    [{ id: "self", finish: (events) => events.signInRequired("throughput") }],
+    { download: true },
+    {
+      downloadMs: 1_000,
+    },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.stages.download).toBe("complete");
+  expect(result.multiServer.failures).toEqual([]);
+});
+
+test("ending while a stage prepares ignores what tearing it down reports", async () => {
+  let reject = (_: Error) => {};
+  const h = setup(
+    two({
+      prepare: () => new Promise<void>((_, fail) => (reject = fail)),
+      finish: (events) => events.signInRequired("throughput"),
+      discard: (events) => events.failed("connection-lost", "torn down"),
+    }),
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  await h.elapse(100);
+  h.run.end("sign-in-required", "Signed out");
+  reject(new Error("torn down"));
+  const result = await h.result();
+  expect(result.multiServer.failures.map(({ serverId, message }) => `${serverId}:${message}`)).toEqual([
+    "a:Signed out",
+    "b:Signed out",
+  ]);
+});
+
+test("a stage turned on while the last one ends still runs", async () => {
+  const slow = { finish: () => new Promise<void>((resolve) => later(300, resolve)) };
+  const h = setup(two(slow, slow), { download: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  for (let t = 0; t < 3_000 && !h.calls.includes("end:b"); t += 5) await h.elapse(5);
+  expect(h.run.canChange("upload")).toBe(true);
+  h.run.reconfigure({ stages: { ...h.plan.stages, upload: true }, duration: h.plan.duration, adaptive: false });
+  const result = await h.result();
+  expect(result.stages).toMatchObject({ download: "complete", upload: "complete" });
+});
+
+test("a change while a stage ends cannot reach the window that closed", async () => {
+  const slow = { finish: () => new Promise<void>((resolve) => later(300, resolve)) };
+  const h = setup([{ id: "self", ...slow }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+  h.start();
+  for (let t = 0; t < 3_000 && !h.calls.includes("end:self"); t += 5) await h.elapse(5);
+  h.run.reconfigure({ stages: h.plan.stages, duration: { ...h.plan.duration, downloadMs: 20_000 }, adaptive: false });
+  const result = await h.result();
+  expect(result.stages.download).toBe("complete");
+});
+
+test("a focus server lost after the latency stage hands every latency figure to a survivor", async () => {
+  const h = setup(
+    [
+      { id: "b", measure: probe(2, 4) },
+      { id: "c", measure: (events, { stage }) => (stage === "latency" ? probe(40, 4)(events) : fail(10)(events)) },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { focus: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.latencyFocus).toBe("b");
+  expect(result.latency?.reportedMs).toBe(2);
+});
+
+test("a server still retrying a failure it did not describe names the direction it left", async () => {
+  const silent = (activity: Activity, ms: number) => activity.stage === "download" && ms >= 400;
+  const stall = (events: StageEvents, { stage }: Activity) => {
+    if (stage === "download") later(400, () => events.stalled({ reason: "connection-lost", detail: "" }));
+  };
+  const h = setup(two({ silent, measure: stall }), { download: true }, { downloadMs: 1_000 });
+  h.start();
+  const result = await h.result();
+  expect(result.multiServer.failures).toMatchObject([{ serverId: "a", message: "down direction carried no data" }]);
+});
+
+test("a steady upload and a steady latency stage each finish early", async () => {
+  const upload = setup([{ id: "self" }], { upload: true }, { uploadMs: 6_000 }, { adaptive: true });
+  upload.start();
+  expect((await upload.result()).durationMs).toBeLessThan(6_000);
+
+  const steady = (events: StageEvents) => void clock.every(100, () => probe(10)(events));
+  const latency = setup(
+    [{ id: "self", measure: steady }],
+    { latency: true },
+    { latencyMs: 20_000 },
+    { adaptive: true },
+  );
+  latency.start();
+  const result = await latency.result(40_000);
+  expect(result.durationMs).toBeLessThan(20_000);
+  expect(result.latency?.reportedMs).toBe(10);
+});
+
+test("turning adaptive off mid-stage runs the stage to its planned end", async () => {
+  const h = setup([{ id: "self" }], { download: true }, { downloadMs: 6_000 }, { adaptive: true });
+  h.start();
+  await h.elapse(1_000);
+  h.run.reconfigure({ stages: h.plan.stages, duration: h.plan.duration, adaptive: false });
+  expect((await h.result()).durationMs).toBeGreaterThanOrEqual(6_000);
+});
+
+test("a page gap while measuring starts a new interval and forbids an early finish", async () => {
+  const h = setup([{ id: "self" }], { download: true }, { downloadMs: 12_000 }, { adaptive: true });
+  h.start();
+  await h.elapse(1_000);
+  h.clock.t += 3_000;
+  const result = await h.result();
+  expect(result.durationMs).toBeGreaterThanOrEqual(12_000);
+  expect(result.multiServer.intervals.map(({ reason }) => reason)).toEqual(["stage-start", "evidence-resumed"]);
+});
+
+test("a stage end handler that ends, stops or throws ends the run there", async () => {
+  const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
+  try {
+    for (const act of ["end", "abort", "throw"] as const) {
+      const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 1_000 });
+      h.start();
+      h.run.on((event) => {
+        if (event.type !== "stageEnd" || event.stage !== "download") return;
+        if (act === "end") h.run.end("sign-in-required", "Signed out");
+        else if (act === "abort") h.run.abort();
+        else throw new Error("handler");
+      });
+      await h.elapse(5_000);
+      const ends = h.events.filter(({ type }) => type === "complete" || type === "aborted" || type === "error");
+      expect(ends.map(({ type }) => type)).toEqual([act === "abort" ? "aborted" : "complete"]);
+      expect(h.calls.includes("begin:self:upload")).toBe(act === "throw");
+    }
+    expect(reported).toHaveBeenCalledTimes(1);
+  } finally {
+    reported.mockRestore();
   }
 });

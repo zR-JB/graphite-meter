@@ -199,11 +199,18 @@ export interface StageEvents {
   uploadHint(lane: number, bytes: number, elapsedMs: number): void;
 }
 
+/** A server's lanes for one stage, as the browser's connection budget dealt them. */
+export type StageLanes = Pick<StageSetup, "streams" | "gating">;
+
 export interface StageSetup {
   server: PreparedServer;
   activity: Activity;
   /** Lanes per direction for this server and stage; 0 for a direction the stage does not move. */
   streams: Record<Direction, number>;
+  /** Of those, the lanes the browser can run at once, which readiness waits for (the plan's `gating`): fewer when an
+      HTTP/1.1 origin's connection pool queues the rest; all of `streams` when absent. Uploads gate on their
+      receiver instead. */
+  gating?: Record<Direction, number>;
   /** The probe spacing of this stage: the idle cadence for the latency stage, the loaded one otherwise. */
   cadence: PingCadence;
   /** Distinguishes this run's requests from cached ones. */
@@ -252,6 +259,9 @@ export interface ProbeChannelEvents {
   stalled(detail: string): void;
   resumed(): void;
   signInRequired(): void;
+  /** Outcomes were lost uncounted (a dead worker, an abandoned drain, `dispose(true)`): a population can no longer
+      be complete. */
+  incomplete?(): void;
 }
 export interface ProbeChannel {
   /** Outcomes count from now on; probes sent before never enter a population. */
