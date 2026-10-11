@@ -233,7 +233,9 @@ impl App {
     fn chip_stages(&self) -> Vec<Stage> {
         let planned = self.plan();
         let stages = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional].into_iter();
-        let shown = |stage: &Stage| *stage != Stage::Bidirectional || planned.iter().any(|(own, _)| own == stage);
+        let shown = |stage: &Stage| {
+            *stage != Stage::Bidirectional || self.stage_on(*stage) || planned.iter().any(|(own, _)| own == stage)
+        };
         stages.filter(shown).collect()
     }
 
@@ -333,7 +335,7 @@ impl App {
         canvas.line(area.x, area.y, area.width, &Line::styled("━".repeat(usize::from(area.width)), hue));
         let head = Line::styled(icon(Stage::Latency), hue).and(" Latency", palette.heading);
         canvas.line(area.x, area.y + 1, area.width, &head);
-        if self.several() {
+        if self.view.run.as_ref().is_some_and(|run| run.at.is_some()) && self.participants().len() > 1 {
             let to = format!("to {}  l switches", self.name(self.latency_server()));
             canvas.right(area.x, area.y + 1, area.width, &Line::styled(to, palette.muted));
         }

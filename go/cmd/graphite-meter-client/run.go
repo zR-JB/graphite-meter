@@ -297,11 +297,9 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 
 func (m model) startRun() (tea.Model, tea.Cmd) {
 	if errors.Is(m.cfg.Validate(), goclient.ErrNoServer) {
-		m.run = nil
 		return m.askForServer(), nil
 	}
 	if err := m.cfg.Validate(); err != nil {
-		m.run = nil
 		return m.notify(styled(blocked+": "+err.Error()+".", m.pal.warn)), nil
 	}
 	m.invalidatePreparation()
@@ -323,6 +321,9 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 			return m.startFailed(event)
 		case m.next != nil && event.Kind == goclient.EventServers:
 			m.run, m.next = m.next, nil
+			if m.prepare == prepareChecking {
+				m.prepare, m.prepareErr = prepareReady, ""
+			}
 		case m.next != nil:
 			continue
 		case event.Kind == goclient.EventDone:
@@ -344,6 +345,9 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 		return m.reprepareNow()
 	case m.last == goclient.OutcomeStopped:
 		m = m.notify(styled("Test stopped before it started.", m.pal.muted))
+		if m.prepare == prepareChecking {
+			return m.reprepareNow()
+		}
 	default:
 		m = m.notify(styled(startFailed+": "+errorText(done.Err), m.pal.warn))
 		return m.reprepare()

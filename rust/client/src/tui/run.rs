@@ -145,7 +145,7 @@ pub enum State {
 
 impl App {
     pub(super) fn running(&self) -> bool {
-        self.view.run.as_ref().is_some_and(|run| run.outcome.is_none())
+        self.view.starting || self.view.run.as_ref().is_some_and(|run| run.outcome.is_none())
     }
 
     pub(super) fn stage_state(&self, stage: Stage) -> State {
@@ -256,11 +256,11 @@ impl App {
 
     /// The progress bar: busy while preparing, then the planned stage time done; an incomplete stage adds nothing.
     pub(super) fn progress(&self) -> Progress {
-        let running = self.view.run.as_ref().filter(|_| self.running());
-        let Some(run) = running else { return Progress::None };
-        if run.at.is_none() {
+        if self.view.starting {
             return Progress::Busy;
         }
+        let running = self.view.run.as_ref().filter(|_| self.running());
+        let Some(run) = running else { return Progress::None };
         let done = |&(stage, duration): &(Stage, Duration)| match self.stage_state(stage) {
             State::Ended(StageStatus::Complete) => duration,
             State::Measuring => self.elapsed().min(duration),

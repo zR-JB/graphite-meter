@@ -142,7 +142,7 @@ pub const DETAILS_SHEET: &[Binding] = &[
     SCROLL, PAGE, CLOSE, CLOSE.on(&[char('d')], "d").hidden(), HELP, QUIT, ABORT.hidden(),
 ];
 pub const HELP_SHEET: &[Binding] = &[SCROLL, CLOSE, CLOSE.on(&[char('?')], "?").hidden(), QUIT, ABORT.hidden()];
-pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, ABORT.hidden()];
+pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, ABORT.hidden()];
 pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL.does("cancel sign-in"), QUIT, ABORT.hidden()];
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
 
