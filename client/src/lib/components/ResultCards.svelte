@@ -6,7 +6,13 @@
 <script lang="ts">
   import ResultSummary from "./ResultSummary.svelte";
   import { store } from "../state/store.svelte";
-  import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
+  import {
+    fmtBytes,
+    fmtMs,
+    formatLatency,
+    formatRate,
+    resultRate,
+  } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { replies } from "../presentation/stageGraph";
   import { latencyTrackScale } from "../presentation/scales";
@@ -23,6 +29,7 @@
     serverIssues,
     summaryEvidence,
     buildCardGraphs,
+    idleFacts,
     type CardGraph,
     type CardScale,
     type SummaryCard,
@@ -191,9 +198,17 @@
     announce(untrack(() => resultSentence(settled)));
   });
 
-  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate and their sum.
+  // A running stage fills its facts as it goes: its replies' spread, its bytes, each bidirectional lane's rate.
   function liveRows(key: Stage): SummaryRow[] {
-    if (key === "latency") return [];
+    if (key === "latency") {
+      const idle = store.latencySummaries.latency;
+      return [
+        ...(idle?.jitterMs == null
+          ? []
+          : [{ label: "Jitter", value: formatLatency(idle.jitterMs) }]),
+        ...idleFacts(idle),
+      ];
+    }
     const moved = {
       label: "Transferred",
       value: fmtBytes(store.liveStageBytes, units.base),

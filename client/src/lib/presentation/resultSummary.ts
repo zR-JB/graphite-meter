@@ -261,13 +261,37 @@ function wire(
   };
 }
 
-/** The idle stage's own facts: its spread, its replies and the probes that went unanswered. */
+/** The idle replies' spread, count and unanswered share, as the stage's summary streams and once it is saved. */
+export function idleFacts(
+  idle: StageLatencySummary | null | undefined,
+): SummaryRow[] {
+  const answered = idle ? idle.probeCount - idle.timeoutCount : null;
+  return [
+    {
+      label: "Range",
+      value:
+        idle?.minMs == null || idle.maxMs == null
+          ? MISSING
+          : `${fmtMs(idle.minMs)}–${fmtMs(idle.maxMs)} ms`,
+    },
+    {
+      label: "Replies",
+      value: answered == null ? MISSING : String(answered),
+    },
+    {
+      label: "Timeouts",
+      value:
+        idle && idle.probeCount
+          ? `${((100 * idle.timeoutCount) / idle.probeCount).toFixed(1)}%`
+          : MISSING,
+    },
+  ];
+}
+
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
   const { reportedMs, jitterMs, stabilityPct } = latency;
-  const idle = evidence.idle;
-  const answered = idle ? idle.probeCount - idle.timeoutCount : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
@@ -278,24 +302,7 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
         label: "Stability",
         value: stabilityPct == null ? MISSING : `${Math.round(stabilityPct)}%`,
       },
-      {
-        label: "Range",
-        value:
-          idle?.minMs == null || idle.maxMs == null
-            ? MISSING
-            : `${fmtMs(idle.minMs)}–${fmtMs(idle.maxMs)} ms`,
-      },
-      {
-        label: "Replies",
-        value: answered == null ? MISSING : String(answered),
-      },
-      {
-        label: "Timeouts",
-        value:
-          idle && idle.probeCount
-            ? `${((100 * idle.timeoutCount) / idle.probeCount).toFixed(1)}%`
-            : MISSING,
-      },
+      ...idleFacts(evidence.idle),
     ],
   };
 }
