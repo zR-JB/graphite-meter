@@ -96,18 +96,18 @@ after three replies and timeouts.
 | Behaviour        | Rule                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Cadence          | Idle default reply-driven; loaded default Medium. Fast 80 ms, Medium 250 ms, Slow 600 ms are start-to-start.     |
-| Reply-driven     | The next probe goes out on the reply; a backup timer covers a missing reply.                                     |
+| Reply-driven     | The latest probe's reply sends the next at once, a late one never; a backup timer covers a missing reply.        |
 | In-flight window | 16 idle at a fixed cadence, 4 reply-driven, 2 under load. A full window skips the send, never a timeout.         |
 | Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms–10 s; 250 ms before the first reply. |
 | Stage end        | Sending stops; in-window probes drain to their deadlines, at most 10 s.                                          |
 | Interruptions    | Disconnects leave pending probes unfinished; local send failures are separate; neither is a timeout.             |
 
-Cadence is a scheduling policy, not an observed sampling rate: reply-driven density depends on RTT, and no coverage
-is inferred from cadence and elapsed time. The idle headline is the full stage median, the base of added latency;
-it never falls back to loaded RTTs or preflight hints. A failed stage keeps its measured population, marked
-incomplete. Every selected server is probed. The run's latency is the shown server's when the run starts (the first
-selected unless the browser was switched to another), or a survivor's once it leaves; switching the shown server
-never retargets probes or changes saved statistics.
+Cadence is a scheduling policy, not an observed sampling rate: reply-driven density follows RTT alone (tens of
+thousands of probes a second on loopback), and no coverage is inferred from cadence and elapsed time. The idle
+headline is the full stage median, the base of added latency; it never falls back to loaded RTTs or preflight hints.
+A failed stage keeps its measured population, marked incomplete. Every selected server is probed. The run's latency
+is the shown server's when the run starts (the first selected unless the browser was switched to another), or a
+survivor's once it leaves; switching the shown server never retargets probes or changes saved statistics.
 
 ## Paired server timing
 

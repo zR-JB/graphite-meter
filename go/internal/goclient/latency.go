@@ -265,7 +265,9 @@ func (r *runner) measureLatency(
 		case <-pace.C:
 			_ = send()
 		case <-replied:
-			_ = send()
+			if !probes.latestInFlight() {
+				_ = send()
+			}
 		case now := <-expiry:
 			for _, at := range probes.expire(now) {
 				emit(at, LatencySample{TimedOut: true})
@@ -292,6 +294,7 @@ type probeLedger struct {
 	pending      map[uint32]probe
 	late         map[uint32]time.Time
 	nextID       uint32
+	latest       uint32
 	stats        latencyStats
 	until        time.Time
 	srtt, rttvar time.Duration
@@ -365,7 +368,15 @@ func (l *probeLedger) register(now time.Time) (uint32, bool) {
 		return 0, false
 	}
 	l.pending[id] = probe{sent: now, deadline: now.Add(l.timeout()), measured: !l.until.IsZero()}
+	l.latest = id
 	return id, true
+}
+
+func (l *probeLedger) latestInFlight() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.pending[l.latest]
+	return ok
 }
 
 func (l *probeLedger) sendFailed(id uint32) {

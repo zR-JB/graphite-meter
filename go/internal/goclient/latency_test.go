@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -39,6 +40,7 @@ func TestMeasureLatencyPopulations(t *testing.T) {
 		{"loaded silent probes keep two in flight", answerNone, 0, 10 * ms, captureWindow, true, 0, 2, 0, 0},
 		{"reply-driven follows replies", answerAll, 5 * ms, PingReplyDriven, time.Second, false, 199, 0, 0, 5 * ms},
 		{"reply-driven silent waits for deadlines", answerNone, 0, PingReplyDriven, time.Second, false, 0, 3, 0, 0},
+		{"reply-driven late replies send nothing", answerAll, 300 * ms, PingReplyDriven, time.Second, false, 2, 1, 0, 300 * ms},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -61,6 +63,26 @@ func TestMeasureLatencyPopulations(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestReplyDrivenProbesKeepOneInFlightOnLoopback(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(pingHandler(answerAll, 0))
+	t.Cleanup(srv.Close)
+	r := &runner{
+		cfg:           DefaultConfig(),
+		websocketHTTP: srv.Client(),
+		latencyTarget: new(testChannel("test-ws", srv.URL)),
+		emit:          func(Event) {},
+	}
+	s, err := r.measureNow(t.Context(), false, 500*time.Millisecond)
+	if err != nil || s.ReflectorTiming == nil {
+		t.Fatalf("stats = %+v, %v", s, err)
+	}
+	busy := time.Duration(s.ReflectorTiming.Count) * s.ReflectorTiming.MeanRawRTT
+	if 2*busy < s.Elapsed {
+		t.Fatalf("%d replies were in flight %v of %v", s.Count, busy, s.Elapsed)
 	}
 }
 
