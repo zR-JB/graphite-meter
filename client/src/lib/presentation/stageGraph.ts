@@ -1,4 +1,5 @@
 import type { LatencyBucket, Phase } from "../runner/contract";
+import { sortedMedian } from "../runner/measure";
 import { monotoneCurve } from "./smoothPath";
 
 export interface GraphPoint {
@@ -61,26 +62,22 @@ export interface StageGraph {
   lines: string[];
   area: string;
   heads: { x: number; y: number }[];
-  /** A reply over the track's top is clamped there and marked. */
-  dots: {
+  /** One bar per reply bucket; a reply over the track's top is clamped there and marked. */
+  dots: (LatencyPoint & {
     x: number;
     y: number;
     yLo: number;
     yHi: number;
-    t: number;
-    ms: number;
-    lo: number;
-    hi: number;
     over: boolean;
-  }[];
+  })[];
   baselineY: number | null;
   /** Per lane: bin centre times and rates, for the hover readout. */
   bins: GraphPoint[][];
 }
 
 const BIN_PX = 4;
-/* A reply bar's pitch: slim bars with air between them. */
-const REPLY_PX = 8;
+/* A reply bar's least pitch: buckets narrower than this join, so bars keep air between them. */
+const REPLY_PX = 4;
 const TOP_PAD = 3;
 
 interface PlotPoint {
@@ -147,48 +144,47 @@ export function stageGraphGeometry(
     trackHeight -
     1.5 -
     Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
-  // Replies bin to the width like the lanes but on a wider pitch, so every stage's track has slim bars with air
-  // between them whatever its length or
-  // its buckets' width: a bucket reaches every column its span covers, a column spans its buckets' fastest to
-  // slowest reply, reads their medians' mean, and keeps the mark of any reply over the top.
+  // Each bar is one bucket's own replies, fastest to slowest; buckets narrower than a bar's pitch join whole, on the
+  // grid of the series' first bucket, so no bucket is drawn twice and a live bar only grows as its buckets close.
   const top = input.latencyTop || 1;
-  const slots = Math.max(8, Math.floor(width / REPLY_PX));
-  const sums = new Float64Array(slots);
-  const counts = new Uint16Array(slots);
-  const los = new Float64Array(slots).fill(Infinity);
-  const his = new Float64Array(slots).fill(-Infinity);
-  const column = (t: number) =>
-    Math.min(
-      slots - 1,
-      Math.max(0, Math.floor(((t - start) / (span || 1)) * slots)),
-    );
+  const origin = input.latency[0]?.t0 ?? start;
+  const bucketMs = Math.max(
+    0,
+    ...input.latency.slice(0, 3).map((point) => point.t1 - point.t0),
+  );
+  const pitchMs = (REPLY_PX / width) * (span || 1);
+  const groupMs = bucketMs
+    ? Math.max(1, Math.ceil(pitchMs / bucketMs)) * bucketMs
+    : pitchMs;
+  const bars: (LatencyPoint & { replies: number[] })[] = [];
+  let group = NaN;
   for (const point of input.latency) {
     if (point.t1 < start || point.t0 > start + span) continue;
-    const last = column(Math.min(point.t1, start + span) - 1e-6);
-    for (let i = column(point.t0); i <= Math.max(last, column(point.t0)); i++) {
-      sums[i] += point.ms;
-      counts[i]++;
-      los[i] = Math.min(los[i], point.lo);
-      his[i] = Math.max(his[i], point.hi);
+    const at = Math.floor((point.t - origin) / groupMs);
+    if (at !== group) {
+      group = at;
+      bars.push({ ...point, replies: [] });
     }
+    const bar = bars.at(-1)!;
+    bar.t1 = Math.max(bar.t1, point.t1);
+    bar.lo = Math.min(bar.lo, point.lo);
+    bar.hi = Math.max(bar.hi, point.hi);
+    bar.replies.push(point.ms);
   }
-  const dots = [...counts.keys()]
-    .filter((i) => counts[i])
-    .map((i) => {
-      const t = start + ((i + 0.5) / slots) * span;
-      const ms = sums[i] / counts[i];
-      return {
-        t,
-        ms,
-        lo: los[i],
-        hi: his[i],
-        x: x(t),
-        y: trackY(ms),
-        yLo: trackY(los[i]),
-        yHi: trackY(his[i]),
-        over: his[i] > top,
-      };
-    });
+  const dots = bars.map(({ replies, ...bar }) => {
+    const t = (bar.t0 + bar.t1) / 2;
+    const ms = sortedMedian(replies.sort((a, b) => a - b));
+    return {
+      ...bar,
+      t,
+      ms,
+      x: x(t),
+      y: trackY(ms),
+      yLo: trackY(bar.lo),
+      yHi: trackY(bar.hi),
+      over: bar.hi > top,
+    };
+  });
   return {
     lines,
     area: areaOf(lines[0] ?? "", points[0] ?? [], plotHeight),

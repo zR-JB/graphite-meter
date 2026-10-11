@@ -17,6 +17,9 @@ const SLOP_PX = 10;
 const GAP_PX = 8;
 const anchored =
   typeof CSS !== "undefined" && CSS.supports("position-area", "block-start");
+const explainOnClick = () =>
+  document.documentElement.dataset.explanations === "click";
+type Kind = "tip" | "term" | "clip";
 /** A plain label or control; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
 /** " (key)" for a tip while the key acts and a keyboard is likely at hand; a finger has no Esc. */
@@ -25,7 +28,8 @@ export const keyHint = (key: string, acts = true) =>
 /** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
 export const term = (text: () => string) =>
   fromAction(
-    (node: HTMLElement, initial: string) => tooltipAction(node, initial, true),
+    (node: HTMLElement, initial: string) =>
+      tooltipAction(node, initial, "term"),
     text,
   );
 
@@ -85,7 +89,7 @@ export function clipTip(node: HTMLElement, full?: string) {
         ? (text ?? node.textContent ?? "").replace(/\s+/g, " ").trim()
         : "";
     if (whole && tip) tip.update(whole);
-    else if (whole) tip = tooltipAction(node, whole);
+    else if (whole) tip = tooltipAction(node, whole, "clip");
     else {
       tip?.destroy();
       tip = null;
@@ -110,12 +114,12 @@ export function clipTip(node: HTMLElement, full?: string) {
 
 /** Live measurement views keep one action per element instead of rebuilding attachment factories on each frame. */
 export const termAction = (node: HTMLElement, text: string) =>
-  tooltipAction(node, text, true);
+  tooltipAction(node, text, "term");
 
 export function tooltipAction(
   node: HTMLElement,
   initial: string,
-  marked = false,
+  kind: Kind = "tip",
 ) {
   let active: ReturnType<typeof createTooltip> | null = null;
   function update(text: string) {
@@ -123,7 +127,7 @@ export function tooltipAction(
       active?.destroy();
       active = null;
     } else if (active) active.update(text);
-    else active = createTooltip(node, text, marked);
+    else active = createTooltip(node, text, kind);
   }
   update(initial);
   return {
@@ -135,7 +139,8 @@ export function tooltipAction(
   };
 }
 
-function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
+function createTooltip(node: HTMLElement, initial: string, kind: Kind) {
+  const marked = kind === "term";
   let text = initial;
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
@@ -147,8 +152,8 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   let press: { x: number; y: number } | null = null;
   // A long press showed the tip; the click it ends in is not a tap on the control.
   let pressed = false;
-  // A touch showed the tip; the next tap closes it.
-  let touchOpen = false;
+  // A tap or an asked-for click showed the tip; the next one closes it.
+  let pinned = false;
   // A click answers the pointer; a control's tip waits until it leaves and comes back.
   let clicked = false;
   // Keyboard focus showed the tip; it stays with its word while the page scrolls.
@@ -164,6 +169,8 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   const inert = host === node && !node.matches(ACTIONABLE_SELECTOR);
   // Jargon and explained facts answer a click or tap; a control does its job and explains on a pause or long press.
   const asks = inert || marked;
+  // A word's or a figure's explanation, unlike a control's own tip or a cut text, may wait to be asked for.
+  const explains = kind !== "clip" && !node.matches(ACTIONABLE_SELECTOR);
   if (!node.matches(ACTIONABLE_SELECTOR))
     node.dataset.tip = marked ? "term" : "";
   const focusable =
@@ -207,7 +214,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     const box = target.getBoundingClientRect();
     target.dataset.side = box.top >= at.top ? "below" : "above";
   }
-  function show(touch = false, byKeyboard = false) {
+  function show(pin = false, byKeyboard = false) {
     cancelOpen();
     clearTimeout(closeTimer);
     if (bubble || !text || !node.isConnected) return;
@@ -232,9 +239,9 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
       "aria-describedby",
       prevDescribedBy ? `${prevDescribedBy} ${id}` : id,
     );
-    // A tip a finger opened takes the tap that closes it, so the tap never lands on what lies beneath.
-    if (touch) {
-      touchOpen = true;
+    // A pinned tip takes the tap or click that closes it, so it never lands on what lies beneath.
+    if (pin) {
+      pinned = true;
       bubble.style.pointerEvents = "auto";
       bubble.addEventListener("click", hide);
     }
@@ -267,7 +274,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     cancelOpen();
     clearTimeout(closeTimer);
     endPress();
-    touchOpen = false;
+    pinned = false;
     release(hide);
     if (!bubble) return;
     warmUp();
@@ -310,6 +317,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   // Hover intent: only a hand that stays near one point opens the tip; a sweep keeps moving it, a drag never counts.
   function settle(event: PointerEvent) {
     if (!hovers(event) || event.buttons || bubble || clicked) return;
+    if (explains && explainOnClick()) return;
     const { clientX: x, clientY: y } = event;
     if (rest && Math.hypot(x - rest.x, y - rest.y) <= REST_PX) return;
     clearTimeout(openTimer);
@@ -329,7 +337,7 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
     cancelOpen();
     clicked = false;
     // Not motion: a slip off a small word keeps its tip a moment.
-    if (bubble && !touchOpen) closeTimer = window.setTimeout(hide, CLOSE_MS);
+    if (bubble && !pinned) closeTimer = window.setTimeout(hide, CLOSE_MS);
   }
   // Keyboard focus only (main.ts drops data-pointer on a key), a microtask later, once a closing popover has restored focus.
   function onFocus(event: FocusEvent) {
@@ -349,20 +357,22 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   function onPointerDown(event: PointerEvent) {
     lastPointer = event.pointerType;
     pressed = false;
-    if (event.pointerType === "touch") {
-      press = { x: event.clientX, y: event.clientY };
-      if (!touchOpen && !asks)
-        // Not motion: a long press asks a control for its tip.
-        pressTimer = window.setTimeout(() => {
-          show(true);
-          pressed = !!bubble;
-        }, LONG_PRESS_MS);
-      return;
+    if (event.pointerType !== "touch") {
+      cancelOpen();
+      clicked = true;
+      const asked = explains && explainOnClick();
+      if (asked && asks && bubble) return hide();
+      if (asks) return show(asked);
+      hide();
+      if (!asked) return;
     }
-    cancelOpen();
-    clicked = true;
-    if (asks) show();
-    else hide();
+    press = { x: event.clientX, y: event.clientY };
+    if (!pinned && !asks)
+      // Not motion: a long press asks a control for its tip, with a mouse too once explanations wait to be asked.
+      pressTimer = window.setTimeout(() => {
+        show(true);
+        pressed = !!bubble;
+      }, LONG_PRESS_MS);
   }
   function onPointerMove(event: PointerEvent) {
     if (
@@ -374,10 +384,10 @@ function createTooltip(node: HTMLElement, initial: string, marked: boolean) {
   }
   // A tap on jargon or a fact toggles its tip; a tap on a control only runs it.
   function onPointerUp(event: PointerEvent) {
-    if (event.pointerType !== "touch" || !press) return;
+    if (!press) return;
     endPress();
-    if (pressed) return;
-    if (touchOpen) hide();
+    if (pressed || event.pointerType !== "touch") return;
+    if (pinned) hide();
     else if (asks) show(true);
   }
   function onClick(event: MouseEvent) {

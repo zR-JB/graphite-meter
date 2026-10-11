@@ -303,6 +303,7 @@ export class Locator {
   async click() {
     const point = await retry(() =>
       this.evaluate(async (el: HTMLButtonElement) => {
+        await document.fonts.ready;
         el.scrollIntoView({ block: "center", inline: "center" });
         const before = el.getBoundingClientRect();
         await new Promise((done) => requestAnimationFrame(done));
@@ -324,9 +325,10 @@ export class Locator {
     await this.page.click(point.x, point.y);
   }
   async hover() {
-    const box = await this.evaluate((el) =>
-      el.getBoundingClientRect().toJSON(),
-    );
+    const box = await this.evaluate(async (el) => {
+      await document.fonts.ready;
+      return el.getBoundingClientRect().toJSON();
+    });
     await this.page.hover(box.x + box.width / 2, box.y + box.height / 2);
   }
   fill(value: string) {

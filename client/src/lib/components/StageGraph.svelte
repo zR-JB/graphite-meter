@@ -82,36 +82,35 @@
   const samples = $derived(
     lanes.map((lane) => lane.filter((point) => point.t >= start)),
   );
-  // A bucket reads as its median and, when its replies spread, their range.
-  const replyRows = (reply: LatencyPoint) => [
-    { label: "Latency", value: formatLatency(reply.ms) },
-    ...(reply.lo < reply.hi
-      ? [{ label: "Range", value: `${fmtMs(reply.lo)}–${fmtMs(reply.hi)} ms` }]
-      : []),
-  ];
+  // A bar reads as what it draws: its replies' range, or the one value they share.
+  type Row = { label: string; value: string; mark?: string };
+  const replyRow = (bar: LatencyPoint): Row => ({
+    label: "Latency",
+    value:
+      bar.lo < bar.hi
+        ? `${fmtMs(bar.lo)}–${fmtMs(bar.hi)} ms`
+        : formatLatency(bar.lo),
+  });
   const hover = $derived.by(() => {
     if (hoverT === null || !geometry || !hasData) return null;
     if (trackOnly) {
-      const reply = nearestAt(latency, hoverT!);
-      if (!reply) return null;
+      const bar = nearestAt(geometry.dots, hoverT!);
+      if (!bar) return null;
       return {
-        x: Math.min(
-          width,
-          Math.max(0, ((reply.t - start) / (span || 1)) * width),
-        ),
-        rows: replyRows(reply),
-        time: fmtDuration(Math.max(0, reply.t - start), 1),
+        x: bar.x,
+        rows: [replyRow(bar)],
+        time: fmtDuration(Math.max(0, bar.t - start), 1),
       };
     }
     const rates = samples.map((lane) => nearestAt(lane, hoverT!));
     const at = rates.find(Boolean)!.t;
-    const reply = nearestAt(latency, at);
-    const near = reply && Math.abs(reply.t - at) <= span / 12 ? reply : null;
-    const rows = rates.map((point, lane) => ({
+    const near = geometry.dots.find((bar) => at >= bar.t0 && at <= bar.t1);
+    const rows = rates.map((point, lane): Row => ({
       label: laneNames[lane] ?? "Rate",
       value: point ? rate(point.v) : "",
+      mark: lanes.length > 1 ? ["↓", "↑"][lane] : undefined,
     }));
-    if (near) rows.push(...replyRows(near));
+    if (near) rows.push(replyRow(near));
     return {
       x: Math.min(width, Math.max(0, ((at - start) / (span || 1)) * width)),
       rows,
@@ -120,6 +119,7 @@
   });
 
   let box: HTMLElement | undefined = $state();
+  let readoutWidth = $state(0);
   function clear() {
     if (!keyboard) hoverT = null;
   }
@@ -146,7 +146,7 @@
   // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
     const times = trackOnly
-      ? latency.map((p) => p.t)
+      ? geometry?.dots.map((bar) => bar.t)
       : geometry?.bins.find((lane) => lane.length)?.map((p) => p.t);
     if (!times?.length) return false;
     const index =
@@ -257,18 +257,19 @@
             y1={graph.baselineY}
             y2={graph.baselineY}
           />{/if}
-        <!-- A bar spans a bin's fastest to slowest reply, at least a dot's length. -->
+        <!-- A bar spans its bucket's fastest to slowest reply, at least a dot's length, on a whole pixel. -->
         {#each graph.dots as dot, index (index)}
+          {@const x = Math.round(dot.x)}
           <line
             class="reply"
-            x1={dot.x}
-            x2={dot.x}
+            x1={x}
+            x2={x}
             y1={dot.yLo}
             y2={Math.min(dot.yHi, dot.yLo - 1.5)}
           />
           {#if dot.over}<path
               class="reply-over"
-              d={`M ${dot.x - 2.5} 5.5 L ${dot.x} 0.5 L ${dot.x + 2.5} 5.5 Z`}
+              d={`M ${x - 2.5} 5.5 L ${x} 0.5 L ${x + 2.5} 5.5 Z`}
             />{/if}
         {/each}
         {#if hover}<line
@@ -282,20 +283,29 @@
     {/if}
   </div>
   {#if hover}
-    <!-- In the top layer, so a card's clip never cuts a reading taller than its strip. -->
+    <!-- In the top layer, over the card's quiet line: centred on the cursor, inside the strip, off the graph. -->
     {@const at = box!.getBoundingClientRect()}
     <span
       class="inspect-card readout"
-      class:flip={hover.x > width / 2}
+      class:unmeasured={!readoutWidth}
       popover="manual"
       {@attach (node) => node.showPopover()}
-      style:left="{at.left + hover.x}px"
+      bind:offsetWidth={readoutWidth}
+      style:max-width="{width}px"
+      style:left="{Math.round(
+        at.left +
+          Math.max(
+            0,
+            Math.min(hover.x - readoutWidth / 2, width - readoutWidth),
+          ),
+      )}px"
       style:top="{at.top}px"
     >
-      <span class="readout-time">{hover.time}</span>
+      <small>{hover.time}</small>
       {#each hover.rows as row (row.label)}
-        <span class="inspect-row"
-          ><span>{row.label}</span><span>{row.value}</span></span
+        <span
+          >{#if row.mark}<small>{row.mark}</small>
+          {/if}{row.value}</span
         >
       {/each}
     </span>
@@ -363,20 +373,14 @@
     stroke: color-mix(in oklab, var(--text) 45%, transparent);
     stroke-width: 1;
   }
+  /* Whole pixels, so the plate's hairlines stay crisp wherever it stands. */
   .readout {
     position: fixed;
     inset: auto;
     margin: 0;
-    min-width: 150px;
-    white-space: nowrap;
-    translate: 10px 0;
+    translate: 0 round(calc(-100% - 4px), 1px);
   }
-  /* Whole pixels, so the card's hairlines stay crisp wherever it flips. */
-  .readout.flip {
-    translate: round(calc(-100% - 10px), 1px) 0;
-  }
-  .readout-time {
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) / 1.3 var(--font-sans);
+  .readout.unmeasured {
+    visibility: hidden;
   }
 </style>

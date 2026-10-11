@@ -83,6 +83,38 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   await expect(row).toHaveCount(1);
 });
 
+test("the idle track draws one bar per reply bucket and grows as each closes", async (page) => {
+  await open(page, home.http, {
+    config: {
+      stages: { ...baseConfig.stages, download: false, upload: false },
+      duration: { ...baseConfig.duration, latencyMs: 2000 },
+    },
+  });
+  await ready(page);
+  await page.evaluate(() => {
+    const live = new Set<number>();
+    const sample = () => {
+      const phase = document.getElementById("console")!.dataset.phase;
+      const bars = document.querySelectorAll(
+        '.results .card[data-tone="latency"] .track line.reply',
+      ).length;
+      if (phase === "latency") live.add(bars);
+      Object.assign(window, { live: live.size, bars });
+      if (phase !== "complete") requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await run(page);
+  const { live, bars } = await page.evaluate(() => {
+    const { live, bars } = window as unknown as Record<string, number>;
+    return { live, bars };
+  });
+  // Reply-driven probes fill 200 ms buckets: ten over two seconds, and the replies of the stage's last moment.
+  expect(bars).toBeGreaterThanOrEqual(9);
+  expect(bars).toBeLessThanOrEqual(11);
+  expect(live).toBeGreaterThanOrEqual(5);
+});
+
 test("stopping during download freezes elapsed time and a rerun completes", async (page) => {
   await open(page, home.url, {
     config: { duration: { ...baseConfig.duration, downloadMs: 1500 } },

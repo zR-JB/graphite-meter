@@ -117,31 +117,50 @@ test("a reply below the idle median sits below its line; the track clamps at its
   expect(graph.lines).toEqual([""]);
 });
 
-test("a bucket reaches every column its span covers", () => {
-  const graph = stageGraphGeometry({
-    ...base,
-    lanes: [[]],
-    latency: [{ t: 2000, t0: 1800, t1: 2200, ms: 12, lo: 10, hi: 14 }],
-  });
-  // 400 ms of a 4000 ms span over 50 reply slots: five slots, one bar each, the same range in all.
-  expect(graph.dots).toHaveLength(5);
-  expect(new Set(graph.dots.map((dot) => `${dot.lo}-${dot.hi}`))).toEqual(
-    new Set(["10-14"]),
+const buckets = (count: number, ms: number, lo = 10, spread = 4) =>
+  Array.from({ length: count }, (_, k) => ({
+    t: 1000 + (k + 0.5) * ms,
+    t0: 1000 + k * ms,
+    t1: 1000 + (k + 1) * ms,
+    ms: lo + k + spread / 2,
+    lo: lo + k,
+    hi: lo + k + spread,
+  }));
+
+test("each reply bucket is one bar, from its own fastest to its slowest reply", () => {
+  const latency = buckets(10, 400);
+  const graph = stageGraphGeometry({ ...base, lanes: [[]], latency });
+  expect(graph.dots.map(({ t0, t1, lo, hi }) => ({ t0, t1, lo, hi }))).toEqual(
+    latency.map(({ t0, t1, lo, hi }) => ({ t0, t1, lo, hi })),
+  );
+  expect(graph.dots.map((dot) => dot.x)).toEqual(
+    latency.map((point) => ((point.t - 1000) / 4000) * 400),
   );
 });
 
-test("replies in one column of the width draw as one bar at their mean, marked when any went over the top", () => {
+test("buckets narrower than a bar's pitch join whole, and a closing bucket only grows the newest bar", () => {
+  // 40 s over 400 px: a 4 px pitch holds two 200 ms buckets.
+  const wide = { ...base, span: 40_000, lanes: [[]] };
+  const graph = stageGraphGeometry({ ...wide, latency: buckets(5, 200) });
+  expect(graph.dots.map(({ lo, hi, t0, t1 }) => [lo, hi, t0, t1])).toEqual([
+    [10, 15, 1000, 1400],
+    [12, 17, 1400, 1800],
+    [14, 18, 1800, 2000],
+  ]);
+  const next = stageGraphGeometry({ ...wide, latency: buckets(6, 200) });
+  expect(next.dots.slice(0, 2)).toEqual(graph.dots.slice(0, 2));
+  expect(next.dots[2]).toMatchObject({ lo: 14, hi: 19, t0: 1800, t1: 2200 });
+});
+
+test("a bar over the track's top is clamped at the edge and marked", () => {
   const graph = stageGraphGeometry({
     ...base,
     lanes: [[]],
     latency: [
-      { t: 3000, t0: 3000, t1: 3000, ms: 10, lo: 10, hi: 10 },
-      { t: 3010, t0: 3010, t1: 3010, ms: 30, lo: 30, hi: 30 },
-      { t: 3500, t0: 3500, t1: 3500, ms: 10, lo: 10, hi: 10 },
-      { t: 3510, t0: 3510, t1: 3510, ms: 500, lo: 500, hi: 500 },
+      { t: 3100, t0: 3000, t1: 3200, ms: 20, lo: 10, hi: 30 },
+      { t: 3300, t0: 3200, t1: 3400, ms: 40, lo: 10, hi: 500 },
     ],
   });
-  expect(graph.dots).toHaveLength(2);
-  expect(graph.dots[0]).toMatchObject({ ms: 20, lo: 10, hi: 30, over: false });
+  expect(graph.dots[0]).toMatchObject({ ms: 20, over: false });
   expect(graph.dots[1]).toMatchObject({ yHi: 1.5, over: true });
 });

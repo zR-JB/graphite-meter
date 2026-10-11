@@ -1,4 +1,4 @@
-import { home, open, run } from "./fleet";
+import { closeSettings, home, open, openSettings, run } from "./fleet";
 import { expect, test, type Locator, type Page } from "./webview";
 
 const tip = (page: Page) => page.locator('[role="tooltip"]');
@@ -81,6 +81,35 @@ test("a hand sweeping across tips opens none, even just after one showed, and a 
   await sweep(page, history, right);
   await expect(tip(page)).toHaveCount(0);
   expect((await opened()).length).toBe(1);
+});
+
+test("explanations on click open only when asked, while a control still names itself on a rest", async (page) => {
+  await open(page, home.http);
+  const settings = await openSettings(page);
+  await settings.getByRole("button", { name: "On click", exact: true }).click();
+  await closeSettings(page);
+  await page.reload();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.dataset.explanations),
+    )
+    .toBe("click");
+
+  const fact = page.locator('.results .card[data-tone="latency"] dt[data-tip]');
+  const { x, y } = await centre(fact);
+  await moveMouse(page, x, y);
+  await Bun.sleep(1_000);
+  await expect(tip(page)).toHaveCount(0);
+  await fact.click();
+  await expect(tip(page)).toContainText("Stability");
+  await fact.click();
+  await expect(tip(page)).toHaveCount(0);
+
+  const key = await centre(
+    page.getByRole("button", { name: "Settings", exact: true }),
+  );
+  await moveMouse(page, key.x, key.y);
+  await expect(tip(page)).toContainText("Settings");
 });
 
 test.chrome(
