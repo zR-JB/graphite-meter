@@ -348,6 +348,17 @@ test("Details hides this browser's address until it is pointed at or pinned", as
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
+  // A busy runner can still be sliding the sheet in; the address is pinned once it rests.
+  // A busy runner can still be sliding the sheet in; the address is pinned once it rests. Scroll-driven
+  // animations never finish, so only timed ones are waited for.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime))
+        .map((a) => a.finished),
+    ),
+  );
   const address = page.locator(".secret");
   await expect(address).toHaveAttribute("aria-pressed", "false");
   const shown = () =>
