@@ -1,8 +1,9 @@
 import { expect as bunExpect, test as bunTest } from "bun:test";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
+import { browser, openDriver, type Driver } from "./browsers";
+
+export { browser };
 
 type Name = string | RegExp;
 type Step =
@@ -120,10 +121,27 @@ function reportPolicyViolations() {
   );
 }
 
-/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed. */
+/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed, and where
+ *  the pointer last moved, so a hover that opened nothing shows what it was over. */
 function recordClicks() {
   const clicks: string[] = [];
-  Object.assign(window, { clicks });
+  const pointer = { x: -1, y: -1, over: "" };
+  Object.assign(window, { clicks, pointer });
+  const describe = (el: Element | null) =>
+    el
+      ? `${el.tagName}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}`
+      : "nothing";
+  document.addEventListener(
+    "pointermove",
+    (event) => {
+      Object.assign(pointer, {
+        x: event.clientX,
+        y: event.clientY,
+        over: `${describe(event.target as Element)} (${event.pointerType})`,
+      });
+    },
+    true,
+  );
   document.addEventListener(
     "click",
     (event) => {
@@ -303,17 +321,13 @@ export class Locator {
     ).catch((error) => {
       throw new Error(`${error.message} for ${JSON.stringify(this.steps)}`);
     });
-    await this.page.raw.click(point.x, point.y);
+    await this.page.click(point.x, point.y);
   }
   async hover() {
     const box = await this.evaluate((el) =>
       el.getBoundingClientRect().toJSON(),
     );
-    await this.page.cdp("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: box.x + box.width / 2,
-      y: box.y + box.height / 2,
-    });
+    await this.page.hover(box.x + box.width / 2, box.y + box.height / 2);
   }
   fill(value: string) {
     return this.evaluate((el, text) => {
@@ -330,35 +344,6 @@ export class Locator {
     return (await this.state())[0]?.attrs[name] ?? null;
   }
 }
-
-// Bun never removes the temp profile of the Chrome it spawns; this process's live Chrome names it (Linux /proc).
-function removeProfiles() {
-  const tasks = `/proc/${process.pid}/task`;
-  const profiles: string[] = [];
-  try {
-    for (const task of readdirSync(tasks))
-      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8")
-        .split(" ")
-        .filter(Boolean)) {
-        const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-        // Chrome rewrites its argv into one space-separated title.
-        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(
-          cmdline,
-        );
-        if (dir) profiles.push(dir[1]);
-      }
-  } catch {}
-  Bun.WebView.closeAll();
-  for (const dir of profiles)
-    try {
-      if (dirname(dir) === tmpdir())
-        rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
-    } catch {}
-}
-// Chrome is shared across files in this process. File-scoped afterAll cleanup
-// can kill the next file's first view while it starts. Only shut down at exit;
-// the fleet wrapper also owns worker profiles through its temporary directory.
-process.on("exit", removeProfiles);
 
 /** Browser work that never answers fails with its name and the page state, before the test timeout hides both. */
 export function within<T>(
@@ -387,56 +372,32 @@ export function within<T>(
 }
 
 export class Page {
-  readonly raw: Bun.WebView;
   readonly errors: string[] = [];
   readonly console: string[] = [];
-  private ready: Promise<void> | undefined;
-  constructor(private readonly options: { monitorDisplay?: boolean } = {}) {
-    this.raw = new Bun.WebView({
-      width: 1280,
-      height: 800,
-      backend: {
-        type: "chrome",
-        url: false,
-        path: process.env.BUN_CHROME_PATH,
-        argv: [
-          "--hide-scrollbars",
-          ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean),
-        ],
-        stderr: process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
-      },
-      dataStore: "ephemeral",
-      console: (type, ...args) => {
-        const line = args
-          .map((arg) => (arg as { description?: string })?.description ?? arg)
-          .join(" ");
-        this.console.push(`${type}: ${line}`);
-        if (type === "error") this.errors.push(`console.error: ${line}`);
-      },
-    });
-  }
+  private driver: Promise<Driver> | undefined;
+  constructor(private readonly options: { monitorDisplay?: boolean } = {}) {}
   private init() {
-    this.ready ??= within(
+    this.driver ??= within(
       "preparing the page",
       (async () => {
-        await this.raw.navigate("about:blank");
-        await this.raw.cdp("Runtime.enable");
+        const driver = await openDriver({
+          console: (type, line) => {
+            this.console.push(`${type}: ${line}`);
+            if (type === "error") this.errors.push(`console.error: ${line}`);
+          },
+          exception: (text) => this.errors.push(text),
+        });
         for (const guard of [
           reportPolicyViolations,
           recordClicks,
           ...(this.options.monitorDisplay === false ? [] : [watchDisplay]),
           recordStorage,
         ])
-          await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
-            source: `(${guard})()`,
-          });
-        this.raw.addEventListener("Runtime.exceptionThrown", (event: any) => {
-          const details = event.data.exceptionDetails;
-          this.errors.push(details.exception?.description ?? details.text);
-        });
+          await driver.addInitScript(`(${guard})()`);
+        return driver;
       })(),
     );
-    return this.ready;
+    return this.driver;
   }
   locator(value: string, options: { hasText?: Name } = {}) {
     return new Locator(this, []).locator(value, options);
@@ -444,48 +405,78 @@ export class Page {
   getByRole(role: string, options: { name?: Name; exact?: boolean } = {}) {
     return new Locator(this, []).getByRole(role, options);
   }
+  /** Chrome only: the DevTools Protocol, for what no other browser offers. */
   async cdp<T = any>(method: string, params?: Record<string, unknown>) {
-    await this.init();
-    return within(`CDP ${method}`, this.raw.cdp<T>(method, params));
+    const driver = await this.init();
+    if (!driver.cdp) throw new Error(`${browser} has no CDP for ${method}`);
+    return within(`CDP ${method}`, driver.cdp<T>(method, params));
+  }
+  async onCdp(event: string, listener: (event: unknown) => void) {
+    const driver = await this.init();
+    if (!driver.onCdp) throw new Error(`${browser} has no CDP for ${event}`);
+    driver.onCdp(event, listener);
   }
   async addInitScript(fn: (arg: any) => unknown, arg?: unknown) {
-    await this.cdp("Page.addScriptToEvaluateOnNewDocument", {
-      source: `(${fn})(${encode(arg)})`,
-    });
+    const driver = await this.init();
+    await driver.addInitScript(`(${fn})(${encode(arg)})`);
   }
   async goto(url: string) {
-    await this.init();
+    const driver = await this.init();
     const document = (href: string) => href.split("#")[0];
     // A same-document hash change never fires the load event navigate() awaits.
-    if (url.includes("#") && document(url) === document(this.raw.url))
+    if (url.includes("#") && document(url) === document(await driver.url()))
       await this.evaluate((href) => location.assign(href), url);
-    else await within(`navigating to ${url}`, this.raw.navigate(url));
+    else await within(`navigating to ${url}`, driver.navigate(url));
   }
-  reload() {
-    return within("reload", this.raw.reload());
+  async reload() {
+    const driver = await this.init();
+    return within("reload", driver.reload());
   }
-  evaluate<T>(fn: ((arg: any) => T) | string, arg?: unknown): Promise<T> {
+  // Input waits for the page to take it, so a stalled page names the action rather than outlasting the test.
+  async click(x: number, y: number) {
+    const driver = await this.init();
+    await within(`click at ${x},${y}`, driver.click(x, y), 10_000);
+  }
+  async hover(x: number, y: number) {
+    const driver = await this.init();
+    await within(`pointer to ${x},${y}`, driver.hover(x, y), 10_000);
+  }
+  async press(key: string) {
+    const driver = await this.init();
+    await within(`pressing ${key}`, driver.press(key), 10_000);
+  }
+  async touch(phase: "start" | "move" | "end", x = 0, y = 0) {
+    const driver = await this.init();
+    await within(`touch ${phase}`, driver.touch(phase, x, y), 10_000);
+  }
+  async evaluate<T>(fn: ((arg: any) => T) | string, arg?: unknown): Promise<T> {
+    const driver = await this.init();
     const source = typeof fn === "string" ? fn : `(${fn})(${encode(arg)})`;
     return within(
       `evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`,
-      this.raw.evaluate<T>(source),
+      driver.evaluate<T>(source),
       undefined,
       () => this.storage(),
     );
   }
-  // Through CDP: the view runs one evaluate at a time, and these report why another hangs.
-  private inspect<T>(expression: string): Promise<T> {
+  // Chrome's view runs one evaluate at a time, so these go through CDP to report why another hangs.
+  private async inspect<T>(expression: string): Promise<T> {
+    const driver = await this.init();
     return within(
       "inspecting the page",
       Promise.try(() =>
-        this.raw.cdp<{ result: { value: T } }>("Runtime.evaluate", {
-          expression,
-          awaitPromise: true,
-          returnByValue: true,
-        }),
+        driver.cdp
+          ? driver
+              .cdp<{ result: { value: T } }>("Runtime.evaluate", {
+                expression,
+                awaitPromise: true,
+                returnByValue: true,
+              })
+              .then(({ result }) => result.value)
+          : driver.evaluate<T>(expression),
       ),
       5_000,
-    ).then(({ result }) => result.value);
+    );
   }
   storage() {
     const read = async () => ({
@@ -496,12 +487,13 @@ export class Page {
     return this.inspect<StorageState>(`(${read})()`);
   }
   async setViewportSize(size: { width: number; height: number }) {
-    await this.init();
-    await this.raw.resize(size.width, size.height);
+    await (await this.init()).resize(size.width, size.height);
+  }
+  async clearStorage(origins: string[]) {
+    await (await this.init()).clearStorage(origins);
   }
   async blockRequests(urls: string[]) {
-    await this.cdp("Network.enable");
-    await this.cdp("Network.setBlockedURLs", { urls });
+    await (await this.init()).blockRequests(urls);
   }
   /** The run's visible state, for a failure message: phase, run control, blocker, gauge status and notices. */
   async summary() {
@@ -520,6 +512,15 @@ export class Page {
         // A refused or failed start shows its reason only in the gauge's footer.
         gauge: text(document.querySelector(".gauge-footer")),
         clicks: (window as any).clicks,
+        pointer: (() => {
+          const { x, y, over } = (window as any).pointer ?? {};
+          const at = document.elementFromPoint(x, y);
+          return {
+            over,
+            at: at && `${at.tagName}.${String(at.className).split(" ")[0]}`,
+            hover: matchMedia("(hover: hover)").matches,
+          };
+        })(),
         notices: [
           ...document.querySelectorAll('[role="alert"], [role="status"]'),
         ]
@@ -535,14 +536,13 @@ export class Page {
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
     const stem = resolve(artifacts, name.replace(/[^a-z0-9_-]+/gi, "-"));
+    const driver = await this.init();
     const shot = await within(
       "capturing the page",
-      Promise.try(() =>
-        this.raw.cdp<{ data: string }>("Page.captureScreenshot"),
-      ),
+      Promise.try(() => driver.screenshot()),
       5_000,
     ).catch(() => undefined);
-    if (shot) await Bun.write(`${stem}.png`, Buffer.from(shot.data, "base64"));
+    if (shot) await Bun.write(`${stem}.png`, shot);
     const storage = await this.storage().then(JSON.stringify, String);
     const dom = await this.inspect("document.documentElement.outerHTML").catch(
       String,
@@ -550,17 +550,14 @@ export class Page {
     const log = [...this.errors, ...this.console].join("\n");
     await Bun.write(
       `${stem}.txt`,
-      `${this.raw.url}\n\n${storage}\n\n${log}\n\n${dom}`,
+      `${await driver.url().catch(String)}\n\n${storage}\n\n${log}\n\n${dom}`,
     );
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
-    await within(
-      "leaving the page",
-      this.raw.navigate("about:blank"),
-      5_000,
-    ).catch(() => {});
-    this.raw.close();
+    if (!this.driver) return;
+    const driver = await this.driver;
+    await within("leaving the page", driver.close(), 5_000).catch(() => {});
   }
 }
 
@@ -620,12 +617,19 @@ export const expect: any = Object.assign(
   { poll },
 );
 
-export function test(
+/** `chrome` marks a test that needs the DevTools Protocol; other browsers skip it. */
+type TestOptions = {
+  monitorDisplay?: boolean;
+  timeout?: number;
+  /** Needs the DevTools Protocol; other browsers skip it. */
+  chrome?: boolean;
+};
+function pageTest(
   name: string,
   fn: (page: Page) => Promise<unknown>,
-  options: { monitorDisplay?: boolean; timeout?: number } = {},
+  options: TestOptions = {},
 ) {
-  bunTest(
+  bunTest.skipIf(!!options.chrome && browser !== "chrome")(
     name,
     async () => {
       const page = new Page(options);
@@ -652,6 +656,14 @@ export function test(
     options.timeout,
   );
 }
+
+export const test = Object.assign(pageTest, {
+  chrome: (
+    name: string,
+    fn: (page: Page) => Promise<unknown>,
+    options: TestOptions = {},
+  ) => pageTest(name, fn, { ...options, chrome: true }),
+});
 
 const axeSource = resolve(
   import.meta.dir,

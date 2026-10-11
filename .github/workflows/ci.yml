@@ -103,11 +103,16 @@ jobs:
         run: mise run server-race
 
   e2e:
-    name: Browser E2E
+    name: Browser E2E (${{ matrix.browser }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.code == 'true'
+    # One engine per runner, so Firefox adds no wall time; tests that need the DevTools Protocol run in Chrome only.
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,23 +123,41 @@ jobs:
         with: {go: 'true', bun: 'true', client-deps: 'true'}
       - id: chrome
         name: Install pinned Chrome for Testing
+        if: matrix.browser == 'chrome'
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
           install-dependencies: true
-      - name: Run Chromium against one local server fleet
+      # Mozilla's release archive, held to the SHA-256 mise.toml pins beside its version.
+      - id: firefox
+        name: Install pinned Firefox
+        if: matrix.browser == 'firefox'
         env:
+          FIREFOX_VERSION: ${{ steps.toolchain.outputs.firefox-version }}
+          FIREFOX_SHA256: ${{ steps.toolchain.outputs.firefox-sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/firefox.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://ftp.mozilla.org/pub/firefox/releases/$FIREFOX_VERSION/linux-x86_64/en-US/firefox-$FIREFOX_VERSION.tar.xz"
+          printf '%s  %s\n' "$FIREFOX_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          printf 'firefox-path=%s\n' "$RUNNER_TEMP/firefox/firefox" >> "$GITHUB_OUTPUT"
+      - name: Run the browser against one local server fleet
+        env:
+          GM_E2E_BROWSER: ${{ matrix.browser }}
           # Chrome for Testing is an unpacked archive without a setuid sandbox;
           # this read-only, secret-free job therefore uses Chromium's CI mode.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
+          GM_EXPECTED_CHROME_VERSION: ${{ matrix.browser == 'chrome' && steps.toolchain.outputs.chrome-version || '' }}
+          GM_FIREFOX_PATH: ${{ steps.firefox.outputs.firefox-path }}
+          GM_EXPECTED_FIREFOX_VERSION: ${{ matrix.browser == 'firefox' && steps.toolchain.outputs.firefox-version || '' }}
         run: mise run e2e
       - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-failures
+          name: e2e-failures-${{ matrix.browser }}
           path: |
             client/test-results/webview
             client/test-results/servers

@@ -49,3 +49,25 @@ export async function sessionAuthenticationRequired(
     clearTimeout(timeout);
   }
 }
+
+/** Whether a measurement grant was withdrawn: its own header is refused at a protected route. Transport failures and
+    timeouts are not evidence. */
+export async function grantAuthenticationRequired(
+  origin: string,
+  headers: HeadersInit,
+  request: FetchRequest = fetch,
+): Promise<boolean> {
+  try {
+    const response = await request(new URL("/probe", origin), {
+      cache: "no-store",
+      credentials: "omit",
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(3000),
+    });
+    await response.body?.cancel().catch(() => {});
+    return authenticationRequired(response);
+  } catch {
+    return false;
+  }
+}

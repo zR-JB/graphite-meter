@@ -21,6 +21,7 @@
   } from "./endpointInfo";
   import { JARGON, MISSING, transportLabel } from "../presentation/vocabulary";
   import { serverIssues } from "../presentation/resultSummary";
+  import { diagnosticReport } from "../presentation/diagnostics";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
   import Icon from "./Icon.svelte";
@@ -94,9 +95,12 @@
     if (!clientIp) return { value: pending };
     return {
       value: clientIp,
+      secret: true,
       aside: `IPv${clientIpVersion}, ${clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`,
     };
   });
+  // The address shows only while pointed at, focused or pinned with a tap, so a shared screen does not carry it.
+  let revealed = $state(false);
 
   function capabilities(role: PathRole): string[] | string {
     const advertised = advertisedServerCapabilities(discovery, role);
@@ -154,27 +158,56 @@
     ),
   );
 
-  function diagnosticReport() {
-    return JSON.stringify(
-      {
+  // Everything the run and its servers hold, anonymized (presentation/diagnostics).
+  function report() {
+    const views = [...store.servers.values()];
+    const probes = views.flatMap((view) => [
+      view.validation.throughput.path?.probe,
+      view.validation.latency.path?.probe,
+      view.paths?.throughput.probe,
+      view.paths?.latency?.probe,
+    ]);
+    return diagnosticReport({
+      page: location.href,
+      servers: [
+        ...(store.serverCatalog?.servers ?? []),
+        ...views.map((view) => view.server),
+      ],
+      clientIps: [...new Set(probes.flatMap((probe) => probe?.clientIp ?? []))],
+      state: $state.snapshot({
         client: BUILD,
-        server,
+        environment: {
+          userAgent: navigator.userAgent,
+          secureContext: isSecureContext,
+          webTransport: "WebTransport" in globalThis,
+          online: navigator.onLine,
+          viewport: `${innerWidth}x${innerHeight}@${devicePixelRatio}`,
+          reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+        },
         scope: pathMode,
-        selectedServers: availableServers.map(({ id, name, url }) => ({
-          id,
-          name,
-          url,
-        })),
-        failures,
-        generation: discovery?.generation,
-        throughput: connections.throughput,
-        latency: connections.latency,
-        preTestPingMs: connections.latency.preTestPingMs,
-        streams: transferStreams,
-      },
-      null,
-      2,
-    );
+        inspected: selectedServer?.id,
+        preferences: {
+          units: `${store.unitKind} ${store.unitBase}`,
+          wireEstimates: store.showWireEstimates,
+          history: store.resultHistoryPreference,
+        },
+        config: store.runConfig,
+        selectedServers: store.selectedServers,
+        servers: Object.fromEntries(store.servers),
+        run: {
+          phase: store.phase,
+          preparation: store.preparationStatus,
+          startError: store.startError,
+          connectivity: store.connectivity,
+          error: store.error,
+          stall: store.stallInfo,
+          stages: store.settledStages,
+          stageResults: store.stageResults,
+          result: store.result,
+          servers: store.serverDetails,
+        },
+      }),
+    });
   }
 
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -187,7 +220,7 @@
   async function copyReport() {
     clearTimeout(copiedTimer);
     try {
-      await navigator.clipboard.writeText(diagnosticReport());
+      await navigator.clipboard.writeText(report());
       copied = true;
       // Not motion: the copy confirmation lingers briefly.
       copiedTimer = setTimeout(() => (copied = false), 1500);
@@ -201,15 +234,24 @@
 
 {#snippet row(
   label: string,
-  fact: string | { value: string; aside?: string },
+  fact: string | { value: string; aside?: string; secret?: boolean },
   tip?: string,
   marked = false,
 )}
-  {@const { value, aside } = typeof fact === "string" ? { value: fact } : fact}
+  {@const { value, aside, secret } =
+    typeof fact === "string" ? { value: fact, secret: false } : fact}
   <div>
     <dt {@attach tip ? (marked ? term : tooltip)(() => tip) : null}>{label}</dt>
     <dd>
-      {value}{#if aside}<span class="aside">{aside}</span>{/if}
+      {#if secret}<button
+          class="secret"
+          type="button"
+          aria-pressed={revealed}
+          onclick={() => (revealed = !revealed)}
+          ><span class="secret-mask" aria-hidden="true">••••••••</span><span
+            class="secret-value">{value}</span
+          >{#if !revealed}<span class="sr-only">Show</span>{/if}</button
+        >{:else}{value}{/if}{#if aside}<span class="aside">{aside}</span>{/if}
     </dd>
   </div>
 {/snippet}
@@ -403,5 +445,32 @@
   }
   .copy > .hidden {
     visibility: hidden;
+  }
+  /* Mask and address share one cell, so revealing never reflows the row. */
+  .secret {
+    display: inline-grid;
+    border-radius: var(--r-chrome);
+    font: inherit;
+    text-align: start;
+  }
+  .secret > span:not(.sr-only) {
+    grid-area: 1 / 1;
+  }
+  .secret-mask {
+    color: var(--text-soft);
+    letter-spacing: var(--track-wide);
+  }
+  .secret:not([aria-pressed="true"], :focus-visible) .secret-value,
+  .secret:is([aria-pressed="true"], :focus-visible) .secret-mask {
+    visibility: hidden;
+  }
+  /* A finger's hover sticks after a tap; only a pointer that hovers reveals by resting. */
+  @media (hover: hover) {
+    .secret:hover .secret-value {
+      visibility: visible;
+    }
+    .secret:hover .secret-mask {
+      visibility: hidden;
+    }
   }
 </style>

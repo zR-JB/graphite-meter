@@ -57,7 +57,7 @@ test("a forced stream count beyond the browser's connections is kept exactly and
   await expect(page.locator(".infra")).toContainText(
     /Forced\s*12 per direction/,
   );
-  await page.raw.press("Escape");
+  await page.press("Escape");
   // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");

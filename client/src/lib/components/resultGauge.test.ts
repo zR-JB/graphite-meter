@@ -4,7 +4,7 @@ import { testRunResult } from "../runner/test-helpers.testutil";
 import {
   primaryResultGaugeArc,
   resultGaugeArcs,
-  resultGaugeHeadPlacements,
+  resultGaugeHeads,
   sortResultGaugeArcs,
 } from "./resultGauge";
 
@@ -78,68 +78,23 @@ test("terminal gauge skips unavailable stages in every combination", () => {
   ]);
 });
 
-const headOptions = {
-  baseRadius: 72,
-  arcSweep: Math.PI * 1.5,
-  headRadius: 3.3,
-  borderWidth: 1,
-};
+// A 72 px ring with 8 px heads: a fraction of 0.01 lies 3.4 px along it.
+const ring = { radius: 72, arcSweep: Math.PI * 1.5, headRadius: 8 };
 
-const headDistance = (
-  a: { fraction: number; radius: number },
-  b: { fraction: number; radius: number },
-): number => {
-  const angleA = a.fraction * headOptions.arcSweep;
-  const angleB = b.fraction * headOptions.arcSweep;
-  return Math.hypot(
-    a.radius * Math.cos(angleA) - b.radius * Math.cos(angleB),
-    a.radius * Math.sin(angleA) - b.radius * Math.sin(angleB),
-  );
-};
-
-test("result heads stay on the base radius when their endpoints are separated", () => {
-  const placements = resultGaugeHeadPlacements([0, 0.5, 1], headOptions);
-  expect(placements.map((placement) => placement.radius)).toEqual([72, 72, 72]);
-  expect(placements.map((placement) => placement.fraction)).toEqual([
-    0, 0.5, 1,
+test("result heads stay whole beads on the ring when apart, and lie over a close higher one", () => {
+  expect(resultGaugeHeads([1, 0.5, 0], ring)).toEqual(["bead", "bead", "bead"]);
+  // Highest first: each lower head is judged against every head painted before it.
+  expect(resultGaugeHeads([0.6, 0.5, 0.46], ring)).toEqual([
+    "bead",
+    "bead",
+    "stacked",
   ]);
-});
-
-test("the highest result always stays primary while equal and near-equal clusters use inward lanes", () => {
-  for (const fractions of [
-    [0.5, 0.5],
-    [0.5, 0.5, 0.5],
-    [0.5, 0.501, 0.502],
-  ]) {
-    const placements = resultGaugeHeadPlacements(fractions, headOptions);
-    expect(placements[0]!.radius).toBe(headOptions.baseRadius);
-    expect(
-      placements.every(
-        (placement, index) =>
-          index === 0 || placement.radius <= headOptions.baseRadius,
-      ),
-    ).toBe(true);
-    for (let i = 0; i < placements.length; i += 1) {
-      for (let j = i + 1; j < placements.length; j += 1)
-        expect(
-          headDistance(placements[i]!, placements[j]!),
-        ).toBeGreaterThanOrEqual(
-          2 * (headOptions.headRadius + headOptions.borderWidth) + 2,
-        );
-    }
-  }
-});
-
-test("result head placement stays bounded for compact gauge geometry", () => {
-  const first = resultGaugeHeadPlacements([0.42, 0.42, 0.42], {
-    ...headOptions,
-    baseRadius: 36,
-  });
-  expect(first[0]!.radius).toBe(36);
-  expect(first.every((placement) => placement.radius >= 6.3)).toBe(true);
-  expect(first.map((placement) => placement.fraction)).toEqual([
-    0.42, 0.42, 0.42,
+  expect(resultGaugeHeads([0.5, 0.5, 0.49], ring)).toEqual([
+    "bead",
+    "split",
+    "split",
   ]);
+  expect(resultGaugeHeads([Number.NaN, 0], ring)).toEqual(["bead", "split"]);
 });
 
 test("headline prefers download then upload then bidirectional regardless of speed or paint order", () => {

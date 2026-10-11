@@ -13,67 +13,30 @@ export interface ResultGaugeArc {
   dashed: boolean;
 }
 
-export interface ResultGaugeHeadPlacement {
-  /** Original result fraction, retained for exact endpoint mapping. */
-  fraction: number;
-  /** Compact inward lane; zero is reserved for the highest result. */
-  lane: number;
-  radius: number;
-}
+/** How a result's head sits on the ring: every head stays at its own value. */
+export type ResultGaugeHead = "bead" | "stacked" | "split";
 
-export interface ResultGaugeHeadLayoutOptions {
-  baseRadius: number;
-  arcSweep: number;
-  headRadius: number;
-  borderWidth: number;
-  /** Clearance between outside edges of neighboring marker borders. */
-  clearance?: number;
-}
-
-/** Assign stable inward lanes to sorted result heads without changing their angles. */
-export function resultGaugeHeadPlacements(
+/** Heads paint from the highest result down, so a lower one lies over its neighbour: one that overlaps a head
+    already painted is cut out of it by a halo in the ground ("stacked"), and one almost level with it shows only
+    its trailing half, so the pair reads as one bead in both hues ("split"). */
+export function resultGaugeHeads(
   fractions: readonly number[],
-  options: ResultGaugeHeadLayoutOptions,
-): ResultGaugeHeadPlacement[] {
-  const clearance = Math.max(0, options.clearance ?? 2);
-  const extent =
-    Math.max(0, options.headRadius) + Math.max(0, options.borderWidth);
-  const laneStep = Math.max(1, extent * 2 + clearance);
-  const minimumRadius = extent + clearance;
-  const placed: ResultGaugeHeadPlacement[] = [];
-  const angles = fractions.map((fraction) =>
-    Number.isFinite(fraction) ? fraction * options.arcSweep : 0,
-  );
-
-  for (const [index, fraction] of fractions.entries()) {
-    if (index === 0) {
-      placed.push({ fraction, lane: 0, radius: options.baseRadius });
-      continue;
-    }
-
-    let lane = 0;
-    while (true) {
-      const radius = Math.max(
-        minimumRadius,
-        options.baseRadius - lane * laneStep,
-      );
-      const angle = angles[index]!;
-      const overlaps = placed.some((other, otherIndex) => {
-        const otherAngle = angles[otherIndex]!;
-        const x = radius * Math.cos(angle);
-        const y = radius * Math.sin(angle);
-        const otherX = other.radius * Math.cos(otherAngle);
-        const otherY = other.radius * Math.sin(otherAngle);
-        return Math.hypot(x - otherX, y - otherY) < extent * 2 + clearance;
-      });
-      if (!overlaps || radius <= minimumRadius) {
-        placed.push({ fraction, lane, radius });
-        break;
-      }
-      lane += 1;
-    }
-  }
-  return placed;
+  geometry: { radius: number; arcSweep: number; headRadius: number },
+): ResultGaugeHead[] {
+  const along = (fraction: number) =>
+    (Number.isFinite(fraction) ? fraction : 0) *
+    geometry.arcSweep *
+    geometry.radius;
+  return fractions.map((fraction, index) => {
+    const nearest = Math.min(
+      ...fractions
+        .slice(0, index)
+        .map((other) => Math.abs(along(fraction) - along(other))),
+    );
+    if (nearest < geometry.headRadius) return "split";
+    if (nearest < geometry.headRadius * 2 + 2) return "stacked";
+    return "bead";
+  });
 }
 
 const arcValue = (value: number): number =>

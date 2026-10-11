@@ -130,8 +130,9 @@ export function flip(update: () => void, only?: readonly string[]): void {
     if (!old && edge) {
       // A sheet coming back while its copy still leaves takes over from where the copy is, at its speed.
       const copy = leaving.get(edge);
-      const off = copy
-        ? copy.getBoundingClientRect().left - box.left
+      const seen = copy?.getBoundingClientRect();
+      const off = seen?.width
+        ? seen.left - box.left
         : edge === "left"
           ? -box.right
           : innerWidth - box.left;
@@ -186,9 +187,11 @@ export function flip(update: () => void, only?: readonly string[]): void {
   for (const [key, { el, box }] of before) {
     const edge = el.dataset.flipEdge;
     if (after.has(key) || !edge) continue;
-    // A sheet no longer displayed leaves to its edge as a copy at its old place, at the speed it had.
+    // A sheet no longer displayed (where a browser cannot keep a closing dialog displayed through its slide) leaves
+    // to its edge as a copy at its old place, at the speed it had: an open copy beside it, so its styles still draw it.
     const ghost = el.cloneNode(true) as HTMLElement;
     ghost.removeAttribute("data-flip");
+    ghost.toggleAttribute("open", el instanceof HTMLDialogElement);
     ghost.setAttribute("aria-hidden", "true");
     ghost.inert = true;
     Object.assign(ghost.style, {
@@ -203,7 +206,7 @@ export function flip(update: () => void, only?: readonly string[]): void {
     });
     leaving.get(edge)?.remove();
     leaving.set(edge, ghost);
-    document.body.append(ghost);
+    (el.parentElement ?? document.body).append(ghost);
     const off = edge === "left" ? -box.right : innerWidth - box.left;
     settle(
       ghost,
