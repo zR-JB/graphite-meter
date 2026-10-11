@@ -153,3 +153,31 @@ test("mixed path breakdown keeps every layer and weights it by measured goodput"
     combined.factors.reduce((sum, part) => sum + part.contributionPct, 0),
   ).toBeCloseTo((combined.totalMultiplier - 1) * 100, 10);
 });
+
+test("the wire model matches the vectors the terminal clients share", async () => {
+  const { cases } = await Bun.file(
+    new URL("../../../api/wirerate.testvectors.json", import.meta.url),
+  ).json();
+  for (const {
+    scheme,
+    transport,
+    protocol,
+    ipVersion,
+    multiplier,
+  } of cases as {
+    scheme: string;
+    transport: "fetch-stream" | "webtransport" | "webtransport-datagram";
+    protocol: string;
+    ipVersion: 4 | 6;
+    multiplier: number;
+  }[]) {
+    const estimate = estimateCompensation(
+      1e9,
+      protocol,
+      scheme === "https",
+      ipVersion,
+      transport,
+    );
+    expect(estimate.totalMultiplier).toBeCloseTo(multiplier, 9);
+  }
+});

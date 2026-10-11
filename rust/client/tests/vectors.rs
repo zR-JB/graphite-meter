@@ -6,10 +6,17 @@ use graphite_meter_client::{
         format,
         latency::{Deadline, Latency, ProbeOutcome},
         live::LiveRate,
+        wire,
     },
     model::{Direction, Stage},
+    net::ThroughputPath,
 };
-use graphite_meter_proto::{catalog::ServerId, upload::Counters};
+use graphite_meter_proto::{
+    catalog::ServerId,
+    discovery::{Protocol, ThroughputTransport},
+    origin::Origin,
+    upload::Counters,
+};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -221,5 +228,29 @@ fn live_rate() {
             let close = (presented - expected).abs() <= 1e-9 * expected.max(1.0);
             assert!(close && changed == step[3], "{} step {index}: {presented} {changed}", case["name"]);
         }
+    }
+}
+
+#[test]
+fn the_wire_rate_matches_the_browser_s_model() {
+    let vectors = cases(include_str!("../../../api/wirerate.testvectors.json"));
+    for case in vectors["cases"].as_array().unwrap() {
+        let text = |field: &str| case[field].as_str().unwrap();
+        let transport = match text("transport") {
+            "webtransport" => ThroughputTransport::WebTransport,
+            "webtransport-datagram" => ThroughputTransport::WebTransportDatagram,
+            _ => ThroughputTransport::FetchStream,
+        };
+        let protocol = match text("protocol") {
+            "http1" => Protocol::Http1,
+            "http2" => Protocol::Http2,
+            _ => Protocol::Http3,
+        };
+        let origin = Origin::parse(&format!("{}://meter.example", text("scheme"))).unwrap();
+        let path = ThroughputPath { origin, transport, protocol };
+        let ip_version = case["ipVersion"].as_u64().unwrap() as u8;
+        let expected = case["multiplier"].as_f64().unwrap();
+        let got = wire::multiplier(&path, ip_version);
+        assert!((got - expected).abs() < 1e-6, "{case}: {got}");
     }
 }

@@ -66,6 +66,8 @@ pub struct Paths {
     pub stage_limit: Duration,
     /// The latency check's round trip; zero without one.
     pub idle_rtt: Duration,
+    /// The address family, 4 or 6, the server saw the throughput check arrive from.
+    pub ip_version: u8,
 }
 
 impl Prepared {
@@ -147,7 +149,8 @@ async fn check(
     };
     let checked = |path: ThroughputPath| async move { Ok((path.protocol, check_throughput(client, &path).await?)) };
     let throughput = first(&candidates.throughput, checked);
-    let ((control, throughput), latency) = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
+    let joined = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
+    let ((control, (throughput, ip_version)), latency) = joined;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
         throughput,
@@ -155,6 +158,7 @@ async fn check(
         latency,
         idle_rtt: idle_rtt.unwrap_or_default(),
         stage_limit: preflight.capabilities.stage_limit(),
+        ip_version,
     })
 }
 
@@ -173,15 +177,16 @@ where
     result
 }
 
-/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol.
-async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<ThroughputPath, Fault> {
+/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol and
+/// names the address family it arrived from.
+async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(ThroughputPath, u8), Fault> {
     if path.transport == ThroughputTransport::WebTransport {
         let session = client.session(None, &path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
         let opened = timeout(VERIFY, session).await;
         opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
     }
-    let protocol = client.probe(&path.origin, path.protocol).await?;
-    Ok(ThroughputPath { protocol, ..path.clone() })
+    let (protocol, ip_version) = client.probe(&path.origin, path.protocol).await?;
+    Ok((ThroughputPath { protocol, ..path.clone() }, ip_version))
 }
 
 /// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats after 750 ms.

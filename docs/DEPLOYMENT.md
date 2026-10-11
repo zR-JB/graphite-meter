@@ -293,15 +293,16 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 
 ## Native terminal client
 
-`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it opens on the
-server's address, and after a server prepares it keeps that address in `graphite-meter/server` under the user's
-configuration directory, so the next start needs none. Releases attach archives for
+`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it asks for the
+server's address. Nothing is kept unless asked: with **Remember server** on (Tab on that card, or in the settings) it
+keeps the address in `graphite-meter/server` under the user's configuration directory (`~/.config` on Linux), so the
+next start needs none, and turning it off deletes the file. Releases attach archives for
 Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the container image or a
 [source build](#build-from-source).
 
 | Flag                                             | Default                   | Meaning                                                                                         |
 | ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `--url`                                          | the last server prepared  | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
+| `--url`                                          | the remembered server     | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
 | `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
 | `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
 | `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
@@ -331,24 +332,29 @@ terminal and `NO_COLOR` is unset.
 | 2         | Invalid flags or arguments.                                                           |
 | 130 / 143 | A run stopped by SIGINT (or ctrl+c) / SIGTERM; after a finished run they exit like q. |
 
-Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
-group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
-current screen. Every selected server is probed for latency; the run's latency is the first selected server's, and
-if it leaves the test a surviving one takes over. `l` switches the server shown; the printed report keeps the run's.
+The interface is one console: the dial, the latency lanes, the run key over a chip per stage, and a card per stage.
+**s** opens the settings as a sheet at the right (the server and its test servers, connection paths, stages, then
+advanced settings), its foot explaining the focused row; `?` lists every key. Without a server, or when none
+answers, a card asks for the address. Every selected server is probed for latency; the run's latency is the first
+selected server's, and if it leaves the test a surviving one takes over. `l` switches the server shown; the printed
+report keeps the run's. A selected server that fails its check leaves the run, which continues as Partial.
 
-| Key                        | Where              | Action                                                                                                                                                       |
-| -------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ↑/↓ (k/j, tab), ←/→        | setup              | Move; change the focused value.                                                                                                                              |
-| enter, space               | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
-| r, v, s, u, a              | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
-| ←/→, home/end, enter, esc  | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
-| space, enter, esc          | server chooser     | Select, apply, cancel.                                                                                                                                       |
-| enter, space (o), esc      | sign-in            | Open the approval page, cancel.                                                                                                                              |
-| esc                        | running            | Stop test; a second esc confirms.                                                                                                                            |
-| enter (r), esc             | finished           | Run again; back to setup.                                                                                                                                    |
-| d, l                       | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
-| pgup/pgdn, home/end, wheel | any                | Scroll the body; ↑/↓ also scroll during a test and in Details.                                                                                               |
-| ?, q, ctrl+c               | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
+| Key                        | Where           | Action                                                                                                            |
+| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| enter, space, r            | console         | Start test; after one, run again.                                                                                 |
+| esc                        | running         | Stop the test at once.                                                                                            |
+| 1–4                        | console         | Turn latency, download, upload or bidirectional on or off; a click on a stage's chip does the same.               |
+| s, d, ?                    | console         | Settings, details (servers, paths, rates, failures), keys; esc or the same key closes them.                       |
+| l, v                       | console         | With several servers, the latency server shown; check the server again.                                           |
+| ↑/↓ (k/j, tab), ←/→        | settings        | Move; change the focused value.                                                                                   |
+| enter, space, r            | settings        | Edit or open the row (the test servers open their chooser); space switches a row on or off; r starts the test.    |
+| ←/→, home/end, enter, esc  | editing a value | Move the cursor, apply, cancel.                                                                                   |
+| tab                        | connect card    | Remember the server for later starts, or forget it.                                                               |
+| space, enter, esc          | server chooser  | Select, apply, cancel.                                                                                            |
+| enter (o), esc             | sign-in         | Open the approval page, cancel.                                                                                   |
+| pgup/pgdn, home/end, wheel | sheets          | Scroll; in the settings the wheel moves the focus.                                                                |
+| mouse                      | any             | Hover lights what a click presses: the run key, a chip, a cap in the bottom bar, a row, the sign-in link.         |
+| q, ctrl+c                  | any             | Quit. While editing, q is typed. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 

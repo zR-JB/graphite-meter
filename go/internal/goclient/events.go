@@ -132,13 +132,15 @@ func (r Result) HasMedian() bool {
 type LatencyStats struct {
 	ReflectorTiming *ReflectorTimingStats // Nil when no valid timing pairs were observed.
 	P50, P95        time.Duration
-	Jitter          time.Duration
-	Count           int // Successful replies within the measured stage and probe deadline.
-	JitterPairs     int // Zero means variation is unavailable, not zero.
-	Timeouts        int
-	Unresolved      int
-	SendFailures    int
-	Elapsed         time.Duration
+	// What a box plot draws of the replies: the fastest, the 10th and 90th percentiles and the slowest.
+	Min, P10, P90, Max time.Duration
+	Jitter             time.Duration
+	Count              int // Successful replies within the measured stage and probe deadline.
+	JitterPairs        int // Zero means variation is unavailable, not zero.
+	Timeouts           int
+	Unresolved         int
+	SendFailures       int
+	Elapsed            time.Duration
 }
 
 type ReflectorTimingStats struct {

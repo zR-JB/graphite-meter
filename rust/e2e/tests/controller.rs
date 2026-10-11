@@ -45,7 +45,7 @@ async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_with
         (
             &server.http2,
             &["-insecure"],
-            refused("sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)"),
+            refused("sign-in refuses Skip TLS verification (--insecure)"),
         ),
     ];
     let (mut interactive, mut received) = controller(true);

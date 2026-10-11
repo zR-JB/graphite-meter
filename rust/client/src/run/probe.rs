@@ -32,7 +32,7 @@ pub fn window(stage: Stage, cadence: Cadence) -> usize {
     }
 }
 
-/// When probes go and resolve: sends start to start or on each reply with the deadline as backup, a full window
+/// When probes go and resolve: sends start to start or on the reply in flight backed by the deadline, a full window
 /// skips a send, each probe's deadline is fixed as it goes, and after sending stops the rest drain to their deadlines.
 #[derive(Debug)]
 pub struct Schedule {
@@ -91,16 +91,16 @@ impl Schedule {
         Some(ping)
     }
 
-    /// Resolves a reply at `now`: a reply in time, else a timeout, late ones teaching the deadline; replies resend.
+    /// Resolves a reply at `now`: in time, else a timeout, and resends; a late one only teaches the deadline.
     pub fn reply(&mut self, pong: Pong, now: Instant) -> Option<Probe> {
-        if self.cadence == Cadence::ReplyDriven && self.due.is_some() {
-            self.due = Some(now);
-        }
         if let Some(sent) = self.late.remove(&pong.id) {
             self.observe(now.saturating_duration_since(sent));
             return None;
         }
         let (sent, deadline) = self.pending.remove(&pong.id)?;
+        if self.cadence == Cadence::ReplyDriven && self.due.is_some() {
+            self.due = Some(now);
+        }
         let rtt = now.saturating_duration_since(sent);
         self.observe(rtt);
         let outcome = match now < deadline {
@@ -253,20 +253,19 @@ async fn serve(
         let Some(wake) = schedule.wake() else { return Ok(()) };
         tokio::select! {
             biased;
-            Ok(()) = window.changed() => {}
-            () = sleep_until(wake.into()) => {
-                let now = Instant::now();
-                schedule.expire(now).into_iter().for_each(emit);
-                let Some(ping) = schedule.send(now) else { continue };
-                let sent = timeout(SEND_TIMEOUT, bus.send(ping)).await;
-                if let Err(fault) = sent.unwrap_or(Err(Fault::TimedOut("probe send"))) {
-                    schedule.failed(ping).into_iter().for_each(emit);
-                    if !schedule.answered {
-                        return Err(fault);
-                    }
-                }
-            }
+            Ok(()) = window.changed() => continue,
+            () = sleep_until(wake.into()) => {}
             pong = bus.next() => schedule.reply(pong?, Instant::now()).into_iter().for_each(emit),
+        }
+        let now = Instant::now();
+        schedule.expire(now).into_iter().for_each(emit);
+        let Some(ping) = schedule.send(now) else { continue };
+        let sent = timeout(SEND_TIMEOUT, bus.send(ping)).await;
+        if let Err(fault) = sent.unwrap_or(Err(Fault::TimedOut("probe send"))) {
+            schedule.failed(ping).into_iter().for_each(emit);
+            if !schedule.answered {
+                return Err(fault);
+            }
         }
     }
 }

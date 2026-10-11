@@ -1,4 +1,4 @@
-//! What setup's keys change: steps, cycles, flags, resets and the inline editor.
+//! What the settings sheet's keys change: steps, cycles, switches, a reset and the inline editor.
 use super::{
     App, Effect, Overlay, RECHECK,
     keys::{self, Action, Key},
@@ -6,9 +6,8 @@ use super::{
     setup::Row,
 };
 use crate::{
-    config::{Config, MAX_STREAMS, PathChoice, Streams, server_origin},
-    events::Check,
-    report::vocabulary::{self as words, CADENCES},
+    config::{Config, MAX_STREAMS, server_origin},
+    report::vocabulary::CADENCES,
     text::Line,
     tui::theme::Palette,
 };
@@ -27,44 +26,21 @@ const WARMUP: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4)
 
 impl App {
     /// Reacts to `action` on the focused row; a change to what a check depends on rechecks the paths.
-    pub(super) fn setup_key(&mut self, action: Action, key: Key) -> Vec<Effect> {
+    pub(super) fn settings_key(&mut self, action: Action, key: Key) -> Vec<Effect> {
         let (row, step) = (self.row(), key.step());
-        let flag = self.flag(row);
-        let action = if action == Action::Toggle && flag.is_none() { Action::Open } else { action };
         let resetting = std::mem::take(&mut self.setup.resetting);
-        if resetting && (action, row) != (Action::Open, Row::Reset) {
-            self.notice = "Settings kept.".into();
-            return Vec::new();
-        }
-        if action == Action::Start && self.view.check == Check::SignIn {
-            self.notice = "Test cannot start: sign in first. Press v to request a new code.".into();
-            return Vec::new();
-        }
-        if action == Action::Start || (action, row) == (Action::Open, Row::Start) {
-            return self.start();
-        }
         let before = self.config.key();
         match action {
-            Action::Move => {
-                let last = self.rows().len() - 1;
-                self.setup.row = self.setup.row.saturating_add_signed(step).min(last);
-                (self.notice, self.follow) = (String::new(), true);
-            }
+            Action::Move => self.move_focus(step),
+            // Remembering writes or deletes a file, which the loop does.
+            Action::Adjust if row == Row::Remember => return self.remember(step > 0),
+            Action::Toggle | Action::Open if row == Row::Remember => return self.remember(!self.remembering),
             Action::Adjust => self.adjust(row, step),
-            Action::Toggle => self.set_flag(row, flag == Some(false)),
-            Action::Open if row == Row::Reset => self.reset(resetting),
-            Action::Open => self.activate(row),
-            Action::Recheck => self.recheck_soon(),
-            Action::Servers => self.open_chooser(),
-            Action::Available => {
-                (self.config.servers, self.notice) = (self.ready(), "Using the available servers.".into());
-                self.recheck_soon();
-            }
-            Action::Automatic => {
-                self.config.paths = PathChoice::default();
-                self.notice = "Automatic paths applied to every selected server.".into();
-                self.recheck_soon();
-            }
+            Action::Toggle => match self.flag(row) {
+                Some(on) => self.set_flag(row, !on),
+                None => self.activate(row, resetting),
+            },
+            Action::Open => self.activate(row, resetting),
             _ => {}
         }
         if self.config.key() != before {
@@ -73,32 +49,57 @@ impl App {
         Vec::new()
     }
 
+    /// A click on row `index`: the first focuses it, a second does what enter does.
+    pub(super) fn click_row(&mut self, index: usize) -> Vec<Effect> {
+        if self.setup.row != index {
+            (self.setup.row, self.setup.resetting) = (index, false);
+            return Vec::new();
+        }
+        self.settings_key(Action::Toggle, Key::Code(KeyCode::Null))
+    }
+
     /// Checks the paths once the settings rest; without a server there are none to check.
     pub(super) fn recheck_soon(&mut self) {
         self.recheck = self.config.url.as_ref().map(|_| self.now + RECHECK);
     }
 
-    fn reset(&mut self, confirmed: bool) {
-        if !confirmed {
-            self.setup.resetting = true;
-            self.notice = "Press enter again to reset every setting; any other key keeps them.".into();
-            return;
+    pub(super) fn set_flag(&mut self, row: Row, on: bool) {
+        let before = self.config.key();
+        match row {
+            Row::Stage(stage) => {
+                self.config.stages.retain(|kept| *kept != stage);
+                self.config.stages.extend(on.then_some(stage));
+                self.config.stages.sort_unstable();
+            }
+            Row::LoadedLatency => self.config.loaded_latency = on,
+            Row::ForceStreams => self.config.streams.forced = if on { self.config.streams.auto } else { 0 },
+            Row::Insecure => self.config.insecure = on,
+            _ => {}
         }
-        let (url, servers) = (self.config.url.clone(), std::mem::take(&mut self.config.servers));
-        self.config = Config { url, servers, ..Config::default() };
-        self.notice = "Settings reset to defaults.".into();
+        if self.config.key() != before {
+            self.recheck_soon();
+        }
     }
 
-    /// Enter or space on `row`.
-    fn activate(&mut self, row: Row) {
+    /// Enter or space on `row`: open, edit, reset once confirmed, or step a choice.
+    fn activate(&mut self, row: Row, confirmed: bool) {
         match row {
             Row::Servers => self.open_chooser(),
+            Row::Reset if confirmed => {
+                let (url, servers) = (self.config.url.clone(), std::mem::take(&mut self.config.servers));
+                self.config = Config { url, servers, ..Config::default() };
+                self.notify(Line::styled("Settings reset to their defaults.", self.palette.muted));
+            }
+            Row::Reset => self.setup.resetting = true,
             Row::Stage(_) | Row::Warmup => {
                 let value = span(&mut self.config, row).map(|(value, ..)| duration::format(*value));
                 self.edit(row, &value.unwrap_or_default());
             }
             Row::Catalogue => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
-            Row::Streams => self.edit(row, &self.show(row).value.text()),
+            Row::Streams => {
+                let count = stream_count(&mut self.config).to_string();
+                self.edit(row, &count);
+            }
             _ => match self.flag(row) {
                 Some(on) => self.set_flag(row, !on),
                 None => self.cycle(row, 1),
@@ -106,7 +107,7 @@ impl App {
         }
     }
 
-    /// ←/→ on `row`: a duration steps, a flag turns on or off, anything else cycles.
+    /// ←/→ on `row`: a duration steps, a switch turns on or off, anything else cycles.
     fn adjust(&mut self, row: Row, step: isize) {
         if let Some((value, bounds, _)) = span(&mut self.config, row) {
             let unit = match value
@@ -121,7 +122,6 @@ impl App {
             };
             let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bounds.start(), *bounds.end());
-            self.notice = format!("{} {}.", row.label(), words::setting(*value));
         } else if self.flag(row).is_some() {
             self.set_flag(row, step > 0);
         } else {
@@ -135,70 +135,66 @@ impl App {
             (at.map_or(-1, |at| at as isize) + step).rem_euclid(length as isize) as usize
         };
         let fixed = self.fixed_protocol();
-        let config = &mut self.config;
-        self.notice = match row {
-            Row::Advanced => {
-                self.setup.advanced = !self.setup.advanced;
-                return;
-            }
+        match row {
             Row::Throughput => {
-                let label = self.cycle_path(&THROUGHPUT, step);
+                self.cycle_path(&THROUGHPUT, step);
                 if self.fixed_protocol().is_some() {
                     self.config.paths.protocol = None;
                 }
-                format!("Throughput path: {label}.")
             }
-            Row::Latency => format!("Latency path: {}.", self.cycle_path(&LATENCY, step)),
-            Row::Protocol if fixed.is_some() => format!("This path serves {} only.", words::protocol(fixed)),
-            Row::Protocol => {
+            Row::Latency => _ = self.cycle_path(&LATENCY, step),
+            Row::Protocol if fixed.is_none() => {
                 let versions = [None, Some(Protocol::Http1), Some(Protocol::Http2), Some(Protocol::Http3)];
-                let at = versions.iter().position(|version| *version == config.paths.protocol);
-                config.paths.protocol = versions[next(at, versions.len())];
-                format!("HTTP version: {}.", words::protocol(config.paths.protocol))
+                let at = versions
+                    .iter()
+                    .position(|version| *version == self.config.paths.protocol);
+                self.config.paths.protocol = versions[next(at, versions.len())];
             }
             Row::IdleCadence | Row::LoadedCadence => {
+                let config = &mut self.config;
                 let cadence = if row == Row::IdleCadence { &mut config.ping } else { &mut config.loaded_ping };
                 let at = CADENCES.iter().position(|(preset, _)| preset == cadence);
                 *cadence = CADENCES[next(at, CADENCES.len())].0;
-                format!("{}: {}.", row.label(), words::cadence(*cadence))
-            }
-            Row::ForceStreams => {
-                config.streams.forced = if config.streams.forced > 0 { 0 } else { config.streams.auto };
-                streams_notice(config.streams, false)
             }
             Row::Streams => {
-                let count = stream_count(config);
+                let count = stream_count(&mut self.config);
                 *count = count.saturating_add_signed(step).clamp(1, MAX_STREAMS);
-                streams_notice(config.streams, true)
             }
-            _ => return,
-        };
+            _ => {}
+        }
     }
 
     pub(super) fn edit(&mut self, row: Row, value: &str) {
-        let mut editor = Editor { row, text: Vec::new(), cursor: 0, error: None };
-        editor.insert(value);
-        (self.overlay, self.notice) = (Overlay::Edit(editor), "Enter applies, esc cancels.".into());
+        self.editor = Some(Editor::new(row, value));
     }
 
-    /// A key while editing: enter applies, esc cancels, others edit the text.
+    /// A key while typing: enter applies, esc cancels, others edit the text.
     pub(super) fn edit_key(&mut self, key: Key) -> Vec<Effect> {
-        let Overlay::Edit(editor) = &mut self.overlay else { return Vec::new() };
+        if matches!(self.overlay, Overlay::Connect) && key == Key::Code(KeyCode::Tab) {
+            return self.remember(!self.remembering);
+        }
+        let Some(editor) = &mut self.editor else { return Vec::new() };
         match keys::find(keys::EDIT, key, |_| true) {
             Some(Action::Abort) => return vec![Effect::Quit],
-            Some(Action::Cancel) => (self.overlay, self.notice) = (Overlay::None, "Edit canceled.".into()),
+            Some(Action::Cancel) => {
+                self.editor = None;
+                if matches!(self.overlay, Overlay::Connect) {
+                    self.overlay = Overlay::None;
+                }
+            }
             Some(Action::Apply) => {
                 let (row, text, before) = (editor.row, editor.text(), self.config.key());
                 match self.parse(row, text.trim()) {
-                    Ok(notice) => (self.overlay, self.notice) = (Overlay::None, notice),
+                    // The address being connected stays open while its check runs, and closes once it prepared.
+                    Ok(()) if matches!(self.overlay, Overlay::Connect) => self.recheck = Some(self.now),
+                    Ok(()) => self.editor = None,
                     Err(error) => {
-                        if let Overlay::Edit(editor) = &mut self.overlay {
-                            editor.error = Some(error.clone());
+                        if let Some(editor) = &mut self.editor {
+                            editor.error = Some(error);
                         }
-                        self.notice = error;
                     }
                 }
-                if self.config.key() != before {
+                if self.config.key() != before && !matches!(self.overlay, Overlay::Connect) {
                     self.recheck_soon();
                 }
             }
@@ -207,47 +203,40 @@ impl App {
         Vec::new()
     }
 
-    /// Applies `raw` to `row`: the notice it gives, or why it does not apply.
-    fn parse(&mut self, row: Row, raw: &str) -> Result<String, String> {
+    /// Applies `raw` to `row`, or says why it does not apply.
+    fn parse(&mut self, row: Row, raw: &str) -> Result<(), String> {
         let config = &mut self.config;
         if row == Row::Catalogue {
             let url = server_origin(raw)?;
-            if config.url.is_none() {
-                // A first server is entered to be tested, so the next enter starts.
-                self.setup.row = 0;
-            } else if config.url.as_ref() != Some(&url) {
+            if config.url.as_ref() != Some(&url) {
                 config.servers.clear();
             }
-            let notice = format!("Server {url}.");
             config.url = Some(url);
-            return Ok(notice);
+            return Ok(());
         }
         if row == Row::Streams {
             let count = raw.parse().ok().filter(|count| (1..=MAX_STREAMS).contains(count));
-            *stream_count(config) = count.ok_or(format!("streams must be a whole number from 1 to {MAX_STREAMS}"))?;
-            return Ok(streams_notice(config.streams, true));
+            *stream_count(config) = count.ok_or(format!("Streams must be a whole number from 1 to {MAX_STREAMS}."))?;
+            return Ok(());
         }
-        let Some((value, bounds, range)) = span(config, row) else {
-            return Ok(String::new());
-        };
+        let Some((value, bounds, range)) = span(config, row) else { return Ok(()) };
         let seconds = raw.parse::<f64>();
         let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
-        let nanos =
-            duration::parse(&raw).map_err(|_| "use a duration like 800ms, 4s, or 1m; a bare number is seconds")?;
+        let nanos = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
         let parsed = u64::try_from(nanos).map_or(Duration::MAX, Duration::from_nanos);
         if !bounds.contains(&parsed) {
-            return Err(format!("{} must be from {range}", row.label()));
+            return Err(format!("{} must be from {range}.", row.label()));
         }
         *value = parsed;
-        Ok(format!("{} {}.", row.label(), words::setting(parsed)))
+        Ok(())
     }
 }
 
 /// The duration `row` sets, the range it keeps to and that range in words.
 fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>, &'static str)> {
     match row {
-        Row::Stage(stage) => Some((&mut config.durations[stage as usize], STAGE_LIMITS, "1s to 24h")),
-        Row::Warmup => Some((&mut config.warmup, WARMUP, "0s to 4s")),
+        Row::Stage(stage) => Some((&mut config.durations[stage as usize], STAGE_LIMITS, "1 s to 24 h")),
+        Row::Warmup => Some((&mut config.warmup, WARMUP, "0 s to 4 s")),
         _ => None,
     }
 }
@@ -260,15 +249,6 @@ fn stream_count(config: &mut Config) -> &mut usize {
     }
 }
 
-/// What a stream change gives: forced counts, or automatic ones with the HTTP/1.1 maximum when `maximum`.
-fn streams_notice(streams: Streams, maximum: bool) -> String {
-    match (streams.forced, maximum) {
-        (0, true) => format!("Stream count: Automatic · up to {} per direction.", streams.auto),
-        (0, false) => "Stream count: Automatic.".into(),
-        (forced, _) => format!("Stream count: Forced · {forced} per direction."),
-    }
-}
-
 /// The inline editor: up to 4096 characters, a cursor, and the error its last apply found.
 pub(super) struct Editor {
     pub row: Row,
@@ -278,8 +258,18 @@ pub(super) struct Editor {
 }
 
 impl Editor {
+    pub fn new(row: Row, text: &str) -> Self {
+        let mut editor = Self { row, text: Vec::new(), cursor: 0, error: None };
+        editor.insert(text);
+        editor
+    }
+
     pub fn text(&self) -> String {
         self.text.iter().collect()
+    }
+
+    pub fn clear(&mut self) {
+        (self.text, self.cursor, self.error) = (Vec::new(), 0, None);
     }
 
     /// Inserts `text` at the cursor while room is left; tabs and line breaks become spaces.
@@ -300,8 +290,8 @@ impl Editor {
         match key {
             Key::Code(KeyCode::Left) => self.cursor = self.cursor.saturating_sub(1),
             Key::Code(KeyCode::Right) => self.cursor = (self.cursor + 1).min(length),
-            Key::Code(KeyCode::Home) => self.cursor = 0,
-            Key::Code(KeyCode::End) => self.cursor = length,
+            Key::Code(KeyCode::Home) | Key::Ctrl('a') => self.cursor = 0,
+            Key::Code(KeyCode::End) | Key::Ctrl('e') => self.cursor = length,
             Key::Code(KeyCode::Backspace) if self.cursor > 0 => {
                 self.cursor -= 1;
                 self.text.remove(self.cursor);
@@ -309,23 +299,19 @@ impl Editor {
             Key::Code(KeyCode::Delete) if self.cursor < length => {
                 self.text.remove(self.cursor);
             }
+            Key::Ctrl('u') => {
+                self.text.drain(..self.cursor);
+                self.cursor = 0;
+            }
             Key::Code(KeyCode::Char(c)) => return self.insert(&c.to_string()),
             _ => return,
         }
         self.error = None;
     }
 
-    /// The text around the cursor in `width` cells, the cursor a block over its character; `placeholder` greyed while
-    /// the text is empty.
-    pub fn line(&self, width: usize, palette: &Palette, placeholder: &str) -> Line {
+    /// The text around the cursor in `width` cells, the cursor a block over its character.
+    pub fn line(&self, width: usize, palette: &Palette) -> Line {
         let cell = |c: &char| c.width().unwrap_or(0);
-        if self.text.is_empty() && !placeholder.is_empty() {
-            let mut rest = placeholder.chars();
-            let under = rest.next().unwrap_or(' ').to_string();
-            return Line::styled(under, palette.cursor)
-                .and(rest.as_str(), palette.muted)
-                .fit(width);
-        }
         let under = self.text.get(self.cursor).copied().unwrap_or(' ');
         let mut room = width.max(1).saturating_sub(cell(&under));
         let mut start = self.cursor;

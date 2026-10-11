@@ -1,6 +1,9 @@
 //! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
-    measure::live::LiveRate,
+    measure::{
+        latency::{Latency, ProbeOutcome},
+        live::LiveRate,
+    },
     model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
 };
@@ -111,6 +114,8 @@ pub struct Point {
     pub at: Duration,
     /// The mean of the merged values; none for a gap.
     pub value: Option<f64>,
+    /// The merged values' lowest and highest.
+    pub low: f64,
     pub peak: f64,
     /// How many values merged into it.
     pub count: u32,
@@ -128,14 +133,14 @@ impl Series {
         {
             last.count += 1;
             last.value = Some(mean + (value - mean) / f64::from(last.count));
-            last.peak = last.peak.max(value);
+            (last.low, last.peak) = (last.low.min(value), last.peak.max(value));
             return;
         }
         if self.points.len() == POINTS {
             self.coarsen();
         }
         let peak = value.map_or(0.0, |value| value.max(0.0));
-        self.points.push(Point { at, value, peak, count: 1 });
+        self.points.push(Point { at, value, low: peak, peak, count: 1 });
     }
 
     /// Merges each pair of points in place; a gap absorbs its pair.
@@ -144,7 +149,7 @@ impl Series {
         for index in 0..kept {
             let mut point = self.points[2 * index];
             if let Some(next) = self.points.get(2 * index + 1) {
-                point.peak = point.peak.max(next.peak);
+                (point.low, point.peak) = (point.low.min(next.low), point.peak.max(next.peak));
                 point.value = match (point.value, next.value) {
                     (Some(mean), Some(other)) => {
                         let (count, others) = (f64::from(point.count), f64::from(next.count));
@@ -201,8 +206,12 @@ pub struct Run {
     pub throughput: Dir<Series>,
     /// The highest combined rate presented or measured, in bytes per second; scales only grow during a run.
     pub peak: f64,
+    /// The bytes moved so far: the finished stages' counts, and the running one's samples.
+    pub moved: f64,
     /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
+    /// Each server's replies in each stage, as they arrive.
+    pub replies: Vec<(Stage, ServerId, Latency)>,
     pub results: Vec<StageResult>,
     /// Every failure with its stage, a finished stage's as its result records them.
     pub issues: Vec<(Stage, ServerFailure)>,
@@ -286,6 +295,7 @@ impl Run {
                         continue;
                     };
                     self.live[direction].observe(rate * ms / 1e3, ms);
+                    self.moved += rate * ms / 1e3;
                     let presented = self.live[direction].presented();
                     if presented > 0.0 {
                         self.throughput[direction].push(offset + *at, Some(presented));
@@ -294,9 +304,22 @@ impl Run {
                 self.peak = self.peak.max(self.live.down.presented() + self.live.up.presented());
             }
             Event::Probe { server, at, rtt } => {
-                let Some((_, offset)) = self.window() else { return };
-                let rtt = rtt.map(|rtt| rtt.as_secs_f64() * 1e3);
-                self.series(server).push(offset + *at, rtt);
+                let Some((stage, offset)) = self.window() else { return };
+                self.series(server)
+                    .push(offset + *at, rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
+                let outcome = match rtt {
+                    Some(rtt) => ProbeOutcome::Reply { rtt: *rtt, handling: Duration::ZERO },
+                    None => ProbeOutcome::Timeout,
+                };
+                let at = self
+                    .replies
+                    .iter()
+                    .position(|(own, id, _)| *own == stage && id == server);
+                let at = at.unwrap_or_else(|| {
+                    self.replies.push((stage, server.clone(), Latency::default()));
+                    self.replies.len() - 1
+                });
+                self.replies[at].2.record(outcome);
             }
             Event::ServerFailed(failure) => {
                 let stage = self.stage.as_ref().map(|(plan, _)| plan.stage);
@@ -347,6 +370,11 @@ impl Run {
         self.issues.extend(failures);
         self.peak = self.peak.max(result.mean());
         self.results.push(result.clone());
+        let counted = self
+            .results
+            .iter()
+            .flat_map(|result| [result.throughput.down, result.throughput.up]);
+        self.moved = counted.flatten().map(|throughput| throughput.bytes as f64).sum();
         self.focus = focus(&self.results).or(self.focus.take());
         self.stage = None;
     }

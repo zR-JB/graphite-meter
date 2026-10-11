@@ -10,15 +10,12 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-var (
-	tuiFrame string
-	tuiLines []string
-)
+var tuiFrame string
 
 func benchmarkModel(b *testing.B, w, h int) model {
 	b.Helper()
 	cfg := goclient.DefaultConfig()
-	cfg.Stages.Bidirectional = true
+	cfg.BaseURL, cfg.Stages.Bidirectional = "https://meter.example", true
 	m := newModel(cfg)
 	b.Cleanup(m.controller.Close)
 	m.width, m.height = w, h
@@ -68,14 +65,5 @@ func BenchmarkTUIFrame(b *testing.B) {
 				}
 			})
 		}
-	}
-}
-
-func BenchmarkTUIStrip(b *testing.B) {
-	m := benchmarkModel(b, 120, 40)
-	bands := [][]point{m.run.history[goclient.Down].points}
-	b.ReportAllocs()
-	for b.Loop() {
-		tuiLines = m.st.strip(goclient.StageDownload, bands, m.run.stripTop(), 0, 60, 100, 4)
 	}
 }

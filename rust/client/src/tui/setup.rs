@@ -1,32 +1,27 @@
-//! The setup screen: its rows, what each shows, and the setup and servers panels.
+//! The settings sheet's rows: what each shows and says, grouped as the browser's settings are.
 use super::{
-    App, Overlay, console,
-    frame::{beside, highlight, unique},
-    keys::{self, Binding},
-    paths::{LATENCY, Readiness, THROUGHPUT},
+    App, Overlay, Target,
+    frame::Entry,
+    paths::{LATENCY, THROUGHPUT},
 };
 use crate::{
-    config::{MAX_STREAMS, NO_SERVER},
-    events::Check,
     model::Stage,
     report::vocabulary as words,
-    text::{Line, Style, fill},
+    text::{Line, Style},
 };
-use graphite_meter_proto::origin::Scheme;
 use std::time::Duration;
 
-/// A setup row.
+/// A settings row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
-    Start,
     Catalogue,
+    Remember,
     Servers,
     Throughput,
     Protocol,
     Latency,
     Stage(Stage),
     LoadedLatency,
-    Advanced,
     Warmup,
     IdleCadence,
     LoadedCadence,
@@ -36,38 +31,33 @@ pub enum Row {
     Reset,
 }
 
-/// Every row in order: the heading of the group it starts, the row, its label and what the footer says of it.
+/// Every row in order: the heading of the group it starts, the row, its label and what the sheet's foot says of it.
 #[rustfmt::skip]
-const ROWS: [(Option<&str>, Row, &str, &str); 19] = [
-    (Some(""), Row::Start, "Start test", "Runs the checked stages in order. r starts from any row."),
-    (Some("Connection"), Row::Catalogue, "Server address",
-        "The Graphite Meter server to test; it lists its test servers. enter types its address."),
+const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
+    (Some("Server"), Row::Catalogue, "Address",
+        "The Graphite Meter server to test, which lists its test servers. enter edits it; a pasted address works too."),
+    (None, Row::Remember, "Remember server", "Keeps the address on this computer, so the next start needs none. Off deletes it."),
     (None, Row::Servers, "Test servers", "Measured at once; their speeds add up. enter picks up to 4."),
-    (None, Row::Throughput, "Throughput path", "How transfers reach the server"),
-    (None, Row::Protocol, "HTTP version", "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
-    (None, Row::Latency, "Latency path", "How probes travel"),
-    (Some("Stages"), Row::Stage(Stage::Latency), "Latency", "Idle round trips"),
-    (None, Row::Stage(Stage::Download), "Download", "Server to client"),
-    (None, Row::Stage(Stage::Upload), "Upload", "Client to server, receiver-timed"),
-    (None, Row::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once"),
-    (None, Row::LoadedLatency, "Loaded latency", "Round trips during transfers: the latency load adds. space on/off."),
-    (Some(""), Row::Advanced, "Advanced", "Warmup, probe cadence, streams and TLS. ←/→ shows or hides."),
-    (None, Row::Warmup, "Warmup", "Ramp-up before each window, at least ten round trips. ←/→ ±100 ms (0 ms–4 s)."),
-    (None, Row::IdleCadence, "Idle latency cadence", "Probe spacing when idle. ←/→ reply-driven, 80, 250, 600 ms."),
-    (None, Row::LoadedCadence, "Loaded latency cadence",
-        "Probe spacing during transfers. ←/→ reply-driven, 80, 250, 600 ms."),
-    (None, Row::ForceStreams, "Force exact stream count",
-        "Off: each path picks its count. On: the count below everywhere."),
-    (None, Row::Streams, "Maximum H1 streams per direction", "Upper bound on HTTP/1.1 paths. ←/→ ±1 (1–14)."),
-    (None, Row::Insecure, "Skip TLS verify", "Accepts any certificate. Unsafe; sign-in is refused. space on/off."),
-    (None, Row::Reset, "Reset settings", "Restores defaults; keeps the catalogue and servers."),
+    (None, Row::Throughput, "Throughput path", "How transfers reach the server."),
+    (None, Row::Protocol, "HTTP version", "Where the path negotiates. ←→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
+    (None, Row::Latency, "Latency path", "How probes travel."),
+    (Some("Stages"), Row::Stage(Stage::Latency), "Latency", "Idle round trips."),
+    (None, Row::Stage(Stage::Download), "Download", "Server to client."),
+    (None, Row::Stage(Stage::Upload), "Upload", "Client to server, timed by the server as it receives."),
+    (None, Row::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once."),
+    (None, Row::LoadedLatency, "Loaded latency", "Round trips during transfers: the latency the load adds."),
+    (Some("Advanced"), Row::Warmup, "Warmup",
+        "Ramp-up before each window, at least ten round trips. ←→ ±100 ms, from 0 ms to 4 s."),
+    (None, Row::IdleCadence, "Idle probe spacing", "How often idle latency is probed: on each reply, or every 80, 250 or 600 ms."),
+    (None, Row::LoadedCadence, "Loaded probe spacing", "How often latency is probed during transfers."),
+    (None, Row::ForceStreams, "Exact stream count", "Off: each path picks its own. On: the count below everywhere."),
+    (None, Row::Streams, "HTTP/1.1 streams", "The most HTTP/1.1 connections per direction. ←→ ±1, from 1 to 14."),
+    (None, Row::Insecure, "Skip TLS verification", "Accepts any certificate. Unsafe, and sign-in is refused."),
+    (None, Row::Reset, "Reset settings", "Restores the defaults; keeps the server and its test servers."),
 ];
 
-/// What the empty server address and its editor show.
-pub const PLACEHOLDER: &str = "type the server's address";
-
 impl Row {
-    /// The row's label and what the footer says of it.
+    /// The row's label and what the sheet's foot says of it.
     fn text(self) -> (&'static str, &'static str) {
         let row = ROWS.iter().find(|(_, row, ..)| *row == self);
         row.map(|(.., label, help)| (*label, *help)).unwrap_or_default()
@@ -76,128 +66,146 @@ impl Row {
     pub(super) fn label(self) -> &'static str {
         self.text().0
     }
-
-    /// What enter does on the row.
-    fn verb(self) -> &'static str {
-        match self {
-            Self::Servers | Self::Advanced => "open",
-            Self::Reset => "reset",
-            Self::Catalogue | Self::Streams | Self::Stage(_) | Self::Warmup => "edit",
-            Self::LoadedLatency | Self::Insecure => "on/off",
-            _ => "next",
-        }
-    }
-
-    fn adjusts(self) -> bool {
-        !matches!(self, Self::Start | Self::Catalogue | Self::Servers | Self::Reset)
-    }
 }
 
-/// Where setup stands: focused row, shown advanced rows, a reset awaiting confirmation, the chooser awaiting the check.
+/// Where the settings sheet stands: its focused row, a reset awaiting confirmation, the chooser awaiting the check.
 #[derive(Debug, Default)]
 pub struct Setup {
     pub row: usize,
-    pub advanced: bool,
     pub resetting: bool,
     pub chooser: bool,
 }
 
-/// A row as setup shows it.
-pub struct Shown {
-    label: &'static str,
-    pub value: Line,
-    pub help: String,
-}
-
 impl App {
-    pub(super) fn rows(&self) -> Vec<Row> {
-        let rows = ROWS.iter().map(|(_, row, ..)| *row);
-        let advanced = rows.clone().position(|row| row == Row::Advanced).unwrap_or_default();
-        let shown = if self.setup.advanced { ROWS.len() } else { advanced + 1 };
-        rows.take(shown).collect()
-    }
-
     pub(super) fn row(&self) -> Row {
-        let rows = self.rows();
-        rows[self.setup.row.min(rows.len() - 1)]
+        ROWS[self.setup.row.min(ROWS.len() - 1)].1
     }
 
-    pub(super) fn first_stage(&self) -> usize {
-        let stage = self.rows().iter().position(|row| matches!(row, Row::Stage(_)));
-        stage.unwrap_or(0)
+    /// Opens the settings sheet, focused on `row` when given.
+    pub(super) fn open_settings(&mut self, row: Option<Row>) {
+        if let Some(at) = row.and_then(|row| ROWS.iter().position(|(_, own, ..)| *own == row)) {
+            self.setup.row = at;
+        }
+        (self.overlay, self.editor, self.scroll) = (Overlay::Settings, None, 0);
+    }
+
+    /// Moves the focus `step` rows.
+    pub(super) fn move_focus(&mut self, step: isize) {
+        self.setup.row = self.setup.row.saturating_add_signed(step).min(ROWS.len() - 1);
+        self.setup.resetting = false;
     }
 
     pub(super) fn flag(&self, row: Row) -> Option<bool> {
         match row {
             Row::Stage(stage) => Some(self.config.stages.contains(&stage)),
             Row::LoadedLatency => Some(self.config.loaded_latency),
+            Row::ForceStreams => Some(self.config.streams.forced > 0),
             Row::Insecure => Some(self.config.insecure),
+            Row::Remember => Some(self.remembering),
             _ => None,
         }
     }
 
-    pub(super) fn set_flag(&mut self, row: Row, on: bool) {
-        match row {
-            Row::Stage(stage) => {
-                self.config.stages.retain(|kept| *kept != stage);
-                self.config.stages.extend(on.then_some(stage));
-                self.config.stages.sort_unstable();
-            }
-            Row::LoadedLatency => self.config.loaded_latency = on,
-            _ => self.config.insecure = on,
-        }
-        self.notice = format!("{} {}.", row.label(), if on { "on" } else { "off" });
-    }
-
-    pub(super) fn show(&self, row: Row) -> Shown {
+    /// A row's value as the sheet shows it, greyed while it does nothing.
+    fn value(&self, row: Row) -> Line {
         let (config, palette) = (&self.config, &self.palette);
-        let (mut label, help) = row.text();
-        let (mut help, mut inert) = (help.to_owned(), false);
-        let (checkbox, text) = match row {
-            Row::Start | Row::Reset => (None, String::new()),
-            Row::Catalogue => {
-                inert = config.url.is_none();
-                (None, config.url.as_ref().map_or(PLACEHOLDER.into(), ToString::to_string))
-            }
+        let mut inert = false;
+        let text = match row {
+            Row::Catalogue => config
+                .url
+                .as_ref()
+                .map_or_else(|| "none yet".into(), ToString::to_string),
             Row::Servers => {
                 inert = self.view.catalogue.len() < 2;
-                (None, self.selection())
+                self.selection()
             }
-            Row::Throughput => (None, self.path_value(&THROUGHPUT, &mut help)),
-            Row::Latency => (None, self.path_value(&LATENCY, &mut help)),
+            Row::Throughput => self.path_value(&THROUGHPUT),
+            Row::Latency => self.path_value(&LATENCY),
             Row::Protocol => match self.fixed_protocol() {
                 Some(fixed) => {
-                    (help, inert) = ("Fixed by this path; pick another path to change it.".into(), true);
-                    (None, words::protocol(Some(fixed)).into())
+                    inert = true;
+                    words::protocol(Some(fixed)).into()
                 }
-                None => (None, words::protocol(config.paths.protocol).into()),
+                None => words::protocol(config.paths.protocol).into(),
             },
             Row::Stage(stage) => {
                 inert = !config.stages.contains(&stage);
-                help.push_str(". ←/→ step it (1 s–24 h; a server may allow less), space on/off.");
-                (Some(!inert), words::setting(config.duration(stage)))
+                words::setting(config.duration(stage))
             }
-            Row::LoadedLatency => (Some(config.loaded_latency), String::new()),
-            Row::Advanced => (None, if self.setup.advanced { "▾ shown" } else { "▸ hidden" }.into()),
-            Row::Warmup => (None, words::setting(config.warmup)),
-            Row::IdleCadence => (None, words::cadence(config.ping)),
-            Row::LoadedCadence => (None, words::cadence(config.loaded_ping)),
-            Row::ForceStreams => (Some(config.streams.forced > 0), String::new()),
-            Row::Streams if config.streams.forced > 0 => {
-                label = "Streams per server and direction";
-                help = format!("Exact streams per server and direction. ←/→ ±1 (1–{MAX_STREAMS}).");
-                (None, config.streams.forced.to_string())
-            }
-            Row::Streams => (None, config.streams.auto.to_string()),
-            Row::Insecure => (Some(config.insecure), String::new()),
+            Row::Warmup => words::setting(config.warmup),
+            Row::IdleCadence => words::cadence(config.ping),
+            Row::LoadedCadence => words::cadence(config.loaded_ping),
+            Row::Streams if config.streams.forced > 0 => config.streams.forced.to_string(),
+            Row::Streams => config.streams.auto.to_string(),
+            Row::Reset if self.setup.resetting => return Line::styled("enter again resets", palette.warn),
+            Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
         };
         let style = if inert { palette.muted } else { palette.value };
-        let value = match checkbox {
-            Some(on) if text.is_empty() => self.checkbox(on),
-            Some(on) => self.checkbox(on).and(format!(" {text}"), style),
+        match self.flag(row) {
+            Some(on) if text.is_empty() => self.switch_mark(on),
+            Some(on) => Line::styled(text, style)
+                .and("  ", Style::default())
+                .with(self.switch_mark(on)),
             None => Line::styled(text, style),
-        };
-        Shown { label, value, help }
+        }
+    }
+
+    /// A switch: on in ink, off as a quiet ring.
+    pub(super) fn switch_mark(&self, on: bool) -> Line {
+        match on {
+            true => Line::styled("● on ", self.palette.accent),
+            false => Line::styled("○ off", self.palette.muted),
+        }
+    }
+
+    /// The sheet's entries and the focused row's index among them.
+    pub(super) fn settings_entries(&self) -> (Vec<Entry>, usize) {
+        let (mut entries, mut focus) = (Vec::new(), 0);
+        for (index, &(heading, row, label, _)) in ROWS.iter().enumerate() {
+            if let Some(heading) = heading {
+                entries.push(Entry::Heading(heading.into()));
+            }
+            if index == self.setup.row {
+                focus = entries.len();
+            }
+            let label = match row {
+                Row::Streams if self.config.streams.forced > 0 => "Streams per direction",
+                _ => label,
+            };
+            let value = match &self.editor {
+                Some(editor) if editor.row == row => editor.line(40, &self.palette),
+                _ => self.value(row),
+            };
+            let label = Line::styled(label, self.palette.text);
+            entries.push(Entry::Item { label, value, target: Some(Target::Row(index)) });
+        }
+        (entries, focus)
+    }
+
+    /// What the sheet's foot says: the editor's error, or what the focused row does.
+    pub(super) fn settings_footer(&self) -> Vec<Line> {
+        if let Some(error) = self.editor.as_ref().and_then(|editor| editor.error.clone()) {
+            return vec![Line::styled(error, self.palette.warn)];
+        }
+        let row = self.row();
+        let mut help = row.text().1.to_owned();
+        match row {
+            Row::Throughput | Row::Latency => {
+                let kind = if row == Row::Throughput {
+                    self.choices(&THROUGHPUT).len()
+                } else {
+                    self.choices(&LATENCY).len()
+                };
+                help.push_str(&format!(" ←→ picks one of {kind}."));
+            }
+            Row::Protocol if self.fixed_protocol().is_some() => {
+                help = "Fixed by this path; pick another path to change it.".into()
+            }
+            Row::Stage(_) => help.push_str(" ←→ steps its time, space switches it."),
+            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => help.push_str(" space switches it."),
+            _ => {}
+        }
+        vec![Line::styled(help, self.palette.muted)]
     }
 
     /// The selected servers' names and how many are ready.
@@ -207,7 +215,7 @@ impl App {
         let summary = match () {
             _ if servers == 0 => String::new(),
             _ if self.checking() => " · checking".into(),
-            _ if ready == servers => " · ready".into(),
+            _ if ready == servers => String::new(),
             _ => format!(" · {ready} of {servers} ready"),
         };
         match names.is_empty() {
@@ -216,173 +224,10 @@ impl App {
         }
     }
 
-    /// The footer's keys for the focused row.
-    pub(super) fn hints(&self) -> Vec<Binding> {
-        let row = self.row();
-        if row == Row::Start {
-            return vec![keys::OPEN.does("start test"), keys::MOVE, keys::HELP, keys::QUIT];
-        }
-        let mut hints = vec![keys::START, keys::MOVE];
-        hints.extend(row.adjusts().then_some(keys::ADJUST));
-        hints.extend(matches!(row, Row::Stage(_)).then_some(keys::TOGGLE));
-        hints.extend([keys::OPEN.does(row.verb()), keys::HELP, keys::QUIT]);
-        hints
-    }
-
-    /// The setup list, and the line of its focused row.
-    pub(super) fn setup_list(&self, width: usize) -> (Vec<Line>, usize) {
-        let rows = self.rows();
-        let shown: Vec<_> = rows.iter().map(|&row| self.show(row)).collect();
-        let labels = shown.iter().map(|shown| crate::text::width(shown.label)).max();
-        let label_width = labels.unwrap_or(0).min((width / 2).max(12));
-        let (mut lines, mut focus) = (Vec::new(), 0);
-        for (index, ((heading, row, ..), shown)) in ROWS.iter().zip(&shown).enumerate() {
-            if let Some(heading) = heading {
-                lines.extend((index > 0).then(Line::default));
-                lines.extend((!heading.is_empty()).then(|| Line::styled(*heading, self.palette.heading)));
-            }
-            let focused = index == self.setup.row;
-            if *row == Row::Start {
-                let [above, key, below] = self.start_key(focused);
-                lines.push(above);
-                focus = if focused { lines.len() } else { focus };
-                lines.extend([Line::plain(if focused { "› " } else { "  " }).with(key), below]);
-                continue;
-            }
-            focus = if focused { lines.len() } else { focus };
-            lines.push(self.setting(*row, shown, focused, label_width, width));
-        }
-        (lines, focus)
-    }
-
-    /// The run screen's key at one row between half-block caps, sized to its label, its plan beside it.
-    fn start_key(&self, focused: bool) -> [Line; 3] {
-        let enabled = self.config.validate().is_ok() && self.view.check != Check::SignIn;
-        let [_, key, _] =
-            console::key(&self.palette, "▶ Start test", "", if focused { "enter" } else { "r" }, 34, enabled);
-        let plate = if enabled { self.palette.plate } else { self.palette.plate_off };
-        let edge = Style { fg: plate.bg, ..Style::default() };
-        let cells = key.width();
-        let cap = |glyph: &str| Line::plain("  ").and(glyph.repeat(cells), edge);
-        [cap("▄"), key.and("  ", Style::default()).with(self.start_note()), cap("▀")]
-    }
-
-    fn setting(&self, row: Row, shown: &Shown, focused: bool, label_width: usize, width: usize) -> Line {
-        let palette = &self.palette;
-        let label = Line::styled(shown.label, palette.text);
-        let label = label.fit(label_width).pad(label_width).and("  ", Style::default());
-        let line = match (row, &self.overlay) {
-            (_, Overlay::Edit(editor)) if editor.row == row => {
-                let placeholder = if row == Row::Catalogue { PLACEHOLDER } else { "" };
-                label.with(editor.line(width.saturating_sub(label_width + 5), palette, placeholder))
-            }
-            _ if focused => highlight(label.with(shown.value.clone()).fit(width.saturating_sub(2)), palette.selected),
-            _ => label.with(shown.value.clone()),
-        };
-        Line::plain(if focused { "› " } else { "  " }).with(line)
-    }
-
-    /// Beside Start test: why the settings cannot run, the check in progress, or the plan's length.
-    fn start_note(&self) -> Line {
-        let palette = &self.palette;
-        let https = self.config.url.as_ref().is_some_and(|url| url.scheme == Scheme::Https);
-        match self.config.validate() {
-            Err(error) if error == NO_SERVER => Line::styled("needs a server", palette.muted),
-            Err(error) => Line::styled(error, palette.warn),
-            Ok(()) if self.view.check == Check::SignIn => {
-                Line::styled("sign in first; v requests a new code", palette.warn)
-            }
-            Ok(()) if self.checking() => {
-                Line::styled(self.spinner(), palette.accent).and(" checking paths", palette.muted)
-            }
-            Ok(()) if self.could_not_start() && https => Line::styled(
-                "check the address, or type http:// for a server without HTTPS; v checks again",
-                palette.warn,
-            ),
-            Ok(()) if self.could_not_start() => {
-                Line::styled("check the server's address; v checks again", palette.warn)
-            }
-            Ok(()) => Line::styled(format!("{} stages, {}", self.config.plan().len(), self.plan_time()), palette.muted),
-        }
-    }
-
     /// How long the configured stages take with their warmups.
     pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
         let total: Duration = plan.iter().map(|(_, duration)| *duration + self.config.warmup).sum();
-        format!("about {}", words::setting(Duration::from_secs(total.as_secs_f64().round() as u64)))
+        words::setting(Duration::from_secs(total.as_secs_f64().round() as u64))
     }
-
-    /// The setup and servers panels, side by side when wide enough, and the focused row's line.
-    pub(super) fn setup_body(&self, width: usize) -> (Vec<Line>, usize) {
-        let side = columns(width);
-        let (left, right) = side.unwrap_or((width, width));
-        let (rows, focus) = self.setup_list(left.saturating_sub(4));
-        let servers = self.servers_panel(right.saturating_sub(4));
-        let height = if side.is_some() { rows.len().max(servers.len()) + 2 } else { 0 };
-        let (rows, servers) = (self.panel("Setup", rows, left, height), self.panel("Servers", servers, right, height));
-        let lines = if side.is_some() { beside(rows, servers) } else { [rows, servers].concat() };
-        (lines, focus + 1)
-    }
-
-    /// Each selected server's readiness, why the check failed, and the paths it found.
-    fn servers_panel(&self, width: usize) -> Vec<Line> {
-        let (palette, servers) = (&self.palette, &self.view.servers);
-        if self.config.url.is_none() {
-            let sentence = "Its test servers and the paths to them show here once it has an address.";
-            return fill(sentence, width.max(4))
-                .into_iter()
-                .map(|line| Line::styled(line, palette.muted))
-                .collect();
-        }
-        let mut lines = Vec::new();
-        if self.checking() && servers.is_empty() {
-            lines.push(self.checking_line());
-        }
-        let warn = |text: &str, indent: &'static str| {
-            let filled = fill(text, width.saturating_sub(indent.len()).max(4)).into_iter();
-            filled.map(move |line| Line::plain(indent).and(line, palette.warn))
-        };
-        let names = self.labels();
-        let name_width = names.iter().map(|name| crate::text::width(name)).max().unwrap_or(0);
-        for (server, name) in servers.iter().zip(names) {
-            let state = self.readiness(server);
-            let glyph = match state {
-                Readiness::Ready => Line::styled("●", palette.ok),
-                Readiness::Checking => Line::styled(self.spinner(), palette.accent),
-                Readiness::Stale | Readiness::SignIn => Line::styled("○", palette.warn),
-                Readiness::Failed => Line::styled("✗", palette.err),
-            };
-            let name = Line::plain(name).pad(name_width);
-            let named = glyph.and(" ", Style::default()).with(name);
-            lines.push(named.and("  ", Style::default()).and(state.label(), palette.text));
-            if let (Readiness::Failed, Err(failure)) = (state, &server.path) {
-                lines.extend(warn(&failure.text, "  "));
-            }
-        }
-        if let Check::Failed(failure) = &self.view.check {
-            lines.extend(warn(&failure.text, ""));
-        }
-        if self.can_use_available() {
-            lines.push(Line::styled("u Use available servers", palette.muted));
-        }
-        let style = if self.fresh() { palette.value } else { palette.muted };
-        let summary = |labels: Vec<String>| match labels.is_empty() {
-            true => Line::styled(words::MISSING, palette.muted),
-            false => Line::styled(unique(labels).join(" / "), style),
-        };
-        let paths = servers.iter().filter_map(|server| server.path.as_ref().ok());
-        let throughput = paths.clone().map(|paths| words::throughput_path(&paths.throughput));
-        let latency = paths.filter_map(|paths| paths.latency.as_ref().map(words::latency_path));
-        lines.push(Line::default());
-        lines.push(Line::styled("Throughput ", palette.text).with(summary(throughput.collect())));
-        lines.push(Line::styled("Latency    ", palette.text).with(summary(latency.collect())));
-        lines
-    }
-}
-
-/// The left and right panels' widths, side by side from 100 cells.
-pub(super) fn columns(width: usize) -> Option<(usize, usize)> {
-    let left = width.saturating_sub(1) * 3 / 5;
-    (width >= 100).then(|| (left, width - 1 - left))
 }

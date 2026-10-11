@@ -1,4 +1,4 @@
-//! Key bindings: one table per screen, which both dispatch and the `?` help read.
+//! Key bindings: one table per context, which dispatch, the bottom bar and the keys sheet all read.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// A pressed key as bindings name it; shift only changes the character.
@@ -30,29 +30,26 @@ impl Key {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Start,
+    Stop,
+    Settings,
+    Details,
+    Help,
+    /// 1–4 switch a stage on or off.
+    Stage,
+    Latency,
+    Recheck,
     Move,
     Adjust,
     Toggle,
     Open,
-    Browse,
-    Recheck,
-    Servers,
-    Available,
-    Automatic,
+    Close,
+    Scroll,
+    Page,
     Select,
     Apply,
     Cancel,
     Cursor,
-    Stop,
-    Confirm,
-    Setup,
-    Again,
-    Details,
-    Close,
-    Latency,
-    Scroll,
-    Page,
-    Help,
+    Browse,
     Quit,
     Abort,
 }
@@ -61,7 +58,7 @@ pub enum Action {
 pub struct Binding {
     pub keys: &'static [Key],
     pub action: Action,
-    /// The key and what it does as help names them; none keeps the binding out of help.
+    /// The key and what it does as the bar and the keys sheet name them; none keeps the binding out of both.
     pub help: Option<(&'static str, &'static str)>,
 }
 
@@ -78,6 +75,11 @@ impl Binding {
 
     const fn hidden(self) -> Self {
         Self { help: None, ..self }
+    }
+
+    const fn on(self, keys: &'static [Key], key: &'static str) -> Self {
+        let Some((_, does)) = self.help else { return Self { keys, ..self } };
+        Self { keys, help: Some((key, does)), ..self }
     }
 }
 
@@ -99,53 +101,50 @@ const ENTER: Key = code(KeyCode::Enter);
 const ESC: Key = code(KeyCode::Esc);
 const SPACE: Key = char(' ');
 
-pub const START: Binding = Binding::new(&[char('r')], Action::Start, "r", "start test");
-pub const MOVE: Binding = Binding::new(
+pub const START: Binding = Binding::new(&[ENTER, SPACE, char('r')], Action::Start, "enter", "start test");
+pub const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
+pub const SETTINGS: Binding = Binding::new(&[char('s')], Action::Settings, "s", "settings");
+pub const DETAILS: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
+pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
+const STAGES: Binding =
+    Binding::new(&[char('1'), char('2'), char('3'), char('4')], Action::Stage, "1–4", "stages on/off");
+const LATENCY: Binding = Binding::new(&[char('l')], Action::Latency, "l", "latency server");
+const RECHECK: Binding = Binding::new(&[char('v')], Action::Recheck, "v", "check the server again");
+const MOVE: Binding = Binding::new(
     &[UP, DOWN, char('k'), char('j'), code(KeyCode::Tab), code(KeyCode::BackTab)],
     Action::Move,
-    "↑/↓",
+    "↑↓",
     "move",
 );
-pub const ADJUST: Binding = Binding::new(&[LEFT, RIGHT], Action::Adjust, "←/→", "change");
-pub const TOGGLE: Binding = Binding::new(&[SPACE], Action::Toggle, "space", "on/off");
-pub const OPEN: Binding = Binding::new(&[ENTER, SPACE], Action::Open, "enter", "open");
-const RECHECK: Binding = Binding::new(&[char('v')], Action::Recheck, "v", "recheck paths");
-const SERVERS: Binding = Binding::new(&[char('s')], Action::Servers, "s", "test servers");
-const AVAILABLE: Binding = Binding::new(&[char('u')], Action::Available, "u", "use available servers");
-const AUTOMATIC: Binding = Binding::new(&[char('a')], Action::Automatic, "a", "automatic paths");
+const ADJUST: Binding = Binding::new(&[LEFT, RIGHT], Action::Adjust, "←→", "change");
+const TOGGLE: Binding = Binding::new(&[SPACE], Action::Toggle, "space", "on/off");
+const OPEN: Binding = Binding::new(&[ENTER], Action::Open, "enter", "edit");
+pub const CLOSE: Binding = Binding::new(&[ESC], Action::Close, "esc", "close");
+const SCROLL: Binding = Binding::new(&[UP, DOWN, char('k'), char('j')], Action::Scroll, "↑↓", "scroll");
+const PAGE: Binding =
+    Binding::new(&[code(KeyCode::PageUp), code(KeyCode::PageDown), HOME, END], Action::Page, "pgdn", "page");
 const SELECT: Binding = Binding::new(&[SPACE], Action::Select, "space", "select");
 const APPLY: Binding = Binding::new(&[ENTER], Action::Apply, "enter", "apply");
 const CANCEL: Binding = Binding::new(&[ESC], Action::Cancel, "esc", "cancel");
-const BROWSE: Binding = Binding::new(&[ENTER, SPACE, char('o')], Action::Browse, "enter/space", "open page");
-const CURSOR: Binding = Binding::new(&[LEFT, RIGHT, HOME, END], Action::Cursor, "←/→", "move");
-const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
-const CONFIRM_STOP: Binding = Binding::new(&[ESC], Action::Confirm, "esc", "confirm stop");
-const SETUP_AGAIN: Binding = Binding::new(&[ESC], Action::Setup, "esc", "setup");
-const AGAIN: Binding = Binding::new(&[ENTER, char('r')], Action::Again, "enter", "run again");
-const DETAILS_OPEN: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
-const CLOSE: Binding = Binding::new(&[ESC, char('d')], Action::Close, "esc", "close");
-const LATENCY: Binding = Binding::new(&[char('l')], Action::Latency, "l", "latency server");
-const SCROLL: Binding = Binding::new(&[UP, DOWN, char('k'), char('j')], Action::Scroll, "↑/↓", "scroll");
-pub const PAGE: Binding =
-    Binding::new(&[code(KeyCode::PageUp), code(KeyCode::PageDown), HOME, END], Action::Page, "pgdn", "more");
-pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
+const CURSOR: Binding = Binding::new(&[LEFT, RIGHT, HOME, END], Action::Cursor, "←→", "move");
+const BROWSE: Binding = Binding::new(&[ENTER, char('o')], Action::Browse, "enter", "open the sign-in page");
 pub const QUIT: Binding = Binding::new(&[char('q')], Action::Quit, "q", "quit");
-const ABORT: Binding = Binding::new(&[Key::Ctrl('c')], Action::Abort, "ctrl+c", "quit");
+const ABORT: Binding = Binding::new(&[Key::Ctrl('c')], Action::Abort, "ctrl+c", "quit at once");
 
+pub const CONSOLE: &[Binding] = &[START, STOP, SETTINGS, DETAILS, STAGES, LATENCY, RECHECK, HELP, QUIT, ABORT.hidden()];
 #[rustfmt::skip]
-pub const SETUP: &[Binding] = &[
-    START, MOVE, ADJUST, TOGGLE, OPEN.does("start or open"), RECHECK, SERVERS, AVAILABLE, AUTOMATIC, PAGE, HELP, QUIT,
+pub const SETTINGS_SHEET: &[Binding] = &[
+    MOVE, ADJUST, TOGGLE, OPEN, START.on(&[char('r')], "r"), CLOSE, CLOSE.on(&[char('s')], "s").hidden(), HELP, QUIT,
     ABORT.hidden(),
 ];
-pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT];
-pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, HELP.hidden(), ABORT.hidden()];
-pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL, QUIT, PAGE.hidden(), HELP.hidden(), ABORT.hidden()];
 #[rustfmt::skip]
-pub const RUN: &[Binding] = &[
-    STOP, AGAIN, SETUP_AGAIN, DETAILS_OPEN, LATENCY, SCROLL.hidden(), PAGE.hidden(), HELP, QUIT, ABORT.hidden(),
+pub const DETAILS_SHEET: &[Binding] = &[
+    SCROLL, PAGE, CLOSE, CLOSE.on(&[char('d')], "d").hidden(), HELP, QUIT, ABORT.hidden(),
 ];
-pub const DETAILS: &[Binding] = &[SCROLL, CLOSE, QUIT, PAGE.hidden(), HELP.hidden(), ABORT.hidden()];
-pub const CONFIRM: &[Binding] = &[CONFIRM_STOP, QUIT, ABORT.hidden()];
+pub const HELP_SHEET: &[Binding] = &[SCROLL, CLOSE, CLOSE.on(&[char('?')], "?").hidden(), QUIT, ABORT.hidden()];
+pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, ABORT.hidden()];
+pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL.does("cancel sign-in"), QUIT, ABORT.hidden()];
+pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
 
 /// The first binding of `table` for `key` whose action is `offered`.
 pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Option<Action> {

@@ -1,0 +1,17 @@
+{
+  "comment": "Wire bytes per payload byte at a 1,500 B MTU, the central estimate of client/src/lib/compensation.ts for a fetch stream or WebTransport path over IPv4 or IPv6. Generated from the TypeScript; the Go and Rust terminal clients must match within 1e-6.",
+  "cases": [
+    {"scheme": "http", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 4, "multiplier": 1.062154696},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 4, "multiplier": 1.063580929},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http2", "ipVersion": 4, "multiplier": 1.064165172},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http3", "ipVersion": 4, "multiplier": 1.064684678},
+    {"scheme": "https", "transport": "webtransport", "protocol": "http3", "ipVersion": 4, "multiplier": 1.064684678},
+    {"scheme": "https", "transport": "webtransport-datagram", "protocol": "http3", "ipVersion": 4, "multiplier": 1.064684678},
+    {"scheme": "http", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 6, "multiplier": 1.077030812},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 6, "multiplier": 1.078477021},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http2", "ipVersion": 6, "multiplier": 1.079069446},
+    {"scheme": "https", "transport": "fetch-stream", "protocol": "http3", "ipVersion": 6, "multiplier": 1.079627621},
+    {"scheme": "https", "transport": "webtransport", "protocol": "http3", "ipVersion": 6, "multiplier": 1.079627621},
+    {"scheme": "https", "transport": "webtransport-datagram", "protocol": "http3", "ipVersion": 6, "multiplier": 1.079627621}
+  ]
+}

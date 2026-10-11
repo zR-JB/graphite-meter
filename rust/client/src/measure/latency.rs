@@ -49,6 +49,16 @@ pub struct Summary {
     pub jitter: Option<Duration>,
     pub jitter_pairs: usize,
     pub timing: Option<Timing>,
+    pub spread: Option<Spread>,
+}
+
+/// What a box plot draws of the replies: the fastest, the 10th and 90th percentiles and the slowest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spread {
+    pub min: Duration,
+    pub p10: Duration,
+    pub p90: Duration,
+    pub max: Duration,
 }
 
 /// Mean raw round trip and server handling over the same replies.
@@ -100,14 +110,21 @@ impl Latency {
                 _ => lower,
             }
         });
+        let percentile = |share: usize| rank((share * replies).div_ceil(100).max(1));
         Summary {
             p50,
-            p95: (replies > 0).then(|| rank((95 * replies).div_ceil(100))),
+            p95: (replies > 0).then(|| percentile(95)),
             jitter: (pairs > 0).then(|| mean(self.variation, pairs)),
             timing: (self.timed > 0).then(|| Timing {
                 pairs: self.timed,
                 rtt: mean(self.timed_rtt, self.timed),
                 handling: mean(self.handling, self.timed),
+            }),
+            spread: (replies > 0).then(|| Spread {
+                min: rank(1),
+                p10: percentile(10),
+                p90: percentile(90),
+                max: rank(replies),
             }),
             ..self.counts
         }

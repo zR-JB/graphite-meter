@@ -2,12 +2,13 @@
 use super::{App, Effect, Exit, FRAME, chrome::Chrome, dialogs, theme};
 use crate::{config::Config, controller::Controller, events::Events, text::Profile};
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, EventStream},
+    event::{DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream, MouseEventKind},
     execute,
     terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
 use graphite_meter_net::Pool;
+use graphite_meter_proto::origin::Origin;
 use ratatui_core::terminal::Terminal;
 use ratatui_crossterm::CrosstermBackend;
 use std::{
@@ -20,14 +21,19 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Runs the interface until it quits, fed events, input, ticks and `signals`' statuses. Input paints at once; measurement
 /// events wait for the next frame, so a burst of them costs one draw.
-pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: UnboundedReceiver<u8>) -> io::Result<Exit> {
+pub async fn interactive(
+    config: Config,
+    kept: Option<Origin>,
+    runtimes: Arc<Pool>,
+    mut signals: UnboundedReceiver<u8>,
+) -> io::Result<Exit> {
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
     let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
-    let (mut app, mut shown) = (App::new(config, profile, Instant::now()), None);
+    let (mut app, mut shown) = (App::new(config, kept, profile, Instant::now()), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut changed = true;
@@ -38,8 +44,13 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: Unbou
                 (app.event(&event, Instant::now()), false)
             }
             input = input.next() => {
-                changed = true;
-                (input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now())), true)
+                // A pointer move repaints only when it reaches another pressable region.
+                let moved = matches!(&input, Some(Input::Mouse(mouse)) if matches!(mouse.kind, MouseEventKind::Moved));
+                let hovered = app.hovered();
+                let effects = input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now()));
+                let paint = !moved || app.hovered() != hovered;
+                changed |= paint;
+                (effects, paint)
             }
             _ = frames.tick() => {
                 let effects = app.tick(Instant::now());
@@ -54,9 +65,15 @@ pub async fn interactive(config: Config, runtimes: Arc<Pool>, mut signals: Unbou
             match effect {
                 Effect::Command(command) => controller.command(*command),
                 Effect::OpenBrowser(url) => dialogs::browse(&url),
+                // A few bytes on local disk, written in order, so turning remembering off never loses to an earlier on.
                 Effect::Remember(origin) => {
                     if let Some(path) = crate::config::kept_server() {
-                        tokio::task::spawn_blocking(move || crate::config::remember(&path, &origin));
+                        crate::config::remember(&path, &origin);
+                    }
+                }
+                Effect::Forget => {
+                    if let Some(path) = crate::config::kept_server() {
+                        crate::config::forget(&path);
                     }
                 }
                 Effect::Quit => return Ok(app.exit()),
@@ -86,10 +103,11 @@ fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<Chrome>) -> io:
     Ok(())
 }
 
-/// Pushes the window title and reports mouse buttons and the wheel, without plain moves, in SGR form.
-const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1002h\x1b[?1006h";
+/// Pushes the window title and reports every pointer move, button and wheel turn in SGR form, so what the pointer rests
+/// on lights up.
+const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1003h\x1b[?1006h";
 /// Undoes `ENTER`, putting back the pushed title.
-const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1002l\x1b[23;0t";
+const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1003l\x1b[23;0t";
 
 /// The terminal raw on the alternate screen with mouse, pastes and a background query; dropping it restores it all.
 struct Session {

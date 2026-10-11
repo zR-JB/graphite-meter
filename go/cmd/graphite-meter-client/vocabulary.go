@@ -62,7 +62,6 @@ type pathState int
 const (
 	pathReady pathState = iota
 	pathChecking
-	pathStale
 	pathFailed
 	pathSignIn
 )
@@ -70,7 +69,6 @@ const (
 var pathLabels = map[pathState]string{
 	pathReady:    "Ready",
 	pathChecking: "Checking",
-	pathStale:    "Recheck needed",
 	pathFailed:   "Failed",
 	pathSignIn:   "Sign in",
 }

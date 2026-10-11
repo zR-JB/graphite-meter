@@ -70,7 +70,8 @@ reached at, and the password with a key to show it. While the server checks it, 
 
 ## Native terminal client
 
-The TUI runs the same measurement against the same servers and ends with the results and a timeline.
+The TUI runs the same measurement against the same servers on one console: the dial, the latency lanes, the run key
+over its stage chips, and a card per stage.
 
 <img src="assets/tui.png" alt="Native terminal client after a complete latency, download and upload run" width="1080">
 
@@ -82,7 +83,8 @@ Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-w
 down and 0.86 Gbit/s up with 1.5 ms. Each queues up to 4 ms of data, so latency under load comes from real
 queueing. The three servers of the multi-server run each have their own path (1.3, 1.1 and 1.0 Gbit/s down with 1,
 1.5 and 2 ms), together about the laptop's, and the partial run stops the Mini PC's server during download. The
-terminal capture is the TUI's own 120 × 40 screen on the workstation's path, replayed in a terminal emulator. Each
-capture is shown as a plain screen; the README's hero sets two in a laptop and a phone outline. The sign-in pages
-come from a local server with password sign-in, at the phone's size.
+terminal capture is a source build of the Go TUI with its default stages at 120 × 40 in VTE at 2×, over TLS on
+loopback, which runs far faster than any of those paths. Each capture is shown as a plain screen; the README's hero
+sets two in a laptop and a phone outline. The sign-in pages come from a local server with password sign-in, at the
+phone's size.
 To measure your own network, follow [deployment and configuration](DEPLOYMENT.md).

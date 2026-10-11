@@ -1,49 +1,130 @@
 package main
 
 import (
-	"slices"
-
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
 
+// action is what a key or a cap does.
+type action int
+
+const (
+	actNone action = iota
+	actStart
+	actStop
+	actSettings
+	actDetails
+	actHelp
+	// actStage switches a stage on or off: 1–4.
+	actStage
+	actLatency
+	actRecheck
+	actMove
+	actAdjust
+	actToggle
+	actOpen
+	actClose
+	actScroll
+	actPage
+	actSelect
+	actApply
+	actCancel
+	actQuit
+)
+
 type keymap struct {
-	rows, adjust, change, toggle, start, recheck, servers, automatic, available key.Binding
-	openSignIn, cancelSignIn                                                    key.Binding
-	stop, confirmStop, setup, runAgain, latencyServer, details, scroll          key.Binding
-	page, close                                                                 key.Binding
-	toggleServer, apply, discard, cursor, help, quit, abort                     key.Binding
+	start, stop, settings, details, help, stages, latency, recheck  key.Binding
+	rows, adjust, toggle, open, close, closeSettings, closeDetails  key.Binding
+	closeHelp, scroll, page, toggleServer, apply, discard, cursor   key.Binding
+	openSignIn, cancelSignIn, startSettings, quit, abort, toggleRow key.Binding
 }
 
 var keys = keymap{
-	rows: key.NewBinding(key.WithKeys("up", "down", "k", "j", "tab", "shift+tab"),
-		key.WithHelp("↑/↓", "move")),
-	adjust:        key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change")),
-	change:        key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "open")),
-	toggle:        key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "on/off")),
-	start:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start test")),
-	recheck:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "recheck paths")),
-	servers:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "test servers")),
-	automatic:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "automatic paths")),
-	available:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "use available servers")),
-	openSignIn:    key.NewBinding(key.WithKeys("enter", "space", "o"), key.WithHelp("enter/space", "open page")),
-	cancelSignIn:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	start:         key.NewBinding(key.WithKeys("enter", "space", "r"), key.WithHelp("enter", "start test")),
 	stop:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop test")),
-	confirmStop:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "confirm stop")),
-	setup:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "setup")),
-	runAgain:      key.NewBinding(key.WithKeys("enter", "r"), key.WithHelp("enter", "run again")),
-	latencyServer: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "latency server")),
+	settings:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
 	details:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "details")),
-	scroll:        key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "scroll")),
-	page:          key.NewBinding(key.WithKeys("pgup", "pgdown", "home", "end"), key.WithHelp("pgdn", "more")),
+	help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "keys")),
+	stages:        key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1–4", "stages on/off")),
+	latency:       key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "latency server")),
+	recheck:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "check the server again")),
+	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j", "tab", "shift+tab"), key.WithHelp("↑↓", "move")),
+	adjust:        key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "change")),
+	toggle:        key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "on/off")),
+	toggleRow:     key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "on/off")),
+	open:          key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit")),
 	close:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+	closeSettings: key.NewBinding(key.WithKeys("s")),
+	closeDetails:  key.NewBinding(key.WithKeys("d")),
+	closeHelp:     key.NewBinding(key.WithKeys("?")),
+	startSettings: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start test")),
+	scroll:        key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑↓", "scroll")),
+	page:          key.NewBinding(key.WithKeys("pgup", "pgdown", "home", "end"), key.WithHelp("pgdn", "page")),
 	toggleServer:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
 	apply:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 	discard:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	cursor:        key.NewBinding(key.WithKeys("left", "right", "home", "end"), key.WithHelp("←/→", "move")),
-	help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "keys")),
+	cursor:        key.NewBinding(key.WithKeys("left", "right", "home", "end"), key.WithHelp("←→", "move")),
+	openSignIn:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter", "open the sign-in page")),
+	cancelSignIn:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel sign-in")),
 	quit:          key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-	abort:         key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+	abort:         key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit at once")),
+}
+
+// binding is a key and what it does in one context; the bar and the keys sheet read the tables they make up.
+type binding struct {
+	binding key.Binding
+	action  action
+}
+
+var (
+	consoleKeys = []binding{{keys.start, actStart}, {keys.stop, actStop}, {keys.settings, actSettings},
+		{keys.details, actDetails}, {keys.stages, actStage}, {keys.latency, actLatency}, {keys.recheck, actRecheck},
+		{keys.help, actHelp}, {keys.quit, actQuit}}
+	settingsKeys = []binding{{keys.rows, actMove}, {keys.adjust, actAdjust}, {keys.toggleRow, actToggle},
+		{keys.open, actOpen}, {keys.startSettings, actStart}, {keys.close, actClose}, {keys.closeSettings, actClose},
+		{keys.help, actHelp}, {keys.quit, actQuit}}
+	detailsKeys = []binding{{keys.scroll, actScroll}, {keys.page, actPage}, {keys.close, actClose},
+		{keys.closeDetails, actClose}, {keys.help, actHelp}, {keys.quit, actQuit}}
+	helpKeys    = []binding{{keys.scroll, actScroll}, {keys.close, actClose}, {keys.closeHelp, actHelp}, {keys.quit, actQuit}}
+	chooserKeys = []binding{{keys.rows, actMove}, {keys.toggleServer, actSelect}, {keys.apply, actApply},
+		{keys.discard, actCancel}}
+	signInKeys = []binding{{keys.openSignIn, actNone}, {keys.cancelSignIn, actNone}, {keys.quit, actQuit}}
+	editKeys   = []binding{{keys.cursor, actNone}, {keys.apply, actApply}, {keys.discard, actCancel}}
+)
+
+// table is the key table of what is on top.
+func (m model) table() []binding {
+	switch {
+	case m.edit != nil:
+		return editKeys
+	case m.auth != nil:
+		return signInKeys
+	}
+	switch m.overlay {
+	case overlaySettings:
+		return settingsKeys
+	case overlayDetails:
+		return detailsKeys
+	case overlayHelp:
+		return helpKeys
+	case overlayChooser:
+		return chooserKeys
+	}
+	return consoleKeys
+}
+
+func (m model) offers(a action) bool {
+	switch a {
+	case actStop:
+		return m.running()
+	case actStart, actStage:
+		return !m.running()
+	case actLatency:
+		return m.multipleRunServers()
+	case actRecheck:
+		return m.cfg.BaseURL != "" && !m.running()
+	}
+	return true
 }
 
 func reverse(msg tea.KeyPressMsg) bool {
@@ -52,62 +133,4 @@ func reverse(msg tea.KeyPressMsg) bool {
 		return true
 	}
 	return false
-}
-
-func (m model) ShortHelp() []key.Binding {
-	switch {
-	case m.popup == popupDetails:
-		return []key.Binding{keys.scroll, keys.close, keys.quit}
-	case m.popup == popupServers:
-		return []key.Binding{keys.rows, keys.toggleServer, keys.apply, keys.discard, keys.quit}
-	case m.edit != nil:
-		return []key.Binding{keys.cursor, keys.apply, keys.discard, keys.abort}
-	case m.stopPrompt:
-		return []key.Binding{keys.confirmStop, keys.quit}
-	case m.running() || m.finished():
-		bindings := []key.Binding{keys.stop}
-		if m.finished() {
-			bindings = []key.Binding{keys.runAgain, keys.setup}
-		}
-		bindings = append(bindings, keys.details)
-		if m.multipleRunServers() {
-			bindings = append(bindings, keys.latencyServer)
-		}
-		return append(bindings, keys.help, keys.quit)
-	case m.auth != nil:
-		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.quit}
-	}
-	row := m.currentRow()
-	if row == startRow {
-		return []key.Binding{hint(keys.change, "start test"), keys.rows, keys.help, keys.quit}
-	}
-	bindings := []key.Binding{keys.start, keys.rows}
-	if row.cycle != nil || row.span != nil || row.flag != nil {
-		bindings = append(bindings, keys.adjust)
-	}
-	if row.flag != nil && row.span != nil {
-		bindings = append(bindings, keys.toggle)
-	}
-	return append(bindings, hint(keys.change, enterVerb(row)), keys.help, keys.quit)
-}
-
-func hint(b key.Binding, desc string) key.Binding {
-	b.SetHelp(b.Help().Key, desc)
-	return b
-}
-
-func (m model) FullHelp() [][]key.Binding {
-	all := m.ShortHelp()
-	if m.run == nil && m.auth == nil && m.edit == nil && m.popup == popupNone {
-		all = []key.Binding{keys.start, keys.rows, keys.adjust, keys.toggle, hint(keys.change, "start or open"),
-			keys.recheck}
-		if m.canChooseServers() {
-			all = append(all, keys.servers)
-		}
-		if m.canUseAvailable() {
-			all = append(all, keys.available)
-		}
-		all = append(all, keys.automatic, keys.page, keys.help, keys.quit)
-	}
-	return slices.Collect(slices.Chunk(all, 3))
 }
