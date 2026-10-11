@@ -99,7 +99,7 @@
       aside: `IPv${clientIpVersion}, ${clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`,
     };
   });
-  // The address shows only while pointed at, focused or pinned with a tap, so a shared screen does not carry it.
+  // The address shows only once its key is pressed, so neither a passing pointer nor a shared screen reveals it.
   let revealed = $state(false);
 
   function capabilities(role: PathRole): string[] | string {
@@ -250,6 +250,7 @@
           onclick={() => (revealed = !revealed)}
           ><span class="secret-mask" aria-hidden="true">••••••••</span><span
             class="secret-value">{value}</span
+          ><span class="secret-key" aria-hidden="true"><Icon name="eye" /></span
           >{#if !revealed}<span class="sr-only">Show</span>{/if}</button
         >{:else}{value}{/if}{#if aside}<span class="aside">{aside}</span>{/if}
     </dd>
@@ -446,31 +447,40 @@
   .copy > .hidden {
     visibility: hidden;
   }
-  /* Mask and address share one cell, so revealing never reflows the row. */
+  /* Mask and address share one cell, so revealing never reflows the row; the eye beside them is the key. */
   .secret {
     display: inline-grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    column-gap: var(--space-2);
     border-radius: var(--r-chrome);
     font: inherit;
     text-align: start;
   }
-  .secret > span:not(.sr-only) {
+  .secret > :is(.secret-mask, .secret-value) {
     grid-area: 1 / 1;
   }
   .secret-mask {
     color: var(--text-soft);
     letter-spacing: var(--track-wide);
   }
-  .secret:not([aria-pressed="true"], :focus-visible) .secret-value,
-  .secret:is([aria-pressed="true"], :focus-visible) .secret-mask {
+  .secret:not([aria-pressed="true"]) .secret-value,
+  .secret[aria-pressed="true"] .secret-mask {
     visibility: hidden;
   }
-  /* A finger's hover sticks after a tap; only a pointer that hovers reveals by resting. */
-  @media (hover: hover) {
-    .secret:hover .secret-value {
-      visibility: visible;
-    }
-    .secret:hover .secret-mask {
-      visibility: hidden;
-    }
+  .secret-key {
+    display: inline-flex;
+    color: var(--text-soft);
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  .secret-key :global(svg) {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
+  }
+  .secret:is(:hover, [aria-pressed="true"]) .secret-key {
+    color: var(--text);
+  }
+  .secret:not([aria-pressed="true"]) .secret-key :global(.strike) {
+    display: none;
   }
 </style>

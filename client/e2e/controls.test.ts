@@ -400,12 +400,11 @@ test("two docked sheets open and close beside the stage in every frame", async (
   expect(overlaps).toEqual([]);
 });
 
-test("Details hides this browser's address until it is pointed at or pinned", async (page) => {
+test("Details hides this browser's address until its key is pressed, whatever the pointer rests on", async (page) => {
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in; the address is pinned once it rests.
-  // A busy runner can still be sliding the sheet in; the address is pinned once it rests. Scroll-driven
+  // A busy runner can still be sliding the sheet in; the address is pressed once it rests. Scroll-driven
   // animations never finish, so only timed ones are waited for.
   await page.evaluate(() =>
     Promise.all(
@@ -423,7 +422,13 @@ test("Details hides this browser's address until it is pointed at or pinned", as
         getComputedStyle(el.querySelector(".secret-value")!).visibility,
     );
   expect(await shown()).toBe("hidden");
+  await address.hover();
+  await Bun.sleep(1_000);
+  expect(await shown()).toBe("hidden");
   await address.click();
   await expect(address).toHaveAttribute("aria-pressed", "true");
   expect(await shown()).toBe("visible");
+  await address.click();
+  await expect(address).toHaveAttribute("aria-pressed", "false");
+  expect(await shown()).toBe("hidden");
 });

@@ -191,7 +191,7 @@ export const JARGON = {
   pathEvidence: "Evidence\nThe HTTP version each side observed",
   uploadFeed: "Upload feed\nHow the server reports upload bytes back",
   clientAddress:
-    "Your address\nAs the server saw it: proxy header or socket\nHidden until you point at it or tap it",
+    "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
   serverLoad:
     "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   serverInstance: "Server\nEngine version; the instance changes on restart",
