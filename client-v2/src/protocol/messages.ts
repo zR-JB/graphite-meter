@@ -55,6 +55,7 @@ export type ProbeCommand =
       maxInFlight: number;
     }
   | { type: "measure" }
+  | { type: "pace"; intervalMs: number }
   | { type: "stop" };
 
 /** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ; the owner translates them in place. */

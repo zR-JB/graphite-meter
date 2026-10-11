@@ -22,6 +22,7 @@ let send: Send | null = null;
 onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
   else if (data.type === "measure") prober.measure();
+  else if (data.type === "pace") prober.pace(data.intervalMs);
   else prober.stop();
 };
 

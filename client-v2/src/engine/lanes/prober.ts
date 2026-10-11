@@ -158,6 +158,12 @@ export class Prober {
     this.#settle(now);
   }
 
+  /** A fixed cadence from the next send on, spaced from the last one; probes in flight keep their deadlines. */
+  pace(intervalMs: number): void {
+    this.options.intervalMs = intervalMs;
+    this.wake();
+  }
+
   /** Stops sending; measured probes in flight drain to their own deadlines, each at most 10 s away. Every stop is
       acknowledged. */
   stop(): void {

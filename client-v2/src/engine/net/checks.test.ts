@@ -11,7 +11,7 @@ let net: ReturnType<typeof fakeNet> | undefined;
 afterEach(() => net?.restore());
 
 /** Discovers a server offering `throughput` and `latency`, whose probes answer as `probe` says, then `run`s its check
-    of `choice`: what it proved or the words its row shows, and when it settled. */
+    of `choice`: what it returned or the words its row shows, and when it settled. */
 async function check<P>(
   run: (context: CheckContext, known: Discovery, selection: Selection, signal: AbortSignal) => Promise<P>,
   choice: string,
@@ -29,7 +29,7 @@ async function check<P>(
   const signal = new AbortController().signal;
   const known = await discover(context, signal);
   const outcome = run(context, known, parseSelection(choice), signal).then(
-    (path) => ({ at: fake.now(), path }),
+    (value) => ({ at: fake.now(), value }),
     (error: unknown) => ({ at: fake.now(), failure: failureOf(error, entry.name) }),
   );
   await fake.advance(10_000);
@@ -47,7 +47,7 @@ test("HTTP/3 is probed until the browser uses it; past its 2 s bound the last an
     const result = await check(checkThroughput, "protocol:http3", offer, (_, attempt) =>
       hops.length ? { body: PROBE, afterMs: 300, hop: hops[Math.min(attempt, hops.length - 1)] } : "hang",
     );
-    const shown = "path" in result ? result.path.browserProtocol : result.failure.message;
+    const shown = "value" in result ? result.value.browserProtocol : result.failure.message;
     expect({ at: result.at, shown }, hops.join()).toEqual({ at, shown: outcome });
   }
 });
@@ -58,7 +58,9 @@ test("Automatic gives each candidate its own budget and stops at a sign-in refus
   const fallback = await check(checkThroughput, "auto", offer, (url) =>
     url.port ? { body: PROBE, hop: "h2" } : "hang",
   );
-  expect("path" in fallback && { at: fallback.at, ...fallback.path.verifiedFor, id: fallback.path.target.id }).toEqual({
+  expect(
+    "value" in fallback && { at: fallback.at, ...fallback.value.verifiedFor, id: fallback.value.target.id },
+  ).toEqual({
     at: 2_500,
     selection: "auto",
     head: page.origin,
@@ -74,8 +76,11 @@ test("Automatic gives each candidate its own budget and stops at a sign-in refus
 
 test("a latency path needs its probe and a bus answering within 3.5 s; five replies end its check", async () => {
   const offer = { throughput: [], latency: [ws(".")] };
-  const replies = await check(checkLatency, "auto", offer, () => ({ body: PROBE }));
-  expect("path" in replies && { at: replies.at, rttMs: replies.path.rttMs }).toEqual({ at: 490, rttMs: 10 });
+  const buses = new FakeBuses();
+  const replies = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), buses);
+  expect("value" in replies && { at: replies.at, rttMs: replies.value.path.rttMs }).toEqual({ at: 490, rttMs: 10 });
+  // A bus nobody adopted closes with its check's budget.
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
   const silent = new FakeBuses();
   silent.rttMs = null;
   const quiet = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), silent);

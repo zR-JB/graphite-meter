@@ -101,16 +101,18 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
 export interface Bus {
   options: ProbeChannelOptions;
   events: ProbeChannelEvents;
+  /** The spacing it was opened with, or paced to since. */
+  intervalMs: number | null;
   disposed: boolean;
 }
 
-/** Latency buses that answer `rttMs` after measuring starts and once per interval after, or never while `rttMs` is
-    null; every bus opened stays listed. */
+/** Latency buses that answer `rttMs` after measuring starts and once per interval after the next reply, or never
+    while `rttMs` is null; every bus opened stays listed. */
 export class FakeBuses {
   rttMs: number | null = 10;
   readonly opened: Bus[] = [];
   readonly open: OpenProbeChannel = (options, events) => {
-    const bus: Bus = { options, events, disposed: false };
+    const bus: Bus = { options, events, intervalMs: options.intervalMs, disposed: false };
     this.opened.push(bus);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const reply = (waitMs: number, first: boolean) => {
@@ -119,13 +121,14 @@ export class FakeBuses {
         if (rttMs === null) return;
         if (first) events.ready();
         events.outcomes([{ rttMs, timedOut: false, handlingMs: null, observedAt: performance.now(), inWindow: true }]);
-        reply(options.intervalMs ?? rttMs, false);
+        reply(bus.intervalMs ?? rttMs, false);
       }, waitMs);
     };
     return {
       measure: () => {
         if (this.rttMs !== null) reply(this.rttMs, true);
       },
+      pace: (intervalMs) => (bus.intervalMs = intervalMs),
       stop: async () => clearTimeout(timer),
       dispose() {
         bus.disposed = true;

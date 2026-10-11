@@ -19,7 +19,7 @@ afterEach(() => {
 
 /** A selected server's connection on the fake network, and every readiness its view painted: what it shows once the
     task that changed it is done. */
-function connect(entry: CatalogEntry, { auth = publicAuth(entry) as ServerAuth, latency = false } = {}) {
+function connect(entry: CatalogEntry, { auth = publicAuth(entry) as ServerAuth, latency = false, shown = true } = {}) {
   const buses = new FakeBuses();
   const idle: ProbeOutcome[] = [];
   const env = {
@@ -30,7 +30,7 @@ function connect(entry: CatalogEntry, { auth = publicAuth(entry) as ServerAuth, 
     active: signal(true),
     online: signal(true),
     metadata: signal(false),
-    latencyServer: signal<string | null>(entry.id),
+    latencyServer: signal(shown ? entry.id : null),
     selections: { throughput: signal(parseSelection("auto")), latency: signal(parseSelection("auto")) },
     latencyNeeded: signal(latency),
     checkpoints: signal(false),
@@ -127,7 +127,7 @@ test("a server selected again keeps evidence up to 2 min old and proves older ev
   }
 });
 
-test("the shown latency server's idle monitor replaces liveness reads until its bus is lost", async () => {
+test("the bus that proved the shown server's latency becomes its idle monitor, and every other bus closes", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"
       ? { body: preflight([h(".", "http1")], [ws(".")]) }
@@ -135,22 +135,50 @@ test("the shown latency server's idle monitor replaces liveness reads until its 
   );
   const { connection, env, buses, idle } = connect(self, { latency: true });
   await net.advance(30_000);
-  const monitor = buses.opened[1]!;
-  expect(monitor.options.intervalMs).toBe(1_000);
+  // One bus served the check at its 120 ms cadence, then the idle console at 1 s, in place of liveness reads.
+  const monitor = buses.opened[0]!;
+  expect(buses.opened).toEqual([monitor]);
+  expect({ opened: monitor.options.intervalMs, paced: monitor.intervalMs, disposed: monitor.disposed }).toEqual({
+    opened: 120,
+    paced: 1_000,
+    disposed: false,
+  });
   expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, connectivity: "connected" });
   expect(idle.length).toBe(30);
   expect(net.sent("/preflight")).toEqual([0]);
-  // A bus that went quiet leaves its path to be proven again, and a new monitor follows.
+  // A bus that went quiet leaves its path to be proven again, and the new check's bus monitors next.
   monitor.events.stalled("connection lost");
   expect(connection.view.peek().connectivity).toBe("offline");
   await net.advance(1_000);
-  expect(monitor.disposed).toBe(true);
+  expect(buses.opened.map(({ disposed, intervalMs }) => [disposed, intervalMs])).toEqual([
+    [true, 1_000],
+    [false, 1_000],
+  ]);
   expect(net.sent("/probe")).toEqual([0, 0, 30_000]);
-  expect(buses.opened.length).toBe(4);
   expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, connectivity: "connected" });
   // A server no longer shown is no longer monitored, and its discovery is re-read again.
   env.latencyServer.set(null);
-  expect(buses.opened.at(-1)?.disposed).toBe(true);
+  expect(buses.opened[1]!.disposed).toBe(true);
   await net.advance(5_000);
   expect(net.sent("/preflight")).toEqual([0, 30_000, 35_000]);
+});
+
+test("a latency check's bus closes with the check when it is cut short or no monitor wants it", async () => {
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const unshown = connect(self, { latency: true, shown: false });
+  await net.advance(1_000);
+  expect(unshown.connection.view.peek().readiness).toBe("verified");
+  expect(unshown.buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
+  const cut = connect(self, { latency: true });
+  await net.advance(200);
+  cut.env.selections.latency.set(parseSelection("transport:websocket"));
+  expect(cut.buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
+  await net.advance(1_000);
+  expect(cut.buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
+  cut.connection.dispose();
+  expect(cut.buses.opened.map(({ disposed }) => disposed)).toEqual([true, true]);
 });

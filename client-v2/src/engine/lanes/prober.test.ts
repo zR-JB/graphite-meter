@@ -87,6 +87,20 @@ test("a fixed cadence spaces sends from the actual sends: a fast reply never pul
   expect(slow.sent).toEqual([0, 200, 400, 600, 800, 1_000]);
 });
 
+test("a new pace spaces the next send from the last one, and the probe in flight still resolves", () => {
+  const b = opened(bus(120, 2, (id) => (id === 1 ? 100 : 10)));
+  b.run(150);
+  b.prober.pace(1_000);
+  b.run(2_500);
+  expect(b.sent).toEqual([0, 120, 1_120, 2_120]);
+  expect(b.outcomes().map(({ rttMs, timedOut }) => [rttMs, timedOut])).toEqual([
+    [10, false],
+    [100, false],
+    [10, false],
+    [10, false],
+  ]);
+});
+
 test("a reply-driven chain steps on its latest probe, its backup covers a late reply, and a full window sleeps", () => {
   // The backup waits 250 ms before any reply; after a 10 ms one, 10 + 4 × 5 = 30 ms.
   const late = opened(bus(null, 4, (id) => (id === 1 ? 100 : 10)));

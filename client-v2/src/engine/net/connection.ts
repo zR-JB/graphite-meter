@@ -9,6 +9,7 @@ import type {
   OpenProbeChannel,
   PreparedServer,
   ProbeChannel,
+  ProbeChannelEvents,
   ProbeOutcome,
   Role,
   ServerAuth,
@@ -22,6 +23,7 @@ import {
   failureOf,
   withinBudget,
   type CheckContext,
+  type CheckedBus,
   type Failure,
 } from "./checks";
 import type { Limiter } from "./limiter";
@@ -160,6 +162,8 @@ function connect(
     fn(latency, "latency");
   };
   let disposed = false;
+  /** The bus the latest latency check proved, for the idle monitor to take over. */
+  let handed: CheckedBus | null = null;
 
   const loopback = isLoopback(new URL(entry.url).hostname);
   const offline = computed(() => !loopback && !env.online());
@@ -317,7 +321,7 @@ function connect(
     known: Discovery,
     selection: Selection,
     owner: AbortSignal | undefined,
-    run: (signal: AbortSignal) => Promise<P>,
+    run: (signal: AbortSignal) => Promise<{ path: P; bus: CheckedBus | null }>,
   ): Promise<void> {
     const text = selectionText(selection);
     return job(
@@ -326,7 +330,12 @@ function connect(
       ROLE_BUDGET_MS,
       owner,
       run,
-      (path) => check.outcome.set({ state: "verified", path }),
+      ({ path, bus }) => {
+        check.outcome.set({ state: "verified", path });
+        // The idle monitor takes over the bus that proved its path, in this flush; no other bus outlives its check.
+        if (bus && watchedPath.peek() === path) handed = bus;
+        else bus?.dispose();
+      },
       (error) => {
         const previous = check.outcome.peek();
         const same =
@@ -343,7 +352,10 @@ function connect(
     const known = discovery.peek()!;
     const selection = env.selections[role].peek();
     return role === "throughput"
-      ? verify(throughput, known, selection, owner, (signal) => checkThroughput(context, known, selection, signal))
+      ? verify(throughput, known, selection, owner, async (signal) => ({
+          path: await checkThroughput(context, known, selection, signal),
+          bus: null,
+        }))
       : verify(latency, known, selection, owner, (signal) => checkLatency(context, known, selection, signal));
   }
 
@@ -477,6 +489,8 @@ function connect(
   effect(() => {
     const path = watchedPath();
     if (!path) return;
+    const checked = handed;
+    handed = null;
     let current = true;
     let channel: ProbeChannel | undefined;
     onCleanup(() => {
@@ -488,30 +502,36 @@ function connect(
       queueMicrotask(() => {
         if (current) invalidate(["latency"]);
       });
+    const events: ProbeChannelEvents = {
+      ready() {},
+      outcomes(outcomes) {
+        if (!current) return;
+        env.idleLatency(entry.id, outcomes);
+        // Timeouts alone prove the bus runs, not that the server answers.
+        if (outcomes.some(({ timedOut }) => !timedOut)) connectivity.set("connected");
+      },
+      interrupted() {},
+      // So is a bus that went quiet: a peer that died leaves Ready.
+      stalled() {
+        if (current) connectivity.set("offline");
+        lost();
+      },
+      resumed() {},
+      signInRequired() {
+        queueMicrotask(() => {
+          if (current) requireSignIn();
+        });
+      },
+    };
+    if (checked) {
+      channel = checked.adopt(events);
+      channel.pace(IDLE_INTERVAL_MS);
+      return;
+    }
     try {
       channel = env.openProbeChannel(
         { target: path.target, auth, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
-        {
-          ready() {},
-          outcomes(outcomes) {
-            if (!current) return;
-            env.idleLatency(entry.id, outcomes);
-            // Timeouts alone prove the bus runs, not that the server answers.
-            if (outcomes.some(({ timedOut }) => !timedOut)) connectivity.set("connected");
-          },
-          interrupted() {},
-          // So is a bus that went quiet: a peer that died leaves Ready.
-          stalled() {
-            if (current) connectivity.set("offline");
-            lost();
-          },
-          resumed() {},
-          signInRequired() {
-            queueMicrotask(() => {
-              if (current) requireSignIn();
-            });
-          },
-        },
+        events,
       );
       // Every idle probe counts; there is no warmup.
       channel.measure();

@@ -276,6 +276,8 @@ export interface ProbeChannelEvents {
 export interface ProbeChannel {
   /** Outcomes count from now on; probes sent before never enter a population. */
   measure(): void;
+  /** Probes at this fixed start-to-start spacing from the next send on; probes in flight keep their deadlines. */
+  pace(intervalMs: number): void;
   /** Stops sending; probes in flight drain to their own deadlines (at most 10 s) and resolve outside the window. */
   stop(): Promise<void>;
   /** Immediate release; `incomplete` first reports the probes it cuts off. */

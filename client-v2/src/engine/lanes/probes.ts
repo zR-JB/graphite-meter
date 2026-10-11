@@ -89,6 +89,9 @@ export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, m
       measured = true;
       worker.postMessage({ type: "measure" } satisfies ProbeCommand);
     },
+    pace(intervalMs) {
+      if (state === "probing") worker.postMessage({ type: "pace", intervalMs } satisfies ProbeCommand);
+    },
     stop() {
       return (stopping ??= (async () => {
         if (state !== "probing") return;
