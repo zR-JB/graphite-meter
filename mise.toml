@@ -9,7 +9,7 @@ python = "3.14.8"
 go = "1.27.2"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:astral-sh/ty" = "0.0.86"
-"aqua:rhysd/actionlint" = "1.7.12"
+"github:jdx/jactionlint" = "2.1.0"
 "aqua:zizmorcore/zizmor" = "1.30.1"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
@@ -64,7 +64,7 @@ run = "python3 scripts/ci/toolchains.py sync"
 [tasks.workflow-check]
 description = "Lint workflows and validate trust boundaries"
 run = [
-  "actionlint -shellcheck= -pyflakes=",
+  "jactionlint --no-online --shellcheck= --pyflakes=",
   "zizmor --offline --no-progress --config .github/zizmor.yml .github",
   "python3 scripts/ci/workflow_policy.py",
 ]
@@ -281,16 +281,21 @@ shell = "bash -e -o pipefail -c"
 description = "Run Chromium against one local fleet of a Rust server executable"
 usage = '''
 arg "<server>" help="The server executable, such as rust/target/release/graphite-meter-server"
-arg "[group]" default="all" help="all; heavy: performance.test.ts alone; rest: every other file"
+arg "[group]" default="all" help="all; reversals or heavy: halves of performance.test.ts; rest-1 or rest-2: halves of the other files"
 '''
 env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = '''
 export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
+# The surface reversals run serially under CPU throttling, so performance.test.ts splits by test name; the other
+# files split into two shards of equal time by e2e/timings.json, which --update-timings refreshes.
+reversals='rapid surface reversals release resources at (1600|390)px'
 case "$usage_group" in
   all) set -- ;;
-  heavy) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 ;;
-  rest) set -- bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' ;;
-  *) echo "group must be all, heavy or rest" >&2; exit 2 ;;
+  reversals) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 -t "$reversals" ;;
+  heavy) set -- bun test ./e2e/performance.test.ts --no-orphans --timeout=60000 -t "^(?!$reversals)" ;;
+  rest-[12]) set -- bun test ./e2e --parallel=3 --no-orphans --timeout=60000 '--path-ignore-patterns=**/performance.test.ts' \
+    "--shard=${usage_group#rest-}/2" --timings=e2e/timings.json ;;
+  *) echo "group must be all, reversals, heavy, rest-1 or rest-2" >&2; exit 2 ;;
 esac
 cd client
 bun run build:e2e-harness

@@ -22,6 +22,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
@@ -62,7 +63,8 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
     with tempfile.TemporaryDirectory(prefix=".rust-notices-", dir=cargo) as notices, \
             tempfile.TemporaryDirectory(prefix=".rust-package-", dir=output) as staging:
         legal, stage = Path(notices), Path(staging)
-        executable = collect(Build("graphite-meter-client", target, "release", version, legal))
+        executable = collect(Build("graphite-meter-client", target, "release", version, legal,
+                                   target_dir=cargo / "package" / target))
         if platform_name == host_platform():
             probe(executable, version, platform_name)
         texts = {"LICENSE": ROOT / "LICENSE", "COPYRIGHT": ROOT / "COPYRIGHT",
@@ -137,8 +139,11 @@ def main() -> None:
         if args.check:
             check(args.version, output)
             return
-        for platform_name, target in load().tui.items():
-            package(args.version, platform_name, target, output)
+        # Each platform builds in its own target directory, so their single-threaded LTO links run at once.
+        with ThreadPoolExecutor() as pool:
+            builds = [pool.submit(package, args.version, name, target, output) for name, target in load().tui.items()]
+            for built in builds:
+                built.result()
     except (ControlPlaneError, LegalError, OSError, ValueError, KeyError, subprocess.CalledProcessError,
             tarfile.TarError, zipfile.BadZipFile) as error:
         sys.exit(f"Rust TUI packaging: {error}")

@@ -134,6 +134,26 @@ def check_source_txt(content: str, where: str, version: str, offer: str, target:
         fail(f"{where} SOURCE.txt does not name {offer} for {target} at {build_source(version, root)}")
 
 
+def offer_files(path: Path, top: str) -> tuple[list[str], dict[str, bytes]]:
+    """A source offer's files and, read in the same pass, the bytes of each outside its third_party/ sources."""
+    files: list[str] = []
+    kept: dict[str, bytes] = {}
+    try:
+        with tarfile.open(path, "r|gz") as archive:
+            for entry in archive:
+                if entry.isdir():
+                    continue
+                files.append(entry.name)
+                if not entry.name.startswith(f"{top}/third_party/"):
+                    handle = archive.extractfile(entry) if entry.isfile() and entry.size <= FILE_LIMIT else None
+                    if handle is None:
+                        fail(f"{path.name}: {entry.name} is not a bounded regular file")
+                    kept[entry.name] = handle.read()
+    except (OSError, tarfile.TarError) as exc:
+        raise ControlPlaneError(f"cannot read {path.name}: {exc}") from exc
+    return files, kept
+
+
 def verify_offer(path: Path, package: str, target: str, profile: str, root: Path = ROOT) -> str:
     """Check a source offer and return its notices. Under its own directory, as Go's, it holds the reviewed notices
     and inventory of a `profile` build of `package` for `target` against this checkout's Cargo.lock, the source of
@@ -143,7 +163,18 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
     names = archive_names(path)
     if outside := sorted(name for name in names if name != top and not name.startswith(top + "/")):
         fail(f"{path.name} holds files outside {top}/: {outside[:5]}")
-    inventory = expect_object(decode_json(text(path, f"{top}/inventory.json"), path.name), path.name)
+    # One pass reads what is checked against the checkout; a member read apiece rescans the whole archive.
+    files, kept = offer_files(path, top)
+
+    def kept_text(name: str) -> str:
+        try:
+            return kept[name].decode()
+        except KeyError:
+            raise ControlPlaneError(f"cannot read {name} from {path.name}") from None
+        except UnicodeDecodeError as exc:
+            raise ControlPlaneError(f"{path.name}: {name} is not UTF-8") from exc
+
+    inventory = expect_object(decode_json(kept_text(f"{top}/inventory.json"), path.name), path.name)
     identity = {"package": package, "target": target, "profile": profile,
                 "cargoLockSha256": file_sha256(root / "rust/Cargo.lock")}
     if int_field(inventory, "schemaVersion", path.name) != 1 or any(
@@ -161,11 +192,6 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
     if (package == SERVER) != bool(browser):
         fail(f"{path.name} must inventory browser packages exactly when it offers the server's source")
     trees |= browser
-    try:
-        with tarfile.open(path, "r:gz") as archive:
-            files = [entry.name for entry in archive if not entry.isdir()]
-    except (OSError, tarfile.TarError) as exc:
-        raise ControlPlaneError(f"cannot read {path.name}: {exc}") from exc
     for name in files:
         relative = name.removeprefix(top + "/")
         if name.startswith(tuple(trees)) or relative in ("inventory.json", "LEGAL.txt"):
@@ -173,11 +199,11 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
         if TLS_NAME.search(relative):
             fail(f"{path.name} holds certificate or key material outside dependency source: {relative}")
         local = confined_path(root / relative, root)
-        if not local.is_file() or read(path, name) != local.read_bytes():
+        if not local.is_file() or kept[name] != local.read_bytes():
             fail(f"{path.name} holds {relative}, which is neither dependency source nor this checkout's file")
     if missing := sorted(tree for tree in trees if not any(name.startswith(tree) for name in files)):
         fail(f"{path.name} lacks the source of {missing[:5]}")
-    notices = text(path, f"{top}/LEGAL.txt")
+    notices = kept_text(f"{top}/LEGAL.txt")
     if not notices.strip() or verify_oci.DEVELOPMENT in notices:
         fail(f"{path.name} lacks reviewed notices")
     return notices

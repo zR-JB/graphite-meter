@@ -68,6 +68,7 @@ class Build:
     version: str
     out: Path
     browser: tuple[Path, Path] | None = None  # the server's browser build and its module scan
+    target_dir: Path | None = None  # Cargo's own under rust/target, for builds that run side by side
 
     @property
     def development(self) -> bool:
@@ -220,7 +221,7 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     """Build the binary once with the prepared notices and check what it compiled, linked and embedded."""
     rust = ROOT / "rust"
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GM_RUST_")}
-    environment |= {"CARGO_TARGET_DIR": str(rust / "target"), "GM_RUST_LEGAL_DIR": str(build.out),
+    environment |= {"CARGO_TARGET_DIR": str(build.target_dir or rust / "target"), "GM_RUST_LEGAL_DIR": str(build.out),
                     "GM_ENGINE_VERSION": f"{build.version}-rust"}
     if build.browser is not None:
         environment["GM_RUST_ASSET_DIR"] = str(build.out / "browser-assets")

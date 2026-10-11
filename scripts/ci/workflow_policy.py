@@ -114,11 +114,15 @@ OFFERS_EXPORT = "target: server-artifacts\n"
 IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.outputs.context }}")
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
 SELECTED_BY = {
-    "core": "code", "go": "go", "e2e": "code", "smoke": "code", "release": "code", "security": "deps",
-    "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
+    "e2e": "code", "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
 }
-ALWAYS = ("plan", "tooling", "secret-scan", "gate")
+ALWAYS = ("plan", "checks", "gate")
+# The plan output that selects each task of the checks job; its other tasks run on every change.
+CHECKS_SELECTED_BY = {
+    "legal-check": "code", "release-check": "code", "container-smoke": "code", "core-check": "code",
+    "server-race": "go", "security": "deps", "client-audit": "deps",
+}
 # Repository paths a Rust source includes: relative to the file, or to its crate's manifest directory.
 RUST_INCLUDE = re.compile(r'include_(?:str|bytes)!\("([^"]+)"\)|concat!\(env!\("CARGO_MANIFEST_DIR"\), "([^"]+)"\)')
 # Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
@@ -415,6 +419,12 @@ def check_selection(root: Path) -> None:
         fail(f"CI jobs must run on their reviewed filters: {wrong}")
     if unknown := sorted(name for name, output in selected.items() if output and output not in dict(outputs)):
         fail(f"CI jobs run on filters the plan does not output: {unknown}")
+    checks = re.search(r"(?ms)^  checks:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", ci)
+    for step in re.split(r"(?m)^(?=\s+- )", checks[1] if checks else ""):
+        step_output = re.search(r"(?m)^\s+if: needs\.plan\.outputs\.([\w-]+) == 'true'$", step)
+        for task in re.findall(r"mise run ([\w-]+)", step):
+            if (step_output[1] if step_output else None) != CHECKS_SELECTED_BY.get(task):
+                fail(f"the checks job must run {task} on its reviewed filter")
     for name, output in selected.items():
         for needed in needs[name]:
             # A glob lies within another that matches it as a path.

@@ -18,7 +18,7 @@ TOOL_KEYS = {
     "staticcheck": "go:honnef.co/go/tools/cmd/staticcheck",
     "govulncheck": "go:golang.org/x/vuln/cmd/govulncheck",
     "ty": "aqua:astral-sh/ty",
-    "actionlint": "aqua:rhysd/actionlint",
+    "jactionlint": "github:jdx/jactionlint",
     "zizmor": "aqua:zizmorcore/zizmor",
     "cargo-deny": "aqua:EmbarkStudios/cargo-deny",
     "cargo-nextest": "aqua:nextest-rs/nextest/cargo-nextest",
