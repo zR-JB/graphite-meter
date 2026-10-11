@@ -5,6 +5,8 @@
 export type Painter = (now: number) => boolean;
 
 const painters = new Set<Painter>();
+/** This frame's painters, in one array reused frame to frame. */
+const order: Painter[] = [];
 let pending = 0;
 let watching = false;
 
@@ -17,7 +19,9 @@ function request(): void {
 function frame(now: number): void {
   pending = 0;
   // A painter added during this frame starts with the next one; one that throws stops alone.
-  for (const paint of [...painters]) {
+  order.length = 0;
+  for (const paint of painters) order.push(paint);
+  for (const paint of order) {
     if (!painters.has(paint)) continue;
     let moving = false;
     try {

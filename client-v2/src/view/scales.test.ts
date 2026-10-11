@@ -70,12 +70,12 @@ test("the dial's ceiling is round in the unit the page reads, in each of the fou
 
 test("a stage settling never rescales the page; a finished run reads in the tier History gives it", () => {
   // A live peak and the result it settled at, in bytes/s; the tier and dial through the run, and the run's tier
-  // once it ends.
+  // once it ends: History's when a result settled, else the one its live figures were drawn in.
   const cases = [
     // 1.3 Mbit/s live, 1.1 settled.
     [162_500, 137_500, 2, 125e6, 1],
     // 800 kbit/s ticks, then the stage failed.
-    [100_000, null, 1, 125_000, 2],
+    [100_000, null, 1, 125_000, 1],
     // 1.25 Gbit/s live, 1.15 settled.
     [156.25e6, 143.75e6, 3, 250e6, 2],
   ] as const;
@@ -85,8 +85,10 @@ test("a stage settling never rescales the page; a finished run reads in the tier
     expect([running.tier, running.gaugeBytesPerSec], `${peak}`).toEqual([tier, gaugeBytesPerSec]);
     expect(throughputScales(results, tick(peak), "auto", BITS), `${peak} settled`).toEqual(running);
     const finished = throughputScales(results, { ...tick(peak), running: false }, "auto", BITS);
+    expect(finished.tier, `${peak} finished`).toBe(finishedTier);
+    if (settled === null) continue;
     const history = throughputScales(results, null, "auto", BITS);
-    expect([finished.tier, history.tier], `${peak} finished`).toEqual([finishedTier, finishedTier]);
+    expect(history.tier, `${peak} in History`).toBe(finishedTier);
     expect(finished.gaugeBytesPerSec).toBe(history.gaugeBytesPerSec);
   }
 });

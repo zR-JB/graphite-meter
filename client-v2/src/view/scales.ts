@@ -72,7 +72,8 @@ export function throughputScales(
   const settled = Math.max(single, down + up);
   const lane = Math.max(live?.lane ?? 0, single, down, up);
   const combined = Math.max(settled, live?.combined ?? 0);
-  const reference = live?.running ? combined : settled;
+  // A run stopped before any stage settled reads in the tier it was drawn in.
+  const reference = live?.running || !settled ? combined : settled;
   const tier = rateTier(reference > 0 ? reference : REFERENCE_BYTES_PER_SEC, units);
   // From the mega tier up the dial starts at 1 Gbit/s, where most connections fit, on the unit's own ladder.
   const floor = tier >= 2 ? rateStep(GIGABIT_BYTES_PER_SEC, units, tier, DIAL_STEPS) : 0;
