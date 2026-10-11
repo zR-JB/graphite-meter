@@ -367,8 +367,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
   across from a 1366 px window), never under 360 px, and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-  A private value (Details' "Your address") stays masked until the eye key beside it is pressed; no hover or focus
-  reveals it.
+  A private value (Details' "Your address") is a mask until the eye key at its row's end is pressed, its glyph on the
+  row's text edge; no hover or focus reveals it, and the page holds the value only while it shows.
 - **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners) holding one line of
   figures, no labels, at the line it reads; a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it

@@ -242,17 +242,23 @@
     typeof fact === "string" ? { value: fact, secret: false } : fact}
   <div>
     <dt {@attach tip ? (marked ? term : tooltip)(() => tip) : null}>{label}</dt>
-    <dd>
-      {#if secret}<button
-          class="secret"
+    <dd class:secret>
+      {#if secret}<span class="secret-text"
+          >{#if revealed}<span class="secret-value"
+              >{#each value.split(":") as part, index (index)}{#if index}:<wbr
+                  />{/if}{part}{/each}</span
+            >{:else}<span class="secret-mask" aria-hidden="true">••••••••</span
+            >{/if}{#if aside}<span class="aside">{aside}</span>{/if}</span
+        ><button
+          class="btn btn-icon btn-quiet reveal"
           type="button"
+          aria-label="Show {label.toLowerCase()}"
           aria-pressed={revealed}
-          onclick={() => (revealed = !revealed)}
-          ><span class="secret-mask" aria-hidden="true">••••••••</span><span
-            class="secret-value">{value}</span
-          ><span class="secret-key" aria-hidden="true"><Icon name="eye" /></span
-          >{#if !revealed}<span class="sr-only">Show</span>{/if}</button
-        >{:else}{value}{/if}{#if aside}<span class="aside">{aside}</span>{/if}
+          {@attach tooltip(
+            () => `${revealed ? "Hide" : "Show"} ${label.toLowerCase()}`,
+          )}
+          onclick={() => (revealed = !revealed)}><Icon name="eye" /></button
+        >{:else}{value}{#if aside}<span class="aside">{aside}</span>{/if}{/if}
     </dd>
   </div>
 {/snippet}
@@ -447,40 +453,37 @@
   .copy > .hidden {
     visibility: hidden;
   }
-  /* Mask and address share one cell, so revealing never reflows the row; the eye beside them is the key. */
+  /* A private value ends in the key that reveals it, which stays on the value's line however the row wraps; until
+     then the page holds only the mask. */
   .secret {
-    display: inline-grid;
-    grid-template-columns: auto auto;
+    display: flex;
     align-items: center;
-    column-gap: var(--space-2);
-    border-radius: var(--r-chrome);
-    font: inherit;
-    text-align: start;
+    gap: var(--space-3);
   }
-  .secret > :is(.secret-mask, .secret-value) {
-    grid-area: 1 / 1;
+  /* The address breaks after a colon, and its aside wraps onto the value's edge, not an indent. */
+  .secret-text {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: var(--space-2);
+    min-width: 0;
+  }
+  .secret-text .aside {
+    margin-inline-start: 0;
   }
   .secret-mask {
     color: var(--text-soft);
     letter-spacing: var(--track-wide);
   }
-  .secret:not([aria-pressed="true"]) .secret-value,
-  .secret[aria-pressed="true"] .secret-mask {
-    visibility: hidden;
+  /* The glyph, not the key's plate, lines up with the sheet's text edge, as a link row's icon does. */
+  .reveal {
+    flex: none;
+    margin-inline-end: calc(
+      (var(--icon) - var(--control-h)) / 2 - var(--hit-pad)
+    );
   }
-  .secret-key {
-    display: inline-flex;
-    color: var(--text-soft);
-    transition: color var(--dur-hover) var(--ease-out);
-  }
-  .secret-key :global(svg) {
-    width: var(--icon-sm);
-    height: var(--icon-sm);
-  }
-  .secret:is(:hover, [aria-pressed="true"]) .secret-key {
-    color: var(--text);
-  }
-  .secret:not([aria-pressed="true"]) .secret-key :global(.strike) {
+  .reveal:not([aria-pressed="true"]) :global(.strike) {
     display: none;
   }
 </style>

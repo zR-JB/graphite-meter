@@ -414,21 +414,18 @@ test("Details hides this browser's address until its key is pressed, whatever th
         .map((a) => a.finished),
     ),
   );
-  const address = page.locator(".secret");
-  await expect(address).toHaveAttribute("aria-pressed", "false");
-  const shown = () =>
-    address.evaluate(
-      (el: Element) =>
-        getComputedStyle(el.querySelector(".secret-value")!).visibility,
-    );
-  expect(await shown()).toBe("hidden");
-  await address.hover();
+  const key = page.getByRole("button", { name: "Show your address" });
+  await expect(key).toHaveAttribute("aria-pressed", "false");
+  const address = page.locator(".secret-value");
+  await expect(address).toHaveCount(0);
+  await page.locator(".secret-mask").hover();
+  await key.hover();
   await Bun.sleep(1_000);
-  expect(await shown()).toBe("hidden");
-  await address.click();
-  await expect(address).toHaveAttribute("aria-pressed", "true");
-  expect(await shown()).toBe("visible");
-  await address.click();
-  await expect(address).toHaveAttribute("aria-pressed", "false");
-  expect(await shown()).toBe("hidden");
+  await expect(address).toHaveCount(0);
+  await key.click();
+  await expect(key).toHaveAttribute("aria-pressed", "true");
+  await expect(address).toContainText(/\d/);
+  await key.click();
+  await expect(key).toHaveAttribute("aria-pressed", "false");
+  await expect(address).toHaveCount(0);
 });
