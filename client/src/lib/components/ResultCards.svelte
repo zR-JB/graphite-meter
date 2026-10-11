@@ -90,8 +90,8 @@
   // strip.
   const latencyTrace = $derived.by<CardGraph>(() => {
     const points = replies(store.latency, "latency");
-    const start = points[0]?.t ?? 0;
-    const measured = (points.at(-1)?.t ?? start) - start;
+    const start = points[0]?.t0 ?? 0;
+    const measured = (points.at(-1)?.t1 ?? start) - start;
     const settled = !running("latency") && status("latency") !== "pending";
     const plan = (store.run?.config ?? store.config).duration.latencyMs;
     return {

@@ -309,14 +309,15 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   on, folds on a phone to its name and value. The card's hover lists every fact as pairs.
 - **Strip** (`StageGraph`): 68 px on the card's field, up to 120 with the console's height. A transfer's strip is the rate from zero to
   the shared ceiling (`store.scales.chartBytesPerSec`), a dashed second lane for bidirectional upload, and a 20 px
-  latency track below: one bar per 4 px column of the width, spanning its reply buckets' fastest to slowest
-  reply, so a bucket's spread shows at a glance and every stage's track has bars of one pitch whatever its
-  length, over the dashed idle median. The track's top is the ladder tier above 2.5× the p75 of the run's
-  slowest replies, so the body of the replies keeps its shape; a reply past it is clamped at the edge and ends in
-  an arrowhead, and the readout names a bucket's median and, when its replies spread, their range. The latency card's strip is the same track alone at the strip's height, on the same top as every card's track so idle and loaded replies compare at a glance, with the same readout: the
-  idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow keys show a readout on a
-  transfer's strip at once: time into the stage, the rate, and the latency replies measured then. A vertical swipe
-  scrolls past; a drag's readout leaves with the finger.
+  latency track below: one bar per reply bucket, from that bucket's own fastest to its slowest reply, over the dashed
+  idle median, so a bucket's spread shows at a glance and the live track grows a bar as each bucket closes; buckets
+  narrower than 4 px join whole on the series' own grid, so no bucket is ever drawn twice. The track's top is the
+  ladder tier above 2.5× the p75 of the run's slowest replies, so the body of the replies keeps its shape; a reply
+  past it is clamped at the edge and ends in an arrowhead. The latency card's strip is the same track alone at the strip's height, on the same top as every card's track so idle and loaded replies compare at a glance: the
+  idle replies over the stage, kept as the record (History has no series). A mouse, a tap, a sideways drag or arrow
+  keys show a readout at once: one line of figures on a plate over the card's quiet line, centred on the cursor and
+  inside the strip, so it never covers the graph: the time into the stage, the rate, and the range of the replies
+  in the bar under it. A vertical swipe scrolls past; a drag's readout leaves with the finger.
 - **Latency lanes** (`LatencyProfileView`): the latency stage's area beside the dial (`.stage-area`: a 2 px rule
   in its hue along the top and a wash of it that fades out, no box), under the head (mark, Latency, and the server
   when several ran; a failed idle stage names its reason there): one 32 px ruled row per population, each
@@ -330,8 +331,7 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
   is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
   pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker; the
-  reading (marker, value, meaning) stands in the row beside the marker, above the box's band, on the side with
-  room for it, as the strips' readouts do. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
+  reading (the marker's name and value) stands centred on the marker, above the box's band. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
   stage names its reason under the headline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
@@ -367,7 +367,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
   across from a 1366 px window), never under 360 px, and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-- **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners); a tip is
+- **Tooltip and readout**: a readout is a light plate (`.inspect-card`, a hairline, 3 px corners) holding one line of
+  figures, no labels, at the line it reads; a tip is
   ink (`--brand`, inverse text, 3 px corners, no arrow), so it never reads as part of the instrument, and it
   fades in over 120 ms. A tip opens once the pointer has stayed within 8 px of one point on its word for 0.65 s
   (jargon 0.45 s, 0.2 s just after another closed); any larger move starts the wait over from where the hand is, so
