@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { createPreferences, DEFAULT_CONFIG, readPreferences, STORAGE_KEY } from "./preferences";
+import { STORAGE_KEY } from "../../auth/theme";
+import { createPreferences, DEFAULT_CONFIG, readPreferences } from "./preferences";
 
 test("stored preferences are read field by field, older shapes migrate and unknown keys go", () => {
   const read = readPreferences({

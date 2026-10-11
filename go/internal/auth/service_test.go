@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -480,33 +478,16 @@ func TestLoginCarriesOnlyAValidChallenge(t *testing.T) {
 	}
 }
 
-func TestAuthTokensMatchApplication(t *testing.T) {
-	css, err := os.ReadFile("../../../client/src/app.css")
-	if err != nil {
-		t.Fatal(err)
+// The stylesheet is generated from the app's tokens; whatever it loads must be what the boundary serves before sign-in.
+func TestAuthStylesLoadOnlyTheSignInFonts(t *testing.T) {
+	var loaded []string
+	for _, match := range regexp.MustCompile(`url\(\s*["']?([^"')]*)`).FindAllStringSubmatch(authCSS, -1) {
+		loaded = append(loaded, match[1])
 	}
-	values := func(source, name string) []string {
-		re := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:\s*([^;]+);`)
-		var out []string
-		for _, match := range re.FindAllStringSubmatch(source, -1) {
-			out = append(out, strings.TrimSpace(match[1]))
-		}
-		return out
-	}
-	var names []string
-	for _, rule := range regexp.MustCompile(`:root\s*\{([^}]*)\}`).FindAllStringSubmatch(authCSS, -1) {
-		for _, token := range regexp.MustCompile(`--([\w-]+):`).FindAllStringSubmatch(rule[1], -1) {
-			names = append(names, token[1])
-		}
-	}
-	if !slices.Contains(names, "canvas") {
-		t.Fatalf("found no :root tokens in auth.css, only %v", names)
-	}
-	slices.Sort(names)
-	for _, name := range slices.Compact(names) {
-		authValues, appValues := values(authCSS, name), values(string(css), name)
-		if !reflect.DeepEqual(authValues, appValues) {
-			t.Errorf("token %s values %v do not match application values %v", name, authValues, appValues)
-		}
+	want := []string{signInSans, signInMono}
+	slices.Sort(loaded)
+	slices.Sort(want)
+	if !slices.Equal(loaded, want) {
+		t.Fatalf("auth.css loads %q; only %s and %s are served before sign-in", loaded, signInSans, signInMono)
 	}
 }

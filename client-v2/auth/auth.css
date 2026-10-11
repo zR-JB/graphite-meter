@@ -1,0 +1,515 @@
+/* The auth pages' own rules. The build puts the tokens they use from src/styles/tokens.css, and the two faces the
+   servers serve before sign-in, ahead of them. */
+*,
+::before,
+::after {
+  box-sizing: border-box;
+}
+/* Every card starts at one height, a little above the middle, so a notice grows
+   it downward and the brand keeps its place from page to page. */
+body {
+  display: grid;
+  place-items: start center;
+  min-height: 100dvh;
+  margin: 0;
+  padding: max(var(--space-4), 50dvh - 19rem) var(--space-4) var(--space-4);
+  background: var(--canvas);
+  color: var(--text);
+  font: var(--role-row);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.card {
+  container-type: inline-size;
+  width: min(100%, 400px);
+  padding: var(--space-5) var(--panel-pad) var(--panel-pad);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--r-surface);
+  background: var(--sheet);
+  box-shadow: var(--elev-float);
+}
+.card > * {
+  margin: var(--space-3) 0 0;
+}
+/* One text edge: plates sit on the sheet's padding, free lines a row inset in. */
+.card > :is(.brand, h1, p) {
+  margin-inline: var(--row-inset);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 0;
+  color: var(--text);
+  font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
+  letter-spacing: -0.01em;
+}
+.mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.mark .hex {
+  stroke: var(--phase-latency);
+}
+.card > .brand + * {
+  margin-top: var(--space-5);
+}
+h1 {
+  font: var(--role-panel-title);
+  letter-spacing: var(--track-tight);
+  text-wrap: balance;
+}
+p {
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+.card > h1 + p {
+  margin-top: var(--space-1);
+}
+/* The sign-in card is a faceplate: the instrument at rest over a centred head. */
+.face {
+  display: grid;
+  justify-items: center;
+}
+.face svg {
+  width: 136px;
+  height: auto;
+  overflow: visible;
+}
+.face path,
+.face circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.face .ticks {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.face .track {
+  stroke: color-mix(in oklab, var(--phase-latency) 18%, var(--border-strong));
+  stroke-width: 6;
+}
+.face .lock {
+  stroke: var(--text-soft);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+/* Out of sight at rest: an empty dash would still leave its round cap on the ring. */
+.face .sweep {
+  opacity: 0;
+  stroke: var(--phase-latency);
+  stroke-width: 6;
+  stroke-dasharray: 1 2;
+  stroke-dashoffset: 1;
+}
+.face .needle {
+  opacity: 0;
+  transform-box: view-box;
+  transform-origin: 60px 60px;
+}
+.face .needle circle {
+  fill: var(--phase-latency);
+}
+.card:has(> .face) > :is(h1, p) {
+  text-align: center;
+}
+.card > .face + h1 {
+  margin-top: var(--space-2);
+}
+.host {
+  color: var(--text-soft);
+  font: var(--w-normal) var(--type-sm) / 1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.card > .host {
+  margin-top: var(--space-1);
+}
+.host:empty {
+  display: none;
+}
+/* While the sign-in is checked, the ring sweeps on and lets go, round after round, as a live stage's needle runs. */
+@media (prefers-reduced-motion: no-preference) {
+  .card:has(form[data-busy]) .face .sweep {
+    animation: sweep 1100ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+  .card:has(form[data-busy]) .face .needle {
+    animation: needle 1100ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card:has(form[data-busy]) .face .sweep {
+    opacity: 0.6;
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes sweep {
+  0% {
+    opacity: 1;
+    stroke-dashoffset: 1;
+  }
+  60% {
+    stroke-dashoffset: 0;
+  }
+  96% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -1;
+  }
+}
+@keyframes needle {
+  0% {
+    opacity: 0;
+    rotate: 0deg;
+  }
+  12% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+    rotate: 270deg;
+  }
+  100% {
+    opacity: 0;
+    rotate: 270deg;
+  }
+}
+/* A short dial gives way so a phone's keyboard leaves the field in view. */
+@media (max-height: 560px) {
+  .face {
+    display: none;
+  }
+}
+/* Programmatic focus lands here to announce a swapped card; it is not a control. */
+h1[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+a {
+  color: var(--brand-strong);
+  text-underline-offset: 3px;
+}
+/* The interstitial moves on by itself; its link is only a fallback. */
+.completion a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  margin-inline: calc(-1 * var(--space-3));
+  border-radius: var(--r-chrome);
+  color: var(--label);
+  font: var(--role-control);
+  text-decoration: none;
+  transition: var(--transition-control);
+}
+
+/* The app's notice: a plate in its tone's wash and edge (data-tone). */
+.notice {
+  --tone: var(--text-soft);
+  --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
+  --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--tone-line);
+  border-radius: var(--r-chrome);
+  background: var(--tone-wash);
+  color: var(--text);
+  font: var(--role-caption);
+}
+[data-tone="warn"] {
+  --tone: var(--warn);
+}
+[data-tone="err"] {
+  --tone: var(--err);
+}
+.card > .notice {
+  margin-inline: 0;
+}
+.notice + .notice {
+  margin-top: var(--space-2);
+}
+
+.code,
+.card > p:has(> strong:only-child) {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--r-chrome);
+  background: var(--surface-1);
+}
+.code,
+.card > p:has(> strong:only-child) {
+  display: flex;
+  align-items: center;
+  min-height: var(--row-h);
+  margin-inline: 0;
+  padding: 7px var(--row-inset);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.card > p:has(> strong:only-child) strong {
+  font-weight: var(--w-normal);
+}
+/* The same face, weight and tracking as the code the app shows beside it. */
+.code {
+  font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
+  letter-spacing: var(--track-wide);
+}
+form {
+  display: grid;
+  gap: var(--space-3);
+}
+/* The label over its entry, on the sheet's own ground. */
+.field {
+  display: grid;
+  gap: 6px;
+}
+/* The label starts where the typed text does. */
+.field label {
+  padding-inline: 11px;
+  color: var(--text-muted);
+  font: var(--role-label);
+}
+.entry {
+  position: relative;
+  display: grid;
+}
+.field input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 calc(var(--control-h) + var(--space-2)) 0 10px;
+  border: 1px solid var(--field-edge);
+  border-radius: var(--r-chrome);
+  background: var(--surface-1);
+  color: var(--text);
+  font: var(--role-row);
+  transition: var(--transition-control);
+}
+.field input:focus-visible {
+  outline: none;
+  border-color: var(--brand-line);
+  box-shadow: var(--ring-halo);
+}
+/* A saved password keeps the field's fill and ink: autofill's tint would be a hue on a control. */
+.field input:autofill {
+  box-shadow: inset 0 0 0 var(--hit) var(--surface-1);
+  -webkit-text-fill-color: var(--text);
+}
+.field input:autofill:focus-visible {
+  box-shadow:
+    inset 0 0 0 var(--hit) var(--surface-1),
+    var(--ring-halo);
+}
+/* A wrong password nudges the field once, a damped shake that settles where it stood. */
+@media (prefers-reduced-motion: no-preference) {
+  .card:has(> .notice[data-tone="err"]) .field {
+    animation: nudge 420ms var(--ease-out);
+  }
+}
+@keyframes nudge {
+  0% {
+    translate: 0;
+  }
+  18% {
+    translate: -6px;
+  }
+  38% {
+    translate: 5px;
+  }
+  58% {
+    translate: -3px;
+  }
+  78% {
+    translate: 1px;
+  }
+  100% {
+    translate: 0;
+  }
+}
+/* The show key sits inside the entry's end, quiet until hovered or pressed. */
+.reveal {
+  position: absolute;
+  inset: 4px 4px 4px auto;
+  display: grid;
+  place-items: center;
+  width: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-well);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.reveal svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.reveal[aria-pressed="false"] .strike {
+  display: none;
+}
+.reveal[aria-pressed="true"] {
+  color: var(--text);
+}
+@media (hover: hover) {
+  .reveal:hover:enabled {
+    background: var(--hover-wash);
+    color: var(--text);
+  }
+}
+.reveal:focus-visible {
+  outline-offset: -2px;
+}
+/* A finger gets 44 px targets and 16 px text, which also keeps a phone from zooming into the field. */
+@media (pointer: coarse) {
+  .field input {
+    height: var(--hit);
+    font-size: 16px;
+  }
+  .reveal {
+    width: 36px;
+  }
+  button[type="submit"] {
+    min-height: var(--hit);
+  }
+}
+
+button[type="submit"] {
+  --label: var(--text-inverse);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) 20px;
+  border: 0;
+  border-radius: var(--r-chrome);
+  background: var(--brand);
+  color: var(--label);
+  font: var(--w-strong) var(--type-md) / 1.2 var(--font-sans);
+  cursor: pointer;
+  transition:
+    var(--transition-control),
+    transform var(--dur-hover) var(--ease-out);
+}
+/* Hover takes the stronger ink, as the run button does; a filter would re-rasterize the label. */
+@media (hover: hover) {
+  button[type="submit"]:hover:enabled {
+    background-color: var(--brand-strong);
+  }
+}
+/* Outlined: fallbacks, unavailable actions, and the password beside a working provider. */
+.completion a,
+form:not([data-busy]) button[type="submit"]:disabled,
+form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button[type="submit"] {
+  --label: var(--text-muted);
+  --line: var(--border);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line);
+}
+@media (hover: hover) {
+  .completion a:hover,
+  form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button[type="submit"]:hover:enabled {
+    --label: var(--text);
+    --line: var(--border-strong);
+  }
+}
+button[type="submit"]:active:enabled {
+  transform: scale(0.985);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (forced-colors: active) {
+  button {
+    border: 1px solid;
+  }
+}
+/* A submitted form: sign-in is a full page navigation and password verification
+   is deliberately slow, so the button holds its size and trades its label for a
+   spinner instead of going quiet. */
+form[data-busy] button[type="submit"] {
+  color: transparent;
+  opacity: 1;
+  cursor: progress;
+}
+form[data-busy] button[type="submit"]::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 2px solid color-mix(in oklab, var(--label) 35%, transparent);
+  border-top-color: var(--label);
+  border-radius: var(--r-full);
+  animation: spin 620ms linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+/* Where the dial shows, it is the progress: the key dims under it rather than spin as well. */
+@media (min-height: 561px) {
+  .card:has(> .face) form[data-busy] button[type="submit"] {
+    color: var(--label);
+    opacity: 0.6;
+  }
+  .card:has(> .face) form[data-busy] button[type="submit"]::after {
+    content: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No spin, but the control must still read as busy. */
+  form[data-busy] button[type="submit"]::after {
+    animation: none;
+    border-top-color: transparent;
+    border-right-color: transparent;
+  }
+}
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.separator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+  color: var(--text-soft);
+  font: var(--role-label);
+}
+.separator::before,
+.separator::after {
+  content: "";
+  flex: 1;
+  height: var(--hairline);
+  background: var(--border);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,11 +1,11 @@
 // The browser's own settings in localStorage "graphite-meter:v1": the next run's test settings and display
 // preferences. The key and its shape are shared with the old client, the pre-paint script and the sign-in pages.
+import { STORAGE_KEY } from "../../auth/theme";
 import { normalizeStreamCount } from "../engine/net/budget";
 import type { PingCadence, TestConfig } from "../engine/types";
 import { batch, signal, type Read, type Signal } from "../lib/signal";
 import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
 
-export const STORAGE_KEY = "graphite-meter:v1";
 const SAVE_DELAY_MS = 250;
 
 export const DEFAULT_CONFIG: TestConfig = {

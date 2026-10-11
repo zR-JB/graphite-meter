@@ -14,6 +14,7 @@ class PlanTests(unittest.TestCase):
             (("client/src/app.ts",), ("client-ci", "legal-check")),
             (("client-v2/src/main.tsx",), ("client-v2-ci", "legal-check")),
             (("client/e2e/webview.ts",), ("client-ci", "client-v2-ci", "legal-check")),
+            (("go/internal/auth/assets/login.tmpl",), ("server-check", "server-test", "client-v2-ci", "legal-check")),
         ):
             with self.subTest(paths=paths):
                 self.assertEqual(plan_checks(paths), checks)

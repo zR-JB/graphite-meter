@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BROWSER_PROFILES = ("dev", "prod")
 # Each browser client's folder and the tracked and new files its build and check read, never ignored build products.
 BROWSER_SOURCES = {
-    "client": ("client", "go/internal/auth/assets", "api", "scripts/rust_build.py"),
+    "client": ("client", "api", "scripts/rust_build.py"),
     "client-v2": ("client-v2", "client/public", "client/e2e/browsers.ts", "client/e2e/servers.ts",
                   "client/e2e/webview.ts", "api", "scripts/rust_build.py"),
 }

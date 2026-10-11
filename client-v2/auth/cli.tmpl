@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <!-- icon -->
+    <title>Graphite Meter — {{if .Refused}}Approval unavailable{{else if .BrowserCapacity}}Client limit reached{{else}}Approve client{{end}}</title>
+    {{template "theme"}}
+    <style>{{.Styles}}</style>
+  </head>
+  <body>
+    <main class="card">
+      <!-- brand -->
+      {{if .Refused}}
+      <!-- One fixed sentence per refusal kind: nothing from the request is echoed. -->
+      <h1>Approval unavailable</h1>
+      {{if eq .Refused "busy"}}
+      <p>Too many approvals are open. Try again from the client in a few minutes.</p>
+      {{else}}
+      <p>This approval link is not valid. Start sign-in again from the client.</p>
+      {{end}}
+      {{else if .BrowserCapacity}}
+      <h1>Client limit reached</h1>
+      <p>This login already has {{.ClientLimit}} approved clients, the most it can have.</p>
+      <p>Renewing the login ends their access and any measurements they are running.</p>
+      <p><a href="/login">Renew this login</a>, then choose Sign in again in the requesting interface.</p>
+      {{else}}
+      {{if .BrowserOrigin}}
+      <h1>Approve browser client</h1>
+      <p>Approve only an interface you opened yourself. The site below can then run measurements as you until you sign out or this login expires.</p>
+      <p><strong>{{.BrowserOrigin}}</strong></p>
+      <p>Confirm that this code matches the code in that interface.</p>
+      {{else}}
+      <h1>Approve terminal client</h1>
+      <p>Approve only a terminal you started yourself. It can then run measurements as you until you sign out or this login expires.</p>
+      <p>Confirm that this code matches the code in your terminal.</p>
+      {{end}}
+      <code class="code">{{.Code}}</code>
+      <form method="post" action="{{if .BrowserOrigin}}/auth/browser/approve{{else}}/auth/cli/approve{{end}}">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="challenge" value="{{.Challenge}}">
+        <button type="submit">Approve this client</button>
+      </form>
+      {{end}}
+    </main>
+    {{template "pending"}}
+  </body>
+</html>

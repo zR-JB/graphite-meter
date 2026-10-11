@@ -4,6 +4,7 @@ import { cp, readdir, rm } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
+import { themeScript } from "./auth/build";
 
 const env = process.env;
 const root = import.meta.dir;
@@ -60,7 +61,12 @@ const inline = async (code: string, loader: "js" | "css") => {
   const result = await Bun.build({ entrypoints: [path], files: { [path]: code }, minify: true });
   return (await result.outputs[0]!.text()).trim();
 };
-let shell = await Bun.file(join(root, "index.html")).text();
+// <!-- theme --> takes the pre-paint theme script the sign-in pages run too.
+const theme = await themeScript();
+let shell = (await Bun.file(join(root, "index.html")).text()).replace(
+  "<!-- theme -->",
+  () => `<script>${theme}</script>`,
+);
 for (const tag of ["style", "script"] as const) {
   const [block, code] = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(shell) ?? [];
   const minified = block && `<${tag}>${await inline(code!, tag === "style" ? "css" : "js")}</${tag}>`;

@@ -40,10 +40,9 @@ WORKDIR /app/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
 COPY client/patches/ ./patches/
 RUN bun --bun install --frozen-lockfile
-# Then the source, then build. The check reads the shared API vectors and the sign-in page script.
+# Then the source, then build. The check reads the shared API vectors.
 COPY client/ ./
 COPY api/ /app/api/
-COPY go/internal/auth/assets/ /app/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # Stage: client-v2 - the plain TypeScript app; it ships v1's fonts, favicon and legal files.

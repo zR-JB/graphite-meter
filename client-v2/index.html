@@ -5,19 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="The Graphite Meter — open-source network speed test" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1013" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f3f6" />
+    <meta name="theme-color" data-scheme="dark" media="(prefers-color-scheme: dark)" content="#0d1013" />
+    <meta name="theme-color" data-scheme="light" media="(prefers-color-scheme: light)" content="#f1f2f5" />
     <link rel="preload" href="/fonts/ibm-plex-sans-var-latin1.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/ibm-plex-mono-500-latin1.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>The Graphite Meter</title>
-    <!-- The first paint happens before the stylesheet arrives: canvas and text repeat src/styles/tokens.css. -->
+    <!-- The first paint happens before the stylesheet arrives: its colours repeat src/styles/tokens.css (canvas,
+         text; surface-1, border, text-muted and the latency hue for the card shown without JavaScript). -->
     <style>
       :root {
         color-scheme: light dark;
         background: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
         color: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
-        font: 450 14px/1.35 "IBM Plex Sans", system-ui, sans-serif;
+        font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
       :root[data-theme="dark"] {
         color-scheme: dark;
@@ -27,26 +30,58 @@
       }
       body {
         margin: 0;
+        min-height: 100vh;
       }
-      noscript p {
-        max-width: 32rem;
-        margin: 20vh auto;
-        padding: 0 16px;
+      .noscript-shell {
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      .noscript-panel {
+        width: min(100%, 520px);
+        padding: 24px;
+        box-sizing: border-box;
+        border: 1px solid light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
+        border-radius: 4px;
+        background: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
+      }
+      .noscript-panel p {
+        margin: 0;
+        color: light-dark(oklch(0.38 0.012 258), oklch(0.8 0.008 258));
+        font-size: 15px;
+        line-height: 1.55;
+      }
+      .noscript-panel .noscript-kicker {
+        margin-bottom: 10px;
+        color: light-dark(oklch(0.6 0.105 182), oklch(0.82 0.105 178));
+        font: 600 12px/1.2 "IBM Plex Mono", monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .noscript-panel h1 {
+        margin: 0 0 12px;
+        font: 600 28px/1.05 "IBM Plex Sans", system-ui, sans-serif;
       }
     </style>
-    <!-- The saved theme applies before the first paint; settings own it afterwards. -->
-    <script>
-      try {
-        var theme = JSON.parse(localStorage.getItem("graphite-meter:v1") || "{}").theme;
-        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-      } catch (error) {}
-    </script>
+    <!-- theme -->
     <!-- bundle -->
   </head>
   <body>
-    <div id="app"></div>
-    <noscript>
-      <p>The Graphite Meter measures your connection in the browser and needs JavaScript. Enable it, then reload.</p>
-    </noscript>
+    <div id="app">
+      <noscript>
+        <main class="noscript-shell" aria-labelledby="noscript-title">
+          <section class="noscript-panel">
+            <p class="noscript-kicker">The Graphite Meter</p>
+            <h1 id="noscript-title">JavaScript is required</h1>
+            <p>
+              This speed test runs in your browser and needs JavaScript to measure latency, download, and upload
+              performance. Enable JavaScript, then reload this page.
+            </p>
+          </section>
+        </main>
+      </noscript>
+    </div>
   </body>
 </html>

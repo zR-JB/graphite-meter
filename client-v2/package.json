@@ -13,11 +13,12 @@
   },
   "scripts": {
     "build:bundle": "bun build.ts",
+    "build:auth": "bun auth/build.ts",
     "build": "bun run check && bun run build:bundle",
-    "check": "bun check",
+    "check": "bun check && bun check auth && bun test ./auth",
     "format": "biome format --write .",
-    "format:check": "biome format .",
-    "test": "bun test src --parallel",
+    "format:check": "biome format . && bun auth/build.ts --check",
+    "test": "bun test src ./auth --parallel",
     "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
     "e2e": "bun run ../client/scripts/e2e.ts"
   }

@@ -12,8 +12,8 @@
     "build:e2e-harness": "vite build -c vite.e2e.config.ts",
     "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
     "e2e": "bun run build:e2e-harness && bun run scripts/e2e.ts",
-    "format": "prettier --write . ../go/internal/auth/assets",
-    "format:check": "prettier --check . ../go/internal/auth/assets"
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
