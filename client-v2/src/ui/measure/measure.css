@@ -1318,6 +1318,13 @@
     & dt {
       color: var(--text-soft);
       font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+      /* A finger's target is 24 px tall, over its figure, in margin the label gives back. */
+      @media (pointer: coarse) {
+        position: relative;
+        z-index: 1;
+        padding-block: calc((24px - 1em) / 2);
+        margin-block: calc((1em - 24px) / 2);
+      }
     }
     & dd {
       font-variant-numeric: tabular-nums;

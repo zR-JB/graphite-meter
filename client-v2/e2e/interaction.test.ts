@@ -1,5 +1,5 @@
 import { closeSettings, home, open, openSettings, run } from "./fleet";
-import { expect, test, type Locator, type Page } from "../../client/e2e/webview";
+import { expect, settled, test, type Locator, type Page } from "../../client/e2e/webview";
 
 const tip = (page: Page) => page.locator('[role="tooltip"]');
 
@@ -114,6 +114,44 @@ test.chrome("a touch screen with a keyboard names the keys in the strip and in t
   for (let stop = 0; stop < 8 && (await focused()) !== "Settings"; stop++) await page.press("Tab");
   expect(await focused()).toBe("Settings");
   await expect(tip(page)).toContainText("Settings (S)");
+});
+
+test.chrome("a finger's card terms are 24 px targets on a phone, and cards keep their layout", async (page) => {
+  await open(page, home.http);
+  await run(page);
+  // Where each card's labels and figures sit, by their text.
+  const layout = () =>
+    page.locator(".results .card .facts").all((lists: HTMLElement[]) =>
+      lists.flatMap((list) =>
+        Array.from(list.querySelectorAll("dt, dd"), (node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const { x, y, width, height } = range.getBoundingClientRect();
+          return [x, y, width, height].map(Math.round);
+        }),
+      ),
+    );
+  // Wide cards stack their facts 22 px apart; a phone's wrap them in columns.
+  for (const width of [1000, 390]) {
+    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(settled);
+    const before = await layout();
+    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+    expect(await layout()).toEqual(before);
+  }
+  const targets = await page.locator(".results .card .facts dt[data-tip]").all((terms: HTMLElement[]) =>
+    terms.map((term) => {
+      term.scrollIntoView({ block: "center" });
+      const box = term.getBoundingClientRect();
+      const hits = (y: number) => term.contains(document.elementFromPoint(box.x + box.width / 2, y));
+      const middle = box.y + box.height / 2;
+      return { tall: box.height >= 24, reached: hits(middle - 11) && hits(middle + 11) };
+    }),
+  );
+  expect(targets.length).toBeGreaterThan(0);
+  for (const target of targets) expect(target).toEqual({ tall: true, reached: true });
 });
 
 test.chrome(
