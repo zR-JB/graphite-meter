@@ -332,7 +332,8 @@ class Stage implements StageResources {
   };
 
   /** Settles a lane's or the feed's ending: a sign-in, a rotation the run decides, a failure, or a stall and a
-      reopen after `delayMs`, a broken one only once the login or grant proved to stand. */
+      reopen after `delayMs`. A broken one also checks the login or grant meanwhile, which releases throughput if it
+      ended: a check can take seconds, longer than the run's silence rule. */
   async #reopen(
     direction: Direction,
     label: string,
@@ -357,9 +358,9 @@ class Stage implements StageResources {
       return false;
     }
     this.#stall(direction, stall);
-    const [signedOut] = await Promise.all([broken && this.#signedOut(), delay(delayMs, signal)]);
-    if (signedOut) this.#signIn("throughput");
-    return !signedOut && !signal.aborted && !this.#ended;
+    if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
+    await delay(delayMs, signal);
+    return !signal.aborted && !this.#ended;
   }
 
   /** Whether the login or grant ended; a revocation mid-outage still shows within one more check. */

@@ -174,6 +174,27 @@ test("one download outage stalls once, checks the sign-in once, and resumes only
   expect(lanes.every(({ terminated }) => terminated)).toBe(true);
 });
 
+test("a broken lane reopens after its pause while a slow sign-in check runs, which releases it if signed out", async () => {
+  for (const signedOut of [false, true]) {
+    const blip = stage(DOWNLOAD, {
+      ended: () => new Promise((resolve) => setTimeout(() => resolve(signedOut), 2_000)),
+    });
+    void blip.resources.prepare(new AbortController().signal);
+    await elapse(150);
+    const lanes = blip.lanes();
+    for (const lane of lanes) bytes(lane, 0);
+    blip.resources.measure();
+    lanes[0]!.report({ type: "broken", detail: "TypeError: network error" });
+    await elapse(300);
+    expect(lanes[0]!.commands.at(-1)).toMatchObject({ type: "download", epoch: 1 });
+    await elapse(1_700);
+    expect(blip.events.filter(([type]) => type === "signInRequired")).toEqual(
+      signedOut ? [["signInRequired", "throughput"]] : [],
+    );
+    expect(lanes.every(({ terminated }) => terminated)).toBe(signedOut);
+  }
+});
+
 test("a flush resolves once every lane reported what it counted, at most 250 ms", async () => {
   for (const answering of [3, 2]) {
     const flushing = stage(DOWNLOAD);
