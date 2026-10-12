@@ -231,22 +231,26 @@ export function createRun(env: RunEnvironment) {
             step.set(null);
             phase.set("complete");
           });
-          return env.finished({ result: finished, plans, engine: focus?.discovery.engineVersion ?? "unknown" });
+          env.finished({ result: finished, plans, engine: focus?.discovery.engineVersion ?? "unknown" });
+          return releaseRun();
         }
         case "error":
           env.recheck(null);
-          return batch(() => {
+          batch(() => {
             live.set(null);
             stall.set(null);
             error.set({ reason: event.reason, message: event.message });
             phase.set("error");
           });
+          return releaseRun();
         case "aborted":
-          return batch(() => {
+          batch(() => {
             live.set(null);
             stall.set(null);
             phase.set("aborted");
           });
+          // Nothing reads a run that ended; what it measured lives in the facts above.
+          return releaseRun();
       }
     });
     release = unsubscribe;

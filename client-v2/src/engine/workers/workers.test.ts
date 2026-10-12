@@ -171,6 +171,31 @@ test("a session's stop finalizes its upload id, then acknowledges on the termina
   }
 });
 
+test("a session relays a flood of receiver progress as its newest record every 50 ms", async () => {
+  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
+  session.send({
+    type: "upload",
+    url: "https://peer.example/wt/upload?id=u1",
+    ticket: null,
+    datagrams: false,
+    streams: 1,
+    finalize: { url: "https://peer.example/upload/progress?id=u1", request: RECIPE },
+  });
+  const transport = FakeWebTransport.dialed.at(-1)!;
+  transport.accept();
+  const records = source();
+  transport.open(records.stream);
+  records.push(
+    Array.from({ length: 1_000 }, (_, i) => `{"type":"progress","bytes":${i + 1},"nanos":${i + 1}}\n`).join(""),
+  );
+  await elapse(0);
+  await elapse(50);
+  expect(session.posted.filter(({ type }) => type === "record").map(({ record }) => record)).toEqual([
+    { type: "progress", bytes: 1, nanos: 1 },
+    { type: "progress", bytes: 1_000, nanos: 1_000 },
+  ]);
+});
+
 test("a session whose streams broke waits for its close: a revocation asks for sign-in, silence is a break", async () => {
   const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
   const download: SessionCommand = {

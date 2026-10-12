@@ -2,7 +2,7 @@
 // datagram flood counted into one report window, or client upload streams or datagrams with the server's progress
 // feed relayed. The worker dials within one budget, ticket included, redials on its owner's command, and finalizes
 // an upload when it stops.
-import type { EndReport, SessionCommand, SessionReport } from "../../protocol/messages";
+import type { EndReport, FeedRecord, SessionCommand, SessionReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
 import { aborted, Tickets, withToken } from "../lanes/dial";
 import { CLOSE_GRACE_MS, ESTABLISH_MS, lost, refusal, sessionClosed } from "../lanes/endings";
@@ -13,6 +13,8 @@ type Upload = Extract<SessionCommand, { type: "upload" }>;
 
 /** A datagram loop settled within one microtask checkpoint would outrun the task carrying its own stop. */
 const YIELD_MS = 4;
+/** A flood of receiver progress reaches the page at most this often. */
+const RECORD_MS = 50;
 const UNESTABLISHED: EndReport = {
   type: "ended",
   ending: { reason: "timeout", retry: true, detail: "webtransport session did not establish" },
@@ -176,8 +178,32 @@ class Session {
   /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session; a feed that ends
       before it can be recovered by a fresh session, as the server reopens the feed. */
   async #follow(stream: ReadableStream<Uint8Array>): Promise<void> {
+    // Progress counts are cumulative, so a peer flooding them reaches the page as the newest every RECORD_MS rather
+    // than as a queue of messages; every other record goes at once, after the progress it follows.
+    let held: FeedRecord | null = null;
+    let sentAt = Number.NEGATIVE_INFINITY;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const send = (record: FeedRecord | null) => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (held) post({ type: "record", record: held });
+      if (record) post({ type: "record", record });
+      if (held || record?.type === "progress") sentAt = performance.now();
+      held = null;
+    };
+    const relay = (record: FeedRecord) => {
+      const since = performance.now() - sentAt;
+      if (record.type !== "progress" || since >= RECORD_MS) return send(record);
+      held = record;
+      timer ??= setTimeout(() => send(null), RECORD_MS - since);
+    };
     try {
-      const last = await readRecords(stream, (record) => post({ type: "record", record }));
+      let last: Awaited<ReturnType<typeof readRecords>>;
+      try {
+        last = await readRecords(stream, relay);
+      } finally {
+        if (held) send(null);
+      }
       if (last?.type === "complete") return this.#completed.resolve();
       this.#end({
         type: "ended",
