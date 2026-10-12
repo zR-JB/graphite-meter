@@ -23,9 +23,8 @@ narrow PR runs only; every push to main runs every job. Each job runs on the
 filter `workflow_policy.py` names for it, and a filter never selects a job
 without the jobs it needs, which the Gate would pass as skipped. The Checks job
 runs the quick gates together, each step on the filter the policy names for its
-task. The `client-v2` filter selects browser client v2's own checks, legal
-scope, image and browser suite; `code` takes only its lockfiles, so a v2 source
-change skips v1's and Rust's jobs.
+task. `code` covers browser client v2 and the static files and E2E harness
+modules it shares from `client/`; client v1 has no CI jobs.
 
 ## Releases
 
@@ -153,9 +152,9 @@ Dependabot and run the checks above.
 The hook refuses commits to `main` and whitespace errors, and scans the index
 with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
 paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
-select the full `check`, and `client-v2/`, the E2E harness modules it imports
+select the full `check`; `client-v2/`, the E2E harness modules it imports
 from v1 and the auth assets it generates (`go/internal/auth/assets/`) select
-`client-v2-ci`. The checks run on the exact staged tree
+`client-ci`, and `client/` selects `client-v1-ci`. The checks run on the exact staged tree
 in a disposable worktree with both clients' frozen dependencies.
 `workflow-check` refuses tracked TLS key and certificate names and PEM
 material.

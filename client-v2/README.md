@@ -1,12 +1,9 @@
 # Browser client v2
 
-The Graphite Meter's browser client, rewritten in plain TypeScript beside the Svelte client in `client/` (v1), which
-stays the default until v2 replaces it. Same look and behaviour; one owner per piece of state, no runtime
-dependencies, and per-frame work kept to what moves.
-
-`GM_CLIENT=v2` points the client, `dev`, `prod`, `e2e` and the container build here (the Rust image keeps v1; see
-`docs/DEVELOPMENT.md`); `mise run client-v2-ci`, `client-v2-audit`, `e2e-v2` and `container-smoke-v2` are v2's own
-gates.
+The Graphite Meter's browser client, rewritten in plain TypeScript from the Svelte client in `client/` (v1), and the
+default: every task, both images and CI build and embed it. Same look and behaviour; one owner per piece of state, no
+runtime dependencies, and per-frame work kept to what moves. `GM_CLIENT=v1` points the tasks back at v1 for
+comparison until it is removed (`docs/DEVELOPMENT.md`).
 
 ## Layers
 

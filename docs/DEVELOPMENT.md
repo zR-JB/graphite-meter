@@ -20,11 +20,11 @@ mise run dev        # development build on http://localhost:7246
 mise run tui        # native TUI; it asks for the server, or add `-- --url <url>`
 ```
 
-`GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`. `GM_CLIENT=v2`
-builds, checks and embeds the new browser client in `client-v2/` instead of v1 in the client tasks, `dev`, `prod`,
-`e2e` and the container build (the Rust image keeps v1); v1 stays the default until v2 replaces it. The gates always
-check v1: `check` runs `client-v2-ci` beside it, and `ci` also runs `client-v2-audit`, `e2e-v2` and
-`container-smoke-v2`.
+`GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`. The browser client is
+v2 in `client-v2/`, which every task, both images and CI build, check and embed. `GM_CLIENT=v1` points the client
+tasks, `dev`, `prod`, `e2e` and the Go image back at the Svelte client in `client/` for comparison until it is
+removed; `mise run client-v1-ci` checks it, and the pre-commit hook runs that when `client/` changes. The shipped
+legal notices cover client v2 only.
 
 mise trusts the project configuration automatically; in paranoid mode run
 [`mise trust`](https://mise.jdx.dev/cli/trust.html) once. Use `mise run <task>` in scripts (`mise doctor` is mise's
@@ -84,7 +84,7 @@ browser's version from the `CLIENT_VERSION` build argument, so `VERSION` alone s
 | Layer                   | Command                                                 | Covers                                                   |
 | ----------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
 | Go unit and integration | `mise run server-test` (race + coverage: `server-race`) | Server, wire, auth, native client, TUI.                  |
-| Browser unit            | `mise run client-ci`, `mise run client-v2-ci`           | Types, format, measurement math, codecs, state.          |
+| Browser unit            | `mise run client-ci` (v1: `client-v1-ci`)               | Types, format, measurement math, codecs, state.          |
 | Real-server E2E         | `mise run e2e`                                          | Chrome or Firefox against a local fleet of real servers. |
 
 `mise run e2e` builds the production client and server, then `client/scripts/e2e.ts` starts five servers with an
@@ -94,8 +94,8 @@ and drive the browser through `client/e2e/webview.ts`: Chrome over its DevTools 
 `GM_E2E_BROWSER=firefox` Firefox over WebDriver BiDi (`GM_FIREFOX_PATH` names another build). CI runs both. Tests
 written `test.chrome` need the DevTools Protocol (heap counters, CPU throttling, forced QUIC) and Firefox skips them.
 Servers listen on `127.0.0.1` at TCP+UDP ports drawn from a per-process slice of 20000–31999; the harness uses an
-OS-assigned port. `mise run e2e-v2` runs `client-v2/e2e` with the same runner and harness, whose paths
-resolve from the client folder the suite runs in.
+OS-assigned port. The suite is `client-v2/e2e`; `GM_CLIENT=v1 mise run e2e` runs v1's `client/e2e` with the same
+runner and harness, whose paths resolve from the client folder the suite runs in.
 
 Failures keep a screenshot, console, page errors and DOM under the client's `test-results/webview`, and server logs
 under its `test-results/servers`. Rerun a subset against the built binary, and set `GM_WEBVIEW_DEBUG=1` for Chrome
