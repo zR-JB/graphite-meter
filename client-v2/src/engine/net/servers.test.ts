@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { signal } from "../../lib/signal";
 import { catalog } from "../../protocol/documents";
 import type { TestConfig } from "../types";
-import { CONFIG, FakeBuses, fakeNet, h, page, preflight, PROBE, ws, type Answer } from "./fakes";
+import { CONFIG, FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, ws, type Answer } from "./fakes";
 import { createPageSession } from "./page";
 import { createServers, reconcile } from "./servers";
 
@@ -16,7 +16,10 @@ afterEach(() => {
 const HOME = { servers: [{ id: "self", url: ".", name: "Home" }], defaultSelection: ["self"] };
 
 /** The page's servers on the fake network, whose catalogue and server answer as `route` says, once loaded. */
-async function load(route: (url: URL) => Answer, transports: Partial<TestConfig["transports"]> = {}) {
+async function load(
+  route: (url: URL, init: RequestInit) => Answer,
+  transports: Partial<TestConfig["transports"]> = {},
+) {
   net = fakeNet(route);
   const config = signal<TestConfig>({ ...CONFIG, transports: { ...CONFIG.transports, ...transports } });
   const active = signal(true);
@@ -42,7 +45,8 @@ async function load(route: (url: URL) => Answer, transports: Partial<TestConfig[
       ({ servers, dropped }) => ({ servers: servers.map(({ server }) => server.id), dropped }),
       (error: Error) => error.name,
     );
-  return { servers, config, active, online, prepare, readiness: () => servers.views.peek().get("self")?.readiness };
+  const readiness = (id = "self") => servers.views.peek().get(id)?.readiness;
+  return { servers, config, active, online, prepare, readiness };
 }
 
 test("Start runs on what its checks verified however long they take, and never fails without a message", async () => {
@@ -117,6 +121,31 @@ test("a reloaded catalogue that no longer allows the chosen origin keeps the pro
   additionalOrigins = [];
   await servers.load();
   expect(config.peek().transports).toEqual({ throughputTarget: "protocol:http2", latencyTarget: "auto" });
+});
+
+test("an approved peer checks its grant at once, even while the approving window hides this page", async () => {
+  const peer = "https://peer.example";
+  const catalogue = {
+    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
+    defaultSelection: ["self", "peer"],
+  };
+  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 3_600_000 };
+  const { servers, active, readiness } = await load((url, init) => {
+    if (url.pathname === "/servers") return { body: catalogue };
+    if (url.pathname === "/auth/browser/token") return { body: grant };
+    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    return url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" };
+  });
+  expect(readiness("peer")).toBe("sign-in");
+  servers.signIn("peer");
+  active.set(false);
+  await net!.advance(2_000);
+  expect({ approval: servers.approval.peek(), readiness: readiness("peer") }).toEqual({
+    approval: { state: "idle" },
+    readiness: "verified",
+  });
 });
 
 test("a saved choice binds IDs to origins, prototype-named IDs included", () => {

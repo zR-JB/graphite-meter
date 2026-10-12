@@ -396,12 +396,15 @@ export function createServers(env: ServersEnv): Servers {
       if (flow !== abort || catalogue.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url) return;
       grants.set(entry.id, { url: entry.url, grant, auth: grantAuth(entry, grant, now) });
       // Approval owns the grant exchange; the new connection owns every later path error.
+      const granted = connect(entry);
       batch(() => {
         const old = connections.peek();
         old.get(entry.id)?.dispose();
-        connections.set(new Map([...old, [entry.id, connect(entry)]]));
+        connections.set(new Map([...old, [entry.id, granted]]));
         approval.set(IDLE);
       });
+      // Checked at once: the approving window may have hidden this page, which holds back timed checks.
+      void granted.check();
     } catch (cause) {
       if (signal.aborted) return;
       connections
