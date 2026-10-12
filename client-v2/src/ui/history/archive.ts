@@ -12,6 +12,8 @@ export type Selected =
 
 const NONE: Selected = { status: "none" };
 const PENDING: Selected = { status: "pending" };
+const STALE = "History could not be read again, so this list may be out of date.";
+const UNREAD = "This result could not be read from History.";
 
 /** Must run inside an owner: disposing it stops the read and the subscription. */
 export function createArchive(repository: HistoryRepository, selectedId: Read<string | null>) {
@@ -52,7 +54,9 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
         if (reading !== controller) return;
         reading = null;
         missed = [];
-        state.set("error");
+        // A list already shown stays, said to be stale.
+        if (state.peek() === "ready") error.set(STALE);
+        else state.set("error");
       },
     );
   }
@@ -81,7 +85,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
         else answer.set({ id, status: result.status });
       },
       () => {
-        if (!disposed && selectedId.peek() === id) state.set("error");
+        if (!disposed && selectedId.peek() === id) error.set(UNREAD);
       },
     );
   }
@@ -104,7 +108,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     state: state as Read<"loading" | "ready" | "error">,
     records,
     malformed: computed(() => listed().malformed),
-    /** Why this view's last change to History failed; each read clears it. */
+    /** Why this view's last change to, or read of, History failed; each list read clears it. */
     error,
     /** The linked result, or why there is none; pending while it is read, so nothing flashes "not found". */
     selected: computed<Selected>(() => {

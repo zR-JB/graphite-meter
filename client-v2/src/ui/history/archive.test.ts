@@ -1,0 +1,79 @@
+import { expect, test } from "bun:test";
+import type { HistoryRecord } from "../../app/history/records";
+import type { HistoryChange, HistoryRepository } from "../../app/history/repository";
+import { scope, signal } from "../../lib/signal";
+import { createArchive } from "./archive";
+
+const notRun = { latency: null, download: null, upload: null, bidirectional: null };
+const record = (id: string, completedAt: number): HistoryRecord => ({
+  schemaVersion: 5,
+  id,
+  completedAt,
+  build: "v1",
+  engine: "e",
+  result: {
+    ...notRun,
+    latencyByStage: notRun,
+    addedLatency: null,
+    multiServer: {
+      selection: [{ id: "a", name: "Edge", url: "" }],
+      participants: ["a"],
+      latencyFocus: "a",
+      servers: [],
+      intervals: [],
+      omittedIntervals: 0,
+      failures: [],
+    },
+    outcome: "complete",
+    stages: { latency: "not-run", download: "not-run", upload: "not-run", bidirectional: "not-run" },
+    startedAt: 0,
+    durationMs: 0,
+  },
+});
+
+/** A repository whose reads the test answers one at a time. */
+function repository() {
+  const reads: PromiseWithResolvers<unknown>[] = [];
+  const read = () => {
+    const pending = Promise.withResolvers<unknown>();
+    reads.push(pending);
+    return pending.promise;
+  };
+  let listener: (change: HistoryChange) => void = () => {};
+  const fake = {
+    list: read,
+    inspect: read,
+    onChange: (next: (change: HistoryChange) => void) => {
+      listener = next;
+      return () => {};
+    },
+  } as unknown as HistoryRepository;
+  return { fake, reads, change: (change: HistoryChange) => listener(change) };
+}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("a failed quiet reload or lookup keeps the list on screen and says why", async () => {
+  const { fake, reads, change } = repository();
+  const selectedId = signal<string | null>(null);
+  const [archive, dispose] = scope(() => createArchive(fake, selectedId));
+  reads[0]!.resolve({ records: [record("a", 2)], malformedCount: 0 });
+  await settle();
+  expect(archive.state()).toBe("ready");
+
+  // Another tab's change.
+  change({ type: "elsewhere" });
+  reads[1]!.reject(new Error("closed"));
+  await settle();
+  expect(archive.state()).toBe("ready");
+  expect(archive.records()).toHaveLength(1);
+  expect(archive.error()).toBe("History could not be read again, so this list may be out of date.");
+
+  selectedId.set("b");
+  reads[2]!.reject(new Error("closed"));
+  await settle();
+  expect(archive.state()).toBe("ready");
+  expect(archive.records()).toHaveLength(1);
+  expect(archive.error()).toBe("This result could not be read from History.");
+  expect(archive.selected().status).toBe("pending");
+  dispose();
+});
