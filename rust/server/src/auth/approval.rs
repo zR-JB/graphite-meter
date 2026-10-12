@@ -252,7 +252,17 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
     let token = match issued {
         // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
         Some(issued) if now < issued.replay_until => issued.token,
-        Some(_) => return response::empty(StatusCode::GONE),
+        Some(_) => {
+            // Past its window the token is no longer kept.
+            if let Some(issued) = state
+                .approvals
+                .get_mut(&challenge)
+                .and_then(|approval| approval.issued.as_mut())
+            {
+                drop(std::mem::take(&mut issued.token));
+            }
+            return response::empty(StatusCode::GONE);
+        }
         None if !approved => {
             let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
             return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };

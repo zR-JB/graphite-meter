@@ -347,6 +347,8 @@ func (s *Service) exchangeLocked(verifier, origin string, now time.Time) (string
 		if now.Before(a.replayUntil) {
 			return a.token, sess, http.StatusOK
 		}
+		// Past its window the token is no longer kept.
+		a.token = ""
 		return "", nil, http.StatusGone
 	}
 	if len(sess.grants) >= maxSessionGrants {
