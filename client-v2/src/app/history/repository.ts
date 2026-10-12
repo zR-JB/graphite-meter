@@ -23,6 +23,7 @@ const UNSAVABLE = "This result could not be saved in browser storage.";
 const FULL = "Browser storage is full. This result was not saved.";
 const UNAVAILABLE = "This browser has no storage for History: results are not saved.";
 const UNSUPPORTED = "Unsupported history database version. Saved data has not been changed.";
+const CLOSED = "History storage was closed before it opened.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
 /** A write History will never take; the message says why. */
@@ -309,6 +310,8 @@ export class HistoryRepository {
       failed: (error) => settle(() => reject(error)),
       blocked: () => deadline(BLOCKED_MS, "History is open elsewhere in another version."),
     };
+    // A connection let go before it opened hears so now, not at its deadline.
+    pending.waiter?.failed(new Error(CLOSED));
     pending.waiter = waiter;
     if (pending.blocked) waiter.blocked();
     else deadline(OPEN_MS, "History storage did not open in time.");

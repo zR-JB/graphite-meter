@@ -149,3 +149,17 @@ test("a late answer is let go, other versions are refused, and without storage n
   await expect(history.put(record("a"), 0)).rejects.toBeInstanceOf(HistoryRefusal);
   expect(jest.getTimerCount()).toBe(0);
 });
+
+test("an open let go by close() is refused at once when the next one takes its request", async () => {
+  const history = new HistoryRepository();
+  let refusal: unknown;
+  history.clears().catch((error: unknown) => (refusal = error));
+  history.close();
+  const next = history.clears();
+  expect(openings).toHaveLength(1);
+  answer(openings[0]!, 2);
+  expect(await next).toBe(2);
+  expect(String(refusal)).toBe("Error: History storage was closed before it opened.");
+  expect(jest.getTimerCount()).toBe(0);
+  history.close();
+});
