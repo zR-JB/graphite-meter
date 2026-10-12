@@ -15,6 +15,8 @@ const RECONNECT_MAX_MS = 2_000;
 const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
 const BACKUP_CEILING_MS = 1_000;
+/** A timer this late means the worker or its page froze, as the run's own gap rule judges a page. */
+const FROZEN_MS = 1_500;
 
 /** Time as the prober sees it, so tests can drive it. */
 export interface ProberClock {
@@ -129,6 +131,8 @@ export class Prober {
   /** A message from the server, read at `at` before it was parsed. */
   frame(text: string, at: number): void {
     if (this.#state !== "open") return;
+    // A reply that reached a frozen worker is read only after the freeze, perhaps before the late timer.
+    if (at - this.#timerAt > FROZEN_MS) this.wake();
     const reply = pong(text);
     if (!reply) return;
     const probe = this.#pending.get(reply.id);
@@ -187,9 +191,13 @@ export class Prober {
   }
 
   wake(): void {
+    const due = this.#timerAt;
     this.#timerAt = Infinity;
     if (this.#state === "stopped") return;
     const now = this.clock.now();
+    // Probes in flight across a freeze get no verdict: their replies may be waiting unread, and their RTTs would
+    // carry the freeze.
+    if (now - due > FROZEN_MS) this.#interrupt();
     if (now >= this.#reconnectAt) {
       this.#reconnectAt = Infinity;
       this.io.dial();

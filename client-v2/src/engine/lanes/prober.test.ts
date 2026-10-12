@@ -58,7 +58,7 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
   const of = <T extends ProbeReport["type"]>(type: T) =>
     reports.filter((report): report is Extract<ProbeReport, { type: T }> => report.type === type);
   const outcomes = () => of("outcomes").flatMap((report) => report.outcomes.map(pick));
-  return { prober, clock, sent, reports, stamps, run, of, outcomes };
+  return { prober, clock, sent, replies, reports, stamps, run, of, outcomes };
 }
 
 const pick = ({ rttMs, timedOut, observedAt, inWindow }: ProbeOutcome) => ({ rttMs, timedOut, observedAt, inWindow });
@@ -213,6 +213,21 @@ test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stal
   b.prober.closed("websocket closed");
   expect(b.of("stalled")).toHaveLength(2);
   dialAt(7_460);
+});
+
+test("a freeze leaves the probes in flight across it unresolved, whether its late timer or a reply runs first", () => {
+  for (const replyFirst of [false, true]) {
+    const b = opened(bus(80, 16, () => 200));
+    b.run(1_000);
+    const answered = b.outcomes().length;
+    // The worker freezes for 3 s; its timer and the replies to the two probes in flight run once it thaws.
+    b.clock.now = b.clock.due = 4_000;
+    for (const reply of b.replies) reply.at = replyFirst ? 4_000 : 4_001;
+    b.run(4_500);
+    expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 2, reason: "unresolved" }]);
+    expect(b.outcomes().filter(({ timedOut }) => timedOut)).toEqual([]);
+    expect(b.outcomes().length).toBeGreaterThan(answered);
+  }
 });
 
 test("a send the browser could not make is interrupted after the replies already observed, never a timeout", () => {

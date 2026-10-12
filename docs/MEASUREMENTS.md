@@ -103,7 +103,7 @@ after three replies and timeouts.
 | In-flight window | 16 idle at a fixed cadence, 4 reply-driven, 2 under load. A full window skips the send, never a timeout.         |
 | Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms–10 s; 250 ms before the first reply. |
 | Stage end        | Sending stops; in-window probes drain to their deadlines, at most 10 s.                                          |
-| Interruptions    | Disconnects leave pending probes unfinished; local send failures are separate; neither is a timeout.             |
+| Interruptions    | Disconnects and freezes over 1.5 s leave pending probes unfinished; send failures are separate; no timeouts.     |
 
 Cadence is a scheduling policy, not an observed sampling rate: reply-driven density follows RTT alone (tens of
 thousands of probes a second on loopback), and no coverage is inferred from cadence and elapsed time. The idle
