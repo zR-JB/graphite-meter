@@ -61,6 +61,15 @@ class El {
     siblings[siblings.indexOf(this)] = next;
     next.parent = this.parent;
   }
+  before(node: El) {
+    const siblings = this.parent!.children;
+    siblings.splice(siblings.indexOf(this), 0, node);
+    node.parent = this.parent;
+  }
+  get previousElementSibling(): El | null {
+    const siblings = this.parent!.children;
+    return siblings[siblings.indexOf(this) - 1] ?? null;
+  }
   focus() {
     focused = this;
   }
@@ -85,12 +94,13 @@ const signIn = (action = "/auth/password") =>
   );
 const done = () => h("main", { class: "card" }, h("h1"), h("p"));
 
-type Reply = { redirected?: boolean; url: string; ok?: boolean; card?: El };
+type Reply = { redirected?: boolean; url: string; ok?: boolean; status?: number; card?: El };
 
 function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {})) {
   focused = null;
   const root = h("body", {}, card);
   const listeners = new Map<string, (event: object) => void>();
+  const shown = new Map<string, (event: object) => void>();
   const effects: string[] = [];
   const posts: [string, RequestInit][] = [];
   const document = {
@@ -103,6 +113,7 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     querySelectorAll: (selector: string) => root.querySelectorAll(selector),
     getElementById: (id: string) => root.querySelector(`#${id}`),
     importNode: (node: El) => node,
+    createElement: (tag: string) => h(tag),
   };
   let answer: Reply | undefined;
   install({
@@ -118,7 +129,7 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     fetch: async (url: URL, init: RequestInit) => {
       posts.push([url.href, init]);
       answer = await reply();
-      return { redirected: false, ok: true, text: async () => "", ...answer };
+      return { redirected: false, ok: true, status: 200, text: async () => "", ...answer };
     },
     DOMParser: class {
       parseFromString = () => ({ title: "Next", querySelector: () => answer!.card ?? null });
@@ -129,13 +140,15 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
         for (const input of form.querySelectorAll("input")) this.append(input.getAttribute("name")!, input.value);
       }
     },
+    addEventListener: (type: string, listener: (event: object) => void) => shown.set(type, listener),
   } as unknown as Parameters<typeof install>[0]);
   const fire = (type: string, target: El) => {
     let prevented = false;
     listeners.get(type)!({ target, preventDefault: () => (prevented = true) });
     return prevented;
   };
-  return { root, document, effects, posts, fire, settled: () => new Promise((done) => setImmediate(done)) };
+  const restore = (persisted: boolean) => shown.get("pageshow")!({ persisted });
+  return { root, document, effects, posts, fire, restore, settled: () => new Promise((done) => setImmediate(done)) };
 }
 
 test("only a redirect to another page leaves this page", () => {
@@ -182,7 +195,7 @@ test("a sign-in posts in place, then swaps in the answer's card or follows it of
     },
     { reply: { url: "https://meter.example/auth/cli/approve", card: done() }, effects: [], focus: "heading" },
     { reply: { url: "https://meter.example/auth/password" }, effects: ["assign https://meter.example/auth/password"] },
-    { reply: { url: "https://meter.example/auth/password", ok: false }, effects: ["reload"] },
+    { reply: { url: "https://meter.example/auth/password", ok: false, status: 403 }, effects: ["reload"] },
   ];
   for (const { reply, effects, focus } of cases) {
     const card = signIn();
@@ -222,23 +235,47 @@ test("a sign-in posts in place, then swaps in the answer's card or follows it of
   }
 });
 
-test("a failed post leaves the form usable, and a busy form takes no second submit", async () => {
-  const card = signIn();
-  const page = load(card, async () => Promise.reject(new TypeError("offline")));
-  const form = card.querySelector("form")!;
-  page.fire("submit", form);
-  await page.settled();
-  expect([form.hasAttribute("data-busy"), ...form.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
-    false,
-    false,
-    false,
-  ]);
+test("a post that cannot reach the server says so once and leaves the form usable", async () => {
+  for (const reply of [
+    () => Promise.reject(new TypeError("offline")),
+    async () => ({ url: "https://meter.example/auth/password", ok: false, status: 502 }),
+  ]) {
+    const card = signIn();
+    const page = load(card, reply);
+    const form = card.querySelector("form")!;
+    page.fire("submit", form);
+    await page.settled();
+    page.fire("submit", form);
+    await page.settled();
+    expect([form.hasAttribute("data-busy"), ...form.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const notices = card.querySelectorAll("[data-unreachable]");
+    expect(notices.map((each) => [each.textContent, each.getAttribute("role"), each.getAttribute("class")])).toEqual([
+      ["Could not reach the server. Try again.", "alert", "notice"],
+    ]);
+    expect([form.previousElementSibling, page.effects]).toEqual([notices[0]!, []]);
+  }
+});
 
+test("a busy form takes no second submit, until the page returns from the back-forward cache", () => {
   const waiting = load(signIn());
   const busy = waiting.root.querySelector("form")!;
   waiting.fire("submit", busy);
   expect(waiting.fire("submit", busy)).toBe(true);
   expect(waiting.posts).toHaveLength(1);
+  waiting.restore(false);
+  expect(busy.hasAttribute("data-busy")).toBe(true);
+  waiting.restore(true);
+  expect([busy.hasAttribute("data-busy"), ...busy.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  waiting.fire("submit", busy);
+  expect(waiting.posts).toHaveLength(2);
 });
 
 test("forms bound elsewhere submit natively, busy", () => {

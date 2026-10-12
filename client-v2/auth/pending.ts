@@ -1,7 +1,10 @@
 // The sign-in and approval pages' script: the host line, the show-password keys, and forms that stay on the page
 // while the server checks them. Without it every form still posts natively.
 
-type Page = Pick<Window & typeof globalThis, "document" | "location" | "fetch" | "DOMParser" | "FormData">;
+type Page = Pick<
+  Window & typeof globalThis,
+  "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener"
+>;
 
 // A native sign-in POST leaves a dead spinner: password verification is deliberately slow, and the browser freezes
 // animations the instant a navigation commits. These forms post with fetch, so a refusal swaps the card in place and a
@@ -13,7 +16,7 @@ export function leftThisPage(response: Pick<Response, "redirected" | "url">, her
   return response.redirected && new URL(response.url).pathname !== here.pathname;
 }
 
-export function install({ document, location, fetch, DOMParser, FormData }: Page): void {
+export function install({ document, location, fetch, DOMParser, FormData, addEventListener }: Page): void {
   // Filled from the address bar, so a visitor sees which server asks, and nothing is disclosed.
   const wake = (root: ParentNode) => {
     for (const line of root.querySelectorAll("[data-host]")) line.textContent = location.host;
@@ -30,6 +33,23 @@ export function install({ document, location, fetch, DOMParser, FormData }: Page
     else form.removeAttribute("data-busy");
     for (const button of form.querySelectorAll("button")) button.disabled = busy;
   };
+  // One fixed sentence above the form, which stays usable: nothing a failing hop answered is shown.
+  const unreachable = (form: HTMLFormElement) => {
+    setBusy(form, false);
+    if (form.previousElementSibling?.hasAttribute("data-unreachable")) return;
+    const notice = document.createElement("p");
+    notice.setAttribute("class", "notice");
+    notice.setAttribute("data-tone", "warn");
+    notice.setAttribute("data-unreachable", "");
+    notice.setAttribute("role", "alert");
+    notice.textContent = "Could not reach the server. Try again.";
+    form.before(notice);
+  };
+
+  // A page restored from the back-forward cache keeps the busy form its submit left.
+  addEventListener("pageshow", (event) => {
+    if (event.persisted) for (const form of document.querySelectorAll("form")) setBusy(form, false);
+  });
 
   // A press on the key keeps the caret, and a phone's keyboard, in the field.
   document.addEventListener("pointerdown", (event) => {
@@ -67,8 +87,11 @@ export function install({ document, location, fetch, DOMParser, FormData }: Page
         const page = new DOMParser().parseFromString(await response.text(), "text/html");
         const card = page.querySelector("main.card");
         if (!card) {
+          // A refusal without a card, such as an approval that ended, shows its page's state on a reload; a failing
+          // hop's answer is not this server's.
           if (response.ok) location.assign(response.url);
-          else location.reload();
+          else if (response.status < 500) location.reload();
+          else unreachable(form);
           return;
         }
         const next = document.importNode(card, true);
@@ -84,7 +107,7 @@ export function install({ document, location, fetch, DOMParser, FormData }: Page
           heading.focus();
         }
       })
-      .catch(() => setBusy(form, false));
+      .catch(() => unreachable(form));
   });
 
   wake(document);
