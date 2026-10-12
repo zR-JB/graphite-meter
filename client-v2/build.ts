@@ -8,10 +8,13 @@ import { themeScript } from "./auth/build";
 
 const env = process.env;
 const root = import.meta.dir;
-const outdir = env.GM_LEGAL_SCAN_DIR ? resolve(env.GM_LEGAL_SCAN_DIR) : join(root, "dist");
-// The build empties its output first: only dist/ or a directory inside the temporary one may be named.
-if (outdir !== join(root, "dist") && !outdir.startsWith(resolve(tmpdir()) + sep))
-  throw new Error("GM_LEGAL_SCAN_DIR must name a directory inside the temporary directory");
+/** A path a caller named, which must lie inside the temporary directory: the build empties and writes what it gets. */
+function temporary(name: string, path: string): string {
+  const resolved = resolve(path);
+  if (!resolved.startsWith(resolve(tmpdir()) + sep)) throw new Error(`${name} must lie inside the temporary directory`);
+  return resolved;
+}
+const outdir = env.GM_LEGAL_SCAN_DIR ? temporary("GM_LEGAL_SCAN_DIR", env.GM_LEGAL_SCAN_DIR) : join(root, "dist");
 const profile = env.GM_CLIENT_BUILD_PROFILE === "prod" ? "prod" : "dev";
 const version = env.VERSION || null;
 const gitRevision = () => {
@@ -81,10 +84,14 @@ const bundle = [
   ...styles.map((output) => `<link rel="stylesheet" href="${asset(output.path)}">`),
   `<script type="module" src="${asset(entry.path)}"></script>`,
 ].join("");
+shell = shell.replace("<!-- bundle -->", () => bundle);
+// Comments go until none is left, so one hidden inside another cannot survive.
+for (let previous = ""; previous !== shell; ) {
+  previous = shell;
+  shell = shell.replace(/<!--[\s\S]*?-->/g, "");
+}
 // Line breaks between tags go; inside text they stay one space.
 shell = shell
-  .replace("<!-- bundle -->", () => bundle)
-  .replace(/<!--[\s\S]*?-->/g, "")
   .replace(/>\s*\n\s*</g, "><")
   .replace(/\s*\n\s*/g, " ")
   .trim();
@@ -107,9 +114,7 @@ for (const file of files) {
 validate(shell, (await readdir(outdir, { recursive: true })).map(String));
 
 if (env.GM_LEGAL_SCAN_OUT) {
-  const scan = resolve(env.GM_LEGAL_SCAN_OUT);
-  if (!scan.startsWith(resolve(tmpdir()) + sep))
-    throw new Error("GM_LEGAL_SCAN_OUT must name a file in the temporary directory");
+  const scan = temporary("GM_LEGAL_SCAN_OUT", env.GM_LEGAL_SCAN_OUT);
   const modules = new Set<string>();
   for (const build of [workers, app])
     for (const input of Object.keys(build.metafile!.inputs)) modules.add(resolve(input));
