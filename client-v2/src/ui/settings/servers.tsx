@@ -144,6 +144,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       return state === "preparing" || state === "waiting";
     });
     const renew = computed(() => approval()?.state === "renew");
+    const failed = computed(() => approval()?.state === "failed");
     return (
       <div class="server-feedback" role="status">
         <div>
@@ -161,9 +162,11 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                     ? `Checking ${name()}…`
                     : renew()
                       ? "Its sign-in ends before the planned test would"
-                      : signIn()
-                        ? "Admits signed-in clients only"
-                        : (view()?.message ?? "")
+                      : failed()
+                        ? (view()?.message ?? "Approval did not finish")
+                        : signIn()
+                          ? "Admits signed-in clients only"
+                          : (view()?.message ?? "")
                 }
               </span>
             );
@@ -179,7 +182,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               // The sign-in window must open within this click.
               onclick={() => servers.signIn(id)}
             >
-              {() => (waiting() ? "Waiting for approval…" : "Sign in")}
+              {() => (waiting() ? "Waiting for approval…" : failed() ? "Sign in again" : "Sign in")}
             </button>
           ) : (
             <button
@@ -210,7 +213,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                   </p>
                 );
               return (
-                "code" in current && (
+                current.state === "waiting" && (
                   <p class="approval-code">
                     Compare this code with the sign-in page:{" "}
                     <strong aria-label={`Verification code ${current.code}`}>{current.code}</strong> Approve only if
@@ -219,19 +222,22 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                 )
               );
             },
-            <button class="btn" type="button" onclick={() => servers.cancelSignIn()}>
-              Cancel sign-in
-            </button>,
+            // A failed approval's challenge is spent: only a new sign-in helps.
+            () =>
+              !failed() && (
+                <button class="btn" type="button" onclick={() => servers.cancelSignIn()}>
+                  Cancel sign-in
+                </button>
+              ),
             () => {
               const current = flow();
               return (
-                "url" in current && (
+                current.state === "waiting" && (
                   <p>
                     <a href={current.url} target="_blank" rel="noopener noreferrer">
                       Open sign-in page
                     </a>{" "}
                     if no window opened, then return here.
-                    {current.state === "failed" ? " Approval did not finish. Try Sign in again." : ""}
                   </p>
                 )
               );

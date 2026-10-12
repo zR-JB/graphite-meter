@@ -67,7 +67,8 @@ export type Approval =
   /** The window is reserved; the challenge is being made. */
   | { state: "preparing"; id: string }
   | { state: "waiting"; id: string; url: string; code: string }
-  | { state: "failed"; id: string; url: string; code: string }
+  /** The approval ended without a grant; its challenge is spent. */
+  | { state: "failed"; id: string }
   /** The remote login holds all its grants: it must be renewed there first. */
   | { state: "limit"; id: string; renewUrl: string }
   /** The grant ends before the planned test, and so would another: grants end with the remote login. */
@@ -398,11 +399,11 @@ export function createServers(env: ServersEnv): Servers {
 
   async function approve(entry: CatalogEntry, abort: AbortController, popup: ReturnType<typeof reserveWindow>) {
     const { signal } = abort;
-    let shown: { url: string; code: string } | null = null;
+    let shown = false;
     try {
       const { url, code, verifier } = await beginApproval(entry, page);
       signal.throwIfAborted();
-      shown = { url, code };
+      shown = true;
       approval.set({ state: "waiting", id: entry.id, url, code });
       popup.navigate(url);
       const grant = await exchangeGrant(entry, verifier, signal, now);
@@ -426,7 +427,7 @@ export function createServers(env: ServersEnv): Servers {
         ?.requireSignIn(cause instanceof Error ? cause.message : "Approval failed");
       if (cause instanceof ApprovalLimitError)
         approval.set({ state: "limit", id: entry.id, renewUrl: `${entry.url}/login` });
-      else approval.set(shown ? { state: "failed", id: entry.id, ...shown } : IDLE);
+      else approval.set(shown ? { state: "failed", id: entry.id } : IDLE);
     } finally {
       popup.close();
       if (flow === abort) flow = null;

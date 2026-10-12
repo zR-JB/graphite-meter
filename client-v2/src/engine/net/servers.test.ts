@@ -185,6 +185,28 @@ test("a catalogue that failed to load is read again as the network or the page c
   expect(servers.loadError.peek()).toBe("");
 });
 
+test("a failed approval keeps no link to its spent challenge, only the words of why", async () => {
+  const peer = "https://peer.example";
+  const catalogue = {
+    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
+    defaultSelection: ["self", "peer"],
+  };
+  const { servers } = await load((url, init) => {
+    if (url.pathname === "/servers") return { body: catalogue };
+    if (url.pathname === "/auth/browser/token") return { status: 410 };
+    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    return url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" };
+  });
+  servers.signIn("peer");
+  await net!.advance(1_000);
+  expect({ approval: servers.approval.peek(), message: servers.views.peek().get("peer")?.message }).toEqual({
+    approval: { state: "failed", id: "peer" },
+    message: "The approval's answer was lost on the way. Sign in again.",
+  });
+});
+
 test("a saved choice binds IDs to origins, prototype-named IDs included", () => {
   const known = catalog(
     {

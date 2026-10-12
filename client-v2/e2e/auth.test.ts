@@ -168,6 +168,29 @@ test("a full remote login offers renewal instead of an approval link", async (pa
   await expect(row.getByRole("button", { name: "Sign in to Private" })).toBeEnabled();
 });
 
+test("a failed approval offers only a new sign-in", async (page) => {
+  await page.addInitScript((peer) => {
+    window.open = () => null;
+    const original = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), location.href);
+      return url.origin === peer && url.pathname === "/auth/browser/token"
+        ? Promise.resolve(new Response(null, { status: 410 }))
+        : original(input, init);
+    }) as typeof fetch;
+  }, locked.url);
+  await open(page, home.url, { servers: [home, locked] });
+  await openSettings(page);
+  const row = feedback(page, "Private");
+  const signIn = row.getByRole("button", { name: "Sign in to Private" });
+  await signIn.click();
+  await expect(signIn).toHaveText("Sign in again");
+  await expect(row).toContainText("The approval's answer was lost on the way. Sign in again.");
+  await expect(row.getByRole("link")).toHaveCount(0);
+  await expect(row.locator(".approval-code")).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Cancel sign-in" })).toHaveCount(0);
+});
+
 test.chrome("peer sign-in opens an isolated popup from the user click", async (page) => {
   await page.addInitScript(() => {
     const open = window.open.bind(window);
