@@ -52,7 +52,14 @@ export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; de
     reports the download bytes counted so far, then answers `flushed`. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
-  | { type: "upload"; url: string; request: RequestRecipe; streams: number }
+  | {
+      type: "upload";
+      url: string;
+      request: RequestRecipe;
+      streams: number;
+      /** The server's idle round trip, which sizes POSTs around their turnaround; null when unknown. */
+      rttMs: number | null;
+    }
   | { type: "measure"; epoch: number }
   | { type: "flush" };
 

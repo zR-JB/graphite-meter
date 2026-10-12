@@ -134,12 +134,39 @@ test("an upload drains each answer and breaks on one past 64 KiB rather than kee
   const endless = source();
   const answers = [new Response("ok"), new Response(endless.stream)];
   const lane = await boot<LaneCommand>("./lane.ts", { fetch: async () => answers.shift() });
-  lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1 });
+  lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1, rttMs: null });
   await elapse(0);
   for (let chunk = 0; chunk < 3; chunk++) endless.push("x".repeat(32 * 1024));
   await elapse(0);
   expect(lane.types()).toEqual(["posted", "broken"]);
   expect(lane.posted.at(-1)).toEqual({ type: "broken", detail: "the upload answer was too large" });
+});
+
+test("upload POSTs grow past their turnaround, so one lane stays about 90 % busy on a long path", async () => {
+  // 100 Mbit/s: a POST sends its body, then its answer arrives one round trip later.
+  const BYTES_PER_MS = 12_500;
+  for (const [pathMs, rttMs] of [
+    [50, 50],
+    [200, 200],
+    [200, null],
+  ] as const) {
+    const sends: { at: number; ms: number }[] = [];
+    let done = false;
+    const lane = await boot<LaneCommand>("./lane.ts", {
+      fetch: (_: string, init: RequestInit) =>
+        new Promise((resolve) => {
+          const ms = (init.body as Blob).size / BYTES_PER_MS;
+          sends.push({ at: performance.now(), ms });
+          setTimeout(() => done || resolve(new Response("ok")), ms + pathMs);
+        }),
+    });
+    lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1, rttMs });
+    await elapse(30_000);
+    done = true;
+    const steady = sends.slice(-4);
+    const busy = steady.slice(0, -1).map(({ at, ms }, i) => ms / (steady[i + 1]!.at - at));
+    for (const share of busy) expect(share, `${pathMs} ms, RTT ${rttMs}`).toBeGreaterThan(0.89);
+  }
 });
 
 test("a session's stop finalizes its upload id, then acknowledges on the terminal record or after 1 s", async () => {

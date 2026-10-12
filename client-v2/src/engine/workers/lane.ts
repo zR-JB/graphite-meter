@@ -5,8 +5,11 @@ import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } fro
 import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
-/** A POST spans about this long: its turnaround sits in the receiver's elapsed time, so shorter ones lose accuracy. */
+/** A POST sends for at least this long, so per-request overhead stays small. */
 const TARGET_POST_MS = 500;
+/** Each POST's answer leaves its lane idle for about one round trip, which the receiver times as no bytes moving: a
+    POST sends for at least this many round trips, so its lane stays at least 90 % busy. */
+const TURNAROUNDS = 9;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 /** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
@@ -83,7 +86,7 @@ async function drained(response: Response): Promise<boolean> {
   return true;
 }
 
-async function upload({ url, request, streams }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+async function upload({ url, request, streams, rttMs }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
   const largest = largestPost(streams, (navigator as { deviceMemory?: number }).deviceMemory);
   if (!body) {
     const block = new Blob([randomBlock()]);
@@ -91,6 +94,8 @@ async function upload({ url, request, streams }: Extract<LaneCommand, { type: "u
   }
   let bytes = MIN_POST_BYTES;
   let rate = 0;
+  // No POST returns sooner than its round trip, so the quickest one bounds it where the server's RTT is unknown.
+  let turnaround = rttMs ?? Infinity;
   for (;;) {
     const startedAt = performance.now();
     try {
@@ -101,8 +106,12 @@ async function upload({ url, request, streams }: Extract<LaneCommand, { type: "u
       const elapsedMs = performance.now() - startedAt;
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
+      turnaround = Math.min(turnaround, elapsedMs);
+      // The rate counts each POST's turnaround as time, so a POST sized to span its send time and one turnaround
+      // sends for the send time.
       rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
-      const want = (rate * TARGET_POST_MS) / 1000;
+      const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
+      const want = (rate * (sendMs + turnaround)) / 1000;
       bytes = Math.floor(Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))));
     } catch (error) {
       return { type: "broken", detail: String(error) };

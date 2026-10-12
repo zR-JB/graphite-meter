@@ -257,7 +257,8 @@ class Stage implements StageResources {
           this.#signedIn((): LaneCommand => {
             if (direction === "up") {
               const url = `${fetch.origin}${ROUTES.upload}?cb=${seed}-${lane}&${upload}`;
-              return { type: "upload", url, request: auth.request(url, "POST"), streams: count };
+              const rttMs = server.latency?.rttMs ?? null;
+              return { type: "upload", url, request: auth.request(url, "POST"), streams: count, rttMs };
             }
             const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
             return { type: "download", url, request: auth.request(url, "GET"), epoch, streams: count };
