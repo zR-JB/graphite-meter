@@ -76,12 +76,17 @@ test("a wrong password keeps the card's host, show key and focus", async (page) 
   }
 });
 
-test("signing out lands on the signed-out notice", async (page) => {
+test("signing out lands on the signed-out notice, even with a token another sign-in replaced", async (page) => {
   await open(page, `${locked.url}/login`, {
     servers: [{ id: "self", url: locked.url }],
   });
   await signIn(page);
-  await page.getByRole("button", { name: "Sign out Local operator", exact: true }).click();
+  const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
+  await expect(signOut).toBeVisible();
+  await page.evaluate(() => {
+    document.querySelector<HTMLInputElement>('form.account input[name="csrf"]')!.value = "replaced";
+  });
+  await signOut.click();
   await expect(page.getByRole("status")).toHaveText("You're signed out.");
   expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
 });
@@ -96,12 +101,11 @@ test("signing out everywhere waits for confirmation", async (page) => {
   });
   await expect(everywhere).toBeVisible();
   // Record the submission instead of ending the fleet's shared operator sessions.
-  await page.evaluate(() =>
-    document.addEventListener("submit", (event) => {
-      event.preventDefault();
-      (window as any).submitted = event.submitter?.getAttribute("value");
-    }),
-  );
+  await page.evaluate(() => {
+    HTMLFormElement.prototype.submit = function () {
+      (window as any).submitted = new FormData(this).get("scope") ?? "this session";
+    };
+  });
   const confirm = page.getByRole("alertdialog", {
     name: "Sign out everywhere?",
   });

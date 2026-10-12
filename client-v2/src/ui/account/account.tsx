@@ -2,7 +2,7 @@
 // the session answers; without it the meter works on, and the run reports a lost login itself.
 import "./account.css";
 import type { App } from "../../app/app";
-import type { Account } from "../../engine/net/page";
+import { csrfHeaders, type Account } from "../../engine/net/page";
 import { Show } from "../../lib/dom";
 import { computed, onCleanup, signal } from "../../lib/signal";
 import { ConfirmDialog } from "../kit/dialog";
@@ -26,19 +26,47 @@ export function AccountControl(props: { app: App }): Node {
         const confirming = signal(false);
         let form!: HTMLFormElement;
         let everywhere!: HTMLButtonElement;
+        let csrf!: HTMLInputElement;
+        let scope!: HTMLInputElement;
+        let leaving = false;
         return [
           <form
             class="account"
             method="post"
             action="/auth/logout"
             aria-label={() => `${label()}, ${provider()}`}
-            // A deliberate sign-out is no lapsed login.
-            onsubmit={() => props.app.signOut()}
+            // The page leaves once the run ended and its result's write landed, with the token as it is now: another
+            // tab may have signed in again since this one read it. A submit drops its submitter, so the scope rides along.
+            onsubmit={(event) => {
+              event.preventDefault();
+              if (leaving) return;
+              leaving = true;
+              scope.disabled = event.submitter !== everywhere;
+              void props.app.signOut().then(() => {
+                csrf.value = csrfHeaders("POST", document.cookie)["X-CSRF-Token"] ?? csrf.value;
+                form.submit();
+              });
+            }}
             ref={(node) => {
               form = node;
             }}
           >
-            <input type="hidden" name="csrf" value={() => session().csrf} />
+            <input
+              type="hidden"
+              name="csrf"
+              value={() => session().csrf}
+              ref={(node) => {
+                csrf = node;
+              }}
+            />
+            <input
+              type="hidden"
+              name="scope"
+              value="all"
+              ref={(node) => {
+                scope = node;
+              }}
+            />
             <div class="identity" ref={tip(() => `${label()}\n${provider()}`)}>
               <span class="avatar" aria-hidden="true">
                 <Icon name="person" />
@@ -48,8 +76,6 @@ export function AccountControl(props: { app: App }): Node {
             <button
               class="btn btn-icon key signout everywhere"
               type="submit"
-              name="scope"
-              value="all"
               aria-label={() => `Sign out ${label()} everywhere`}
               ref={(node) => {
                 everywhere = node;

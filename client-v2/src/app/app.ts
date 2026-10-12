@@ -190,9 +190,12 @@ export function createApp() {
       booted.set(true);
       void servers.load();
     },
-    /** The sign-out form is submitting: the login it ends is no reason to leave for sign-in. */
-    signOut(): void {
+    /** Before the sign-out form leaves: a running test ends as a lapsed login ends it, the result's write gets its few
+        seconds, and the login the form ends is no reason to leave for sign-in. */
+    async signOut(): Promise<void> {
       signingOut = true;
+      run.end("sign-in-required", "Signed out during the test");
+      await settled();
     },
     dispose,
   };
