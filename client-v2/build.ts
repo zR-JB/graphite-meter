@@ -96,7 +96,7 @@ shell = shell
   .trim();
 await Bun.write(join(outdir, "index.html"), shell);
 
-// Fonts, the favicon and the legal notices keep one owner while both clients ship.
+// Fonts, the favicon and the legal notices keep one owner until client v1 is deleted.
 await cp(join(root, "../client/public"), outdir, { recursive: true });
 await Bun.write(join(outdir, "version.json"), JSON.stringify({ version, label: profile, revision }));
 

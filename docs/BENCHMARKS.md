@@ -5,10 +5,10 @@ the [measurement definitions](MEASUREMENTS.md) and keep reports and raw evidence
 
 | Task                               | Measures                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------ |
-| `mise run bench-throughput [cell]` | Production transfer workers in Chromium, per origin, direction and lane count. |
-| `mise run bench-servers`           | One, two and four coordinated servers in isolated Linux network namespaces.    |
-| `mise run bench-ui`                | UI frame delivery with default stage lengths against the E2E fleet.            |
-| `mise run bench-wire`              | Go and TypeScript wire codec cost.                                             |
+| `mise run bench-throughput [cell]` | Client v1's transfer workers in Chromium, per origin, direction and lane count. |
+| `mise run bench-servers`           | One, two and four coordinated servers in isolated namespaces, through client v1. |
+| `mise run bench-ui`                | UI frame delivery with default stage lengths against the E2E fleet (`GM_CLIENT`). |
+| `mise run bench-wire`              | Go and client v1's TypeScript wire codec cost.                                 |
 | `mise run stress`                  | Server saturation envelope (Unix).                                             |
 
 ## Throughput matrix

@@ -150,8 +150,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RUST, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
     (RUST, "/20260927T180000Z", "", "snapshot.debian.org"),
     # A change to any input of the Rust image selects the jobs that build it.
-    (".github/ci-paths.yml", "  - 'client-v2/**'\n  - 'client/public/**'\n  - 'api/**'\n",
-     "  - 'client/public/**'\n  - 'api/**'\n", r"rust-image misses \['client-v2/package.json'"),
+    (".github/ci-paths.yml", "  - 'client-v2/**'\n  - 'client/public/**'\n  - 'client/e2e/browsers.ts'\n  - 'client/e2e/servers.ts'\n  - 'client/e2e/webview.ts'\n  - 'client/scripts/e2e.ts'\n  - 'go/internal/auth",
+     "  - 'client/public/**'\n  - 'client/e2e/browsers.ts'\n  - 'client/e2e/servers.ts'\n  - 'client/e2e/webview.ts'\n  - 'client/scripts/e2e.ts'\n  - 'go/internal/auth",
+     r"rust-image misses \['client-v2/package.json'"),
     (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "",
      r"rust-image misses \['container/Dockerfile.rust'\]"),
     (RUST, "COPY client/public/ /src/client/public/\n", "COPY client/public/ docs/ /src/client/public/\n",

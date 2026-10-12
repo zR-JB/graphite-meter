@@ -52,9 +52,8 @@ jobs:
           printf '### CI plan for `%s`\n\nSelected: `%s`; the policy, pipeline and secret checks always run.\n' \
             "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
 
-  # The quick gates share one runner. What only reads the checkout runs at once; the component checks follow, since
-  # svelte-check writes into the checkout the container build reads; the race tests run alone last, since they time
-  # loopback.
+  # The quick gates share one runner. What only reads the checkout runs at once; the component checks follow; the race
+  # tests run alone last, since they time loopback.
   checks:
     name: Checks
     runs-on: ubuntu-24.04

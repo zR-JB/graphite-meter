@@ -149,7 +149,6 @@ run = 'client=$(scripts/client-dir.sh); cd "$client"; bun run build'
 [tasks._legal-run]
 hide = true
 usage = 'arg "[mode]" default="check"'
-env = { GM_CLIENT = "v2" }
 run = '''
 #!/usr/bin/env sh
 set -eu
@@ -192,14 +191,8 @@ run = 'client=$(scripts/client-dir.sh); cd "$client"; bun audit'
 shell = "bash -e -o pipefail -c"
 description = "Run the standalone Vite development server of client v1"
 raw = true
-run = '''
-client=$(scripts/client-dir.sh)
-if [ "$client" != client ]; then
-  echo "client v2 has no development server yet; GM_CLIENT=v2 mise run dev serves its build" >&2
-  exit 2
-fi
-cd client
-exec bun run dev'''
+dir = "client"
+run = "exec bun run dev"
 
 [tasks.auth-preview]
 shell = "bash -e -o pipefail -c"
@@ -342,7 +335,6 @@ run = [
   { task = "_e2e-build" },
   'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e bun test ./bench/session.bench.ts --no-orphans --timeout=600000',
 ]
-
 
 [tasks.stress]
 description = "Measure the server saturation envelope (Unix, manual)"

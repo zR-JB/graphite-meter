@@ -1,6 +1,6 @@
 # Development
 
-A Go monorepo with an embedded Svelte browser client and a native Bubble Tea client. The Go module owns the server,
+A Go monorepo with an embedded TypeScript browser client and a native Bubble Tea client. The Go module owns the server,
 wire implementation, native client, generated legal data and the embedded browser bundle.
 
 [Project overview](../README.md) · [Deployment](DEPLOYMENT.md) · [Measurement definitions](MEASUREMENTS.md)
@@ -38,8 +38,8 @@ symlink another worktree's `node_modules`. Bun's package cache and Go's build ca
 | Path           | Responsibility                                                                             |
 | -------------- | ------------------------------------------------------------------------------------------ |
 | `api/`         | Shared schemas and protocol specifications.                                                |
-| `client/`      | Svelte browser client, workers, unit tests and the E2E runner.                             |
-| `client-v2/`   | Browser client v2 in plain TypeScript; it shares v1's fonts, legal files and E2E harness.  |
+| `client/`      | Svelte client v1 (comparison only, `GM_CLIENT=v1`), the fonts, legal files and E2E harness. |
+| `client-v2/`   | The browser client in plain TypeScript, its workers, unit tests and browser suite.         |
 | `go/cmd/`      | Server and native client entry points.                                                     |
 | `go/internal/` | Server, transport, measurement, native client and embedded assets.                         |
 | `container/`   | Container build and deployment examples.                                                   |
@@ -67,7 +67,7 @@ runtimes and are not identical benchmark targets ([client differences](MEASUREME
 
 ```sh
 mise run prod               # production browser build + server
-mise run client-watch       # standalone Vite dev server (v1)
+mise run client-watch       # client v1's standalone Vite dev server
 mise run server-build-prod  # production server binary; VERSION=0.9.0 stamps a release
 mise run goclient-build     # native client (go/graphite-meter-client)
 mise run release-artifacts  # every native release archive
@@ -102,7 +102,7 @@ under its `test-results/servers`. Rerun a subset against the built binary, and s
 output:
 
 ```sh
-cd client && bun run scripts/e2e.ts bun test ./e2e --no-orphans --timeout=60000 -t "History"
+cd client-v2 && bun run e2e bun test ./e2e --no-orphans --timeout=60000 -t "History"
 ```
 
 In a restricted sandbox set writable `GOCACHE`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`, point `BUN_CHROME_PATH` at

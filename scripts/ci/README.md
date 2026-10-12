@@ -88,7 +88,7 @@ and a source-availability note naming them. A prerelease publishes only its
 images and creates no GitHub Release. Go's and Rust's prerelease images both
 ship their notices, name the repository in `SOURCE.txt` and the built commit in
 their `revision` label; that commit's lockfiles (`go/go.sum`,
-`client/bun.lock`, `rust/Cargo.lock` with the forks in
+`client-v2/bun.lock`, `rust/Cargo.lock` with the forks in
 `legal/rust-forks.json`) pin the third-party source they were built from.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and

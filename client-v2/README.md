@@ -33,5 +33,5 @@ in URLs). The page keeps the servers' shell contract: one `</head>`, one attribu
 `bun build.ts` (`build:bundle`) bundles the workers, then the app with their hashed URLs, minifies the shell's inline
 blocks, copies `client/public` and writes compressed siblings. `bun check` type-checks with the TypeScript 7 port Bun
 ships; Biome formats. Unit tests (`bun test src`) cover pure logic and the engine against fake clocks and fakes;
-the browser suite in `e2e/` runs real Chrome and Firefox against local Go servers through v1's harness, so both
-clients are held to the same scenarios.
+the browser suite in `e2e/` runs real Chrome and Firefox against local Go servers, and Chrome against the Rust server
+in CI, through v1's harness, so both clients are held to the same scenarios.
