@@ -123,7 +123,7 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
     let mut last = [0; COUNTERS];
     let stale = post(&app, "192.0.2.1", NONCE, "", &format!("password={}", right())).await;
     assert_eq!(location(&stale), Some("/login?error=stale"));
-    let forged = post(
+    let replaced = post(
         &app,
         "192.0.2.1",
         "another-long-unpredictable-nonce",
@@ -131,7 +131,7 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
         "",
     )
     .await;
-    assert_eq!(location(&forged), Some("/login?error=failed"));
+    assert_eq!(location(&replaced), Some("/login?error=stale"), "another tab's login cookie");
     for _ in 0..5 {
         assert_eq!(location(&sign_in(&app, "192.0.2.1", &wrong()).await), Some("/login?error=password"));
     }

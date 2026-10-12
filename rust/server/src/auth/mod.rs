@@ -281,7 +281,8 @@ graphite_meter_proto::table! {
         CsrfOriginMismatch => ("csrf_origin_mismatch", "failed", None),
         CsrfCookieMissing => ("csrf_cookie_missing", "stale", None),
         CsrfTokenMissing => ("csrf_token_missing", "stale", None),
-        CsrfTokenMismatch => ("csrf_token_mismatch", "failed", None),
+        /// Usually a second sign-in tab replaced the login cookie this form was made for.
+        CsrfTokenMismatch => ("csrf_token_mismatch", "stale", None),
         MalformedForm => ("malformed_form", "failed", None),
         Throttled => ("rate_limited", "throttled", Some(Counter::Throttled)),
         ClientAddress => ("client_address", "proxy", None),
