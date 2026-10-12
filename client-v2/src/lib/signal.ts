@@ -127,7 +127,14 @@ function unobserve(source: Node, observer: Node): void {
 function dispose(target: Owner): void {
   const owned = target.owned;
   target.owned = null;
-  if (owned) for (let i = owned.length - 1; i >= 0; i--) owned[i]!();
+  // A cleanup that throws is reported; the ones after it still run.
+  if (owned)
+    for (let i = owned.length - 1; i >= 0; i--)
+      try {
+        owned[i]!();
+      } catch (error) {
+        reportError(error);
+      }
 }
 
 function flush(): void {
@@ -211,15 +218,18 @@ export function scope<T>(fn: () => T): [T, () => void] {
   const root: Owner = { owned: null, depth: owner ? owner.depth + 1 : 0, disposed: false };
   const outer = owner;
   owner = root;
+  const disposer = () =>
+    batch(() => {
+      root.disposed = true;
+      dispose(root);
+    });
   try {
-    return [
-      fn(),
-      () =>
-        batch(() => {
-          root.disposed = true;
-          dispose(root);
-        }),
-    ];
+    return [fn(), disposer];
+  } catch (error) {
+    // Nobody gets the disposer of a scope that threw, so what it had created goes now.
+    owner = outer;
+    disposer();
+    throw error;
   } finally {
     owner = outer;
   }

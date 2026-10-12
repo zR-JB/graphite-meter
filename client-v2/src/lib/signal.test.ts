@@ -169,3 +169,28 @@ test("a computed nobody reads any more runs its cleanups", () => {
   stop();
   expect(cleaned).toBe(1);
 });
+
+test("a scope that throws disposes what it created, and every cleanup runs though one throws", () => {
+  const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
+  const a = signal(0);
+  const seen: number[] = [];
+  expect(() =>
+    scope(() => {
+      effect(() => void seen.push(a()));
+      throw new Error("build");
+    }),
+  ).toThrow("build");
+  a.set(1);
+  expect(seen).toEqual([0]);
+  let cleaned = 0;
+  const [, dispose] = scope(() => {
+    onCleanup(() => cleaned++);
+    onCleanup(() => {
+      throw new Error("cleanup");
+    });
+  });
+  dispose();
+  expect(cleaned).toBe(1);
+  expect(reported).toHaveBeenCalledTimes(1);
+  reported.mockRestore();
+});
