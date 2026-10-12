@@ -22,9 +22,9 @@ mise run tui        # native TUI; it asks for the server, or add `-- --url <url>
 
 `GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`. The browser client is
 v2 in `client-v2/`, which every task, both images and CI build, check and embed. `GM_CLIENT=v1` points the client
-tasks, `dev`, `prod`, `e2e` and the Go image back at the Svelte client in `client/` for comparison until it is
-removed; `mise run client-v1-ci` checks it, and the pre-commit hook runs that when `client/` changes. The shipped
-legal notices cover client v2 only.
+tasks, `dev`, `prod` and `e2e` back at the Svelte client in `client/` for local comparison until it is removed;
+`mise run client-v1-ci` checks it, and the pre-commit hook runs that when `client/` changes. No image embeds v1: the
+shipped legal notices cover client v2 only.
 
 mise trusts the project configuration automatically; in paranoid mode run
 [`mise trust`](https://mise.jdx.dev/cli/trust.html) once. Use `mise run <task>` in scripts (`mise doctor` is mise's

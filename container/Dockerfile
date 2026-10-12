@@ -9,9 +9,7 @@
 # prerelease automation supplies the public server and client versions.
 ARG VERSION=0.0.0-dev
 ARG CLIENT_VERSION
-# The browser client the image embeds: v2 (client-v2/), the default, or v1 (client/).
-ARG GM_CLIENT=v2
-# Build-time client config (override with --build-arg). Each client stage declares it again, since only a stage's
+# Build-time client config (override with --build-arg). The client stage declares it again, since only a stage's
 # own arguments reach its steps and Podman's cache keys, and promotes it to ENV for `bun run build`'s process.env.
 ARG GM_CLIENT_BUILD_PROFILE=prod
 ARG GM_CLIENT_REVISION=source
@@ -20,33 +18,10 @@ ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
 
 # ---------------------------------------------------------------------------
-# Stage: client - the bun both browser clients build with. A build runs only
-# the client stage the image embeds.
+# Stage: client - the browser client (client-v2/), the one the image's notices
+# cover; it ships v1's fonts, favicon and legal files.
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
-
-# Stage: client-v1 - the Svelte app.
-FROM client AS client-v1
-ARG GM_CLIENT_BUILD_PROFILE
-ARG GM_CLIENT_REVISION
-ARG GM_CLIENT_VALIDATE
-ARG CLIENT_VERSION
-ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
-    GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
-    VERSION=$CLIENT_VERSION
-WORKDIR /app/client
-# Install deps first for layer caching. Every official build uses the
-# repository's exact Bun release and the committed lockfile.
-COPY client/package.json client/bun.lock client/bunfig.toml ./
-COPY client/patches/ ./patches/
-RUN bun --bun install --frozen-lockfile
-# Then the source, then build. The check reads the shared API vectors.
-COPY client/ ./
-COPY api/ /app/api/
-RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
-
-# Stage: client-v2 - the plain TypeScript app; it ships v1's fonts, favicon and legal files.
-FROM client AS client-v2
 ARG GM_CLIENT_BUILD_PROFILE
 ARG GM_CLIENT_REVISION
 ARG GM_CLIENT_VALIDATE
@@ -61,11 +36,8 @@ COPY client-v2/ ./
 COPY client/public/ /app/client/public/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
-FROM scratch AS client-v1-dist
-COPY --from=client-v1 /app/client/dist /
-FROM scratch AS client-v2-dist
-COPY --from=client-v2 /app/client-v2/dist /
-FROM client-${GM_CLIENT}-dist AS client-dist
+FROM scratch AS client-dist
+COPY --from=client /app/client-v2/dist /
 
 # ---------------------------------------------------------------------------
 # Stage: server - build the Go binary with the client embedded.
