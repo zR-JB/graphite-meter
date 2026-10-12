@@ -288,6 +288,21 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   expect(await role()).not.toBe("radio");
 });
 
+test("a page shown again after a night away dates its results at once", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1, Date.now() - 60_000)] });
+  await history(page);
+  const heading = page.locator(".history-list h3");
+  await expect(heading).toHaveText("Today");
+  // The night passes in the background; the minute clock has not ticked since.
+  await page.evaluate(() => {
+    const real = Date.now;
+    Date.now = () => real() + 86_400_000;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(heading).toHaveText("Yesterday");
+});
+
 test("the keyboard moves the list's split within both panes' limits, and it survives a reload", async (page) => {
   await fixturePage(page);
   await seed(page, { records: [record(1)] });

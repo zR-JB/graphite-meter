@@ -72,12 +72,17 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     const { by } = sort();
     if (by !== "date" && !app.preferences.historyColumns().includes(by)) untrack(() => setSort("date", true));
   });
-  // How long ago a result finished reads in minutes, while the page shows.
+  // How long ago a result finished reads in minutes while the page shows, and afresh as it shows again.
   const now = signal(epochMs());
-  const clock = setInterval(() => {
+  const tick = () => {
     if (document.visibilityState === "visible") now.set(epochMs());
-  }, MINUTE_MS);
-  onCleanup(() => clearInterval(clock));
+  };
+  const clock = setInterval(tick, MINUTE_MS);
+  document.addEventListener("visibilitychange", tick);
+  onCleanup(() => {
+    clearInterval(clock);
+    document.removeEventListener("visibilitychange", tick);
+  });
 
   const actionError = archive.error;
   const dismissed = signal(dismissals.get(app.history) ?? 0);
