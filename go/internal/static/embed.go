@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -55,6 +56,18 @@ func inlineCSPHash(html []byte, tag string) string {
 func PagePolicy(connect []string) string {
 	return pagePolicy(inlineScript, inlineStyle, trustedTypes, slices.DeleteFunc(slices.Clone(connect),
 		func(raw string) bool { return strings.Contains(raw, "://[") }))
+}
+
+// SecureSources is connect less the clear-text sources an HTTPS page cannot use: browsers block mixed content to
+// every host but loopback.
+func SecureSources(connect []string) []string {
+	return slices.DeleteFunc(slices.Clone(connect), func(raw string) bool {
+		scheme, rest, _ := strings.Cut(raw, "://")
+		host, _, _ := strings.Cut(strings.ToLower(rest), ":")
+		ip, err := netip.ParseAddr(host)
+		loopback := host == "localhost" || strings.HasSuffix(host, ".localhost") || err == nil && ip.IsLoopback()
+		return (scheme == "http" || scheme == "ws") && !loopback
+	})
 }
 
 // pagePolicy requires Trusted Types for script sinks under the trusted policy name, when there is one.

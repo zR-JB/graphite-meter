@@ -198,14 +198,28 @@ async fn the_page_connects_to_catalogue_servers_and_offered_targets() {
         ("GM_H3_ADDR", ":7249"),
         ("GM_PUBLIC_ORIGINS", "self"),
         ("GM_SERVER_CATALOG", catalog),
+        ("GM_TRUSTED_PROXIES", "10.0.0.0/8"),
     ];
     let app = served(&env);
-    let response = send(&app, Endpoint::H1, empty(request("GET", "/"))).await;
-    let policy = header(&response, "content-security-policy").unwrap();
-    let connect = policy.rsplit("; ").next().unwrap();
-    let expected = "connect-src 'self' http://other.example:* https://other.example:* ws://other.example:* \
-                    wss://other.example:* https://cdn.other.example:8443 wss://cdn.other.example:8443 \
-                    http://speed.example:7246 https://speed.example:7249 ws://speed.example:7246 \
-                    wss://speed.example:7249";
-    assert_eq!(connect, expected);
+    let plain = "connect-src 'self' http://other.example:* https://other.example:* ws://other.example:* \
+                 wss://other.example:* https://cdn.other.example:8443 wss://cdn.other.example:8443 \
+                 http://speed.example:7246 https://speed.example:7249 ws://speed.example:7246 \
+                 wss://speed.example:7249";
+    // An HTTPS page cannot use a clear-text source on any host but loopback.
+    let secure = "connect-src 'self' https://other.example:* wss://other.example:* https://cdn.other.example:8443 \
+                  wss://cdn.other.example:8443 https://speed.example:7249 wss://speed.example:7249";
+    let proxied = || {
+        let forwarded = request("GET", "/").header("x-real-ip", "198.51.100.8");
+        empty(forwarded.header("x-forwarded-proto", "https"))
+    };
+    for (endpoint, peer, request, expected) in [
+        (Endpoint::H1, "192.0.2.1", empty(request("GET", "/")), plain),
+        (Endpoint::H1Tls, "192.0.2.1", empty(request("GET", "/")), secure),
+        (Endpoint::H1, "10.1.2.3", proxied(), secure),
+        (Endpoint::H1, "192.0.2.1", proxied(), plain),
+    ] {
+        let response = send_from(&app, endpoint, peer, request).await;
+        let policy = header(&response, "content-security-policy").unwrap();
+        assert_eq!(policy.rsplit("; ").next().unwrap(), expected, "{endpoint:?} from {peer}");
+    }
 }

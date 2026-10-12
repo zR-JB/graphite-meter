@@ -150,6 +150,18 @@ func TestPagePolicy(t *testing.T) {
 	}
 }
 
+// An HTTPS page keeps clear-text sources only for loopback hosts, which browsers exempt from mixed-content blocking.
+func TestSecureSources(t *testing.T) {
+	got := SecureSources([]string{"http://meter.example:*", "https://meter.example:*", "ws://meter.example:*",
+		"wss://meter.example:*", "http://127.0.0.1:7246", "ws://Localhost:7246", "http://app.localhost",
+		"http://localhost.example"})
+	want := []string{"https://meter.example:*", "wss://meter.example:*", "http://127.0.0.1:7246",
+		"ws://Localhost:7246", "http://app.localhost"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("secure sources = %q, want %q", got, want)
+	}
+}
+
 // Client v2's shell names its Trusted Types policy and the page then requires it; client v1's names none.
 func TestTrustedTypes(t *testing.T) {
 	for html, want := range map[string]string{
