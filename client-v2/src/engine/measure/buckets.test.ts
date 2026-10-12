@@ -21,7 +21,7 @@ test("a timeout counts as a probe, never as an RTT, and a timeout-only bucket ha
   expect(emitted[1]).toMatchObject({ startT: 200, endT: 300, pingCount: 1, timeoutCount: 1, medianRttMs: null });
 });
 
-test("a bucket closes at its end without a later probe, and a late outcome revises the bucket that owns its time", () => {
+test("a bucket closes at its end without a later probe, and late outcomes revise the bucket that owns their time once per tick", () => {
   const { presented, emitted } = buckets();
   presented.observe(50, 10, false);
   presented.closeThrough(199);
@@ -31,7 +31,11 @@ test("a bucket closes at its end without a later probe, and a late outcome revis
   expect(presented.nextEnd).toBe(400);
   presented.observe(250, 10, false);
   presented.observe(150, 30, false);
-  expect(emitted[1]).toMatchObject({ startT: 0, pingCount: 2, maxRttMs: 30 });
+  presented.observe(160, 40, false);
+  expect(emitted).toHaveLength(1);
+  presented.closeThrough(260);
+  expect(emitted).toHaveLength(2);
+  expect(emitted[1]).toMatchObject({ startT: 0, pingCount: 3, maxRttMs: 40 });
 });
 
 test("widths fit the series and align to a fixed probe spacing", () => {

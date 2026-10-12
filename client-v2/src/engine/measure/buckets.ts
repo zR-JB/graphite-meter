@@ -48,8 +48,11 @@ export class LatencyBuckets {
   #pending: Open | null = null;
   /** Closed buckets a late outcome may still revise. */
   #closed: Open[] = [];
+  /** Closed buckets revised since the last report: reported once per tick, not once per outcome. */
+  #revised = new Set<Open>();
 
-  /** `emit` receives every bucket that closes with probes in it, and every revision of one. */
+  /** `emit` receives every bucket that closes with probes in it, and every revision of one at the next
+      `closeThrough` or `flush`. */
   constructor(readonly emit: (bucket: LatencyBucket) => void) {}
 
   reset(t: number, phase: Stage, continuity: number, spanMs: number, intervalMs: number | null): void {
@@ -64,6 +67,7 @@ export class LatencyBuckets {
     this.#continuity = continuity;
     this.#pending = this.#open(t);
     this.#closed = [];
+    this.#revised.clear();
   }
 
   /** A longer stage only widens buckets, so drawn ones never split. */
@@ -74,18 +78,28 @@ export class LatencyBuckets {
 
   observe(t: number, rttMs: number, timedOut: boolean): void {
     this.#pending ??= this.#open(t);
-    this.closeThrough(t);
+    this.#close(t);
     const pending = this.#pending!;
     const target = t >= pending.startT ? pending : this.#closed.findLast((each) => t >= each.startT && t < each.endT);
     if (!target) return;
     target.pings++;
     if (timedOut) target.timeouts++;
     else if (Number.isFinite(rttMs)) target.rtts.push(Math.max(0, rttMs));
-    if (target !== pending) this.emit(this.#summary(target, target.endT));
+    if (target !== pending) this.#revised.add(target);
   }
 
-  /** Closes every bucket that ends by `t`, whether or not a later probe arrives. */
+  /** Closes every bucket that ends by `t`, whether or not a later probe arrives, and reports revisions since. */
   closeThrough(t: number): void {
+    this.#report();
+    this.#close(t);
+  }
+
+  #report(): void {
+    for (const bucket of this.#revised) this.emit(this.#summary(bucket, bucket.endT));
+    this.#revised.clear();
+  }
+
+  #close(t: number): void {
     while (this.#pending && t >= this.#pending.endT) {
       const pending = this.#pending;
       // A page suspended for hours skips the empty time: only the revision horizon can still take late outcomes.
@@ -110,6 +124,7 @@ export class LatencyBuckets {
 
   /** Emits the open bucket cut at `atT` and forgets everything. */
   flush(atT: number): void {
+    this.#report();
     const pending = this.#pending;
     this.#pending = null;
     this.#closed = [];
