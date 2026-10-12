@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
+import { elapse } from "./fakes.testutil";
 import { Receiver } from "./receiver";
 
 const encoder = new TextEncoder();
@@ -17,7 +18,11 @@ const ndjson = (...chunks: string[]) =>
 
 /** A receiver following an HTTP feed whose answers come from `script`, one per request, and whose checkpoints answer
     `counters` in turn; `carried` leaves the feed to a session. */
-function follow(script: (() => Response)[], counters: { bytes: number; nanos: number }[] = [], carried = false) {
+function follow(
+  script: ((init: RequestInit) => Response)[],
+  counters: { bytes: number; nanos: number }[] = [],
+  carried = false,
+) {
   const observed: [number, number, boolean][] = [];
   const endings: [Ending, boolean, number][] = [];
   const deletes: RequestInit[] = [];
@@ -28,7 +33,7 @@ function follow(script: (() => Response)[], counters: { bytes: number; nanos: nu
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch: async (url, init = {}) => {
       if (init.method === "DELETE") return deletes.push(init), new Response(null, { status: 204 });
-      return url.includes("/checkpoint") ? Response.json(counters.shift()) : script.shift()!();
+      return url.includes("/checkpoint") ? Response.json(counters.shift()) : script.shift()!(init);
     },
     ticket: () => null,
     ended: async () => false,
@@ -132,6 +137,40 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
   ]);
   await settled(ended.signedIn);
   expect(ended.endings).toEqual([]);
+});
+
+test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet one open", async () => {
+  jest.useFakeTimers();
+  try {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    // As a browser's, the answer's body errors when its request is aborted.
+    const open = ({ signal }: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            streams.push(controller);
+            signal!.addEventListener("abort", () => controller.error(signal!.reason));
+          },
+        }),
+      );
+    const feed = follow([open, open]);
+    await elapse(0);
+    streams[0]!.enqueue(encoder.encode('{"type":"ready"}\n'));
+    for (let second = 0; second < 4; second++) {
+      await elapse(1_000);
+      streams[0]!.enqueue(encoder.encode("\n"));
+    }
+    await elapse(1_200);
+    expect(feed.endings).toEqual([]);
+    await elapse(300);
+    expect(feed.endings).toEqual([
+      [{ reason: "connection-lost", retry: true, detail: "progress stream went silent" }, false, 300],
+    ]);
+    expect(streams).toHaveLength(2);
+    feed.receiver.close();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("a session's id is backed up by a DELETE at finish, unless a terminal record that passed the guard arrived", async () => {

@@ -57,8 +57,9 @@ contributions share the client's connection and are not independent capacity tes
   server's still grow, a lane fails for good, or its grant is refused (which asks for sign-in). Silence that every
   server shares is the link's: nobody leaves for it, the run shows it as Recovering and the stage keeps its planned
   time. The browser times an upload receiver that still reports on that receiver's clock, and one that sends no record
-  at all only after 4 s, since its feed can lag a busy uplink; the native client times every direction on its own clock
-  from the boundary where the server's counted bytes last grew. At the final boundary a refused grant
+  at all only after 4 s, since its feed can lag a busy uplink, and reconnects an HTTP progress feed that sends no line,
+  heartbeats included, for 1.5 s; the native client times every direction on its own clock from the boundary where
+  the server's counted bytes last grew. At the final boundary a refused grant
   removes a server, and so does a direction still silent past the limit or a stream still retrying a failure while
   that direction's bytes have not moved for 500 ms; the stage then records that failure. The interval ends at the
   boundary where the departing server's bytes last moved (in a bidirectional stage, where its first direction

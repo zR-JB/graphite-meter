@@ -16,6 +16,9 @@ const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
+/** The feed sends a line at least every second (a record every 100 ms once bytes arrive, a heartbeat before): an HTTP
+    feed silent for this many 250 ms checks, 1.25 to 1.5 s, is dead and reconnects. */
+const SILENT_CHECKS = 6;
 
 export interface ReceiverHost {
   /** Run ms. */
@@ -169,17 +172,32 @@ export class Receiver {
     for (;;) {
       let ending: Ending;
       let broken = false;
+      const silent = new AbortController();
+      const connection = AbortSignal.any([signal, silent.signal]);
+      let checks = 0;
+      const watch = (): void =>
+        void delay(QUIET_MS, connection).then(() => {
+          if (connection.aborted) return;
+          if (++checks >= SILENT_CHECKS) silent.abort();
+          else watch();
+        });
       try {
         const response = await this.#auth.fetch(this.#feed, {
           cache: "no-store",
           headers: { accept: "application/x-ndjson" },
-          signal,
+          signal: connection,
         });
         if (!response.ok || !response.body) {
           response.body?.cancel().catch(() => {});
           ending = refused(response, `progress returned HTTP ${response.status}`);
         } else {
-          const last = await readRecords(response.body, (record) => this.record(record));
+          // Only an open feed promises its lines; opening one over a loaded uplink can take seconds.
+          watch();
+          const last = await readRecords(
+            response.body,
+            (record) => this.record(record),
+            () => (checks = 0),
+          );
           if (last?.type === "complete") return;
           ending = last
             ? refusal(null, last.code, last.message || "upload progress error")
@@ -188,8 +206,10 @@ export class Receiver {
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof SignInRequired) return this.#host.signIn();
-        ending = lost(String(error));
-        broken = true;
+        ending = lost(silent.signal.aborted ? "progress stream went silent" : String(error));
+        broken = !silent.signal.aborted;
+      } finally {
+        silent.abort();
       }
       if (!(await this.#host.ended(ending, broken, this.#backoff!.after(ending), signal))) return;
     }
