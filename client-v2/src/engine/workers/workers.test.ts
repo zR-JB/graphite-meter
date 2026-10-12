@@ -107,6 +107,17 @@ test("a download counts bytes into the epoch they were read in: a measure drops 
   ]);
 });
 
+test("a download whose answer ends short ends the lane, so its owner paces the reopen", async () => {
+  let fetches = 0;
+  const lane = await boot<LaneCommand>("./lane.ts", {
+    fetch: async () => (fetches++, new Response("<html>portal</html>")),
+  });
+  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 0 });
+  await elapse(0);
+  expect(fetches).toBe(1);
+  expect(lane.posted.at(-1)).toMatchObject({ type: "ended", ending: { reason: "connection-lost", retry: true } });
+});
+
 test("an upload drains each answer and breaks on one past 64 KiB rather than keeping it", async () => {
   const endless = source();
   const answers = [new Response("ok"), new Response(endless.stream)];

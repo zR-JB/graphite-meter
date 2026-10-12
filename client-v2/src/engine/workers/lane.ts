@@ -2,7 +2,7 @@
 // the server counts. Its owner reopens it after an ending and stops it by termination.
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
-import { downloadRefused, refused } from "../lanes/endings";
+import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
 /** A POST spans about this long: its turnaround sits in the receiver's elapsed time, so shorter ones lose accuracy. */
@@ -13,6 +13,8 @@ const MIN_POST_BYTES = 128 * 1024;
 const MAX_POST_BYTES = 256 * MIB;
 /** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
 const MAX_ANSWER_BYTES = 64 * 1024;
+/** A download asks for far more; a body that ends below this came from something else, such as a proxy's page. */
+const MIN_DOWNLOAD_BYTES = MIB;
 
 const post = (report: LaneReport) => postMessage(report);
 const ignore = () => {};
@@ -36,9 +38,19 @@ async function download({ url, request, epoch }: Extract<LaneCommand, { type: "d
       const response = await fetch(url, init);
       if (!response.ok || !response.body) {
         response.body?.cancel().catch(ignore);
+        reports.flush();
         return { type: "ended", ending: downloadRefused(response) };
       }
-      await countBytes(response.body, reports.count);
+      let read = 0;
+      await countBytes(response.body, (bytes) => {
+        read += bytes;
+        reports.count(bytes);
+      });
+      // Fetching again at once would spin as fast as the short answers come; the owner's backoff paces a reopen.
+      if (read < MIN_DOWNLOAD_BYTES) {
+        reports.flush();
+        return { type: "ended", ending: lost("the download ended early") };
+      }
     } catch (error) {
       // Bytes counted before the break still count.
       reports.flush();
