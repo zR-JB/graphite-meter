@@ -200,6 +200,8 @@ export interface StageResources {
   measure(): void;
   /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
+  /** Resolves once the download bytes the lanes counted so far reached `download`, within 250 ms; never rejects. */
+  flush(): Promise<void>;
   /** Replaces an upload id the server no longer knows: the run's one rotation per server. */
   replaceUpload(signal: AbortSignal): Promise<void>;
   /** Graceful end: probes drain to their deadlines, sessions finalize, then everything is released. */

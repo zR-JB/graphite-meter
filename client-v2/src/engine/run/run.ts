@@ -157,6 +157,8 @@ interface Seat {
   resources: StageResources;
   /** Measured client-consumed bytes this stage. */
   down: number;
+  /** The window closed and its lanes are reporting what they counted before it did. */
+  flushing: boolean;
   /** The latest measured receiver checkpoint this stage. */
   up: Checkpoint | null;
   progressAt: Record<Direction, number>;
@@ -585,6 +587,7 @@ export class Run {
     const seat = {
       server,
       down: 0,
+      flushing: false,
       up: null,
       progressAt: { down: 0, up: 0 },
       heardAt: 0,
@@ -670,9 +673,11 @@ export class Run {
       (!stage.measured || stage.activity.transfer.every((dir) => stage.closedAt - seat.progressAt[dir] < QUIET_MS));
     return {
       download: (bytes) => {
-        if (!measuring() || !stage.activity.transfer.includes("down") || !(bytes > 0)) return;
+        const flushed = seat.flushing && live();
+        if (!(measuring() || flushed) || !stage.activity.transfer.includes("down") || !(bytes > 0)) return;
         seat.down += bytes;
-        seat.progressAt.down = this.#clock.activeMs();
+        // Flushed bytes were counted before the window closed: no evidence that the server moves now.
+        if (!flushed) seat.progressAt.down = this.#clock.activeMs();
         this.#aggregate.addDownload(name as TransferStage, server.id, bytes);
       },
       receiver: (checkpoint) => {
@@ -1121,19 +1126,33 @@ export class Run {
   /** Terminal evidence after this boundary cannot change measured totals or rates. */
   async #finalBoundary(stage: StageRun, finish: (seat: Seat) => void): Promise<void> {
     const seats = active(stage);
-    const upload = stage.activity.transfer.includes("up");
+    const { transfer } = stage.activity;
+    const upload = transfer.includes("up");
     const boundary = this.#snapshot(stage);
     const at = stage.closedAt;
     // Judged as the window closed: a final checkpoint answered late over a full uplink must not make a server that
     // was moving look silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
+    // Bytes a lane counted before the window closed but had not reported yet still belong to it.
+    const flushed = async (seat: Seat) => {
+      seat.flushing = true;
+      await seat.resources.flush();
+      seat.flushing = false;
+      boundary.down[seat.server.id] = seat.down;
+    };
     const answers = await Promise.allSettled(
-      seats.map((seat) =>
-        (upload ? seat.resources.checkpoint(stage.abort.signal, true) : Promise.resolve(null)).finally(() =>
-          finish(seat),
-        ),
-      ),
+      seats.map(async (seat) => {
+        try {
+          const [checkpoint] = await Promise.all([
+            upload ? seat.resources.checkpoint(stage.abort.signal, true) : null,
+            transfer.includes("down") && flushed(seat),
+          ]);
+          return checkpoint;
+        } finally {
+          finish(seat);
+        }
+      }),
     );
     if (!this.#current(stage)) return;
     seats.forEach((seat, index) => {

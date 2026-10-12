@@ -10,6 +10,8 @@ import { delay } from "./wait";
 
 /** A stopping session gets this long to finalize and acknowledge. */
 const STOP_GRACE_MS = 2_500;
+/** A flush waits at most this long for its lanes' answers. */
+const FLUSH_MS = 250;
 /** Lanes open at most this far apart and within this spread, so their connections do not start in one burst. */
 const STAGGER_MS = 75;
 const SPREAD_MS = 1_000;
@@ -41,6 +43,8 @@ interface Lane {
   worker: Worker;
   delivered: boolean;
   backoff: Backoff;
+  /** Resolves the flush awaiting this lane's answer. */
+  flushed: (() => void) | null;
 }
 
 export class Carrier {
@@ -62,6 +66,7 @@ export class Carrier {
         worker: new Worker(workerScript(plan.worker), { type: "module" }),
         delivered: false,
         backoff: new Backoff(),
+        flushed: null,
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) => this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
@@ -88,6 +93,20 @@ export class Carrier {
   measure(): void {
     this.#epoch++;
     for (const { worker } of this.#lanes) worker.postMessage({ type: "measure", epoch: this.#epoch });
+  }
+
+  /** Resolves once every lane reported the download bytes it counted so far, within 250 ms. */
+  async flush(): Promise<void> {
+    const answered = new AbortController();
+    const answers = this.#lanes.map(
+      (lane) =>
+        new Promise<void>((resolve) => {
+          lane.flushed = resolve;
+          lane.worker.postMessage({ type: "flush" });
+        }),
+    );
+    await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
+    answered.abort();
   }
 
   /** A session finalizes and acknowledges within its grace; fetch lanes end at once. */
@@ -130,6 +149,10 @@ export class Carrier {
         return this.#host.record(report.record);
       case "stopped":
         return this.#acknowledged.abort();
+      case "flushed":
+        lane.flushed?.();
+        lane.flushed = null;
+        return;
       case "ended":
         return void this.#ended(lane, report.ending);
       case "broken":

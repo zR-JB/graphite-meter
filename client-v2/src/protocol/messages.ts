@@ -48,17 +48,23 @@ export interface BytesReport {
     classifies because a login or grant that ended shows first as one. */
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
-/** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. */
+/** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
+    reports the download bytes counted so far, then answers `flushed`. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number }
   | { type: "upload"; url: string; request: RequestRecipe; streams: number }
-  | { type: "measure"; epoch: number };
+  | { type: "measure"; epoch: number }
+  | { type: "flush" };
 
 /** `posted` is one completed upload POST, timed on the worker clock: presentation evidence, never a measurement. */
-export type LaneReport = BytesReport | { type: "posted"; bytes: number; elapsedMs: number } | EndReport;
+export type LaneReport =
+  | BytesReport
+  | { type: "posted"; bytes: number; elapsedMs: number }
+  | EndReport
+  | { type: "flushed" };
 
 /** A session worker (re)dials with `download` or `upload` after its previous ending; `stop` finalizes an upload and
-    is acknowledged by `stopped` whatever ended the session. */
+    is acknowledged by `stopped` whatever ended the session; `flush` is a lane's. */
 export type SessionCommand =
   | { type: "download"; url: string; ticket: TicketRecipe | null; datagrams: boolean; epoch: number }
   | {
@@ -71,11 +77,17 @@ export type SessionCommand =
       finalize: { url: string; request: RequestRecipe };
     }
   | { type: "measure"; epoch: number }
+  | { type: "flush" }
   | { type: "stop" };
 
 /** An upload session relays its feed's observations; a refusal record ends the session instead. */
 export type FeedRecord = Exclude<ProgressRecord, { type: "error" }>;
-export type SessionReport = BytesReport | { type: "record"; record: FeedRecord } | EndReport | { type: "stopped" };
+export type SessionReport =
+  | BytesReport
+  | { type: "record"; record: FeedRecord }
+  | EndReport
+  | { type: "stopped" }
+  | { type: "flushed" };
 
 export type ProbeCommand =
   | {

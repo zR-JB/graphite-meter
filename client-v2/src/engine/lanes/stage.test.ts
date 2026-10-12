@@ -174,6 +174,26 @@ test("one download outage stalls once, checks the sign-in once, and resumes only
   expect(lanes.every(({ terminated }) => terminated)).toBe(true);
 });
 
+test("a flush resolves once every lane reported what it counted, at most 250 ms", async () => {
+  for (const answering of [3, 2]) {
+    const flushing = stage(DOWNLOAD);
+    void flushing.resources.prepare(new AbortController().signal);
+    await elapse(150);
+    const lanes = flushing.lanes();
+    for (const lane of lanes) bytes(lane, 0);
+    flushing.resources.measure();
+    const flushed = outcome(flushing.resources.flush());
+    expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "flush" }));
+    for (const lane of lanes.slice(0, answering)) {
+      bytes(lane, 1);
+      lane.report({ type: "flushed" });
+    }
+    await elapse(300);
+    expect(flushed.at).toBe(answering === 3 ? 0 : 250);
+    expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering);
+  }
+});
+
 test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", async () => {
   for (const acknowledged of [true, false]) {
     const session = stage(DOWNLOAD, {}, SESSION);

@@ -168,6 +168,25 @@ test("two servers sum their windows, and terminal evidence after the final bound
   near(result.multiServer.servers[1]!.download?.reportedBytesPerSec, 3_000);
 });
 
+test("bytes a lane counted before the window closed but had not reported yet count at the final boundary", async () => {
+  const h = setup(
+    [
+      {
+        id: "self",
+        rate: 1,
+        flush: (events) => events.download(250),
+        finish: (events) => events.download(1_000_000),
+      },
+    ],
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.download!.totalBytes).toBe(1_250);
+  near(result.download?.reportedBytesPerSec, 1_250);
+});
+
 test("a server lost in the latency stage is not prepared for the later stages", async () => {
   const lose = (how: (events: StageEvents) => unknown): Partial<Peer> => ({
     measure: (events, { stage }) => void (stage === "latency" && how(events)),

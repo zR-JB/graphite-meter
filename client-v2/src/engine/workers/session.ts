@@ -28,7 +28,10 @@ let session: Session | null = null;
 
 onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch);
-  else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
+  else if (data.type === "flush") {
+    reports.flush();
+    post({ type: "flushed" });
+  } else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
   else session = new Session(data);
 };
 
