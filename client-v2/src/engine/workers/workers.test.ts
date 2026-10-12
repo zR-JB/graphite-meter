@@ -262,6 +262,31 @@ test("a datagram download reads the clock once per 16 datagrams and still counts
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(1_600 * 1_200);
 });
 
+test("a slow datagram download reports what arrived within 100 ms, not after 16 datagrams", async () => {
+  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
+  session.send({
+    type: "download",
+    url: "https://peer.example/wt/download?datagrams=1",
+    ticket: null,
+    datagrams: true,
+    epoch: 0,
+  });
+  const transport = FakeWebTransport.dialed.at(-1)!;
+  transport.accept();
+  await elapse(0);
+  // Five datagrams a second: sixteen would take over three, past the run's 1.5 s silence rule.
+  const reported = () => session.posted.filter(({ type }) => type === "bytes").length;
+  transport.datagram(1_200);
+  await elapse(0);
+  expect(reported()).toBe(0);
+  await elapse(100);
+  expect(reported()).toBe(1);
+  await elapse(100);
+  transport.datagram(1_200);
+  await elapse(100);
+  expect(reported()).toBe(2);
+});
+
 test("a session whose streams broke waits for its close: a revocation asks for sign-in, silence is a break", async () => {
   const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
   const download: SessionCommand = {
