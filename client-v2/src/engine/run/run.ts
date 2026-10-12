@@ -475,8 +475,7 @@ export class Run {
     this.#elapsed = Math.min(this.#elapsed + Math.max(0, sinceTick), current?.end ?? Infinity);
     const stage = this.#stage;
     if (stage) {
-      // A page gap starts a new interval, so no headline, early finish or live rate spans it.
-      if (this.#clock.takeGap() && stage.phase === "measuring") this.#resumeEvidence(stage);
+      this.#resumeAfterGap(stage);
       this.#expire(stage);
       if (this.#state !== "running" || this.#clock.held) return;
     }
@@ -678,6 +677,8 @@ export class Run {
       },
       receiver: (checkpoint) => {
         if (!measuring()) return;
+        // The first record after a page gap belongs to the interval the gap opens.
+        this.#resumeAfterGap(stage);
         this.#hear(seat, checkpoint);
         if (!this.#stalled) this.#live.receiver(server.id, checkpoint, this.#clock.read());
         if (this.#boundary(stage)) this.#tick();
@@ -793,6 +794,8 @@ export class Run {
   /** Observes every participant's evidence now; true when that confirmed an early finish. */
   #boundary(stage: StageRun): boolean {
     if (stage.phase !== "measuring" || !stage.activity.transfer.length || !this.#current(stage)) return false;
+    // Resuming observes a boundary of its own, and a gap rules out finishing early.
+    if (this.#resumeAfterGap(stage)) return false;
     return this.#observe(stage, this.#snapshot(stage));
   }
 
@@ -961,6 +964,15 @@ export class Run {
       if (segment.activity.stage === stage.activity.stage) this.#elapsed = Math.max(this.#elapsed, segment.end);
     stage.armedAt = null;
     queueMicrotask(() => this.#tick());
+  }
+
+  /** A page gap starts a new interval before any evidence after it applies, so no headline, early finish or live rate
+      spans it; true when one did. */
+  #resumeAfterGap(stage: StageRun): boolean {
+    this.#clock.read();
+    if (!this.#clock.takeGap() || stage.phase !== "measuring") return false;
+    this.#resumeEvidence(stage);
+    return true;
   }
 
   /** After a page gap, evidence resumes in a new interval; the one before it still counts. */

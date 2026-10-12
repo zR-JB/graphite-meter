@@ -956,6 +956,47 @@ test("a page gap while measuring starts a new interval and forbids an early fini
   expect(result.multiServer.intervals.map(({ reason }) => reason)).toEqual(["stage-start", "evidence-resumed"]);
 });
 
+test("a receiver record delivered before the first tick after a page gap opens the resumed interval", async () => {
+  // The receiver counts 1 byte per ms of its own time, except while the page and its workers are frozen.
+  let frozen = false;
+  let emit = () => {};
+  let bytes = 0;
+  let nanos = 1;
+  let last = 0;
+  const record = () => {
+    nanos += (clock.t - last) * 1e6;
+    if (!frozen) bytes += clock.t - last;
+    last = clock.t;
+    return { id: "u", bytes, nanos, receivedAtMs: clock.t };
+  };
+  const h = setup(
+    [
+      {
+        id: "self",
+        receives: false,
+        measure: (events) => {
+          last = clock.t;
+          emit = () => events.receiver(record());
+          clock.every(100, emit);
+        },
+        checkpoint: () => Promise.resolve(record()),
+      },
+    ],
+    { upload: true },
+    { uploadMs: 10_000 },
+  );
+  h.start();
+  await h.elapse(8_000);
+  frozen = true;
+  h.clock.t += 20_000;
+  // The feed's buffered record lands before the run's next timer task.
+  emit();
+  frozen = false;
+  const result = await h.result();
+  near(result.upload?.reportedBytesPerSec, 1_000);
+  expect(result.multiServer.intervals.map(({ reason }) => reason)).toEqual(["stage-start", "evidence-resumed"]);
+});
+
 test("a stage end handler may end or stop the run there, and one that throws changes nothing", async () => {
   const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
   try {
