@@ -103,18 +103,29 @@ test("a session read that failed at boot is tried again when the network returns
       return Promise.reject(new TypeError("Failed to fetch"));
     }) as typeof fetch;
   });
-  await open(page, `${locked.url}/login`, {
-    servers: [{ id: "self", url: locked.url }],
-  });
-  await signIn(page);
-  await expect.poll(() => page.evaluate(() => (window as any).state.refused)).toBeGreaterThan(0);
-  const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
-  await expect(signOut).toHaveCount(0);
-  await page.evaluate(() => {
-    (window as any).state.unreachable = false;
-    window.dispatchEvent(new Event("online"));
-  });
-  await expect(signOut).toBeVisible();
+  // A server of its own, so this sign-in spends none of the shared one's budget.
+  const vault = await spawnPeer("Vault", (server) => ({
+    GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
+    GM_AUTH_MODE: "password",
+    GM_AUTH_PUBLIC_URL: server.url,
+    GM_AUTH_PASSWORD_HASH: passwordHash,
+  }));
+  try {
+    await open(page, `${vault.server.url}/login`, {
+      servers: [{ id: "self", url: vault.server.url }],
+    });
+    await signIn(page);
+    await expect.poll(() => page.evaluate(() => (window as any).state.refused)).toBeGreaterThan(0);
+    const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
+    await expect(signOut).toHaveCount(0);
+    await page.evaluate(() => {
+      (window as any).state.unreachable = false;
+      window.dispatchEvent(new Event("online"));
+    });
+    await expect(signOut).toBeVisible();
+  } finally {
+    vault.kill("SIGKILL");
+  }
 });
 
 test("signing out everywhere waits for confirmation", async (page) => {
