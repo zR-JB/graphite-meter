@@ -107,6 +107,18 @@ test("a download counts bytes into the epoch they were read in: a measure drops 
   ]);
 });
 
+test("an upload drains each answer and breaks on one past 64 KiB rather than keeping it", async () => {
+  const endless = source();
+  const answers = [new Response("ok"), new Response(endless.stream)];
+  const lane = await boot<LaneCommand>("./lane.ts", { fetch: async () => answers.shift() });
+  lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1 });
+  await elapse(0);
+  for (let chunk = 0; chunk < 3; chunk++) endless.push("x".repeat(32 * 1024));
+  await elapse(0);
+  expect(lane.types()).toEqual(["posted", "broken"]);
+  expect(lane.posted.at(-1)).toEqual({ type: "broken", detail: "the upload answer was too large" });
+});
+
 test("a session's stop finalizes its upload id, then acknowledges on the terminal record or after 1 s", async () => {
   const deletes: [string, RequestInit][] = [];
   const session = await boot<SessionCommand>("./session.ts", {

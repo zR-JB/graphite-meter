@@ -117,7 +117,7 @@ export type Preflight = Decoded<typeof preflight>;
 
 export const probe = object(
   {
-    clientIp: string(1, 64),
+    clientIp: displayText(64, 1),
     clientIpVersion: oneOf(4, 6),
     clientIpSource: oneOf("socket", "forwarded"),
     protocolNegotiated: oneOf("http/1.1", "h2", "h3"),

@@ -34,9 +34,11 @@ export async function readRecords(
   try {
     for (;;) {
       const { value, done } = await reader.read();
+      // What is left holds no newline, so a trickled record is scanned once.
+      const scanned = text.length;
       text += decoder.decode(value, { stream: !done });
       let start = 0;
-      for (let end = text.indexOf("\n"); end >= 0; end = text.indexOf("\n", start)) {
+      for (let end = text.indexOf("\n", scanned); end >= 0; end = text.indexOf("\n", start)) {
         const record = parse(text.slice(start, end));
         start = end + 1;
         if (!record) continue;
