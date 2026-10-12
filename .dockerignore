@@ -8,8 +8,9 @@ client/test-results
 client/bench/results
 client-v2/dist
 client-v2/test-results
-# The image's v2 check covers what it builds; the E2E tests import v1's harness, which the image lacks.
+# The image's v2 check covers what it builds; the E2E tests and benchmarks import v1's harness, which the image lacks.
 client-v2/e2e
+client-v2/bench
 go/graphite-meter
 go/graphite-meter-client
 go/graphite-meter-client.exe

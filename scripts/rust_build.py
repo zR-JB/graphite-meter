@@ -108,7 +108,7 @@ def main() -> None:
     parser.add_argument("--package", choices=PACKAGES, required=True)
     parser.add_argument("--profile", choices=PROFILES, required=True)
     parser.add_argument("--browser", choices=BROWSER_PROFILES, help="the server's browser build")
-    parser.add_argument("--client", choices=BROWSER_CLIENTS, default="client", help="the server's browser client")
+    parser.add_argument("--client", choices=BROWSER_CLIENTS, default="client-v2", help="the server's browser client")
     parser.add_argument("--version", default="development")
     args = parser.parse_args()
     if (args.package == "graphite-meter-server") != (args.browser is not None):

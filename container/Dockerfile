@@ -9,8 +9,8 @@
 # prerelease automation supplies the public server and client versions.
 ARG VERSION=0.0.0-dev
 ARG CLIENT_VERSION
-# The browser client the image embeds: v1 (client/), the default, or v2 (client-v2/).
-ARG GM_CLIENT=v1
+# The browser client the image embeds: v2 (client-v2/), the default, or v1 (client/).
+ARG GM_CLIENT=v2
 # Build-time client config (override with --build-arg). Each client stage declares it again, since only a stage's
 # own arguments reach its steps and Podman's cache keys, and promotes it to ENV for `bun run build`'s process.env.
 ARG GM_CLIENT_BUILD_PROFILE=prod

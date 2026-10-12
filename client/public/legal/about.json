@@ -252,25 +252,6 @@
           "url": "https://go.dev/"
         }
       ]
-    },
-    {
-      "name": "svelte",
-      "version": "5.57.2",
-      "ecosystem": "npm",
-      "source": "https://github.com/sveltejs/svelte",
-      "declaredLicenseExpression": "MIT",
-      "selectedLicenseExpression": "MIT",
-      "modified": true,
-      "links": [
-        {
-          "label": "Source",
-          "url": "https://github.com/sveltejs/svelte"
-        },
-        {
-          "label": "Changes",
-          "url": "https://github.com/zR-JB/graphite-meter/blob/HEAD/client/patches/svelte%405.57.2.patch"
-        }
-      ]
     }
   ]
 }

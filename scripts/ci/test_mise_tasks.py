@@ -64,11 +64,11 @@ class MiseTaskTests(unittest.TestCase):
                              [payload, "--oidc-ready=false"])
             self.assertEqual(run("bench-throughput", payload)["env"], {"GM_BENCH_FILTER": payload})
             built = run("client-build-prod", VERSION=payload, GM_CLIENT_REVISION=payload)
-            self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
-            # GM_CLIENT picks the browser client's folder; any other value stops a task before a tool runs.
-            built = run("client-build-prod", GM_CLIENT="v2", VERSION=payload, GM_CLIENT_REVISION=payload)
             self.assertEqual((built["env"], Path(built["cwd"])),
                              ({"VERSION": payload, "GM_CLIENT_REVISION": payload}, root.resolve() / "client-v2"))
+            # GM_CLIENT picks the browser client's folder; any other value stops a task before a tool runs.
+            built = run("client-build-prod", GM_CLIENT="v1", VERSION=payload, GM_CLIENT_REVISION=payload)
+            self.assertEqual(Path(built["cwd"]), root.resolve() / "client")
             for task in ("dev", "prod", "client-build-prod", "e2e", "container-build"):
                 self.assertEqual(run(task, GM_CLIENT=payload, status=2), {})
             run("goclient-build", VERSION=payload, status=2)

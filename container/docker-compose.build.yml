@@ -11,5 +11,5 @@ services:
       args:
         VERSION: "0.0.0-dev"
         GM_CLIENT_REVISION: "source"
-        # GM_CLIENT=v2 in the environment embeds browser client v2.
-        GM_CLIENT: "${GM_CLIENT:-v1}"
+        # GM_CLIENT=v1 in the environment embeds browser client v1.
+        GM_CLIENT: "${GM_CLIENT:-v2}"
