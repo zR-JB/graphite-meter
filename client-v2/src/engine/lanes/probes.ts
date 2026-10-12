@@ -2,6 +2,7 @@
 // itself; this side translates their times, asks whether a broken bus was the sign-in ending, bounds each window's
 // drain and hands the bus from one owner to the next.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
+import { workerScript } from "../../lib/trusted";
 import { ROUTES } from "../../protocol/routes";
 import { DEADLINE_CEILING_MS } from "../measure/latency";
 import { fromEpoch } from "../run/clock";
@@ -24,7 +25,7 @@ export function openProbeChannel(
   /** What a new owner is told at once: the bus answers on its connection, or why it stalled. */
   let answering = false;
   let stall: string | null = null;
-  const worker = new Worker(WORKERS.probe, { type: "module" });
+  const worker = new Worker(workerScript(WORKERS.probe), { type: "module" });
 
   const release = () => {
     released.abort();

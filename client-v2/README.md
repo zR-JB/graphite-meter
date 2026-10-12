@@ -26,7 +26,9 @@ Both clients run on one origin, so v2 keeps v1's persisted formats and URLs exac
 `graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` v2 with
 schema-5 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (the Details panel is `endpoint`
 in URLs). The page keeps the servers' shell contract: one `</head>`, one attribute-less inline script and style
-(hashed into the content security policy), `<div id="app">`, hashed assets under `/assets/`; `build.ts` checks it.
+(hashed into the content security policy), one `graphite-meter-trusted-types` meta naming the Trusted Types policy
+`src/lib/trusted.ts` creates (the servers then require Trusted Types), `<div id="app">`, hashed assets under
+`/assets/`; `build.ts` checks it.
 
 ## Build and checks
 

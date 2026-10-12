@@ -1,5 +1,6 @@
 // The main thread's wall clock and timers, and one run's time, so tests can drive both.
 import { pageMs } from "../../lib/frame";
+import { workerScript } from "../../lib/trusted";
 
 /** Wall-clock milliseconds since the epoch, for timestamps that leave the page. */
 export const epochMs = (): number => Date.now();
@@ -26,7 +27,7 @@ function timerWorker(): Worker | null {
   worker = null;
   if (typeof document === "undefined") return worker;
   try {
-    worker = new Worker(WORKERS.clock, { type: "module" });
+    worker = new Worker(workerScript(WORKERS.clock), { type: "module" });
     worker.onmessage = ({ data: id }: MessageEvent<number>) => due.get(id)?.();
   } catch {}
   return worker;

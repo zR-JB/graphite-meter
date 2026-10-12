@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,12 +19,25 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-// The CSP digests of index.html's inline pre-paint <script> and <style>; both are empty without a build.
-var inlineScript, inlineStyle = inlineHash("script"), inlineHash("style")
+// The CSP digests of index.html's inline pre-paint <script> and <style>, and the Trusted Types policy its marker
+// names (client v1 names none); all are empty without a build.
+var inlineScript, inlineStyle, trustedTypes = inlineHash("script"), inlineHash("style"), trustedTypesPolicy(shell())
 
-func inlineHash(tag string) string {
+func shell() []byte {
 	b, _ := fs.ReadFile(distFS, "dist/index.html")
-	return inlineCSPHash(b, tag)
+	return b
+}
+
+func inlineHash(tag string) string { return inlineCSPHash(shell(), tag) }
+
+var trustedTypesMarker = regexp.MustCompile(`<meta name="graphite-meter-trusted-types" content="([A-Za-z0-9_-]+)"`)
+
+// trustedTypesPolicy returns the policy name a shell's Trusted Types marker carries, or "" without one.
+func trustedTypesPolicy(html []byte) string {
+	if match := trustedTypesMarker.FindSubmatch(html); match != nil {
+		return string(match[1])
+	}
+	return ""
 }
 
 // inlineCSPHash returns the base64 sha256 of the first attribute-less inline tag's exact text.
@@ -39,18 +53,19 @@ func inlineCSPHash(html []byte, tag string) string {
 
 // PagePolicy is the shell's CSP; connect names peers beyond 'self', less IPv6 literals CSP cannot express.
 func PagePolicy(connect []string) string {
-	return pagePolicy(inlineScript, inlineStyle, slices.DeleteFunc(slices.Clone(connect),
+	return pagePolicy(inlineScript, inlineStyle, trustedTypes, slices.DeleteFunc(slices.Clone(connect),
 		func(raw string) bool { return strings.Contains(raw, "://[") }))
 }
 
-func pagePolicy(script, style string, connect []string) string {
+// pagePolicy requires Trusted Types for script sinks under the trusted policy name, when there is one.
+func pagePolicy(script, style, trusted string, connect []string) string {
 	sources := func(directive, hash string) string {
 		if hash == "" {
 			return directive + " 'self'"
 		}
 		return directive + " 'self' 'sha256-" + hash + "'"
 	}
-	return strings.Join([]string{
+	directives := []string{
 		"default-src 'self'",
 		sources("script-src", script),
 		sources("style-src", style),
@@ -61,8 +76,12 @@ func pagePolicy(script, style string, connect []string) string {
 		"base-uri 'none'",
 		"form-action 'self'",
 		"frame-ancestors 'none'",
-		strings.Join(append([]string{"connect-src 'self'"}, connect...), " "),
-	}, "; ")
+	}
+	if trusted != "" {
+		directives = append(directives, "require-trusted-types-for 'script'", "trusted-types "+trusted)
+	}
+	connectSrc := strings.Join(append([]string{"connect-src 'self'"}, connect...), " ")
+	return strings.Join(append(directives, connectSrc), "; ")
 }
 
 // Handler serves the client shell at / and otherwise only embedded files. The shell carries the

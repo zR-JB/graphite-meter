@@ -3,6 +3,7 @@
 // ending means, so a session's unspent ticket survives its redials. The carrier is ready when enough lanes delivered
 // since they last opened.
 import type { FeedRecord, LaneCommand, LaneReport, SessionCommand, SessionReport } from "../../protocol/messages";
+import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
 import { Backoff, lost } from "./endings";
 import { delay } from "./wait";
@@ -58,7 +59,7 @@ export class Carrier {
     for (let index = 0; index < plan.lanes; index++) {
       const lane: Lane = {
         index,
-        worker: new Worker(plan.worker, { type: "module" }),
+        worker: new Worker(workerScript(plan.worker), { type: "module" }),
         delivered: false,
         backoff: new Backoff(),
       };

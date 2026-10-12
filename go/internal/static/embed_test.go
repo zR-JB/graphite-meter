@@ -148,3 +148,24 @@ func TestPagePolicy(t *testing.T) {
 		}
 	}
 }
+
+// Client v2's shell names its Trusted Types policy and the page then requires it; client v1's names none.
+func TestTrustedTypes(t *testing.T) {
+	for html, want := range map[string]string{
+		`<head><meta name="graphite-meter-trusted-types" content="graphite-meter" /></head>`: "graphite-meter",
+		`<head><meta name="graphite-meter-trusted-types" content="a b"></head>`:              "",
+		`<head><meta name="graphite-meter-trusted-types" content=""></head>`:                 "",
+		`<head></head>`: "",
+	} {
+		if got := trustedTypesPolicy([]byte(html)); got != want {
+			t.Errorf("%s names %q, want %q", html, got, want)
+		}
+	}
+	required := "require-trusted-types-for 'script'; trusted-types graphite-meter; connect-src 'self'"
+	if policy := pagePolicy("", "", "graphite-meter", nil); !strings.HasSuffix(policy, required) {
+		t.Errorf("v2 policy does not require Trusted Types: %s", policy)
+	}
+	if policy := pagePolicy("", "", "", nil); strings.Contains(policy, "trusted-types") {
+		t.Errorf("v1 policy requires Trusted Types: %s", policy)
+	}
+}

@@ -98,6 +98,30 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
   expect(live).toBeGreaterThanOrEqual(5);
 });
 
+// Every page reports a policy violation as an error, so a run that trips Trusted Types fails whichever test made it.
+test("the page requires Trusted Types and refuses script it did not make", async (page) => {
+  const policy = (await fetch(`${home.http}/`)).headers.get("content-security-policy");
+  expect(policy).toContain("; require-trusted-types-for 'script'; trusted-types graphite-meter; ");
+  await open(page);
+  await ready(page);
+  const refusals = await page.evaluate(() =>
+    [() => new Worker("/assets/elsewhere.js"), () => (document.body.innerHTML = "<b></b>")].map((sink) => {
+      try {
+        sink();
+        return "admitted";
+      } catch (error) {
+        return (error as Error).name;
+      }
+    }),
+  );
+  expect(refusals).toEqual(["TypeError", "TypeError"]);
+  // The guard reports each refusal; Firefox's console reports them too.
+  const reports = () => page.errors.filter((error) => error.includes("CSP violation: require-trusted-types-for"));
+  await expect.poll(() => reports().length).toBe(2);
+  expect(page.errors.every((error) => error.includes("require-trusted-types-for"))).toBe(true);
+  page.errors.length = 0;
+});
+
 test("stopping during download freezes elapsed time and a rerun completes", async (page) => {
   await open(page, home.url, {
     config: { duration: { ...baseConfig.duration, downloadMs: 1500 } },

@@ -87,6 +87,24 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     assert!(std::str::from_utf8(&auth).unwrap().contains(tags));
 }
 
+#[test]
+fn a_shell_naming_its_trusted_types_policy_has_the_page_require_it() {
+    static SHELL: &[Asset] = &[asset(
+        "index.html",
+        "text/html; charset=utf-8",
+        b"<html><head><meta name=\"graphite-meter-trusted-types\" content=\"graphite-meter\" /></head></html>",
+    )];
+    let required = "frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types graphite-meter; \
+                    connect-src 'self'";
+    assert!(
+        Assets::new(SHELL, notices(), false, false)
+            .policy(&[])
+            .ends_with(required)
+    );
+    let unmarked = Assets::new(FILES, notices(), false, false).policy(&[]);
+    assert!(unmarked.ends_with("frame-ancestors 'none'; connect-src 'self'"), "{unmarked}");
+}
+
 #[tokio::test]
 async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     let app = served(&ALL_LISTENERS);

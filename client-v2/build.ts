@@ -5,6 +5,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { themeScript } from "./auth/build";
+import { TRUSTED_TYPES_POLICY } from "./src/lib/trusted";
 
 const env = process.env;
 const root = import.meta.dir;
@@ -130,6 +131,9 @@ function validate(html: string, names: string[]): void {
     count("<script>") !== 1 && "the shell needs exactly one inline <script>",
     count("<style>") !== 1 && "the shell needs exactly one inline <style>",
     !html.includes('<div id="app"') && 'the shell needs <div id="app">',
+    (count("graphite-meter-trusted-types") !== 1 ||
+      !html.includes(`<meta name="graphite-meter-trusted-types" content="${TRUSTED_TYPES_POLICY}"`)) &&
+      `the shell needs one Trusted Types marker naming ${TRUSTED_TYPES_POLICY}`,
     /graphite-meter-(auth|result-history-default)/.test(html) && "the shell must not carry the servers' meta tags",
     ...names.map((name) => {
       const parts = name.split(/[\\/]/);
