@@ -207,8 +207,13 @@ func TestCLIExchangeIssuesOneGrant(t *testing.T) {
 	if _, ok := s.authenticateGrant(out.Token); !ok {
 		t.Fatal("grant not accepted")
 	}
-	if replay := cliExchange(s, `{"verifier":"terminal-verifier"}`); replay.Code != http.StatusOK ||
-		replay.Body.String() != first.Body.String() || len(sess.grants) != 1 {
+	// The same token again; its remaining time may have moved on.
+	replay := cliExchange(s, `{"verifier":"terminal-verifier"}`)
+	var again struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(replay.Body.Bytes(), &again); replay.Code != http.StatusOK || err != nil ||
+		again.Token != out.Token || len(sess.grants) != 1 {
 		t.Fatalf("repeated exchange code=%d grants=%d, want the same grant", replay.Code, len(sess.grants))
 	}
 	if w := serveMounted(s, cliPageRequest(challengeFor("terminal-verifier"), raw)); w.Code != http.StatusForbidden {

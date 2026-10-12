@@ -19,6 +19,7 @@ use graphite_meter_proto::approval::{challenge, verification_code};
 use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
@@ -251,7 +252,7 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
     let now = Instant::now();
     let token = match issued {
         // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
-        Some(issued) if now < issued.replay_until => issued.token,
+        Some(issued) if now < issued.replay_until && !issued.token.is_empty() => issued.token,
         Some(_) => {
             // Past its window the token is no longer kept.
             if let Some(issued) = state
@@ -277,6 +278,18 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
             let approval = state.approvals.get_mut(&challenge).expect("the approval exists");
             approval.deadline = approval.deadline.max(replay_until);
             approval.issued = Some(Issued { grant: digest(&token), token: token.clone(), replay_until });
+            // The token is kept for its window only, whether or not it is asked for again.
+            let (store, kept) = (Arc::clone(&auth.store.0), challenge.clone());
+            tokio::spawn(async move {
+                tokio::time::sleep(REPLAY).await;
+                if let Some(issued) = lock(&store)
+                    .approvals
+                    .get_mut(&kept)
+                    .and_then(|approval| approval.issued.as_mut())
+                {
+                    drop(std::mem::take(&mut issued.token));
+                }
+            });
             token
         }
     };

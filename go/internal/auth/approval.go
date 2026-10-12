@@ -168,13 +168,15 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 			expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = a
 	}
+	// The exchange sets issued under the lock, so it is read here, not after.
+	issued := a != nil && a.issued != nil
 	s.mu.Unlock()
 	if a == nil {
 		s.count(countCapacity)
 		refusePage(w, refusedBusy)
 		return
 	}
-	if a.issued != nil {
+	if issued {
 		refusePage(w, refusedLink)
 		return
 	}
@@ -212,12 +214,13 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 			browserOrigin: clientOrigin, clients: clients}
 		s.approvals[challenge] = a
 	}
+	issued := a != nil && a.issued != nil
 	s.mu.Unlock()
 	if a == nil {
 		refusePage(w, refusedBusy)
 		return
 	}
-	if a.browserOrigin != clientOrigin || a.issued != nil {
+	if a.browserOrigin != clientOrigin || issued {
 		refusePage(w, refusedLink)
 		return
 	}
@@ -233,7 +236,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	sessionRoom, _ := s.approvalRoomLocked(p.session, clients, now)
-	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && sessionRoom)
+	valid = s.approvals[challenge] == a && a.issued == nil && (a.session == p.session || a.session == nil && sessionRoom)
 	refusal := refusedLink
 	if a.session == nil && !sessionRoom {
 		refusal = refusedBusy
@@ -344,7 +347,7 @@ func (s *Service) exchangeLocked(verifier, origin string, now time.Time) (string
 	sess := a.session
 	// A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
 	if a.issued != nil {
-		if now.Before(a.replayUntil) {
+		if now.Before(a.replayUntil) && a.token != "" {
 			return a.token, sess, http.StatusOK
 		}
 		// Past its window the token is no longer kept.
@@ -373,6 +376,12 @@ func (s *Service) exchangeLocked(verifier, origin string, now time.Time) (string
 		challenge: challenge, ctx: ctx, cancel: cancel}
 	s.grants[g.key], sess.grants[g.key] = g, g
 	a.issued, a.token, a.replayUntil = g, raw, now.Add(grantReplay)
+	// The token is kept for its window only, whether or not it is asked for again.
+	time.AfterFunc(grantReplay, func() {
+		s.mu.Lock()
+		a.token = ""
+		s.mu.Unlock()
+	})
 	if a.expires.Before(a.replayUntil) {
 		a.expires = a.replayUntil
 	}
