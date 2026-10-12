@@ -1342,8 +1342,12 @@ export class Run {
         ? { down: result("bidirectional", "down"), up: result("bidirectional", "up") }
         : null,
     };
+    // A server that left the run before a stage began did not run it, unless the stage was charged to it.
+    const joined = (stage: Stage) => !!this.#stages.get(stage)?.seats.has(id) || this.#failed(stage, id);
     const status = (stage: Stage): StageStatus =>
-      (this.#settled.get(stage)?.status ?? "not-run") === "not-run" || (stage === "latency" && !prepared.latency)
+      (this.#settled.get(stage)?.status ?? "not-run") === "not-run" ||
+      (stage === "latency" && !prepared.latency) ||
+      !joined(stage)
         ? "not-run"
         : stageStatus(lanes(evidence, stage), this.#failed(stage, id));
     return {

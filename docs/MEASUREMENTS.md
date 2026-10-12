@@ -65,8 +65,9 @@ contributions share the client's connection and are not independent capacity tes
   stopped; at its first boundary, without a window, if they never moved), so its silence is never measured, and the
   survivors' `dropout` interval starts there. A server that cannot prepare a stage leaves the same way, and the run
   fails only when none survives. A removed server stays out for the rest of the run, except that a sole server
-  retries at the next stage. A latency-only failure keeps throughput, except in the latency stage: a server lost
-  there (connection lost or timed out) leaves the run while another remains.
+  retries at the next stage; its own statuses show the stages it never began as not run. A latency-only failure keeps
+  throughput, except in the latency stage: a server lost there (connection lost or timed out) leaves the run while
+  another remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes; time in it when no bytes moved lowers the mean. After a late
   dropout the interval before it can hold the headline and the stage is Partial. With no such interval the stage

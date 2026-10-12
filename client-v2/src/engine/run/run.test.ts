@@ -426,6 +426,22 @@ test("each server's stage statuses follow the run's rule on its own lanes and fa
   ]);
 });
 
+test("a server that left the run reports the stages it never began as not run, with no failure for them", async () => {
+  const h = setup(
+    two({ measure: (events, { stage }) => void (stage === "download" && fail(100)(events)) }),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const { multiServer, stages } = await h.result();
+  expect(stages.upload).toBe("complete");
+  expect(multiServer.failures.map(({ serverId, stage }) => [serverId, stage])).toEqual([["a", "download"]]);
+  expect(multiServer.servers.map(({ stages }) => [stages.download, stages.upload])).toEqual([
+    ["failed", "not-run"],
+    ["complete", "complete"],
+  ]);
+});
+
 test("ending for sign-in keeps what was measured and names the reason for each unfinished stage", async () => {
   const h = setup([{ id: "self", rate: 2 }], { download: true, upload: true }, { downloadMs: 2_000, uploadMs: 1_000 });
   h.start();
