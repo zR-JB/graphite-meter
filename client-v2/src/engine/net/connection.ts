@@ -471,20 +471,23 @@ function connect(
     const at = dueAt();
     if (at === Infinity) return;
     let armed = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const fire = () => {
       if (!armed) return;
+      // A coarse page clock (Firefox's) can still read short of `at` when its timer fires: nothing is due yet.
+      const wait = Math.ceil(at - now());
+      if (wait > 0) return void (timer = setTimeout(fire, wait));
       armed = false;
       if (auth.deadline !== null && now() >= auth.deadline && !fault.peek()?.failure.signIn) requireSignIn();
       else void check();
     };
     // What is due already starts before the page paints, so a row never flashes its unchecked state.
-    const wait = Math.ceil(at - now());
-    if (wait <= 0) queueMicrotask(fire);
-    else {
-      const timer = setTimeout(fire, wait);
-      onCleanup(() => clearTimeout(timer));
-    }
-    onCleanup(() => (armed = false));
+    if (at <= now()) queueMicrotask(fire);
+    else fire();
+    onCleanup(() => {
+      armed = false;
+      clearTimeout(timer);
+    });
   });
   effect(() => {
     const path = watchedPath();

@@ -19,7 +19,10 @@ afterEach(() => {
 
 /** A selected server's connection on the fake network, and every readiness its view painted: what it shows once the
     task that changed it is done. */
-function connect(entry: CatalogEntry, { auth = publicAuth(entry) as ServerAuth, latency = false, shown = true } = {}) {
+function connect(
+  entry: CatalogEntry,
+  { auth = publicAuth(entry) as ServerAuth, latency = false, shown = true, now = net.now } = {},
+) {
   const buses = new FakeBuses();
   const idle: ProbeOutcome[] = [];
   const env = {
@@ -35,7 +38,7 @@ function connect(entry: CatalogEntry, { auth = publicAuth(entry) as ServerAuth, 
     latencyNeeded: signal(latency),
     checkpoints: signal(false),
     idleLatency: (_: string, outcomes: readonly ProbeOutcome[]) => idle.push(...outcomes),
-    now: net.now,
+    now,
   } satisfies ConnectionEnv;
   const selected = signal(true);
   const connection = createConnection(entry, auth, selected, env);
@@ -106,6 +109,26 @@ test("a selected server re-reads discovery every 5 s without a checking flash or
   await net.advance(5_000);
   expect(connection.view.peek().message).toBe("Server could not be reached");
   expect(readiness).toEqual(["checking", "verified", "failed"]);
+});
+
+test("a timer that fires before a coarse page clock reaches its time still re-reads, so a dead peer fails", async () => {
+  let alive = true;
+  net = fakeNet((url) =>
+    !alive
+      ? "unreachable"
+      : url.pathname === "/preflight"
+        ? { body: preflight([h(".", "http1")]) }
+        : { body: PROBE, hop: "http/1.1" },
+  );
+  // Firefox's page clock may read up to a millisecond ahead of the timer that wakes it.
+  let aheadMs = 0.5;
+  const { connection } = connect(self, { now: () => net.now() + aheadMs });
+  await net.advance(1_000);
+  aheadMs = 0;
+  alive = false;
+  await net.advance(5_000);
+  expect(net.sent("/preflight")).toEqual([0, 5_001]);
+  expect(connection.view.peek().message).toBe("Server could not be reached");
 });
 
 test("a server selected again keeps evidence up to 2 min old and proves older evidence again", async () => {
