@@ -19,7 +19,7 @@ interface Fault {
   name: string;
   downloadMs?: number;
   uploadMs?: number;
-  /** Acts once the named stage has run for 300 ms. */
+  /** Acts once the named stage has measured for 300 ms: its own time left shows, not the last stage's handing off. */
   during: "download" | "upload";
   act?(page: Page, victim: Peer): Promise<{ kill(): void } | void>;
   /** A Settings edit of the active download's duration, a second later. */
@@ -136,7 +136,8 @@ for (const fault of faults.filter(
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
-      await expect(page.locator(".remaining")).toHaveCount(1);
+      const left = page.locator(".remaining:not(.handoff-out)");
+      await expect(left).toHaveCount(1, { timeout: 15_000 });
       await Bun.sleep(300);
       const replacement = await fault.act?.(page, victim);
       if (replacement) relaunched.push(replacement);

@@ -20,7 +20,7 @@ interface Fault {
   name: string;
   downloadMs?: number;
   uploadMs?: number;
-  /** Acts once the named stage has run for 300 ms. */
+  /** Acts once the named stage has measured for 300 ms: its own time left shows, not the last stage's handing off. */
   during: "download" | "upload";
   act?(page: Page, victim: Peer): Promise<{ kill(): void } | void>;
   /** A Settings edit of the active download's duration, a second later. */
@@ -126,7 +126,7 @@ for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
-      await expect(page.locator(".remaining")).toHaveCount(1);
+      await expect(page.locator(".remaining:not(.handoff-out)")).toHaveCount(1, { timeout: 15_000 });
       await Bun.sleep(300);
       const replacement = await fault.act?.(page, victim);
       if (replacement) relaunched.push(replacement);
@@ -137,12 +137,15 @@ for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name
       }
       const saved = await savedResult(page, startedAt, 30_000);
       expect(incoherence(saved.result, plansOf({ ...config, adaptive: false }))).toEqual([]);
-      expect(saved.result.outcome).toBe(fault.outcome);
-      const failures = saved.result.multiServer.failures
-        .filter((failure) => failure.scope === "throughput")
-        .map(({ serverId, stage, reason }) => ({ serverId, stage, reason }));
-      if (fault.failure) expect(failures).toContainEqual(fault.failure);
+      const { failures } = saved.result.multiServer;
+      if (fault.failure)
+        expect(
+          failures
+            .filter((failure) => failure.scope === "throughput")
+            .map(({ serverId, stage, reason }) => ({ serverId, stage, reason })),
+        ).toContainEqual(fault.failure);
       else expect(failures).toEqual([]);
+      expect(saved.result.outcome).toBe(fault.outcome);
       if (fault.interval)
         expect(
           saved.result.multiServer.intervals.map(({ stage, reason }) => ({
