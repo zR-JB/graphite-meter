@@ -97,13 +97,16 @@ export const warmTips = () => {
   coolUntil = pageMs() + WARM_MS;
 };
 
-/** The explained element at or above `target`. */
+/** The explained element at or above `target`; cut text yields to an element around it that explains itself. */
 function find(target: EventTarget | null): [HTMLElement, Entry] | null {
+  let cut: [HTMLElement, Entry] | null = null;
   for (let node = target instanceof Element ? target : null; node; node = node.parentElement) {
     const entry = entries.get(node);
-    if (entry && entry.text.peek()) return [node as HTMLElement, entry];
+    if (!entry?.text.peek()) continue;
+    if (entry.kind !== "clip") return [node as HTMLElement, entry];
+    cut ??= [node as HTMLElement, entry];
   }
-  return null;
+  return cut;
 }
 
 /** Jargon and stand-alone facts answer a click or tap; a control does its job and explains on a rest. */

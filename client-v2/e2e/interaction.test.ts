@@ -104,6 +104,23 @@ test("explanations on click open only when asked, while a control still names it
   await expect(tip(page)).toContainText("Settings");
 });
 
+test.chrome("a stage chip explains itself over its cut label, on a rest and on a long press", async (page) => {
+  await open(page, home.http);
+  await run(page);
+  const label = page.locator('.stage-track [data-tone="download"] .chip-label');
+  await label.evaluate((node: HTMLElement) => Object.assign(node.style, { flex: "none", maxWidth: "2ch" }));
+  await expect.poll(() => label.evaluate((node: HTMLElement) => node.dataset.tip)).toBe("");
+  const { x, y } = await centre(label);
+  await moveMouse(page, x, y);
+  await expect(tip(page)).toContainText("Complete");
+  await moveMouse(page, x, y + 240);
+  await expect(tip(page)).toHaveCount(0);
+  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  await page.touch("start", x, y);
+  await expect(tip(page)).toContainText("Complete");
+  await page.touch("end");
+});
+
 test.chrome("a touch screen with a keyboard names the keys in the strip and in tips", async (page) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
