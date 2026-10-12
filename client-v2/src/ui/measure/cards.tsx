@@ -8,7 +8,7 @@ import { For, Show } from "../../lib/dom";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
 import { fmtMs, fmtRate, fmtSpeed, MISSING, rateUnit, toRateUnit, type RateUnits } from "../../view/format";
 import { replyTrackMs } from "../../view/scales";
-import { STAGE, type StageState } from "../../view/words";
+import { STAGE, TIP, type StageState } from "../../view/words";
 import { announce } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tipGroup } from "../kit/rove";
@@ -27,7 +27,7 @@ import {
   type Issue,
   type LiveEvidence,
 } from "./cards-model";
-import { CARDS, JARGON } from "./copy";
+import { CARDS } from "./copy";
 import type { Live } from "./live";
 import { Figure, painter, setText } from "./paint";
 import { StageGraph, type Head } from "./strip";
@@ -42,7 +42,7 @@ interface Figures {
 }
 
 /** One stage's card. The headline is re-made, rising in, when the lens shows another server. */
-function Card(props: { card: Read<CardModel>; reason: Read<string>; scope: Read<string>; strip?: () => Node | null }): {
+function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<string>; strip?: () => Node | null }): {
   element: HTMLElement;
   figures: Figures;
 } {
@@ -152,7 +152,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; scope: Read<
           </Show>
         </span>
         {() => {
-          props.scope();
+          props.lens();
           return untrack(headline);
         }}
       </span>
@@ -177,7 +177,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; scope: Read<
           if (kind === "jitter")
             return (
               <span class="wire">
-                <span class="label" ref={term(() => JARGON.jitter)}>
+                <span class="label" ref={term(() => TIP.jitter)}>
                   {CARDS.jitter}
                 </span>{" "}
                 {jitter}
@@ -188,7 +188,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; scope: Read<
         <Show when={noData}>
           {() => (
             <span class="no-data">
-              <span class="label" ref={term(() => JARGON.noData)}>
+              <span class="label" ref={term(() => TIP.noData)}>
                 {CARDS.noData}
               </span>{" "}
               {noData}
@@ -229,29 +229,25 @@ function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) =
   return summary;
 }
 
-/**
- * A saved result's cards, as History shows them: settled stages only, no strips, and the issues no card carries.
- * - `result`: the saved run.
- * - `scope`: a server id shows that server's share; "" every server together.
- * - `units`: the page's units with the result's own tier, so its figures read as they did live.
- * - `showWire`: the wire estimate under each complete transfer's headline.
- */
+/** A saved result's cards, as History shows them: settled stages only, no strips, and the issues no card carries.
+    `lens` "" shows every server together; `units` carry the result's own tier, so its figures read as they did
+    live. */
 export function ResultSummary(props: {
   result: () => RunResult;
-  scope?: () => string;
+  lens: Read<string>;
   units: () => RateUnits;
   showWire: () => boolean;
 }): Node {
-  const scope = computed(() => props.scope?.() ?? "");
+  const { lens } = props;
   const evidence = computed<Evidence>(() => {
     const result = props.result();
-    return scope()
-      ? serverEvidence(result.multiServer, scope())
+    return lens()
+      ? serverEvidence(result.multiServer, lens())
       : { ...result, status: result.stages, idle: result.latencyByStage.latency };
   });
   const stages = computed(() => STAGES.filter((stage) => settled(evidence().status[stage])));
-  const issues = computed(() => serverIssues(props.result().multiServer, scope()));
-  const attributed = computed(() => props.result().multiServer.selection.length > 1 && !scope());
+  const issues = computed(() => serverIssues(props.result().multiServer, lens()));
+  const attributed = computed(() => props.result().multiServer.selection.length > 1 && !lens());
   const listed = computed(() => issues().filter((issue) => !issue.throughput.length));
   const card = (stage: Stage) =>
     Card({
@@ -260,7 +256,7 @@ export function ResultSummary(props: {
         return settledCard(stage, settled(status) ? status : "failed", evidence(), props.units(), props.showWire());
       }),
       reason: computed(() => cardReason(issues(), stage, attributed())),
-      scope,
+      lens,
     }).element;
   return (
     <Summary
@@ -293,9 +289,9 @@ export function ResultCards(props: { app: App; live: Live }): Node {
   const { run } = app;
   const units = live.rateUnits;
   const details = run.details;
-  const scope = live.lens;
+  const { lens } = live;
   const evidence = computed<Evidence>(() => {
-    const shown = scope();
+    const shown = lens();
     const all = details();
     if (all && shown) return serverEvidence(all, shown);
     const results = run.results();
@@ -303,9 +299,9 @@ export function ResultCards(props: { app: App; live: Live }): Node {
   });
   // Lost latency probes are marked on the latency card's facts; nothing is added under the cards mid-run.
   const issues = computed(() =>
-    details() ? serverIssues(details()!, scope()).filter((issue) => issue.throughput.length) : [],
+    details() ? serverIssues(details()!, lens()).filter((issue) => issue.throughput.length) : [],
   );
-  const attributed = computed(() => (details()?.selection.length ?? 1) > 1 && !scope());
+  const attributed = computed(() => (details()?.selection.length ?? 1) > 1 && !lens());
   const plan = computed(() => run.plan() ?? app.preferences.config());
 
   /** What a stage that has not settled shows, read from the run only while it runs or after it stopped. */
@@ -434,7 +430,7 @@ export function ResultCards(props: { app: App; live: Live }): Node {
       label: CARDS.overTime(STAGE[stage].label),
     });
     // A server shown alone has no series of its own.
-    return () => (scope() ? null : graph);
+    return () => (lens() ? null : graph);
   };
 
   const card = (stage: Stage) => {
@@ -442,7 +438,7 @@ export function ResultCards(props: { app: App; live: Live }): Node {
     const { element, figures } = Card({
       card: view,
       reason: computed(() => cardReason(issues(), stage, attributed())),
-      scope,
+      lens,
       strip: strip(stage),
     });
     // The running card's figures follow the frame clock; a figure is written only when what it shows changes.

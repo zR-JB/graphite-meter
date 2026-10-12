@@ -81,13 +81,9 @@
       animation: glyph-turn 480ms var(--ease-spring) backwards;
     }
   }
-  /* The reply sparkline never shows in the bar. */
   .connectivity {
     display: grid;
     place-items: center;
-    & .spark {
-      display: none;
-    }
   }
   .return-live {
     --btn-line: var(--tone-line);

@@ -1,17 +1,15 @@
 // The Test servers checklist and what stands in its way: a catalogue that did not load, a saved selection that
 // changed, and each selected server's problem with its Retry or Sign in.
 import type { App } from "../../app/app";
-import type { Approval } from "../../engine/net/servers";
+import { MAX_SELECTED, type Approval } from "../../engine/net/servers";
 import type { CatalogEntry } from "../../protocol/documents";
 import { For, Show } from "../../lib/dom";
 import { computed, onCleanup, signal, type Read } from "../../lib/signal";
 import { fmtMs } from "../../view/format";
-import { READINESS, serverLabel } from "../../view/words";
+import { preflightNote, READINESS, serverLabel, TIP } from "../../view/words";
 import { clip, tip } from "../kit/tip";
-import { preflightNote, TIP } from "./tips";
 
 /** The most servers a test runs on. */
-const MAX_SERVERS = 4;
 
 export function ServerSelection(props: { app: App; locked: Read<boolean> }): Node {
   const { servers } = props.app;
@@ -92,7 +90,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           checked={checked}
           disabled={() => {
             const count = servers.selected().length;
-            return locked() || (checked() ? count === 1 : count >= MAX_SERVERS);
+            return locked() || (checked() ? count === 1 : count >= MAX_SELECTED);
           }}
           aria-describedby={() => (preflight() ? "settings-preflight-note" : undefined)}
           onchange={(event) => {
@@ -247,7 +245,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               <span id="settings-servers-label" ref={tip(() => TIP.testServers)}>
                 Test servers
               </span>
-              <small>{() => `${servers.selected().length} selected, up to ${MAX_SERVERS}`}</small>
+              <small>{() => `${servers.selected().length} selected, up to ${MAX_SELECTED}`}</small>
             </div>
             <div class="kv">
               <div

@@ -29,10 +29,10 @@
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
   }
-  /* Every explained word brightens; a word whose colour states something sets --tip-ink to keep it. */
+  /* Every explained word brightens. */
   @media (hover: hover) {
     [data-tip]:is(:hover, :focus-visible) {
-      color: var(--tip-ink, var(--text));
+      color: var(--text);
       text-decoration-color: currentColor;
     }
   }
@@ -56,7 +56,7 @@
 }
 
 /* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
-   only while the thing it describes is live. Reduced motion lands every one at its end state (above). */
+   only while the thing it describes is live. Reduced motion lands every one at its end state (base.css). */
 /* A settled figure's row slides in from under its label's line. */
 @keyframes row-in {
   from {

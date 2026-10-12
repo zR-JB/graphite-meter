@@ -8,13 +8,13 @@ import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { Stage, TransferStage } from "../../engine/run/schedule";
 import { computed, effect, onCleanup, signal } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtLatencyRange } from "../../view/format";
+import { STAGE } from "../../view/words";
 import { warmTips } from "../kit/tip";
 import { CARDS } from "./copy";
-import { inView, measure, painter, scrub } from "./paint";
+import { inView, measure, painter, scrub, svg } from "./paint";
 import { columnsFor, Lane, monotoneTangents, nearestIndex, replyBars, type ReplyBar } from "./strip-model";
 
 const TOP_PAD = 3;
-const SVG = "http://www.w3.org/2000/svg";
 
 /** The running stage's leading edge at a frame: now on the timeline and each lane's glided rate (bytes/s). */
 export interface Head {
@@ -22,7 +22,7 @@ export interface Head {
   values: number[];
 }
 
-export interface StripProps {
+interface StripProps {
   stage: Stage;
   /** Lanes by direction: one for download or upload, two for bidirectional, none for the latency card. */
   dirs: readonly Direction[];
@@ -56,11 +56,6 @@ interface Row {
 
 let strips = 0;
 
-const svg = <K extends keyof SVGElementTagNameMap>(tag: K, className?: string): SVGElementTagNameMap[K] => {
-  const element = document.createElementNS(SVG, tag);
-  if (className) element.setAttribute("class", className);
-  return element;
-};
 const shown = (mark: SVGElement, visible: boolean) => mark.setAttribute("visibility", visible ? "visible" : "hidden");
 const fixed = (value: number) => (Math.round(value * 100) / 100).toString();
 
@@ -151,7 +146,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     if (t === null || !hasData()) return null;
     const time = (when: number) => fmtDuration(Math.max(0, when - props.start()), 1);
     const reply = (bar: ReplyBar): Row => ({
-      label: "Latency",
+      label: STAGE.latency.label,
       value: bar.lo < bar.hi ? fmtLatencyRange(bar.lo, bar.hi) : fmtLatency(bar.lo),
     });
     if (trackOnly) {
@@ -167,7 +162,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     const first = nearest.find(Boolean);
     if (!first) return null;
     const rows: Row[] = nearest.map((sample, index) => ({
-      label: dirs.length > 1 ? (index ? "Upload" : "Download") : CARDS.rate,
+      label: dirs.length > 1 ? STAGE[index ? "upload" : "download"].label : CARDS.rate,
       value: sample ? props.rate(sample.bytesPerSec) : "",
       mark: dirs.length > 1 ? (index ? "↑" : "↓") : undefined,
     }));

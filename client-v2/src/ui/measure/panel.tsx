@@ -7,13 +7,14 @@ import { computed, effect } from "../../lib/signal";
 import { allServersLabel } from "../../view/words";
 import { ServerScope } from "../kit/scope";
 import type { Shell } from "../shell/api";
+import { media } from "../shell/layout";
 import { ResultCards } from "./cards";
 import { RunButton, StageTrack } from "./chips";
 import { LENS } from "./copy";
 import { Dial } from "./dial";
 import { LatencyProfile } from "./lanes";
 import { liveOf, type Live } from "./live";
-import { measure, media } from "./paint";
+import { measure } from "./paint";
 
 export function GaugePanel(props: { app: App; shell: Shell }): Node {
   const { app } = props;

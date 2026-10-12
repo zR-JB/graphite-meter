@@ -24,6 +24,7 @@ import {
   groupRows,
   PAGE_ROWS,
   rowPresenter,
+  SORT_LABEL,
   type Cell,
   type Days,
   type Row,
@@ -175,7 +176,7 @@ export function ResultsList(props: {
     const sorted = computed(() => props.sort().by === column);
     const order = () => (props.sort().descending ? "descending" : "ascending");
     const unit = () => (column === "date" ? "" : scales()[column].unit);
-    const name = () => (column === "date" ? "Date" : `${COLUMN[column].short} ${unit()}`.trim());
+    const name = () => (column === "date" ? SORT_LABEL.date : `${COLUMN[column].short} ${unit()}`.trim());
     return (
       <button
         type="button"
@@ -185,7 +186,7 @@ export function ResultsList(props: {
         onclick={() => props.setSort(column, sorted.peek() ? !props.sort.peek().descending : naturalDescending(column))}
       >
         {column === "date" ? (
-          <span>Date</span>
+          <span>{SORT_LABEL.date}</span>
         ) : (
           [
             <span class="head-icon" data-tone={column}>
@@ -264,7 +265,7 @@ export function ResultsList(props: {
         const footer = (
           <div class="load-more">
             <button class="btn" type="button" onclick={loadMore}>
-              Load 50 more
+              {`Load ${PAGE_ROWS} more`}
             </button>
             <span>{() => `${shown()} of ${ordered().length}`}</span>
           </div>

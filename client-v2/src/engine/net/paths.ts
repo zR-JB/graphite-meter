@@ -166,7 +166,7 @@ const inGroup = (target: Target, selection: Selection) =>
     : selection.kind === "transport" && target.transport === selection.transport;
 
 /** Whether `selection` points at `target` at all, usable or not. */
-const names = (selection: Selection, target: Target) =>
+export const pointsAt = (selection: Selection, target: Target) =>
   selection.kind === "auto" ||
   inGroup(target, selection) ||
   (selection.kind === "origin" &&
@@ -236,7 +236,7 @@ export function unresolvedReason(
   // A browser policy explains the miss only when it excludes every origin the choice points at.
   let blocked: string | null = null;
   for (const entry of origins(discovery, role).values()) {
-    if (!entry.targets.some((target) => names(selection, target))) continue;
+    if (!entry.targets.some((target) => pointsAt(selection, target))) continue;
     if (!entry.blocked) {
       blocked = null;
       break;

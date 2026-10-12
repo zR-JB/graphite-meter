@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import { classify } from "../../engine/net/paths";
-import type { MultiServerResult } from "../../engine/run/result";
 import type { Discovery } from "../../engine/types";
 import type { Preflight } from "../../protocol/documents";
-import { capabilities, evidence, httpPaths, loadSummary, serverIssues } from "./facts";
+import { capabilities, evidence, httpPaths, loadSummary } from "./facts";
 
 const page = { origin: "https://ui.example", secure: true, webTransport: "available" as const };
 function offer(throughput: object[], latency: object[]): Discovery {
@@ -51,25 +50,4 @@ test("a server supports what it advertises; latency targets are no HTTP paths", 
   expect(capabilities(discovery, "throughput")).toEqual(["Fetch streams", "Some clear origins blocked by this page"]);
   expect(capabilities(discovery, "latency")).toEqual(["WebTransport datagrams"]);
   expect(httpPaths(null)).toBeNull();
-});
-
-test("a server's issues name the stages each reason ended", () => {
-  const failure = (stage: string, scope: string, reason: string, serverId = "a") => ({
-    serverId,
-    stage,
-    scope,
-    reason,
-  });
-  const details = {
-    failures: [
-      failure("download", "throughput", "timeout"),
-      failure("upload", "latency", "timeout"),
-      failure("latency", "latency", "connection-lost"),
-      failure("upload", "throughput", "timeout", "b"),
-    ],
-  } as unknown as MultiServerResult;
-  expect(serverIssues(details, "a")).toEqual([
-    { stages: "Download, Loaded up", reason: "Stopped delivering data" },
-    { stages: "Latency", reason: "Connection lost" },
-  ]);
 });

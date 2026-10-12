@@ -1,23 +1,16 @@
 // The top bar: start over, the Settings key, the connection, the way back to a live run, the account, History,
 // Details and the theme, with the last three moving into "More controls" as the bar narrows (container queries).
 import type { App } from "../../app/app";
-import type { Theme } from "../../app/preferences";
 import { Show } from "../../lib/dom";
 import { computed, onCleanup } from "../../lib/signal";
-import { PHASE, STAGE } from "../../view/words";
+import { PHASE, STAGE, THEME } from "../../view/words";
 import { AccountControl } from "../account/account";
-import { Icon, type IconName } from "../kit/icon";
+import { Icon } from "../kit/icon";
 import { MoreMenu } from "../kit/menu";
 import { keyHint, tip } from "../kit/tip";
 import type { Shell } from "./api";
 import { BINDINGS, type Binding } from "./keys";
 import type { Controller } from "./shell";
-
-const THEME: Record<Theme, { label: string; icon: IconName }> = {
-  light: { label: "Light", icon: "sun" },
-  dark: { label: "Dark", icon: "moon" },
-  auto: { label: "Auto", icon: "contrast" },
-};
 
 /** Builds what a key opens as the hand or focus reaches it, so the press only reveals it. */
 const intent = (build: () => void) => (node: HTMLElement) => {

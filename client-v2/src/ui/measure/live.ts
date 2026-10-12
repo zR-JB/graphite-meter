@@ -9,13 +9,13 @@ import type { LatencySummary } from "../../engine/measure/latency";
 import { needsPings } from "../../engine/net/budget";
 import type { Phase } from "../../engine/run/run";
 import { activities, planned, STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
-import { nextFrame } from "../../lib/frame";
-import { frameNow, Glide } from "../../lib/motion";
+import { nextFrame, pageMs } from "../../lib/frame";
+import { Glide } from "../../lib/motion";
 import { batch, computed, effect, scope, signal, untrack, type Read } from "../../lib/signal";
 import type { RateUnits, Units } from "../../view/format";
 import { latencyAxisMs, throughputScales } from "../../view/scales";
 import { stageState, type StageState } from "../../view/words";
-import { resultArcs } from "./geometry";
+import { resultArcs } from "./dial-model";
 
 /** A stalled sample fades the rates to zero once, over this long. */
 const STALL_FADE_MS = 800;
@@ -44,7 +44,7 @@ function createLive(app: App) {
   let movedAt = Number.NEGATIVE_INFINITY;
   const moved = signal(0);
   const bump = () => {
-    movedAt = frameNow();
+    movedAt = pageMs();
     moved.set(moved.peek() + 1);
   };
 
@@ -77,8 +77,8 @@ function createLive(app: App) {
   const rateUnits = computed<RateUnits>(() => ({ ...units(), tier: scales().tier }));
 
   // One stage's evidence at a time: a new stage starts with no rate, its first evidence snaps in, a stall fades once.
-  const down = new Glide(0, { painted: true });
-  const up = new Glide(0, { painted: true });
+  const down = new Glide();
+  const up = new Glide();
   const rateStage = signal<TransferStage | null>(null);
   let stalled = false;
   effect(() => {
@@ -180,7 +180,7 @@ function createLive(app: App) {
   });
   const latencyAxis = computed(() => latencyAxisMs(buckets(), !run.running()));
   // Shown only on the millisecond scale; between runs the idle probes move it unseen and wake nothing.
-  const rtt = new Glide(0, { painted: true });
+  const rtt = new Glide();
   effect(() => {
     const ms = completedRtt() ?? replies().rttMs;
     const shown = msScale();
@@ -225,7 +225,7 @@ function createLive(app: App) {
   });
 
   // The shown segment's clock: progress corrects it, a running segment keeps it moving, a new segment starts at zero.
-  const phaseClock = new Glide(0, { painted: true });
+  const phaseClock = new Glide();
   const budget = signal(0);
   let segment = "";
   let stale: object | null = null;
@@ -253,7 +253,7 @@ function createLive(app: App) {
   });
 
   // Time since the run started: it holds when the run stops and reads the result's own duration once complete.
-  const runClock = new Glide(0, { painted: true });
+  const runClock = new Glide();
   effect(() => {
     const phase = run.phase();
     const result = run.result();

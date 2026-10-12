@@ -1,5 +1,5 @@
-// The instrument's frame and visibility helpers: a view's painter on the shared frame clock, whether an element is
-// on screen in a visible page, a media query as a signal, and a box's measured size.
+// The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
+// visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
 import { animate } from "../../lib/frame";
 import { batch, onCleanup, signal, type Read } from "../../lib/signal";
 
@@ -35,15 +35,6 @@ export function inView(element: Element, initial: boolean): Read<boolean> {
     document.removeEventListener("visibilitychange", update);
   });
   return seen;
-}
-
-export function media(query: string): Read<boolean> {
-  const list = matchMedia(query);
-  const matches = signal(list.matches);
-  const change = () => matches.set(list.matches);
-  list.addEventListener("change", change);
-  onCleanup(() => list.removeEventListener("change", change));
-  return matches;
 }
 
 /** Each element's border-box size in CSS px, from one observer; read in its callbacks, never by forcing layout. */
@@ -133,3 +124,9 @@ export class Figure {
 export function setText(node: Text, text: string): void {
   if (node.data !== text) node.data = text;
 }
+
+export const svg = <K extends keyof SVGElementTagNameMap>(tag: K, className?: string): SVGElementTagNameMap[K] => {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (className) element.setAttribute("class", className);
+  return element;
+};

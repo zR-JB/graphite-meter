@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { liveCard, settledCard, type Evidence, type LiveEvidence } from "./cards-model";
+import type { MultiServerResult } from "../../engine/run/result";
+import { liveCard, serverIssues, settledCard, type Evidence, type LiveEvidence } from "./cards-model";
 import { lanesAxisMs, nearestMetric, present, stepMetric, values } from "./lanes-model";
 import { monotoneTangents, replyBars } from "./strip-model";
 
@@ -143,4 +144,26 @@ test("a running card follows its own stage only, says when replies stop, and a s
   expect([stopped.status, stopped.figure, stopped.word?.label]).toEqual(["stopped", "200.0", "Stopped"]);
   const pair = liveCard("bidirectional", "recovering", evidence({}), BITS);
   expect([pair.status, pair.live, pair.word?.label]).toEqual(["recovering", "pair", "Recovering"]);
+});
+
+test("a server's issues name the stages each reason ended", () => {
+  const failure = (stage: string, scope: string, reason: string, serverId = "a") => ({
+    serverId,
+    stage,
+    scope,
+    reason,
+  });
+  const details = {
+    selection: [{ id: "a", name: "Oslo" }],
+    failures: [
+      failure("download", "throughput", "timeout"),
+      failure("upload", "latency", "timeout"),
+      failure("latency", "latency", "connection-lost"),
+      failure("upload", "throughput", "timeout", "b"),
+    ],
+  } as unknown as MultiServerResult;
+  expect(serverIssues(details, "a")).toEqual([
+    { server: "Oslo", stages: "Download, Loaded up", reason: "Stopped delivering data", throughput: ["download"] },
+    { server: "Oslo", stages: "Latency", reason: "Connection lost", throughput: [] },
+  ]);
 });

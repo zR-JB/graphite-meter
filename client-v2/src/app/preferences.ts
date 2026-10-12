@@ -2,16 +2,22 @@
 // preferences. The key and its shape are shared with the old client, the pre-paint script and the sign-in pages.
 import { STORAGE_KEY } from "../../auth/theme";
 import { normalizeStreamCount } from "../engine/net/budget";
-import type { PingCadence, TestConfig } from "../engine/types";
+import { CADENCE_MS, type PingCadence, type TestConfig } from "../engine/types";
 import { batch, signal, type Read, type Signal } from "../lib/signal";
 import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
 
 const SAVE_DELAY_MS = 250;
 
+export const DURATION_PRESETS: Record<"short" | "medium" | "long", TestConfig["duration"]> = {
+  short: { warmupMs: 600, latencyMs: 2_500, downloadMs: 5_000, uploadMs: 5_000, bidirectionalMs: 5_000 },
+  medium: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
+  long: { warmupMs: 1_200, latencyMs: 6_000, downloadMs: 20_000, uploadMs: 20_000, bidirectionalMs: 20_000 },
+};
+
 export const DEFAULT_CONFIG: TestConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
-  duration: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
+  duration: { ...DURATION_PRESETS.medium },
   pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 4 },
@@ -30,14 +36,8 @@ export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   bidirectionalMs: [1_000, MAX_STAGE_LIMIT_MS],
 };
 
-export const DURATION_PRESETS: Record<"short" | "medium" | "long", TestConfig["duration"]> = {
-  short: { warmupMs: 600, latencyMs: 2_500, downloadMs: 5_000, uploadMs: 5_000, bidirectionalMs: 5_000 },
-  medium: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
-  long: { warmupMs: 1_200, latencyMs: 6_000, downloadMs: 20_000, uploadMs: 20_000, bidirectionalMs: 20_000 },
-};
-
 /** A whole number of ms within the setting's limits; anything else is its default. */
-export function clampDuration(key: DurationKey, value: unknown): number {
+function clampDuration(key: DurationKey, value: unknown): number {
   const [min, max] = DURATION_LIMITS[key];
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(max, Math.max(min, Math.round(value)))
@@ -79,7 +79,7 @@ const text = (value: unknown, fallback: string) =>
   typeof value === "string" && value.length <= 256 ? value : fallback;
 const positive = <T>(value: unknown, fallback: T): number | T =>
   typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : fallback;
-const CADENCES: readonly PingCadence[] = ["reply-driven", "fast", "medium", "slow"];
+const CADENCES = Object.keys(CADENCE_MS) as PingCadence[];
 
 /** Each stored field sanitised on its own: anything unreadable falls back to its default, unknown keys go. */
 export function readPreferences(stored: unknown): Preferences {

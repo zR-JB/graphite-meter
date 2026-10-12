@@ -22,8 +22,8 @@ import {
   toRateUnit,
   type RateUnits,
 } from "../../view/format";
-import { POPULATION, reasonLabel, STAGE, STAGE_STATE, type StageState, type Word } from "../../view/words";
-import { CARDS, JARGON } from "./copy";
+import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP, type StageState, type Word } from "../../view/words";
+import { CARDS } from "./copy";
 
 /** The card's look: its edge, glow and quiet dash. */
 export type CardStatus =
@@ -123,12 +123,12 @@ const LABELS: Record<Stage, readonly string[]> = {
   bidirectional: ["Stability", CARDS.downUp, "Transferred"],
 };
 const TIPS: Record<string, string> = {
-  Peak: JARGON.peak,
-  Stability: JARGON.rateStability,
-  Range: JARGON.latencyRange,
-  Replies: JARGON.replies,
-  Timeouts: JARGON.timeouts,
-  Transferred: JARGON.transferred,
+  Peak: TIP.peak,
+  Stability: TIP.rateStability,
+  Range: TIP.latencyRange,
+  Replies: TIP.replies,
+  Timeouts: TIP.timeouts,
+  Transferred: TIP.transferred,
 };
 
 /** The stage's fixed facts, filled from `known`. */
@@ -136,7 +136,7 @@ function facts(stage: Stage, known: Partial<Record<string, string>>): Fact[] {
   return LABELS[stage].map((label) => ({
     label,
     value: known[label] ?? MISSING,
-    tip: stage === "latency" && label === "Stability" ? JARGON.latencyStability : (TIPS[label] ?? ""),
+    tip: stage === "latency" && label === "Stability" ? TIP.latencyStability : (TIPS[label] ?? ""),
   }));
 }
 

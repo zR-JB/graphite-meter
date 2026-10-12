@@ -7,6 +7,7 @@ import { Show } from "../../lib/dom";
 import { nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, scope, type Read } from "../../lib/signal";
+import { RUN_ACTION, runAction, START_OVER } from "../../view/words";
 import { LegalDialog } from "../legal/legal";
 import { Announcements } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
@@ -30,24 +31,6 @@ export interface Views {
   /** The connection indicator in the top bar. */
   connectivity(shell: Shell): Node;
 }
-
-const RESET = {
-  running: {
-    title: "Stop the running test?",
-    description: "The measurement in progress stops and its results are cleared.",
-    cancel: "Keep running",
-    confirm: "Stop test",
-  },
-  unsaved: {
-    title: "Clear this result?",
-    description: "It is not saved; starting over removes it.",
-    cancel: "Keep result",
-    confirm: "Clear result",
-  },
-};
-
-/** What the run key does now, as the Space hint names it. */
-const RUN_ACTION = { start: "Start test", stop: "Stop test", again: "Run again", cancel: "Cancel" };
 
 // Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
 const SETTLES = new Set(["result-sweep", "pop", "row-in", "grow-x"]);
@@ -147,10 +130,10 @@ export function mountConsole(root: HTMLElement, app: App, views: Views): { shell
       <ConfirmDialog
         open={ctl.reset.open}
         id="reset-confirm"
-        title={() => RESET[ctl.reset.reason()].title}
-        description={() => RESET[ctl.reset.reason()].description}
-        cancel={() => RESET[ctl.reset.reason()].cancel}
-        confirm={() => RESET[ctl.reset.reason()].confirm}
+        title={() => START_OVER[ctl.reset.reason()].title}
+        description={() => START_OVER[ctl.reset.reason()].description}
+        cancel={() => START_OVER[ctl.reset.reason()].cancel}
+        confirm={() => START_OVER[ctl.reset.reason()].confirm}
         onCancel={() => ctl.reset.open.set(false)}
         onConfirm={ctl.confirmStartOver}
       />,
@@ -193,15 +176,7 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
     so a change never moves the strip. */
 function ShortcutHints(props: { app: App }): Node {
   const { app } = props;
-  const current = computed(() =>
-    app.run.preparing()
-      ? RUN_ACTION.cancel
-      : app.run.running()
-        ? RUN_ACTION.stop
-        : ["complete", "aborted", "error"].includes(app.run.phase())
-          ? RUN_ACTION.again
-          : RUN_ACTION.start,
-  );
+  const current = computed(() => runAction(app.run.preparing(), app.run.running(), app.run.phase()));
   return (
     <Show when={app.preferences.keyShortcuts}>
       {() => (

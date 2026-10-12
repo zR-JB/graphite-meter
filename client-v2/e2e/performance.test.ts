@@ -63,7 +63,7 @@ async function churnSurfaces(cycles: number) {
       await assertClosed();
     }
     await topbar("History", "history");
-    // Its first visit loads a chunk; later visits deliberately do not settle.
+    // History reads its archive as it opens, on every visit.
     for (let wait = 0; !document.querySelector('button[aria-label="History actions"]'); wait++) {
       if (wait === 60) throw new Error("History did not open");
       await frames();

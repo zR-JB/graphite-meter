@@ -119,10 +119,10 @@ export interface Servers {
 
 const IDLE: Approval = { state: "idle" };
 const SAVED_KEY = "graphite-meter:server-selection:v1";
-const MAX_SELECTED = 4;
+export const MAX_SELECTED = 4;
 const CATALOGUE_TIMEOUT_MS = 5_000;
 const ROLES: readonly Role[] = ["throughput", "latency"];
-const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
+export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
 
 const savedRow = object({ id: displayText(64, 1), url: string(1, 2048) });
 

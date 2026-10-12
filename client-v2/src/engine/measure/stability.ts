@@ -76,7 +76,7 @@ export const stillStable = (wasStable: boolean, score: number) =>
 
 /** The evidence a stage can reach within its time, never below the statistical minimum. `intervalMs` is the
     fixed probe spacing of a latency stage, null when reply-driven. */
-export function sampleFloor(kind: "latency" | "transfer", durationMs: number, intervalMs: number | null): number {
+function sampleFloor(kind: "latency" | "transfer", durationMs: number, intervalMs: number | null): number {
   const requested = kind === "latency" ? EARLY_FINISH.latencySamples : EARLY_FINISH.transferSamples;
   const budgetMs = Math.max(0, (Number.isFinite(durationMs) ? durationMs : 0) - EARLY_FINISH.confirmationMs);
   const spacing = kind === "latency" ? intervalMs : BUCKET_MS;

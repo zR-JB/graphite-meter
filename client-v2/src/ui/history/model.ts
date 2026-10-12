@@ -6,9 +6,8 @@ import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
 import type { Outcome, RunResult, StageStatus } from "../../engine/run/result";
 import { fmtAddedMs, fmtMs, fmtSpeed, MISSING, rateTier, rateUnit, toRateUnit, type Units } from "../../view/format";
-import { LATENCY, OUTCOME, STAGE, STAGE_STATE } from "../../view/words";
+import { LATENCY, OUTCOME, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import type { IconName } from "../kit/icon";
-import { JARGON } from "../measure/copy";
 
 export const PAGE_ROWS = 50;
 const DAY_MS = 86_400_000;
@@ -23,7 +22,7 @@ export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon:
     tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes don't count",
   },
   bidirectional: { ...STAGE.bidirectional, tip: "Bidirectional\nDownload and upload at once, added together" },
-  idle: { ...LATENCY.idle, icon: STAGE.latency.icon, tip: JARGON.latency },
+  idle: { ...LATENCY.idle, icon: STAGE.latency.icon, tip: TIP.latency },
   loaded: {
     ...LATENCY.loaded,
     icon: STAGE.latency.icon,

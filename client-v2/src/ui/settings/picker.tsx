@@ -4,11 +4,11 @@ import type { App } from "../../app/app";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, signal, type Read } from "../../lib/signal";
-import { PATH, READINESS } from "../../view/words";
+import { PATH, PATH_NOTE, PATH_TIP, READINESS } from "../../view/words";
 import { tip } from "../kit/tip";
-import { choices, roleLine, TRANSPORT_KEY, type Choice } from "./paths";
+import { TRANSPORT_KEY } from "../../engine/net/servers";
+import { choices, roleLine, type Choice } from "./paths";
 import type { Edits } from "./settings";
-import { PATH_NOTE, PATH_TIP } from "./tips";
 import { Unfold } from "./unfold";
 
 export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boolean>; edits: Edits }): Node {

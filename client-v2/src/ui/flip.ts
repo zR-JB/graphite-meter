@@ -4,6 +4,7 @@
 // other element that got wider opens from its old width. An arriving element waits for its neighbours to make room,
 // then rises in; a leaving one goes at once. A move that interrupts another keeps its speed. A docked panel stays
 // displayed beside its closed column, so its slide is an ordinary move in every engine.
+import { pageMs } from "../lib/frame";
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];
@@ -32,7 +33,7 @@ function settle(el: Element, axes: Axes, frame: (x: number, y: number, w: number
     const at = (axis: Axis) => (i === STEPS ? 0 : spring(axis, t)[0]);
     return frame(at(axes.x), at(axes.y), at(axes.w));
   });
-  moving.set(el, { at: performance.now(), axes, run: el.animate(frames, { duration: SPRING_MS }) });
+  moving.set(el, { at: pageMs(), axes, run: el.animate(frames, { duration: SPRING_MS }) });
 }
 
 /** The displayed elements marked `data-flip`, by key. */
@@ -51,7 +52,7 @@ function boxes(only?: readonly string[]): Map<string, { el: HTMLElement; box: DO
     within a flip is part of the outer one. */
 export function flip(update: () => void, only?: readonly string[]): void {
   if (flipping || reducedMotion.peek() || document.hidden) return update();
-  const now = performance.now();
+  const now = pageMs();
   const before = boxes(only);
   const speed = new Map([...before].map(([key, { el }]) => [key, velocity(el, now)]));
   // The new places are measured without the moves still under way.

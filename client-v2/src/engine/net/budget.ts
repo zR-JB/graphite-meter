@@ -5,7 +5,7 @@ import { timeline, type Activity, type Plan } from "../run/schedule";
 import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, ThroughputTarget } from "../types";
 
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
-const BROWSER_POOL = 6;
+export const BROWSER_POOL = 6;
 /** The server clamps a WebTransport session's lanes here in both directions. */
 const SESSION_MAX_LANES = 16;
 export const MAX_STREAMS = 128;

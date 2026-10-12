@@ -1,3 +1,4 @@
+/* The element defaults every component starts from: a reset, reduced motion, scrollbars, focus, links and fields. */
 @layer reset {
   *,
   ::before,

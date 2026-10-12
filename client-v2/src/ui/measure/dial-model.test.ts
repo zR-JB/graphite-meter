@@ -14,7 +14,7 @@ import {
   resultArcs,
   resultSweepMs,
   RISE_MS,
-} from "./geometry";
+} from "./dial-model";
 
 test("the ring fills the measured face, keeps its labels inside and a hung note under its tick ends", () => {
   // face width, height, hung note → radius, arc width, centre, note top and width, the face's type measure

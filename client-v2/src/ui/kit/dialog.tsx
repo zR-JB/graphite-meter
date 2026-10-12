@@ -1,13 +1,12 @@
-// Native dialogs: modal ones trap focus and carry their own live region; the owner keeps the open state and hears
+// Native modal dialogs: they trap focus and carry their own live region; the owner keeps the open state and hears
 // every close request once. Focus returns to the opener unless the user already moved it.
 import type { Child } from "../../lib/jsx-runtime";
 import { effect, onCleanup, untrack, type Read } from "../../lib/signal";
 import { Announcements } from "./announce";
 import { canFocus, hasFocus } from "./focus";
 
-export interface DialogProps {
+export function Dialog(props: {
   open: Read<boolean>;
-  modal?: boolean;
   onCancel: () => void;
   /** A click on the backdrop closes it. */
   lightDismiss?: boolean;
@@ -15,14 +14,10 @@ export interface DialogProps {
   invoker?: () => HTMLElement | null;
   class?: string;
   role?: "dialog" | "alertdialog";
-  label?: string;
   labelledby?: string;
   describedby?: string;
   children: Child;
-}
-
-export function Dialog(props: DialogProps): HTMLDialogElement {
-  const modal = props.modal ?? true;
+}): HTMLDialogElement {
   // A close can follow a cancel the owner is still applying: report once.
   let reported = false;
   const cancel = () => {
@@ -34,7 +29,6 @@ export function Dialog(props: DialogProps): HTMLDialogElement {
     <dialog
       class={props.class ?? "float"}
       role={props.role ?? "dialog"}
-      aria-label={props.label}
       aria-labelledby={props.labelledby}
       aria-describedby={props.describedby}
       inert={() => !props.open()}
@@ -46,7 +40,7 @@ export function Dialog(props: DialogProps): HTMLDialogElement {
         if (props.open.peek() && !event.currentTarget.open) cancel();
       }}
       onclick={(event) => {
-        if (!props.lightDismiss || !modal || event.target !== event.currentTarget) return;
+        if (!props.lightDismiss || event.target !== event.currentTarget) return;
         const box = event.currentTarget.getBoundingClientRect();
         const inside =
           event.clientX >= box.left &&
@@ -57,7 +51,7 @@ export function Dialog(props: DialogProps): HTMLDialogElement {
       }}
     >
       {props.children}
-      {modal && <Announcements />}
+      <Announcements />
     </dialog>
   ) as HTMLDialogElement;
   effect(() => {
@@ -68,8 +62,7 @@ export function Dialog(props: DialogProps): HTMLDialogElement {
       // A dialog built open is shown once it is in the page.
       const show = () => {
         if (!props.open.peek() || dialog.open) return;
-        if (modal) dialog.showModal();
-        else dialog.show();
+        dialog.showModal();
       };
       if (dialog.isConnected) show();
       else queueMicrotask(show);

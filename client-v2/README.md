@@ -9,7 +9,8 @@ client-v2-ci`, `client-v2-audit`, `e2e-v2` and `container-smoke-v2` are v2's own
 
 ## Layers
 
-Imports only point down the list.
+Each layer imports only from the layers above it in this table; the composition root (`src/app/app.ts`, mounted by
+`src/main.tsx`) is the one place that wires across them.
 
 | Folder | Owns |
 | --- | --- |

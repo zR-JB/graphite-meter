@@ -3,18 +3,19 @@
 import type { App } from "../../app/app";
 import type { HistoryRecord } from "../../app/history/records";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { protocolFromNextHop } from "../../engine/net/paths";
+import { movedBytes } from "../../engine/run/result";
 import { STAGES } from "../../engine/run/schedule";
-import type { HttpProtocol, Role } from "../../engine/types";
+import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, signal } from "../../lib/signal";
 import { fmtBytes, fmtCount, fmtCounted, fmtDuration, fmtLatency, fmtRate } from "../../view/format";
 import { throughputScales } from "../../view/scales";
 import {
   allServersLabel,
-  HTTP_VERSION,
+  httpVersionLabel,
   OUTCOME,
   PATH,
+  PATH_TIP,
   POPULATION,
   reasonLabel,
   STAGE,
@@ -26,7 +27,6 @@ import { ServerScope } from "../kit/scope";
 import { tip } from "../kit/tip";
 import { LatencyProfileView, ResultSummary, type LaneInput } from "../measure";
 import { accountingNotice } from "../measure/lanes-model";
-import { PATH_TIP } from "../settings/tips";
 
 const TITLE = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
@@ -40,22 +40,16 @@ const PROBES_TIP =
   "Probe accounting\nA timeout: no reply by the probe's deadline\nUnfinished or failed sends are not timeouts";
 const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
 
-/** An HTTP version as recorded or as the browser named it ("h2"); one it does not know reads as given. */
-function httpLabel(protocol: string): string {
-  const known = Object.hasOwn(HTTP_VERSION, protocol) ? (protocol as HttpProtocol) : protocolFromNextHop(protocol);
-  return known ? HTTP_VERSION[known] : protocol;
-}
-
 /** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. */
 function path(role: Role, transport: string, protocol?: string, browserProtocol?: string) {
-  const observed = browserProtocol && httpLabel(browserProtocol);
-  const endpoint = protocol && httpLabel(protocol);
+  const observed = browserProtocol && httpVersionLabel(browserProtocol);
+  const server = protocol && httpVersionLabel(protocol);
   return {
     value: transportLabel(transport, role) ?? "Not recorded",
     aside:
-      observed && endpoint && observed !== endpoint && protocol !== "negotiated"
-        ? `${observed}, endpoint ${endpoint}`
-        : observed || endpoint || "",
+      observed && server && observed !== server && protocol !== "negotiated"
+        ? `${observed}, endpoint ${server}`
+        : observed || server || "",
   };
 }
 const UNMEASURED = { value: "Not measured", aside: "" };
@@ -96,8 +90,8 @@ export function ResultDetail(props: {
   const { result } = record;
   const run = result.multiServer;
   const multiple = run.selection.length > 1;
-  /** The lens: "" for every server together. Each result opens on all of them. */
-  const shown = signal("");
+  /** "" shows every server together; each result opens on all of them. */
+  const lens = signal("");
   // One tier for the whole result, the one its own results set, as the console read it when it finished.
   const units = computed(() => {
     const base = app.preferences.unitBase();
@@ -108,7 +102,7 @@ export function ResultDetail(props: {
   // Latency follows the chosen server when it measured latency, else the run's latency server.
   const latencyServer = computed(
     () =>
-      run.servers.find(({ server, latencyTarget }) => server.id === shown() && latencyTarget) ??
+      run.servers.find(({ server, latencyTarget }) => server.id === lens() && latencyTarget) ??
       run.servers.find(({ server }) => server.id === run.latencyFocus),
   );
   const summaries = () => latencyServer()?.latencyByStage ?? result.latencyByStage;
@@ -150,7 +144,7 @@ export function ResultDetail(props: {
     }
     if (threw) props.onBroken();
   };
-  const transferred = run.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
+  const transferred = movedBytes(run);
   const title = `result-${record.id}-title`;
 
   const fact = (label: string, value: Node | string | (() => string), aside = "") => (
@@ -198,7 +192,7 @@ export function ResultDetail(props: {
           {multiple && [
             fact(STAGE.download.short, () => fmtRate(measured?.download?.reportedBytesPerSec, units())),
             fact(STAGE.upload.short, () => fmtRate(measured?.upload?.reportedBytesPerSec, units())),
-            fact("Latency", fmtLatency(measured?.latency?.reportedMs)),
+            fact(STAGE.latency.short, fmtLatency(measured?.latency?.reportedMs)),
           ]}
           {pathFact(
             "throughput",
@@ -254,8 +248,8 @@ export function ResultDetail(props: {
               quiet
               label="Servers shown in this result"
               servers={() => run.selection}
-              value={shown}
-              onChange={(id) => guard(() => shown.set(id))}
+              value={lens}
+              onChange={(id) => guard(() => lens.set(id))}
               aggregate={() => allServersLabel(run.selection.length, run.participants.length, run.servers.length)}
               unavailable={() =>
                 run.selection
@@ -284,7 +278,7 @@ export function ResultDetail(props: {
         </div>
       </header>
       <div class="detail-body">
-        <ResultSummary result={() => result} scope={shown} units={units} showWire={app.preferences.showWireEstimates} />
+        <ResultSummary result={() => result} lens={lens} units={units} showWire={app.preferences.showWireEstimates} />
         <div class="facts">
           <Show when={() => lanes().length > 0}>
             {() => (

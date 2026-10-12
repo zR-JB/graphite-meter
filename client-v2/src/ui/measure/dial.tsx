@@ -4,15 +4,16 @@
 import type { App } from "../../app/app";
 import type { Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
-import { frameNow, handoff, reducedMotion } from "../../lib/motion";
+import { pageMs } from "../../lib/frame";
+import { HANDOFF_OUT_MS, handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, type Read } from "../../lib/signal";
 import { fmtDuration, fmtMs, fmtSpeed, fmtTick, MISSING, rateUnit, toRateUnit, withUnit } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
-import { PHASE, reasonLabel, STAGE } from "../../view/words";
+import { PHASE, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
-import { DIAL, JARGON, PHASE_HINT, statusLabel } from "./copy";
+import { DIAL, PHASE_HINT } from "./copy";
 import {
   ARC_START,
   ARC_SWEEP,
@@ -30,13 +31,12 @@ import {
   SWEEP_DEG,
   type DialLayout,
   type ResultArc,
-} from "./geometry";
+} from "./dial-model";
 import type { Live } from "./live";
 import { Figure, inView, measure, painter } from "./paint";
 
 /** A result leaves as its arcs drain back to zero (the stylesheet's result-drain), so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
-const HANDOFF_MS = 90;
 const TRANSFER: readonly string[] = ["download", "upload", "bidirectional"];
 const LABELLED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
 
@@ -101,7 +101,7 @@ export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: N
       };
     },
     (view) => view.key,
-    (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_MS),
+    (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
   // The running stage's name and its figure hand off apart: the name once per stage, the figure on its first value,
   // so a dash that stays never blinks. A finished run that reads its latency names it.
@@ -176,9 +176,9 @@ export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: N
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };
       if (ended) return { status: ended.status, tone: ended.error ? "error" : "", hint: ended.hint };
       const quiet = run.live()?.quietMs;
-      if (quiet != null) return { hint: DIAL.noData(fmtDuration(quiet, 0)), tip: JARGON.noData };
+      if (quiet != null) return { hint: DIAL.noData(fmtDuration(quiet, 0)), tip: TIP.noData };
       const silent = unanswered();
-      if (silent !== null) return { hint: DIAL.noReplies(fmtDuration(silent, 0)), tip: JARGON.noReplies };
+      if (silent !== null) return { hint: DIAL.noReplies(fmtDuration(silent, 0)), tip: TIP.noReplies };
       const known = PHASE_HINT[phase()];
       return known ? { hint: known.text, tip: known.tip } : {};
     },
@@ -337,7 +337,7 @@ export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: N
         motion: motion(),
         course: `${gaugeScale()}:${scaleMs()}`,
       },
-      frameNow(),
+      pageMs(),
     );
     wake();
   });
@@ -433,7 +433,7 @@ export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: N
     <Show when={() => shownArcs().length > 0}>
       {() => {
         // The result takes the ring over where the needle stands, and its sweep runs on from there.
-        from = needle.takeover(motion.peek(), frameNow());
+        from = needle.takeover(motion.peek(), pageMs());
         dial.style.setProperty("--from", String(from));
         dial.style.setProperty("--sweep-ms", `${resultSweepMs(from)}ms`);
         wake();

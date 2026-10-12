@@ -1,5 +1,5 @@
 /* The design tokens (docs/DESIGN.md). Every colour is one light-dark() pair, so a theme switch changes only
-   color-scheme. Copies outside this file: the shell's first-paint canvas and text (web/index.html). */
+   color-scheme. Copies outside this file: the shell's first-paint canvas and text (index.html). */
 @layer reset, tokens, base, primitives, components, utilities, overrides;
 
 /* Unmodified upstream IBM Plex subsets, self-hosted so the meter renders offline. */

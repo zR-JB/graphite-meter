@@ -1,7 +1,7 @@
 // Tooltips by delegation: one set of document listeners finds the explained element under the pointer or the
 // keyboard focus, and one bubble shows at a time. An element asks for a tip with `ref={tip(() => text)}`.
 // A hand at rest opens a tip, a sweep never does; jargon and facts answer a tap or click; a long press asks a control.
-import { nextFrame } from "../../lib/frame";
+import { nextFrame, pageMs } from "../../lib/frame";
 import { computed, effect, onCleanup, scope, signal, type Read } from "../../lib/signal";
 
 type Kind = "tip" | "term" | "clip";
@@ -91,11 +91,11 @@ let lastPointer = "";
 let anchoring: boolean | undefined;
 const anchored = () => (anchoring ??= CSS.supports("position-area", "block-start"));
 const explainOnClick = () => document.documentElement.dataset.explanations === "click";
-const warm = () => !!open || performance.now() < coolUntil;
+const warm = () => !!open || pageMs() < coolUntil;
 
 /** A plot's reading just closed: the next tip nearby answers a short rest. */
 export const warmTips = () => {
-  coolUntil = performance.now() + WARM_MS;
+  coolUntil = pageMs() + WARM_MS;
 };
 
 /** The explained element at or above `target`. */

@@ -1,18 +1,27 @@
 // The run key over the stage chips, as wide as their row. A chip switches its stage for the next run and shows how it
 // fares in the shown one: a bar along its top, and at its end its time into the stage, its length, a check or a word.
 import type { App } from "../../app/app";
-import { adaptWarmup, planned, STAGES, timeline, type Stage } from "../../engine/run/schedule";
+import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { handoff } from "../../lib/motion";
 import { computed, effect } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
-import { NEXT_RUN, PHASE, reasonLabel, STAGE, STAGE_STATE, type StageState, type Tone } from "../../view/words";
+import {
+  NEXT_RUN,
+  PHASE,
+  reasonLabel,
+  runAction,
+  STAGE,
+  STAGE_STATE,
+  type StageState,
+  type Tone,
+} from "../../view/words";
 import { flip } from "../flip";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { clip, tip } from "../kit/tip";
-import { CHIPS, runAction } from "./copy";
+import { CHIPS } from "./copy";
 import type { Live } from "./live";
 import { Figure, painter } from "./paint";
 
@@ -247,17 +256,7 @@ export function RunButton(props: { app: App }): Node {
   const busy = computed(() => run.running() || run.preparing());
   const idle = computed(() => !busy());
   const blocker = computed(() => (idle() && !servers.loading() ? app.blocker() : ""));
-  // The running plan; otherwise the next one, its warmup adapted to the verified round trip.
-  const eta = computed(() => {
-    const config = app.preferences.config();
-    const plan = run.running() ? run.plan() : null;
-    const rtt = servers.views().get(servers.latencyServer() ?? "")?.latency.path?.rttMs ?? 0;
-    const shown = plan ?? {
-      ...config,
-      duration: { ...config.duration, warmupMs: adaptWarmup(config.duration.warmupMs, rtt) },
-    };
-    return fmtDuration(timeline(shown).at(-1)?.end ?? 0, 0);
-  });
+  const eta = computed(() => fmtDuration(app.plannedMs(), 0));
   // The label, the skin and the stop mark change together, the moment the run's state does.
   return (
     <>

@@ -59,14 +59,14 @@ export interface Layout {
   width: Read<number>;
 }
 
-const media = (query: string): Read<boolean> => {
+export function media(query: string): Read<boolean> {
   const list = matchMedia(query);
   const matches = signal(list.matches);
   const change = () => matches.set(list.matches);
   list.addEventListener("change", change);
   onCleanup(() => list.removeEventListener("change", change));
   return matches;
-};
+}
 
 /** Follows the viewport and the console's own width (read once per frame at most, never inside observer delivery).
     Its listeners and observer live as long as the owner that creates it. */

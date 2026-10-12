@@ -8,12 +8,12 @@ import { For, Show } from "../../lib/dom";
 import { Glide, handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
 import { fmtAddedMs, fmtLatency, fmtMs, fmtTick, MISSING } from "../../view/format";
-import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
+import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { ServerScope } from "../kit/scope";
 import { clip, term, tip, warmTips } from "../kit/tip";
-import { JARGON, LANES } from "./copy";
+import { LANES } from "./copy";
 import {
   accountingNotice,
   fmtTimeouts,
@@ -33,7 +33,7 @@ import {
   type Values,
 } from "./lanes-model";
 import type { Live } from "./live";
-import { inView, measure, painter, scrub } from "./paint";
+import { inView, measure, painter, scrub, svg } from "./paint";
 
 /** One population's row. */
 export interface LaneInput {
@@ -58,20 +58,14 @@ export type LanesHead =
 const EDGE = 7;
 const GLIDED = ["min", "max", "p10", "p90", "center", "current"] as const;
 const NONE: LanesHead = { kind: "none" };
-const SVG = "http://www.w3.org/2000/svg";
 
 interface Row {
   lane: LaneInput;
   values: Values;
 }
 
-/**
- * The lanes for a live run or a saved result.
- * - `lanes`: the rows to show, in stage order; a row kept as the same object draws nothing again.
- * - `variant`: "bare" for the live console (marks glide, the latest reply is marked); "compact" for a saved result.
- * - `added`: each load's added latency once the run has it; until then the medians give it.
- * - `head`: what stands beside the title.
- */
+/** The lanes for a live run ("bare": marks glide, the latest reply is marked) or a saved result ("compact"), rows in
+    stage order. A row kept as the same object draws nothing again; until the run has `added`, the medians give it. */
 export function LatencyProfileView(props: {
   lanes: () => readonly LaneInput[];
   variant?: "bare" | "compact";
@@ -168,7 +162,7 @@ export function LatencyProfileView(props: {
         <span class="tone-icon" aria-hidden="true">
           <Icon name={STAGE.latency.icon} />
         </span>
-        <h3 ref={tip(() => JARGON.latency)}>{STAGE.latency.label}</h3>
+        <h3 ref={tip(() => TIP.latency)}>{STAGE.latency.label}</h3>
         {() => {
           const shown = head();
           if (shown.kind === "failure" && idleCenter() === null)
@@ -191,12 +185,6 @@ export function LatencyProfileView(props: {
     </section>
   ) as HTMLElement;
 }
-
-const element = <K extends keyof SVGElementTagNameMap>(tag: K, className: string): SVGElementTagNameMap[K] => {
-  const created = document.createElementNS(SVG, tag);
-  created.setAttribute("class", className);
-  return created;
-};
 
 /** An SVG mark whose position attributes are written only when they change. */
 class Mark<E extends SVGElement> {
@@ -295,17 +283,17 @@ function Lane(props: {
     />
   ) as HTMLElement;
   const size = measure({ track }).track;
-  const art = element("svg", "lane-art");
+  const art = svg("svg", "lane-art");
   art.setAttribute("aria-hidden", "true");
-  const grid = [0, 1, 2].map(() => new Mark(element("line", "grid")));
-  const range = new Mark(element("rect", "range"));
-  const overflowLine = new Mark(element("rect", "overflow-line"));
-  const arrow = element("path", "arrow");
-  const band = new Mark(element("rect", "band"));
-  const baseline = new Mark(element("rect", "baseline"));
-  const span = new Mark(element("rect", "added-span"));
-  const center = new Mark(element("rect", "center-marker"));
-  const current = new Mark(element("circle", "current-marker"));
+  const grid = [0, 1, 2].map(() => new Mark(svg("line", "grid")));
+  const range = new Mark(svg("rect", "range"));
+  const overflowLine = new Mark(svg("rect", "overflow-line"));
+  const arrow = svg("path", "arrow");
+  const band = new Mark(svg("rect", "band"));
+  const baseline = new Mark(svg("rect", "baseline"));
+  const span = new Mark(svg("rect", "added-span"));
+  const center = new Mark(svg("rect", "center-marker"));
+  const current = new Mark(svg("circle", "current-marker"));
   band.node.setAttribute("rx", "1.5");
   center.node.setAttribute("rx", "1");
   current.node.setAttribute("r", "4");
@@ -325,9 +313,6 @@ function Lane(props: {
   // made on a metric's first value and let go when the value goes.
   const glides = new Map<(typeof GLIDED)[number], Glide>();
   const wake = painter((now) => draw(now));
-  onCleanup(() => {
-    for (const glide of glides.values()) glide.dispose();
-  });
   effect(() => {
     const values = shown();
     const snap = !props.motion();
@@ -339,7 +324,7 @@ function Lane(props: {
         continue;
       }
       const target = pct(value);
-      if (!glide) glides.set(metric, (glide = new Glide(target, { painted: true })));
+      if (!glide) glides.set(metric, (glide = new Glide(target)));
       if (snap || glide.target !== target) glide.set(target, { snap });
     }
     wake();
@@ -479,7 +464,7 @@ function Lane(props: {
         tabindex="-1"
         ref={tip(() => {
           const timing = summary()?.reflectorTiming;
-          return timing ? `${JARGON.latencyMedian}\n${serverHandling(timing)}` : JARGON.latencyMedian;
+          return timing ? `${TIP.latencyMedian}\n${serverHandling(timing)}` : TIP.latencyMedian;
         })}
       >
         {median}
@@ -487,7 +472,7 @@ function Lane(props: {
       <em
         class={() => (summary()?.jitterMs == null ? "lane-jitter quiet" : "lane-jitter")}
         tabindex="-1"
-        ref={tip(() => JARGON.jitter)}
+        ref={tip(() => TIP.jitter)}
       >
         {jitter}
       </em>
@@ -518,7 +503,7 @@ function Lane(props: {
       <span
         class={() => (plus() === null ? "lane-added quiet" : "lane-added")}
         tabindex="-1"
-        ref={tip(() => JARGON.addedLatency)}
+        ref={tip(() => TIP.addedLatency)}
       >
         {addedText}
       </span>

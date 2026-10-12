@@ -9,7 +9,8 @@ export const ARC_START = 0.75 * Math.PI;
 export const ARC_SWEEP = 1.5 * Math.PI;
 export const SWEEP_DEG = 270;
 const TICKS = 8;
-const LABEL_FRACTIONS = [0, 0.25, 0.5, 0.75, 1] as const;
+/** The label fractions of the ring, in label order. */
+export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
 const LABEL_CLEARANCE = 8;
 const NOTE_GAP = 8;
 /** The share of the labelled ring's height its centring moves it down. */
@@ -90,7 +91,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
     headRadius: arcWidth / 2 + 2,
     track: `M${round(start.x)} ${round(start.y)}A${round(radius)} ${round(radius)} 0 1 1 ${round(end.x)} ${round(end.y)}`,
     ticks,
-    labels: LABEL_FRACTIONS.map((fraction) => {
+    labels: DIAL_LABELS.map((fraction) => {
       const angle = ARC_START + fraction * ARC_SWEEP;
       // The point is the label's nearest edge or corner on the tick's ray.
       return {
@@ -104,9 +105,6 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
     faceMin: Math.min(width, height, radius * 2.4),
   };
 }
-
-/** The label fractions of the ring, in label order. */
-export const DIAL_LABELS = LABEL_FRACTIONS;
 
 // One low-end transfer curve for every rate: a hundredth of the scale already moves the needle an eighth of the ring.
 const KNOTS = [0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1] as const;
@@ -204,7 +202,7 @@ export const reachMs = (fraction: number, from: number, sweepMs: number) =>
 
 export const RISE_MS = 520;
 export const DRAIN_MS = 300;
-export const RESCALE_MS = 360;
+const RESCALE_MS = 360;
 /** Frames further apart than this leave the needle at rest between them. */
 const FRAME_GAP_MS = 50;
 

@@ -61,7 +61,7 @@ export class FakeClock implements Clock {
   }
 }
 
-export const settled = () => new Promise((resolve) => setImmediate(resolve));
+const settled = () => new Promise((resolve) => setImmediate(resolve));
 
 export interface Peer {
   id: string;

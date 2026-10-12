@@ -2,12 +2,12 @@
 // warmup's stepper in Custom, and the switches that shape the timeline.
 import { DURATION_LIMITS, DURATION_PRESETS } from "../../app/preferences";
 import type { App } from "../../app/app";
-import { adaptWarmup, timeline, type Stage } from "../../engine/run/schedule";
+import type { Stage } from "../../engine/run/schedule";
 import type { TestConfig } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, type Read, type Signal } from "../../lib/signal";
 import { fmtDuration, fmtStageTime, parseDuration } from "../../view/format";
-import { PHASE, STAGE } from "../../view/words";
+import { PHASE, STAGE, TIP } from "../../view/words";
 import { Roll } from "../kit/roll";
 import { Switch } from "../kit/switch";
 import { tip } from "../kit/tip";
@@ -15,7 +15,6 @@ import { PRESETS, presetOf, stageStepMs, type Preset } from "./model";
 import { Segments } from "./segments";
 import type { Edits } from "./settings";
 import { Stepper } from "./stepper";
-import { TIP } from "./tips";
 import { Unfold } from "./unfold";
 
 type DurationKey = keyof TestConfig["duration"];
@@ -26,22 +25,11 @@ const STRIP: readonly Stage[] = CUSTOM_STAGES;
 const STRIP_BIDIRECTIONAL: readonly Stage[] = [...CUSTOM_STAGES, "bidirectional"];
 const NAME = { short: "Short", medium: "Medium", long: "Long", custom: "Custom" } as const;
 
-const end = (plan: Parameters<typeof timeline>[0]) => timeline(plan).at(-1)?.end ?? 0;
-
 export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<boolean>; limitError: Read<string> }) {
   const { app, edits, custom } = props;
   const config = app.preferences.config;
   const mode = computed((): Preset | "custom" => (custom() ? "custom" : (presetOf(config().duration) ?? "custom")));
   const ms = (key: DurationKey) => () => config().duration[key];
-  // A run reads its own live plan; otherwise the settings, with the warmup the latency server's round trip sets.
-  const total = computed(() => {
-    const plan = app.run.running() ? app.run.plan() : null;
-    if (plan) return end(plan);
-    const id = app.servers.latencyServer();
-    const rttMs = (id && app.servers.views().get(id)?.latency.path?.rttMs) || 0;
-    const { duration } = config();
-    return end({ ...config(), duration: { ...duration, warmupMs: adaptWarmup(duration.warmupMs, rttMs) } });
-  });
 
   const setDuration = (key: DurationKey, value: number) =>
     value === config.peek().duration[key] ||
@@ -98,7 +86,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
           <span ref={tip(() => TIP.stageTime)}>Duration</span>
         </h3>
         <span class="aside">
-          <Roll text={() => fmtDuration(total(), 0)} rank={total} /> in total
+          <Roll text={() => fmtDuration(app.plannedMs(), 0)} rank={app.plannedMs} /> in total
         </span>
       </div>
       <div class="kv">

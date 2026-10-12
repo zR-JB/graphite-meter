@@ -6,7 +6,8 @@ import { createServers } from "../engine/net/servers";
 import { openProbeChannel } from "../engine/lanes/probes";
 import { openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
-import { pageMs } from "../engine/run/clock";
+import { adaptWarmup, totalMs } from "../engine/run/schedule";
+import { pageMs } from "../lib/frame";
 import { computed, effect, signal, untrack } from "../lib/signal";
 import { historyRecord } from "./history/records";
 import { HistoryRepository } from "./history/repository";
@@ -103,6 +104,11 @@ export function createApp() {
       ),
   });
   busy = computed(() => run.running() || run.preparing());
+  const plannedMs = computed(() => {
+    const plan = run.running() ? run.plan() : null;
+    const rttMs = servers.views().get(servers.latencyServer() ?? "")?.latency.path?.rttMs ?? 0;
+    return totalMs(plan ?? adaptWarmup(preferences.config(), rttMs));
+  });
   // A run's latency replaces the idle series, and a newly shown server starts its own.
   const stopIdle = effect(() => {
     servers.latencyServer();
@@ -165,6 +171,8 @@ export function createApp() {
     saving,
     /** Why Start cannot run now, or "". */
     blocker,
+    /** The running test's length, else the next one's, its warmup adapted to the latency server's round trip. */
+    plannedMs,
     latencyPin,
     /** The latency server's idle probes between runs; `version` bumps when `buckets` changes in place. */
     idle: idle as { readonly buckets: readonly LatencyBucket[]; readonly version: typeof idle.version },

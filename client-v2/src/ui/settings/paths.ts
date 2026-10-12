@@ -2,7 +2,8 @@
 // and why one cannot be chosen, and the line that states a role's check.
 import type { ServerView } from "../../engine/net/connection";
 import type { PageConfig } from "../../engine/net/page";
-import { parseSelection, resolve, selectionText, type Selection } from "../../engine/net/paths";
+import { parseSelection, pointsAt, PROTOCOL_LABEL, resolve, type Selection } from "../../engine/net/paths";
+import { TRANSPORT_KEY } from "../../engine/net/servers";
 import type {
   Discovery,
   HttpProtocol,
@@ -13,7 +14,7 @@ import type {
   TestConfig,
   ThroughputTarget,
 } from "../../engine/types";
-import { HTTP_VERSION, READINESS, transportLabel, type Word } from "../../view/words";
+import { READINESS, TRANSPORT, transportLabel, type Word } from "../../view/words";
 
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 type Target = ThroughputTarget | LatencyTarget;
@@ -24,8 +25,6 @@ export interface PathTarget {
   tls: boolean;
   protocol?: HttpProtocol;
 }
-
-export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
 
 /** The mechanism, its carrier, and both together: "Fetch streams over HTTP/1.1 (TLS)". A WebSocket names HTTP/1.1
     only when its origin's fetch target does. */
@@ -41,15 +40,15 @@ export function describePath(
     const h1 = discovery?.throughput
       .get(target.origin)
       ?.targets.some((each) => each.transport === "fetch-stream" && each.protocol === "http1");
-    const carrier = h1 ? secured(HTTP_VERSION.http1) : security;
+    const carrier = h1 ? secured(PROTOCOL_LABEL.http1) : security;
     const label = h1 ? `${mechanism} over ${carrier}` : secured(mechanism);
     return { label, summary: label, carrier };
   }
   if (target.transport !== "fetch-stream") {
-    const carrier = secured(HTTP_VERSION.http3);
+    const carrier = secured(PROTOCOL_LABEL.http3);
     return { label: secured(mechanism), summary: `${mechanism} over ${carrier}`, carrier };
   }
-  const carrier = secured(HTTP_VERSION[target.protocol ?? "negotiated"]);
+  const carrier = secured(PROTOCOL_LABEL[target.protocol ?? "negotiated"]);
   return { label: carrier, summary: `${mechanism} over ${carrier}`, carrier };
 }
 
@@ -61,27 +60,16 @@ export function shownTarget(view: ServerView | undefined, role: Role, page: Brow
   return view.discovery ? resolve(view.discovery, role, parseSelection(view[role].selection), page) : null;
 }
 
-export const pathSummary = (view: ServerView | undefined, role: Role, page: Browser) => {
-  const target = shownTarget(view, role, page);
-  return target ? describePath(view!.discovery, role, target).summary : "Selection unresolved";
-};
+export const pathSummary = (discovery: Discovery | null, role: Role, target: PathTarget | null) =>
+  target ? describePath(discovery, role, target).summary : "Selection unresolved";
 
 const origins = (discovery: Discovery, role: Role) => discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
-
-/** Whether `selection` points at `target`, usable or not. */
-const points = (selection: Selection, target: Target) =>
-  selection.kind === "auto" ||
-  (selection.kind === "protocol"
-    ? target.transport === "fetch-stream" && target.protocol === selection.protocol
-    : selection.kind === "transport"
-      ? target.transport === selection.transport
-      : target.id === selectionText(selection) || (!selection.mechanism && target.origin === selection.origin));
 
 /** The browser's reason, when its policy excludes every origin the choice points at. */
 function blockedReason(discovery: Discovery, role: Role, selection: Selection): string | null {
   let reason: string | null = null;
   for (const entry of origins(discovery, role).values()) {
-    if (!entry.targets.some((target) => points(selection, target))) continue;
+    if (!entry.targets.some((target) => pointsAt(selection, target))) continue;
     if (!entry.blocked) return null;
     reason ??= entry.blocked;
   }
@@ -120,15 +108,15 @@ const DATAGRAMS = "transport:webtransport-datagram";
 const GROUPS: Record<Role, readonly (readonly [string, string])[]> = {
   throughput: [
     ["auto", "Automatic"],
-    ["protocol:http1", HTTP_VERSION.http1],
-    ["protocol:http2", HTTP_VERSION.http2],
-    ["protocol:http3", HTTP_VERSION.http3],
-    ["transport:webtransport", "WebTransport streams"],
+    ["protocol:http1", PROTOCOL_LABEL.http1],
+    ["protocol:http2", PROTOCOL_LABEL.http2],
+    ["protocol:http3", PROTOCOL_LABEL.http3],
+    ["transport:webtransport", TRANSPORT.webtransport],
   ],
   latency: [
     ["auto", "Automatic"],
-    ["transport:websocket", "WebSocket"],
-    ["transport:webtransport", "WebTransport datagrams"],
+    ["transport:websocket", TRANSPORT.websocket],
+    ["transport:webtransport", TRANSPORT["webtransport-datagram"]],
   ],
 };
 
@@ -148,7 +136,7 @@ export function choices(
 ): Choice[] {
   const selected = config.transports[TRANSPORT_KEY[role]];
   const datagrams = role === "throughput" && (config.experimentalDatagramThroughput || selected === DATAGRAMS);
-  const groups = datagrams ? [...GROUPS[role], [DATAGRAMS, "WebTransport datagrams"] as const] : GROUPS[role];
+  const groups = datagrams ? [...GROUPS[role], [DATAGRAMS, TRANSPORT["webtransport-datagram"]] as const] : GROUPS[role];
   if (servers.length <= 1) {
     const view = servers[0] && views.get(servers[0].id);
     const known = view?.discovery ?? null;
@@ -214,7 +202,11 @@ export function roleLine(
   if (!several) {
     const { state, message } = first[role];
     if (state === "failed" && message) return { state, status: { label: message, tone: "err" }, summary: null };
-    return { state, status: READINESS[state], summary: message ?? pathSummary(first, role, page) };
+    return {
+      state,
+      status: READINESS[state],
+      summary: message ?? pathSummary(first.discovery, role, shownTarget(first, role, page)),
+    };
   }
   const states = considered.map((view) => view[role].state);
   const state = (["checking", "failed", "unchecked"] as const).find((each) => states.includes(each)) ?? "verified";

@@ -34,7 +34,6 @@ export function Splitter(props: {
   max: Read<number>;
   onChange(px: number): void;
   onReset(): void;
-  class?: string;
 }): Node {
   const clamp = (px: number) => Math.min(props.max.peek(), Math.max(props.min.peek(), Math.round(px)));
   const grows = props.edge === "right" ? 1 : -1;
@@ -46,7 +45,7 @@ export function Splitter(props: {
   onCleanup(() => drag?.release());
   return (
     <div
-      class={props.class ?? "resize-handle"}
+      class="resize-handle"
       data-edge={props.edge}
       role="separator"
       aria-orientation="vertical"

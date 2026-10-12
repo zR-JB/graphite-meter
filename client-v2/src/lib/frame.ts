@@ -1,6 +1,9 @@
 // The one frame clock: everything that moves per frame paints from a single requestAnimationFrame loop, which runs
 // only while something moves and the page is visible.
 
+/** Monotonic page milliseconds, the timeline frame timestamps share. */
+export const pageMs = (): number => performance.now();
+
 /** Paints one frame at `now` and returns whether it still moves. */
 export type Painter = (now: number) => boolean;
 

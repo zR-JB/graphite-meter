@@ -3,18 +3,19 @@
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import { needsPings } from "../../engine/net/budget";
+import { movedBytes } from "../../engine/run/result";
 import { activities } from "../../engine/run/schedule";
 import { Show } from "../../lib/dom";
 import { handoff } from "../../lib/motion";
 import { computed, effect, onCleanup, signal, untrack } from "../../lib/signal";
 import { fmtBytes, fmtCounted, fmtDuration, fmtMs } from "../../view/format";
-import { CONNECTIVITY, PHASE, reasonLabel, type Connectivity, type Tone } from "../../view/words";
+import { CONNECTIVITY, PHASE, reasonLabel, statusLabel, type Connectivity, type Tone } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
 import type { Shell } from "../shell/api";
 import { serverIssues } from "./cards-model";
-import { statusLabel, TOAST } from "./copy";
+import { TOAST } from "./copy";
 import { liveOf } from "./live";
 import { Figure, painter, setText } from "./paint";
 
@@ -35,8 +36,7 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   const refused = computed(() => live.preparation() === "blocked" || live.preparation() === "failed");
   const bytes = computed(() => {
     const result = run.result();
-    if (result)
-      return result.multiServer.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
+    if (result) return movedBytes(result.multiServer);
     run.throughputVersion();
     return run.throughput.at(-1)?.bytesCumulative ?? 0;
   });
@@ -53,7 +53,10 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   const recoveringText = document.createTextNode("");
   effect(() => moved.set(fmtBytes(bytes(), app.preferences.unitBase())));
   const wake = painter((now) => {
-    elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
+    // A stopped run keeps the time it showed when it stopped.
+    const phase = run.phase.peek();
+    if (phase !== "aborted" && phase !== "error")
+      elapsed.set(fmtDuration(run.result.peek()?.durationMs ?? live.runClock.at(now)));
     const rest = fmtDuration(Math.max(0, live.budget.peek() - live.phaseClock.at(now)));
     if (left.shown.peek().recovering) setText(recoveringText, rest);
     else remaining.set(rest);

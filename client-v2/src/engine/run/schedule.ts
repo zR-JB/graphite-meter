@@ -53,9 +53,12 @@ export const changeable = (current: Stage | null, stage: Stage) =>
 const SLOW_START_RTTS = 10;
 const WARMUP_CEILING_MS = 4_000;
 
-/** The configured warmup, stretched to ten round trips of `rttMs` but never past 4 s. */
-export const adaptWarmup = (warmupMs: number, rttMs: number) =>
-  Math.min(WARMUP_CEILING_MS, Math.max(warmupMs, Math.round((rttMs > 0 ? rttMs : 0) * SLOW_START_RTTS)));
+/** `plan` with its configured warmup stretched to ten round trips of `rttMs` but never past 4 s. */
+export const adaptWarmup = <T extends Pick<Plan, "duration">>(plan: T, rttMs: number): T => {
+  const stretched = Math.round((rttMs > 0 ? rttMs : 0) * SLOW_START_RTTS);
+  const warmupMs = Math.min(WARMUP_CEILING_MS, Math.max(plan.duration.warmupMs, stretched));
+  return { ...plan, duration: { ...plan.duration, warmupMs } };
+};
 
 export function timeline(plan: Plan): Segment[] {
   const segments: Segment[] = [];
@@ -71,6 +74,9 @@ export function timeline(plan: Plan): Segment[] {
   }
   return segments;
 }
+
+/** The whole timeline's length. */
+export const totalMs = (plan: Plan) => timeline(plan).at(-1)?.end ?? 0;
 
 /** The segment covering `elapsed`, or undefined past the end. */
 export const segmentAt = (segments: readonly Segment[], elapsed: number) =>

@@ -7,17 +7,17 @@ import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, onCleanup, signal, untrack } from "../../lib/signal";
 import { fmtLatency, MISSING } from "../../view/format";
-import { PATH, READINESS, type Word } from "../../view/words";
+import { PATH, PATH_TIP, READINESS, TIP, type Word } from "../../view/words";
 import { announce } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tipGroup } from "../kit/rove";
 import { ServerScope } from "../kit/scope";
 import { term, tip } from "../kit/tip";
+import { serverIssues } from "../measure/cards-model";
 import { liveOf } from "../measure/live";
 import type { Shell } from "../shell/api";
-import { describePath, shownTarget } from "../settings/paths";
-import { PATH_TIP, TIP } from "../settings/tips";
-import { capabilities, evidence, httpPaths, loadSummary, serverIssues } from "./facts";
+import { describePath, pathSummary, shownTarget } from "../settings/paths";
+import { capabilities, evidence, httpPaths, loadSummary } from "./facts";
 import { diagnosticReport } from "./report";
 
 const ROLES = ["throughput", "latency"] as const;
@@ -283,8 +283,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
                   <span>
                     {() => {
                       if (!measured()) return mode() === "live" ? "Not selected" : "Not measured";
-                      const shown = target(role);
-                      return shown ? describePath(discovery(), role, shown).summary : "Selection unresolved";
+                      return pathSummary(discovery(), role, target(role));
                     }}
                   </span>
                   <Show when={measured}>

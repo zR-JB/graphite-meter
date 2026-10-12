@@ -12,7 +12,7 @@ import type {
   StageStatus,
 } from "../engine/run/result";
 import { Run, type DroppedServer, type LiveSample, type Phase, type RunOptions, type RunPlan } from "../engine/run/run";
-import { adaptWarmup, changeable, planned, STAGES, timeline, type Stage } from "../engine/run/schedule";
+import { adaptWarmup, changeable, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
 import type { PreferenceStore } from "./preferences";
@@ -58,8 +58,6 @@ interface ServerSeries {
 }
 
 const NO_RESULTS: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
-const total = (plan: Pick<RunPlan, "stages" | "duration" | "skipLoadedLatencyWhenStageOff">) =>
-  timeline(plan).at(-1)?.end ?? 0;
 
 export function createRun(env: RunEnvironment) {
   const { preferences } = env;
@@ -251,7 +249,7 @@ export function createRun(env: RunEnvironment) {
   }
 
   async function launch(config: TestConfig, signal: AbortSignal): Promise<void> {
-    await env.authorize(total(adaptWarmupIn(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS, signal);
+    await env.authorize(totalMs(adaptWarmup(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS, signal);
     signal.throwIfAborted();
     preparation.set("checking");
     const ready = await env.prepare(signal);
@@ -263,7 +261,7 @@ export function createRun(env: RunEnvironment) {
           .join("; ") || "Connection check failed",
       );
     const focus = ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
-    const runPlan = adaptWarmupIn(config, focus.latency?.rttMs ?? 0);
+    const runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
     const next = new Run({
       servers: ready.servers,
       focus: focus.server.id,
@@ -285,7 +283,7 @@ export function createRun(env: RunEnvironment) {
     });
     run = next;
     rttMs = focus.latency?.rttMs ?? 0;
-    spanMs = total(runPlan);
+    spanMs = totalMs(runPlan);
     follow(next);
     next.start();
   }
@@ -367,10 +365,10 @@ export function createRun(env: RunEnvironment) {
       return false;
     // The gauge's maximum is the page's alone: the run never hears of it.
     if (current && keys.some((key) => key !== "visualization")) {
-      const runPlan = adaptWarmupIn({ ...current.plan, ...pick(candidate) }, rttMs);
+      const runPlan = adaptWarmup({ ...current.plan, ...pick(candidate) }, rttMs);
       const refuse = (message: string) => (refusal.set(message), false);
-      const remainingMs = total(runPlan) - shownAt.peek() - progress.peek().elapsedMs;
-      if (total(runPlan) > total(current.plan) && !env.fits(remainingMs + SESSION_MARGIN_MS))
+      const remainingMs = totalMs(runPlan) - shownAt.peek() - progress.peek().elapsedMs;
+      if (totalMs(runPlan) > totalMs(current.plan) && !env.fits(remainingMs + SESSION_MARGIN_MS))
         return refuse("This change would extend the test beyond the current session.");
       const uploads = (each: RunPlan) => planned(each, "upload") || planned(each, "bidirectional");
       const lacking =
@@ -387,7 +385,7 @@ export function createRun(env: RunEnvironment) {
         return refuse(cause instanceof Error ? cause.message : "This change cannot be applied to the active test.");
       }
       plan.set(current.plan);
-      spanMs = total(current.plan);
+      spanMs = totalMs(current.plan);
     }
     // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
     if (keys.some((key) => key !== "visualization")) cancel();
@@ -459,9 +457,4 @@ const pick = ({ stages, duration, adaptive }: Pick<TestConfig, "stages" | "durat
   stages,
   duration,
   adaptive,
-});
-
-const adaptWarmupIn = <T extends Pick<TestConfig, "duration">>(config: T, rttMs: number): T => ({
-  ...config,
-  duration: { ...config.duration, warmupMs: adaptWarmup(config.duration.warmupMs, rttMs) },
 });

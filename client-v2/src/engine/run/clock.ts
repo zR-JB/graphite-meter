@@ -1,13 +1,10 @@
-// The only clock readers on the main thread, so tests can drive time.
-
-/** Monotonic page milliseconds. */
-export const pageMs = (): number => performance.now();
+// The main thread's wall clock and timers, and one run's time, so tests can drive both.
+import { pageMs } from "../../lib/frame";
 
 /** Wall-clock milliseconds since the epoch, for timestamps that leave the page. */
 export const epochMs = (): number => Date.now();
 
-/** Epoch milliseconds of a monotonic page time; worker clocks cross realms only as epoch values. */
-export const toEpoch = (page: number): number => performance.timeOrigin + page;
+/** The page time of an epoch time; worker clocks cross realms only as epoch values. */
 export const fromEpoch = (epoch: number): number => epoch - performance.timeOrigin;
 
 /** The time a run reads; tests pass a fake. */

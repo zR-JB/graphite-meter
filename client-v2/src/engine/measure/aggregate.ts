@@ -7,7 +7,7 @@ import { BUCKET_MS, RateBuckets, SCORE_WINDOW_MS, stabilityPct, stillStable, tra
 export type Direction = "down" | "up";
 
 /** Evidence must span this long on the client clock and on every receiver clock. */
-export const MIN_EVIDENCE_MS = 800;
+const MIN_EVIDENCE_MS = 800;
 const PEAK_WINDOW_MS = 500;
 /** Recent intervals a result keeps; older ones only count. */
 const INTERVAL_LIMIT = 128;

@@ -105,6 +105,10 @@ export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
 export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
   statuses.includes("failed") ? "incomplete" : failures ? "partial" : "complete";
 
+/** The bytes every server moved, both directions. */
+export const movedBytes = (result: MultiServerResult) =>
+  result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
+
 /** From the stage's first kept interval to its last, gaps between them included. */
 export function coveredMs(intervals: readonly Interval[], stage: TransferStage): number {
   const spans = intervals.filter((interval) => interval.stage === stage);

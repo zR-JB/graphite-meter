@@ -3,13 +3,13 @@
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";
-import { MAX_STREAMS, normalizeStreamCount } from "../../engine/net/budget";
+import { BROWSER_POOL, MAX_STREAMS, normalizeStreamCount } from "../../engine/net/budget";
 import { parseSelection } from "../../engine/net/paths";
 import type { PingCadence, TestConfig } from "../../engine/types";
 import { Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
-import { fromRateUnit, rateUnit, toRateUnit, type Units } from "../../view/format";
-import { READINESS, READINESS_TIP, stageLimitError } from "../../view/words";
+import { fromRateUnit, rateUnit, toRateUnit } from "../../view/format";
+import { CADENCE, READINESS, READINESS_TIP, stageLimitError, TIP } from "../../view/words";
 import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { Icon } from "../kit/icon";
@@ -23,7 +23,6 @@ import { ConnectionPicker } from "./picker";
 import { Segments } from "./segments";
 import { ServerSelection } from "./servers";
 import { Stepper } from "./stepper";
-import { CADENCE, TIP } from "./tips";
 import { Unfold } from "./unfold";
 
 export type Group = "connection" | "duration" | "display" | "probes" | "transfers";
@@ -38,7 +37,6 @@ const REFUSED = "This change cannot apply to the current run.";
 /** The maximum keeps one prefix, so a typed number never changes meaning. */
 const MAXIMUM_TIER = 2;
 /** Requests a browser runs at once per HTTP/1.1 server; more wait for a free connection. */
-const BROWSER_POOL = 6;
 const CADENCES = Object.keys(CADENCE) as PingCadence[];
 const CADENCE_ROWS = [
   ["pingCadence", "Idle latency cadence", TIP.idleCadence],
@@ -98,13 +96,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     return tone === "err" || readiness() === "blocked" ? `Connection: ${label}` : "";
   });
 
-  const units = computed((): Units => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
+  const { units, scales } = liveOf(app);
   const maximum = computed(() => config().visualization.throughputMaxBytesPerSec);
   const shownMaximum = computed(() => {
     const max = maximum();
     return max === "auto" ? 0 : Number(toRateUnit(max, units(), MAXIMUM_TIER).toPrecision(4));
   });
-  const chartBytesPerSec = () => liveOf(app).scales.peek().chartBytesPerSec;
   const scale = (throughputMaxBytesPerSec: number | "auto") =>
     configure("display", { visualization: { throughputMaxBytesPerSec } });
 
@@ -225,7 +222,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               tip={() => TIP.gaugeAuto}
               checked={() => maximum() === "auto"}
               // Fixing the scale keeps the chart's ceiling as it stands.
-              onToggle={(auto) => scale(auto ? "auto" : Math.max(1, Math.round(chartBytesPerSec())))}
+              onToggle={(auto) => scale(auto ? "auto" : Math.max(1, Math.round(scales.peek().chartBytesPerSec)))}
             />
             <Unfold when={() => maximum() !== "auto"}>
               {() => (
