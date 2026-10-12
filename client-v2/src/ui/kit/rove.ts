@@ -4,8 +4,10 @@ import { onCleanup } from "../../lib/signal";
 
 const ROVE: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
-/** Use as `ref` on a `[data-tip-group]` list; its facts are the explained words inside it. */
+/** Use as `ref` on a list of facts; its facts are the explained words inside it. */
 export function tipGroup(list: HTMLElement): void {
+  // Explained words inside a group leave the tab order to it (tip.ts).
+  list.dataset.tipGroup = "";
   const facts = () => [...list.querySelectorAll<HTMLElement>("[data-tip][tabindex]")];
   const settle = () => {
     const found = facts();
