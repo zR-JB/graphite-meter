@@ -156,6 +156,20 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     </div>
   );
 
+  const Unread = () => (
+    <div class="detail-pane empty-state" role="status">
+      <span class="empty-icon">!</span>
+      <h2>Result could not be read</h2>
+      <p>History could not read this result just now.</p>
+      <button class="btn" type="button" onclick={() => archive.reread()}>
+        Retry
+      </button>
+      <button class="btn" type="button" onclick={() => shell.history(null)}>
+        Back to results
+      </button>
+    </div>
+  );
+
   // The result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
   /** A result whose views threw: it reads as unreadable for the rest of the visit. */
@@ -163,6 +177,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   function DetailPane(selected: Selected): Node | null {
     if (selected.status === "none") focused = null;
     if (selected.status === "none" || selected.status === "pending") return null;
+    if (selected.status === "unread") return Unread();
     if (selected.status !== "ready" || broken.peek() === selected.record.id)
       return Unavailable(selected.status !== "missing");
     const { record } = selected;

@@ -80,8 +80,13 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   await settle();
   expect(archive.state()).toBe("ready");
   expect(archive.records()).toHaveLength(1);
-  expect(archive.error()).toBe("This result could not be read from History.");
+  // The result that could not be read says so, rather than leaving the previous one on show; Retry reads it again.
+  expect(archive.selected().status).toBe("unread");
+  archive.reread();
   expect(archive.selected().status).toBe("pending");
+  reads[3]!.resolve({ status: "ready", record: record("b", 1) });
+  await settle();
+  expect(archive.selected().status).toBe("ready");
   dispose();
 });
 

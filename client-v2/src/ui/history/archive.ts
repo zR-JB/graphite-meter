@@ -7,13 +7,13 @@ import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "
 import { applyChange, withEntry, type Listed } from "./model";
 
 export type Selected =
-  | { status: "none" | "pending" | "missing" | "malformed" }
+  | { status: "none" | "pending" | "missing" | "malformed" | "unread" }
   | { status: "ready"; record: HistoryRecord };
 
 const NONE: Selected = { status: "none" };
 const PENDING: Selected = { status: "pending" };
 const STALE = "History could not be read again, so this list may be out of date.";
-const UNREAD = "This result could not be read from History.";
+const UNREAD: Selected = { status: "unread" };
 
 /** Must run inside an owner: disposing it stops the read and the subscription. */
 export function createArchive(repository: HistoryRepository, selectedId: Read<string | null>) {
@@ -88,7 +88,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
         });
       },
       () => {
-        if (!disposed && selectedId.peek() === id) error.set(UNREAD);
+        if (!disposed && selectedId.peek() === id) answer.set({ id, selected: UNREAD });
       },
     );
   }
@@ -125,5 +125,12 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     }),
     /** Reads the archive again; `quiet` keeps the list on screen meanwhile. */
     load,
+    /** Reads the open result again after it could not be read. */
+    reread(): void {
+      const id = selectedId.peek();
+      if (id === null) return;
+      answer.set(null);
+      lookUp(id);
+    },
   };
 }
