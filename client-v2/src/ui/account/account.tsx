@@ -12,9 +12,19 @@ import { tip } from "../kit/tip";
 export function AccountControl(props: { app: App }): Node {
   const account = signal<Account | null>(null);
   const request = new AbortController();
-  void props.app.session.account(request.signal).then((value) => {
-    if (!request.signal.aborted) account.set(value);
-  });
+  let reading = false;
+  const read = () => {
+    if (reading || account.peek() || document.visibilityState === "hidden") return;
+    reading = true;
+    void props.app.session.account(request.signal).then((value) => {
+      reading = false;
+      if (!request.signal.aborted) account.set(value);
+    });
+  };
+  read();
+  // A read that failed is tried again when the page shows or the network returns, not left hidden for the tab's life.
+  document.addEventListener("visibilitychange", read, { signal: request.signal });
+  window.addEventListener("online", read, { signal: request.signal });
   onCleanup(() => request.abort());
 
   return (

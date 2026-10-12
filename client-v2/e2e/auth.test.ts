@@ -91,6 +91,32 @@ test("signing out lands on the signed-out notice, even with a token another sign
   expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
 });
 
+test("a session read that failed at boot is tried again when the network returns", async (page) => {
+  await page.addInitScript(() => {
+    const state = { unreachable: true, refused: 0 };
+    Object.assign(window, { state });
+    const original = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!state.unreachable || new URL(String(input), location.href).pathname !== "/auth/session")
+        return original(input, init);
+      state.refused++;
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }) as typeof fetch;
+  });
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+  });
+  await signIn(page);
+  await expect.poll(() => page.evaluate(() => (window as any).state.refused)).toBeGreaterThan(0);
+  const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
+  await expect(signOut).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).state.unreachable = false;
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(signOut).toBeVisible();
+});
+
 test("signing out everywhere waits for confirmation", async (page) => {
   await open(page, `${locked.url}/login`, {
     servers: [{ id: "self", url: locked.url }],
