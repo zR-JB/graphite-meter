@@ -120,7 +120,7 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
 }
 
 /** Every file of go/internal/auth/assets by name. */
-export async function authAssets(): Promise<Record<string, string>> {
+async function authAssets(): Promise<Record<string, string>> {
   const { css, tokens } = await stylesheet();
   const icon = btoa(favicon(tokens.get("--phase-latency")!, tokens.get("--text")!));
   const assets: Record<string, string> = {

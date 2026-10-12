@@ -153,8 +153,9 @@ Dependabot and run the checks above.
 The hook refuses commits to `main` and whitespace errors, and scans the index
 with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
 paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
-select the full `check`, and `client-v2/` with the E2E harness modules it
-imports from v1 select `client-v2-ci`. The checks run on the exact staged tree
+select the full `check`, and `client-v2/`, the E2E harness modules it imports
+from v1 and the auth assets it generates (`go/internal/auth/assets/`) select
+`client-v2-ci`. The checks run on the exact staged tree
 in a disposable worktree with both clients' frozen dependencies.
 `workflow-check` refuses tracked TLS key and certificate names and PEM
 material.

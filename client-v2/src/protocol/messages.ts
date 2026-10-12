@@ -1,8 +1,41 @@
 // What the engine's owners and its workers tell each other: a lane worker moves one HTTP fetch lane, a session worker
 // one WebTransport session, a probe worker one latency bus. Both sides are this code, so messages are typed, not
 // validated.
-import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../engine/types";
 import type { ProgressRecord } from "./progress";
+import type { FailureReason } from "./reasons";
+
+/** Everything a request needs, as plain data a worker can take. */
+export interface RequestRecipe {
+  headers: Record<string, string>;
+  credentials: RequestCredentials;
+  redirect: RequestRedirect;
+}
+
+/** How to mint a single-use socket ticket for one destination. */
+export interface TicketRecipe {
+  url: string;
+  request: RequestRecipe;
+}
+
+/** How a lane, feed or channel ended. `retry`: a reconnect may recover it; `rotate`: the server no longer knows the
+    upload id, so the run may replace the receiver once. */
+export interface Ending {
+  reason: FailureReason;
+  retry: boolean;
+  detail: string;
+  rotate?: boolean;
+  retryAfterMs?: number;
+}
+
+/** One resolved probe, timed on the page's monotonic clock. A reply after the stage's cutoff resolves its probe but
+    stays out of the window's statistics (`inWindow: false`). */
+export interface ProbeOutcome {
+  rttMs: number;
+  timedOut: boolean;
+  handlingMs: number | null;
+  observedAt: number;
+  inWindow: boolean;
+}
 
 /** Download bytes counted since the previous report, at most every 50 ms, in the measurement epoch they belong to. */
 export interface BytesReport {

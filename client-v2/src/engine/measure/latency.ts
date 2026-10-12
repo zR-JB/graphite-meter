@@ -178,7 +178,7 @@ export class Population {
 }
 
 /** The idle stage's last four seconds of outcomes, which early finish scores. */
-export class IdleWindow {
+class IdleWindow {
   #times: number[] = [];
   /** RTTs, NaN for a timeout. */
   #rtts: number[] = [];

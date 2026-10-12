@@ -49,8 +49,8 @@ Local builds embed development notices, so their executables say `UNREVIEWED DEV
 distributable; the pinned builder in `container/Dockerfile.rust` makes reviewed release builds
 ([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per client and profile
 into `target/browser/` and reused until a browser input changes. `GM_CLIENT=v2` makes `rust-server-build`,
-`rust-server-run`, `dev` and `prod` embed browser client v2 and `rust-e2e` run its whole suite (group `all`); the image and CI keep v1
-until v2 becomes the default.
+`rust-server-run`, `dev` and `prod` embed browser client v2 and `rust-e2e` run its whole suite (group `all`); the
+image and CI keep v1 until v2 becomes the default.
 
 Build-time variables:
 

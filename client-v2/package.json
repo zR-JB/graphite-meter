@@ -15,7 +15,7 @@
     "build:bundle": "bun build.ts",
     "build:auth": "bun auth/build.ts",
     "build": "bun run check && bun run build:bundle",
-    "check": "bun check && bun check auth && bun test ./auth",
+    "check": "bun check && bun test ./auth",
     "format": "biome format --write .",
     "format:check": "biome format . && bun auth/build.ts --check",
     "test": "bun test src ./auth --parallel",

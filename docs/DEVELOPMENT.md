@@ -22,8 +22,9 @@ mise run tui        # native TUI; it asks for the server, or add `-- --url <url>
 
 `GM_IMPLEMENTATION=rust` runs the opt-in Rust server or TUI instead in `dev`, `prod` and `tui`. `GM_CLIENT=v2`
 builds, checks and embeds the new browser client in `client-v2/` instead of v1 in the client tasks, `dev`, `prod`,
-`e2e` and the container build; v1 stays the default until v2 replaces it. The gates `check` and `ci` always check v1
-and run v2's own tasks (`client-v2-ci`, `client-v2-audit`, `e2e-v2`, `container-smoke-v2`) beside it.
+`e2e` and the container build (the Rust image keeps v1); v1 stays the default until v2 replaces it. The gates always
+check v1: `check` runs `client-v2-ci` beside it, and `ci` also runs `client-v2-audit`, `e2e-v2` and
+`container-smoke-v2`.
 
 mise trusts the project configuration automatically; in paranoid mode run
 [`mise trust`](https://mise.jdx.dev/cli/trust.html) once. Use `mise run <task>` in scripts (`mise doctor` is mise's

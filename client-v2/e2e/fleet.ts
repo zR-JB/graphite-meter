@@ -24,7 +24,6 @@ export const fleet: Server[] = env.fleet;
 export const [home, frankfurt, amsterdam, helsinki, locked] = fleet as [Server, Server, Server, Server, Server];
 export const password: string = env.password;
 export const passwordHash: string = env.passwordHash;
-export const harness: string = env.harness;
 
 export const catalog = (...servers: Server[]) => ({
   GM_SERVER_CATALOG: JSON.stringify({

@@ -429,13 +429,12 @@ run = [
   "scripts/verify-container.sh graphite-meter:smoke",
 ]
 
-# Mirrors CI job by job: server-race replaces check's server-test.
-
 [tasks.container-smoke-v2]
 description = "Build and smoke-test the local production image with the v2 client"
 env = { GM_CLIENT = "v2" }
 run = [{ task = "container-smoke" }]
 
+# Mirrors CI job by job: server-race replaces check's server-test.
 [tasks.ci]
 description = "Run deterministic, race, Rust, interoperability, advisory, browser, release, and container gates"
 env = { GM_CLIENT = "v1" }

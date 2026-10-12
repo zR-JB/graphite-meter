@@ -58,7 +58,6 @@ WORKDIR /app/client-v2
 COPY client-v2/package.json client-v2/bun.lock client-v2/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
 COPY client-v2/ ./
-COPY api/ /app/api/
 COPY client/public/ /app/client/public/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 

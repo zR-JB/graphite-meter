@@ -19,7 +19,7 @@ or running a Go generator.
 
 Dependency discovery remains tied to the actual build inputs: Python invokes
 `go list -deps -json` for the supported server and TUI targets and `go env
-GOVERSION` to verify the pinned toolchain. Temporary production builds of both
+GOVERSION` to verify the pinned toolchain. Temporary builds of both
 browser clients report the modules that reach their bundles; one
 `server/browser` scope covers their union, so every Go image's notices cover
 either client. Changing a product language therefore requires changing its

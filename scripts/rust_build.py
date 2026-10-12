@@ -91,7 +91,7 @@ def browser(client: str, profile: str) -> tuple[Path, Path]:
         return assets, scan
     print(f"Browser [{client} {profile}]: build into {assets.relative_to(ROOT)}", flush=True)
     stamp.unlink(missing_ok=True)
-    # Vite empties no output directory outside client/, so this build removes only its own products.
+    # v1's Vite build empties no output directory outside client/, so this build removes its own products.
     shutil.rmtree(assets, ignore_errors=True)
     scan.unlink(missing_ok=True)
     output.mkdir(parents=True, exist_ok=True)

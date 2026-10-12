@@ -1,11 +1,12 @@
 // The engine's shared vocabulary: servers and their verified paths, credentials, evidence, and the contract between
 // the run and the resources each server opens for a stage.
 import type { Probe } from "../protocol/documents";
+import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../protocol/messages";
 import type { FailureReason } from "../protocol/reasons";
 import type { Checkpoint } from "./measure/aggregate";
 import type { Activity, Stage } from "./run/schedule";
 
-export type { Checkpoint, FailureReason, Probe, Stage };
+export type { Checkpoint, Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage, TicketRecipe };
 export type Direction = "down" | "up";
 export type Role = "throughput" | "latency";
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
@@ -114,19 +115,6 @@ export interface PreparedServer {
   latency: LatencyPath | null;
 }
 
-/** Everything a request needs, as plain data a worker can take. */
-export interface RequestRecipe {
-  headers: Record<string, string>;
-  credentials: RequestCredentials;
-  redirect: RequestRedirect;
-}
-
-/** How to mint a single-use socket ticket for one destination. */
-export interface TicketRecipe {
-  url: string;
-  request: RequestRecipe;
-}
-
 /** A server's credentials: none, the page's own login, or a measurement grant. Requests never leave the server's
     allowed destinations, and a grant never appears in a URL. */
 export interface ServerAuth {
@@ -150,32 +138,12 @@ export class SignInRequired extends Error {
   }
 }
 
-/** How a lane, feed or channel ended. `retry`: a reconnect may recover it; `rotate`: the server no longer knows the
-    upload id, so the run may replace the receiver once. */
-export interface Ending {
-  reason: FailureReason;
-  retry: boolean;
-  detail: string;
-  rotate?: boolean;
-  retryAfterMs?: number;
-}
-
 /** A non-terminal stall: a direction went quiet or its lanes are reconnecting. */
 export interface Stall {
   reason: FailureReason;
   detail: string;
   direction?: Direction;
   rotate?: boolean;
-}
-
-/** One resolved probe, timed on the page's monotonic clock. A reply after the stage's cutoff resolves its probe but
-    stays out of the window's statistics (`inWindow: false`). */
-export interface ProbeOutcome {
-  rttMs: number;
-  timedOut: boolean;
-  handlingMs: number | null;
-  observedAt: number;
-  inWindow: boolean;
 }
 
 /** What one server's stage resources report to the run. */

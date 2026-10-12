@@ -9,7 +9,9 @@ import { describe, host, launch } from "../e2e/servers";
 const bin =
   process.env.GM_E2E_SERVER_BIN ?? resolve("test-results/graphite-meter");
 if (!(await Bun.file(bin).exists()))
-  throw new Error(`${bin} is missing; build it with mise run e2e`);
+  throw new Error(
+    `${bin} is missing; build it with mise run e2e (e2e-v2 for client v2)`,
+  );
 // CI runs the browser mise.toml pins; a local run takes whichever is installed.
 for (const [path, expected, name] of [
   [
