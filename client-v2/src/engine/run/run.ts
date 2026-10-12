@@ -1134,12 +1134,14 @@ export class Run {
     // was moving look silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
-    // Bytes a lane counted before the window closed but had not reported yet still belong to it.
+    // Bytes a lane counted but had not reported yet still count; lanes read on until they answer, so the boundary
+    // closes when the last answer came, the time those counts were read at.
     const flushed = async (seat: Seat) => {
       seat.flushing = true;
       await seat.resources.flush();
       seat.flushing = false;
       boundary.down[seat.server.id] = seat.down;
+      boundary.atMs = Math.max(boundary.atMs, this.#clock.runMs());
     };
     const answers = await Promise.allSettled(
       seats.map(async (seat) => {
@@ -1217,9 +1219,8 @@ export class Run {
       const message = short ? "Measured too little of the planned time" : "Too little measured evidence for a result";
       for (const id of ids) this.#record(id, failureScope(name), "insufficient-evidence", message, name);
     }
-    const status = stageStatus(lanes(this.#results, name), this.#failed(name));
-    this.#settled.set(name, { status, plan });
-    // A server that stayed but measured too little on its own for a result of its own says so, as the run does.
+    // A server that stayed but measured too little for a result of its own says so, as the run does; the stage's
+    // status counts it.
     if (stage && name !== "latency")
       for (const id of stage.seats.keys()) {
         const own = stage.activity.transfer.map((dir) => this.#aggregate.serverResult(name, dir, id));
@@ -1232,6 +1233,8 @@ export class Run {
             name,
           );
       }
+    const status = stageStatus(lanes(this.#results, name), this.#failed(name));
+    this.#settled.set(name, { status, plan });
     return status;
   }
 

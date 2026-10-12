@@ -187,6 +187,24 @@ test("bytes a lane counted before the window closed but had not reported yet cou
   near(result.download?.reportedBytesPerSec, 1_250);
 });
 
+test("lanes that read on until their flush answers count against the time it answered", async () => {
+  const h = setup(
+    [{ id: "self", rate: 1, flush: () => new Promise<void>((resolve) => later(200, resolve)) }],
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  near((await h.result()).download?.reportedBytesPerSec, 1_000);
+});
+
+test("a server that stayed without a result of its own makes the stage partial, coherently", async () => {
+  const h = setup(two({}, { rate: 0 }), { download: true }, { downloadMs: 1_000 });
+  h.start();
+  const result = await h.result();
+  expect([result.stages.download, result.outcome]).toEqual(["partial", "partial"]);
+  expect(result.multiServer.failures).toMatchObject([{ serverId: "b", reason: "insufficient-evidence" }]);
+});
+
 test("a server lost in the latency stage is not prepared for the later stages", async () => {
   const lose = (how: (events: StageEvents) => unknown): Partial<Peer> => ({
     measure: (events, { stage }) => void (stage === "latency" && how(events)),
