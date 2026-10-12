@@ -3,15 +3,22 @@
 import { animate } from "../../lib/frame";
 import { batch, onCleanup, signal, type Read } from "../../lib/signal";
 
-/** A view's painter: `wake()` draws from the next frame until `draw` returns false. Released with its owner. */
+/** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
+const LIVE_FRAME_MS = 10;
+
+/** A view's painter: `wake()` draws from the next frame until `draw` returns false, skipping frames closer than
+    LIVE_FRAME_MS to the last it drew. Released with its owner. */
 export function painter(draw: (now: number) => boolean): () => void {
   let stop: (() => void) | null = null;
+  let drawn = Number.NEGATIVE_INFINITY;
   onCleanup(() => {
     stop?.();
     stop = null;
   });
   return () => {
     stop ??= animate((now) => {
+      if (now - drawn < LIVE_FRAME_MS) return true;
+      drawn = now;
       if (draw(now)) return true;
       stop = null;
       return false;
