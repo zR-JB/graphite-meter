@@ -63,7 +63,7 @@ export interface ServerView {
   discovery: Discovery | null;
   readiness: Readiness;
   message: string | null;
-  /** A reason no connection check can clear: sign-in, offline, or a missing server capability. */
+  /** A reason no connection check can clear: sign-in or a missing server capability. */
   blocked: string | null;
   throughput: RoleView<ThroughputPath>;
   latency: RoleView<LatencyPath>;
@@ -168,6 +168,8 @@ function connect(
   /** The bus the latest latency check proved, for the idle monitor to take over. */
   let handed: CheckedBus | null = null;
 
+  // The browser's word is advisory: a link without a gateway reads offline and still reaches its server. It names
+  // a failure, and stops nothing.
   const loopback = isLoopback(new URL(entry.url).hostname);
   const offline = computed(() => !loopback && !env.online());
   const required = (role: Role) => selected() && (role === "throughput" || env.latencyNeeded());
@@ -204,7 +206,7 @@ function connect(
   /** The paths a run may use, verified at or after `since`; null while anything stands in the way. */
   function paths(since: number): Pick<PreparedServer, "throughput" | "latency"> | null {
     const known = discovery();
-    if (!selected() || !known || fault() || offline() || (env.checkpoints() && !known.uploadCheckpoint)) return null;
+    if (!selected() || !known || fault() || (env.checkpoints() && !known.uploadCheckpoint)) return null;
     const throughputPath = valid.throughput();
     if (!throughputPath || throughputPath.verifiedAt < since) return null;
     if (!env.latencyNeeded()) return { throughput: throughputPath, latency: null };
@@ -213,9 +215,7 @@ function connect(
   }
 
   const watchedPath = computed(() =>
-    env.latencyServer() === entry.id && env.active() && required("latency") && !fault() && !offline()
-      ? valid.latency()
-      : null,
+    env.latencyServer() === entry.id && env.active() && required("latency") && !fault() ? valid.latency() : null,
   );
 
   // What falls due, in page ms; Infinity for nothing, or for what waits on the user.
@@ -225,7 +225,7 @@ function connect(
     return failureHere(role)?.due ?? 0;
   };
   const discoveryDue = computed((): number => {
-    if (discovering() || offline() || (!selected() && !env.metadata())) return Infinity;
+    if (discovering() || (!selected() && !env.metadata())) return Infinity;
     const failed = fault();
     if (failed) return failed.due;
     const known = discovery();
@@ -236,8 +236,7 @@ function connect(
   const dueAt = computed((): number => {
     let at = discoveryDue();
     if (auth.deadline !== null && !fault()?.failure.signIn) at = Math.min(at, auth.deadline);
-    if (discovery() && !fault() && !discovering() && !offline())
-      for (const role of ROLES) at = Math.min(at, roleDue(role));
+    if (discovery() && !fault() && !discovering()) for (const role of ROLES) at = Math.min(at, roleDue(role));
     return at;
   });
 
@@ -363,7 +362,7 @@ function connect(
   }
 
   async function check({ force = false, since, role, signal: owner }: CheckOptions = {}): Promise<void> {
-    if (disposed || offline.peek()) return;
+    if (disposed) return;
     const fresh = since !== undefined;
     const forced = (each: Role) => force && (!role || each === role);
     batch(() =>
@@ -559,13 +558,11 @@ function connect(
   const view = computed((): ServerView => {
     const known = discovery();
     const failed = loud() ? null : fault();
+    // A failure other than a sign-in reads as the device's when it says it is offline.
     const isOffline = offline();
-    // What stands before any path: a sign-in first, then the device, then the discovery's own failure.
-    const standing = failed?.failure.signIn
-      ? failed.failure.message
-      : isOffline
-        ? OFFLINE
-        : (failed?.failure.message ?? null);
+    const words = (failure: Failure) => (isOffline && !failure.signIn ? OFFLINE : failure.message);
+    // What stands before any path: the discovery's failure.
+    const standing = failed ? words(failed.failure) : null;
     const capability = selected() && known && env.checkpoints() && !known.uploadCheckpoint ? CAPABILITY : null;
     const shown = <P>(role: Role, path: P | null): RoleView<P> => {
       const selection = selectionText(env.selections[role]());
@@ -576,7 +573,7 @@ function connect(
       if (path && role === "throughput" && capability) return { selection, state: "failed", path, message: capability };
       if (path) return { selection, state: "verified", path, message: null };
       const failure = needed ? failureHere(role) : null;
-      if (failure) return { selection, state: "failed", path: null, message: failure.failure.message };
+      if (failure) return { selection, state: "failed", path: null, message: words(failure.failure) };
       return { selection, state: "unchecked", path: null, message: null };
     };
     const throughputView = shown("throughput", valid.throughput());
@@ -593,7 +590,7 @@ function connect(
       discovery: known,
       readiness: signIn ? "sign-in" : message ? "failed" : checking ? "checking" : ready ? "verified" : "unchecked",
       message,
-      blocked: message && (signIn || isOffline || message === capability) ? message : null,
+      blocked: message && (signIn || message === capability) ? message : null,
       throughput: throughputView,
       latency: latencyView,
       ready,

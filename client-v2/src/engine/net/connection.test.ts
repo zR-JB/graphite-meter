@@ -90,6 +90,35 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
   expect(net.requests.length).toBe(sent);
 });
 
+test("a device that says it is offline still checks its servers, and says offline only when a check fails", async () => {
+  let reachable = true;
+  net = fakeNet((url) =>
+    !reachable
+      ? "unreachable"
+      : url.pathname === "/preflight"
+        ? { body: preflight([h(".", "http1")]) }
+        : { body: PROBE, hop: "http/1.1" },
+  );
+  // A lab link without a gateway: the browser reports offline, the server answers.
+  const peer: CatalogEntry = { id: "peer", url: "https://peer.example", name: "Peer", additionalOrigins: [] };
+  const { connection, env } = connect(peer);
+  env.online.set(false);
+  await net.advance(1_000);
+  expect(connection.view.peek()).toMatchObject({ readiness: "verified", message: null, blocked: null });
+  expect(connection.prepared(0)).not.toBeNull();
+  reachable = false;
+  await net.advance(5_000);
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "failed",
+    message: "This device is offline",
+    blocked: null,
+  });
+  // Start tries again rather than being held back.
+  reachable = true;
+  await connection.check({ since: net.now() });
+  expect(connection.prepared(net.now() - 1_000)).not.toBeNull();
+});
+
 test("a selected server re-reads discovery every 5 s without a checking flash or moving Automatic", async () => {
   const hops = ["h2", null, "h3"];
   let alive = true;
