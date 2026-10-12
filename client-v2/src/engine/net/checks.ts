@@ -464,6 +464,8 @@ export async function checkLatency(
       ]);
       const release = () => channel.dispose();
       bounded.addEventListener("abort", release, { once: true });
+      // The budget may have ended between the answers and here; its abort has fired already.
+      if (bounded.aborted) release();
       const bus: CheckedBus = {
         adopt(next) {
           bounded.removeEventListener("abort", release);

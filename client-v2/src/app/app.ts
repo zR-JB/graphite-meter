@@ -90,7 +90,16 @@ export function createApp() {
         : "";
     }),
     authorize: servers.authorize,
-    prepare: servers.prepare,
+    async prepare(signal, config) {
+      const ready = await servers.prepare(signal);
+      // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
+      let limit = { ms: Number.POSITIVE_INFINITY, server: null as string | null };
+      for (const { server, discovery } of ready.servers)
+        if (discovery.maxStageMs < limit.ms) limit = { ms: discovery.maxStageMs, server: server.name };
+      const refused = stageLimitError(config, limit);
+      if (refused) throw new Error(refused);
+      return ready;
+    },
     fits: servers.fits,
     recheck: servers.recheck,
     finished: (finished) => (finished ? saver.offer(historyRecord(finished)) : saver.withdraw()),

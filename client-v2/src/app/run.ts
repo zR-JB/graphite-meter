@@ -30,9 +30,13 @@ export interface RunEnvironment {
   refusal: Read<string>;
   /** The page's login and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again: what Start runs on, the servers left out, and whose latency leads. An
-      AbortError means newer intent superseded the start. */
-  prepare(signal: AbortSignal): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
+  /** Checks the selected servers again: what Start runs on, the servers left out, and whose latency leads. Throws
+      with the words to show when a server, as just read, refuses `config`; an AbortError means newer intent
+      superseded the start. */
+  prepare(
+    signal: AbortSignal,
+    config: TestConfig,
+  ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
   /** Whether a run of `totalMs` still fits the session; a live change that lengthens the test must. */
   fits(totalMs: number): boolean;
   /** A server failed during the run, or with null the whole run did: its paths are checked again. */
@@ -252,7 +256,7 @@ export function createRun(env: RunEnvironment) {
     await env.authorize(totalMs(adaptWarmup(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS, signal);
     signal.throwIfAborted();
     preparation.set("checking");
-    const ready = await env.prepare(signal);
+    const ready = await env.prepare(signal, config);
     signal.throwIfAborted();
     if (!ready.servers.length)
       throw new Error(
