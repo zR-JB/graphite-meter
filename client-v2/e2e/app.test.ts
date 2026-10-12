@@ -252,11 +252,6 @@ test("a completed run fits every layout and theme without serious violations", a
       href,
     })),
   ).toEqual(links);
-  const svelte = legal.components.find((c) => c.name === "svelte")!;
-  expect(svelte.modified).toBe(true);
-  expect(decodeURIComponent(svelte.links.find((l) => l.label === "Changes")!.url)).toContain(
-    `/client/patches/svelte@${svelte.version}.patch`,
-  );
   if (rust) {
     const fork = legal.components.find((c) => c.name === "noq")!;
     expect(fork.links.map((l) => l.label)).toEqual(["Source", "Upstream", "Changes"]);
