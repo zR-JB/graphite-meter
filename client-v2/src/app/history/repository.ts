@@ -5,9 +5,10 @@
 // - a finished run: `saver.offer(historyRecord(run))`; a new Start or Start over: `saver.withdraw()`;
 // - signing out waits, and unload can warn, while `saver.pending`; Start over asks first while `saver.unsaved`;
 //   `saver.warning` says why a write failed;
-// - the History view reads `list(signal)` and `inspect(id)`, changes rows with `delete`, `clear` and
-//   `removeMalformed`, and follows `onChange`: this tab's changes as they land, any other tab's (of either client) as
-//   `elsewhere`, which means reading the list again; `sortKeys`, `sortHistory` and `recentCompletion` present rows.
+// - the History view lists entries with `list(signal, historyEntry)`, reads a result whole with `inspect(id)` as it
+//   opens, changes rows with `delete`, `clear` and `removeMalformed`, and follows `onChange`: this tab's changes as
+//   they land, any other tab's (of either client) as `elsewhere`, which means reading the list again; `sortHistory`
+//   and `recentCompletion` present rows.
 import { HISTORY_LIMIT, readHistoryRecord, type HistoryRecord } from "./records";
 
 const DATABASE = "graphite-meter";
@@ -180,15 +181,19 @@ export class HistoryRepository {
     return written;
   }
 
-  /** The newest readable records, at most 2,000, and how many rows could not be read. Each row is its own task; an
-      abort stops the walk at the next row without aborting any write. */
-  async list(signal: AbortSignal): Promise<{ records: HistoryRecord[]; malformedCount: number }> {
+  /** The newest readable records, at most 2,000, each as `keep` makes it, so no whole record outlives its row; and
+      how many rows could not be read. Each row is its own task; an abort stops the walk at the next row without
+      aborting any write. */
+  async list<T>(
+    signal: AbortSignal,
+    keep: (record: HistoryRecord) => T,
+  ): Promise<{ records: T[]; malformedCount: number }> {
     signal.throwIfAborted();
     const tx = await this.#transaction("readonly");
     signal.throwIfAborted();
     const store = tx.objectStore(RESULTS);
     const total = request(store.count());
-    const records: HistoryRecord[] = [];
+    const records: T[] = [];
     let readable = 0;
     const walked = new Promise<void>((resolve, reject) => {
       const scan = store.index(COMPLETED_AT).openCursor(null, "prev");
@@ -199,7 +204,7 @@ export class HistoryRepository {
         const cursor = scan.result;
         if (!cursor) return resolve();
         const record = readHistoryRecord(cursor.value);
-        if (record && ++readable <= HISTORY_LIMIT) records.push(record);
+        if (record && ++readable <= HISTORY_LIMIT) records.push(keep(record));
         cursor.continue();
       };
     });

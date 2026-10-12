@@ -188,11 +188,19 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       </div>
     );
   }
-  // Built again only when another result, or another state of the link, shows.
+  // Built again only when another result, or another state of the link, shows; a result still being read keeps what
+  // shows, so moving between results never blanks the pane.
+  let shownBefore = "none";
   const shownKey = computed(() => {
     const selected = archive.selected();
-    if (selected.status !== "ready") return selected.status;
-    return broken() === selected.record.id ? "malformed" : `ready\t${selected.record.id}`;
+    if (selected.status === "pending") return shownBefore;
+    shownBefore =
+      selected.status !== "ready"
+        ? selected.status
+        : broken() === selected.record.id
+          ? "malformed"
+          : `ready\t${selected.record.id}`;
+    return shownBefore;
   });
 
   function Body(): Node {

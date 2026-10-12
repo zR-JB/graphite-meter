@@ -1,10 +1,10 @@
 // History as data: its columns and their units, each row's words, the day groups, the archive's span, how many rows
 // show, and how a change to the archive lands in a list already read. Pure, so a 2,000-result archive is worked out
 // once per change and never in the DOM code.
-import { HISTORY_LIMIT, sortKeys, type HistorySort, type KeyedRecord } from "../../app/history/records";
+import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistorySort } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
-import type { Outcome, RunResult, StageStatus } from "../../engine/run/result";
+import type { Outcome, StageStatus } from "../../engine/run/result";
 import { fmtAddedMs, fmtMs, fmtSpeed, MISSING, rateTier, rateUnit, toRateUnit, type Units } from "../../view/format";
 import { LATENCY, OUTCOME, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import type { IconName } from "../kit/icon";
@@ -67,7 +67,7 @@ export interface Scale {
 
 /** Each column's unit from every loaded record, not only the rows shown: latency in ms, a rate in the tier of its
     upper median, so one fast outlier never sets it. */
-export function columnScales(records: readonly KeyedRecord[], units: Units): Record<HistoryColumn, Scale> {
+export function columnScales(records: readonly HistoryEntry[], units: Units): Record<HistoryColumn, Scale> {
   const scale = (column: HistoryColumn): Scale => {
     const values = new Float64Array(records.length);
     let count = 0;
@@ -122,13 +122,13 @@ function dayHeading(time: number, days: Days): string {
 }
 
 /** One date when the oldest and newest share a day, else a range that names a shared year once. */
-export function span(records: readonly KeyedRecord[]): string {
+export function span(records: readonly HistoryEntry[]): string {
   if (!records.length) return "";
   let first = Infinity;
   let last = -Infinity;
-  for (const { record } of records) {
-    first = Math.min(first, record.completedAt);
-    last = Math.max(last, record.completedAt);
+  for (const { completedAt } of records) {
+    first = Math.min(first, completedAt);
+    last = Math.max(last, completedAt);
   }
   const [from, to] = [dateLabel(first), dateLabel(last)];
   if (from === to) return from;
@@ -182,40 +182,20 @@ const STATUS_WORD: Record<StageStatus, string> = {
   "not-run": STAGE_STATE.skipped.label,
 };
 
-const LOADED = ["download", "upload", "bidirectional"] as const;
-
-/** The load whose median the Loaded column shows: the highest, the first of equals. */
-function loadedStage(result: RunResult): (typeof LOADED)[number] | null {
-  let worst: (typeof LOADED)[number] | null = null;
-  for (const stage of LOADED) {
-    const median = result.latencyByStage[stage]?.p50Ms;
-    if (median != null && (worst === null || median > result.latencyByStage[worst]!.p50Ms!)) worst = stage;
-  }
-  return worst;
-}
-
 /** Under a rate, the latency its load added; under idle, its jitter; under loaded, whose load it was. */
-function note(result: RunResult, column: HistoryColumn): string {
-  if (column === "idle") return result.latency?.jitterMs == null ? "" : `jitter ${fmtMs(result.latency.jitterMs)}`;
-  if (column === "loaded") {
-    const stage = loadedStage(result);
-    return stage ? STAGE[stage].short.toLowerCase() : "";
-  }
-  const added = result.addedLatency?.[column];
+function note(entry: HistoryEntry, column: HistoryColumn): string {
+  if (column === "idle") return entry.jitterMs == null ? "" : `jitter ${fmtMs(entry.jitterMs)}`;
+  if (column === "loaded") return entry.loadedStage ? STAGE[entry.loadedStage].short.toLowerCase() : "";
+  const added = entry.addedLatency?.[column];
   return added == null ? "" : `${fmtAddedMs(added)} ms`;
 }
 
 /** Why a value is missing, in the stage's own word; a bidirectional stage that kept one direction says which. */
-function missing(result: RunResult, column: HistoryColumn): string {
+function missing(entry: HistoryEntry, column: HistoryColumn): string {
   if (column === "loaded") return MISSING;
-  if (column === "idle") return STATUS_WORD[result.stages.latency];
-  if (column === "bidirectional") {
-    const down = result.bidirectional?.down?.reportedBytesPerSec;
-    const up = result.bidirectional?.up?.reportedBytesPerSec;
-    if (down != null && up == null) return "Down only";
-    if (up != null && down == null) return "Up only";
-  }
-  return STATUS_WORD[result.stages[column]];
+  if (column === "idle") return STATUS_WORD[entry.stages.latency];
+  if (column === "bidirectional" && entry.lone) return entry.lone === "down" ? "Down only" : "Up only";
+  return STATUS_WORD[entry.stages[column]];
 }
 
 const notePhrase = (column: HistoryColumn, text: string) =>
@@ -230,21 +210,20 @@ function dated(completedAt: number, byDay: boolean, days: Days): { heading: stri
   return { heading, primary: recent ? time : `${DATES.day.format(completedAt)}, ${time}` };
 }
 
-function resultRow({ record, keys }: KeyedRecord, context: RowContext, days: Days): Row {
-  const { result, completedAt, id } = record;
+function resultRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
+  const { completedAt, id, outcome } = entry;
   const { columns, scales, units } = context;
   const exact = DATES.exact.format(completedAt);
-  const selection = result.multiServer.selection;
-  const where = selection.length > 1 ? `${selection.length} servers` : (selection[0]?.name ?? "");
+  const where = entry.servers > 1 ? `${entry.servers} servers` : entry.server;
   const cells = columns.map((column): Cell => {
-    const value = keys[column];
-    if (value === null) return { column, text: missing(result, column), value, note: "" };
+    const value = entry.keys[column];
+    if (value === null) return { column, text: missing(entry, column), value, note: "" };
     const { tier } = scales[column];
     const text = tier === null ? fmtMs(value) : fmtSpeed(toRateUnit(value, units, tier));
-    return { column, text, value, note: note(result, column) };
+    return { column, text, value, note: note(entry, column) };
   });
   const label = [
-    [exact, where, `${OUTCOME[result.outcome].label.toLowerCase()} result`].filter(Boolean).join(", "),
+    [exact, where, `${OUTCOME[outcome].label.toLowerCase()} result`].filter(Boolean).join(", "),
     ...columns.map((column, index) => {
       const { text, value, note } = cells[index]!;
       const reading = `${SORT_LABEL[column]} ${text}${value === null ? "" : ` ${scales[column].unit}`}`;
@@ -259,19 +238,19 @@ function resultRow({ record, keys }: KeyedRecord, context: RowContext, days: Day
     ...dated(completedAt, context.byDay, days),
     exact,
     where,
-    outcome: result.outcome,
+    outcome,
     cells,
     label,
   };
 }
 
 /** A row's words; a record they cannot be made from becomes an unreadable row. */
-function presentRow(keyed: KeyedRecord, context: RowContext, days: Days): Row {
+function presentRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   try {
-    return resultRow(keyed, context, days);
+    return resultRow(entry, context, days);
   } catch (error) {
     reportError(error);
-    const { id, completedAt } = keyed.record;
+    const { id, completedAt } = entry;
     const { heading } = dated(completedAt, context.byDay, days);
     return {
       kind: "unreadable",
@@ -286,20 +265,20 @@ function presentRow(keyed: KeyedRecord, context: RowContext, days: Days): Row {
 
 /** Rows worded under one context, kept by id. A row stays the same object until what it shows changes, so its DOM is
     built again only then: across midnight, only the rows whose day words change. */
-export function rowPresenter(context: RowContext): (keyed: KeyedRecord, days: Days) => Row {
+export function rowPresenter(context: RowContext): (entry: HistoryEntry, days: Days) => Row {
   const kept = new Map<string, { row: Row; days: Days }>();
-  return (keyed, days) => {
+  return (listed, days) => {
     // Results deleted or pruned while the list stays open leave their rows here; past twice the archive, start over.
     if (kept.size > 2 * HISTORY_LIMIT) kept.clear();
-    const entry = kept.get(keyed.record.id);
+    const entry = kept.get(listed.id);
     if (entry?.days === days) return entry.row;
-    let row = entry?.row ?? presentRow(keyed, context, days);
+    let row = entry?.row ?? presentRow(listed, context, days);
     if (entry) {
       const { heading, primary } = dated(row.completedAt, context.byDay, days);
       if (heading !== row.heading || (row.kind === "result" && primary !== row.primary))
         row = row.kind === "result" ? { ...row, heading, primary } : { ...row, heading };
     }
-    kept.set(keyed.record.id, { row, days });
+    kept.set(listed.id, { row, days });
     return row;
   };
 }
@@ -330,12 +309,11 @@ export function groupRows(rows: readonly Row[]): Group[] {
 
 /** `added` in the list, replacing the same id; at the limit the oldest other record gives way, so a result opened
     past the newest 2,000 shows and the count stays 2,000. */
-export function withRecord(records: readonly KeyedRecord[], added: KeyedRecord): KeyedRecord[] {
-  const rest = records.filter(({ record }) => record.id !== added.record.id);
+export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry): HistoryEntry[] {
+  const rest = records.filter(({ id }) => id !== added.id);
   if (rest.length >= HISTORY_LIMIT) {
     let oldest = 0;
-    for (let i = 1; i < rest.length; i++)
-      if (rest[i]!.record.completedAt < rest[oldest]!.record.completedAt) oldest = i;
+    for (let i = 1; i < rest.length; i++) if (rest[i]!.completedAt < rest[oldest]!.completedAt) oldest = i;
     rest.splice(oldest, 1);
   }
   rest.push(added);
@@ -343,7 +321,7 @@ export function withRecord(records: readonly KeyedRecord[], added: KeyedRecord):
 }
 
 export interface Listed {
-  records: readonly KeyedRecord[];
+  records: readonly HistoryEntry[];
   /** Rows that could not be read. */
   malformed: number;
 }
@@ -353,10 +331,10 @@ export interface Listed {
 export function applyChange(listed: Listed, change: Exclude<HistoryChange, { type: "elsewhere" }>): Listed {
   switch (change.type) {
     case "saved":
-      return { ...listed, records: withRecord(listed.records, sortKeys([change.record])[0]!) };
+      return { ...listed, records: withEntry(listed.records, historyEntry(change.record)) };
     case "deleted": {
       const gone = new Set(change.ids);
-      return { ...listed, records: listed.records.filter(({ record }) => !gone.has(record.id)) };
+      return { ...listed, records: listed.records.filter(({ id }) => !gone.has(id)) };
     }
     case "cleared":
       return { records: [], malformed: 0 };

@@ -9,7 +9,7 @@ import {
   readHistoryRecord,
   recentCompletion,
   sortHistory,
-  sortKeys,
+  historyEntry,
   type HistoryRecord,
   type HistorySort,
 } from "./records";
@@ -452,7 +452,7 @@ test("History sorts missing values last, equal ones newest first, each field in 
   });
   const transfer = (bps: number) => ({ ...rate(bps), wire: null });
   const idle = (reportedMs: number) => ({ reportedMs, jitterMs: null, stabilityPct: null });
-  const records = sortKeys([
+  const records = [
     record("a", 1, {
       download: transfer(10),
       upload: transfer(40),
@@ -474,7 +474,7 @@ test("History sorts missing values last, equal ones newest first, each field in 
     record("d", 5, { download: transfer(10) }),
     record("e", 4, { download: transfer(10) }),
     record("f", 5, { download: transfer(10) }),
-  ]);
+  ].map(historyEntry);
   const cases: [HistorySort, boolean, string][] = [
     ["date", true, "fdecba"],
     ["date", false, "abcefd"],
@@ -489,7 +489,7 @@ test("History sorts missing values last, equal ones newest first, each field in 
     ["loaded", true, "abfdec"],
   ];
   for (const [sort, descending, expected] of cases) {
-    const order = sortHistory(records, sort, descending).map(({ record }) => record.id);
+    const order = sortHistory(records, sort, descending).map(({ id }) => id);
     expect(order.join(""), `${sort} ${descending}`).toBe(expected);
   }
   expect(records.map(({ keys }) => keys.bidirectional)).toEqual([10, 30, null, null, null, null]);

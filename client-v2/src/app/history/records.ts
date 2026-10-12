@@ -392,40 +392,68 @@ export type HistorySort = "date" | "download" | "upload" | "bidirectional" | "id
 /** Latency reads best lowest first; dates and rates highest first. */
 export const naturalDescending = (sort: HistorySort) => sort !== "idle" && sort !== "loaded";
 
-export interface KeyedRecord {
-  record: HistoryRecord;
+/** What History's list shows of a record and orders it by: a few hundred bytes of a record's kilobytes, so the list
+    stays small while History is open. A record is read whole only as it opens. */
+export interface HistoryEntry {
+  id: string;
+  completedAt: number;
+  outcome: Outcome;
+  /** How many servers ran, and the first one's name. */
+  servers: number;
+  server: string;
+  stages: Record<Stage, StageStatus>;
+  jitterMs: number | null;
+  addedLatency: AddedLatency | null;
+  /** The load whose median the Loaded column shows: the highest, the first of equals. */
+  loadedStage: TransferStage | null;
+  /** The one direction a bidirectional stage kept, when it kept only one. */
+  lone: "down" | "up" | null;
+  /** The value each sort orders it by. */
   keys: Record<HistorySort, number | null>;
 }
 
-/** Each record with the value every sort orders it by, worked out once per list. */
-export const sortKeys = (records: readonly HistoryRecord[]): KeyedRecord[] =>
-  records.map((record) => {
-    const { result } = record;
-    const down = result.bidirectional?.down?.reportedBytesPerSec;
-    const up = result.bidirectional?.up?.reportedBytesPerSec;
-    // The highest loaded median, as the detail's lanes centre on it, with or without idle latency.
-    const loaded = (["download", "upload", "bidirectional"] as const).flatMap(
-      (stage) => result.latencyByStage[stage]?.p50Ms ?? [],
-    );
-    return {
-      record,
-      keys: {
-        date: record.completedAt,
-        download: result.download?.reportedBytesPerSec ?? null,
-        upload: result.upload?.reportedBytesPerSec ?? null,
-        // A large surviving lane must not outrank a complete bidirectional result.
-        bidirectional: down != null && up != null ? down + up : null,
-        idle: result.latency?.reportedMs ?? null,
-        loaded: loaded.length ? Math.max(...loaded) : null,
-      },
-    };
-  });
+const LOADED = ["download", "upload", "bidirectional"] as const;
+
+export function historyEntry(record: HistoryRecord): HistoryEntry {
+  const { result } = record;
+  const down = result.bidirectional?.down?.reportedBytesPerSec;
+  const up = result.bidirectional?.up?.reportedBytesPerSec;
+  // The highest loaded median, as the detail's lanes centre on it, with or without idle latency.
+  let loadedStage: TransferStage | null = null;
+  for (const stage of LOADED) {
+    const median = result.latencyByStage[stage]?.p50Ms;
+    if (median != null && (loadedStage === null || median > result.latencyByStage[loadedStage]!.p50Ms!))
+      loadedStage = stage;
+  }
+  const selection = result.multiServer.selection;
+  return {
+    id: record.id,
+    completedAt: record.completedAt,
+    outcome: result.outcome,
+    servers: selection.length,
+    server: selection[0]?.name ?? "",
+    stages: result.stages,
+    jitterMs: result.latency?.jitterMs ?? null,
+    addedLatency: result.addedLatency,
+    loadedStage,
+    lone: (down == null) === (up == null) ? null : down == null ? "up" : "down",
+    keys: {
+      date: record.completedAt,
+      download: result.download?.reportedBytesPerSec ?? null,
+      upload: result.upload?.reportedBytesPerSec ?? null,
+      // A large surviving lane must not outrank a complete bidirectional result.
+      bidirectional: down != null && up != null ? down + up : null,
+      idle: result.latency?.reportedMs ?? null,
+      loaded: loadedStage && result.latencyByStage[loadedStage]!.p50Ms,
+    },
+  };
+}
 
 /** Missing values last in either direction; equal ones newest first, then by id. */
-export function sortHistory(records: readonly KeyedRecord[], sort: HistorySort, descending: boolean): KeyedRecord[] {
-  return records.toSorted((a, b) => {
+export function sortHistory(entries: readonly HistoryEntry[], sort: HistorySort, descending: boolean): HistoryEntry[] {
+  return entries.toSorted((a, b) => {
     const [x, y] = [a.keys[sort], b.keys[sort]];
-    if (x === y) return b.record.completedAt - a.record.completedAt || b.record.id.localeCompare(a.record.id);
+    if (x === y) return b.completedAt - a.completedAt || b.id.localeCompare(a.id);
     if (x === null || y === null) return x === null ? 1 : -1;
     return descending ? y - x : x - y;
   });

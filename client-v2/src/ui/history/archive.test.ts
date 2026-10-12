@@ -40,15 +40,22 @@ function repository() {
     return pending.promise;
   };
   let listener: (change: HistoryChange) => void = () => {};
+  const inspected: string[] = [];
   const fake = {
-    list: read,
-    inspect: read,
+    list: async (_: AbortSignal, keep: (record: HistoryRecord) => unknown) => {
+      const { records, malformedCount } = (await read()) as { records: HistoryRecord[]; malformedCount: number };
+      return { records: records.map(keep), malformedCount };
+    },
+    inspect: (id: string) => {
+      inspected.push(id);
+      return read();
+    },
     onChange: (next: (change: HistoryChange) => void) => {
       listener = next;
       return () => {};
     },
   } as unknown as HistoryRepository;
-  return { fake, reads, change: (change: HistoryChange) => listener(change) };
+  return { fake, reads, inspected, change: (change: HistoryChange) => listener(change) };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -75,5 +82,33 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   expect(archive.records()).toHaveLength(1);
   expect(archive.error()).toBe("This result could not be read from History.");
   expect(archive.selected().status).toBe("pending");
+  dispose();
+});
+
+test("the list keeps entries only; the open result alone is read whole, again as it leaves the list", async () => {
+  const { fake, reads, inspected, change } = repository();
+  const selectedId = signal<string | null>(null);
+  const [archive, dispose] = scope(() => createArchive(fake, selectedId));
+  const [a, b] = [record("a", 2), record("b", 1)];
+  reads[0]!.resolve({ records: [a, b], malformedCount: 0 });
+  await settle();
+  expect(archive.records().map(({ id }) => id)).toEqual(["a", "b"]);
+  expect(archive.records().some((entry) => "result" in entry || "record" in entry)).toBe(false);
+
+  selectedId.set("a");
+  expect(archive.selected().status).toBe("pending");
+  expect(inspected).toEqual(["a"]);
+  reads[1]!.resolve({ status: "ready", record: a });
+  await settle();
+  expect(archive.selected()).toEqual({ status: "ready", record: a });
+
+  // Deleted in another tab: the list read again no longer holds it.
+  change({ type: "elsewhere" });
+  reads[2]!.resolve({ records: [b], malformedCount: 0 });
+  await settle();
+  expect(inspected).toEqual(["a", "a"]);
+  reads[3]!.resolve({ status: "missing" });
+  await settle();
+  expect(archive.selected()).toEqual({ status: "missing" });
   dispose();
 });

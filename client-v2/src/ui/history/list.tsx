@@ -6,7 +6,7 @@ import {
   recentCompletion,
   sortHistory,
   type HistorySort,
-  type KeyedRecord,
+  type HistoryEntry,
 } from "../../app/history/records";
 import { For, Show } from "../../lib/dom";
 import { nextFrame } from "../../lib/frame";
@@ -45,7 +45,7 @@ const unknown = () => ({ fits: Infinity, needs: 0, exact: false });
 export function ResultsList(props: {
   app: App;
   shell: Shell;
-  records: Read<readonly KeyedRecord[]>;
+  records: Read<readonly HistoryEntry[]>;
   sort: Read<Sort>;
   setSort(by: HistorySort, descending: boolean): void;
   pages: Signal<number>;
@@ -79,7 +79,7 @@ export function ResultsList(props: {
     const [row, today] = [present(), days()];
     return ordered()
       .slice(0, shown())
-      .map((keyed) => row(keyed, today));
+      .map((entry) => row(entry, today));
   });
   const groups = computed(() => groupRows(visible()));
 

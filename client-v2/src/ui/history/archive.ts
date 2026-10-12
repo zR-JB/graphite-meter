@@ -1,10 +1,10 @@
-// The saved results one visit to History lists: read once as it opens, kept current by this tab's changes as they
-// land, read again quietly on another tab's, and a linked result found even past the newest 2,000. Leaving stops a
-// read still under way.
-import { sortKeys, type HistoryRecord } from "../../app/history/records";
+// The saved results one visit to History lists, as entries small enough to keep 2,000: read once as it opens, kept
+// current by this tab's changes as they land, and read again quietly on another tab's. The open result alone is read
+// whole, even past the newest 2,000. Leaving stops a read still under way.
+import { historyEntry, type HistoryRecord } from "../../app/history/records";
 import type { HistoryChange, HistoryRepository } from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
-import { applyChange, withRecord, type Listed } from "./model";
+import { applyChange, withEntry, type Listed } from "./model";
 
 export type Selected =
   | { status: "none" | "pending" | "missing" | "malformed" }
@@ -19,8 +19,8 @@ const UNREAD = "This result could not be read from History.";
 export function createArchive(repository: HistoryRepository, selectedId: Read<string | null>) {
   const state = signal<"loading" | "ready" | "error">("loading");
   const listed = signal<Listed>({ records: [], malformed: 0 });
-  /** What reading the linked result found when it is not in the list. */
-  const answer = signal<{ id: string; status: "missing" | "malformed" } | null>(null);
+  /** What reading the open result whole found: the one whole record History holds. */
+  const answer = signal<{ id: string; selected: Selected } | null>(null);
   const error = signal("");
   let reading: AbortController | null = null;
   /** This tab's changes since the running read began: it may have read before some of them landed. */
@@ -38,11 +38,11 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
       error.set("");
       if (!quiet) state.set("loading");
     });
-    repository.list(controller.signal).then(
+    repository.list(controller.signal, historyEntry).then(
       ({ records, malformedCount }) => {
         if (reading !== controller) return;
         reading = null;
-        let next: Listed = { records: sortKeys(records), malformed: malformedCount };
+        let next: Listed = { records, malformed: malformedCount };
         for (const change of missed) next = applyChange(next, change);
         missed = [];
         batch(() => {
@@ -69,30 +69,36 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
   });
 
   const records = computed(() => listed().records);
-  const found = computed(() => {
+  const listedOpen = computed(() => {
     const id = selectedId();
-    return id === null ? null : (records().find(({ record }) => record.id === id)?.record ?? null);
+    return id !== null && records().some((entry) => entry.id === id);
   });
 
   function lookUp(id: string): void {
     const at = changes;
     repository.inspect(id).then(
       (result) => {
-        if (disposed || selectedId.peek() !== id || found.peek()) return;
+        if (disposed || selectedId.peek() !== id) return;
         if (changes !== at) return lookUp(id);
-        if (result.status === "ready")
-          listed.set({ ...listed.peek(), records: withRecord(records.peek(), sortKeys([result.record])[0]!) });
-        else answer.set({ id, status: result.status });
+        batch(() => {
+          answer.set({ id, selected: result });
+          // One past the newest 2,000 joins the list while it is open.
+          if (result.status === "ready" && !listedOpen.peek())
+            listed.set({ ...listed.peek(), records: withEntry(records.peek(), historyEntry(result.record)) });
+        });
       },
       () => {
         if (!disposed && selectedId.peek() === id) error.set(UNREAD);
       },
     );
   }
-  // A linked result outside the list is read on its own, once the list is.
+  // The open result is read once the list is, and again as it leaves the list, so one deleted elsewhere reads as
+  // missing; closing it lets go of it.
   effect(() => {
     const id = selectedId();
-    if (id === null || state() !== "ready" || found()) return;
+    const listedNow = listedOpen();
+    if (id === null) return untrack(() => answer.set(null));
+    if (state() !== "ready" || (listedNow && untrack(answer)?.id === id)) return;
     untrack(() => lookUp(id));
   });
 
@@ -110,14 +116,12 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     malformed: computed(() => listed().malformed),
     /** Why this view's last change to, or read of, History failed; each list read clears it. */
     error,
-    /** The linked result, or why there is none; pending while it is read, so nothing flashes "not found". */
+    /** The open result, or why there is none; pending while it is read, so nothing flashes "not found". */
     selected: computed<Selected>(() => {
       const id = selectedId();
       if (id === null) return NONE;
-      const record = found();
-      if (record) return { status: "ready", record };
       const known = answer();
-      return state() === "ready" && known?.id === id ? { status: known.status } : PENDING;
+      return known?.id === id ? known.selected : PENDING;
     }),
     /** Reads the archive again; `quiet` keeps the list on screen meanwhile. */
     load,

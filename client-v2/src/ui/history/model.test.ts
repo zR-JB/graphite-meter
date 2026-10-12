@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { HISTORY_LIMIT, sortKeys, type HistoryRecord, type KeyedRecord } from "../../app/history/records";
+import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistoryRecord } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { RunResult } from "../../engine/run/result";
 import { applyChange, columnScales, daysAt, groupRows, rowPresenter, type Listed, type RowContext } from "./model";
@@ -11,8 +11,8 @@ const rate = (reportedBytesPerSec: number) => ({ reportedBytesPerSec });
 const latency = (p50Ms: number) => ({ p50Ms, probeCount: 20 });
 
 // Only what History's list reads; the rest of a record never reaches it.
-function saved(id: string, completedAt: number, result: Partial<Record<keyof RunResult, unknown>> = {}): KeyedRecord {
-  const record = {
+function stored(id: string, completedAt: number, result: Partial<Record<keyof RunResult, unknown>> = {}) {
+  return {
     schemaVersion: 5,
     id,
     completedAt,
@@ -31,8 +31,8 @@ function saved(id: string, completedAt: number, result: Partial<Record<keyof Run
       ...result,
     },
   } as unknown as HistoryRecord;
-  return sortKeys([record])[0]!;
 }
+const saved = (...args: Parameters<typeof stored>): HistoryEntry => historyEntry(stored(...args));
 
 test("a rate column reads in the tier of its upper median, latency in ms, a column without values unitless", () => {
   const cases: [number[], string, number][] = [
@@ -58,14 +58,14 @@ test("a rate column reads in the tier of its upper median, latency in ms, a colu
   expect(columnScales([saved("a", NOW)], { base: "base2", kind: "bytes" }).download.unit).toBe("MiB/s");
 });
 
-const context = (records: KeyedRecord[], overrides: Partial<RowContext> = {}): RowContext => ({
+const context = (records: HistoryEntry[], overrides: Partial<RowContext> = {}): RowContext => ({
   columns: ["download", "upload", "bidirectional", "idle", "loaded"],
   scales: columnScales(records, bits),
   units: bits,
   byDay: true,
   ...overrides,
 });
-const present = (record: KeyedRecord, rowContext: RowContext) => rowPresenter(rowContext)(record, daysAt(NOW));
+const present = (record: HistoryEntry, rowContext: RowContext) => rowPresenter(rowContext)(record, daysAt(NOW));
 
 test("a row's cells read value, note and the word for a missing value", () => {
   const cases: [string, Partial<Record<keyof RunResult, unknown>>, string[]][] = [
@@ -140,24 +140,24 @@ test("a heading that returns after another keeps its rows in their own group", (
 });
 
 test("changes that landed while a list was read apply again to it without changing the result", () => {
-  const [a, b, c] = ["a", "b", "c"].map((id, i) => saved(id, NOW - i * 60_000)) as [
-    KeyedRecord,
-    KeyedRecord,
-    KeyedRecord,
+  const [a, b, c] = ["a", "b", "c"].map((id, i) => stored(id, NOW - i * 60_000)) as [
+    HistoryRecord,
+    HistoryRecord,
+    HistoryRecord,
   ];
   const changes: Exclude<HistoryChange, { type: "elsewhere" }>[] = [
-    { type: "saved", record: c.record },
+    { type: "saved", record: c },
     { type: "deleted", ids: ["a"] },
     { type: "malformed-removed" },
     { type: "cleared" },
-    { type: "saved", record: b.record },
+    { type: "saved", record: b },
   ];
   const replay = (from: Listed, list: typeof changes) => list.reduce(applyChange, from);
-  const before: Listed = { records: [a], malformed: 3 };
+  const before: Listed = { records: [historyEntry(a)], malformed: 3 };
   // A read that saw any prefix of the changes ends where the list that followed them all does.
   for (let seen = 0; seen <= changes.length; seen++) {
     const read = replay(before, changes.slice(0, seen));
-    const ids = (listed: Listed) => listed.records.map(({ record }) => record.id).sort();
+    const ids = (listed: Listed) => listed.records.map(({ id }) => id).sort();
     expect(ids(replay(read, changes)), `read after ${seen}`).toEqual(["b"]);
     expect(replay(read, changes).malformed).toBe(0);
   }
@@ -165,11 +165,11 @@ test("changes that landed while a list was read apply again to it without changi
 
 test("a result added at the limit replaces the oldest other, so the count stays at the limit", () => {
   const full = Array.from({ length: HISTORY_LIMIT }, (_, i) => saved(String(i), NOW - i));
-  const old = saved("old", NOW - 1e9);
-  const { records } = applyChange({ records: full, malformed: 0 }, { type: "saved", record: old.record });
+  const old = stored("old", NOW - 1e9);
+  const { records } = applyChange({ records: full, malformed: 0 }, { type: "saved", record: old });
   expect(records).toHaveLength(HISTORY_LIMIT);
-  expect(records.some(({ record }) => record.id === "old")).toBe(true);
-  expect(records.some(({ record }) => record.id === String(HISTORY_LIMIT - 1))).toBe(false);
+  expect(records.some(({ id }) => id === "old")).toBe(true);
+  expect(records.some(({ id }) => id === String(HISTORY_LIMIT - 1))).toBe(false);
 });
 
 test("a row stays the same object across a day unless its day words change", () => {
