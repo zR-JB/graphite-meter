@@ -34,6 +34,9 @@ import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 export const FRESH_MS = 120_000;
 /** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays ready. */
 const LIVENESS_MS = 5_000;
+/** A monitored one re-reads it this often: its bus proves liveness, not an unchanged generation, stage limit or
+    targets behind a proxy that holds the bus open. */
+const MONITORED_MS = 60_000;
 const DISCOVERY_BUDGET_MS = 5_000;
 const ROLE_BUDGET_MS = 12_000;
 const IDLE_INTERVAL_MS = 1_000;
@@ -228,7 +231,7 @@ function connect(
     const known = discovery();
     if (!known) return 0;
     if (!selected()) return known.readAt + FRESH_MS;
-    return watchedPath() ? Infinity : known.readAt + LIVENESS_MS;
+    return known.readAt + (watchedPath() ? MONITORED_MS : LIVENESS_MS);
   });
   const dueAt = computed((): number => {
     let at = discoveryDue();

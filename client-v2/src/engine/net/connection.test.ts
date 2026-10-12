@@ -186,6 +186,28 @@ test("the bus that proved the shown server's latency becomes its idle monitor, a
   expect(net.sent("/preflight")).toEqual([0, 30_000, 35_000]);
 });
 
+test("a monitored server re-reads its discovery each minute, quietly, and a new generation proves its paths again", async () => {
+  let generation = "g1";
+  net = fakeNet((url) =>
+    url.pathname === "/preflight"
+      ? { body: { ...preflight([h(".", "http1")], [ws(".")]), generation } }
+      : { body: PROBE, hop: "http/1.1" },
+  );
+  const { connection, buses, readiness } = connect(self, { latency: true });
+  await net.advance(119_000);
+  expect(net.sent("/preflight")).toEqual([0, 60_000]);
+  expect(net.sent("/probe")).toEqual([0, 0]);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([false]);
+  expect(readiness).toEqual(["checking", "verified"]);
+  // A restart behind a proxy that keeps the bus open.
+  generation = "g2";
+  await net.advance(3_000);
+  expect(net.sent("/preflight")).toEqual([0, 60_000, 120_000]);
+  expect(net.sent("/probe")).toEqual([0, 0, 120_000, 120_000]);
+  expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
+  expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, discovery: { generation: "g2" } });
+});
+
 test("a latency check's bus closes with the check when it is cut short or no monitor wants it", async () => {
   net = fakeNet((url) =>
     url.pathname === "/preflight"
