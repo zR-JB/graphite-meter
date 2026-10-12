@@ -68,7 +68,7 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
         : { body: PROBE, hop: "http/1.1" },
   );
   const peer: CatalogEntry = { id: "peer", url: "https://peer.example", name: "Peer", additionalOrigins: [] };
-  const grant = { token: "t".repeat(43), deadline: 60_000, maximumLifetimeMs: 28_800_000 };
+  const grant = { token: "t".repeat(43), deadline: 60_000, expires: Infinity, maximumLifetimeMs: 28_800_000 };
   const { connection } = connect(peer, { auth: grantAuth(peer, grant, net.now) });
   await net.advance(20_000);
   expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000]);

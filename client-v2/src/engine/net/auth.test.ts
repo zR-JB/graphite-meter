@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { SignInRequired, type RequestRecipe, type ServerAuth } from "../types";
 import {
@@ -29,7 +29,14 @@ const peer: CatalogEntry = {
 };
 const session = { headers: (method: string) => csrfHeaders(method, "theme=dark; __Host-gm_csrf=a%2Bb") } as PageSession;
 const TOKEN = "t".repeat(43);
-const grant = (deadline: number) => grantAuth(peer, { token: TOKEN, deadline, maximumLifetimeMs: 28_800_000 }, () => 0);
+/** A grant whose monotonic deadline is `deadline` and whose wall-clock expiry is `expires`. */
+const held = (deadline: number, expires = Infinity) => ({
+  token: TOKEN,
+  deadline,
+  expires,
+  maximumLifetimeMs: 28_800_000,
+});
+const grant = (deadline: number) => grantAuth(peer, held(deadline), () => 0);
 
 const OUTSIDE = "Request destination is outside the selected server";
 const omit: RequestRecipe = { headers: {}, credentials: "omit", redirect: "error" };
@@ -143,7 +150,7 @@ test("a marked refusal is a sign-in that ends what it refused; an unmarked one i
   await expect(sessionAuth(self, page, ending).fetch(`${page.origin}/marked`)).rejects.toBeInstanceOf(SignInRequired);
   expect(ended).toEqual(["expired"]);
   // A refused grant is over: whatever follows is refused before any request.
-  const auth = grantAuth(peer, { token: TOKEN, deadline: 60_000, maximumLifetimeMs: 28_800_000 }, net.now);
+  const auth = grantAuth(peer, held(60_000), net.now);
   await expect(auth.fetch("https://peer.example/marked")).rejects.toBeInstanceOf(SignInRequired);
   const sent = net.requests.length;
   expect(() => auth.request("https://peer.example/probe", "GET")).toThrow(SignInRequired);
@@ -154,7 +161,7 @@ test("a marked refusal is a sign-in that ends what it refused; an unmarked one i
 test("whether a grant ended is one 3 s probe for all who ask; only its marker or its deadline says yes", async () => {
   let answer: Answer = "unreachable";
   net = fakeNet(() => answer);
-  const auth = grantAuth(peer, { token: TOKEN, deadline: 60_000, maximumLifetimeMs: 28_800_000 }, net.now);
+  const auth = grantAuth(peer, held(60_000), net.now);
   for (const [next, ended] of [
     ["unreachable", false],
     [{ status: 403 }, false],
@@ -171,9 +178,21 @@ test("whether a grant ended is one 3 s probe for all who ask; only its marker or
   ).toEqual(Array(4).fill(["https://peer.example/probe", "omit", `Bearer ${TOKEN}`]));
   expect(() => auth.request("https://peer.example/probe", "GET")).toThrow(SignInRequired);
   // A grant past its deadline has ended without asking.
-  const late = grantAuth(peer, { token: TOKEN, deadline: 9_000, maximumLifetimeMs: 28_800_000 }, net.now);
+  const late = grantAuth(peer, held(9_000), net.now);
   expect(await late.ended()).toBe(true);
   expect(net.requests.length).toBe(4);
+});
+
+test("a grant also ends by the wall clock, which runs on while a suspend pauses the page clock", async () => {
+  const slept = grantAuth(peer, held(60_000, Date.now() + 1_000), () => 0);
+  expect(slept.request("https://peer.example/probe", "GET")).toEqual(bearer);
+  setSystemTime(new Date(Date.now() + 1_000));
+  try {
+    expect(() => slept.request("https://peer.example/probe", "GET")).toThrow(SignInRequired);
+    expect(await slept.ended()).toBe(true);
+  } finally {
+    setSystemTime();
+  }
 });
 
 test("the grant exchange polls until approval and refuses invalid grants, the login's limit and an abort", async () => {
@@ -197,10 +216,13 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
     net?.restore();
     let round = 0;
     net = fakeNet(() => answers[Math.min(round++, answers.length - 1)]!);
+    const wall = Date.now() - net.now();
     const signal = new AbortController().signal;
     const exchanged = exchangeGrant(peer, "verifier", signal, net.now).catch((error: Error) => error.message);
     await net.advance(130_000);
-    expect(await exchanged, JSON.stringify(answers)).toEqual(outcome);
+    // The wall-clock expiry is the monotonic deadline on the clock the page started on.
+    const expected = typeof outcome === "string" ? outcome : { ...outcome, expires: wall + outcome.deadline };
+    expect(await exchanged, JSON.stringify(answers)).toEqual(expected);
   }
   expect(net?.requests[0]?.init).toMatchObject({
     method: "POST",

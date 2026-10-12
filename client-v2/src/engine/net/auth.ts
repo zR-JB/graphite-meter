@@ -1,6 +1,6 @@
 // Per-server credentials: none, the page's own login, or a measurement grant a peer approved. Requests they authorize
 // stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and never in a URL, and every
-// lifetime is a monotonic deadline.
+// lifetime is a monotonic deadline, a grant's also a wall-clock one.
 import { grant as grantDocument, readJSON, type CatalogEntry } from "../../protocol/documents";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type RequestRecipe, type ServerAuth, type ServerIdentity } from "../types";
@@ -13,8 +13,14 @@ export interface Grant {
   token: string;
   /** Monotonic page ms. */
   deadline: number;
+  /** Epoch ms by this page's clock, which runs on through a suspend that can pause the monotonic one. */
+  expires: number;
   maximumLifetimeMs: number;
 }
+
+/** How long `grant` has left, by whichever clock says less. */
+export const grantLeft = (grant: Grant, now: () => number): number =>
+  Math.min(grant.deadline - now(), grant.expires - Date.now());
 
 const ENDED_CHECK_MS = 3_000;
 
@@ -96,7 +102,7 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
   const authorization = { Authorization: `Bearer ${grant.token}` };
   let revoked = false;
   let checking: Promise<boolean> | null = null;
-  const over = () => revoked || now() >= grant.deadline;
+  const over = () => revoked || grantLeft(grant, now) <= 0;
   // A broken stream is how a withdrawn grant first shows: the grant's own request is refused with the marker.
   async function check(): Promise<boolean> {
     try {
@@ -199,7 +205,7 @@ export async function exchangeGrant(
   const deadline = now() + APPROVAL_MS;
   while (now() < deadline) {
     signal.throwIfAborted();
-    const sentAt = now();
+    const [sentAt, sentWall] = [now(), Date.now()];
     const response = await fetch(`${entry.url}/auth/browser/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -223,7 +229,7 @@ export async function exchangeGrant(
       signal.throwIfAborted();
       if (!answer.remainingMs || answer.remainingMs > MAX_GRANT_MS) throw new Error("Invalid measurement grant");
       const { token, remainingMs, maximumLifetimeMs } = answer;
-      return { token, deadline: sentAt + remainingMs, maximumLifetimeMs };
+      return { token, deadline: sentAt + remainingMs, expires: sentWall + remainingMs, maximumLifetimeMs };
     }
     if (response) {
       response.body?.cancel().catch(() => {});

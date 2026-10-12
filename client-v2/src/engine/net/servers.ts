@@ -30,7 +30,15 @@ import type {
   ServerAuth,
   TestConfig,
 } from "../types";
-import { ApprovalLimitError, beginApproval, exchangeGrant, grantAuth, initialAuth, type Grant } from "./auth";
+import {
+  ApprovalLimitError,
+  beginApproval,
+  exchangeGrant,
+  grantAuth,
+  grantLeft,
+  initialAuth,
+  type Grant,
+} from "./auth";
 import { describeStreams, needsPings, planError, plannedActivities, type PlanServer } from "./budget";
 import { createConnection, FRESH_MS, type Connection, type ConnectionEnv, type ServerView } from "./connection";
 import { createLimiter } from "./limiter";
@@ -447,13 +455,19 @@ export function createServers(env: ServersEnv): Servers {
       const { name } = connection.view.peek().server;
       if (requiredMs > held.grant.maximumLifetimeMs)
         throw new CoverageError(`${name}: this test is longer than its sign-in can last. Shorten it before starting.`);
-      if (held.grant.deadline - now() < requiredMs) {
+      const left = grantLeft(held.grant, now);
+      // A grant that ended while the page slept is the sign-in its own timer would have asked for.
+      if (left <= 0) {
+        connection.requireSignIn();
+        continue;
+      }
+      if (left < requiredMs) {
         if (!flow) approval.set({ state: "renew", id: entry.id, renewUrl: `${entry.url}/login?reason=renew` });
         throw new CoverageError(
           `${name}: its sign-in ends before this test would. Renew the login there, or shorten the test.`,
         );
       }
-      earliest = Math.min(earliest ?? Infinity, held.grant.deadline);
+      earliest = Math.min(earliest ?? Infinity, now() + left);
     }
     budget = earliest;
   }

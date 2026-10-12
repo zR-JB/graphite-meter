@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { signal } from "../../lib/signal";
 import { catalog } from "../../protocol/documents";
 import type { TestConfig } from "../types";
@@ -284,4 +284,42 @@ test("a peer grant that ends before the test asks to renew its login, and the ne
     approval: { state: "idle" },
     readiness: "verified",
   });
+});
+
+test("Start judges a peer grant by the wall clock too, which runs on while the page sleeps", async () => {
+  const peer = "https://peer.example";
+  const catalogue = {
+    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
+    defaultSelection: ["self", "peer"],
+  };
+  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 28_800_000 };
+  const { servers, readiness } = await load((url, init) => {
+    if (url.pathname === "/servers") return { body: catalogue };
+    if (url.pathname === "/auth/browser/token") return { body: grant };
+    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    return url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" };
+  });
+  servers.signIn("peer");
+  await net!.advance(2_000);
+  const authorize = (ms: number) =>
+    servers.authorize(ms, new AbortController().signal).then(
+      () => "covered",
+      (error: Error) => error.message,
+    );
+  const asleep = (ms: number) => setSystemTime(new Date(Date.now() + ms));
+  try {
+    // 50 minutes asleep leave 10 of the grant's 60, though the paused page clock still counts 60.
+    asleep(3_000_000);
+    expect(await authorize(1_800_000)).toBe(
+      "Meter: its sign-in ends before this test would. Renew the login there, or shorten the test.",
+    );
+    // Asleep past its end, the grant is the sign-in its own timer would have asked for, and Start runs without it.
+    asleep(600_000);
+    expect(await authorize(1_800_000)).toBe("covered");
+    expect(readiness("peer")).toBe("sign-in");
+  } finally {
+    setSystemTime();
+  }
 });
