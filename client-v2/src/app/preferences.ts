@@ -44,6 +44,9 @@ export function clampDuration(key: DurationKey, value: unknown): number {
     : DEFAULT_CONFIG.duration[key];
 }
 
+/** The History list's share of its body width until the user moves it. */
+export const HISTORY_SPLIT = 0.42;
+
 export const HISTORY_COLUMNS = ["download", "upload", "bidirectional", "idle", "loaded"] as const;
 export type HistoryColumn = (typeof HISTORY_COLUMNS)[number];
 export type Theme = "dark" | "light" | "auto";
@@ -138,7 +141,7 @@ export function readPreferences(stored: unknown): Preferences {
     historySplit:
       typeof saved.historySplit === "number" && saved.historySplit >= 0 && saved.historySplit <= 1
         ? saved.historySplit
-        : 0.42,
+        : HISTORY_SPLIT,
   };
 }
 

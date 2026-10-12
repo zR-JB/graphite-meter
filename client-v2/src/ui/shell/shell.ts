@@ -65,9 +65,10 @@ export function focusMove(facts: {
   after: Route;
   /** The panels visible now; the route before names those that were open, whatever the layout showed. */
   shown: readonly Panel[];
-  /** The panel that held focus as the route changed, and whether anything still holds it. */
+  /** The panel that held focus as the route changed, and whether anything still holds it: asked only when a panel
+      closed, since asking lays out the page. */
   holder: Panel | null;
-  focused: boolean;
+  focused(): boolean;
   wanted: "element" | "workspace" | "keep" | null;
   fromHistory: boolean;
   flyout: boolean;
@@ -80,7 +81,7 @@ export function focusMove(facts: {
   if (facts.wanted) return { to: facts.wanted === "element" ? "wanted" : "workspace" };
   const closed = named.filter((panel) => !shown.includes(panel));
   if (holder && closed.includes(holder)) return { to: "invoker", panel: holder };
-  if (closed.length) return facts.focused ? null : { to: "invoker", panel: closed.at(-1)! };
+  if (closed.length) return facts.focused() ? null : { to: "invoker", panel: closed.at(-1)! };
   const switched = facts.fromHistory && workspaceOf(before) !== workspaceOf(after);
   return switched && !legalOf(after) && !facts.flyout ? { to: "workspace" } : null;
 }
@@ -168,7 +169,7 @@ export function createShell(app: App, layout: Layout) {
       after: next,
       shown,
       holder,
-      focused: hasFocus(),
+      focused: hasFocus,
       wanted: wanted instanceof HTMLElement ? "element" : (wanted ?? null),
       fromHistory,
       flyout: flyout.peek(),
