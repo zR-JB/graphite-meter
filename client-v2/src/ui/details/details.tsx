@@ -380,8 +380,8 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           {fact(
             "Client",
             () => (BUILD.version ? `v${BUILD.version}` : REVISION),
-            () => (REVISION === BUILD.revision ? "" : `Commit ${BUILD.revision}`),
-            () => [BUILD.profile, BUILD.version && REVISION].filter(Boolean).join(", "),
+            () => (REVISION === BUILD.revision ? TIP.client : `${TIP.client}\nCommit ${BUILD.revision}`),
+            () => ["v2", BUILD.profile, BUILD.version && REVISION].filter(Boolean).join(", "),
           )}
           {fact(
             "Server",

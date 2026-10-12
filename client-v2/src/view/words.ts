@@ -336,6 +336,7 @@ export const TIP = {
   uploadFeed: "Upload feed\nHow the server reports upload bytes back",
   clientAddress: "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
   serverLoad: "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
+  client: "Client\nThis page's build of browser client v2",
   serverInstance: "Server\nEngine version; the instance changes on restart",
   pretestLatency: "Pre-test latency\nMedian round trip of the path check\nThe shown server's sizes the warmup",
 } as const;
