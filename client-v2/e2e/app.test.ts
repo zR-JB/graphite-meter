@@ -287,3 +287,16 @@ test("a completed run fits every layout and theme without serious violations", a
   await expect(dialog).toHaveCount(0);
   await expect(about).toBeFocused();
 });
+
+test.chrome("a run logs nothing to the console, rendering errors included", async (page) => {
+  await open(page);
+  await ready(page);
+  await page.cdp("Log.enable");
+  const logged: string[] = [];
+  await page.onCdp("Log.entryAdded", (event: any) => {
+    const entry = event.data?.entry;
+    if (entry?.level === "error" || entry?.level === "warning") logged.push(`${entry.source}: ${entry.text}`);
+  });
+  await run(page);
+  expect(logged).toEqual([]);
+});

@@ -260,8 +260,11 @@ export function StageGraph(props: StripProps): HTMLElement {
     if (medianY !== medianAt) {
       medianAt = medianY;
       shown(median, baseline !== null);
-      median.setAttribute("y1", medianY);
-      median.setAttribute("y2", medianY);
+      // Without a median the line hides where it was; an empty length is no coordinate.
+      if (baseline !== null) {
+        median.setAttribute("y1", medianY);
+        median.setAttribute("y2", medianY);
+      }
     }
     const list = bars();
     list.forEach((bar, index) => {
