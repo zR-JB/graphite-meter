@@ -4,12 +4,13 @@ import type { LaneCommand, LaneReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
 import { downloadRefused, refused } from "../lanes/endings";
 
+const MIB = 1024 * 1024;
 /** A POST spans about this long: its turnaround sits in the receiver's elapsed time, so shorter ones lose accuracy. */
 const TARGET_POST_MS = 500;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 /** Bodies repeat one random block, so memory stays at the block whatever their size. */
-const MAX_POST_BYTES = 256 * 1024 * 1024;
+const MAX_POST_BYTES = 256 * MIB;
 
 const post = (report: LaneReport) => postMessage(report);
 const ignore = () => {};
@@ -44,7 +45,9 @@ async function download({ url, request, epoch }: Extract<LaneCommand, { type: "d
   }
 }
 
-async function upload({ url, request }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+async function upload({ url, request, streams }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+  // Firefox reports no device memory and can stall a body past v1's 128 MiB share without an error.
+  const largest = "deviceMemory" in navigator ? MAX_POST_BYTES : Math.max(2 * MIB, Math.floor((128 * MIB) / streams));
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
@@ -61,10 +64,9 @@ async function upload({ url, request }: Extract<LaneCommand, { type: "upload" }>
       const elapsedMs = performance.now() - startedAt;
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
-      // The next POST aims at the target from a smoothed rate, changing at most twofold.
       rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
       const want = (rate * TARGET_POST_MS) / 1000;
-      bytes = Math.floor(Math.min(MAX_POST_BYTES, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))));
+      bytes = Math.floor(Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))));
     } catch (error) {
       return { type: "broken", detail: String(error) };
     }

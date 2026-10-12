@@ -51,7 +51,7 @@ export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; de
 /** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number }
-  | { type: "upload"; url: string; request: RequestRecipe }
+  | { type: "upload"; url: string; request: RequestRecipe; streams: number }
   | { type: "measure"; epoch: number };
 
 /** `posted` is one completed upload POST, timed on the worker clock: presentation evidence, never a measurement. */
