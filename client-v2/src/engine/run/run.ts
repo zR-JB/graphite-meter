@@ -1134,21 +1134,26 @@ export class Run {
     // was moving look silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
-    // Bytes a lane counted but had not reported yet still count; lanes read on until they answer, so the boundary
-    // closes when the last answer came, the time those counts were read at.
-    const flushed = async (seat: Seat) => {
-      seat.flushing = true;
-      await seat.resources.flush();
-      seat.flushing = false;
-      boundary.down[seat.server.id] = seat.down;
-      boundary.atMs = Math.max(boundary.atMs, this.#clock.runMs());
-    };
+    // Bytes lanes counted but had not reported yet still count. Lanes read and report on until every server's
+    // lanes have answered; the download boundary closes then, for every server at once, so each count is as current
+    // as at any boundary mid-stage (one report interval) at the same moment.
+    const flushed = transfer.includes("down")
+      ? (async () => {
+          for (const seat of seats) seat.flushing = true;
+          await Promise.allSettled(seats.map((seat) => seat.resources.flush()));
+          boundary.atMs = Math.max(boundary.atMs, this.#clock.runMs());
+          for (const seat of seats) {
+            seat.flushing = false;
+            boundary.down[seat.server.id] = seat.down;
+          }
+        })()
+      : null;
     const answers = await Promise.allSettled(
       seats.map(async (seat) => {
         try {
           const [checkpoint] = await Promise.all([
             upload ? seat.resources.checkpoint(stage.abort.signal, true) : null,
-            transfer.includes("down") && flushed(seat),
+            flushed,
           ]);
           return checkpoint;
         } finally {

@@ -197,6 +197,15 @@ test("lanes that read on until their flush answers count against the time it ans
   near((await h.result()).download?.reportedBytesPerSec, 1_000);
 });
 
+test("servers whose lanes answer the final flush at different times are cut at the same moment", async () => {
+  const late = () => new Promise<void>((resolve) => later(200, resolve));
+  const h = setup(two({ flush: () => {} }, { rate: 1, flush: late }), { download: true }, { downloadMs: 1_000 });
+  h.start();
+  const result = await h.result();
+  near(result.download?.reportedBytesPerSec, 2_000);
+  for (const server of result.multiServer.servers) near(server.download?.reportedBytesPerSec, 1_000);
+});
+
 test("a server that stayed without a result of its own makes the stage partial, coherently", async () => {
   const h = setup(two({}, { rate: 0 }), { download: true }, { downloadMs: 1_000 });
   h.start();
