@@ -60,6 +60,11 @@ export class ByteReports {
     if (now - this.#since >= this.#reportMs) this.flush(now);
   };
 
+  /** Counts without reading the clock; the next count or flush reports the bytes. */
+  add(bytes: number): void {
+    this.#bytes += bytes;
+  }
+
   flush(now = performance.now()): void {
     if (this.#bytes) this.report(this.#bytes, this.#epoch);
     this.#bytes = 0;

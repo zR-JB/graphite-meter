@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, jest, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import type { LaneCommand, ProbeCommand, SessionCommand } from "../../protocol/messages";
 import { elapse } from "../lanes/fakes.testutil";
 
@@ -68,6 +68,11 @@ class FakeWebTransport {
   /** The server opens a stream. */
   open(stream: ReadableStream<Uint8Array>): void {
     this.#streams.enqueue(stream);
+  }
+
+  /** The server sends a datagram. */
+  datagram(bytes: number): void {
+    this.#datagrams.enqueue(new Uint8Array(bytes));
   }
 
   /** The server resets the session's streams and datagrams. */
@@ -233,6 +238,28 @@ test("a session relays a flood of receiver progress as its newest record every 5
     { type: "progress", bytes: 1, nanos: 1 },
     { type: "progress", bytes: 1_000, nanos: 1_000 },
   ]);
+});
+
+test("a datagram download reads the clock once per 16 datagrams and still counts every byte", async () => {
+  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
+  session.send({
+    type: "download",
+    url: "https://peer.example/wt/download?datagrams=1",
+    ticket: null,
+    datagrams: true,
+    epoch: 0,
+  });
+  const transport = FakeWebTransport.dialed.at(-1)!;
+  transport.accept();
+  await elapse(0);
+  const clock = spyOn(performance, "now");
+  for (let i = 0; i < 1_600; i++) transport.datagram(1_200);
+  for (let turn = 0; turn < 10_000; turn++) await null;
+  expect(clock.mock.calls.length).toBeLessThanOrEqual(1_600 / 16 + 1);
+  clock.mockRestore();
+  session.send({ type: "flush" });
+  const counted = session.posted.flatMap((report) => (report.type === "bytes" ? [report.bytes as number] : []));
+  expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(1_600 * 1_200);
 });
 
 test("a session whose streams broke waits for its close: a revocation asks for sign-in, silence is a break", async () => {

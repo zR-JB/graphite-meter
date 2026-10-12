@@ -13,6 +13,8 @@ type Upload = Extract<SessionCommand, { type: "upload" }>;
 
 /** A datagram loop settled within one microtask checkpoint would outrun the task carrying its own stop. */
 const YIELD_MS = 4;
+/** A datagram loop reads the clock, for its report window and its yield, once per this many datagrams. */
+const CLOCK_EVERY = 16;
 /** A flood of receiver progress reaches the page at most this often. */
 const RECORD_MS = 50;
 const UNESTABLISHED: EndReport = {
@@ -147,8 +149,14 @@ class Session {
     try {
       const reader = transport.datagrams.readable.getReader();
       let yielded = performance.now();
+      let unclocked = 0;
       for (let next = await reader.read(); !next.done; next = await reader.read()) {
-        // One clock read per datagram serves the report window and the yield.
+        if (++unclocked < CLOCK_EVERY) {
+          reports.add(next.value.byteLength);
+          continue;
+        }
+        unclocked = 0;
+        // One clock read serves the report window and the yield.
         const now = performance.now();
         reports.count(next.value.byteLength, now);
         if (now - yielded < YIELD_MS) continue;
@@ -237,19 +245,25 @@ class Session {
     const { datagrams } = transport;
     try {
       const writer = datagrams.writable.getWriter();
-      let payload = block.subarray(0, 0);
+      let payload: Uint8Array<ArrayBuffer> | null = null;
       let yielded = performance.now();
+      let unclocked = 0;
       while (this.#state === "open") {
+        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write: the size is
+        // read again after each yield.
+        if (!payload) {
+          const size = Math.min(block.length, datagrams.maxDatagramSize);
+          if (!size) return this.#end({ type: "ended", ending: lost("webtransport datagram size collapsed") });
+          payload = block.subarray(0, size);
+        }
         await writer.ready;
-        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write.
-        const size = Math.min(block.length, datagrams.maxDatagramSize);
-        if (!size) return this.#end({ type: "ended", ending: lost("webtransport datagram size collapsed") });
-        if (payload.length !== size) payload = block.subarray(0, size);
         writer.write(payload).catch(ignore);
-        const now = performance.now();
-        if (now - yielded < YIELD_MS) continue;
+        if (++unclocked < CLOCK_EVERY) continue;
+        unclocked = 0;
+        if (performance.now() - yielded < YIELD_MS) continue;
         await taskTurn();
         yielded = performance.now();
+        payload = null;
       }
     } catch (error) {
       this.#broken(error);
