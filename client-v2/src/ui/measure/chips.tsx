@@ -249,7 +249,8 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   );
 }
 
-/** Start, Stop or Cancel. Never disabled: a refused start says why, in its tip and in the dial's note. */
+/** Start, Stop or Cancel. Never disabled: a blocked start stays focusable, aria-disabled, and says why in its
+    description, its tip and the dial's note. */
 export function RunButton(props: { app: App }): Node {
   const { app } = props;
   const { run, servers } = app;
@@ -263,7 +264,6 @@ export function RunButton(props: { app: App }): Node {
       <button
         type="button"
         class={() => `run-button${busy() ? " running" : ""}${run.preparing() ? " pending" : ""}`}
-        aria-busy={() => (run.preparing() ? "true" : "false")}
         aria-disabled={() => (blocker() ? "true" : "false")}
         aria-describedby={() => (idle() ? "run-duration" : undefined)}
         ref={tip(blocker)}

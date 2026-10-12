@@ -139,6 +139,22 @@ test("a docked panel's edge steps 16 px from the keyboard, within its limits", a
   }
 });
 
+test("the run key is never marked busy, as a start it prepares can still be cancelled", async (page) => {
+  await open(page);
+  await ready(page);
+  await page.evaluate(() => {
+    const key = document.querySelector(".run-button")!;
+    const busy: (string | null)[] = [];
+    new MutationObserver((records) => busy.push(...records.map(() => key.getAttribute("aria-busy")))).observe(key, {
+      attributeFilter: ["aria-busy"],
+    });
+    Object.assign(window, { busy });
+  });
+  await run(page);
+  expect(await page.evaluate(() => (window as any).busy)).toEqual([]);
+  expect(await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy"))).toBe(false);
+});
+
 test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
