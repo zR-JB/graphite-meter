@@ -148,6 +148,43 @@ test("an approved peer checks its grant at once, even while the approving window
   });
 });
 
+test("a catalogue that failed to load is read again as the network or the page comes back", async () => {
+  let reachable = false;
+  const { servers, online } = await load((url) =>
+    !reachable
+      ? "unreachable"
+      : url.pathname === "/servers"
+        ? { body: HOME }
+        : url.pathname === "/preflight"
+          ? { body: preflight([h(".", "http1")]) }
+          : { body: PROBE, hop: "http/1.1" },
+  );
+  expect(servers.loadError.peek()).toBe("Could not load the server catalog");
+  online.set(false);
+  reachable = true;
+  online.set(true);
+  await net!.advance(1_000);
+  expect({ error: servers.loadError.peek(), selected: servers.selected.peek() }).toEqual({
+    error: "",
+    selected: ["self"],
+  });
+  // A loaded catalogue is never read again on its own.
+  const sent = net!.sent("/servers").length;
+  online.set(false);
+  online.set(true);
+  servers.resume();
+  await net!.advance(1_000);
+  expect(net!.sent("/servers")).toHaveLength(sent);
+
+  reachable = false;
+  await servers.load();
+  expect(servers.loadError.peek()).toBe("Could not load the server catalog");
+  reachable = true;
+  servers.resume();
+  await net!.advance(1_000);
+  expect(servers.loadError.peek()).toBe("");
+});
+
 test("a saved choice binds IDs to origins, prototype-named IDs included", () => {
   const known = catalog(
     {

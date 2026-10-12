@@ -8,7 +8,7 @@
 // prepare(signal) at Start, and fits(totalMs) for a live change; recheck(failure) after a run; resume() when the page
 // shows again; dispose().
 import { object, string } from "../../lib/decode";
-import { batch, computed, signal, type Read } from "../../lib/signal";
+import { batch, computed, effect, signal, untrack, type Read } from "../../lib/signal";
 import {
   canonicalOrigin,
   catalog as catalogDocument,
@@ -336,6 +336,17 @@ export function createServers(env: ServersEnv): Servers {
     }
   }
 
+  /** A catalogue that failed to load is read again as the network or the page comes back. */
+  const reloadFailed = () => {
+    if (loadError.peek() && !loading.peek() && env.active.peek()) void load();
+  };
+  let wasOnline = env.online.peek();
+  const stopOnline = effect(() => {
+    const online = env.online();
+    if (online && !wasOnline) untrack(reloadFailed);
+    wasOnline = online;
+  });
+
   async function retry(id?: string, role?: Role): Promise<void> {
     if (!env.active.peek()) return;
     const chosen = selected.peek().filter((each) => !id || each === id);
@@ -533,9 +544,11 @@ export function createServers(env: ServersEnv): Servers {
       else connection?.invalidate([failure.scope]);
     },
     resume() {
+      reloadFailed();
       for (const connection of connections.peek().values()) connection.resume();
     },
     dispose() {
+      stopOnline();
       lifetime.abort();
       loadRequest?.abort();
       cancelSignIn();
