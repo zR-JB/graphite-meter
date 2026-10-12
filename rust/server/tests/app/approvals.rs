@@ -8,6 +8,7 @@ use graphite_meter_proto::approval::challenge;
 use graphite_meter_server::auth::NewLogin;
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
+use std::time::Duration;
 
 const VERIFIER: &str = "a-verifier-that-never-leaves-the-requester";
 
@@ -115,4 +116,52 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     assert_eq!(issued["maximumLifetimeMs"], 28_800_000);
     let grant = store(&app).bearer(issued["token"].as_str().unwrap()).unwrap();
     assert_eq!(grant.browser(), Some(&HeaderValue::from_static(BROWSER)));
+}
+
+/// An exchange whose answer was lost is asked again: the same verifier and origin get the same grant for 30 s, which
+/// spends one of the login's eight once, and a clear refusal after.
+#[tokio::test]
+async fn a_repeated_exchange_returns_the_same_grant_briefly() {
+    let app = auth_app(&[]);
+    let operator = login(&app, "operator");
+    let approval = challenge(VERIFIER);
+    let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
+    assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::OK);
+    assert_eq!(
+        approve(&app, "/auth/browser/approve", &operator, &approval)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let token = "/auth/browser/token";
+    let issued = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
+    let again = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
+    assert_eq!(again["token"], issued["token"]);
+    let other = exchange(&app, token, Some("https://other.example"), &verifier(VERIFIER)).await;
+    assert!(pending(other).await, "another origin's exchange");
+    assert!(
+        pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await,
+        "a native exchange"
+    );
+    assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        approve(&app, "/auth/browser/approve", &operator, &approval)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let browser = Some(HeaderValue::from_static(BROWSER));
+    for _ in 1..8 {
+        store(&app).grant(operator.key, browser.clone()).unwrap();
+    }
+    assert!(store(&app).grant(operator.key, browser).is_err(), "the login holds eight grants");
+    let full = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
+    assert_eq!(full["token"], issued["token"]);
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(30)).await;
+    tokio::time::resume();
+    let late = exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await;
+    assert_eq!(late.status(), StatusCode::GONE);
+    assert!(store(&app).bearer(issued["token"].as_str().unwrap()).is_some());
 }

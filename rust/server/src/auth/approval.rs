@@ -6,7 +6,7 @@ use super::{
     policy::{browser_origin, cookie_lease},
     rate::share_full,
     routes::{Form, body, field, redirect},
-    store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
+    store::{Digest, GrantRefusal, MAX_LOGIN_GRANTS, State, credentials, digest},
 };
 use crate::{
     app::{finalize::Access, query, response},
@@ -23,13 +23,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
 const LIFETIME: Duration = Duration::from_secs(2 * 60);
+/// How long an issued grant answers its verifier again, for an exchange whose answer was lost.
+const REPLAY: Duration = Duration::from_secs(30);
 const MAX_APPROVALS: usize = 256;
 const MAX_LOGIN_APPROVALS: usize = 8;
 const MAX_CLIENT_APPROVALS: usize = 8;
 const MAX_VERIFIER: usize = 128;
 const MIN_BROWSER_VERIFIER: usize = 32;
 
-/// A pending approval of one challenge.
+/// An approval of one challenge: pending, then the grant it issued while that lasts.
 pub(super) struct Approval {
     /// The browser origin asking, or none for a terminal.
     browser: Option<HeaderValue>,
@@ -38,16 +40,35 @@ pub(super) struct Approval {
     pub login: Option<LoginKey>,
     pub deadline: Instant,
     approved: bool,
+    /// The grant it became, kept while that grant lasts.
+    issued: Option<Issued>,
+}
+
+#[derive(Clone)]
+struct Issued {
+    grant: Digest,
+    token: String,
+    replay_until: Instant,
+}
+
+impl Approval {
+    /// Whether it issued the grant keyed `grant`.
+    pub(super) fn became(&self, grant: &Digest) -> bool {
+        self.issued.as_ref().is_some_and(|issued| issued.grant == *grant)
+    }
 }
 
 impl State {
     /// Whether one more approval fits `login`'s eight, the client's share and server bounds; half at most pre-sign-in.
     fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> (bool, bool) {
-        let count =
-            |held: &dyn Fn(&Approval) -> bool| self.approvals.values().filter(|approval| held(approval)).count();
+        // An issued approval is bounded by its live grant, so only pending ones count.
+        let count = |held: &dyn Fn(&Approval) -> bool| {
+            let pending = self.approvals.values().filter(|approval| approval.issued.is_none());
+            pending.filter(|approval| held(approval)).count()
+        };
         let held = count(&|approval| approval.login == login);
         let client = |key: &ClientKey| count(&|approval| approval.clients.contains(key));
-        let total = self.approvals.len() < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
+        let total = count(&|_| true) < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
         (held < MAX_LOGIN_APPROVALS, total && !share_full(keys, MAX_CLIENT_APPROVALS, client))
     }
 
@@ -60,7 +81,14 @@ impl State {
 
     fn open(&mut self, challenge: &str, browser: Option<HeaderValue>, keys: &ClientKeys, login: Option<LoginKey>) {
         let (clients, deadline) = (keys.iter().collect(), Instant::now() + LIFETIME);
-        let approval = Approval { browser, clients, login, deadline, approved: false };
+        let approval = Approval {
+            browser,
+            clients,
+            login,
+            deadline,
+            approved: false,
+            issued: None,
+        };
         self.approvals.insert(challenge.to_owned(), approval);
     }
 }
@@ -74,8 +102,8 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
     let found = state.pending(&challenge);
-    let found = found.map(|approval| (approval.browser.clone(), approval.login));
-    if let Some((Some(origin), _)) = &found {
+    let found = found.map(|approval| (approval.browser.clone(), approval.login, approval.issued.is_some()));
+    if let Some((Some(origin), ..)) = &found {
         let origin = origin.to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", &challenge), ("client_origin", origin)]);
         return redirect(&format!("/auth/browser?{query}"));
@@ -85,7 +113,7 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     };
     let Some(keys) = peer.keys() else { return refused(true) };
     match found {
-        Some((_, login)) if login != Some(lease.login()) => return refused(false),
+        Some((_, login, issued)) if issued || login != Some(lease.login()) => return refused(false),
         Some(_) => {}
         None => {
             state.sweep(Instant::now());
@@ -125,7 +153,7 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     }
     let approval = &state.approvals[&challenge];
     let (asked, holder) = (approval.browser.as_ref() == Some(&origin), approval.login);
-    if !asked {
+    if !asked || approval.issued.is_some() {
         return refused(false);
     }
     let Some(lease) = login else {
@@ -165,7 +193,10 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     let now = Instant::now();
     let pending = state.approvals.get_mut(field(&form, "challenge"));
     let Some(approval) = pending.filter(|approval| {
-        now < approval.deadline && approval.login == Some(lease.login()) && approval.browser.is_some() == browser
+        now < approval.deadline
+            && approval.login == Some(lease.login())
+            && approval.browser.is_some() == browser
+            && approval.issued.is_none()
     }) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
@@ -205,27 +236,40 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     answer
 }
 
-/// Issues the grant an approved challenge of `verifier` holds for `origin`, ending the approval.
+/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again for 30 s.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Response<Body> {
     let (challenge, credentials) = (challenge(verifier), credentials());
     let mut state = lock(&auth.store.0);
     let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
-    let Some((login, approved)) = approval.and_then(|approval| Some((approval.login?, approval.approved))) else {
+    let approval = approval.and_then(|approval| Some((approval.login?, approval.approved, approval.issued.clone())));
+    let Some((login, approved, issued)) = approval else {
         return pending();
     };
     let Some(expires) = state.login(&login.0).map(|login| login.expires) else {
         return pending();
     };
-    if !approved {
-        let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
-        return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
-    }
-    let token = match state.grant(login, origin.clone(), credentials) {
-        Ok(token) => token,
-        Err(GrantRefusal::Full) => return response::empty(StatusCode::TOO_MANY_REQUESTS),
-        Err(GrantRefusal::NoLogin) => return pending(),
+    let now = Instant::now();
+    let token = match issued {
+        // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
+        Some(issued) if now < issued.replay_until => issued.token,
+        Some(_) => return response::empty(StatusCode::GONE),
+        None if !approved => {
+            let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
+            return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
+        }
+        None => {
+            let token = match state.grant(login, origin.clone(), credentials) {
+                Ok(token) => token,
+                Err(GrantRefusal::Full) => return response::empty(StatusCode::TOO_MANY_REQUESTS),
+                Err(GrantRefusal::NoLogin) => return pending(),
+            };
+            let replay_until = now + REPLAY;
+            let approval = state.approvals.get_mut(&challenge).expect("the approval exists");
+            approval.deadline = approval.deadline.max(replay_until);
+            approval.issued = Some(Issued { grant: digest(&token), token: token.clone(), replay_until });
+            token
+        }
     };
-    state.approvals.remove(&challenge);
     drop(state);
     let remaining = expires.duration_since(SystemTime::now()).unwrap_or_default();
     response::json_of(&match origin {

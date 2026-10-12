@@ -188,7 +188,8 @@ const POLL_MS = 1_000;
 const EXCHANGE_TIMEOUT_MS = 5_000;
 
 /** Polls the peer's verifier-bound exchange until the user approves, within the approval's lifetime. A network
-    failure, a slow answer or a failing hop is retried in the next round; a refusal is final. */
+    failure, a slow answer or a failing hop is retried in the next round, which the server answers with the grant it
+    already issued for 30 s; a refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,
@@ -227,6 +228,7 @@ export async function exchangeGrant(
     if (response) {
       response.body?.cancel().catch(() => {});
       if (response.status === 429) throw new ApprovalLimitError();
+      if (response.status === 410) throw new Error("The approval's answer was lost on the way. Sign in again.");
       if (response.status !== 202 && response.status !== 408 && response.status < 500)
         throw new Error(`Approval exchange returned HTTP ${response.status}`);
     }

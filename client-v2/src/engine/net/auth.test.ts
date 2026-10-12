@@ -208,6 +208,16 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
     credentials: "omit",
     redirect: "error",
   });
+  // A grant whose answer was lost, asked for again past the server's replay window, ends the polling at once.
+  net?.restore();
+  let rounds = 0;
+  net = fakeNet(() => (rounds++ ? { status: 410 } : "unreachable"));
+  const lost = exchangeGrant(peer, "verifier", new AbortController().signal, net.now).catch((e: Error) => e.message);
+  await net.advance(1_500);
+  expect({ outcome: await lost, requests: net.sent("/auth/browser/token") }).toEqual({
+    outcome: "The approval's answer was lost on the way. Sign in again.",
+    requests: [0, 1_000],
+  });
   // Cancelling sign-in stops the polling at once.
   net?.restore();
   net = fakeNet(() => ({ status: 202 }));
