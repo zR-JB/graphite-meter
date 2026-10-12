@@ -29,10 +29,13 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     const several = selected.length > 1;
     const views = servers.views();
     const busy = retrying();
+    const asked = servers.approval();
     return entries().filter(({ id }) => {
       const readiness = views.get(id)?.readiness;
+      const renew = asked.state === "renew" && asked.id === id;
       return (
-        selected.includes(id) && (readiness === "sign-in" || (several && (readiness === "failed" || busy.has(id))))
+        selected.includes(id) &&
+        (readiness === "sign-in" || renew || (several && (readiness === "failed" || busy.has(id))))
       );
     });
   });
@@ -140,6 +143,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       const state = approval()?.state;
       return state === "preparing" || state === "waiting";
     });
+    const renew = computed(() => approval()?.state === "renew");
     return (
       <div class="server-feedback" role="status">
         <div>
@@ -155,16 +159,18 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                 {() =>
                   checking
                     ? `Checking ${name()}…`
-                    : signIn()
-                      ? "Admits signed-in clients only"
-                      : (view()?.message ?? "")
+                    : renew()
+                      ? "Its sign-in ends before the planned test would"
+                      : signIn()
+                        ? "Admits signed-in clients only"
+                        : (view()?.message ?? "")
                 }
               </span>
             );
           }}
         </p>
         {() =>
-          signIn() ? (
+          signIn() || renew() ? (
             <button
               class="btn"
               type="button"
@@ -193,14 +199,14 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           {(flow) => [
             () => {
               const current = flow();
-              if (current.state === "limit")
+              if (current.state === "limit" || current.state === "renew")
                 return (
                   <p>
                     <a href={current.renewUrl} target="_blank" rel="noopener noreferrer">
                       Renew login at {name}
                     </a>
-                    . Renewing ends the other client connections authorized by that login. Then choose Sign in again
-                    here.
+                    .{current.state === "renew" ? " A sign-in here lasts only as long as that login." : ""} Renewing
+                    ends the other client connections authorized by that login. Then choose Sign in again here.
                   </p>
                 );
               return (

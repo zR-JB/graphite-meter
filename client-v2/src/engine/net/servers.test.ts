@@ -226,3 +226,40 @@ test("a saved choice binds IDs to origins, prototype-named IDs included", () => 
   ] as const)
     expect<unknown>(reconcile(known, saved), JSON.stringify(saved)).toEqual(expected);
 });
+
+test("a peer grant that ends before the test asks to renew its login, and the next Start checks again", async () => {
+  const peer = "https://peer.example";
+  const catalogue = {
+    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
+    defaultSelection: ["self", "peer"],
+  };
+  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 28_800_000 };
+  const { servers, readiness } = await load((url, init) => {
+    if (url.pathname === "/servers") return { body: catalogue };
+    if (url.pathname === "/auth/browser/token") return { body: grant };
+    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    return url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" };
+  });
+  servers.signIn("peer");
+  await net!.advance(2_000);
+  const authorize = (ms: number) =>
+    servers.authorize(ms, new AbortController().signal).then(
+      () => "covered",
+      (error: Error) => error.message,
+    );
+  // Another approval would end with the same login, so the words point at renewing it, and the peer stays checked.
+  expect(await authorize(2 * 3_600_000)).toBe(
+    "Meter: its sign-in ends before this test would. Renew the login there, or shorten the test.",
+  );
+  expect({ approval: servers.approval.peek(), readiness: readiness("peer") }).toEqual({
+    approval: { state: "renew", id: "peer", renewUrl: `${peer}/login?reason=renew` },
+    readiness: "verified",
+  });
+  expect(await authorize(1_800_000)).toBe("covered");
+  expect({ approval: servers.approval.peek(), readiness: readiness("peer") }).toEqual({
+    approval: { state: "idle" },
+    readiness: "verified",
+  });
+});

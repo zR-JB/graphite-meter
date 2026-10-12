@@ -69,7 +69,9 @@ export type Approval =
   | { state: "waiting"; id: string; url: string; code: string }
   | { state: "failed"; id: string; url: string; code: string }
   /** The remote login holds all its grants: it must be renewed there first. */
-  | { state: "limit"; id: string; renewUrl: string };
+  | { state: "limit"; id: string; renewUrl: string }
+  /** The grant ends before the planned test, and so would another: grants end with the remote login. */
+  | { state: "renew"; id: string; renewUrl: string };
 
 export interface Servers {
   catalogue: Read<Catalog | null>;
@@ -435,16 +437,20 @@ export function createServers(env: ServersEnv): Servers {
 
   async function authorize(requiredMs: number, signal: AbortSignal): Promise<void> {
     budget = null;
+    if (approval.peek().state === "renew") approval.set(IDLE);
     let earliest = await env.session.coverage(requiredMs, signal);
     for (const connection of chosenConnections()) {
-      const held = grants.get(connection.entry.id);
+      const { entry } = connection;
+      const held = grants.get(entry.id);
       if (!held || connection.auth !== held.auth) continue;
       const { name } = connection.view.peek().server;
       if (requiredMs > held.grant.maximumLifetimeMs)
         throw new CoverageError(`${name}: this test is longer than its sign-in can last. Shorten it before starting.`);
       if (held.grant.deadline - now() < requiredMs) {
-        connection.requireSignIn("Sign in again to cover the planned test duration");
-        throw new CoverageError(`${name}: sign in again to cover the planned test duration`);
+        if (!flow) approval.set({ state: "renew", id: entry.id, renewUrl: `${entry.url}/login?reason=renew` });
+        throw new CoverageError(
+          `${name}: its sign-in ends before this test would. Renew the login there, or shorten the test.`,
+        );
       }
       earliest = Math.min(earliest ?? Infinity, held.grant.deadline);
     }
