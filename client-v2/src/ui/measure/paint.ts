@@ -1,21 +1,22 @@
 // The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
 // visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
 import { animate } from "../../lib/frame";
-import { batch, onCleanup, signal, type Read } from "../../lib/signal";
+import { batch, effect, onCleanup, signal, type Read } from "../../lib/signal";
 
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
 /** A view's painter: `wake()` draws from the next frame until `draw` returns false, skipping frames closer than
-    LIVE_FRAME_MS to the last it drew. Released with its owner. */
-export function painter(draw: (now: number) => boolean): () => void {
+    LIVE_FRAME_MS to the last it drew. While `away` holds it draws nothing, and it draws again as its view returns.
+    Released with its owner. */
+export function painter(draw: (now: number) => boolean, away?: Read<boolean>): () => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
-  onCleanup(() => {
+  const halt = () => {
     stop?.();
     stop = null;
-  });
-  return () => {
+  };
+  const start = () => {
     stop ??= animate((now) => {
       if (now - drawn < LIVE_FRAME_MS) return true;
       drawn = now;
@@ -23,6 +24,21 @@ export function painter(draw: (now: number) => boolean): () => void {
       stop = null;
       return false;
     });
+  };
+  onCleanup(halt);
+  if (!away) return start;
+  let gone = false;
+  effect(() => {
+    if (away()) {
+      gone = true;
+      halt();
+    } else if (gone) {
+      gone = false;
+      start();
+    }
+  });
+  return () => {
+    if (!away.peek()) start();
   };
 }
 

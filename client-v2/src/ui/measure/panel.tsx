@@ -20,6 +20,11 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const live = liveOf(app);
   const { run } = app;
+  // Under History or a missing page the workspace skips rendering, and its painters wait for its return.
+  const away = computed(() => {
+    const route = props.shell.route();
+    return route.kind !== "app" || route.workspace.kind !== "measurement";
+  });
   const section = (
     <section
       class="gauge-panel"
@@ -47,7 +52,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
 
   section.append(
     <div class={() => (live.latencyEnabled() ? "instrument" : "instrument no-lanes")}>
-      <Dial app={app} live={live} hung={hung} lens={<Lens app={app} live={live} />} />
+      <Dial app={app} live={live} away={away} hung={hung} lens={<Lens app={app} live={live} />} />
       <Show when={live.latencyEnabled}>
         {() => (
           <div class="latency-panel" data-flip="lanes">
@@ -56,12 +61,12 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
         )}
       </Show>
       <div class="controls" data-flip="controls">
-        <StageTrack app={app} live={live}>
+        <StageTrack app={app} live={live} away={away}>
           <RunButton app={app} />
         </StageTrack>
       </div>
       <div class="results">
-        <ResultCards app={app} live={live} />
+        <ResultCards app={app} live={live} away={away} />
       </div>
     </div>,
   );

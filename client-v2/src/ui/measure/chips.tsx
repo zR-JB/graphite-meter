@@ -5,7 +5,7 @@ import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { handoff } from "../../lib/motion";
-import { computed, effect } from "../../lib/signal";
+import { computed, effect, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
 import {
   NEXT_RUN,
@@ -46,7 +46,7 @@ const SETTLED_WORD: Partial<Record<Look, string>> = {
   failed: STAGE_STATE.failed.label,
 };
 
-export function StageTrack(props: { app: App; live: Live; children: Child }): Node {
+export function StageTrack(props: { app: App; live: Live; away: Read<boolean>; children: Child }): Node {
   const { app, live } = props;
   const shown = computed(() => STAGES.filter((stage) => live.visibility(stage).chip));
   const track = (
@@ -57,7 +57,7 @@ export function StageTrack(props: { app: App; live: Live; children: Child }): No
           {CHIPS.legend}
         </span>
         <For each={shown} by={(stage) => stage}>
-          {(stage) => <Chip app={app} live={live} stage={stage()} />}
+          {(stage) => <Chip app={app} live={live} away={props.away} stage={stage()} />}
         </For>
       </div>
       {/* A stage change the run refused says why where it was asked for. */}
@@ -75,7 +75,7 @@ export function StageTrack(props: { app: App; live: Live; children: Child }): No
   return track;
 }
 
-function Chip(props: { app: App; live: Live; stage: Stage }): Node {
+function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }): Node {
   const { app, live, stage } = props;
   const { run } = app;
   const config = app.preferences.config;
@@ -185,7 +185,7 @@ function Chip(props: { app: App; live: Live; stage: Stage }): Node {
     }
     return clocked.peek() && live.active(now);
   };
-  const wake = painter(draw);
+  const wake = painter(draw, props.away);
   effect(() => {
     look();
     timed();

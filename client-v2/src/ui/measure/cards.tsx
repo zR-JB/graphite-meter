@@ -284,7 +284,7 @@ const RUNNING_STATES = new Set<StageState>(["warmup", "running", "recovering"]);
 
 /** The live console's cards: settled stages from the run's results, the running one following the frame clock with its
     strip's leading edge, the rest waiting; a completed run is announced once. */
-export function ResultCards(props: { app: App; live: Live }): Node {
+export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;
   const units = live.rateUnits;
@@ -474,7 +474,7 @@ export function ResultCards(props: { app: App; live: Live }): Node {
       }
       return live.active(now);
     };
-    const wake = painter(draw);
+    const wake = painter(draw, props.away);
     effect(() => {
       if (!glided()) return;
       units();

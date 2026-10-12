@@ -175,6 +175,49 @@ for (const width of [1000, 390]) {
   });
 }
 
+test("the measurement workspace's painters rest while History covers it mid-run and draw again on return", async (page) => {
+  await open(page, home.http, {
+    config: {
+      stages: { ...baseConfig.stages, upload: false },
+      duration: { ...baseConfig.duration, downloadMs: 10_000 },
+    },
+  });
+  await ready(page);
+  // What the workspace's painters write over 30 frames: inline styles (the needle, the chips' bars) and the dial's,
+  // the chips' and the running card's figures; a card's facts, and the widths their figures grow to, follow samples.
+  const painted = () =>
+    page.evaluate(async () => {
+      let writes = 0;
+      const observer = new MutationObserver((records) => {
+        for (const { attributeName, target } of records)
+          if (
+            (attributeName === "style" && !(target as Element).closest(".facts")) ||
+            target.parentElement?.closest(".dial-figure, .headline-figure, .chip .figure")
+          )
+            writes++;
+      });
+      observer.observe(document.querySelector(".measurement-stage")!, {
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+      for (let frame = 0; frame < 30; frame++) await new Promise((done) => requestAnimationFrame(done));
+      observer.disconnect();
+      return writes;
+    });
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+  expect(await painted()).toBeGreaterThan(30);
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page.locator(".measurement-stage.away")).toHaveCount(1);
+  expect(await painted()).toBe(0);
+  await page.getByRole("button", { name: "Close History", exact: true }).click();
+  await expect(page.locator(".measurement-stage:not(.away)")).toHaveCount(1);
+  await expect(phase(page, "download")).toHaveCount(1);
+  expect(await painted()).toBeGreaterThan(30);
+  await runButton(page, "Stop test").click();
+});
+
 test("panels build as the pointer reaches their key and retain their state after closing", async (page) => {
   await open(page, home.http);
   await expect(page.locator("#console")).toHaveCount(1);

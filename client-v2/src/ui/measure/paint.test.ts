@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { scope } from "../../lib/signal";
+import { scope, signal } from "../../lib/signal";
 import { painter } from "./paint";
 
 let frames: ((now: number) => void)[] = [];
@@ -24,4 +24,25 @@ function display(hz: number, count: number): number[] {
 test("a live painter draws every frame at 60 Hz and every other frame at 120 Hz", () => {
   expect(display(60, 4)).toEqual([0, 17, 33, 50]);
   expect(display(120, 6)).toEqual([0, 17, 33]);
+});
+
+test("a painter whose view is away draws nothing until it returns, then draws once", () => {
+  const away = signal(false);
+  const drawn: number[] = [];
+  let live = true;
+  const [wake, dispose] = scope(() => painter((now) => (drawn.push(now), live), away));
+  const tick = (now: number) => frames.shift()?.(now);
+  wake();
+  tick(0);
+  away.set(true);
+  tick(20);
+  wake();
+  tick(40);
+  expect(drawn).toEqual([0]);
+  live = false;
+  away.set(false);
+  tick(60);
+  tick(80);
+  expect(drawn).toEqual([0, 60]);
+  dispose();
 });

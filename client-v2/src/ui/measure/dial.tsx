@@ -42,7 +42,13 @@ const LABELLED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete
 
 let dials = 0;
 
-export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: Node }): HTMLElement {
+export function Dial(props: {
+  app: App;
+  live: Live;
+  away: Read<boolean>;
+  hung: Read<boolean>;
+  lens: Node;
+}): HTMLElement {
   const { app, live } = props;
   const { run } = app;
   const phase = run.phase;
@@ -328,7 +334,7 @@ export function Dial(props: { app: App; live: Live; hung: Read<boolean>; lens: N
     }
     return needle.moving(now) || live.active(now);
   }
-  const wake = painter(draw);
+  const wake = painter(draw, props.away);
   effect(() => {
     needle.update(
       {
