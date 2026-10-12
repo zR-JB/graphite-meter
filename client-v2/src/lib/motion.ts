@@ -52,10 +52,13 @@ export class Glide {
   #speed = 0;
   #published = Number.NEGATIVE_INFINITY;
   #stop: (() => void) | null = null;
+  readonly #painted: boolean;
 
-  constructor(value = 0) {
+  /** A `painted` glide is read only with `at(now)`: it never publishes `current` and runs no frames of its own. */
+  constructor(value = 0, options: { painted?: boolean } = {}) {
     this.#current = signal(value);
     this.#from = this.#to = value;
+    this.#painted = !!options.painted;
   }
 
   /** The value as last drawn. */
@@ -118,6 +121,7 @@ export class Glide {
     this.#fixed = fixed;
     this.#ease = ease;
     this.#speed = ease ? speed : 0;
+    if (this.#painted) return;
     this.#publish(this.at(now), now);
     if (!close(this.#from, value) || (rate > 0 && value < this.#max)) this.#stop ??= animate((t) => this.#frame(t));
     else this.dispose();

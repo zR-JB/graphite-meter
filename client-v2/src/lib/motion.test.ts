@@ -103,6 +103,20 @@ test("at 120 Hz a live value redraws on every other frame and a fixed glide on e
     expect([live.current(), fixed.current()]).toEqual([1_000, 1_000]);
   }));
 
+test("a painted glide moves only as a painter reads it: it publishes nothing and owes no frame", () =>
+  withFrames((frame) => {
+    const requested = spyOn(globalThis, "requestAnimationFrame");
+    const value = new Glide(0, { painted: true });
+    value.set(100, { snap: true, now: 0 });
+    value.set(300, { now: 200 });
+    expect(value.at(300)).toBe(200);
+    value.set(0, { rate: 1, max: 50, snap: true, now: 400 });
+    expect(value.at(500)).toBe(50);
+    frame(500);
+    expect([value.current(), requested.mock.calls.length]).toEqual([0, 0]);
+    requested.mockRestore();
+  }));
+
 test("a hand-off never shows a key held shorter than its fade-out and follows a held key live", () =>
   withFrames((frame) => {
     let now = 0;
