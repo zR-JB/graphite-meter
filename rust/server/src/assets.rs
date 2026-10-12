@@ -174,7 +174,7 @@ impl Assets {
             "default-src 'self'",
             script,
             style,
-            "img-src 'self' data:",
+            "img-src 'self'",
             "font-src 'self'",
             "worker-src 'self'",
             "object-src 'none'",

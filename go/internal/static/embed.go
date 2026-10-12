@@ -69,7 +69,7 @@ func pagePolicy(script, style, trusted string, connect []string) string {
 		"default-src 'self'",
 		sources("script-src", script),
 		sources("style-src", style),
-		"img-src 'self' data:",
+		"img-src 'self'",
 		"font-src 'self'",
 		"worker-src 'self'",
 		"object-src 'none'",

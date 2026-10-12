@@ -67,7 +67,7 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     let (script, style) = (sha256("let theme='dark';"), sha256("html{background:#131518}"));
     let expected = format!(
         "default-src 'self'; script-src 'self' 'sha256-{script}'; style-src 'self' 'sha256-{style}'; \
-         img-src 'self' data:; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; \
+         img-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; \
          form-action 'self'; frame-ancestors 'none'; connect-src 'self' http://speed.example:7246 \
          ws://speed.example:7246"
     );
