@@ -227,3 +227,21 @@ test("without storage for History a write is refused at once, so signing out nev
   expect([events.count(), jest.getTimerCount()]).toEqual([0, 0]);
   saver.dispose();
 });
+
+test("while storage keeps failing, results wait in a bounded queue and the oldest waiting ones are given up", async () => {
+  const history = memoryHistory();
+  const saver = createHistorySaving(history.repository, signal(true), windowEvents());
+  for (let i = 0; i < 20; i++) saver.offer(record(String(i)));
+  await turns();
+  history.writes[0]!.answer(new Error("busy"));
+  await turns();
+  jest.advanceTimersByTime(15_000);
+  await turns();
+  // Storage recovered: the head, then what still waits, in order.
+  for (let write = 1; write < history.writes.length; write++) {
+    history.writes[write]!.answer();
+    await turns();
+  }
+  expect([...history.rows.keys()]).toEqual(["0", "13", "14", "15", "16", "17", "18", "19"]);
+  expect([saver.pending(), saver.unsaved()]).toEqual([false, false]);
+});

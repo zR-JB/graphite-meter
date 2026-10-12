@@ -5,6 +5,8 @@ import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
 
 const RETRY_MS = 15_000;
+/** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
+const MAX_QUEUED = 8;
 const RETRYING = "Unable to save this result locally. Future writes will be retried.";
 
 export interface HistorySaving {
@@ -47,6 +49,8 @@ export function createHistorySaving(
 
   const enqueue = (record: HistoryRecord) => {
     if (settled.has(record.id) || queue.some((entry) => entry.record.id === record.id)) return;
+    // The head may be mid-write; the oldest behind it goes.
+    if (queue.length >= MAX_QUEUED) settled.set(queue.splice(1, 1)[0]!.record.id, false);
     queue.push({ record, clears: repository.clears().catch(() => null) });
     pending.set(true);
     void drain();
@@ -128,6 +132,8 @@ export function createHistorySaving(
 
   return {
     offer(record) {
+      // Only a result still waiting or still shown needs its outcome remembered.
+      for (const id of settled.keys()) if (id !== record.id) settled.delete(id);
       offered = record;
       batch(() => {
         if (saving.peek()) enqueue(record);

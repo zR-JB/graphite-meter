@@ -289,6 +289,8 @@ function presentRow(keyed: KeyedRecord, context: RowContext, days: Days): Row {
 export function rowPresenter(context: RowContext): (keyed: KeyedRecord, days: Days) => Row {
   const kept = new Map<string, { row: Row; days: Days }>();
   return (keyed, days) => {
+    // Results deleted or pruned while the list stays open leave their rows here; past twice the archive, start over.
+    if (kept.size > 2 * HISTORY_LIMIT) kept.clear();
     const entry = kept.get(keyed.record.id);
     if (entry?.days === days) return entry.row;
     let row = entry?.row ?? presentRow(keyed, context, days);

@@ -22,6 +22,7 @@ const BLOCKED_MS = 1_000;
 const UNSAVABLE = "This result could not be saved in browser storage.";
 const FULL = "Browser storage is full. This result was not saved.";
 const UNAVAILABLE = "This browser has no storage for History: results are not saved.";
+const UNSUPPORTED = "Unsupported history database version. Saved data has not been changed.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
 /** A write History will never take; the message says why. */
@@ -78,7 +79,7 @@ function openRequest(answered: () => void): OpenRequest {
   let refusal: Error | undefined;
   opening.onupgradeneeded = ({ oldVersion }) => {
     if (oldVersion !== 0) {
-      refusal = new Error("Unsupported history database version. Saved data has not been changed.");
+      refusal = new HistoryRefusal(UNSUPPORTED);
       return opening.transaction!.abort();
     }
     const db = opening.result;
@@ -92,7 +93,9 @@ function openRequest(answered: () => void): OpenRequest {
   };
   opening.onerror = () => {
     answered();
-    pending.waiter?.failed(refusal ?? opening.error ?? new Error("IndexedDB open failed"));
+    // A database at a newer version stays so for the page's life.
+    const error = opening.error?.name === "VersionError" ? new HistoryRefusal(UNSUPPORTED) : opening.error;
+    pending.waiter?.failed(refusal ?? error ?? new Error("IndexedDB open failed"));
   };
   opening.onblocked = () => {
     pending.blocked = true;
@@ -286,8 +289,9 @@ export class HistoryRepository {
     let pending: OpenRequest;
     try {
       pending = this.#request ??= openRequest(() => (this.#request = null));
-    } catch (error) {
-      return Promise.reject(error);
+    } catch {
+      // Storage the page may not use stays refused for its life.
+      return Promise.reject(new HistoryRefusal(UNAVAILABLE));
     }
     const { promise, resolve, reject } = Promise.withResolvers<IDBDatabase>();
     let timer: ReturnType<typeof setTimeout> | undefined;
