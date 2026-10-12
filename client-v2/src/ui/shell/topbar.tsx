@@ -104,6 +104,7 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
             class="btn btn-icon key direct-history"
             type="button"
             aria-label="History"
+            aria-current={() => (ctl.historyOpen() ? "page" : undefined)}
             aria-pressed={() => String(ctl.historyOpen())}
             ref={named(BINDINGS.history, () => "History")}
             onclick={(event) => ctl.toggleHistory(event.currentTarget)}

@@ -319,7 +319,9 @@ export function createShell(app: App, layout: Layout) {
 
   // One page-level handler, bubbling, so local widgets, menus, modals and tips take their keys first.
   function keydown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (event.defaultPrevented) return;
+    // Escape dismisses whatever is held with it; every other key acts only on its own.
+    if (event.key !== "Escape" && (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)) return;
     if (!KEYS.has(event.key.toLowerCase())) return;
     if (document.querySelector(":popover-open:not(.tooltip)") || activeModal()) return;
     const target = event.target;

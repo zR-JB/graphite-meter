@@ -40,10 +40,11 @@ const PROBES_TIP =
   "Probe accounting\nA timeout: no reply by the probe's deadline\nUnfinished or failed sends are not timeouts";
 const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
 
-/** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. */
+/** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. A version left to
+    negotiation that the browser did not report is not named. */
 function path(role: Role, transport: string, protocol?: string, browserProtocol?: string) {
   const observed = browserProtocol && httpVersionLabel(browserProtocol);
-  const server = protocol && httpVersionLabel(protocol);
+  const server = protocol && protocol !== "negotiated" && httpVersionLabel(protocol);
   return {
     value: transportLabel(transport, role) ?? "Not recorded",
     aside:

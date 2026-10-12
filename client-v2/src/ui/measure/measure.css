@@ -1256,6 +1256,8 @@
     min-width: 0;
     height: 16px;
     overflow: hidden;
+    /* The line clips, so a focused term draws its ring inside itself. */
+    --ring-offset: -2px;
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
     white-space: nowrap;
