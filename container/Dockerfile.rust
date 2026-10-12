@@ -85,6 +85,7 @@ ARG TARGETARCH
 ARG PROFILE=release
 COPY --from=source / /src/
 COPY --from=browser /src/client-v2/ /src/client-v2/
+COPY --from=browser /src/client/public/ /src/client/public/
 # The legal scan names the bundled packages at their paths in Bun's installation cache.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
