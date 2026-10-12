@@ -1,8 +1,10 @@
-// Payload in a lane or session worker: a download's bytes are counted, never touched, and reported at most every
-// 50 ms; an upload sends one incompressible block over and over.
+// Payload in a lane or session worker: a download's bytes are counted, never touched, and reported in batches; an
+// upload sends one incompressible block over and over.
 
 const READ_BYTES = 1024 * 1024;
-const REPORT_MS = 50;
+/** A server's download reports, all its lanes together, come about this often: a boundary then misses at most this
+    much of one reporter's bytes, whatever the lane count, and the page handles about 100 reports a second. */
+const REPORT_MS = 10;
 const MIB = 1024 * 1024;
 const BLOCK_BYTES = 4 * MIB;
 /** crypto.getRandomValues fills at most this much per call. */
@@ -37,18 +39,25 @@ export async function countBytes(body: ReadableStream<Uint8Array>, count: (bytes
   }
 }
 
-/** A download's counted bytes, reported at most every 50 ms with the measurement epoch they belong to. */
+/** A download's counted bytes, reported at most every 10 ms per reporter of its server with the measurement epoch they
+    belong to. */
 export class ByteReports {
   #bytes = 0;
   #since = performance.now();
   #epoch = 0;
+  #reportMs = REPORT_MS;
 
   constructor(readonly report: (bytes: number, epoch: number) => void) {}
+
+  /** One of `reporters` that share their server's report rate. */
+  share(reporters: number): void {
+    this.#reportMs = REPORT_MS * Math.max(1, reporters);
+  }
 
   /** Bound for read loops; a datagram loop passes the clock reading it already made. */
   count = (bytes: number, now = performance.now()): void => {
     this.#bytes += bytes;
-    if (now - this.#since >= REPORT_MS) this.flush(now);
+    if (now - this.#since >= this.#reportMs) this.flush(now);
   };
 
   flush(now = performance.now()): void {

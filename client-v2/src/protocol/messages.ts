@@ -37,7 +37,7 @@ export interface ProbeOutcome {
   inWindow: boolean;
 }
 
-/** Download bytes counted since the previous report, at most every 50 ms, in the measurement epoch they belong to. */
+/** Download bytes counted since the previous report, in the measurement epoch they belong to. */
 export interface BytesReport {
   type: "bytes";
   bytes: number;
@@ -51,7 +51,7 @@ export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; de
 /** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
     reports the download bytes counted so far, then answers `flushed`. */
 export type LaneCommand =
-  | { type: "download"; url: string; request: RequestRecipe; epoch: number }
+  | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
   | { type: "upload"; url: string; request: RequestRecipe; streams: number }
   | { type: "measure"; epoch: number }
   | { type: "flush" };

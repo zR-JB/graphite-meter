@@ -91,7 +91,7 @@ const REVOKED = { closeCode: 3, reason: "authentication required" };
 test("a download counts bytes into the epoch they were read in: a measure drops what was not yet reported", async () => {
   const body = source();
   const lane = await boot<LaneCommand>("./lane.ts", { fetch: async () => new Response(body.stream) });
-  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 0 });
+  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 0, streams: 1 });
   await elapse(0);
   body.push("warmup");
   await elapse(0);
@@ -110,7 +110,7 @@ test("a download counts bytes into the epoch they were read in: a measure drops 
 test("a flush reports the bytes counted so far before it answers", async () => {
   const body = source();
   const lane = await boot<LaneCommand>("./lane.ts", { fetch: async () => new Response(body.stream) });
-  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 1 });
+  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 1, streams: 1 });
   await elapse(0);
   body.push("counted");
   await elapse(0);
@@ -124,7 +124,7 @@ test("a download whose answer ends short ends the lane, so its owner paces the r
   const lane = await boot<LaneCommand>("./lane.ts", {
     fetch: async () => (fetches++, new Response("<html>portal</html>")),
   });
-  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 0 });
+  lane.send({ type: "download", url: "https://peer.example/download", request: RECIPE, epoch: 0, streams: 1 });
   await elapse(0);
   expect(fetches).toBe(1);
   expect(lane.posted.at(-1)).toMatchObject({ type: "ended", ending: { reason: "connection-lost", retry: true } });

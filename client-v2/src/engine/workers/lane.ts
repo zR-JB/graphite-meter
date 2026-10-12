@@ -31,8 +31,14 @@ onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   );
 };
 
-async function download({ url, request, epoch }: Extract<LaneCommand, { type: "download" }>): Promise<LaneReport> {
+async function download({
+  url,
+  request,
+  epoch,
+  streams,
+}: Extract<LaneCommand, { type: "download" }>): Promise<LaneReport> {
   reports.measure(epoch);
+  reports.share(streams);
   const init: RequestInit = { ...request, cache: "no-store" };
   // A response that reaches its length is fetched again until the lane ends.
   for (;;) {

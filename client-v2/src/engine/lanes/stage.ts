@@ -260,7 +260,7 @@ class Stage implements StageResources {
               return { type: "upload", url, request: auth.request(url, "POST"), streams: count };
             }
             const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
-            return { type: "download", url, request: auth.request(url, "GET"), epoch };
+            return { type: "download", url, request: auth.request(url, "GET"), epoch, streams: count };
           }),
       };
     } else {

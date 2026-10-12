@@ -1,7 +1,22 @@
 import { expect, test } from "bun:test";
-import { largestPost } from "./bytes";
+import { ByteReports, largestPost } from "./bytes";
 
 const MiB = 1024 * 1024;
+
+test("a server's reporters together report about every 10 ms, whatever their number", () => {
+  for (const [reporters, expected] of [
+    [1, [10, 20, 30, 40]],
+    [4, [40]],
+  ] as const) {
+    const reported: number[] = [];
+    const reports = new ByteReports(() => reported.push(at));
+    let at = 0;
+    reports.share(reporters);
+    reports.flush(0);
+    for (at = 1; at <= 45; at++) reports.count(1, at);
+    expect(reported).toEqual([...expected]);
+  }
+});
 
 test("a lane's largest POST is v1's device-memory share divided across the lanes", () => {
   for (const [lanes, deviceMemory, expected] of [
