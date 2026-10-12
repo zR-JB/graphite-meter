@@ -41,7 +41,7 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
 
 /// Why the view's run has no report: it never started, or its sign-in expired.
 pub fn unreported(view: &View) -> Option<String> {
-    let run = view.run.as_ref()?;
+    let run = view.latest()?;
     let error = run.error.as_ref();
     let signed_out = error.filter(|error| error.reason == FailureReason::SignInRequired);
     Some(match (error, signed_out) {

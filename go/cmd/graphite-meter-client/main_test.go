@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/quic-go/webtransport-go"
@@ -707,5 +708,47 @@ func TestPastedAddressesNameTheirServer(t *testing.T) {
 		if got, err := serverOrigin(raw); err == nil {
 			t.Errorf("%q gave %q, want an error", raw, got)
 		}
+	}
+}
+
+func TestIdleNoticeShowsThenLapses(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	m.now = time.Now().Add(-time.Hour)
+	m.ticking = false
+	m, tick := modelAndCmd(m.Update(press("v")))
+	if m.toast == nil || !strings.Contains(ansi.Strip(view(m)), "Checking the server again") {
+		t.Fatal("an idle notice did not show")
+	}
+	if tick == nil || !m.ticking {
+		t.Fatal("an idle notice started no tick to lapse it")
+	}
+	m, _ = modelAndCmd(m.Update(spinner.TickMsg{Time: m.toast.until}))
+	if m.toast != nil {
+		t.Fatal("the notice outlived its time")
+	}
+}
+
+func TestSignInCapsAndCardOwnInput(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	opened := 0
+	m.openApproval = func(*goclient.PendingAuthorization) { opened++ }
+	m = m.openSettings(catalogueRow)
+	m, _ = modelAndCmd(m.Update(press("enter")))
+	m.auth = &signIn{pending: &goclient.PendingAuthorization{Code: "ABCD"}, since: time.Now()}
+	before := m.edit.input.Value()
+	m, _ = modelAndCmd(m.Update(press("x")))
+	if m.edit.input.Value() != before {
+		t.Fatal("an editor behind the sign-in card took a key")
+	}
+	m, launch := modelAndCmd(m.click(target{kind: targetCap, action: actBrowse}))
+	if launch == nil {
+		t.Fatal("the sign-in page cap did nothing")
+	}
+	launch()
+	m, _ = modelAndCmd(m.click(target{kind: targetCap, action: actAbandon}))
+	if opened != 1 || m.prepare != prepareSignIn {
+		t.Fatalf("opened=%d prepare=%v", opened, m.prepare)
 	}
 }

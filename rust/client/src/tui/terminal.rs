@@ -9,7 +9,7 @@ use crossterm::{
 use futures_util::StreamExt;
 use graphite_meter_net::Pool;
 use graphite_meter_proto::origin::Origin;
-use ratatui_core::terminal::Terminal;
+use ratatui_core::{buffer::Buffer, terminal::Terminal};
 use ratatui_crossterm::CrosstermBackend;
 use std::{
     io::{self, BufWriter, Write},
@@ -30,6 +30,7 @@ pub async fn interactive(
     let profile = theme::profile(true, |name| std::env::var(name).ok());
     let _session = Session::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
+    terminal.hide_cursor()?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
     let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
@@ -53,8 +54,10 @@ pub async fn interactive(
                 (effects, paint)
             }
             _ = frames.tick() => {
+                // While anything animates, and once after, so its last state shows.
+                let animated = app.animating();
                 let effects = app.tick(Instant::now());
-                (effects, std::mem::take(&mut changed) || app.animating())
+                (effects, std::mem::take(&mut changed) || animated || app.animating())
             }
             Some(status) = signals.recv() => {
                 changed = true;
@@ -88,18 +91,28 @@ pub async fn interactive(
 
 type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
-/// Draws one frame and the chrome after it as a synchronized update, so a terminal never shows half of it.
-fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<Chrome>) -> io::Result<()> {
+/// Draws a frame: the changed cells and chrome in one write, a synchronized update where the terminal holds one. An
+/// unchanged frame writes nothing, so the terminal has nothing to repaint.
+fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome)>) -> io::Result<()> {
+    terminal.autoresize()?;
+    let mut frame = terminal.get_frame();
+    let cells = frame.buffer_mut();
+    let drawn = app.draw(cells, Instant::now());
+    let unchanged = shown.as_ref().is_some_and(|(last, _)| last == cells);
+    let bytes = drawn.bytes(shown.as_ref().map(|(_, chrome)| chrome), !unchanged, app.profile);
+    if unchanged && bytes.is_empty() {
+        cells.reset();
+        return Ok(());
+    }
+    let cells = cells.clone();
     terminal.backend_mut().write_all(b"\x1b[?2026h")?;
-    let mut drawn = Chrome::default();
-    let now = Instant::now();
-    terminal.draw(|frame| drawn = app.draw(frame.buffer_mut(), now))?;
-    let bytes = drawn.bytes(shown.as_ref(), app.profile);
+    terminal.flush()?;
+    terminal.swap_buffers();
     let out = terminal.backend_mut();
     out.write_all(&bytes)?;
     out.write_all(b"\x1b[?2026l")?;
     out.flush()?;
-    *shown = Some(drawn);
+    *shown = Some((cells, drawn));
     Ok(())
 }
 
@@ -150,7 +163,7 @@ impl Drop for Session {
 }
 
 fn restore() {
-    let _ = io::stdout().write_all(&[Chrome::default().bytes(None, Profile::Plain), LEAVE.to_vec()].concat());
+    let _ = io::stdout().write_all(&[Chrome::default().bytes(None, true, Profile::Plain), LEAVE.to_vec()].concat());
     let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }

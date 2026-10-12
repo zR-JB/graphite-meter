@@ -1,4 +1,4 @@
-//! The frame: the top bar, the console, a sheet or card over it on a dimmed backdrop, a notice in its corner and the
+//! The frame: the top bar, the console, a sheet or card over it on a dimmed backdrop, a notice in the bottom bar and the
 //! bottom bar, written into the terminal's buffer.
 use super::{
     App, Overlay, SMALLEST, Target,
@@ -150,7 +150,12 @@ impl App {
         canvas.fill(area, palette.surface);
         let (word, tone) = self.status();
         let mut status = Line::styled(word, tone.bold());
-        if let Some(run) = self.view.run.as_ref().filter(|run| run.at.is_some()) {
+        if let Some(run) = self
+            .view
+            .run
+            .as_ref()
+            .filter(|run| run.at.is_some() && !self.view.starting)
+        {
             let elapsed = match run.outcome {
                 Some(_) => run.elapsed,
                 None => run.at.map_or_default(|at| self.now.saturating_duration_since(at)),
@@ -213,6 +218,7 @@ impl App {
             Overlay::None | Overlay::Connect => &[Action::Start, Action::Settings, Action::Details, Action::Help],
             Overlay::Settings => &[Action::Move, Action::Adjust, Action::Toggle, Action::Open, Action::Close],
             _ => &[
+                Action::Move,
                 Action::Scroll,
                 Action::Select,
                 Action::Apply,
@@ -235,6 +241,8 @@ impl App {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
         match run.map(|run| (run.outcome, &run.stage)) {
+            _ if self.view.starting && self.stopping => ("Stopping", palette.muted),
+            _ if self.view.starting => ("Checking paths", palette.muted),
             Some((Some(outcome), _)) => (words::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
             Some((None, Some((plan, Some(_))))) => (words::label(plan.stage), palette.stage(plan.stage)),

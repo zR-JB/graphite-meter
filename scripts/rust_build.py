@@ -6,7 +6,8 @@
 The server embeds a browser build kept in rust/target/browser/CLIENT/PROFILE, apart from Go's CLIENT/dist,
 together with its module scan. It is rebuilt only when a browser input, the Bun release or a client build variable
 changes, or when its outputs no longer match their stamp. Cargo then owns the binary's freshness: the notices
-keep unchanged files untouched, so a build after a Rust edit reuses every other artifact.
+keep unchanged files untouched, so a build after a Rust edit reuses every other artifact. A build whose inputs, as file
+sizes and times, and arguments are those of the last one reuses its executable without the notices or Cargo.
 """
 from __future__ import annotations
 
@@ -36,6 +37,28 @@ BROWSER_VARIABLES = ("GM_CLIENT_", "VITE_", "BUN_", "NODE_")
 def fingerprint(paths: list[Path], root: Path) -> dict[str, str]:
     return {path.relative_to(root).as_posix(): sha256(path.read_bytes()) for path in sorted(set(paths))
             if path.is_file()}
+
+
+def inputs_state() -> dict[str, object]:
+    """The development build's inputs as file sizes and times, with its arguments and build variables."""
+    files = {}
+    for top in ("rust", "legal", "scripts/legal", "scripts/rust_build.py", "mise.toml"):
+        for directory, names, found in os.walk(ROOT / top):
+            names[:] = [name for name in names if Path(directory, name) != ROOT / "rust/target"]
+            for name in found:
+                path = Path(directory, name)
+                stat = path.stat()
+                files[path.relative_to(ROOT).as_posix()] = [stat.st_size, stat.st_mtime_ns]
+        if (ROOT / top).is_file():
+            stat = (ROOT / top).stat()
+            files[top] = [stat.st_size, stat.st_mtime_ns]
+    variables = {key: value for key, value in sorted(os.environ.items()) if key.startswith(("GM_", "CARGO", "RUST"))}
+    return {"arguments": sys.argv[1:], "variables": variables, "files": files}
+
+
+def executable_state(path: Path) -> list[object]:
+    stat = path.stat()
+    return [path.relative_to(ROOT).as_posix(), stat.st_size, stat.st_mtime_ns]
 
 
 def browser_inputs(client: str, environment: dict[str, str]) -> dict[str, object]:
@@ -96,8 +119,19 @@ def main() -> None:
     browser_build = browser(BROWSER_CLIENTS[BROWSER_CLIENTS.index(args.client)],
                             BROWSER_PROFILES[BROWSER_PROFILES.index(args.browser)]) if args.browser else None
     out = ROOT / "rust/target/dev-legal" / package
-    executable = collect(Build(package, None, PROFILES[PROFILES.index(args.profile)], args.version, out,
-                               browser_build))
+    stamp, inputs = out / f"{args.profile}-build.json", inputs_state()
+    try:
+        previous = json.loads(stamp.read_bytes())
+        reused = previous["inputs"] == inputs and executable_state(ROOT / previous["executable"][0]) == previous["executable"]
+    except (OSError, ValueError, KeyError, TypeError):
+        reused = False
+    if reused and browser_build is None:
+        executable = ROOT / previous["executable"][0]
+    else:
+        stamp.unlink(missing_ok=True)
+        executable = collect(Build(package, None, PROFILES[PROFILES.index(args.profile)], args.version, out,
+                                   browser_build))
+        write_changed(stamp, marshal({"inputs": inputs, "executable": executable_state(executable)}))
     print(f"Rust {package} [{args.profile} profile, development notices]: {executable.relative_to(ROOT)}")
 
 

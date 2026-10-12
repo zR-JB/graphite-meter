@@ -174,7 +174,12 @@ pub struct View {
     /// The latest preparation's servers and catalogue.
     pub servers: Arc<[ServerPath]>,
     pub catalogue: Arc<[ServerEntry]>,
+    /// The run shown: the latest that started, kept while the next one checks its paths.
     pub run: Option<Run>,
+    /// Whether a run checks its paths and has not started yet.
+    pub starting: bool,
+    /// A run that ended before it started, while an earlier one stays shown.
+    pub refused: Option<Run>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -222,6 +227,11 @@ pub struct Run {
 
 impl View {
     /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
+    /// The run that ended last: one refused at its start, else the one shown.
+    pub fn latest(&self) -> Option<&Run> {
+        self.refused.as_ref().or(self.run.as_ref())
+    }
+
     pub fn remains(&self, server: &ServerId) -> bool {
         let results = self.run.iter().flat_map(|run| run.results.iter().rev());
         let mut own = results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
@@ -234,7 +244,7 @@ impl View {
 
     pub fn apply(&mut self, event: &Event) {
         match event {
-            Event::Checking { run: true } => self.run = Some(Run::default()),
+            Event::Checking { run: true } => (self.starting, self.refused) = (true, None),
             Event::Checking { run: false } => self.check = Check::Checking,
             Event::Prepared { servers, catalogue } => {
                 (self.servers, self.catalogue, self.check) = (servers.clone(), catalogue.clone(), Check::Ready);
@@ -247,9 +257,15 @@ impl View {
                     self.check = Check::SignIn;
                 }
             }
-            Event::RunStarted { plan, focus, at } => self.run = Some(Run::new(plan, focus, *at)),
+            Event::RunStarted { plan, focus, at } => {
+                (self.run, self.starting) = (Some(Run::new(plan, focus, *at)), false);
+            }
             Event::RunFinished { outcome, error, elapsed } => {
-                let run = self.run.get_or_insert_with(Run::default);
+                let earlier = std::mem::take(&mut self.starting) && self.run.is_some();
+                let run = match earlier {
+                    true => self.refused.insert(Run::default()),
+                    false => self.run.get_or_insert_with(Run::default),
+                };
                 (run.outcome, run.error, run.elapsed, run.stage) = (Some(*outcome), error.clone(), *elapsed, None);
             }
             event => {
