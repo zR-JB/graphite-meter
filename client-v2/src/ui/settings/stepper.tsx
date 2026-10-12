@@ -41,9 +41,12 @@ export function Stepper(props: {
   // Handlers run outside any effect, so their reads subscribe to nothing.
   const clamp = (value: number) => Math.min(props.max(), Math.max(props.min, value));
   let hold = 0;
+  /** A touch that has not yet stepped: it steps as it lifts, unless the browser took it for a scroll. */
+  let tap = false;
   const release = () => {
     clearTimeout(hold);
     hold = 0;
+    tap = false;
   };
   onCleanup(release);
   /** Whether the value after `times` steps applied; a limit holds it in place. */
@@ -67,14 +70,19 @@ export function Stepper(props: {
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
         release();
-        if (!nudge(direction)) return;
+        tap = event.pointerType === "touch";
+        if (!tap && !nudge(direction)) return;
         const repeat = () => {
+          tap = false;
           if (atLimit(direction) || !nudge(direction)) return release();
           hold = window.setTimeout(repeat, REPEAT_MS);
         };
         hold = window.setTimeout(repeat, HOLD_MS);
       }}
-      onpointerup={release}
+      onpointerup={() => {
+        if (tap) nudge(direction);
+        release();
+      }}
       onpointercancel={release}
       onlostpointercapture={release}
       oncontextmenu={(event) => event.preventDefault()}

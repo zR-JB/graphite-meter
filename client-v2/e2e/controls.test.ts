@@ -346,3 +346,34 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await expect(key).toHaveAttribute("aria-pressed", "false");
   await expect(address).toHaveCount(0);
 });
+
+test.chrome(
+  "a swipe that starts on a stepper key scrolls Settings without stepping; a tap steps once",
+  async (page) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page);
+    const settings = await openSettings(page);
+    const field = settings.getByRole("spinbutton", { name: "Streams" });
+    const value = async () => (await field.state())[0]!.value;
+    const before = await value();
+    const box = await settings.getByRole("button", { name: "More streams" }).evaluate((key: HTMLElement) => {
+      key.scrollIntoView({ block: "center" });
+      return key.getBoundingClientRect().toJSON();
+    });
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    await page.touch("start", x, y);
+    // Upwards, so the sheet's content scrolls rather than the sheet being dragged away.
+    for (let step = 1; step <= 8; step++) await page.touch("move", x, y - step * 15);
+    await page.touch("end", x, y - 120);
+    // A tap during the swipe's fling only stops the fling, on a phone too.
+    await Bun.sleep(1_000);
+    expect(await value()).toBe(before);
+    const key = await settings.getByRole("button", { name: "More streams" }).evaluate((key: HTMLElement) => {
+      const rect = key.getBoundingClientRect();
+      return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+    });
+    await page.touch("start", key[0]!, key[1]!);
+    await page.touch("end", key[0]!, key[1]!);
+    await expect.poll(value).toBe(String(Number(before) + 1));
+  },
+);
