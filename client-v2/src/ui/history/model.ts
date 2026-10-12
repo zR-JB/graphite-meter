@@ -10,7 +10,6 @@ import { LATENCY, OUTCOME, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import type { IconName } from "../kit/icon";
 
 export const PAGE_ROWS = 50;
-const DAY_MS = 86_400_000;
 
 export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon: IconName; tip: string }> = {
   download: {
@@ -108,10 +107,13 @@ export interface Days {
   today: string;
   yesterday: string;
 }
-export const daysAt = (now: number): Days => ({
-  today: new Date(now).toDateString(),
-  yesterday: new Date(now - DAY_MS).toDateString(),
-});
+export function daysAt(now: number): Days {
+  const date = new Date(now);
+  const today = date.toDateString();
+  // The calendar day before, which a daylight-saving change can make 23 or 25 hours long.
+  date.setDate(date.getDate() - 1);
+  return { today, yesterday: date.toDateString() };
+}
 
 /** Recent days, then months, so a sparse archive never gets a heading per result. */
 function dayHeading(time: number, days: Days): string {

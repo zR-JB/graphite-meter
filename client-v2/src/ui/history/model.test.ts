@@ -190,3 +190,15 @@ test("a row stays the same object across a day unless its day words change", () 
     if (byDay) expect(next.map(({ heading }) => heading).slice(0, 1)).toEqual(["Yesterday"]);
   }
 });
+
+test("Yesterday is the calendar day before, even after a 23-hour day", () => {
+  const zone = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    // 00:30 on the day after the spring-forward change, which lasted 23 hours.
+    const now = new Date(2026, 2, 9, 0, 30).getTime();
+    expect(daysAt(now)).toEqual({ today: "Mon Mar 09 2026", yesterday: "Sun Mar 08 2026" });
+  } finally {
+    process.env.TZ = zone;
+  }
+});
