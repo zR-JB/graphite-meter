@@ -17,5 +17,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "e2e", "auth", "*.ts"]
+  "include": ["src", "e2e", "bench", "auth", "*.ts"]
 }
