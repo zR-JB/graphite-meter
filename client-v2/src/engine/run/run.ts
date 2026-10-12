@@ -21,6 +21,7 @@ import {
   type StageEvents,
   type StageLanes,
   type StageResources,
+  type StageSetup,
   type TestConfig,
 } from "../types";
 import { pageClock, RunClock, type Clock } from "./clock";
@@ -146,6 +147,8 @@ interface Participant {
   rotated: boolean;
   /** Probe adjacency for jitter; a reconnect breaks it. */
   continuity: number;
+  /** Its latency bus across the run's stages, disposed when the run ends. */
+  bus: StageSetup["bus"];
 }
 
 /** A server in one stage. Times are active ms. */
@@ -284,6 +287,7 @@ export class Run {
         removed: false,
         rotated: false,
         continuity: 0,
+        bus: { current: null },
       };
     });
     this.#source = this.#servers.find((server) => server.id === options.focus) ?? this.#servers[0]!;
@@ -598,6 +602,7 @@ export class Run {
       seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),
       now: () => this.#clock.runMs(),
+      bus: server.bus,
     });
     stage.seats.set(server.id, seat);
     return seat;
@@ -679,8 +684,9 @@ export class Run {
       },
       probes: (outcomes) => {
         if (!counting() || server.removed) return;
+        const position = this.#position();
         for (const outcome of outcomes) {
-          const t = this.#timelineAt(outcome.observedAt);
+          const t = this.#timelineAt(outcome.observedAt, position);
           server.latency.observe(name, outcome, t, server.continuity);
           if (outcome.inWindow) server.buckets.observe(t, outcome.rttMs, outcome.timedOut);
         }
@@ -754,8 +760,8 @@ export class Run {
   }
 
   /** A page-clock observation on the timeline, relative to the last tick rather than to its delivery. */
-  #timelineAt(observedAt: number): number {
-    return Math.max(this.#shown?.start ?? 0, Math.min(this.#position(), this.#elapsed + observedAt - this.#tickAt));
+  #timelineAt(observedAt: number, position = this.#position()): number {
+    return Math.max(this.#shown?.start ?? 0, Math.min(position, this.#elapsed + observedAt - this.#tickAt));
   }
 
   /** Grown receiver bytes are progress; any record with advancing receiver time shows the feed is alive. */
@@ -1286,7 +1292,11 @@ export class Run {
       }
     }
     this.#aggregate.close();
-    for (const server of this.#servers) server.latency.close();
+    for (const server of this.#servers) {
+      server.latency.close();
+      server.bus.current?.dispose();
+      server.bus.current = null;
+    }
   }
 
   #summary(server: Participant): ServerMeasurementSummary {

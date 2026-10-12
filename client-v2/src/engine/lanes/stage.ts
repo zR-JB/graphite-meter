@@ -16,6 +16,7 @@ import {
   type FailureReason,
   type OpenStage,
   type ProbeChannel,
+  type ProbeChannelEvents,
   type Role,
   type StageResources,
   type StageSetup,
@@ -126,12 +127,17 @@ class Stage implements StageResources {
     await Promise.all([this.#down?.stop(), this.#up?.stop()]);
     await this.#receiver?.finish();
     await drained;
+    // The bus outlives the stage, for the next one to adopt.
+    this.#probes = null;
     this.discard();
   }
 
   discard(incomplete = false): void {
     if (this.#released.signal.aborted) return;
-    this.#probes?.dispose(incomplete);
+    if (this.#probes) {
+      this.#probes.dispose(incomplete);
+      this.#setup.bus.current = null;
+    }
     this.#released.abort();
     this.#ended = true;
     this.#releaseThroughput();
@@ -157,29 +163,34 @@ class Stage implements StageResources {
   }
 
   #openProbes(): void {
-    const { server, activity, cadence, events } = this.#setup;
+    const { server, activity, cadence, events, bus } = this.#setup;
     if (!server.latency || !needsPings(activity)) return;
     const intervalMs = CADENCE_MS[cadence];
     const maxInFlight =
       activity.stage !== "latency" ? IN_FLIGHT.loaded : intervalMs === null ? IN_FLIGHT.replyDriven : IN_FLIGHT.fixed;
-    this.#probes = openProbeChannel(
-      { target: server.latency.target, auth: server.auth, intervalMs, maxInFlight },
-      {
-        ready: () => {
-          this.#probesReady = true;
-          this.#notify();
-        },
-        outcomes: (outcomes) => events.probes(outcomes),
-        interrupted: (count, reason) => events.probesInterrupted(count, reason),
-        stalled: (detail) => {
-          this.#probesReady = false;
-          events.latencyStalled(detail);
-        },
-        resumed: () => events.latencyResumed(),
-        signInRequired: () => this.#signIn("latency"),
-        incomplete: () => events.probesIncomplete(),
+    const own: ProbeChannelEvents = {
+      ready: () => {
+        this.#probesReady = true;
+        this.#notify();
       },
-    );
+      outcomes: (outcomes) => events.probes(outcomes),
+      interrupted: (count, reason) => events.probesInterrupted(count, reason),
+      stalled: (detail) => {
+        this.#probesReady = false;
+        events.latencyStalled(detail);
+      },
+      resumed: () => events.latencyResumed(),
+      signInRequired: () => this.#signIn("latency"),
+      incomplete: () => events.probesIncomplete(),
+    };
+    // A handshake behind a stage's own transfers can take seconds, so each later stage adopts the bus already open.
+    if (bus.current?.adopt(own)) bus.current.pace(intervalMs, maxInFlight);
+    else
+      bus.current = openProbeChannel(
+        { target: server.latency.target, auth: server.auth, intervalMs, maxInFlight },
+        own,
+      );
+    this.#probes = bus.current;
   }
 
   /** Mints an upload id and opens its receiver. A session carries its own feed; HTTP lanes write only once the feed

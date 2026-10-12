@@ -213,12 +213,20 @@ class FakeWebSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
 
+  closes = 0;
+
   constructor(readonly url: string) {
     FakeWebSocket.opened.push(this);
   }
 
-  send(): void {}
-  close(): void {}
+  /** The server answers the probe it was sent. */
+  send(text: string): void {
+    queueMicrotask(() => this.onmessage?.({ data: `PONG,${text.slice("PING,".length)},0` }));
+  }
+
+  close(): void {
+    this.closes++;
+  }
 }
 
 const bus = (transport: "websocket" | "webtransport", ticket: boolean): ProbeCommand => ({
@@ -230,23 +238,26 @@ const bus = (transport: "websocket" | "webtransport", ticket: boolean): ProbeCom
   maxInFlight: 2,
 });
 
-test("a refused dial spends its ticket, one that lapsed unanswered reuses it, and a WebSocket 1008 asks for sign-in", async () => {
+test("a WebSocket dial past its budget stays, reported as an outage until it answers; a refused one spends its ticket", async () => {
   let minted = 0;
   const probe = await boot<ProbeCommand>("./probe.ts", {
     WebSocket: FakeWebSocket,
     fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
   });
   probe.send(bus("websocket", true));
+  // The browser queues the handshake: closing it would only delay the next one.
+  await elapse(3_500);
+  expect(probe.types()).toEqual(["stalled"]);
+  expect(FakeWebSocket.opened.map(({ closes }) => closes)).toEqual([0]);
+  FakeWebSocket.opened.at(-1)!.onopen!();
   await elapse(0);
+  expect(probe.types()).toEqual(["stalled", "ready", "resumed"]);
   // A refused upgrade presented its ticket: the server spent it whatever it answered.
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
   await elapse(100);
-  // This dial is never answered and lapses after 3 s; it may never have reached the server.
-  await elapse(3_200);
-  FakeWebSocket.opened.at(-1)!.onopen!();
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1008, reason: "authentication required" });
-  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual(["t1", "t2", "t2"]);
-  expect(probe.types()).toEqual(["stalled", "sign-in", "stopped"]);
+  expect(FakeWebSocket.opened.map(({ url }) => new URL(url).searchParams.get("token"))).toEqual(["t1", "t2"]);
+  expect(probe.types().slice(3)).toEqual(["stalled", "sign-in"]);
 });
 
 test("a WebTransport bus whose datagrams failed waits for its close: a revocation asks for sign-in", async () => {
@@ -260,5 +271,5 @@ test("a WebTransport bus whose datagrams failed waits for its close: a revocatio
   await elapse(20);
   transport.end(REVOKED);
   await elapse(0);
-  expect(probe.types()).toEqual(["sign-in", "stopped"]);
+  expect(probe.types()).toEqual(["sign-in"]);
 });

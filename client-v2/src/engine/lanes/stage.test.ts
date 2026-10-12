@@ -7,6 +7,7 @@ import {
   type ServerAuth,
   type SessionTarget,
   type StageEvents,
+  type StageSetup,
 } from "../types";
 import { elapse, FakeWorker, outcome, useFakeWorkers } from "./fakes.testutil";
 import { openStage } from "./stage";
@@ -24,8 +25,14 @@ const SESSION: SessionTarget = {
 };
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
-/** One server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order. */
-function stage(activity: Activity, auth: Partial<ServerAuth> = {}, target: FetchTarget | SessionTarget = FETCH) {
+/** One server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order; its
+    latency bus is `bus`. */
+function stage(
+  activity: Activity,
+  auth: Partial<ServerAuth> = {},
+  target: FetchTarget | SessionTarget = FETCH,
+  bus: StageSetup["bus"] = { current: null },
+) {
   const events: [keyof StageEvents, ...unknown[]][] = [];
   const spawned = FakeWorker.spawned.length;
   let checks = 0;
@@ -43,7 +50,7 @@ function stage(activity: Activity, auth: Partial<ServerAuth> = {}, target: Fetch
       server: { id: "peer", url: ORIGIN, name: "Peer" },
       auth: credentials,
       throughput: { target, fetch: FETCH },
-      latency: null,
+      latency: { target: { id: ORIGIN, origin: ORIGIN, transport: "websocket", protocol: "http1", tls: true } },
     } as unknown as PreparedServer,
     activity,
     streams: { down: activity.transfer.includes("down") ? 3 : 0, up: activity.transfer.includes("up") ? 1 : 0 },
@@ -57,6 +64,7 @@ function stage(activity: Activity, auth: Partial<ServerAuth> = {}, target: Fetch
           events.push([type, ...args]),
     }),
     now: () => performance.now(),
+    bus,
   });
   const workers = (url: string) => FakeWorker.spawned.slice(spawned).filter((worker) => worker.url === url);
   return {
@@ -64,6 +72,7 @@ function stage(activity: Activity, auth: Partial<ServerAuth> = {}, target: Fetch
     events,
     lanes: () => workers("lane"),
     session: () => workers("session")[0]!,
+    probes: () => workers("probe"),
     checks: () => checks,
   };
 }
@@ -188,4 +197,46 @@ test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", a
     expect(finished.at).toBe(acknowledged ? 0 : 2_500);
     expect(worker.terminated).toBe(true);
   }
+});
+
+test("one latency bus serves the server's run: a later stage adopts and re-paces it, and only a discard closes it", async () => {
+  const bus: StageSetup["bus"] = { current: null };
+  const idle = stage({ stage: "latency", transfer: [], loadedLatency: false }, {}, FETCH, bus);
+  const prepared = outcome(idle.resources.prepare(new AbortController().signal));
+  const [probe] = idle.probes();
+  expect(probe!.commands).toEqual([
+    {
+      type: "start",
+      url: "wss://peer.example/ws/ping",
+      transport: "websocket",
+      ticket: null,
+      intervalMs: 80,
+      maxInFlight: 16,
+    },
+  ]);
+  probe!.report({ type: "ready" });
+  await elapse(0);
+  expect(prepared).toEqual({ at: 0 });
+  idle.resources.measure();
+  const finished = outcome(idle.resources.finish());
+  probe!.report({ type: "drained" });
+  await elapse(0);
+  expect(finished).toEqual({ at: 0 });
+  expect(probe!.terminated).toBe(false);
+
+  // The loaded stage dials nothing: its transfers never race a handshake.
+  const loaded = stage({ stage: "download", transfer: ["down"], loadedLatency: true }, {}, FETCH, bus);
+  const discarded = outcome(loaded.resources.prepare(new AbortController().signal));
+  expect(loaded.probes()).toEqual([]);
+  expect(probe!.commands.at(-1)).toEqual({ type: "pace", intervalMs: 80, maxInFlight: 2 });
+  loaded.resources.measure();
+  probe!.report({ type: "stalled", detail: "websocket closed" });
+  expect(loaded.events.filter(([type]) => type === "latencyStalled")).toEqual([["latencyStalled", "websocket closed"]]);
+  expect(idle.events.filter(([type]) => type === "latencyStalled")).toEqual([]);
+  loaded.resources.discard(true);
+  expect(probe!.terminated).toBe(true);
+  expect(loaded.events.at(-1)).toEqual(["probesIncomplete"]);
+  expect(bus.current).toBeNull();
+  await elapse(0);
+  expect(discarded.error).toBeInstanceOf(DOMException);
 });

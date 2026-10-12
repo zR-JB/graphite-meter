@@ -141,18 +141,17 @@ test("deadlines are fixed at send; a late reply stays a timeout yet teaches the 
   expect(b.of("ready")).toHaveLength(1);
 });
 
-test("a stop drains measured probes to their own deadlines outside the window, then acknowledges", () => {
+test("a window's end drains its probes to their own deadlines outside it while the bus probes on for the next", () => {
   const b = opened(bus(20, 4, (id) => ([5, 100, "lost", "unconfirmed"] as const)[id] ?? 5));
   b.run(65);
   const before = b.reports.length;
   b.prober.stop();
   b.run(400);
-  expect(b.sent).toEqual([0, 20, 40, 60]);
   expect(b.stamps.slice(before)).toEqual([
     [170, "outcomes"],
     [310, "outcomes"],
     [310, "interrupted"],
-    [310, "stopped"],
+    [310, "drained"],
   ]);
   expect(b.outcomes().slice(1)).toEqual([
     { rttMs: 100, timedOut: false, observedAt: 120, inWindow: false },
@@ -160,8 +159,26 @@ test("a stop drains measured probes to their own deadlines outside the window, t
   ]);
   // A write never confirmed stays unresolved when the drain ends at the last deadline.
   expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 1, reason: "unresolved" }]);
+  // Between windows the bus keeps its cadence, and nothing it sends enters a population.
+  expect(b.sent.filter((at) => at > 65 && at <= 400)).toHaveLength(17);
+  b.prober.measure();
+  b.run(460);
+  expect(b.outcomes().slice(3)).toEqual(
+    [405, 425, 445].map((observedAt) => ({ rttMs: 5, timedOut: false, observedAt, inWindow: true })),
+  );
   b.prober.stop();
-  expect(b.reports.at(-1)).toEqual({ type: "stopped" });
+  b.run(470);
+  expect(b.reports.at(-1)).toEqual({ type: "drained" });
+});
+
+test("a new pace can turn a fixed cadence into a reply-driven chain within a smaller window, and back", () => {
+  const b = opened(bus(250, 16, () => 10));
+  b.run(300);
+  b.prober.pace(null, 1);
+  b.run(335);
+  b.prober.pace(100);
+  b.run(600);
+  expect(b.sent).toEqual([0, 250, 300, 310, 320, 330, 430, 530]);
 });
 
 test("a disconnect keeps passed deadlines as timeouts, interrupts the rest, stalls once per outage and backs off", () => {
@@ -220,13 +237,14 @@ test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wak
     );
   const dense = opened(bus(null, 4, () => 0.01));
   dense.run(10);
+  const measured = dense.sent.length;
   dense.prober.stop();
   dense.run(11);
   const batches = dense.of("outcomes").map(({ outcomes }) => outcomes.length);
   expect(batches.slice(0, -1).every((size) => size === 128)).toBe(true);
-  expect(batches.reduce((sum, size) => sum + size)).toBe(dense.sent.length);
+  expect(batches.reduce((sum, size) => sum + size)).toBe(measured);
   expect(lags(dense).every((lag) => lag <= 50)).toBe(true);
-  expect(dense.reports.at(-1)).toEqual({ type: "stopped" });
+  expect(dense.of("drained")).toHaveLength(1);
   const idle = opened(bus(1_000, 2, () => 1));
   idle.run(10_000);
   // A lone reply waits for the batch, never past it; each second one wake sends and one reports.

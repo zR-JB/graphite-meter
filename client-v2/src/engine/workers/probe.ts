@@ -22,7 +22,7 @@ let send: Send | null = null;
 onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
   else if (data.type === "measure") prober.measure();
-  else if (data.type === "pace") prober.pace(data.intervalMs);
+  else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);
   else prober.stop();
 };
 
@@ -56,8 +56,9 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   let token = "";
   const end: End = (detail) => {
     if (own.signal.aborted) return;
-    // An answer, a refusal too, spent the ticket; a dial that lapsed may never have reached the server.
-    if (!expired.aborted) tickets.spent(token);
+    // An answer, a refusal too, spent the ticket; a WebTransport dial ended at its budget may never have reached the
+    // server, while a WebSocket one always waits for the browser's answer.
+    if (transport === "websocket" || !expired.aborted) tickets.spent(token);
     own.abort();
     if (connection === own) connection = send = null;
     if (detail === null) prober.signIn();
@@ -84,21 +85,23 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
     prober.opened();
   };
   try {
-    if (transport === "websocket") socket(withToken(url, token), own.signal, budget, end, opened);
+    if (transport === "websocket") socket(withToken(url, token), own.signal, expired, end, opened);
     else session(withToken(url, token), own.signal, budget, end, opened);
   } catch (error) {
     end(String(error));
   }
 }
 
-/** A refused upgrade is invisible to script and closes as 1006; the owner asks whether the sign-in ended. */
-function socket(url: string, closed: AbortSignal, budget: AbortSignal, end: End, opened: (write: Send) => void): void {
+/** A refused upgrade is invisible to script and closes as 1006; the owner asks whether the sign-in ended. The browser
+    bounds the handshake itself and may queue it behind another to the same host, where closing it would only delay
+    the next dial: a dial past its budget stays, reported as an outage. */
+function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End, opened: (write: Send) => void): void {
   const ws = new WebSocket(url);
   closed.addEventListener("abort", () => ws.close());
-  const expire = () => end("websocket did not establish");
-  budget.addEventListener("abort", expire);
+  const lapse = () => prober.lapsed("websocket did not establish");
+  expired.addEventListener("abort", lapse, { signal: closed });
   ws.onopen = () => {
-    budget.removeEventListener("abort", expire);
+    expired.removeEventListener("abort", lapse);
     opened((text) => ws.send(text));
   };
   ws.onmessage = ({ data }: MessageEvent<unknown>) => {

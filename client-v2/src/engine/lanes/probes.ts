@@ -1,26 +1,32 @@
 // A latency bus to one server, driven by a probe worker: the worker paces, times and resolves probes and reconnects
-// itself; this side translates their times, asks whether a broken bus was the sign-in ending, and bounds the drain.
+// itself; this side translates their times, asks whether a broken bus was the sign-in ending, bounds each window's
+// drain and hands the bus from one owner to the next.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
 import { DEADLINE_CEILING_MS } from "../measure/latency";
 import { fromEpoch } from "../run/clock";
-import { SignInRequired, type OpenProbeChannel } from "../types";
+import { SignInRequired, type LatencyBus, type ProbeChannelEvents, type ProbeChannelOptions } from "../types";
 import { delay } from "./wait";
 
 /** A draining worker gets its probes' longest deadline and this to acknowledge. */
 const STOP_MARGIN_MS = 250;
 
-export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, maxInFlight }, events) => {
+export function openProbeChannel(
+  { target, auth, intervalMs, maxInFlight }: ProbeChannelOptions,
+  events: ProbeChannelEvents,
+): LatencyBus {
   const websocket = target.transport === "websocket";
   const route = websocket ? ROUTES.ping : ROUTES.wtPing;
   const released = new AbortController();
-  let state: "probing" | "stopping" | "released" = "probing";
+  /** A window is open or draining, so cutting the bus off leaves its population incomplete. */
   let measured = false;
-  let stopping: Promise<void> | undefined;
+  let drain: { promise: Promise<void>; acknowledged: AbortController } | null = null;
+  /** What a new owner is told at once: the bus answers on its connection, or why it stalled. */
+  let answering = false;
+  let stall: string | null = null;
   const worker = new Worker(WORKERS.probe, { type: "module" });
 
   const release = () => {
-    state = "released";
     released.abort();
     worker.onmessage = worker.onerror = null;
     worker.terminate();
@@ -38,6 +44,7 @@ export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, m
   worker.onmessage = ({ data }: MessageEvent<ProbeReport>) => {
     switch (data.type) {
       case "ready":
+        answering = true;
         return events.ready();
       case "outcomes":
         for (const outcome of data.outcomes) outcome.observedAt = fromEpoch(outcome.observedAt);
@@ -45,6 +52,8 @@ export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, m
       case "interrupted":
         return events.interrupted(data.count, data.reason);
       case "stalled":
+        answering = false;
+        stall = data.detail;
         events.stalled(data.detail);
         // A refused WebSocket upgrade looks like any break, so each outage asks whether the sign-in ended.
         return void auth.ended(released.signal).then(
@@ -54,11 +63,14 @@ export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, m
           () => {},
         );
       case "resumed":
+        answering = true;
+        stall = null;
         return events.resumed();
       case "sign-in":
         return signedOut();
-      case "stopped":
-        return release();
+      case "drained":
+        measured = false;
+        return drain?.acknowledged.abort();
     }
   };
   worker.onerror = ({ message }) => {
@@ -85,26 +97,38 @@ export const openProbeChannel: OpenProbeChannel = ({ target, auth, intervalMs, m
 
   return {
     measure() {
-      if (state !== "probing") return;
+      if (released.signal.aborted) return;
       measured = true;
       worker.postMessage({ type: "measure" } satisfies ProbeCommand);
     },
-    pace(intervalMs) {
-      if (state === "probing") worker.postMessage({ type: "pace", intervalMs } satisfies ProbeCommand);
+    pace(intervalMs, maxInFlight) {
+      if (!released.signal.aborted)
+        worker.postMessage({ type: "pace", intervalMs, maxInFlight } satisfies ProbeCommand);
     },
     stop() {
-      return (stopping ??= (async () => {
-        if (state !== "probing") return;
-        state = "stopping";
-        worker.postMessage({ type: "stop" } satisfies ProbeCommand);
-        await delay(DEADLINE_CEILING_MS + STOP_MARGIN_MS, released.signal);
-        if (!released.signal.aborted) lost();
-      })());
+      if (released.signal.aborted) return Promise.resolve();
+      if (drain) return drain.promise;
+      worker.postMessage({ type: "stop" } satisfies ProbeCommand);
+      const acknowledged = new AbortController();
+      const bound = AbortSignal.any([released.signal, acknowledged.signal]);
+      const promise = delay(DEADLINE_CEILING_MS + STOP_MARGIN_MS, bound).then(() => {
+        drain = null;
+        if (!bound.aborted) lost();
+      });
+      drain = { promise, acknowledged };
+      return promise;
     },
     dispose(incomplete = false) {
-      if (state === "released") return;
+      if (released.signal.aborted) return;
       if (incomplete) lost();
       else release();
     },
+    adopt(next) {
+      if (released.signal.aborted) return false;
+      events = next;
+      if (stall !== null) next.stalled(stall);
+      else if (answering) next.ready();
+      return true;
+    },
   };
-};
+}

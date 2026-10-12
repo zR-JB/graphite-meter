@@ -218,6 +218,9 @@ export interface StageSetup {
   events: StageEvents;
   /** Run ms, the clock checkpoints are stamped with. */
   now(): number;
+  /** The server's latency bus for the whole run: the first stage that probes opens it here and each later one adopts
+      it, so no handshake races a stage's transfers; the run disposes it when the server leaves or the run ends. */
+  bus: { current: LatencyBus | null };
 }
 
 /** One server's resources for one stage, shared by its warmup and measured window. */
@@ -276,14 +279,21 @@ export interface ProbeChannelEvents {
 export interface ProbeChannel {
   /** Outcomes count from now on; probes sent before never enter a population. */
   measure(): void;
-  /** Probes at this fixed start-to-start spacing from the next send on; probes in flight keep their deadlines. */
-  pace(intervalMs: number): void;
-  /** Stops sending; probes in flight drain to their own deadlines (at most 10 s) and resolve outside the window. */
+  /** Probes at this start-to-start spacing (null: on each reply), with at most `maxInFlight` in flight when given, from
+      the next send on; probes in flight keep their deadlines. */
+  pace(intervalMs: number | null, maxInFlight?: number): void;
+  /** Ends the measured window: its probes in flight drain to their own deadlines (at most 10 s) and resolve outside
+      it; the bus probes on, unmeasured, until disposed. */
   stop(): Promise<void>;
   /** Immediate release; `incomplete` first reports the probes it cuts off. */
   dispose(incomplete?: boolean): void;
 }
 export type OpenProbeChannel = (options: ProbeChannelOptions, events: ProbeChannelEvents) => ProbeChannel;
+/** A probe channel that outlives its stage. */
+export interface LatencyBus extends ProbeChannel {
+  /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
+  adopt(events: ProbeChannelEvents): boolean;
+}
 
 /** The test settings as saved (localStorage `graphite-meter:v1` → `config`); the shape is a compatibility boundary. */
 export interface TestConfig {

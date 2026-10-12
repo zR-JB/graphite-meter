@@ -1,6 +1,7 @@
 // One latency bus's probing, whatever carries it (docs/MEASUREMENTS.md#latency-probing): fixed or reply-driven pacing
 // within an in-flight window, RFC 6298 deadlines fixed at send, outcomes batched for the owner, reconnects with
-// backoff, and a drain to the probes' own deadlines at stop. One timer serves all of it, armed only for what is due.
+// backoff, and a drain to the probes' own deadlines at each window's end, while the bus probes on for the next one. One
+// timer serves all of it, armed only for what is due.
 import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
 import { DEADLINE_FLOOR_MS, RttEstimator } from "../measure/latency";
@@ -25,7 +26,7 @@ export interface ProberClock {
   disarm(): void;
 }
 
-/** The connection side: a dial is answered by opened(), closed() or signIn(). */
+/** The connection side: a dial is answered by opened(), closed() or signIn(), and may lapse() first. */
 export interface ProberIO {
   dial(): void;
   /** Sends on the open connection; throws or rejects when the browser could not send. */
@@ -42,9 +43,11 @@ interface Probe {
   confirmed: boolean;
   /** Warmup probes never enter a population. */
   measured: boolean;
+  /** When its window ended: a later outcome resolves it outside the window. */
+  cutoff: number;
 }
 
-type State = "connecting" | "open" | "draining" | "stopped";
+type State = "connecting" | "open" | "stopped";
 
 export class Prober {
   #state: State = "connecting";
@@ -66,8 +69,8 @@ export class Prober {
   /** This connection had a matched reply. */
   #replied = false;
   #measuring = false;
-  /** When the stop arrived: outcomes observed later resolve their probes outside the window. */
-  #stoppedAt = Infinity;
+  /** A window ended and its probes in flight have yet to resolve. */
+  #draining = false;
   #timerAt = Infinity;
 
   constructor(
@@ -100,13 +103,19 @@ export class Prober {
     // A deadline that passed before the gap stays a timeout; the others are unfinished, never timeouts.
     this.#sweep(now);
     this.#interrupt();
-    if (this.#state === "draining") return this.#finish();
     // Once per outage, until replies flow again.
     if (!this.#stalled) this.io.post({ type: "stalled", detail });
     this.#stalled = true;
     this.#backoff = Math.min(RECONNECT_MAX_MS, this.#backoff * 2 || RECONNECT_MIN_MS);
     this.#reconnectAt = now + this.#backoff;
     this.#settle(now);
+  }
+
+  /** A dial outlived its budget and still awaits the browser's verdict: an outage as far as the owner can tell. */
+  lapsed(detail: string): void {
+    if (this.#state !== "connecting" || this.#stalled) return;
+    this.#stalled = true;
+    this.io.post({ type: "stalled", detail });
   }
 
   /** The server ended the login or grant: nothing pending gets a verdict. */
@@ -119,7 +128,7 @@ export class Prober {
 
   /** A message from the server, read at `at` before it was parsed. */
   frame(text: string, at: number): void {
-    if (this.#state !== "open" && this.#state !== "draining") return;
+    if (this.#state !== "open") return;
     const reply = pong(text);
     if (!reply) return;
     const probe = this.#pending.get(reply.id);
@@ -139,7 +148,7 @@ export class Prober {
     const late = at >= probe.deadline;
     const handlingMs = reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
     if (probe.measured) this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
-    if (!late && this.#stalled && this.#state === "open") {
+    if (!late && this.#stalled) {
       this.#stalled = false;
       this.io.post({ type: "resumed" });
     }
@@ -149,7 +158,7 @@ export class Prober {
 
   /** Outcomes count from now on; a fixed cadence probes the window's start at once. */
   measure(): void {
-    if (this.#state === "draining" || this.#state === "stopped") return;
+    if (this.#state === "stopped") return;
     this.#measuring = true;
     if (this.options.intervalMs === null) return;
     this.#sentAt = -Infinity;
@@ -158,24 +167,22 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** A fixed cadence from the next send on, spaced from the last one; probes in flight keep their deadlines. */
-  pace(intervalMs: number): void {
-    this.options.intervalMs = intervalMs;
+  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain starting at once;
+      probes in flight keep their deadlines. */
+  pace(intervalMs: number | null, maxInFlight = this.options.maxInFlight): void {
+    Object.assign(this.options, { intervalMs, maxInFlight });
+    this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
     this.wake();
   }
 
-  /** Stops sending; measured probes in flight drain to their own deadlines, each at most 10 s away. Every stop is
-      acknowledged. */
+  /** Ends the measured window: its probes in flight drain to their own deadlines, each at most 10 s away, and the
+      drain is acknowledged; the bus probes on, unmeasured. */
   stop(): void {
-    if (this.#state === "stopped") return this.io.post({ type: "stopped" });
-    if (this.#state === "draining") return;
+    if (this.#state === "stopped") return this.io.post({ type: "drained" });
     const now = this.clock.now();
-    this.#stoppedAt = now;
-    this.#reconnectAt = this.#backupAt = Infinity;
-    for (const [id, probe] of this.#pending) if (!probe.measured) this.#pending.delete(id);
-    // Nothing is in flight while disconnected.
-    if (this.#state === "connecting") return this.#finish();
-    this.#state = "draining";
+    this.#measuring = false;
+    this.#draining = true;
+    for (const probe of this.#pending.values()) if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
     this.#settle(now);
   }
 
@@ -219,6 +226,7 @@ export class Prober {
       deadline: now + this.#rtt.deadlineMs(),
       confirmed: false,
       measured: this.#measuring,
+      cutoff: Infinity,
     };
     this.#pending.set(id, probe);
     try {
@@ -288,7 +296,7 @@ export class Prober {
       timedOut,
       handlingMs,
       observedAt: this.clock.origin + observedAt,
-      inWindow: observedAt <= this.#stoppedAt,
+      inWindow: observedAt <= probe.cutoff,
     });
     if (this.#outbox.length >= BATCH_MAX) this.#flush();
     else if (this.#flushAt === Infinity) this.#flushAt = this.clock.now() + FLUSH_MS;
@@ -315,29 +323,42 @@ export class Prober {
     this.#timerAt = Infinity;
     this.clock.disarm();
     this.#flush();
-    this.io.post({ type: "stopped" });
     this.io.hangUp();
   }
 
-  /** Ends a drain once nothing is pending, or at the last deadline, where a write still unconfirmed stays
-      unresolved; otherwise arms the timer for the earliest of the next send, a confirmed deadline, the batch flush,
-      the drain's end and a reconnect. An armed timer that fires earlier just re-arms. */
+  /** The ended window's probes resolved, or their last deadline passed with a write still unconfirmed, which stays
+      unresolved. */
+  #drained(now: number): void {
+    this.#sweep(now);
+    let unresolved = 0;
+    for (const [id, probe] of this.#pending)
+      if (probe.cutoff < Infinity) {
+        this.#pending.delete(id);
+        unresolved++;
+      }
+    this.#flush();
+    if (unresolved) this.io.post({ type: "interrupted", count: unresolved, reason: "unresolved" });
+    this.#draining = false;
+    this.io.post({ type: "drained" });
+  }
+
+  /** Ends a drain at its window's last deadline, or once nothing of it is pending; otherwise arms the timer for the
+      earliest of the next send, a confirmed deadline, the batch flush, the drain's end and a reconnect. An armed timer
+      that fires earlier just re-arms. */
   #settle(now: number): void {
     if (this.#state === "stopped") return;
-    let at = Math.min(this.#flushAt, this.#reconnectAt);
-    let last = -Infinity;
-    for (const probe of this.#pending.values()) {
-      if (probe.confirmed) at = Math.min(at, probe.deadline);
-      last = Math.max(last, probe.deadline);
-    }
-    if (this.#state === "draining") {
-      if (now < last) at = Math.min(at, last);
-      else {
-        this.#sweep(now);
-        this.#interrupt();
-        return this.#finish();
+    let drainAt = Infinity;
+    if (this.#draining) {
+      drainAt = -Infinity;
+      for (const probe of this.#pending.values())
+        if (probe.cutoff < Infinity) drainAt = Math.max(drainAt, probe.deadline);
+      if (now >= drainAt) {
+        this.#drained(now);
+        drainAt = Infinity;
       }
     }
+    let at = Math.min(this.#flushAt, this.#reconnectAt, drainAt);
+    for (const probe of this.#pending.values()) if (probe.confirmed) at = Math.min(at, probe.deadline);
     const { intervalMs, maxInFlight } = this.options;
     // A backup due while the window is full puts the chain to sleep; a full cadence waits for a free slot.
     if (this.#state === "open")

@@ -55,7 +55,8 @@ export type ProbeCommand =
       maxInFlight: number;
     }
   | { type: "measure" }
-  | { type: "pace"; intervalMs: number }
+  | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
+  /** Ends the measured window; `drained` acknowledges it once the window's probes resolved. */
   | { type: "stop" };
 
 /** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ; the owner translates them in place. */
@@ -66,4 +67,4 @@ export type ProbeReport =
   | { type: "stalled"; detail: string }
   | { type: "resumed" }
   | { type: "sign-in" }
-  | { type: "stopped" };
+  | { type: "drained" };
