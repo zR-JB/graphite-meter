@@ -264,7 +264,7 @@ export function createShell(app: App, layout: Layout) {
   function startOver(): void {
     if (workspace.peek() !== "measurement") return navigate(withWorkspace(route.peek(), MEASUREMENT), "push");
     const running = app.run.running.peek();
-    if (!running && !(app.run.result.peek() && !app.saving.peek())) return app.run.returnToStart();
+    if (!running && !(app.run.result.peek() && app.saver.unsaved.peek())) return app.run.returnToStart();
     batch(() => {
       reset.reason.set(running ? "running" : "unsaved");
       reset.open.set(true);
@@ -341,9 +341,9 @@ export function createShell(app: App, layout: Layout) {
     event.preventDefault();
     run(order);
   }
-  // Leaving mid-run asks first.
+  // Leaving mid-run, or before a result's write lands, asks first.
   const beforeunload = (event: BeforeUnloadEvent) => {
-    if (!app.run.running.peek()) return;
+    if (!app.run.running.peek() && !app.saver.pending.peek()) return;
     event.preventDefault();
     event.returnValue = "";
   };

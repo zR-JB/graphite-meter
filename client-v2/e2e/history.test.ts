@@ -1,4 +1,4 @@
-import { countSaves, home, open, ready, run, runButton, HISTORY_DB } from "./fleet";
+import { countSaves, home, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
 import { expect, test, type Page } from "../../client/e2e/webview";
 
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
@@ -428,4 +428,18 @@ test("History refuses other database versions without changing them", async (pag
     await expect(refusal).toBeVisible(OPEN_BOUND);
     expect(await stored(page)).toEqual(before);
   }
+});
+
+test("starting over asks before clearing a result History refused to save", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [], version: HISTORY_DB.version + 1 });
+  await page.goto(home.url);
+  await ready(page);
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+  const ask = page.getByRole("alertdialog", { name: "Clear this result?" });
+  await page.getByRole("button", { name: /start over$/ }).click();
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Keep result" }).click();
+  await expect(runButton(page, "Run again")).toBeVisible();
 });
