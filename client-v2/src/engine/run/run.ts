@@ -3,7 +3,14 @@
 // and dropouts, finishes stable stages early, reshapes the timeline on live changes, and reduces it all to a result.
 import { safeDetail } from "../../protocol/documents";
 import type { FailureReason } from "../../protocol/reasons";
-import { Aggregate, type Boundary, type Checkpoint, type ComponentWindow, type Direction } from "../measure/aggregate";
+import {
+  Aggregate,
+  type Boundary,
+  type Checkpoint,
+  type ComponentWindow,
+  type Direction,
+  type ThroughputResult,
+} from "../measure/aggregate";
 import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
 import { ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates } from "../measure/live";
@@ -26,7 +33,6 @@ import {
 } from "../types";
 import { pageClock, RunClock, type Clock } from "./clock";
 import {
-  coveredMs,
   failureScope,
   lanes,
   outcomeOf,
@@ -264,6 +270,9 @@ export class Run {
   #stages = new Map<Stage, StageRun>();
   #settled = new Map<Stage, { status: StageStatus; plan: StagePlans[Stage] }>();
   #results: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
+  /** Each server's own result per stage and direction, taken as the stage settles: later stages' intervals may push
+      its intervals past the interval limit. */
+  #own = new Map<string, ThroughputResult | null>();
   /** Complete once the current stage settles. */
   #finishing = false;
   #aggregate = new Aggregate();
@@ -1212,9 +1221,7 @@ export class Run {
     const measured = lanes(this.#results, name).every(Boolean);
     // A result that spans too little of its planned time is kept, never complete: the rule History checks.
     const short =
-      measured &&
-      name !== "latency" &&
-      coveredMs(this.#aggregate.intervals, name) < plan.durationMs * minCoverage(plan.early);
+      measured && name !== "latency" && this.#aggregate.coveredMs(name) < plan.durationMs * minCoverage(plan.early);
     if (stage && !this.#failed(name) && (short || !measured)) {
       const ids =
         name === "latency"
@@ -1228,7 +1235,11 @@ export class Run {
     // status counts it.
     if (stage && name !== "latency")
       for (const id of stage.seats.keys()) {
-        const own = stage.activity.transfer.map((dir) => this.#aggregate.serverResult(name, dir, id));
+        const own = stage.activity.transfer.map((dir) => {
+          const result = this.#aggregate.serverResult(name, dir, id);
+          this.#own.set(`${name}\t${dir}\t${id}`, result);
+          return result;
+        });
         if (!own.every(Boolean) && !this.#failed(name, id))
           this.#record(
             id,
@@ -1354,7 +1365,10 @@ export class Run {
   #summary(server: Participant): ServerMeasurementSummary {
     const { id, prepared, latency } = server;
     const { throughput } = prepared;
-    const result = (stage: TransferStage, dir: Direction) => this.#aggregate.serverResult(stage, dir, id);
+    const result = (stage: TransferStage, dir: Direction) => {
+      const key = `${stage}\t${dir}\t${id}`;
+      return this.#own.has(key) ? this.#own.get(key)! : this.#aggregate.serverResult(stage, dir, id);
+    };
     const evidence = {
       latency: latency.result(),
       download: result("download", "down"),

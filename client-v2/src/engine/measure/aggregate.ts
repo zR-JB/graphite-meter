@@ -134,6 +134,8 @@ export class Aggregate {
   #stageTotals = new Map<TransferStage, Map<string, Totals>>();
   /** The highest byte count credited per server and upload id. */
   #ledgers = new Map<string, Map<string, number>>();
+  /** Where each stage's first interval began, once the interval limit let it go. */
+  #evictedStart = new Map<TransferStage, number>();
   #latest: { boundary: Boundary; final: boolean } | null = null;
 
   get current(): Interval | null {
@@ -152,7 +154,9 @@ export class Aggregate {
       this.#latest = null;
     }
     if (this.intervals.length >= INTERVAL_LIMIT) {
-      this.#closed.delete(this.intervals.shift()!.id);
+      const evicted = this.intervals.shift()!;
+      this.#closed.delete(evicted.id);
+      if (!this.#evictedStart.has(evicted.stage)) this.#evictedStart.set(evicted.stage, evicted.startMs);
       this.omittedIntervals++;
     }
     const record: Interval = {
@@ -376,6 +380,12 @@ export class Aggregate {
       return null;
     };
     return { down: reduce("down"), up: reduce("up") };
+  }
+
+  /** How long a stage's intervals span, from its first interval even past the interval limit. */
+  coveredMs(stage: TransferStage): number {
+    const spans = this.intervals.filter((interval) => interval.stage === stage);
+    return spans.length ? spans.at(-1)!.endMs - (this.#evictedStart.get(stage) ?? spans[0]!.startMs) : 0;
   }
 
   /** One server's share: the latest complete interval where its own component has enough evidence. */

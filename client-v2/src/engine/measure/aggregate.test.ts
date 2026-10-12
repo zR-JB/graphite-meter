@@ -81,3 +81,11 @@ test("a steady window too short on one direction's clock gives way to the full w
   expect(down?.window).toBe(up?.window);
   expect(aggregate.intervals[0]!.headline).toBe(down!.window);
 });
+
+test("a stage's coverage counts from its first interval after the interval limit let it go", () => {
+  const aggregate = new Aggregate();
+  aggregate.begin("download", ["a"], 0);
+  for (let at = 10; at <= 1_300; at += 10) aggregate.begin("download", ["a"], at, "evidence-resumed");
+  expect(aggregate.omittedIntervals).toBeGreaterThan(0);
+  expect(aggregate.coveredMs("download")).toBe(1_300);
+});

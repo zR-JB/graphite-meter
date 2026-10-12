@@ -1065,6 +1065,20 @@ test("a receiver record delivered before the first tick after a page gap opens t
   expect(result.multiServer.intervals.map(({ reason }) => reason)).toEqual(["stage-start", "evidence-resumed"]);
 });
 
+test("a server's result from an early stage outlives the interval limit a later stage reaches", async () => {
+  const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 600_000 });
+  h.start();
+  await h.elapse(1_500);
+  // Each page gap opens an interval; past 128 the oldest, the download's, give way.
+  for (let gap = 0; gap < 140; gap++) {
+    h.clock.t += 2_000;
+    await h.elapse(400);
+  }
+  const result = await h.result(600_000);
+  expect(result.multiServer.omittedIntervals).toBeGreaterThan(0);
+  near(result.multiServer.servers[0]!.download?.reportedBytesPerSec, 1_000);
+});
+
 test("a stage end handler may end or stop the run there, and one that throws changes nothing", async () => {
   const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
   try {
