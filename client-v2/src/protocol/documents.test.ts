@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { json } from "./pins.testutil";
-import { catalog, preflight, probe } from "./documents";
+import { catalog, preflight, probe, readJSON } from "./documents";
+
+test("a JSON body is read up to its bound and refused past it, 64 KiB unless named", async () => {
+  const document = { text: "x".repeat(70_000) };
+  const body = JSON.stringify(document);
+  await expect(readJSON(new Response(body))).rejects.toThrow("too large");
+  await expect(readJSON(new Response(body), body.length - 1)).rejects.toThrow("too large");
+  expect(await readJSON(new Response(body), body.length)).toEqual(document);
+});
 
 test("the shared preflight and probe fixtures decode as Go and Rust read them", async () => {
   const golden = await json("preflight.golden.json");

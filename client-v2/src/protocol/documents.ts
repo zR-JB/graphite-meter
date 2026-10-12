@@ -7,9 +7,9 @@ const MAX_TARGETS = 32;
 export const DEFAULT_STAGE_LIMIT_MS = 300_000;
 export const MAX_STAGE_LIMIT_MS = 86_400_000;
 
-/** One JSON document of at most 64 KiB of strict UTF-8, decoded bytes counted as they stream; the body is always
-    released. */
-export async function readJSON(response: Response): Promise<unknown> {
+/** One JSON document of at most `maxBytes` (64 KiB unless named) of strict UTF-8, decoded bytes counted as they
+    stream; the body is always released. */
+export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   if (!response.body) throw new DecodeError("the response has no body");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -18,7 +18,7 @@ export async function readJSON(response: Response): Promise<unknown> {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if ((size += value.byteLength) > MAX_BODY_BYTES) throw new DecodeError("the response is too large");
+      if ((size += value.byteLength) > maxBytes) throw new DecodeError("the response is too large");
       chunks.push(value);
     }
   } finally {
