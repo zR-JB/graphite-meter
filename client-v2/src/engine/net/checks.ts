@@ -77,8 +77,8 @@ const ESTABLISH_MARGIN_MS = 500;
 // HTTP/3 bootstrap is bounded by attempts and by wall time together, so a path that never answers cannot hold a check.
 const H3_ATTEMPTS = 8;
 const H3_DEADLINE_MS = 2_000;
-/** Body completion can precede delivery of the browser's Resource Timing entry. */
-const TIMING_DELIVERY_MS = 250;
+/** Body completion can precede the browser's Resource Timing entry; a loaded browser delivers it late. */
+const TIMING_DELIVERY_MS = 1_000;
 const PREPARATION_INTERVAL_MS = 120;
 const PREPARATION_RTTS = 5;
 const COLLECT_MS = 1_500;
@@ -179,6 +179,8 @@ function watchProtocol(url: string) {
           delivered = done;
         });
       signal.throwIfAborted();
+      // An entry already buffered whose observer callback is still queued.
+      if (protocol === undefined) take(performance.getEntriesByName(url, "resource"));
       return protocol ?? null;
     },
     stop: () => observer?.disconnect(),
