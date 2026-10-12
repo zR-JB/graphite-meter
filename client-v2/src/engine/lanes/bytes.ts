@@ -3,7 +3,8 @@
 
 const READ_BYTES = 1024 * 1024;
 const REPORT_MS = 50;
-const BLOCK_BYTES = 4 * 1024 * 1024;
+const MIB = 1024 * 1024;
+const BLOCK_BYTES = 4 * MIB;
 /** crypto.getRandomValues fills at most this much per call. */
 const RANDOM_QUOTA = 65_536;
 
@@ -63,12 +64,27 @@ export class ByteReports {
   }
 }
 
-let block: Uint8Array<ArrayBuffer> | undefined;
-
-/** 4 MiB of CSPRNG bytes, filled once per worker, so a compressing hop cannot flatter an upload. */
+/** 4 MiB of CSPRNG bytes, so a compressing hop cannot flatter an upload; kept only by whoever is sending them. */
 export function randomBlock(): Uint8Array<ArrayBuffer> {
-  if (block) return block;
-  block = new Uint8Array(BLOCK_BYTES);
+  const block = new Uint8Array(BLOCK_BYTES);
   for (let at = 0; at < BLOCK_BYTES; at += RANDOM_QUOTA) crypto.getRandomValues(block.subarray(at, at + RANDOM_QUOTA));
   return block;
+}
+
+/** Bodies repeat one random block, so memory stays at the block whatever their size. */
+export const MAX_POST_BYTES = 256 * MIB;
+
+/** A lane's share of what a server's lanes post at once, as v1 sizes it: 16 MiB on a device with 2 GB or less, 24 MiB
+    up to 4 GB, else 256 MiB; 128 MiB where the browser does not say (Firefox, which can stall a larger body without
+    an error). Never under 2 MiB a lane. */
+export function largestPost(streams: number, deviceMemory: number | undefined): number {
+  const pool =
+    deviceMemory === undefined
+      ? 128 * MIB
+      : deviceMemory <= 2
+        ? 16 * MIB
+        : deviceMemory <= 4
+          ? 24 * MIB
+          : MAX_POST_BYTES;
+  return Math.max(2 * MIB, Math.floor(pool / Math.max(1, streams)));
 }

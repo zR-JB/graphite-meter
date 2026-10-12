@@ -1,7 +1,7 @@
 // One HTTP fetch lane (api/upload.md): a download loop counting what it reads, or an upload loop of sized POSTs that
 // the server counts. Its owner reopens it after an ending and stops it by termination.
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
-import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
+import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
 import { downloadRefused, lost, refused } from "../lanes/endings";
 
 const MIB = 1024 * 1024;
@@ -9,8 +9,6 @@ const MIB = 1024 * 1024;
 const TARGET_POST_MS = 500;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
-/** Bodies repeat one random block, so memory stays at the block whatever their size. */
-const MAX_POST_BYTES = 256 * MIB;
 /** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
 const MAX_ANSWER_BYTES = 64 * 1024;
 /** A download asks for far more; a body that ends below this came from something else, such as a proxy's page. */
@@ -76,8 +74,7 @@ async function drained(response: Response): Promise<boolean> {
 }
 
 async function upload({ url, request, streams }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  // Firefox reports no device memory and can stall a body past v1's 128 MiB share without an error.
-  const largest = "deviceMemory" in navigator ? MAX_POST_BYTES : Math.max(2 * MIB, Math.floor((128 * MIB) / streams));
+  const largest = largestPost(streams, (navigator as { deviceMemory?: number }).deviceMemory);
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
