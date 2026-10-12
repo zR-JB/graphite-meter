@@ -103,7 +103,7 @@ export class Carrier {
   release(): void {
     this.#done.abort();
     this.#acknowledged.abort();
-    for (const { worker } of this.#lanes) {
+    for (const { worker } of this.#lanes.splice(0)) {
       worker.onmessage = worker.onerror = null;
       worker.terminate();
     }
