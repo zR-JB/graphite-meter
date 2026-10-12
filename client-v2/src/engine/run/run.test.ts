@@ -197,6 +197,29 @@ test("lanes that read on until their flush answers count against the time it ans
   near((await h.result()).download?.reportedBytesPerSec, 1_000);
 });
 
+test("an answer that reaches the page late still closes the boundary when its count was read", async () => {
+  // 1 byte per ms, counted until the flush reads the count; the answer arrives 200 ms after that.
+  let counting = true;
+  const h = setup(
+    [
+      {
+        id: "self",
+        rate: 0,
+        measure: (events) => clock.every(20, () => counting && events.download(20)),
+        flush: () => {
+          counting = false;
+          const read = clock.t;
+          return new Promise<number>((resolve) => later(200, () => resolve(read)));
+        },
+      },
+    ],
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  h.start();
+  near((await h.result()).download?.reportedBytesPerSec, 1_000);
+});
+
 test("servers whose lanes answer the final flush at different times are cut at the same moment", async () => {
   const late = () => new Promise<void>((resolve) => later(200, resolve));
   const h = setup(two({ flush: () => {} }, { rate: 1, flush: late }), { download: true }, { downloadMs: 1_000 });

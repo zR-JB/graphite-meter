@@ -49,7 +49,8 @@ export interface BytesReport {
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
 /** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
-    reports the download bytes counted so far, then answers `flushed`. */
+    reports the download bytes counted so far, then answers `flushed` with when it read that count
+    (`performance.timeOrigin + performance.now()`). */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
   | {
@@ -68,7 +69,7 @@ export type LaneReport =
   | BytesReport
   | { type: "posted"; bytes: number; elapsedMs: number }
   | EndReport
-  | { type: "flushed" };
+  | { type: "flushed"; at: number };
 
 /** A session worker (re)dials with `download` or `upload` after its previous ending; `stop` finalizes an upload and
     is acknowledged by `stopped` whatever ended the session; `flush` is a lane's. */
@@ -94,7 +95,7 @@ export type SessionReport =
   | { type: "record"; record: FeedRecord }
   | EndReport
   | { type: "stopped" }
-  | { type: "flushed" };
+  | { type: "flushed"; at: number };
 
 export type ProbeCommand =
   | {

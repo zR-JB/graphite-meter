@@ -121,7 +121,8 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   await elapse(0);
   lane.send({ type: "flush" });
   lane.send({ type: "flush" });
-  expect(lane.posted).toEqual([{ type: "bytes", bytes: 7, epoch: 1 }, { type: "flushed" }, { type: "flushed" }]);
+  const flushed = { type: "flushed", at: expect.any(Number) };
+  expect(lane.posted).toEqual([{ type: "bytes", bytes: 7, epoch: 1 }, flushed, flushed]);
 });
 
 test("a download whose answer ends short ends the lane, so its owner paces the reopen", async () => {

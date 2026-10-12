@@ -78,7 +78,8 @@ export interface Peer {
   checkpointLagMs?: number;
   replaceUpload?(signal: AbortSignal): Promise<void>;
   /** The lanes report what they counted but had not reported yet. */
-  flush?(events: StageEvents): void | Promise<void>;
+  /** May answer with the clock time its count was read at. */
+  flush?(events: StageEvents): void | number | Promise<void | number>;
   receives?: false;
 }
 
@@ -162,7 +163,7 @@ export function resources(peer: Peer, setup: StageSetup, calls: string[], clock:
           : Promise.resolve(answer))
       );
     },
-    flush: async () => peer.flush?.(events),
+    flush: async () => (await peer.flush?.(events)) ?? null,
     replaceUpload: (signal) => peer.replaceUpload?.(signal) ?? Promise.resolve(),
   };
 }

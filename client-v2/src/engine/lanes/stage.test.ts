@@ -203,14 +203,20 @@ test("a flush resolves once every lane reported what it counted, at most 250 ms"
     const lanes = flushing.lanes();
     for (const lane of lanes) bytes(lane, 0);
     flushing.resources.measure();
-    const flushed = outcome(flushing.resources.flush());
+    const answer = flushing.resources.flush();
+    const flushed = outcome(answer);
+    let read: number | null | undefined;
+    void answer.then((value) => (read = value));
     expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "flush" }));
     for (const lane of lanes.slice(0, answering)) {
       bytes(lane, 1);
-      lane.report({ type: "flushed" });
+      lane.report({ type: "flushed", at: performance.timeOrigin + performance.now() });
     }
     await elapse(300);
     expect(flushed.at).toBe(answering === 3 ? 0 : 250);
+    expect(read).toEqual(expect.any(Number));
+    // A lane that answered counts nothing more: its later bytes lie past the boundary.
+    for (const lane of lanes.slice(0, answering)) bytes(lane, 1);
     expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering);
   }
 });

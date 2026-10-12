@@ -6,6 +6,7 @@ import type { FeedRecord, LaneCommand, LaneReport, SessionCommand, SessionReport
 import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
 import { Backoff, lost } from "./endings";
+import { fromEpoch } from "../run/clock";
 import { delay } from "./wait";
 
 /** A stopping session gets this long to finalize and acknowledge. */
@@ -43,8 +44,10 @@ interface Lane {
   worker: Worker;
   delivered: boolean;
   backoff: Backoff;
-  /** Resolves the flush awaiting this lane's answer. */
-  flushed: (() => void) | null;
+  /** Resolves the flush awaiting this lane's answer, with when the lane read its count. */
+  flushed: ((at: number) => void) | null;
+  /** Answered the final flush: what it counts later lies past the boundary. */
+  cut: boolean;
 }
 
 export class Carrier {
@@ -67,6 +70,7 @@ export class Carrier {
         delivered: false,
         backoff: new Backoff(),
         flushed: null,
+        cut: false,
       };
       lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) => this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
@@ -95,18 +99,25 @@ export class Carrier {
     for (const { worker } of this.#lanes) worker.postMessage({ type: "measure", epoch: this.#epoch });
   }
 
-  /** Resolves once every lane reported the download bytes it counted so far, within 250 ms. */
-  async flush(): Promise<void> {
+  /** Resolves once every lane reported the download bytes it counted so far, within 250 ms, with the latest page
+      time a lane read its count at, or null when none answered. A lane that answered counts nothing more. */
+  async flush(): Promise<number | null> {
     const answered = new AbortController();
+    let latest: number | null = null;
     const answers = this.#lanes.map(
       (lane) =>
         new Promise<void>((resolve) => {
-          lane.flushed = resolve;
+          lane.flushed = (at) => {
+            lane.cut = true;
+            latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, fromEpoch(at));
+            resolve();
+          };
           lane.worker.postMessage({ type: "flush" });
         }),
     );
     await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
     answered.abort();
+    return latest;
   }
 
   /** A session finalizes and acknowledges within its grace; fetch lanes end at once. */
@@ -139,7 +150,7 @@ export class Carrier {
     switch (report.type) {
       case "bytes":
         this.#delivered(lane);
-        if (report.epoch === this.#epoch) this.#host.bytes(report.bytes);
+        if (report.epoch === this.#epoch && !lane.cut) this.#host.bytes(report.bytes);
         return;
       case "posted":
         this.#delivered(lane);
@@ -150,7 +161,7 @@ export class Carrier {
       case "stopped":
         return this.#acknowledged.abort();
       case "flushed":
-        lane.flushed?.();
+        lane.flushed?.(report.at);
         lane.flushed = null;
         return;
       case "ended":

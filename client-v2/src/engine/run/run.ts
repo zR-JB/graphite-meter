@@ -1149,8 +1149,16 @@ export class Run {
     const flushed = transfer.includes("down")
       ? (async () => {
           for (const seat of seats) seat.flushing = true;
-          await Promise.allSettled(seats.map((seat) => seat.resources.flush()));
-          boundary.atMs = Math.max(boundary.atMs, this.#clock.runMs());
+          // The boundary's time is when the lanes read their counts, not when their answers reached the page.
+          let read: number | null = null;
+          await Promise.allSettled(
+            seats.map(async (seat) => {
+              const at = await seat.resources.flush();
+              if (at !== null) read = Math.max(read ?? at, at);
+            }),
+          );
+          const readMs = read === null ? this.#clock.runMs() : (read as number) - this.#clock.start;
+          boundary.atMs = Math.max(boundary.atMs, readMs);
           for (const seat of seats) {
             seat.flushing = false;
             boundary.down[seat.server.id] = seat.down;
