@@ -1,6 +1,7 @@
 // Glitch-free push-pull signals: a write marks readers stale, a read recomputes lazily, effects flush once per batch,
 // owners before the effects they own. Effects own what they create while running (effects, cleanups) and dispose it
-// before each rerun. An exception in one effect is reported and never stops the others.
+// before each rerun. An exception in one effect is reported and never stops the others; a computed keeps the one it
+// threw and throws it to every reader until a source changes.
 
 const CLEAN = 0;
 const CHECK = 1;
@@ -20,6 +21,8 @@ class Node<T = unknown> implements Owner {
   observers: Node[] = [];
   owned: (() => void)[] | null = null;
   disposed = false;
+  /** What the last run of a computed threw. */
+  failure: { error: unknown } | null = null;
   state: State;
   constructor(
     public value: T,
@@ -47,6 +50,7 @@ function get<T>(node: Node<T>): T {
     if (!reader.sources.includes(node)) node.observers.push(reader);
   }
   if (node.fn) refresh(node);
+  if (node.failure) throw node.failure.error;
   return node.value;
 }
 
@@ -83,10 +87,15 @@ function refresh(node: Node): void {
 function run(node: Node): void {
   dispose(node);
   const previous = node.value;
+  const failed = node.failure;
   const [outerOwner, outerReader, outerRead] = [owner, reader, read];
   [owner, reader, read] = [node, node, []];
   try {
     node.value = node.fn!();
+    node.failure = null;
+  } catch (error) {
+    if (node.effect) throw error;
+    node.failure = { error };
   } finally {
     const sources = read;
     [owner, reader, read] = [outerOwner, outerReader, outerRead];
@@ -99,7 +108,7 @@ function run(node: Node): void {
     }
   }
   // A changed value settles the readers that were checking it; one reading it right now already has it.
-  if (!node.effect && !Object.is(previous, node.value))
+  if (!node.effect && (node.failure || failed || !Object.is(previous, node.value)))
     for (const observer of node.observers) if (observer.state === CHECK) observer.state = DIRTY;
 }
 
@@ -108,6 +117,7 @@ function unobserve(source: Node, observer: Node): void {
   if (index >= 0) source.observers.splice(index, 1);
   // A computed nobody reads lets go of its own sources, so it can be collected.
   if (!source.observers.length && source.fn && !source.effect) {
+    dispose(source);
     for (const upstream of source.sources) unobserve(upstream, source);
     source.sources = [];
     source.state = DIRTY;
@@ -126,6 +136,8 @@ function flush(): void {
   try {
     for (let rounds = 0; queue.length; rounds++) {
       if (rounds > MAX_ROUNDS) {
+        // Dropped effects are clean again, so their next change queues them.
+        for (const effect of queue) effect.state = CLEAN;
         queue = [];
         reportError(new Error("Effects kept re-triggering each other"));
         break;
@@ -176,13 +188,14 @@ export function effect(fn: () => void): () => void {
   // An owner already gone starts nothing.
   if (owner?.disposed) return () => {};
   const node = new Node<void>(undefined, fn, true, owner ? owner.depth + 1 : 0);
-  const disposer = () => {
-    node.disposed = true;
-    dispose(node);
-    node.fn = null;
-    for (const source of node.sources) unobserve(source, node);
-    node.sources = [];
-  };
+  const disposer = () =>
+    batch(() => {
+      node.disposed = true;
+      dispose(node);
+      node.fn = null;
+      for (const source of node.sources) unobserve(source, node);
+      node.sources = [];
+    });
   onCleanup(disposer);
   depth++;
   try {
@@ -201,10 +214,11 @@ export function scope<T>(fn: () => T): [T, () => void] {
   try {
     return [
       fn(),
-      () => {
-        root.disposed = true;
-        dispose(root);
-      },
+      () =>
+        batch(() => {
+          root.disposed = true;
+          dispose(root);
+        }),
     ];
   } finally {
     owner = outer;

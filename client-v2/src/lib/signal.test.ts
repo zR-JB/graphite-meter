@@ -126,3 +126,46 @@ test("an effect disposes what it created before it reruns, and a scope disposes 
   inner.set(2);
   expect(log).toEqual(["inner 0:0", "cleanup 0", "inner 1:0", "inner 1:1", "cleanup 1"]);
 });
+
+test("a computed that throws throws to every reader until a source changes, and its readers live on", () => {
+  const reported = spyOn(globalThis, "reportError").mockImplementation(() => {});
+  const a = signal(0);
+  const checked = computed(() => {
+    if (a() === 1) throw new Error("boom");
+    return a();
+  });
+  const chained = computed(() => checked() + 100);
+  const seen: number[] = [];
+  effect(() => void seen.push(chained()));
+  a.set(1);
+  expect(() => checked()).toThrow("boom");
+  expect(() => chained()).toThrow("boom");
+  a.set(2);
+  a.set(3);
+  expect(seen).toEqual([100, 102, 103]);
+  expect(reported).toHaveBeenCalledTimes(1);
+  reported.mockRestore();
+});
+
+test("disposing an owner batches what its cleanups write", () => {
+  const a = signal(0);
+  const seen: string[] = [];
+  const [, dispose] = scope(() => {
+    effect(() => void seen.push(`reads ${a()}`));
+    onCleanup(() => a.set(1));
+  });
+  dispose();
+  expect(seen).toEqual(["reads 0"]);
+});
+
+test("a computed nobody reads any more runs its cleanups", () => {
+  const a = signal(0);
+  let cleaned = 0;
+  const c = computed(() => {
+    onCleanup(() => cleaned++);
+    return a();
+  });
+  const stop = effect(() => void c());
+  stop();
+  expect(cleaned).toBe(1);
+});
