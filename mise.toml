@@ -327,24 +327,22 @@ cd "$client"
 bun run e2e "$@"
 '''
 
-# The benchmark harnesses drive client v1.
 [tasks.bench-ui]
-description = "Measure UI frame delivery against the local server fleet (manual)"
-dir = "client"
-env = { GM_CLIENT = "v1" }
+shell = "bash -e -o pipefail -c"
+description = "Measure UI frame delivery against the local server fleet (manual; GM_CLIENT=v2|v1)"
 run = [
   { task = "_e2e-build" },
-  "bun run e2e bun test ./bench/ui.bench.ts --no-orphans --timeout=600000",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e bun test ./bench/ui.bench.ts --no-orphans --timeout=600000',
 ]
 
 [tasks.bench-session]
-description = "Measure retained browser resources across repeated tests (manual)"
-dir = "client"
-env = { GM_CLIENT = "v1" }
+shell = "bash -e -o pipefail -c"
+description = "Measure retained browser resources across repeated tests (manual; GM_CLIENT=v2|v1)"
 run = [
   { task = "_e2e-build" },
-  "bun run e2e bun test ./bench/session.bench.ts --no-orphans --timeout=600000",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e bun test ./bench/session.bench.ts --no-orphans --timeout=600000',
 ]
+
 
 [tasks.stress]
 description = "Measure the server saturation envelope (Unix, manual)"
@@ -359,6 +357,7 @@ run = [
   "cd client && bun run src/lib/runner/real/wire.bench.ts",
 ]
 
+# The throughput and server benchmarks drive client v1's bench page.
 [tasks.bench-throughput]
 shell = "bash -e -o pipefail -c"
 description = "Measure throughput cells against the local server fleet (manual)"
