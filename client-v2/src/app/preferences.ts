@@ -165,8 +165,8 @@ function read(storage: Storage | null): unknown {
 
 /** Loads the preferences, saves changes once edits pause and before the page goes, and follows the History
     choices other tabs make. A save rewrites only the fields this tab changed over what is stored, so two tabs keep
-    each other's changes to other fields (the test settings are one field); the first save stores the normalised
-    whole. */
+    each other's changes to other fields (the test settings are one field); the first save also normalises what is
+    stored. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,
@@ -176,19 +176,21 @@ export function createPreferences(
   const signals = Object.fromEntries(keys.map((key) => [key, signal(loaded[key])])) as {
     [K in keyof Preferences]: Signal<Preferences[K]>;
   };
-  let dirty = new Set<keyof Preferences>(keys);
+  let dirty = new Set<keyof Preferences>();
+  let normalised = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const save = () => {
     clearTimeout(timer);
     timer = undefined;
-    if (!dirty.size) return;
+    if (!dirty.size && normalised) return;
     const merged = readPreferences(read(storage)) as unknown as Record<string, unknown>;
     for (const key of dirty) merged[key] = signals[key].peek();
     // A refused write keeps its fields dirty, so the next save carries them.
     try {
       storage?.setItem(STORAGE_KEY, JSON.stringify(merged));
       dirty = new Set();
+      normalised = true;
     } catch {}
   };
   const schedule = () => {

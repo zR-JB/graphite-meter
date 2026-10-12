@@ -73,3 +73,17 @@ test("two tabs never take back each other's choices", () => {
   tabA.dispose();
   tabB.dispose();
 });
+
+test("a tab's first save normalises what is stored without taking back another tab's change", () => {
+  const shared = storage();
+  shared.setItem(STORAGE_KEY, JSON.stringify({ theme: "light", latencySelection: "a" }));
+  const [a, b] = [new EventTarget(), new EventTarget()];
+  const tabA = createPreferences(shared, a);
+  const tabB = createPreferences(shared, b);
+  tabB.set({ theme: "dark" });
+  b.dispatchEvent(new Event("pagehide"));
+  a.dispatchEvent(new Event("pagehide"));
+  expect(stored(shared)).toEqual({ ...readPreferences(undefined), theme: "dark" });
+  tabA.dispose();
+  tabB.dispose();
+});
