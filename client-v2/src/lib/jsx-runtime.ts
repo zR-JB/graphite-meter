@@ -62,7 +62,7 @@ export function jsx(type: string | Component<any>, props: Record<string, unknown
     const value = props[name];
     if (name === "children" || name === "ref") continue;
     if (name.startsWith("on")) element.addEventListener(name.slice(2), value as EventListener);
-    else if (typeof value === "function") effect(() => assign(element, name, (value as () => Primitive)()));
+    else if (typeof value === "function") bind(element, name, value as () => Primitive);
     else assign(element, name, value as Primitive);
   }
   (props.ref as ((element: Element) => void) | undefined)?.(element);
@@ -74,6 +74,19 @@ export function Fragment(props: { children?: Child }): Node {
   const fragment = document.createDocumentFragment();
   insert(fragment, props.children);
   return fragment;
+}
+
+// A rerun that yields the attribute it wrote last leaves the element alone, as every write restyles it. Live state
+// (a field's value, a box's checked) is written each time, so a rerun can take back what the user changed.
+function bind(element: Element, name: string, read: () => Primitive): void {
+  if (name === "value" || PROPERTIES.has(name)) return void effect(() => assign(element, name, read()));
+  let written: { value: Primitive } | null = null;
+  effect(() => {
+    const value = read();
+    if (written && Object.is(written.value, value)) return;
+    written = { value };
+    assign(element, name, value);
+  });
 }
 
 function assign(element: Element, name: string, value: Primitive): void {

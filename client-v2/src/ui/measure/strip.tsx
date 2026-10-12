@@ -11,7 +11,7 @@ import { fmtDuration, fmtLatency, fmtLatencyRange } from "../../view/format";
 import { STAGE } from "../../view/words";
 import { warmTips } from "../kit/tip";
 import { CARDS } from "./copy";
-import { inView, measure, painter, scrub, svg } from "./paint";
+import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
 import { columnsFor, Lane, monotoneTangents, nearestIndex, replyBars, type ReplyBar } from "./strip-model";
 
 const TOP_PAD = 3;
@@ -56,7 +56,7 @@ interface Row {
 
 let strips = 0;
 
-const shown = (mark: SVGElement, visible: boolean) => mark.setAttribute("visibility", visible ? "visible" : "hidden");
+const shown = (mark: SVGElement, visible: boolean) => setAttr(mark, "visibility", visible ? "visible" : "hidden");
 const fixed = (value: number) => (Math.round(value * 100) / 100).toString();
 
 export function StageGraph(props: StripProps): HTMLElement {
@@ -280,8 +280,8 @@ export function StageGraph(props: StripProps): HTMLElement {
       mark.key = key;
       mark.line.setAttribute("x1", String(at));
       mark.line.setAttribute("x2", String(at));
-      mark.line.setAttribute("y1", fixed(low));
-      mark.line.setAttribute("y2", fixed(high));
+      setAttr(mark.line, "y1", fixed(low));
+      setAttr(mark.line, "y2", fixed(high));
       if (clamped && !mark.over) {
         mark.over = svg("path", "reply-over");
         mark.line.after(mark.over);
@@ -411,12 +411,12 @@ export function StageGraph(props: StripProps): HTMLElement {
       const dot = heads[index]!;
       shown(dot, leading && n > 0);
       if (leading && n) {
-        dot.setAttribute("cx", fixed(xs[n - 1]!));
-        dot.setAttribute("cy", fixed(ys[n - 1]!));
+        setAttr(dot, "cx", fixed(xs[n - 1]!));
+        setAttr(dot, "cy", fixed(ys[n - 1]!));
       }
       if (n < 2) {
-        lines[index]!.setAttribute("d", "");
-        if (index === 0) area.setAttribute("d", "");
+        setAttr(lines[index]!, "d", "");
+        if (index === 0) setAttr(area, "d", "");
         return;
       }
       monotoneTangents(xs, ys, n, tangents);
@@ -431,8 +431,8 @@ export function StageGraph(props: StripProps): HTMLElement {
       }
       let path = prefix.path;
       for (let i = n - 1 - tail; i < n - 1; i++) path += segment(i);
-      lines[index]!.setAttribute("d", path);
-      if (index === 0) area.setAttribute("d", `${path}L${fixed(xs[n - 1]!)} ${h}L${fixed(xs[0]!)} ${h}Z`);
+      setAttr(lines[index]!, "d", path);
+      if (index === 0) setAttr(area, "d", `${path}L${fixed(xs[n - 1]!)} ${h}L${fixed(xs[0]!)} ${h}Z`);
     });
     return leading && props.active(now);
   }

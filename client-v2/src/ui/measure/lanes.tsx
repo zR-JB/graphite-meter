@@ -33,7 +33,7 @@ import {
   type Values,
 } from "./lanes-model";
 import type { Live } from "./live";
-import { inView, measure, painter, scrub, svg } from "./paint";
+import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
 
 /** One population's row. */
 export interface LaneInput {
@@ -375,7 +375,7 @@ function Lane(props: {
       overflowLine.place("width", width - x(100));
       overflowLine.place("y", middle - snap(0.5));
       overflowLine.place("height", hair);
-      arrow.setAttribute("d", `M${width} ${middle}L${width - 5} ${middle - 3.5}L${width - 5} ${middle + 3.5}Z`);
+      setAttr(arrow, "d", `M${width} ${middle}L${width - 5} ${middle - 3.5}L${width - 5} ${middle + 3.5}Z`);
     }
     const p10 = at("p10");
     const p90 = at("p90");
@@ -569,8 +569,10 @@ export function LatencyProfile(props: { app: App; live: Live }): Node {
   const newest = (stage: Stage) =>
     live.buckets().findLast((bucket) => bucket.phase === stage && bucket.medianRttMs !== null)?.medianRttMs ?? null;
   const kept = new Map<Stage, LaneInput>();
-  const lanes = computed<LaneInput[]>(() =>
-    STAGES.filter((stage) => live.visibility(stage).lane).map((stage) => {
+  // The same lanes are the same array, so a reply that changes no lane redraws nothing downstream.
+  let shown: LaneInput[] = [];
+  const lanes = computed<LaneInput[]>(() => {
+    const next = STAGES.filter((stage) => live.visibility(stage).lane).map((stage) => {
       const state = live.states()[stage];
       const active = state === "warmup" || state === "running" || state === "recovering";
       // A settled lane draws like a saved one: the latest reply marks only a running stage.
@@ -592,8 +594,9 @@ export function LatencyProfile(props: { app: App; live: Live }): Node {
         return previous;
       kept.set(stage, next);
       return next;
-    }),
-  );
+    });
+    return next.length === shown.length && next.every((lane, i) => lane === shown[i]) ? shown : (shown = next);
+  });
   const failure = computed(() => {
     if (live.states().latency !== "failed") return null;
     const found = run.details()?.failures.find((each) => each.stage === "latency" && each.scope === "latency");

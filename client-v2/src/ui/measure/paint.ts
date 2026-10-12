@@ -120,6 +120,11 @@ export class Figure {
   }
 }
 
+/** Writes an attribute only when its value changes, as each write restyles an SVG mark. */
+export function setAttr(element: Element, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
 /** Writes a text node only when its text changes. */
 export function setText(node: Text, text: string): void {
   if (node.data !== text) node.data = text;
