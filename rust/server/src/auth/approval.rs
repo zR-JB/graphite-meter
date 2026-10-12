@@ -279,14 +279,16 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
             approval.deadline = approval.deadline.max(replay_until);
             approval.issued = Some(Issued { grant: digest(&token), token: token.clone(), replay_until });
             // The token is kept for its window only, whether or not it is asked for again.
-            let (store, kept) = (Arc::clone(&auth.store.0), challenge.clone());
+            let (store, kept, grant) = (Arc::clone(&auth.store.0), challenge.clone(), digest(&token));
             tokio::spawn(async move {
                 tokio::time::sleep(REPLAY).await;
-                if let Some(issued) = lock(&store)
+                let mut state = lock(&store);
+                // Only the grant this timer was set for: the challenge may have issued another since.
+                let issued = state
                     .approvals
                     .get_mut(&kept)
-                    .and_then(|approval| approval.issued.as_mut())
-                {
+                    .and_then(|approval| approval.issued.as_mut());
+                if let Some(issued) = issued.filter(|issued| issued.grant == grant) {
                     drop(std::mem::take(&mut issued.token));
                 }
             });

@@ -143,9 +143,14 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	a := s.approvals[challenge]
+	// The exchange may extend expires under the lock, so what this page reads of it is taken here.
+	browserOrigin, live := "", false
+	if a != nil {
+		browserOrigin, live = a.browserOrigin, time.Now().Before(a.expires)
+	}
 	s.mu.Unlock()
-	if a != nil && a.browserOrigin != "" && time.Now().Before(a.expires) {
-		query := url.Values{"challenge": {challenge}, "client_origin": {a.browserOrigin}}
+	if browserOrigin != "" && live {
+		query := url.Values{"challenge": {challenge}, "client_origin": {browserOrigin}}
 		http.Redirect(w, r, "/auth/browser?"+query.Encode(), http.StatusSeeOther)
 		return
 	}
