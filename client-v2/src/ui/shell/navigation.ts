@@ -12,7 +12,10 @@ const MEASUREMENT: Workspace = { kind: "measurement" };
 const MAX_HASH = 4_096;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PANEL_WORD: Record<Panel, string> = { settings: "settings", details: "endpoint" };
-const PANEL_OF: Record<string, Panel> = { settings: "settings", endpoint: "details" };
+const PANEL_OF = new Map<string, Panel>([
+  ["settings", "settings"],
+  ["endpoint", "details"],
+]);
 
 export const appRoute = (workspace: Workspace = MEASUREMENT, panels: readonly Panel[] = [], legal = false): Route => ({
   kind: "app",
@@ -26,7 +29,7 @@ export function parseRoute(hash: string): Route {
   if (text.length > MAX_HASH) return { kind: "not-found" };
   const [path = "", query = ""] = text.split("?", 2);
   const params = new URLSearchParams(query);
-  const panels = (params.get("panels") ?? "").split(",").flatMap((word) => PANEL_OF[word] ?? []);
+  const panels = (params.get("panels") ?? "").split(",").flatMap((word) => PANEL_OF.get(word) ?? []);
   const legal = params.get("dialog") === "legal";
   if (path === "" || path === "/") return appRoute(MEASUREMENT, panels, legal);
   if (path === "/history") return appRoute({ kind: "history", id: null }, panels, legal);
@@ -39,7 +42,7 @@ export function parseRoute(hash: string): Route {
     }
     return UUID.test(id) ? appRoute({ kind: "history", id }, panels, legal) : { kind: "not-found" };
   }
-  const panel = PANEL_OF[path.slice(1)];
+  const panel = PANEL_OF.get(path.slice(1));
   if (panel) return appRoute(MEASUREMENT, [panel, ...panels], legal);
   if (path === "/legal") return appRoute(MEASUREMENT, panels, true);
   return { kind: "not-found" };
