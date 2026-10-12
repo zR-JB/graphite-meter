@@ -33,6 +33,15 @@ export interface Outcome {
   inWindow?: boolean;
 }
 
+/** Distinct RTTs kept to the nanosecond; past them new ones keep four significant digits (0.01 %), so a day-long
+    stage holds tens of thousands of values at most. */
+const EXACT_VALUES = 65_536;
+const significant = (ns: number) => {
+  if (ns < 10_000) return ns;
+  const step = 10 ** (Math.floor(Math.log10(ns)) - 3);
+  return Math.round(ns / step) * step;
+};
+
 /** One stage's outcomes. RTTs are kept once per distinct nanosecond value with a count, so a dense loopback run
     holds its few thousand distinct values rather than millions of samples. */
 export class Population {
@@ -76,7 +85,8 @@ export class Population {
     if (!(rttMs >= 0) || !Number.isFinite(rttMs)) return;
     this.#replies++;
     if (outcome.inWindow === false) return;
-    const ns = Math.round(rttMs * 1e6);
+    const exact = Math.round(rttMs * 1e6);
+    const ns = this.#counts.size < EXACT_VALUES ? exact : significant(exact);
     const seen = this.#counts.get(ns);
     if (seen === undefined) this.#fresh.push(ns);
     this.#counts.set(ns, (seen ?? 0) + 1);

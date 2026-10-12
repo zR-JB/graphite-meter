@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { heapStats } from "bun:jsc";
 import { json } from "../../protocol/pins.testutil";
 import { LiveRates, RateEstimator } from "./live";
 
@@ -64,4 +65,15 @@ test("a slow receiver counting 64 KiB reads never opens with a peak", () => {
   expect(shown.length).toBeGreaterThan(50);
   expect(Math.max(...shown) / rate).toBeLessThan(1.15);
   expect(shown.at(-1)! / rate).toBeCloseTo(1, 1);
+});
+
+test("an hour of 10 ms reports keeps a bounded window and the same steady rate", () => {
+  Bun.gc(true);
+  const before = heapStats().heapSize;
+  const estimator = new RateEstimator();
+  // 1,000 B/s in 10 ms reports for an hour.
+  for (let i = 0; i < 360_000; i++) estimator.observe(10, 10);
+  Bun.gc(true);
+  expect(heapStats().heapSize - before).toBeLessThan(4 * 1024 * 1024);
+  expect(Math.abs(estimator.presented - 1_000)).toBeLessThan(1e-6);
 });

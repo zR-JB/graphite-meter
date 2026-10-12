@@ -204,7 +204,7 @@ export class Aggregate {
     }
     Object.assign(open.record, { endMs: end.boundary.atMs, full: end.full, headline: end.headline });
     open.peaks = end.peaks;
-    for (const [buckets, length] of end.buckets) buckets.rates.length = length;
+    for (const [buckets, count] of end.buckets) buckets.truncate(count);
     if (!survivors.length) return;
     const latest = this.#latest;
     this.begin(stage, survivors, end.boundary.atMs, "dropout");
@@ -365,7 +365,7 @@ export class Aggregate {
         const rate = rateOf(window, dir);
         if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
-        const from = Math.floor((window.startMs - record.startMs) / BUCKET_MS);
+        const from = Math.floor((window.startMs - record.startMs) / open.total[dir].bucketMs);
         return {
           window,
           result: {
@@ -420,7 +420,7 @@ export class Aggregate {
       headline: record.headline,
       peaks: new Map([...open.peaks].map(([id, peak]) => [id, { ...peak }])),
       buckets: [open.total, ...open.servers.values()].flatMap((each) =>
-        directions(record.stage).map((dir): [RateBuckets, number] => [each[dir], each[dir].rates.length]),
+        directions(record.stage).map((dir): [RateBuckets, number] => [each[dir], each[dir].buckets]),
       ),
     };
   }

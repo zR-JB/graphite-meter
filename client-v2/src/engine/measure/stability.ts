@@ -5,28 +5,57 @@ export const BUCKET_MS = 250;
 export const SCORE_WINDOW_MS = 4_000;
 const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 
-/** Byte and time evidence cut into fixed 250 ms rate buckets, at most `limit` recent ones. */
+/** At most this many buckets in a series without a limit: past them pairs merge, so a day-long stage stays small. */
+const MAX_BUCKETS = 4_096;
+
+/** Byte and time evidence cut into fixed 250 ms rate buckets, at most `limit` recent ones. Without a limit every
+    bucket stays, until MAX_BUCKETS of them merge in pairs into buckets twice as long (17 minutes in). */
 export class RateBuckets {
   readonly rates: number[] = [];
+  /** 250 ms buckets per rate. */
+  width = 1;
   #bytes = 0;
   #ms = 0;
   constructor(readonly limit = Infinity) {}
 
+  /** How long each rate spans. */
+  get bucketMs(): number {
+    return BUCKET_MS * this.width;
+  }
+
+  /** 250 ms buckets so far, the count `truncate` takes back to. */
+  get buckets(): number {
+    return this.rates.length * this.width;
+  }
+
+  truncate(buckets: number): void {
+    this.rates.length = Math.min(this.rates.length, Math.floor(buckets / this.width));
+  }
+
   observe(bytes: number, ms: number): void {
     if (!(ms > 0) || !Number.isFinite(ms)) return;
     bytes = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+    const span = this.bucketMs;
     while (ms > 0) {
-      const take = Math.min(BUCKET_MS - this.#ms, ms);
+      const take = Math.min(span - this.#ms, ms);
       const part = (bytes * take) / ms;
       this.#bytes += part;
       this.#ms += take;
       bytes -= part;
       ms -= take;
-      if (this.#ms < BUCKET_MS - 1e-9) continue;
-      this.rates.push((this.#bytes * 1000) / BUCKET_MS);
+      if (this.#ms < span - 1e-9) continue;
+      this.rates.push((this.#bytes * 1000) / span);
       if (this.rates.length > this.limit) this.rates.shift();
       this.#bytes = this.#ms = 0;
+      if (this.rates.length === MAX_BUCKETS && this.limit === Infinity) return this.#merge(bytes, ms);
     }
+  }
+
+  #merge(bytes: number, ms: number): void {
+    for (let i = 0; i < MAX_BUCKETS / 2; i++) this.rates[i] = (this.rates[2 * i]! + this.rates[2 * i + 1]!) / 2;
+    this.rates.length = MAX_BUCKETS / 2;
+    this.width *= 2;
+    this.observe(bytes, ms);
   }
 }
 

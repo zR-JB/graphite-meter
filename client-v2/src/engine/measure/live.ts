@@ -9,6 +9,8 @@ const FAST_WINDOW_MS = 750;
 const REGIME_READY_MS = 2_000;
 const DOWNSHIFT_CONFIRM_MS = 750;
 const UPSHIFT_CONFIRM_MS = 500;
+/** Spans a window keeps before its older ones merge; the shared vectors stay below it. */
+const MAX_SPANS = 4_096;
 
 interface Span {
   start: number;
@@ -64,7 +66,26 @@ export class RateEstimator {
       this.#spans = this.#spans.slice(this.#head);
       this.#head = 0;
     }
+    if (this.#spans.length - this.#head > MAX_SPANS) this.#coarsen();
     return changed;
+  }
+
+  /** Merges the older spans in pairs, all but the fast window and a pending regime change: a long steady regime's
+      window edge then falls in a longer span, evenly spread, and memory stays bounded. */
+  #coarsen(): void {
+    const fine = Math.min(this.#evidence - 2 * FAST_WINDOW_MS, this.#candidate?.start ?? Infinity);
+    const spans = this.#spans;
+    const merged: Span[] = [];
+    let i = this.#head;
+    for (; i + 1 < spans.length && spans[i + 1]!.end <= fine; i += 2)
+      merged.push({
+        start: spans[i]!.start,
+        end: spans[i + 1]!.end,
+        bytes: spans[i]!.bytes + spans[i + 1]!.bytes,
+        total: spans[i + 1]!.total,
+      });
+    this.#spans = merged.concat(spans.slice(i));
+    this.#head = 0;
   }
 
   #recalculate(): void {

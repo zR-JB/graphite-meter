@@ -52,3 +52,18 @@ test("only whole positive counts of lost probes count", () => {
   population.interrupt(2, "unresolved");
   expect(population.summary()).toMatchObject({ sendFailureCount: 0, unresolvedCount: 2 });
 });
+
+test("a stage past 65,536 distinct RTTs keeps its percentiles to four significant digits", () => {
+  const population = new Population();
+  const rtts: number[] = [];
+  // Three hundred thousand replies spread over 10-110 ms, nearly all distinct to the nanosecond.
+  for (let i = 0; i < 300_000; i++) {
+    const rttMs = 10 + ((i * 7_919) % 100_000) / 1_000 + (i % 997) / 1e6;
+    rtts.push(rttMs);
+    population.observe({ rttMs, timedOut: false });
+  }
+  rtts.sort((a, b) => a - b);
+  const summary = population.summary()!;
+  const exact = (rtts[149_999]! + rtts[150_000]!) / 2;
+  expect(Math.abs(summary.p50Ms! - exact) / exact).toBeLessThan(1e-4);
+});
