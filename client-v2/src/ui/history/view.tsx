@@ -11,6 +11,7 @@ import { orders, SORT_LABEL } from "./model";
 
 // One History shows at a time, so one id serves its anchor.
 const ID = "history-view";
+const STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
 export function ViewControl(props: {
   columns: Read<readonly HistoryColumn[]>;
@@ -20,6 +21,7 @@ export function ViewControl(props: {
 }): Node {
   const open = signal(false);
   const by = computed(() => props.sort().by);
+  const options = computed(() => ["date" as const, ...props.columns()]);
   const toggle = (column: HistoryColumn) => {
     const shown = props.columns.peek();
     if (!shown.includes(column))
@@ -79,8 +81,31 @@ export function ViewControl(props: {
         <h3>
           <span ref={tip(() => "Sort by\nResults missing the value stay last")}>Sort by</span>
         </h3>
-        <div class="menu" role="radiogroup" aria-label="Sort by">
-          <For each={() => ["date" as const, ...props.columns()]} by={(option) => option}>
+        {/* One tab stop, the chosen order; arrows, Home and End choose another. */}
+        <div
+          class="menu"
+          role="radiogroup"
+          aria-label="Sort by"
+          onkeydown={(event) => {
+            const list = options.peek();
+            const at = list.indexOf(by.peek());
+            const step = STEP[event.key];
+            const to =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? list.length - 1
+                  : step
+                    ? (at + step + list.length) % list.length
+                    : -1;
+            if (to < 0) return;
+            event.preventDefault();
+            const option = list[to]!;
+            if (option !== by.peek()) props.onSort(option, naturalDescending(option));
+            event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[to]?.focus();
+          }}
+        >
+          <For each={options} by={(option) => option}>
             {(option) => {
               const chosen = () => by() === option();
               return (
@@ -88,6 +113,7 @@ export function ViewControl(props: {
                   type="button"
                   role="radio"
                   aria-checked={() => String(chosen())}
+                  tabindex={() => (chosen() ? 0 : -1)}
                   onclick={() => props.onSort(option(), naturalDescending(option()))}
                 >
                   {check(chosen)}

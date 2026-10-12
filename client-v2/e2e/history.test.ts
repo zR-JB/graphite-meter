@@ -244,6 +244,50 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await expect(page.locator(".result-detail")).toBeVisible();
 });
 
+test("Sort by is one tab stop whose arrows, Home and End choose the order", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await history(page);
+  await page.getByRole("button", { name: "Choose columns and sort order" }).click();
+  await expect(page.getByRole("dialog", { name: "History view options" })).toBeVisible();
+  // Each order: whether it is chosen, a tab stop and focused.
+  const orders = () =>
+    page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>('[role="radiogroup"][aria-label="Sort by"] [role="radio"]'),
+        (radio) =>
+          [radio.getAttribute("aria-checked") === "true", radio.tabIndex === 0, radio === document.activeElement]
+            .map(Number)
+            .join(""),
+      ),
+    );
+  const count = (await orders()).length;
+  expect(count).toBeGreaterThan(2);
+  const only = (at: number, state: string) =>
+    Array.from({ length: count }, (_, index) => (index === at ? state : "000"));
+  expect(await orders()).toEqual(only(0, "110"));
+  // The popover gives focus to its first column; Tab passes the columns and the heading's term to the chosen order
+  // alone, and leaves the group again.
+  const role = () => page.evaluate(() => document.activeElement?.getAttribute("role"));
+  await expect.poll(role).toBe("checkbox");
+  for (let stop = 0; stop < 10 && (await role()) !== "radio"; stop++) await page.press("Tab");
+  expect(await orders()).toEqual(only(0, "111"));
+  for (const [key, at] of [
+    ["ArrowDown", 1],
+    ["ArrowRight", 2],
+    ["End", count - 1],
+    ["ArrowDown", 0],
+    ["ArrowUp", count - 1],
+    ["Home", 0],
+  ] as const) {
+    await page.press(key);
+    expect(await orders()).toEqual(only(at, "111"));
+  }
+  await page.press("Tab");
+  expect(await role()).not.toBe("radio");
+});
+
 test("the keyboard moves the list's split within both panes' limits, and it survives a reload", async (page) => {
   await fixturePage(page);
   await seed(page, { records: [record(1)] });
