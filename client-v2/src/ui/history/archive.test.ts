@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HistoryRecord } from "../../app/history/records";
-import type { HistoryChange, HistoryRepository } from "../../app/history/repository";
+import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
 import { scope, signal } from "../../lib/signal";
 import { createArchive } from "./archive";
 
@@ -82,6 +82,18 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   expect(archive.records()).toHaveLength(1);
   expect(archive.error()).toBe("This result could not be read from History.");
   expect(archive.selected().status).toBe("pending");
+  dispose();
+});
+
+test("a reload History refuses for good, such as a newer version's database, leaves the list", async () => {
+  const { fake, reads, change } = repository();
+  const [archive, dispose] = scope(() => createArchive(fake, signal<string | null>(null)));
+  reads[0]!.resolve({ records: [record("a", 2)], malformedCount: 0 });
+  await settle();
+  change({ type: "elsewhere" });
+  reads[1]!.reject(new HistoryRefusal("Unsupported history database version. Saved data has not been changed."));
+  await settle();
+  expect(archive.state()).toBe("error");
   dispose();
 });
 

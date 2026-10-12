@@ -2,7 +2,7 @@
 // current by this tab's changes as they land, and read again quietly on another tab's. The open result alone is read
 // whole, even past the newest 2,000. Leaving stops a read still under way.
 import { historyEntry, type HistoryRecord } from "../../app/history/records";
-import type { HistoryChange, HistoryRepository } from "../../app/history/repository";
+import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 import { applyChange, withEntry, type Listed } from "./model";
 
@@ -50,12 +50,12 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
           state.set("ready");
         });
       },
-      () => {
+      (cause) => {
         if (reading !== controller) return;
         reading = null;
         missed = [];
-        // A list already shown stays, said to be stale.
-        if (state.peek() === "ready") error.set(STALE);
+        // A list already shown stays, said to be stale, unless History is refused for good.
+        if (state.peek() === "ready" && !(cause instanceof HistoryRefusal)) error.set(STALE);
         else state.set("error");
       },
     );
