@@ -51,7 +51,6 @@ const app = await Bun.build({
   ...options,
   entrypoints: [join(root, "src/main.tsx")],
   define,
-  splitting: true,
   external: ["/fonts/*"],
 });
 const entry = app.outputs.find((output) => output.kind === "entry-point")!;
