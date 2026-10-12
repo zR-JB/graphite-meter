@@ -275,11 +275,6 @@
       display: none;
     }
   }
-  @media (any-hover: none) {
-    .command-hints {
-      display: none;
-    }
-  }
 
   /* A phone's chips, key and cards already say what the strip would. */
   @media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {

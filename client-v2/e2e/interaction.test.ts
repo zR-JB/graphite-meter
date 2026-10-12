@@ -104,6 +104,18 @@ test("explanations on click open only when asked, while a control still names it
   await expect(tip(page)).toContainText("Settings");
 });
 
+test.chrome("a touch screen with a keyboard names the keys in the strip and in tips", async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  await open(page, home.http);
+  expect(await page.evaluate(() => matchMedia("(any-hover: none)").matches)).toBe(true);
+  await expect(page.getByRole("group", { name: "Keyboard shortcuts" })).toBeVisible();
+  const focused = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+  for (let stop = 0; stop < 8 && (await focused()) !== "Settings"; stop++) await page.press("Tab");
+  expect(await focused()).toBe("Settings");
+  await expect(tip(page)).toContainText("Settings (S)");
+});
+
 test.chrome(
   "a finger scrolls past graphs, reads one by dragging sideways and toggles jargon by a tap",
   async (page) => {

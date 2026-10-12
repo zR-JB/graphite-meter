@@ -34,9 +34,8 @@ export const tip =
 /** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
 export const term = (text: () => string) => tip(text, "term");
 
-/** " (key)" while the key acts and a keyboard is likely at hand; a finger has no keys. */
-export const keyHint = (key: string, acts = true) =>
-  acts && matchMedia("(any-hover: hover)").matches ? ` (${key})` : "";
+/** " (key)" while the key acts. */
+export const keyHint = (key: string, acts = true) => (acts ? ` (${key})` : "");
 
 function register(node: HTMLElement, text: () => string, kind: Kind): void {
   const entry = { text: computed(text), kind };
