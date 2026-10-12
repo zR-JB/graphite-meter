@@ -150,12 +150,19 @@ for (const fault of faults.filter(
       expect(incoherence(saved.result, { ...config, adaptive: false })).toEqual(
         [],
       );
-      expect(saved.result.outcome).toBe(fault.outcome);
-      const failures = saved.result.multiServer.failures
-        .filter((failure) => failure.scope === "throughput")
-        .map(({ serverId, stage, reason }) => ({ serverId, stage, reason }));
-      if (fault.failure) expect(failures).toContainEqual(fault.failure);
+      const { failures } = saved.result.multiServer;
+      if (fault.failure)
+        expect(
+          failures
+            .filter((failure) => failure.scope === "throughput")
+            .map(({ serverId, stage, reason }) => ({
+              serverId,
+              stage,
+              reason,
+            })),
+        ).toContainEqual(fault.failure);
       else expect(failures).toEqual([]);
+      expect(saved.result.outcome).toBe(fault.outcome);
       if (fault.interval)
         expect(
           saved.result.multiServer.intervals.map(({ stage, reason }) => ({
