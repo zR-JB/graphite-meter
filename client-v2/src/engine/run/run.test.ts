@@ -952,7 +952,13 @@ test("a server still retrying a failure it did not describe names the direction 
   const h = setup(two({ silent, measure: stall }), { download: true }, { downloadMs: 1_000 });
   h.start();
   const result = await h.result();
-  expect(result.multiServer.failures).toMatchObject([{ serverId: "a", message: "down direction carried no data" }]);
+  // b stayed, silent too, and says why it has no result of its own.
+  expect(result.multiServer.failures).toMatchObject([
+    { serverId: "a", message: "down direction carried no data" },
+    { serverId: "b", reason: "insufficient-evidence" },
+  ]);
+  const b = result.multiServer.servers.find(({ server }) => server.id === "b")!;
+  expect(b.stages.download).toBe("failed");
 });
 
 test("a steady upload and a steady latency stage each finish early", async () => {

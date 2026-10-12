@@ -1219,6 +1219,19 @@ export class Run {
     }
     const status = stageStatus(lanes(this.#results, name), this.#failed(name));
     this.#settled.set(name, { status, plan });
+    // A server that stayed but measured too little on its own for a result of its own says so, as the run does.
+    if (stage && name !== "latency")
+      for (const id of stage.seats.keys()) {
+        const own = stage.activity.transfer.map((dir) => this.#aggregate.serverResult(name, dir, id));
+        if (!own.every(Boolean) && !this.#failed(name, id))
+          this.#record(
+            id,
+            failureScope(name),
+            "insufficient-evidence",
+            "Too little measured evidence for a result",
+            name,
+          );
+      }
     return status;
   }
 
