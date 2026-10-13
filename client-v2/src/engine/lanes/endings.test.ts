@@ -23,8 +23,9 @@ test("every pinned upload refusal ends with its pinned reason, by code over HTTP
 
 test("without a known code the status decides, and a stream refusal without one is unexpected", () => {
   const reason = (status: number | null, code?: string) => refusal(status, code, "").reason;
+  // A bare 401 is a proxy's, never this server's ended login.
   expect([401, 429, 503, 0, 408, 500, 502, 400, 403, 409].map((status) => reason(status))).toEqual([
-    "sign-in-required",
+    "protocol-error",
     "server-busy",
     "server-busy",
     "connection-lost",

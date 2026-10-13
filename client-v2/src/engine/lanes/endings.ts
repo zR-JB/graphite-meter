@@ -27,7 +27,8 @@ const REFUSALS: Record<string, Disposition> = {
 export const lost = (detail: string): Ending => ({ ...LOST, detail });
 
 /** An upload refusal: its code decides; without one its status does, where a network-level or generic server failure
-    reconnects the same id. A feed's error record has no status. */
+    reconnects the same id. A bare 401 is not this server's (it marks an ended login, see `signInMarked`): a proxy's
+    challenge is an unexpected answer, never an ended session. A feed's error record has no status. */
 export function refusal(
   status: number | null,
   code: string | null | undefined,
@@ -37,13 +38,11 @@ export function refusal(
   const disposition =
     code && Object.hasOwn(REFUSALS, code)
       ? REFUSALS[code]!
-      : status === 401
-        ? SIGN_IN
-        : status === 429 || status === 503
-          ? BUSY
-          : status !== null && (status === 0 || status === 408 || status >= 500)
-            ? LOST
-            : UNEXPECTED;
+      : status === 429 || status === 503
+        ? BUSY
+        : status !== null && (status === 0 || status === 408 || status >= 500)
+          ? LOST
+          : UNEXPECTED;
   return { ...disposition, detail, retryAfterMs };
 }
 
