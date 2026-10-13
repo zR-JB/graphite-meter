@@ -33,7 +33,7 @@ export interface Views {
 }
 
 // Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
-const SETTLES = new Set(["result-sweep", "pop", "row-in", "grow-x"]);
+const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
 const finishSettled = (stage: HTMLElement) => {
   for (const animation of stage.getAnimations({ subtree: true }))
     if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName)) animation.finish();

@@ -1177,22 +1177,6 @@
       border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
     }
   }
-  /* A settled card lays its facts down row by row. */
-  @media (prefers-reduced-motion: no-preference) {
-    .card:is(.complete, .partial, .stopped, .failed) .facts > div {
-      animation: row-in 260ms var(--ease-settle) backwards;
-      animation-delay: calc(var(--n, 0) * 40ms + var(--beat));
-    }
-    .facts > div:nth-child(2) {
-      --n: 1;
-    }
-    .facts > div:nth-child(3) {
-      --n: 2;
-    }
-    .facts > div:nth-child(4) {
-      --n: 3;
-    }
-  }
   .card .face {
     display: grid;
     gap: var(--space-1);
