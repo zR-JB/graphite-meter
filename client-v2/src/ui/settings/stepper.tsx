@@ -55,11 +55,24 @@ export function Stepper(props: {
     for (let i = 0; i < times; i++) next = clamp(stepOnGrid(next, props.step(next, direction), direction));
     return next;
   };
-  /** Whether the value after `times` steps applied. */
-  const nudge = (direction: Direction, times = 1) => {
-    const next = stepped(props.value(), direction, times);
-    return next === props.value() || props.onChange(next);
+  let field!: HTMLInputElement;
+  /** What a step starts from: a typed draft, 9 typed over 10 stepping up to 10, else the value; text that reads as
+      no value steps the value as it was. */
+  const origin = () => {
+    const current = props.value();
+    if (field.value === text.peek()) return current;
+    const { min, format, parse } = props;
+    return typedValue(field.value, current, { min, max: props.max(), format, parse });
   };
+  /** Applies `next` and shows what holds, which a typed draft gives way to; whether it applied. */
+  const apply = (next: number) => {
+    const current = props.value();
+    const applied = next === current || props.onChange(next);
+    field.value = props.format(applied ? next : current);
+    return applied;
+  };
+  /** Whether the value after `times` steps, from a typed draft or the value, applied. */
+  const nudge = (direction: Direction, times = 1) => apply(stepped(origin(), direction, times));
   const atLimit = (direction: Direction) => (direction > 0 ? props.value() >= props.max() : props.value() <= props.min);
 
   const key = (direction: Direction) => (
@@ -111,6 +124,9 @@ export function Stepper(props: {
           inputmode={props.count ? "numeric" : undefined}
           value={text}
           disabled={props.disabled}
+          ref={(node) => {
+            field = node;
+          }}
           aria-label={() => {
             const label = props.label();
             return `${label[0]?.toUpperCase()}${label.slice(1)}${props.noun ? ` ${props.noun}` : ""}`;
@@ -141,16 +157,7 @@ export function Stepper(props: {
             const limit = event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
             if (!step && limit === null) return;
             event.preventDefault();
-            // A typed draft is what a key steps: 9 typed over 10 steps up to 10. Text that reads as no value steps
-            // the value as it was.
-            const current = props.value();
-            const { min, format, parse } = props;
-            const from =
-              input.value === text.peek()
-                ? current
-                : typedValue(input.value, current, { min, max: props.max(), format, parse });
-            const next = step ? stepped(from, ...step) : limit!;
-            input.value = props.format(next === current || props.onChange(next) ? next : current);
+            apply(step ? stepped(origin(), ...step) : limit!);
           }}
         />
         <span class="stepper-shown" aria-hidden="true">
