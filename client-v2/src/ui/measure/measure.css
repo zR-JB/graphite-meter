@@ -912,10 +912,11 @@
     &.is-stalled {
       animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
     }
+    /* A warmup scans the bar at an even pace, one pass leaving as the next enters, until the window opens. */
     &.chip-fill--warmup {
       width: 45%;
       background: color-mix(in oklab, var(--tone) 55%, transparent);
-      animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
+      animation: warmup-sweep 900ms linear infinite;
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -1230,8 +1231,8 @@
     & .num {
       font-variant-numeric: tabular-nums;
     }
-    /* Every dash that waits for a value is soft. */
-    &:is(.quiet, .waiting) .num {
+    /* Every dash that waits for a value is soft, and so is a warmup's figure, which nothing counts yet. */
+    &:is(.quiet, .waiting, .warming) .num {
       color: var(--text-soft);
     }
     & .pair {
@@ -1652,10 +1653,10 @@
 }
 @keyframes warmup-sweep {
   from {
-    translate: -110%;
+    translate: -100%;
   }
   to {
-    translate: 240%;
+    translate: calc(100% / 0.45);
   }
 }
 @keyframes linger {

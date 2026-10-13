@@ -49,6 +49,8 @@ export interface CardModel {
   word: Word | null;
   /** Nothing measured yet, or the stage did not run: a soft dash and no unit. */
   quiet: boolean;
+  /** Its stage is warming up: the figure reads the live rate, which nothing counts yet. */
+  warming: boolean;
   figure: string;
   unit: string;
   /** Each bidirectional lane's figure in one unit, when the card shows the pair. */
@@ -190,6 +192,7 @@ const blank = (stage: Stage, state: StageState): CardModel => {
     status,
     word: wordOf(state),
     quiet: QUIET.has(status),
+    warming: state === "warmup",
     figure: MISSING,
     unit: "",
     pair: null,
@@ -314,7 +317,8 @@ export function liveCard(stage: Stage, state: StageState, live: LiveEvidence, un
     };
   }
   const known: Partial<Record<string, string>> = {
-    Transferred: fmtBytes(live.bytes, units.base),
+    // A warmup moves bytes nothing counts: the fact waits for the window.
+    Transferred: card.warming ? undefined : fmtBytes(live.bytes, units.base),
     Stability: live.shape?.stability == null ? undefined : percent(live.shape.stability),
   };
   if (stage !== "bidirectional") known.Peak = live.shape ? fmtRate(live.shape.peak, units) : undefined;

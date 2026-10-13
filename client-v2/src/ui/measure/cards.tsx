@@ -86,7 +86,9 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
   );
   const headline = () => (
     <span
-      class={() => `headline enter${quiet() ? " quiet" : ""}${waiting() ? " waiting" : ""}`}
+      class={() =>
+        `headline enter${quiet() ? " quiet" : ""}${waiting() ? " waiting" : ""}${card().warming ? " warming" : ""}`
+      }
       aria-hidden={() => (spoken() ? "true" : undefined)}
     >
       {() =>
