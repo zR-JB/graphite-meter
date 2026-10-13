@@ -89,3 +89,58 @@ test("a stage's coverage counts from its first interval after the interval limit
   expect(aggregate.omittedIntervals).toBeGreaterThan(0);
   expect(aggregate.coveredMs("download")).toBe(1_300);
 });
+
+test("a stage's stability is of its 250 ms rates however long it runs", () => {
+  // A link alternating between nothing and twice its mean every 250 ms: no stability, before and after the rates
+  // kept for drawing merge at 4,096 buckets.
+  for (const buckets of [4_094, 4_096, 8_192]) {
+    const aggregate = new Aggregate();
+    aggregate.begin("download", ["a"], 0);
+    aggregate.observe({ atMs: 0, down: { a: 0 }, up: {} });
+    let bytes = 0;
+    for (let i = 0; i < buckets; i++) {
+      const add = i % 2 ? 500 : 0;
+      bytes += add;
+      aggregate.addDownload("download", "a", add);
+      aggregate.observe({ atMs: (i + 1) * 250, down: { a: bytes }, up: {} });
+    }
+    const result = aggregate.settle("download", false).down!.result;
+    expect([buckets, Math.round(result.stabilityPct)]).toEqual([buckets, 0]);
+  }
+});
+
+test("a departed server keeps its result after the interval limit lets its interval go", () => {
+  const aggregate = new Aggregate();
+  aggregate.begin("download", ["a", "b"], 0);
+  aggregate.observe({ atMs: 0, down: { a: 0, b: 0 }, up: {} });
+  aggregate.observe({ atMs: 1_000, down: { a: 1_000, b: 1_000 }, up: {} });
+  aggregate.addDownload("download", "a", 1_000);
+  aggregate.dropout(["b"], 1_000);
+  const before = aggregate.serverResult("download", "down", "a");
+  // The survivor goes on through more resumed intervals than the log keeps.
+  for (let i = 1; i <= 130; i++) {
+    aggregate.begin("download", ["b"], i * 1_000, "evidence-resumed");
+    aggregate.observe({ atMs: i * 1_000, down: { b: i * 1_000 }, up: {} });
+    aggregate.observe({ atMs: (i + 1) * 1_000, down: { b: (i + 1) * 1_000 }, up: {} });
+  }
+  expect(aggregate.omittedIntervals).toBeGreaterThan(0);
+  expect(before?.reportedBytesPerSec).toBe(1_000);
+  expect(aggregate.serverResult("download", "down", "a")).toEqual(before);
+  expect(aggregate.serverResult("download", "down", "b")?.reportedBytesPerSec).toBe(1_000);
+});
+
+test("a stage keeps its result when every interval the log still holds measured too little", () => {
+  const aggregate = new Aggregate();
+  aggregate.begin("download", ["a"], 0);
+  aggregate.observe({ atMs: 0, down: { a: 0 }, up: {} });
+  aggregate.observe({ atMs: 2_000, down: { a: 2_000 }, up: {} });
+  // Then only resumed intervals too short to report, more than the log keeps.
+  for (let i = 0; i < 130; i++) {
+    const at = 2_000 + i * 100;
+    aggregate.begin("download", ["a"], at, "evidence-resumed");
+    aggregate.observe({ atMs: at, down: { a: 2_000 + i * 100 }, up: {} });
+    aggregate.observe({ atMs: at + 100, down: { a: 2_000 + (i + 1) * 100 }, up: {} });
+  }
+  expect(aggregate.omittedIntervals).toBeGreaterThan(0);
+  expect(aggregate.settle("download", false).down?.result.reportedBytesPerSec).toBe(1_000);
+});

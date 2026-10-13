@@ -8,14 +8,28 @@ const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 /** At most this many buckets in a series without a limit: past them pairs merge, so a day-long stage stays small. */
 const MAX_BUCKETS = 4_096;
 
-/** Byte and time evidence cut into fixed 250 ms rate buckets, at most `limit` recent ones. Without a limit every
-    bucket stays, until MAX_BUCKETS of them merge in pairs into buckets twice as long (17 minutes in). */
+/** The 250 ms rates so far as sufficient statistics: their count, and the sums of their offsets and squared offsets
+    from the first rate, which keeps the arithmetic exact enough for a spread a thousand times below the mean. */
+export interface Moments {
+  count: number;
+  sum: number;
+  squares: number;
+}
+
+/** Byte and time evidence cut into fixed 250 ms rate buckets. Their spread is kept exactly as moments; the rates
+    kept for drawing are at most `limit` recent ones, or without a limit every bucket until MAX_BUCKETS of them
+    merge in pairs into buckets twice as long (17 minutes in), which the moments never see. */
 export class RateBuckets {
   readonly rates: number[] = [];
   /** 250 ms buckets per rate. */
   width = 1;
   #bytes = 0;
   #ms = 0;
+  /** Base buckets gathered towards the next rate of `width` of them. */
+  #gathered = 0;
+  #gatheredRate = 0;
+  #shift: number | null = null;
+  #moments: Moments = { count: 0, sum: 0, squares: 0 };
   constructor(readonly limit = Infinity) {}
 
   /** How long each rate spans. */
@@ -23,39 +37,71 @@ export class RateBuckets {
     return BUCKET_MS * this.width;
   }
 
-  /** 250 ms buckets so far, the count `truncate` takes back to. */
+  /** 250 ms buckets in the kept rates, the count `truncate` takes back to. */
   get buckets(): number {
     return this.rates.length * this.width;
   }
 
-  truncate(buckets: number): void {
+  /** Every 250 ms bucket so far, as a mark `truncate` and `stabilitySince` take. */
+  get moments(): Moments {
+    return { ...this.#moments };
+  }
+
+  /** Takes the series back to an earlier mark: its kept rates to `buckets`, its moments to `moments`. */
+  truncate(buckets: number, moments?: Moments): void {
     this.rates.length = Math.min(this.rates.length, Math.floor(buckets / this.width));
+    this.#gathered = this.#gatheredRate = 0;
+    if (moments) this.#moments = { ...moments };
   }
 
   observe(bytes: number, ms: number): void {
     if (!(ms > 0) || !Number.isFinite(ms)) return;
     bytes = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
-    const span = this.bucketMs;
     while (ms > 0) {
-      const take = Math.min(span - this.#ms, ms);
+      const take = Math.min(BUCKET_MS - this.#ms, ms);
       const part = (bytes * take) / ms;
       this.#bytes += part;
       this.#ms += take;
       bytes -= part;
       ms -= take;
-      if (this.#ms < span - 1e-9) continue;
-      this.rates.push((this.#bytes * 1000) / span);
-      if (this.rates.length > this.limit) this.rates.shift();
+      if (this.#ms < BUCKET_MS - 1e-9) continue;
+      this.#complete((this.#bytes * 1000) / BUCKET_MS);
       this.#bytes = this.#ms = 0;
-      if (this.rates.length === MAX_BUCKETS && this.limit === Infinity) return this.#merge(bytes, ms);
     }
   }
 
-  #merge(bytes: number, ms: number): void {
+  #complete(rate: number): void {
+    this.#shift ??= rate;
+    const offset = rate - this.#shift;
+    this.#moments.count++;
+    this.#moments.sum += offset;
+    this.#moments.squares += offset * offset;
+    this.#gatheredRate += rate;
+    if (++this.#gathered < this.width) return;
+    this.rates.push(this.#gatheredRate / this.width);
+    this.#gathered = this.#gatheredRate = 0;
+    if (this.rates.length > this.limit) this.rates.shift();
+    if (this.rates.length === MAX_BUCKETS && this.limit === Infinity) this.#merge();
+  }
+
+  #merge(): void {
     for (let i = 0; i < MAX_BUCKETS / 2; i++) this.rates[i] = (this.rates[2 * i]! + this.rates[2 * i + 1]!) / 2;
     this.rates.length = MAX_BUCKETS / 2;
     this.width *= 2;
-    this.observe(bytes, ms);
+  }
+
+  /** stabilityPct of every 250 ms bucket since `mark`, or of all of them. */
+  stabilitySince(mark?: Moments): number {
+    const m = this.#moments;
+    const count = m.count - (mark?.count ?? 0);
+    if (count < 2) return 0;
+    const sum = m.sum - (mark?.sum ?? 0);
+    const squares = m.squares - (mark?.squares ?? 0);
+    const offset = sum / count;
+    const mean = (this.#shift ?? 0) + offset;
+    if (!(mean > 0)) return 0;
+    const variation = Math.sqrt(Math.max(0, squares / count - offset * offset)) / mean;
+    return Math.max(0, 1 - variation) * 100;
   }
 }
 

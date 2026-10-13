@@ -2,7 +2,7 @@
 // boundaries, where downloads count client-consumed bytes on the client clock and uploads each receiver's bytes on
 // its own clock. The terminal clients share its vectors (api/aggregation.testvectors.json).
 import type { TransferStage } from "../run/schedule";
-import { BUCKET_MS, RateBuckets, SCORE_WINDOW_MS, stabilityPct, stillStable, transferConfidence } from "./stability";
+import { BUCKET_MS, type Moments, RateBuckets, SCORE_WINDOW_MS, stillStable, transferConfidence } from "./stability";
 
 export type Direction = "down" | "up";
 
@@ -96,7 +96,22 @@ interface Mark {
   full: AggregateWindow | null;
   headline: AggregateWindow | null;
   peaks: Peaks;
-  buckets: [RateBuckets, number][];
+  buckets: [RateBuckets, number, Moments][];
+  stableMark: StableMark | null;
+}
+
+/** Where the steady stretch began, with every direction's moments then, so its stability is of that stretch alone. */
+interface StableMark {
+  atMs: number;
+  moments: Partial<Record<Direction, Moments>>;
+}
+
+/** A result kept from an interval the log let go: what a stage or a server measured stays measured. */
+interface Kept {
+  window: AggregateWindow | null;
+  bytesPerSec: number;
+  peakBytesPerSec: number;
+  stabilityPct: number;
 }
 
 interface Open {
@@ -109,6 +124,7 @@ interface Open {
   quiet: Totals;
   /** Quiet time up to `stable`. */
   stableQuiet: Totals;
+  stableMark: StableMark | null;
   /** All directions together, for the early-finish score. */
   combined: RateBuckets;
   total: Series;
@@ -136,6 +152,8 @@ export class Aggregate {
   #ledgers = new Map<string, Map<string, number>>();
   /** Where each stage's first interval began, once the interval limit let it go. */
   #evictedStart = new Map<TransferStage, number>();
+  /** The latest results of intervals the limit let go, by stage and direction, and by server. */
+  #kept = new Map<string, Kept>();
   #latest: { boundary: Boundary; final: boolean } | null = null;
 
   get current(): Interval | null {
@@ -155,6 +173,7 @@ export class Aggregate {
     }
     if (this.intervals.length >= INTERVAL_LIMIT) {
       const evicted = this.intervals.shift()!;
+      this.#keep(evicted);
       this.#closed.delete(evicted.id);
       if (!this.#evictedStart.has(evicted.stage)) this.#evictedStart.set(evicted.stage, evicted.startMs);
       this.omittedIntervals++;
@@ -179,6 +198,7 @@ export class Aggregate {
       wasStable: false,
       quiet: { down: 0, up: 0 },
       stableQuiet: { down: 0, up: 0 },
+      stableMark: null,
       combined: new RateBuckets(SCORE_WINDOW_MS / BUCKET_MS),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
@@ -204,7 +224,8 @@ export class Aggregate {
     }
     Object.assign(open.record, { endMs: end.boundary.atMs, full: end.full, headline: end.headline });
     open.peaks = end.peaks;
-    for (const [buckets, count] of end.buckets) buckets.truncate(count);
+    open.stableMark = end.stableMark;
+    for (const [buckets, count, moments] of end.buckets) buckets.truncate(count, moments);
     if (!survivors.length) return;
     const latest = this.#latest;
     this.begin(stage, survivors, end.boundary.atMs, "dropout");
@@ -343,7 +364,13 @@ export class Aggregate {
     if (!open || !open.record.complete) return false;
     const stable = stillStable(open.wasStable, score);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
-    if (stable && !open.wasStable) open.stableQuiet = { ...open.quiet };
+    if (stable && !open.wasStable) {
+      open.stableQuiet = { ...open.quiet };
+      open.stableMark = {
+        atMs: open.last?.atMs ?? open.record.startMs,
+        moments: Object.fromEntries(directions(open.record.stage).map((dir) => [dir, open.total[dir].moments])),
+      };
+    }
     open.wasStable = stable;
     return stable;
   }
@@ -365,19 +392,31 @@ export class Aggregate {
         const rate = rateOf(window, dir);
         if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
-        const from = Math.floor((window.startMs - record.startMs) / open.total[dir].bucketMs);
+        const mark = open.stableMark?.atMs === window.startMs ? open.stableMark.moments[dir] : undefined;
         return {
           window,
           result: {
             reportedBytesPerSec: rate,
             totalBytes: this.#stageTotal(stage, dir),
             peakBytesPerSec: Math.max(open.peaks.get(COMBINED)?.[dir] ?? 0, rate),
-            stabilityPct: stabilityPct(open.total[dir].rates.slice(from)),
+            stabilityPct: open.total[dir].stabilitySince(mark),
             quietMs: window.quietMs?.[dir] ?? 0,
           },
         };
       }
-      return null;
+      const kept = this.#kept.get(`${stage}:${dir}`);
+      return kept?.window
+        ? {
+            window: kept.window,
+            result: {
+              reportedBytesPerSec: kept.bytesPerSec,
+              totalBytes: this.#stageTotal(stage, dir),
+              peakBytesPerSec: kept.peakBytesPerSec,
+              stabilityPct: kept.stabilityPct,
+              quietMs: kept.window.quietMs?.[dir] ?? 0,
+            },
+          }
+        : null;
     };
     return { down: reduce("down"), up: reduce("up") };
   }
@@ -399,10 +438,44 @@ export class Aggregate {
         reportedBytesPerSec: component.bytesPerSec,
         totalBytes: this.#stageTotal(stage, dir, id),
         peakBytesPerSec: Math.max(open.peaks.get(id)?.[dir] ?? 0, component.bytesPerSec),
-        stabilityPct: stabilityPct(open.servers.get(id)![dir].rates),
+        stabilityPct: open.servers.get(id)![dir].stabilitySince(),
       };
     }
-    return null;
+    const kept = this.#kept.get(`${stage}:${dir}:${id}`);
+    return kept
+      ? {
+          reportedBytesPerSec: kept.bytesPerSec,
+          totalBytes: this.#stageTotal(stage, dir, id),
+          peakBytesPerSec: kept.peakBytesPerSec,
+          stabilityPct: kept.stabilityPct,
+        }
+      : null;
+  }
+
+  /** Keeps what an interval the limit lets go measured, where nothing later measured it: the stage's full window and
+      each server's share. Totals are read from the ledgers, which go on counting. */
+  #keep(record: Interval): void {
+    const open = this.#interval(record);
+    if (!open || !record.complete || !record.full) return;
+    const full = record.full;
+    for (const dir of directions(record.stage)) {
+      const rate = rateOf(full, dir);
+      if (rate && sufficient(full, dir))
+        this.#kept.set(`${record.stage}:${dir}`, {
+          window: full,
+          bytesPerSec: rate,
+          peakBytesPerSec: Math.max(open.peaks.get(COMBINED)?.[dir] ?? 0, rate),
+          stabilityPct: open.total[dir].stabilitySince(),
+        });
+      for (const component of full[dir] ?? [])
+        if (component.bytes && component.durationMs >= MIN_EVIDENCE_MS)
+          this.#kept.set(`${record.stage}:${dir}:${component.serverId}`, {
+            window: null,
+            bytesPerSec: component.bytesPerSec,
+            peakBytesPerSec: Math.max(open.peaks.get(component.serverId)?.[dir] ?? 0, component.bytesPerSec),
+            stabilityPct: open.servers.get(component.serverId)![dir].stabilitySince(),
+          });
+    }
   }
 
   #start(open: Open, boundary: Boundary): void {
@@ -420,8 +493,13 @@ export class Aggregate {
       headline: record.headline,
       peaks: new Map([...open.peaks].map(([id, peak]) => [id, { ...peak }])),
       buckets: [open.total, ...open.servers.values()].flatMap((each) =>
-        directions(record.stage).map((dir): [RateBuckets, number] => [each[dir], each[dir].buckets]),
+        directions(record.stage).map((dir): [RateBuckets, number, Moments] => [
+          each[dir],
+          each[dir].buckets,
+          each[dir].moments,
+        ]),
       ),
+      stableMark: open.stableMark,
     };
   }
 
