@@ -371,3 +371,24 @@ test("a sheet's head draws its rule once its content scrolls under it, in every 
   await scroll(0);
   await expect.poll(async () => clear(await rule())).toBe(true);
 });
+
+test("the run's toast fades out as it fades in, in every engine", async (page) => {
+  await open(page, home.http);
+  await ready(page);
+  const sample = await page.evaluate(async () => {
+    const toast = document.querySelector<HTMLElement>(".phase-toast")!;
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+    toast.classList.add("visible");
+    await wait(400);
+    toast.classList.remove("visible");
+    await wait(50);
+    const leaving = getComputedStyle(toast);
+    const during = [leaving.visibility, Number(leaving.opacity)] as const;
+    await wait(400);
+    return { during, after: getComputedStyle(toast).visibility };
+  });
+  expect(sample.during[0]).toBe("visible");
+  expect(sample.during[1]).toBeGreaterThan(0);
+  expect(sample.during[1]).toBeLessThan(1);
+  expect(sample.after).toBe("hidden");
+});
