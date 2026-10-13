@@ -202,8 +202,12 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
             let sent = Instant::now();
             bus.send(ping).await?;
             let reply = async {
-                while bus.next().await?.id != ping.id {}
-                Ok(sent.elapsed())
+                loop {
+                    let (pong, arrived) = bus.next().await?;
+                    if pong.id == ping.id {
+                        return Ok(arrived.duration_since(sent));
+                    }
+                }
             };
             if let Ok(rtt) = timeout(wait, reply).await {
                 return rtt;

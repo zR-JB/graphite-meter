@@ -105,7 +105,7 @@ async fn a_websocket_bus_closed_as_revoked_asks_its_server_for_sign_in() {
         transport: LatencyTransport::WebSocket,
     };
     let mut bus = client().bus(&path).await.unwrap();
-    assert_eq!(bus.next().await.unwrap(), Pong { id: 7, handling_nanos: 42 });
+    assert_eq!(bus.next().await.unwrap().0, Pong { id: 7, handling_nanos: 42 });
     let fault = bus.next().await.unwrap_err();
     assert!(matches!(&fault, Fault::SignIn(server) if *server == origin), "{fault:?}");
 }

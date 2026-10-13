@@ -251,11 +251,15 @@ async fn serve(
             schedule.stop();
         }
         let Some(wake) = schedule.wake() else { return Ok(()) };
+        // A reply that already arrived resolves before a deadline due at the same poll can expire it.
         tokio::select! {
             biased;
+            reply = bus.next() => {
+                let (pong, arrived) = reply?;
+                schedule.reply(pong, arrived).into_iter().for_each(emit);
+            }
             Ok(()) = window.changed() => continue,
             () = sleep_until(wake.into()) => {}
-            pong = bus.next() => schedule.reply(pong?, Instant::now()).into_iter().for_each(emit),
         }
         let now = Instant::now();
         schedule.expire(now).into_iter().for_each(emit);
