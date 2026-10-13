@@ -407,25 +407,29 @@ test("a sheet's head draws its rule once its content scrolls under it, in every 
   await expect.poll(async () => clear(await rule())).toBe(true);
 });
 
-test("the run's toast fades out as it fades in, in every engine", async (page) => {
+test("the run's toast fades out as it fades in, in every engine, and is out of layout once gone", async (page) => {
   await open(page, home.http);
   await ready(page);
   const sample = await page.evaluate(async () => {
     const toast = document.querySelector<HTMLElement>(".phase-toast")!;
     const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+    const before = getComputedStyle(toast).display;
     toast.classList.add("visible");
     await wait(400);
-    toast.classList.remove("visible");
+    // As the page lets it go: laid out while it fades.
+    toast.classList.replace("visible", "leaving");
     await wait(50);
     const leaving = getComputedStyle(toast);
-    const during = [leaving.visibility, Number(leaving.opacity)] as const;
-    await wait(400);
-    return { during, after: getComputedStyle(toast).visibility };
+    const during = [leaving.display, Number(leaving.opacity)] as const;
+    await wait(300);
+    toast.classList.remove("leaving");
+    return { before, during, after: getComputedStyle(toast).display };
   });
-  expect(sample.during[0]).toBe("visible");
+  expect(sample.before).toBe("none");
+  expect(sample.during[0]).toBe("grid");
   expect(sample.during[1]).toBeGreaterThan(0);
   expect(sample.during[1]).toBeLessThan(1);
-  expect(sample.after).toBe("hidden");
+  expect(sample.after).toBe("none");
 });
 
 test("the diagnostic report copies on a page without the Clipboard API, and says when it cannot", async (page) => {

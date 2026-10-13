@@ -105,6 +105,8 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
 
 /** A toast lingers for its reading time, then goes; not motion. */
 const LINGER_MS = 3_200;
+/** It is laid out this long after it goes, for its fade (--dur-slide) to run. */
+const LEAVE_MS = 200;
 
 /** Only failures, issues, stalls and a result History could not save: the status strip already names every phase.
     A stall shows while it lasts, and an unsaved result's warning after any toast, for as long as it is unsaved. */
@@ -167,10 +169,29 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   announceChanges(() => (stalled() ? `${stall().kicker}: ${stall().message}` : ""));
   announceChanges(() => (unsaved() ? `${TOAST.unsaved}: ${app.saver.warning()}` : ""));
   announceChanges(() => (issue().message ? `${issue().kicker}: ${issue().message}` : ""));
+  // Out of layout while it shows nothing, so a stage that resizes never lays it out; laid out for its fade as it goes.
+  const showing = computed(() => lingering() || stalled() || unsaved());
+  const leaving = signal(false);
+  let shownBefore = false;
+  let leaveTimer = 0;
+  onCleanup(() => clearTimeout(leaveTimer));
+  effect(() => {
+    const now = showing();
+    untrack(() => {
+      clearTimeout(leaveTimer);
+      if (now || !shownBefore) {
+        shownBefore = now;
+        return leaving.set(false);
+      }
+      shownBefore = false;
+      leaving.set(true);
+      leaveTimer = window.setTimeout(() => leaving.set(false), LEAVE_MS);
+    });
+  });
   const element = (
     <div
       class={() =>
-        `float phase-toast${lingering() || stalled() || unsaved() ? " visible" : ""}${stalled() ? " stall" : ""}`
+        `float phase-toast${showing() ? " visible" : leaving() ? " leaving" : ""}${stalled() ? " stall" : ""}`
       }
       data-tone={() => shown().tone}
       aria-hidden="true"
