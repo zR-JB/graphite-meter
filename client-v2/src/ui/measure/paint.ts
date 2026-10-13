@@ -6,31 +6,51 @@ import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
-/** A view's painter: `wake()` draws from the next frame until `draw` returns false, skipping frames closer than
-    LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws at once instead, in the frame that
-    resized the view, so a view keeps step with its box at any display rate. While `away` holds it draws nothing, and
-    it draws again as its view returns. Released with its owner. */
+/** A view's painter: `wake()` draws on the next frame, and on every frame after while `draw` returns true, skipping
+    frames closer than LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws instead before the
+    frame's next layout, so a view keeps step with its box at any display rate. A change is drawn once however many
+    wakes ask for it. While `away` holds it draws nothing, and it draws again as its view returns. Released with its
+    owner. */
 export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
+  // A change waits to be drawn; the last draw is still moving; a draw is queued before the next layout.
+  let due = false;
+  let moving = false;
+  let queued = false;
   const halt = () => {
     stop?.();
     stop = null;
   };
+  const paint = (now: number) => {
+    drawn = now;
+    due = false;
+    moving = untrack(() => draw(now));
+    return moving;
+  };
   const start = () => {
     stop ??= animate((now) => {
+      if (!due && !moving) {
+        stop = null;
+        return false;
+      }
       if (now - drawn < LIVE_FRAME_MS) return true;
-      drawn = now;
-      if (draw(now)) return true;
+      if (paint(now)) return true;
       stop = null;
       return false;
     });
   };
   const wake = (resized = false) => {
     if (away?.peek()) return;
+    due = true;
     if (!resized) return start();
-    drawn = pageMs();
-    if (untrack(() => draw(drawn))) start();
+    if (queued) return;
+    queued = true;
+    // After the callback or batch that resized the view, so every wake it caused is drawn in one go.
+    queueMicrotask(() => {
+      queued = false;
+      if (due && !away?.peek() && paint(pageMs())) start();
+    });
   };
   onCleanup(halt);
   if (!away) return wake;
@@ -41,6 +61,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
       halt();
     } else if (gone) {
       gone = false;
+      due = true;
       start();
     }
   });
