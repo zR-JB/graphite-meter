@@ -12,6 +12,69 @@ pub mod webtransport;
 mod window;
 
 use crate::log::{Level, RateLimited};
+use std::{
+    pin::pin,
+    task::{Context, Poll},
+};
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
 pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(Level::Info, "peer", "peer connection failures");
+
+/// Bytes a connection's socket moves before its task lets the other tasks on its pinned runtime run.
+const BURST_BYTES: usize = 256 << 10;
+
+/// A connection's socket bytes since its task last waited, which bound how long a bulk transfer holds its thread.
+#[derive(Default)]
+pub(crate) struct Burst(usize);
+
+impl Burst {
+    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran.
+    pub fn poll_turn(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 < BURST_BYTES {
+            return Poll::Ready(());
+        }
+        self.0 = 0;
+        // A fresh `yield_now` is pending on its first poll, with the wake deferred past the driver.
+        let _ = pin!(tokio::task::yield_now()).poll(cx);
+        Poll::Pending
+    }
+
+    pub fn moved(&mut self, bytes: usize) {
+        self.0 = self.0.saturating_add(bytes);
+    }
+
+    /// The socket would block: the task waits anyway, so its next poll starts a new burst.
+    pub fn waited(&mut self) {
+        self.0 = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::poll_fn,
+        sync::{Arc, Mutex},
+    };
+
+    #[tokio::test]
+    async fn a_spent_burst_yields_once_to_the_other_ready_tasks() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (bulk_order, probe_order) = (order.clone(), order.clone());
+        let bulk = tokio::spawn(async move {
+            let mut burst = Burst::default();
+            burst.moved(BURST_BYTES - 1);
+            poll_fn(|cx| burst.poll_turn(cx)).await;
+            bulk_order.lock().unwrap().push("under");
+            burst.moved(1);
+            poll_fn(|cx| burst.poll_turn(cx)).await;
+            bulk_order.lock().unwrap().push("spent");
+            poll_fn(|cx| burst.poll_turn(cx)).await;
+            bulk_order.lock().unwrap().push("fresh");
+        });
+        let probe = tokio::spawn(async move { probe_order.lock().unwrap().push("probe") });
+        bulk.await.unwrap();
+        probe.await.unwrap();
+        assert_eq!(*order.lock().unwrap(), ["under", "probe", "spent", "fresh"]);
+    }
+}

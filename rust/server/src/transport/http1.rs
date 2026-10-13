@@ -1,6 +1,7 @@
 //! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
 
 use super::{
+    Burst,
     body::{Aborted, Body, ReplyBound},
     tls, websocket,
 };
@@ -39,6 +40,9 @@ use tokio_util::sync::CancellationToken;
 const BUFFER_BYTES: usize = 128 << 10;
 /// A connection between requests closes after this long.
 const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(15);
+/// Unsent downloads wait in hyper's buffer: a writable wake encrypts and the kernel holds about one block.
+#[cfg(target_os = "linux")]
+const NOTSENT_LOWAT: u32 = 256 << 10;
 
 /// What an HTTP/1 listener's connections share.
 #[derive(Clone)]
@@ -61,6 +65,8 @@ impl Http1 {
                 return;
             };
             let _ = socket.set_nodelay(true);
+            #[cfg(target_os = "linux")]
+            let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(NOTSENT_LOWAT);
             let connection = Connection::new(listener.endpoint, peer.ip());
             let Some(acceptor) = &listener.tls else {
                 return listener.serve(socket, connection, accepted).await;
@@ -204,6 +210,7 @@ struct Io<S> {
     /// The keep-alive or exchange deadline.
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
+    burst: Burst,
 }
 
 enum State {
@@ -221,7 +228,7 @@ impl<S> Io<S> {
     fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
         *lock(&shared.started) = Some(deadline);
         let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
-        Self { inner, state, deadline, shared }
+        Self { inner, state, deadline, shared, burst: Burst::default() }
     }
 
     /// Adopts a posted limit and fails once the connection's deadline passed or its reply must end.
@@ -262,12 +269,16 @@ impl<S> Io<S> {
 
     fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
         match &result {
-            Poll::Ready(Ok(1..)) => {
+            Poll::Ready(Ok(written @ 1..)) => {
+                self.burst.moved(*written);
                 if let State::Reply(bound) = &self.state {
                     bound.progressed();
                 }
             }
-            Poll::Pending => self.blocked(cx)?,
+            Poll::Pending => {
+                self.burst.waited();
+                self.blocked(cx)?;
+            }
             Poll::Ready(_) => {}
         }
         result
@@ -289,10 +300,15 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let filled = buffer.filled().len();
         let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
+        this.burst.moved(buffer.filled().len() - filled);
         match result {
-            Poll::Pending => this.blocked(cx)?,
+            Poll::Pending => {
+                this.burst.waited();
+                this.blocked(cx)?;
+            }
             Poll::Ready(Ok(())) if buffer.filled().len() > filled && matches!(this.state, State::Waiting) => {
                 let deadline = Instant::now() + EXCHANGE_BOUND;
                 this.deadline.as_mut().reset(deadline);
@@ -309,6 +325,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let result = Pin::new(&mut this.inner).poll_write(cx, bytes);
         this.written(cx, result)
     }
@@ -320,6 +337,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let result = Pin::new(&mut this.inner).poll_write_vectored(cx, bytes);
         this.written(cx, result)
     }

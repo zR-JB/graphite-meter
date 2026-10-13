@@ -1,6 +1,7 @@
 //! HTTP/2 through the h2 fork: connection floor and settings, bounded streams, the reply pump, upload windows.
 
 use super::{
+    Burst,
     body::{Aborted, ReplyBound, Sink, pump},
     lifecycle::{Event, Grace, Lifecycle},
     tls,
@@ -36,7 +37,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
-    time::{Sleep, sleep, timeout},
+    time::{Instant, Sleep, sleep, timeout},
 };
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -87,7 +88,7 @@ impl Http2 {
                 return;
             };
             let connection = Connection::new(Endpoint::H2, peer.ip());
-            let stalled = Stalled { inner: stream, stalled: None };
+            let stalled = Stalled::new(stream);
             listener.serve(stalled, connection).await;
         }
     }
@@ -246,20 +247,41 @@ async fn capacity(stream: &mut SendStream<Bytes>, bound: &mut ReplyBound, length
 /// A connection's socket, ended by a write blocked for the idle bound: a blocked socket stalls every stream.
 struct Stalled<S> {
     inner: S,
-    stalled: Option<Pin<Box<Sleep>>>,
+    /// When the blocked write began.
+    since: Option<Instant>,
+    /// Due no later than the current stall's end, and re-armed only when it fires, so a stall costs no timer.
+    timer: Pin<Box<Sleep>>,
+    burst: Burst,
 }
 
 impl<S> Stalled<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            since: None,
+            timer: Box::pin(sleep(IDLE_BOUND)),
+            burst: Burst::default(),
+        }
+    }
+
     /// A write is blocked; fails once it has been for the idle bound.
     fn blocked(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let stalled = self.stalled.get_or_insert_with(|| Box::pin(sleep(IDLE_BOUND)));
-        stalled.as_mut().poll(cx).map(|()| Err(io::ErrorKind::TimedOut.into()))
+        self.burst.waited();
+        let due = *self.since.get_or_insert_with(Instant::now) + IDLE_BOUND;
+        loop {
+            ready!(self.timer.as_mut().poll(cx));
+            if self.timer.deadline() >= due {
+                return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
+            }
+            self.timer.as_mut().reset(due);
+        }
     }
 
     fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
         match result {
-            Poll::Ready(Ok(1..)) => {
-                self.stalled = None;
+            Poll::Ready(Ok(written @ 1..)) => {
+                self.since = None;
+                self.burst.moved(written);
                 result
             }
             Poll::Ready(_) => result,
@@ -270,16 +292,24 @@ impl<S> Stalled<S> {
 
 impl<S: AsyncRead + Unpin> AsyncRead for Stalled<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        let timer = self.stalled.as_mut();
-        if timer.is_some_and(|stalled| stalled.as_mut().poll(cx).is_ready()) {
+        let this = &mut *self;
+        if this.since.is_some_and(|since| since.elapsed() >= IDLE_BOUND) {
             return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
         }
-        Pin::new(&mut self.inner).poll_read(cx, buffer)
+        ready!(this.burst.poll_turn(cx));
+        let filled = buffer.filled().len();
+        let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
+        match result {
+            Poll::Pending => this.burst.waited(),
+            Poll::Ready(_) => this.burst.moved(buffer.filled().len() - filled),
+        }
+        result
     }
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+        ready!(self.burst.poll_turn(cx));
         let result = Pin::new(&mut self.inner).poll_write(cx, bytes);
         self.written(cx, result)
     }
@@ -289,6 +319,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
         cx: &mut Context<'_>,
         bytes: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
+        ready!(self.burst.poll_turn(cx));
         let result = Pin::new(&mut self.inner).poll_write_vectored(cx, bytes);
         self.written(cx, result)
     }
@@ -300,7 +331,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match Pin::new(&mut self.inner).poll_flush(cx) {
             Poll::Ready(Ok(())) => {
-                self.stalled = None;
+                self.since = None;
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
