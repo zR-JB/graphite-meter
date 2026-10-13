@@ -128,7 +128,7 @@ impl App {
         if area.width >= WIDE.0 && area.height >= WIDE.1 {
             let top = (area.height * 11 / 20).clamp(18, 24);
             let dial = Rect::new(area.x + 1, area.y + 1, (area.width * 3 / 10).clamp(46, 66), top);
-            dial::draw(canvas, dial, &self.palette, &self.dial());
+            dial::draw(canvas, dial, &self.palette, &self.dial(), &self.ring);
             let side = Rect::new(dial.right() + 3, dial.y, area.right().saturating_sub(dial.right() + 5), top);
             let mut controls = side;
             if !lanes.is_empty() {

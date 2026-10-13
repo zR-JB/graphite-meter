@@ -33,7 +33,10 @@ use keys::{Action, Key};
 use ratatui_core::layout::{Position, Rect};
 use settings::Editor;
 use setup::{Row, Setup};
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 use theme::{Answer, Palette, Taken};
 
 /// How long settings rest before their paths are checked again.
@@ -153,6 +156,8 @@ pub struct App {
     hover: Option<Target>,
     /// The last frame's size.
     area: Rect,
+    /// The dial's ring for the area it was last drawn in.
+    ring: RefCell<Option<dial::Ring>>,
     since: Instant,
     now: Instant,
 }
@@ -185,6 +190,7 @@ impl App {
             hits: Vec::new(),
             hover: None,
             area: Rect::default(),
+            ring: RefCell::default(),
             since: now,
             now,
         };
