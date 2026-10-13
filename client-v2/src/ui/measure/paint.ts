@@ -1,15 +1,16 @@
 // The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
 // visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
-import { animate } from "../../lib/frame";
-import { batch, effect, onCleanup, signal, type Read } from "../../lib/signal";
+import { animate, pageMs } from "../../lib/frame";
+import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
 /** A view's painter: `wake()` draws from the next frame until `draw` returns false, skipping frames closer than
-    LIVE_FRAME_MS to the last it drew. While `away` holds it draws nothing, and it draws again as its view returns.
-    Released with its owner. */
-export function painter(draw: (now: number) => boolean, away?: Read<boolean>): () => void {
+    LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws at once instead, in the frame that
+    resized the view, so a view keeps step with its box at any display rate. While `away` holds it draws nothing, and
+    it draws again as its view returns. Released with its owner. */
+export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
   const halt = () => {
@@ -25,8 +26,14 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
       return false;
     });
   };
+  const wake = (resized = false) => {
+    if (away?.peek()) return;
+    if (!resized) return start();
+    drawn = pageMs();
+    if (untrack(() => draw(drawn))) start();
+  };
   onCleanup(halt);
-  if (!away) return start;
+  if (!away) return wake;
   let gone = false;
   effect(() => {
     if (away()) {
@@ -37,9 +44,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
       start();
     }
   });
-  return () => {
-    if (!away.peek()) start();
-  };
+  return wake;
 }
 
 /** Whether `element` is on screen in a visible page; `initial` until the first observation. */

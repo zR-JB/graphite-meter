@@ -425,6 +425,9 @@ function Lane(props: {
     const { width, height } = size();
     art.setAttribute("width", String(width));
     art.setAttribute("height", String(height));
+    wake(true);
+  });
+  effect(() => {
     props.idle();
     props.several();
     overflow();

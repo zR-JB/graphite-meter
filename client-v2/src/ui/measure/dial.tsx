@@ -421,7 +421,7 @@ export function Dial(props: {
     headArt.setAttribute("viewBox", `${-reach} ${-reach} ${2 * reach} ${2 * reach}`);
     for (const circle of headArt.children) circle.setAttribute("r", String(headRadius));
     drawn = Number.NaN;
-    wake();
+    wake(true);
   });
 
   // One ring per idle reply, never two at once: a steady link is seen to answer, a stalled one holds still.

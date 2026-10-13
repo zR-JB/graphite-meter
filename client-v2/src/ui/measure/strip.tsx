@@ -500,11 +500,15 @@ export function StageGraph(props: StripProps): HTMLElement {
   effect(() => {
     binned();
     props.ceiling();
-    sizes.plot();
     props.live();
     seen();
     written++;
     wake();
+  });
+  effect(() => {
+    sizes.plot();
+    written++;
+    wake(true);
   });
   return graph;
 }
