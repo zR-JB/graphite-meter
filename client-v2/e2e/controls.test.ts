@@ -90,6 +90,8 @@ test("a unit switch relabels the dial in place, on round ticks, without replayin
               (animation as CSSAnimation).animationName === "result-sweep" && animation.playState === "running",
           ).length,
     );
+  // The result takes the dial a hand-off after the run completes; its sweep ends before the switch.
+  await expect.poll(() => page.locator(".result-arc").all((paths: Element[]) => paths.length)).toBeGreaterThan(0);
   await expect.poll(sweeps).toBe(0);
   const settings = await openSettings(page);
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
