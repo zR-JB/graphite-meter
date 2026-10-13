@@ -34,13 +34,21 @@ interface Gesture {
   origin: number | null;
   from: number;
   samples: { t: number; p: number }[];
-  scroller: Element | null;
+  /** Where the finger landed in the content; null on the sheet's head or handle, which always drag. */
+  content: Element | null;
 }
 
 /** Attaches the drag to `sheet` until the returned detach runs. `--sheet-drag` on its parent, 0 to 1, fades the
     scrim with it. */
 export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () => void): () => void {
   const host = sheet.parentElement ?? sheet;
+  // Any box from the finger up to the sheet scrolled from its top, whichever scrolls in this layout: the content's
+  // body, or the sheet itself on a short screen.
+  const scrolledAbove = (from: Element) => {
+    for (let node: Element | null = from; node; node = node === sheet ? null : node.parentElement)
+      if (node.scrollTop > 0) return true;
+    return false;
+  };
   let offset = 0;
   let stop: (() => void) | null = null;
   let gesture: Gesture | null = null;
@@ -89,7 +97,7 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
       origin: caught ? along(at, touch) : null,
       from: caught ? offset : 0,
       samples: [],
-      scroller: event.target.closest(".panel-body"),
+      content: event.target.closest(".sheet-head, .sheet-handle") ? null : event.target,
     };
   }
 
@@ -104,8 +112,8 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
       if (Math.hypot(dx, dy) < SLOP_PX) return;
       const outward = at === "bottom" ? dy : at === "right" ? dx : -dx;
       const across = at === "bottom" ? dx : dy;
-      // Down drags a bottom sheet only from the top of its list, so the list under the finger scrolls first.
-      const scrolled = at === "bottom" && (current.scroller?.scrollTop ?? 0) > 0;
+      // Down drags a bottom sheet only from the top of its content, so the content under the finger scrolls first.
+      const scrolled = at === "bottom" && !!current.content && scrolledAbove(current.content);
       if (outward <= 0 || Math.abs(across) > Math.abs(outward) || scrolled) {
         gesture = null;
         return;

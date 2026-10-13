@@ -256,6 +256,47 @@ test.chrome("a phone's sheet leaves on a short quick flick and springs back from
   await expect(sheet).toHaveCount(0);
 });
 
+test.chrome(
+  "a short phone's scrolled sheet scrolls back on a downward flick, and leaves from its head",
+  async (page) => {
+    await page.setViewportSize({ width: 390, height: 460 });
+    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await open(page, home.http);
+    const sheet = page.locator("dialog.panel[open]");
+    async function flick(selector: string) {
+      const from = await page.locator(selector).evaluate((el: Element) => {
+        const box = el.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + Math.min(box.height / 2, 40) };
+      });
+      let clock = Date.now();
+      const at = (type: string, y?: number) =>
+        page.cdp("Input.dispatchTouchEvent", {
+          type,
+          timestamp: clock / 1000,
+          touchPoints: y === undefined ? [] : [{ x: from.x, y }],
+        });
+      await at("touchStart", from.y);
+      for (let step = 1; step <= 6; step++) {
+        clock += 8;
+        await at("touchMove", from.y + step * 12);
+      }
+      clock += 8;
+      await at("touchEnd");
+    }
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(sheet).toHaveCount(1);
+    // Whichever box scrolls in this layout, scrolled from its top.
+    await sheet.evaluate((dialog: HTMLElement) => {
+      for (const box of [dialog, dialog.querySelector(".panel-body")!] as HTMLElement[]) box.scrollTop = 250;
+    });
+    await flick("dialog.panel[open] .panel-body");
+    await Bun.sleep(300);
+    await expect(sheet).toHaveCount(1);
+    await flick("dialog.panel[open] .sheet-head");
+    await expect(sheet).toHaveCount(0);
+  },
+);
+
 test("a graph's reading stays inside a narrow card wherever it reads", async (page) => {
   await page.setViewportSize({ width: 900, height: 800 });
   await open(page, home.http);
