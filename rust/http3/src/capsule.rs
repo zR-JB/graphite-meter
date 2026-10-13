@@ -28,10 +28,10 @@ impl Reader {
                 frame::Piece::Payload(body) if self.kind == CLOSE => {
                     self.close.extend_from_slice(&body);
                     if self.frames.remaining == 0 {
-                        let mut close = std::mem::take(&mut self.close);
-                        let reason = String::from_utf8(close.split_off(4)).map_err(|_| Code::H3_MESSAGE_ERROR)?;
-                        let code = u32::from_be_bytes(close.try_into().expect("four code bytes"));
-                        return Ok(Some((code, reason)));
+                        let close = std::mem::take(&mut self.close);
+                        let (code, reason) = close.split_first_chunk().ok_or(Code::H3_MESSAGE_ERROR)?;
+                        let reason = std::str::from_utf8(reason).map_err(|_| Code::H3_MESSAGE_ERROR)?;
+                        return Ok(Some((u32::from_be_bytes(*code), reason.to_owned())));
                     }
                 }
                 frame::Piece::Payload(_) => {}
@@ -48,10 +48,7 @@ impl Reader {
 
 /// A CLOSE_WEBTRANSPORT_SESSION capsule; the reason is cut at a character boundary within 1024 bytes.
 pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
-    let mut end = reason.len().min(MAX_REASON);
-    while !reason.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = reason.floor_char_boundary(MAX_REASON);
     let mut capsule = Vec::with_capacity(end + 12);
     frame::put_header(CLOSE, 4 + end as u64, &mut capsule);
     capsule.put_u32(code);

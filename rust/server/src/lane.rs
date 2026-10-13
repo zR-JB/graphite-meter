@@ -17,6 +17,7 @@ const RUNNING: u8 = u8::MAX;
 
 /// An admitted request, WebSocket bus or WebTransport session; its last clone releases its admission and work.
 #[derive(Debug, Clone)]
+#[must_use = "dropping the last clone releases the admission and work"]
 pub struct Lane(Arc<State>);
 
 #[derive(Debug)]
@@ -166,6 +167,7 @@ impl Work {
 
 /// One piece of admitted work, ended when dropped.
 #[derive(Debug)]
+#[must_use = "dropping it ends the work"]
 pub struct WorkGuard(Work);
 
 impl Drop for WorkGuard {

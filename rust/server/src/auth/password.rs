@@ -76,10 +76,10 @@ impl Hash {
     /// Checks a PHC string, with the messages operators see.
     fn parse(encoded: &str) -> Result<Self, String> {
         let fields: Vec<_> = encoded.trim().split('$').collect();
-        if fields.len() != 6 || fields[1] != "argon2id" || fields[2] != "v=19" {
+        let [_, "argon2id", "v=19", params, salt, key] = fields[..] else {
             return Err("password hash must be an Argon2id v=19 PHC string".into());
-        }
-        let params: Vec<_> = fields[3].split(',').collect();
+        };
+        let params: Vec<_> = params.split(',').collect();
         if params.len() != 3 {
             return Err("password hash has invalid Argon2 parameters".into());
         }
@@ -91,13 +91,12 @@ impl Hash {
                 return Err(format!("password hash must use m={MEMORY_KIB},t={PASSES},p={LANES}"));
             }
         }
-        let decode = |text: &str, bytes: usize| RAW_STD.decode(text).ok().filter(|raw| raw.len() == bytes);
-        let salt = decode(fields[4], SALT_BYTES).ok_or("password hash must use a 16-byte salt")?;
-        let key = decode(fields[5], KEY_BYTES).ok_or("password hash must use a 32-byte output")?;
-        Ok(Self {
-            salt: salt.try_into().expect("the salt's length"),
-            key: key.try_into().expect("the key's length"),
-        })
+        fn decode<const N: usize>(text: &str) -> Option<[u8; N]> {
+            RAW_STD.decode(text).ok()?.try_into().ok()
+        }
+        let salt = decode(salt).ok_or("password hash must use a 16-byte salt")?;
+        let key = decode(key).ok_or("password hash must use a 32-byte output")?;
+        Ok(Self { salt, key })
     }
 
     fn verify(&self, password: &[u8]) -> bool {
@@ -161,9 +160,11 @@ impl Password {
         if URL_SAFE_NO_PAD.decode_slice(cookie, &mut raw).ok() != Some(raw.len()) {
             return false;
         }
-        let (expires, tag) = raw.split_at(8);
+        let Some((expires, tag)) = raw.split_first_chunk() else {
+            return false;
+        };
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let expires_at = u64::from_be_bytes(expires.try_into().expect("eight bytes"));
+        let expires_at = u64::from_be_bytes(*expires);
         now.as_secs() < expires_at && self.device.clone().chain_update(expires).verify_slice(tag).is_ok()
     }
 }

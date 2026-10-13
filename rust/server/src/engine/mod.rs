@@ -46,6 +46,7 @@ impl Meter {
     }
 
     /// A running transfer, one per lane, which the lane's streams share.
+    #[must_use = "dropping it ends the transfer"]
     pub fn open(&self) -> Option<Arc<Transfer>> {
         let counts = self.0.as_ref()?;
         counts.transfers.fetch_add(1, Ordering::Relaxed);
@@ -87,6 +88,7 @@ pub fn reflect(message: &[u8], received: std::time::Instant) -> Option<String> {
 }
 
 /// A joined data lane; dropping it leaves the aggregate, which may then complete.
+#[must_use = "dropping it leaves the aggregate"]
 pub struct UploadSink {
     aggregate: Arc<Aggregate>,
     lane: Lane,

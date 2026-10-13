@@ -26,7 +26,8 @@ pub const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
 pub const MAX_PER_CLIENT: usize = 32;
 /// An ID creates state for this long after it was minted.
-pub const ID_LIFETIME: Duration = Duration::from_secs(120);
+pub const ID_LIFETIME: Duration = Duration::from_mins(2);
+const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_secs() * 1_000_000_000;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
 pub const RETENTION: Duration = ID_LIFETIME;
 /// Retention is swept at most this often.
@@ -347,10 +348,9 @@ impl Uploads {
         if !decoded || self.mac(signed).verify_slice(tag).is_err() {
             return false;
         }
-        let issued = u64::from_be_bytes(raw[..8].try_into().expect("eight bytes"));
-        let lifetime = u64::try_from(ID_LIFETIME.as_nanos()).expect("two minutes in nanoseconds");
-        let age = self.0.clock.now().checked_sub(issued);
-        age.is_some_and(|age| age <= lifetime)
+        let issued = raw.first_chunk().map(|issued| u64::from_be_bytes(*issued));
+        let age = issued.and_then(|issued| self.0.clock.now().checked_sub(issued));
+        age.is_some_and(|age| age <= ID_LIFETIME_NANOS)
     }
 
     fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
