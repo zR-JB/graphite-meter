@@ -71,9 +71,12 @@ impl PartialEq for Verify {
     }
 }
 
+/// Client configurations kept per trust: one offering no ALPN, then one per protocol in declaration order.
+pub(crate) const CONFIGS: usize = Protocol::ALL.len() + 1;
+
 /// The client configuration for `verify` offering `alpn`, built once so its connections share one session cache.
 pub async fn client_config(verify: &Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
-    static INSECURE: [OnceCell<Arc<ClientConfig>>; 5] = [const { OnceCell::const_new() }; 5];
+    static INSECURE: [OnceCell<Arc<ClientConfig>>; CONFIGS] = [const { OnceCell::const_new() }; CONFIGS];
     let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
     let index = alpn.map_or(0, |protocol| protocol as usize + 1);
     let configs = match verify {

@@ -88,8 +88,16 @@ impl Auth {
         };
         let oidc = settings.map(oidc).transpose()?;
         // How people sign in, one line per concern, with only the settings the mode uses.
+        // Go's form without zero units: 8h, 8h30m, 10m.
         let lifetime = duration::format(LOGIN_LIFETIME);
-        let lifetime = lifetime.trim_end_matches("0s").trim_end_matches("0m");
+        let lifetime = lifetime
+            .strip_suffix("0s")
+            .filter(|rest| rest.ends_with(['h', 'm']))
+            .unwrap_or(&lifetime);
+        let lifetime = lifetime
+            .strip_suffix("0m")
+            .filter(|rest| rest.ends_with('h'))
+            .unwrap_or(lifetime);
         log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
         if let Some(oidc) = settings {
             let groups = match oidc.allowed_groups.len() {

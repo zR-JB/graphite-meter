@@ -1,5 +1,5 @@
 //! The trust store for server certificates, loaded once on first use from the places Go 1.27 reads.
-use crate::crypto::{Verify, provider};
+use crate::crypto::{CONFIGS, Verify, provider};
 use rustls::{
     CertificateError, DigitallySignedStruct, OtherError, RootCertStore, SignatureScheme,
     client::{
@@ -41,7 +41,7 @@ pub struct Trust {
     file: Option<OsString>,
     directories: Option<OsString>,
     verifier: OnceCell<Arc<dyn ServerCertVerifier>>,
-    pub(crate) configs: [OnceCell<Arc<rustls::ClientConfig>>; 5],
+    pub(crate) configs: [OnceCell<Arc<rustls::ClientConfig>>; CONFIGS],
 }
 
 impl Trust {
@@ -52,7 +52,7 @@ impl Trust {
             file: set("SSL_CERT_FILE"),
             directories: set("SSL_CERT_DIR"),
             verifier: OnceCell::new(),
-            configs: [const { OnceCell::const_new() }; 5],
+            configs: [const { OnceCell::const_new() }; CONFIGS],
         }
     }
 

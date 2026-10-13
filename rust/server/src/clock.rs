@@ -290,7 +290,8 @@ fn clock(text: &mut &str) -> Option<i32> {
     let minutes = parts.next().unwrap_or(Some(0))?;
     let seconds = parts.next().unwrap_or(Some(0))?;
     *text = &rest[length..];
-    Some(sign * (hours * 3600 + minutes * 60 + seconds))
+    let total = hours.checked_mul(3600)?.checked_add(minutes.checked_mul(60)?)?;
+    Some(sign * total.checked_add(seconds)?)
 }
 
 #[cfg(test)]
@@ -313,7 +314,7 @@ mod tests {
         assert_eq!(sydney.offset(WINTER + 150 * 86_400), 36_000, "mid-June is standard time");
         let fixed = Rule::parse("<-03>3").unwrap();
         assert_eq!((fixed.offset(AUTUMN), fixed.daylight), (-10_800, None));
-        for bad in ["", "C1", "CET", "CET-1CEST,M13.1.0,M10.5.0", "CET-1CEST,M3.5.0"] {
+        for bad in ["", "C1", "CET", "CET-1CEST,M13.1.0,M10.5.0", "CET-1CEST,M3.5.0", "CET999999"] {
             assert_eq!(Rule::parse(bad), None, "{bad}");
         }
     }
