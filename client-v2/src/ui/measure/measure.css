@@ -197,7 +197,7 @@
     stroke-opacity: 0.7;
   }
   .gauge-dial.motion .dial-art .track {
-    transition: stroke 700ms var(--ease-out);
+    transition: stroke 379ms var(--ease-out-head);
   }
   /* The needle turns as squares; their empty corners must not widen a phone's page. */
   .live {
@@ -238,8 +238,8 @@
     /* A draining needle blends into the next stage's hue on its way down. */
     & :is(path, circle) {
       transition:
-        stroke var(--dur-stage) var(--ease-out),
-        fill var(--dur-stage) var(--ease-out);
+        stroke calc(0.54 * var(--dur-stage)) var(--ease-out-head),
+        fill calc(0.54 * var(--dur-stage)) var(--ease-out-head);
     }
   }
   /* The rotors and the head are their own layers: a frame of the needle moves them and paints nothing. */
@@ -609,12 +609,12 @@
       inset: 0 calc(-1 * var(--space-4));
       background: color-mix(in oklab, var(--tone) 7%, transparent);
       opacity: 0;
-      transition: opacity var(--dur-graph) var(--ease-out);
+      transition: opacity calc(0.54 * var(--dur-graph)) var(--ease-out-head);
       pointer-events: none;
     }
     &[data-active="true"]::before {
       opacity: 1;
-      transition: opacity var(--dur-stage) var(--ease-out) var(--beat);
+      transition: opacity calc(0.54 * var(--dur-stage)) var(--ease-out-head) var(--beat);
     }
   }
   /* Every figure in a row sits on the median's baseline. */
@@ -907,7 +907,7 @@
     transform-origin: left center;
     transition:
       transform var(--dur-graph) var(--ease-out),
-      background-color var(--dur-graph) var(--ease-out);
+      background-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
     /* While live the frame clock draws the width, on its own layer. */
     &.is-live {
       transition: background-color var(--dur-graph) var(--ease-out);
@@ -1179,7 +1179,7 @@
         var(--elev-tile),
         0 12px 32px -16px color-mix(in oklab, var(--tone) 60%, transparent);
       transition:
-        border-color var(--dur-stage) var(--ease-out) calc(2 * var(--beat)),
+        border-color calc(0.54 * var(--dur-stage)) var(--ease-out-head) calc(2 * var(--beat)),
         box-shadow 0s linear calc(2 * var(--beat));
     }
     &:is(.pending, .not-run) {

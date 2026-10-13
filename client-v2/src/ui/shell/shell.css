@@ -216,8 +216,8 @@
       );
       opacity: 0;
       transition:
-        opacity 900ms var(--ease-out),
-        --ambient 900ms var(--ease-out);
+        opacity 488ms var(--ease-out-head),
+        --ambient 488ms var(--ease-out-head);
       pointer-events: none;
     }
     &[data-stage]::before {
@@ -385,7 +385,9 @@
     }
     /* Skipped content never advances a transition, so none starts there: a style read forced at rest (an audit
        after a theme change) applies at once. */
-    &[data-rest] * {
+    &[data-rest] *,
+    &[data-rest] *::before,
+    &[data-rest] *::after {
       transition: none !important;
     }
   }

@@ -20,8 +20,8 @@
     border-top: 2px solid color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
     background: linear-gradient(180deg, color-mix(in oklab, var(--tone) var(--wash), transparent), transparent 180px);
     transition:
-      --wash var(--dur-graph) var(--ease-out),
-      border-color var(--dur-graph) var(--ease-out);
+      --wash calc(0.54 * var(--dur-graph)) var(--ease-out-head),
+      border-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
   }
   .stage-area:is(.complete, .partial, .failed, .stopped) {
     --wash: 9%;
