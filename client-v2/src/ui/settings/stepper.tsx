@@ -49,12 +49,16 @@ export function Stepper(props: {
     tap = false;
   };
   onCleanup(release);
-  /** Whether the value after `times` steps applied; a limit holds it in place. */
-  const nudge = (direction: Direction, times = 1) => {
-    const current = props.value();
-    let next = current;
+  /** The value `times` steps from `from`; a limit holds it in place. */
+  const stepped = (from: number, direction: Direction, times = 1) => {
+    let next = from;
     for (let i = 0; i < times; i++) next = clamp(stepOnGrid(next, props.step(next, direction), direction));
-    return next === current || props.onChange(next);
+    return next;
+  };
+  /** Whether the value after `times` steps applied. */
+  const nudge = (direction: Direction, times = 1) => {
+    const next = stepped(props.value(), direction, times);
+    return next === props.value() || props.onChange(next);
   };
   const atLimit = (direction: Direction) => (direction > 0 ? props.value() >= props.max() : props.value() <= props.min);
 
@@ -135,10 +139,18 @@ export function Stepper(props: {
             const step = KEYS[event.key];
             // Home and End reach the limits, as a spin button's do.
             const limit = event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
-            if (step) nudge(...step);
-            else if (limit === null) return;
-            else if (limit !== props.value()) props.onChange(limit);
+            if (!step && limit === null) return;
             event.preventDefault();
+            // A typed draft is what a key steps: 9 typed over 10 steps up to 10. Text that reads as no value steps
+            // the value as it was.
+            const current = props.value();
+            const { min, format, parse } = props;
+            const from =
+              input.value === text.peek()
+                ? current
+                : typedValue(input.value, current, { min, max: props.max(), format, parse });
+            const next = step ? stepped(from, ...step) : limit!;
+            input.value = props.format(next === current || props.onChange(next) ? next : current);
           }}
         />
         <span class="stepper-shown" aria-hidden="true">

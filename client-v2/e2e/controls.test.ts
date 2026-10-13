@@ -48,6 +48,24 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   expect(await checked(wire)).toBe(true);
 });
 
+test("an arrow key steps the time typed into a field, not the one it held", async (page) => {
+  await open(page);
+  const settings = await openSettings(page);
+  await settings.getByRole("button", { name: "Custom", exact: true }).click();
+  const download = settings.getByRole("spinbutton", { name: "Download stage time" });
+  await download.fill("4");
+  await page.press("Tab");
+  await expect(download).toHaveValue("4 s");
+  // Over 4 s, a typed 2 steps up to 2.5 s, not to the 4.5 s after the 4 it held.
+  await download.fill("2");
+  await page.press("ArrowUp");
+  await expect(download).toHaveValue("2.5 s");
+  // Text that reads as no time steps the time as it was.
+  await download.fill("soon");
+  await page.press("ArrowUp");
+  await expect(download).toHaveValue("3 s");
+});
+
 test("a unit switch relabels the dial in place, on round ticks, without replaying the result", async (page) => {
   await open(page);
   await ready(page);
