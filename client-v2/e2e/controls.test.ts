@@ -181,7 +181,9 @@ test("Space and R run the test from page load; a focused control keeps Space", a
   // As after a fresh load: focus left the Settings button that ready() used.
   await page.evaluate(() => (document.activeElement as HTMLElement).blur());
   await page.press(" ");
+  // Stop shows from the press; the run is under way once its first stage has started.
   await expect(runButton(page, "Stop test")).toBeVisible();
+  await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
   await page.press("r");
   await expect(phase(page, "aborted")).toHaveCount(1);
   await page.getByRole("switch", { name: /^Upload stage/ }).evaluate((el: HTMLElement) => el.focus());
