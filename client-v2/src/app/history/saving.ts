@@ -1,7 +1,7 @@
 // Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
 // was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
-// A write whose count could not be read when it was queued takes the last count this tab knows to be current; with
-// none, it is refused rather than given a later count, which would bring it back after a clear.
+// A write whose count could not be read when it was queued takes the last count this tab read and knows to be
+// current; with none, it is refused rather than given a later count, which would bring it back after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
@@ -47,14 +47,14 @@ export function createHistorySaving(
   let draining = false;
   let disposed = false;
   let stopRetries: (() => void) | null = null;
-  // The clear count as last read, while nothing in another tab may have changed it since.
+  // The clear count as last read for a write, while nothing in another tab may have changed it since. Never read
+  // for its own sake, so History opens its database only to save.
   let known: number | null = null;
   const read = () =>
     repository.clears().then((clears) => {
       known = clears;
       return clears;
     });
-  read().catch(() => {});
 
   const showUnsaved = () => unsaved.set(offered !== null && settled.get(offered.id) !== true);
 
@@ -131,11 +131,8 @@ export function createHistorySaving(
   };
   const stopWatching = repository.onChange((change) => {
     if (change.type === "cleared" && known !== null) known++;
-    // Another tab may have cleared History: the count is known again once read.
-    if (change.type === "elsewhere") {
-      known = null;
-      read().catch(() => {});
-    }
+    // Another tab may have cleared History: the count is known again at the next write's read.
+    if (change.type === "elsewhere") known = null;
     if (change.type === "deleted") for (const id of change.ids) removed(id);
     else if (change.type === "cleared") for (const id of settled.keys()) removed(id);
     else if (change.type === "elsewhere" && offered && settled.get(offered.id)) {

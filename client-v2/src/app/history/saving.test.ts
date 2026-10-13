@@ -267,21 +267,35 @@ test("a write whose clear count could not be read never comes back after a clear
   expect(saver.warning()).toContain("could not be read");
 });
 
-test("a write whose clear count could not be read takes the count this tab knows to be current", async () => {
+test("a write whose clear count could not be read takes the count this tab last read and knows to be current", async () => {
   const history = memoryHistory();
   const saver = createHistorySaving(history.repository, signal(true), windowEvents());
-  await turns();
-  history.failing.clears = true;
   saver.offer(record("a"));
   await turns();
   history.writes[0]!.answer();
   await turns();
-  expect(history.writes.map(({ id, clears }) => [id, clears])).toEqual([["a", 0]]);
-  expect([...history.rows.keys()]).toEqual(["a"]);
-  // A change in another tab may have cleared History: until the count is read again, a write cannot be ordered.
-  history.elsewhere(() => history.clear());
+  history.failing.clears = true;
   saver.offer(record("b"));
   await turns();
-  expect(history.writes.map(({ id }) => id)).toEqual(["a"]);
+  history.writes[1]!.answer();
+  await turns();
+  expect(history.writes.map(({ id, clears }) => [id, clears])).toEqual([
+    ["a", 0],
+    ["b", 0],
+  ]);
+  expect([...history.rows.keys()]).toEqual(["a", "b"]);
+  // A clear in this tab moves the count on with it.
+  history.clear();
+  saver.offer(record("c"));
+  await turns();
+  history.writes[2]!.answer();
+  await turns();
+  expect(history.writes[2]!.clears).toBe(1);
+  expect([...history.rows.keys()]).toEqual(["c"]);
+  // A change in another tab may have cleared History: until the count is read again, a write cannot be ordered.
+  history.elsewhere(() => history.clear());
+  saver.offer(record("d"));
+  await turns();
+  expect(history.writes).toHaveLength(3);
   expect(saver.unsaved()).toBe(true);
 });
