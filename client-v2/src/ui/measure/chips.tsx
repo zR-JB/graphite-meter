@@ -177,7 +177,8 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
         : clocked.peek() && length > 0
           ? Math.min(1, clock / length)
           : 0;
-    if (!(Math.abs(next - progress) < 5e-4)) fill.style.setProperty("--progress", String((progress = next)));
+    // A plain transform, not a custom property: Chrome then restyles the fill from its previous style.
+    if (!(Math.abs(next - progress) < 5e-4)) fill.style.transform = `scaleX(${(progress = next)})`;
     if (timed.peek() && Math.round(clock / 100) !== tenths) {
       tenths = Math.round(clock / 100);
       full.set(fmtProgress(clock, length));

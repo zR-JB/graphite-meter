@@ -886,7 +886,7 @@
     inset: 0;
     border-radius: inherit;
     background: var(--tone);
-    transform: scaleX(var(--progress, 0));
+    transform: scaleX(0);
     transform-origin: left center;
     transition:
       transform var(--dur-graph) var(--ease-out),
