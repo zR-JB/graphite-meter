@@ -4,7 +4,7 @@ use super::{
     AuthLease, Counter, Enabled, LOGIN_LIFETIME, LoginKey, Reason, Via, approval,
     oidc::{self, Oidc, TRANSACTION_COOKIE},
     page::{self, Page},
-    password::Password,
+    password::{Password, Verdict},
     policy::{SESSION_COOKIE, cookie, cookie_lease},
     protect,
     store::{MintRefusal, random},
@@ -166,9 +166,9 @@ async fn sign_in<B: http_body::Body>(
     }
     let entered = Zeroizing::new(field(&form, "password").to_owned());
     match password.verify(entered).await {
-        Some(true) => {}
-        Some(false) => return rejected(auth, Reason::PasswordMismatch, challenge),
-        None => return rejected(auth, Reason::VerifierBusy, challenge),
+        Verdict::Match => {}
+        Verdict::Mismatch => return rejected(auth, Reason::PasswordMismatch, challenge),
+        Verdict::Busy => return rejected(auth, Reason::VerifierBusy, challenge),
     }
     let target = match verification_code(challenge) {
         Some(_) => format!("/auth/cli?challenge={challenge}"),

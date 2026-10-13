@@ -214,15 +214,25 @@ fn public_lists(settings: &Settings) -> [(&'static str, &Vec<String>); 3] {
     ]
 }
 
+/// An enabled GM_AUTH_MODE.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthMode {
+    Password,
+    Oidc,
+    Hybrid,
+}
+
 fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
-    match settings.auth_mode.as_str() {
+    let mode = match settings.auth_mode.as_str() {
         "off" if settings.auth_given() => {
             return Err("authentication settings require GM_AUTH_MODE to be enabled".into());
         }
         "off" => return Ok(None),
-        "password" | "oidc" | "hybrid" => {}
+        "password" => AuthMode::Password,
+        "oidc" => AuthMode::Oidc,
+        "hybrid" => AuthMode::Hybrid,
         _ => return Err("GM_AUTH_MODE must be off, password, oidc, or hybrid".into()),
-    }
+    };
     let public = &settings.auth_public_url;
     let public_origin = Origin::parse(public)
         .ok()
@@ -231,17 +241,17 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
     if public.rsplit_once(':').is_some_and(|(_, port)| port == "443") {
         return Err("GM_AUTH_PUBLIC_URL must omit the default HTTPS port".into());
     }
-    let methods = methods(settings)?;
+    let methods = methods(settings, mode)?;
     advertised_auth_origins(settings, &public_origin)?;
     let provider = settings.auth_oidc_provider_name.clone();
     Ok(Some(Auth { public_origin, methods, provider }))
 }
 
 /// Go's secret checks, in its order: both exclusions, each method's sources, then the provider's settings.
-fn methods(settings: &Settings) -> Result<Methods, String> {
+fn methods(settings: &Settings, mode: AuthMode) -> Result<Methods, String> {
     let password = secret(&settings.auth_password_hash, &settings.auth_password_hash_file);
     let client_secret = secret(&settings.auth_oidc_client_secret, &settings.auth_oidc_client_secret_file);
-    let (wants_password, wants_oidc) = (settings.auth_mode != "oidc", settings.auth_mode != "password");
+    let (wants_password, wants_oidc) = (mode != AuthMode::Oidc, mode != AuthMode::Password);
     let (issuer, client_id) = (&settings.auth_oidc_issuer, &settings.auth_oidc_client_id);
     let groups = &settings.auth_oidc_allowed_groups;
     let oidc_given = !issuer.is_empty() || !client_id.is_empty() || client_secret.is_some() || !groups.is_empty();
@@ -272,12 +282,15 @@ fn methods(settings: &Settings) -> Result<Methods, String> {
             secret,
             allowed_groups: groups.clone(),
         });
-        return Ok(match (password, oidc) {
-            (Some(password), Some(oidc)) => Methods::Hybrid(password, oidc),
-            (Some(password), _) => Methods::Password(password),
-            (None, Some(oidc)) => Methods::Oidc(oidc),
-            (None, None) => unreachable!("an enabled mode has a method"),
-        });
+        // The checks above leave each mode exactly its methods' secrets.
+        let methods = match mode {
+            AuthMode::Password => password.map(Methods::Password),
+            AuthMode::Oidc => oidc.map(Methods::Oidc),
+            AuthMode::Hybrid => password
+                .zip(oidc)
+                .map(|(password, oidc)| Methods::Hybrid(password, oidc)),
+        };
+        return methods.ok_or_else(|| "GM_AUTH_MODE has no configured method".into());
     };
     Err(failure.into())
 }

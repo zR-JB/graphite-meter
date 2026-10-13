@@ -104,6 +104,15 @@ impl Hash {
     }
 }
 
+/// What a password check found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Verdict {
+    Match,
+    Mismatch,
+    /// Both verifier slots were taken, or the check did not finish.
+    Busy,
+}
+
 /// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
 pub(super) struct Password {
     hash: Hash,
@@ -131,19 +140,24 @@ impl Password {
         keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))
     }
 
-    /// Whether `password` matches, verified on a blocking thread that holds its slot; `None` while both slots are busy.
-    pub async fn verify(&self, password: Zeroizing<String>) -> Option<bool> {
-        let permit = self.slots.clone().try_acquire_owned().ok()?;
+    /// Checks `password` on a blocking thread that holds its slot.
+    pub async fn verify(&self, password: Zeroizing<String>) -> Verdict {
+        let Ok(permit) = self.slots.clone().try_acquire_owned() else {
+            return Verdict::Busy;
+        };
         let hash = self.hash;
         let verify = move || {
             let _permit = permit;
             hash.verify(password.as_bytes())
         };
-        let verified = tokio::task::spawn_blocking(verify).await.ok()?;
-        if !verified {
-            self.wrong.note();
+        match tokio::task::spawn_blocking(verify).await {
+            Ok(true) => Verdict::Match,
+            Ok(false) => {
+                self.wrong.note();
+                Verdict::Mismatch
+            }
+            Err(_) => Verdict::Busy,
         }
-        Some(verified)
     }
 
     /// A device cookie's value, its expiry in seconds and their HMAC, and that expiry.
