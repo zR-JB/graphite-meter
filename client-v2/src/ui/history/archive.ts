@@ -74,11 +74,15 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     return id !== null && records().some((entry) => entry.id === id);
   });
 
+  // Only the latest lookup answers: an earlier one for the same result, landing late, never overwrites it.
+  let lookups = 0;
   function lookUp(id: string): void {
     const at = changes;
+    const turn = ++lookups;
+    const current = () => !disposed && turn === lookups && selectedId.peek() === id;
     repository.inspect(id).then(
       (result) => {
-        if (disposed || selectedId.peek() !== id) return;
+        if (!current()) return;
         if (changes !== at) return lookUp(id);
         batch(() => {
           answer.set({ id, selected: result });
@@ -88,7 +92,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
         });
       },
       () => {
-        if (!disposed && selectedId.peek() === id) answer.set({ id, selected: UNREAD });
+        if (current()) answer.set({ id, selected: UNREAD });
       },
     );
   }

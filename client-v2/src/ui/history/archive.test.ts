@@ -129,3 +129,24 @@ test("the list keeps entries only; the open result alone is read whole, again as
   expect(archive.selected()).toEqual({ status: "missing" });
   dispose();
 });
+
+test("an earlier lookup landing late never overwrites the latest one's answer", async () => {
+  const { fake, reads } = repository();
+  const selectedId = signal<string | null>(null);
+  const [archive, dispose] = scope(() => createArchive(fake, selectedId));
+  const [a, b] = [record("a", 2), record("b", 1)];
+  reads[0]!.resolve({ records: [a, b], malformedCount: 0 });
+  await settle();
+  // A, then B, then A again: the second look at A answers first, then the first fails.
+  selectedId.set("a");
+  selectedId.set("b");
+  selectedId.set("a");
+  reads[3]!.resolve({ status: "ready", record: a });
+  await settle();
+  expect(archive.selected()).toEqual({ status: "ready", record: a });
+  reads[1]!.reject(new Error("closed"));
+  reads[2]!.resolve({ status: "missing" });
+  await settle();
+  expect(archive.selected()).toEqual({ status: "ready", record: a });
+  dispose();
+});
