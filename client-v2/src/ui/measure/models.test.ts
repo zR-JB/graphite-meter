@@ -3,7 +3,7 @@ import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { LatencySummary } from "../../engine/measure/latency";
 import type { MultiServerResult } from "../../engine/run/result";
-import { liveCard, serverIssues, settledCard, type Evidence, type LiveEvidence } from "./cards-model";
+import { liveCard, serverIssues, settledCard, shownEvidence, type Evidence, type LiveEvidence } from "./cards-model";
 import { lanesAxisMs, nearestMetric, present, stepMetric, values } from "./lanes-model";
 import { monotoneTangents, replyBars } from "./strip-model";
 
@@ -166,4 +166,33 @@ test("a server's issues name the stages each reason ended", () => {
     { server: "Oslo", stages: "Download, Loaded up", reason: "Stopped delivering data", throughput: ["download"] },
     { server: "Oslo", stages: "Latency", reason: "Connection lost", throughput: [] },
   ]);
+});
+
+test("shown together, the latency card reads the server latency is shown for, headline and spread alike", () => {
+  const summary = (p50Ms: number, probeCount: number) =>
+    ({ p50Ms, minMs: p50Ms, maxMs: p50Ms, probeCount }) as LatencySummary;
+  const entry = (id: string, p50Ms: number, probes: number) => ({
+    server: { id },
+    stages: { latency: "complete" },
+    latency: { medianMs: p50Ms },
+    latencyByStage: { latency: summary(p50Ms, probes) },
+  });
+  const [near, far] = [entry("near", 16, 12), entry("far", 121, 9)];
+  const details = { servers: [near, far] } as unknown as MultiServerResult;
+  const run = {
+    status: { latency: "complete" as const, download: "complete" as const },
+    latency: { medianMs: 16 },
+    download: null,
+    upload: null,
+    bidirectional: null,
+  } as unknown as Omit<Evidence, "idle">;
+  const live = summary(121, 40);
+  const shown = (focus: string, lens = "") => shownEvidence({ details, lens, focus, run, idle: live });
+  // Latency shown for the far server: its result and its own replies, never the run's near headline.
+  expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
+  expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
+  expect([shown("near").latency, shown("near").idle?.probeCount]).toEqual([near.latency as never, 12]);
+  // A lens on one server reads that server alone; with no result yet, the run's own and the live replies.
+  expect(shown("near", "far").latency).toBe(far.latency as never);
+  expect(shownEvidence({ details: null, lens: "", focus: "far", run, idle: live }).idle).toBe(live);
 });

@@ -22,6 +22,7 @@ import {
   settled,
   settledCard,
   shapeSoFar,
+  shownEvidence,
   type CardModel,
   type Evidence,
   type Issue,
@@ -292,13 +293,15 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const units = live.rateUnits;
   const details = run.details;
   const { lens } = live;
-  const evidence = computed<Evidence>(() => {
-    const shown = lens();
-    const all = details();
-    if (all && shown) return serverEvidence(all, shown);
-    const results = run.results();
-    return { ...results, status: run.statuses(), idle: live.summaries().latency ?? null };
-  });
+  const evidence = computed<Evidence>(() =>
+    shownEvidence({
+      details: details(),
+      lens: lens(),
+      focus: live.focus(),
+      run: { ...run.results(), status: run.statuses() },
+      idle: live.summaries().latency ?? null,
+    }),
+  );
   // Lost latency probes are marked on the latency card's facts; nothing is added under the cards mid-run.
   const issues = computed(() =>
     details() ? serverIssues(details()!, lens()).filter((issue) => issue.throughput.length) : [],

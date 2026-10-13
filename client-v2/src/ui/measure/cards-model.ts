@@ -93,6 +93,29 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
+/** What the cards read: the lens's server, or every server together, where the latency card reads the server latency
+    is shown for, whole, once it has a result; every server is probed alike, so its headline and its spread never
+    come from two servers. */
+export function shownEvidence(view: {
+  details: MultiServerResult | null;
+  lens: string;
+  focus: string | null;
+  run: Omit<Evidence, "idle">;
+  /** The focus's live replies, while it has no result. */
+  idle: LatencySummary | null;
+}): Evidence {
+  const { details, lens, focus, run } = view;
+  if (details && lens) return serverEvidence(details, lens);
+  const focused = details?.servers.find((entry) => entry.server.id === focus);
+  if (!focused?.latency) return { ...run, idle: view.idle };
+  return {
+    ...run,
+    status: { ...run.status, latency: focused.stages.latency },
+    latency: focused.latency,
+    idle: focused.latencyByStage.latency,
+  };
+}
+
 const SETTLED = new Set<StageStatus>(["complete", "partial", "failed"]);
 export const settled = (status: StageStatus | null | undefined): status is "complete" | "partial" | "failed" =>
   !!status && SETTLED.has(status);
