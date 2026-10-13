@@ -121,10 +121,10 @@ pub fn setting(duration: Duration) -> String {
     if duration < Duration::from_secs(1) {
         return format!("{} ms", duration.as_millis());
     }
-    if duration < Duration::from_secs(60) {
+    if duration < Duration::from_mins(1) {
         return format!("{} s", duration.as_secs_f64());
     }
-    let (step, (large, small)) = match duration < Duration::from_secs(3600) {
+    let (step, (large, small)) = match duration < Duration::from_hours(1) {
         true => (1.0, ("min", "s")),
         false => (60.0, ("h", "min")),
     };

@@ -531,8 +531,7 @@ impl Registry {
 
     /// Refuses streams that waited too long for their session.
     pub(crate) fn expire(&mut self, now: Instant) {
-        while self.early.front().is_some_and(|(deadline, ..)| *deadline <= now) {
-            let (_, _, stream) = self.early.pop_front().expect("an early stream");
+        while let Some((_, _, stream)) = self.early.pop_front_if(|(deadline, ..)| *deadline <= now) {
             stream.refuse(Code::WT_BUFFERED_STREAM_REJECTED);
         }
     }
@@ -604,9 +603,7 @@ impl Registry {
 
     /// The session is gone for routing; later streams naming it are refused.
     pub(super) fn unregister(&mut self, id: u64) {
-        if self.active(id).is_some() {
-            self.active = None;
-        }
+        self.active.take_if(|active| active.id == id);
         self.gone_through = self.gone_through.max(Some(id));
     }
 

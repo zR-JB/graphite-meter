@@ -248,9 +248,9 @@ settings! {
         "maximum `number` of concurrent TCP and QUIC connections";
     max_connections_per_client: usize = 64, "GM_MAX_CONNECTIONS_PER_CLIENT", "max-connections-per-client",
         "maximum `number` of concurrent connections per direct client";
-    max_operation_duration: Duration = Duration::from_secs(5 * 60), "GM_MAX_OPERATION_DURATION",
+    max_operation_duration: Duration = Duration::from_mins(5), "GM_MAX_OPERATION_DURATION",
         "max-operation-duration", "maximum measurement operation `duration`";
-    max_session_duration: Duration = Duration::from_secs(2 * 60 * 60), "GM_MAX_SESSION_DURATION",
+    max_session_duration: Duration = Duration::from_hours(2), "GM_MAX_SESSION_DURATION",
         "max-session-duration", "maximum WebTransport session `duration`";
     max_stage_duration: Duration = DEFAULT_STAGE_LIMIT, "GM_MAX_STAGE_DURATION", "max-stage-duration",
         "longest stage `duration` clients may plan, 1s to 24h";
@@ -319,7 +319,7 @@ impl Settings {
     /// Lifetimes left unset grow to cover the stage limit plus a minute, and a session at least an operation.
     fn cover_stage_limit(&mut self) {
         if !self.given.contains("GM_MAX_OPERATION_DURATION") {
-            let covering = self.max_stage_duration.saturating_add(Duration::from_secs(60));
+            let covering = self.max_stage_duration.saturating_add(Duration::from_mins(1));
             self.max_operation_duration = self.max_operation_duration.max(covering);
         }
         if !self.given.contains("GM_MAX_SESSION_DURATION") {

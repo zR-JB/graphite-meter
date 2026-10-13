@@ -25,7 +25,7 @@ const PASSES: u32 = 2;
 const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
-const DEVICE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const DEVICE_LIFETIME: Duration = Duration::from_hours(30 * 24);
 
 /// Unpadded standard base64 that tolerates nonzero trailing bits.
 const RAW_STD: GeneralPurpose = GeneralPurpose::new(

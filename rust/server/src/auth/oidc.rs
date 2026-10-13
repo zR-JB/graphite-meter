@@ -32,11 +32,11 @@ use zeroize::Zeroizing;
 const MAX_TRANSACTIONS: usize = 16384;
 const MAX_CLIENT_TRANSACTIONS: usize = 8;
 /// A sign-in at the provider must return within this.
-const TRANSACTION_LIFETIME: Duration = Duration::from_secs(10 * 60);
+const TRANSACTION_LIFETIME: Duration = Duration::from_mins(10);
 /// A callback's provider requests leave this long of its exchange's bound to answer.
 const ANSWER_MARGIN: Duration = Duration::from_secs(3);
 /// Discovery retries back off from one second, doubling up to this.
-const RETRY_MAX: Duration = Duration::from_secs(60);
+const RETRY_MAX: Duration = Duration::from_mins(1);
 /// The transaction's cookie, the one a browser sends on the provider's cross-site redirect back.
 pub(super) const TRANSACTION_COOKIE: &str = "__Host-gm_oidc";
 

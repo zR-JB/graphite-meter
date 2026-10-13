@@ -117,8 +117,8 @@ impl App {
                 _ if row == Row::Warmup => Duration::from_millis(100),
                 0..60 => Duration::from_secs(1),
                 60..600 => Duration::from_secs(10),
-                600..3600 => Duration::from_secs(60),
-                _ => Duration::from_secs(300),
+                600..3600 => Duration::from_mins(1),
+                _ => Duration::from_mins(5),
             };
             let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bounds.start(), *bounds.end());

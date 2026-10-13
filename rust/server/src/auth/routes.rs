@@ -39,7 +39,7 @@ const LOGIN_COOKIE: &str = "__Host-gm_login";
 const CSRF_COOKIE: &str = "__Host-gm_csrf";
 const DEVICE_COOKIE: &str = "__Host-gm_device";
 /// A sign-in form's token lasts this long.
-const FORM_LIFETIME: Duration = Duration::from_secs(10 * 60);
+const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
 /// A form's fields in order.
 pub(super) type Form = Vec<(String, String)>;

@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 /// A login lasts this long from sign-in.
-pub const LOGIN_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+pub const LOGIN_LIFETIME: Duration = Duration::from_hours(8);
 const MAX_LOGINS: usize = 1024;
 const MAX_SUBJECT_LOGINS: usize = 8;
 pub(super) const MAX_LOGIN_GRANTS: usize = 8;

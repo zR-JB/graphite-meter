@@ -283,7 +283,7 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
 /// The security log reports sign-in outcomes every minute.
-const SECURITY_LOG: Duration = Duration::from_secs(60);
+const SECURITY_LOG: Duration = Duration::from_mins(1);
 
 /// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
 async fn release_when_idle(app: &App, release: impl Fn()) {

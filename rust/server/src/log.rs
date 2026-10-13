@@ -154,7 +154,7 @@ fn civil(days: u64) -> (u64, u64, u64) {
     (year_of_era + era * 400 + u64::from(month <= 2), month, day)
 }
 
-const INTERVAL: Duration = Duration::from_secs(60);
+const INTERVAL: Duration = Duration::from_mins(1);
 
 /// A line any peer can cause: written at most once a minute, the next one counting those held back.
 pub struct RateLimited {

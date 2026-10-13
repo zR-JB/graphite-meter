@@ -18,7 +18,7 @@ use tokio_rustls::TlsConnector;
 /// The longest CONNECT response head a proxy may send.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// The longest a proxy may take past the TCP connect: Go's bound for CONNECT.
-const PROXY_TIMEOUT: Duration = Duration::from_secs(60);
+const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
 pub const TLS_READ_BYTES: usize = 64 << 10;

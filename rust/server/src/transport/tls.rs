@@ -32,9 +32,9 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use tokio_util::sync::CancellationToken;
 
 /// Renewed files are read this often.
-const RENEWAL_CHECK: Duration = Duration::from_secs(60);
+const RENEWAL_CHECK: Duration = Duration::from_mins(1);
 /// A certificate expiring sooner is logged with a warning.
-const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 3600);
+const EXPIRY_WARNING: Duration = Duration::from_hours(30 * 24);
 
 /// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
 type Fits = Box<dyn Fn(usize) -> Result<(), String> + Send + Sync>;
@@ -223,7 +223,7 @@ fn log_loaded(expires: SystemTime, now: SystemTime) {
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
         // Whole days from two days on, else whole hours.
-        let hours = (remaining + Duration::from_secs(1800)).as_secs() / 3600;
+        let hours = (remaining + Duration::from_mins(30)).as_secs() / 3600;
         let left = if hours >= 48 {
             format!("{} days", (hours + 12) / 24)
         } else {

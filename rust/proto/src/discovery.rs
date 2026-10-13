@@ -11,9 +11,9 @@ pub const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 pub const MAX_METADATA_BYTES: usize = 256;
 /// The stage limit of a server that advertises none.
-pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_secs(300);
+pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
 /// The stage limits a server may advertise.
-pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_secs(24 * 60 * 60);
+pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_hours(24);
 
 named! {
     pub enum ThroughputTransport {

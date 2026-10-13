@@ -22,7 +22,7 @@ use serde_json::json;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
-const LIFETIME: Duration = Duration::from_secs(2 * 60);
+const LIFETIME: Duration = Duration::from_mins(2);
 const MAX_APPROVALS: usize = 256;
 const MAX_LOGIN_APPROVALS: usize = 8;
 const MAX_CLIENT_APPROVALS: usize = 8;
