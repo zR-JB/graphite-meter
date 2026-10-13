@@ -169,7 +169,8 @@ for (const width of [1000, 390]) {
     // Bypass the locator's actionability retry: the first click must land while
     // the closed sheet and scrim are still fading.
     await page.click(target.x, target.y);
-    await expect(runButton(page, "Stop test")).toBeVisible();
+    // A stop before the run is under way cancels the start; one after it aborts the run.
+    await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
     await runButton(page, "Stop test").click();
     await expect(phase(page, "aborted")).toHaveCount(1);
   });

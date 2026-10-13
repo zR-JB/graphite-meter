@@ -134,6 +134,8 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await closed(details);
   await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
+  // A stop before the run is under way cancels the start; one after it aborts the run.
+  await expect(phase(page, "idle")).toHaveCount(0);
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
