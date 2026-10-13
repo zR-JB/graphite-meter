@@ -299,3 +299,34 @@ test("a write whose clear count could not be read takes the count this tab last 
   expect(history.writes).toHaveLength(3);
   expect(saver.unsaved()).toBe(true);
 });
+
+test("failed holds only while the offered result's own write was refused or given up", async () => {
+  const history = memoryHistory();
+  const saving = signal(false);
+  const saver = createHistorySaving(history.repository, saving, windowEvents());
+  // Saving off, a deletion and a clear leave a result unsaved by choice.
+  saver.offer(record("a"));
+  expect([saver.unsaved(), saver.failed()]).toEqual([true, false]);
+  saving.set(true);
+  await turns();
+  history.writes[0]!.answer();
+  await turns();
+  history.delete("a");
+  expect([saver.unsaved(), saver.failed()]).toEqual([true, false]);
+  saver.offer(record("b"));
+  await turns();
+  history.clear();
+  history.writes[1]!.answer();
+  await turns();
+  expect([saver.unsaved(), saver.failed()]).toEqual([true, false]);
+  // A refusal fails the result it refused, until another result is offered.
+  saver.offer(record("c"));
+  await turns();
+  history.writes[2]!.answer(new HistoryRefusal("Browser storage is full. This result was not saved."));
+  await turns();
+  expect([saver.unsaved(), saver.failed()]).toEqual([true, true]);
+  saver.offer(record("d"));
+  expect(saver.failed()).toBe(false);
+  saver.withdraw();
+  expect(saver.failed()).toBe(false);
+});

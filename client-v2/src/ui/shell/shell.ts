@@ -259,8 +259,10 @@ export function createShell(app: App, layout: Layout) {
     else showHistory(null, null, where);
   }
 
-  // Starting over asks first while a run is live or its unsaved result shows; the panels stay as they are.
-  const reset = { open: signal(false), reason: signal<"running" | "unsaved">("running") };
+  // Starting over asks first while a run is live or its unsaved result shows, and a new run first while the result
+  // it replaces could not be saved; the panels stay as they are.
+  const reset = { open: signal(false), reason: signal<"running" | "unsaved" | "rerun">("running") };
+  const unsavable = () => !!app.run.result.peek() && app.saver.failed.peek();
   function startOver(): void {
     if (workspace.peek() !== "measurement") return navigate(withWorkspace(route.peek(), MEASUREMENT), "push");
     const running = app.run.running.peek();
@@ -272,7 +274,16 @@ export function createShell(app: App, layout: Layout) {
   }
   function confirmStartOver(): void {
     reset.open.set(false);
-    app.run.returnToStart();
+    if (reset.reason.peek() === "rerun") app.run.toggle();
+    else app.run.returnToStart();
+  }
+  function toggleRun(): void {
+    const starting = !app.run.running.peek() && !app.run.preparing.peek();
+    if (!starting || !unsavable()) return app.run.toggle();
+    batch(() => {
+      reset.reason.set("rerun");
+      reset.open.set(true);
+    });
   }
 
   /** Light, dark, auto: each press steps from the theme applied when its change runs, so presses during a fade each
@@ -307,7 +318,7 @@ export function createShell(app: App, layout: Layout) {
       case "cancel-start":
         return app.run.cancel();
       case "run":
-        return app.run.toggle();
+        return toggleRun();
       case "toggle":
         return toggle(order.panel);
       case "history":
@@ -343,9 +354,9 @@ export function createShell(app: App, layout: Layout) {
     event.preventDefault();
     run(order);
   }
-  // Leaving mid-run, or before a result's write lands, asks first.
+  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first.
   const beforeunload = (event: BeforeUnloadEvent) => {
-    if (!app.run.running.peek() && !app.saver.pending.peek()) return;
+    if (!app.run.running.peek() && !app.saver.pending.peek() && !unsavable()) return;
     event.preventDefault();
     event.returnValue = "";
   };
@@ -381,6 +392,7 @@ export function createShell(app: App, layout: Layout) {
     closeHistory: () => untrack(() => closeHistory()),
     legal: (invoker) => untrack(() => legal(invoker)),
     startOver: () => untrack(startOver),
+    toggleRun: () => untrack(toggleRun),
   };
 
   return {

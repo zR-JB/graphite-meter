@@ -4,7 +4,8 @@
 // - `const history = new HistoryRepository()` and `const saver = createHistorySaving(history, saving, window)`;
 // - a finished run: `saver.offer(historyRecord(run))`; a new Start or Start over: `saver.withdraw()`;
 // - signing out waits, and unload can warn, while `saver.pending`; Start over asks first while `saver.unsaved`;
-//   `saver.warning` says why a write failed;
+//   while `saver.failed`, a new run asks first, unload warns and the measurement shows `saver.warning`, which says
+//   why a write failed;
 // - the History view lists entries with `list(signal, historyEntry)`, reads a result whole with `inspect(id)` as it
 //   opens, changes rows with `delete`, `clear` and `removeMalformed`, and follows `onChange`: this tab's changes as
 //   they land, any other tab's (of either client) as `elsewhere`, which means reading the list again; `sortHistory`

@@ -1,6 +1,7 @@
 // The run key over the stage chips, as wide as their row. A chip switches its stage for the next run and shows how it
 // fares in the shown one: a bar along its top, and at its end its time into the stage, its length, a check or a word.
 import type { App } from "../../app/app";
+import type { Shell } from "../shell/api";
 import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
@@ -255,7 +256,7 @@ const CANCEL_AFTER_MS = 250;
 
 /** Start, Stop or Cancel. Never disabled: a blocked start stays focusable, aria-disabled, and says why in its
     description, its tip and the dial's note. */
-export function RunButton(props: { app: App }): Node {
+export function RunButton(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run, servers } = app;
   const busy = computed(() => run.running() || run.preparing());
@@ -278,7 +279,7 @@ export function RunButton(props: { app: App }): Node {
         aria-disabled={() => (blocker() ? "true" : "false")}
         aria-describedby={() => (idle() ? "run-duration" : undefined)}
         ref={tip(blocker)}
-        onclick={() => run.toggle()}
+        onclick={() => props.shell.toggleRun()}
       >
         <span class="skin" aria-hidden="true" />
         <span class="skin stop" aria-hidden="true" />

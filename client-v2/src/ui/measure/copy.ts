@@ -58,6 +58,7 @@ export const LENS = "Servers shown in the results";
 
 export const TOAST = {
   issue: "Issue",
+  unsaved: "Not saved",
   issueOn: (server: string) => `Issue on ${server}`,
   many: (count: number) => `${count} measurement issues, each marked on its card`,
 } as const;

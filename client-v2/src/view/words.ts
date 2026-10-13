@@ -279,6 +279,12 @@ export const START_OVER = {
     cancel: "Keep result",
     confirm: "Clear result",
   },
+  rerun: {
+    title: "Replace this result?",
+    description: "It could not be saved; a new test replaces it.",
+    cancel: "Keep result",
+    confirm: "Run again",
+  },
 } as const;
 
 /** A cadence's name, and its word on a segment. */

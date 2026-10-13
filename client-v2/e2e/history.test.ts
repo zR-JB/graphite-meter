@@ -489,18 +489,35 @@ test("History refuses other database versions without changing them", async (pag
   }
 });
 
-test("starting over asks before clearing a result History refused to save", async (page) => {
+test("a result History refused to save says so, and starting over, a new run or leaving asks first", async (page) => {
   await fixturePage(page);
   await seed(page, { records: [], version: HISTORY_DB.version + 1 });
   await page.goto(home.url);
   await ready(page);
   await runButton(page, "Start test").click();
   await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+  // The warning stays beside the result, past any toast's reading time.
+  const notice = page.locator(".phase-toast.visible");
+  await expect(notice).toContainText("Not saved", { timeout: 8_000 });
   const ask = page.getByRole("alertdialog", { name: "Clear this result?" });
   await page.getByRole("button", { name: /start over$/ }).click();
   await expect(ask).toBeVisible();
   await ask.getByRole("button", { name: "Keep result" }).click();
+  const replace = page.getByRole("alertdialog", { name: "Replace this result?" });
+  await runButton(page, "Run again").click();
+  await expect(replace).toBeVisible();
+  await replace.getByRole("button", { name: "Keep result" }).click();
   await expect(runButton(page, "Run again")).toBeVisible();
+  const leaving = () =>
+    page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+  expect(await leaving()).toBe(true);
+  await runButton(page, "Run again").click();
+  await replace.getByRole("button", { name: "Run again" }).click();
+  await expect(phase(page, "complete")).toHaveCount(0);
 });
 
 /** Holds History's read of each result listed in `window.hold` until `release`, once the read is under way. */

@@ -22,6 +22,8 @@ export interface HistorySaving {
   readonly pending: Read<boolean>;
   /** The offered result is not in History: saving is off, its write is queued or failed, or it is gone since. */
   readonly unsaved: Read<boolean>;
+  /** The offered result's write was refused or given up: not saved, though saving is on and nothing removed it. */
+  readonly failed: Read<boolean>;
   /** Why the last write failed, until one succeeds. */
   readonly warning: Read<string>;
   dispose(): void;
@@ -39,10 +41,13 @@ export function createHistorySaving(
 ): HistorySaving {
   const pending = signal(false);
   const unsaved = signal(false);
+  const failed = signal(false);
   const warning = signal("");
   const queue: Entry[] = [];
   // Every record written, refused or dropped, never queued again: true while it is in History.
   const settled = new Map<string, boolean>();
+  // Records whose write was refused or given up, as opposed to removed by a delete or a clear.
+  const lost = new Set<string>();
   let offered: HistoryRecord | null = null;
   let draining = false;
   let disposed = false;
@@ -56,12 +61,20 @@ export function createHistorySaving(
       return clears;
     });
 
-  const showUnsaved = () => unsaved.set(offered !== null && settled.get(offered.id) !== true);
+  const showUnsaved = () =>
+    batch(() => {
+      unsaved.set(offered !== null && settled.get(offered.id) !== true);
+      failed.set(offered !== null && lost.has(offered.id));
+    });
 
   const enqueue = (record: HistoryRecord) => {
     if (settled.has(record.id) || queue.some((entry) => entry.record.id === record.id)) return;
     // The head may be mid-write; the oldest behind it goes.
-    if (queue.length >= MAX_QUEUED) settled.set(queue.splice(1, 1)[0]!.record.id, false);
+    if (queue.length >= MAX_QUEUED) {
+      const dropped = queue.splice(1, 1)[0]!.record.id;
+      settled.set(dropped, false);
+      lost.add(dropped);
+    }
     // A refusal is final and says why; any other failure falls back on the count known to be current.
     queue.push({
       record,
@@ -75,6 +88,7 @@ export function createHistorySaving(
     batch(() => {
       queue.shift();
       settled.set(entry.record.id, written);
+      if (!written && message) lost.add(entry.record.id);
       pending.set(queue.length > 0);
       warning.set(message);
       showUnsaved();
@@ -155,6 +169,7 @@ export function createHistorySaving(
     offer(record) {
       // Only a result still waiting or still shown needs its outcome remembered.
       for (const id of settled.keys()) if (id !== record.id) settled.delete(id);
+      for (const id of lost) if (id !== record.id) lost.delete(id);
       offered = record;
       batch(() => {
         if (saving.peek()) enqueue(record);
@@ -167,6 +182,7 @@ export function createHistorySaving(
     },
     pending,
     unsaved,
+    failed,
     warning,
     dispose() {
       disposed = true;

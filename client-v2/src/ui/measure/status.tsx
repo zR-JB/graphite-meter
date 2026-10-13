@@ -106,7 +106,8 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
 /** A toast lingers for its reading time, then goes; not motion. */
 const LINGER_MS = 3_200;
 
-/** Only failures, issues and stalls: the status strip already names every phase. A stall shows while it lasts. */
+/** Only failures, issues, stalls and a result History could not save: the status strip already names every phase.
+    A stall shows while it lasts, and an unsaved result's warning after any toast, for as long as it is unsaved. */
 export function PhaseToast(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;
@@ -153,12 +154,24 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
       show({ kicker: PHASE.error, message: error ? reasonLabel(error.reason) : "", tone: "err" });
     }
   });
-  const shown = computed(() => (stalled() ? stall() : toast()));
+  const unsaved = computed(
+    () => !run.running() && !!run.result() && app.saving() && app.saver.unsaved() && !!app.saver.warning(),
+  );
+  const shown = computed(() =>
+    stalled()
+      ? stall()
+      : unsaved() && !lingering()
+        ? { kicker: TOAST.unsaved, message: app.saver.warning(), tone: "warn" as Tone }
+        : toast(),
+  );
   announceChanges(() => (stalled() ? `${stall().kicker}: ${stall().message}` : ""));
+  announceChanges(() => (unsaved() ? `${TOAST.unsaved}: ${app.saver.warning()}` : ""));
   announceChanges(() => (issue().message ? `${issue().kicker}: ${issue().message}` : ""));
   const element = (
     <div
-      class={() => `float phase-toast${lingering() || stalled() ? " visible" : ""}${stalled() ? " stall" : ""}`}
+      class={() =>
+        `float phase-toast${lingering() || stalled() || unsaved() ? " visible" : ""}${stalled() ? " stall" : ""}`
+      }
       data-tone={() => shown().tone}
       aria-hidden="true"
     >

@@ -19,4 +19,6 @@ export interface Shell {
   legal(invoker?: HTMLElement | null): void;
   /** Start over, asking first when that would stop a running test or drop an unsaved result. */
   startOver(): void;
+  /** Start or stop a test, asking first before a new one replaces a result whose save failed. */
+  toggleRun(): void;
 }

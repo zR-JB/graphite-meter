@@ -62,7 +62,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
       </Show>
       <div class="controls" data-flip="controls">
         <StageTrack app={app} live={live} away={away}>
-          <RunButton app={app} />
+          <RunButton app={app} shell={props.shell} />
         </StageTrack>
       </div>
       <div class="results">
