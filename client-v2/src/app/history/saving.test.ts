@@ -17,11 +17,15 @@ function memoryHistory() {
   const listeners = new Set<(change: HistoryChange) => void>();
   const writes: { id: string; clears: number; answer(failure?: Error): void }[] = [];
   let clears = 0;
+  const failing = { clears: false };
   const notify = (change: HistoryChange) => {
     for (const listener of listeners) listener(change);
   };
   const repository: Pick<HistoryRepository, "clears" | "put" | "inspect" | "onChange"> = {
-    clears: async () => clears,
+    clears: async () => {
+      if (failing.clears) throw new Error("busy");
+      return clears;
+    },
     put: (saved, queued) =>
       new Promise((resolve, reject) => {
         const answer = (failure?: Error) => {
@@ -46,6 +50,7 @@ function memoryHistory() {
     rows,
     writes,
     listeners,
+    failing,
     clear() {
       rows.clear();
       clears++;
@@ -244,4 +249,39 @@ test("while storage keeps failing, results wait in a bounded queue and the oldes
   }
   expect([...history.rows.keys()]).toEqual(["0", "13", "14", "15", "16", "17", "18", "19"]);
   expect([saver.pending(), saver.unsaved()]).toEqual([false, false]);
+});
+
+test("a write whose clear count could not be read never comes back after a clear", async () => {
+  // Nothing in this tab has read the count yet: the write has no count it can trust.
+  const history = memoryHistory();
+  history.failing.clears = true;
+  const saver = createHistorySaving(history.repository, signal(true), windowEvents());
+  saver.offer(record("before-clear"));
+  await turns();
+  history.clear();
+  history.failing.clears = false;
+  await turns();
+  expect(history.writes).toEqual([]);
+  expect([...history.rows.keys()]).toEqual([]);
+  expect([saver.pending(), saver.unsaved()]).toEqual([false, true]);
+  expect(saver.warning()).toContain("could not be read");
+});
+
+test("a write whose clear count could not be read takes the count this tab knows to be current", async () => {
+  const history = memoryHistory();
+  const saver = createHistorySaving(history.repository, signal(true), windowEvents());
+  await turns();
+  history.failing.clears = true;
+  saver.offer(record("a"));
+  await turns();
+  history.writes[0]!.answer();
+  await turns();
+  expect(history.writes.map(({ id, clears }) => [id, clears])).toEqual([["a", 0]]);
+  expect([...history.rows.keys()]).toEqual(["a"]);
+  // A change in another tab may have cleared History: until the count is read again, a write cannot be ordered.
+  history.elsewhere(() => history.clear());
+  saver.offer(record("b"));
+  await turns();
+  expect(history.writes.map(({ id }) => id)).toEqual(["a"]);
+  expect(saver.unsaved()).toBe(true);
 });

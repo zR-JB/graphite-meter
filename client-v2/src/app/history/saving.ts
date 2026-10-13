@@ -1,5 +1,7 @@
 // Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
 // was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
+// A write whose count could not be read when it was queued takes the last count this tab knows to be current; with
+// none, it is refused rather than given a later count, which would bring it back after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
@@ -8,6 +10,7 @@ const RETRY_MS = 15_000;
 /** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
 const MAX_QUEUED = 8;
 const RETRYING = "Unable to save this result locally. Future writes will be retried.";
+const UNORDERED = "Unable to save this result: History could not be read when it finished.";
 
 export interface HistorySaving {
   /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until
@@ -44,6 +47,14 @@ export function createHistorySaving(
   let draining = false;
   let disposed = false;
   let stopRetries: (() => void) | null = null;
+  // The clear count as last read, while nothing in another tab may have changed it since.
+  let known: number | null = null;
+  const read = () =>
+    repository.clears().then((clears) => {
+      known = clears;
+      return clears;
+    });
+  read().catch(() => {});
 
   const showUnsaved = () => unsaved.set(offered !== null && settled.get(offered.id) !== true);
 
@@ -51,7 +62,11 @@ export function createHistorySaving(
     if (settled.has(record.id) || queue.some((entry) => entry.record.id === record.id)) return;
     // The head may be mid-write; the oldest behind it goes.
     if (queue.length >= MAX_QUEUED) settled.set(queue.splice(1, 1)[0]!.record.id, false);
-    queue.push({ record, clears: repository.clears().catch(() => null) });
+    // A refusal is final and says why; any other failure falls back on the count known to be current.
+    queue.push({
+      record,
+      clears: read().catch((error) => (error instanceof HistoryRefusal ? Promise.reject(error) : known)),
+    });
     pending.set(true);
     void drain();
   };
@@ -72,8 +87,11 @@ export function createHistorySaving(
       while (!disposed && queue.length) {
         const entry = queue[0]!;
         try {
-          const clears = (await entry.clears) ?? (await repository.clears());
-          entry.clears = Promise.resolve(clears);
+          const clears = await entry.clears;
+          if (clears === null) {
+            settle(entry, false, UNORDERED);
+            continue;
+          }
           const written = await repository.put(entry.record, clears);
           if (disposed) return;
           settle(entry, written, "");
@@ -112,6 +130,12 @@ export function createHistorySaving(
     showUnsaved();
   };
   const stopWatching = repository.onChange((change) => {
+    if (change.type === "cleared" && known !== null) known++;
+    // Another tab may have cleared History: the count is known again once read.
+    if (change.type === "elsewhere") {
+      known = null;
+      read().catch(() => {});
+    }
     if (change.type === "deleted") for (const id of change.ids) removed(id);
     else if (change.type === "cleared") for (const id of settled.keys()) removed(id);
     else if (change.type === "elsewhere" && offered && settled.get(offered.id)) {
