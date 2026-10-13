@@ -89,13 +89,16 @@ C and assembly.
 on one of them. On Linux HTTP/3 runs one endpoint per two runtime threads, two to sixteen, as many as the budget
 covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their endpoint, which forwards short-header
 packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
+A connection's socket moves at most 256 KiB before its task lets the other tasks on its runtime run, and a runtime
+polls for I/O at least every 16 tasks, so a latency probe sharing a thread with a transfer waits behind one such burst.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
-WebTransport session per group of up to 16 lanes. Upload control requests use the throughput check's protocol, on its
+WebTransport session per group of up to 16 lanes. Its latency bus, WebSocket or WebTransport, runs beside its prober
+on the multi-thread runtime, away from the lanes. Upload control requests use the throughput check's protocol, on its
 connection except over HTTP/3.
 
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
-holds no floor. Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
+holds no floor, and its sockets keep at most about 256 KiB unsent in the kernel (`TCP_NOTSENT_LOWAT`). Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
 endpoint buffers and the 256 KiB download block. A QUIC connection holds a floor of its handshake, certificate
 flights and Noq's stream state (481 KiB at default limits, 978 KiB with per-client limits at the totals), about
 0.5 MiB in all at default limits; an HTTP/2 connection 1.5 MiB.
