@@ -186,8 +186,6 @@ export function createShell(app: App, layout: Layout) {
     const update = () => apply(next, fromHistory, wanted);
     const keys = moves(route.peek(), next, docked.peek(), multiple());
     if (!keys) return update();
-    // A resting sheet about to open is displayed at its closed place first, so it slides in from there.
-    for (const panel of visible(next, layout.mode.peek())) elements.sheets[panel]?.removeAttribute("data-rest");
     flip(update, keys);
   }
 
