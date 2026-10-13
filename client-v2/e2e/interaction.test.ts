@@ -348,3 +348,26 @@ test.chrome("a phone's top bar keeps every key in view, with a live run seen fro
     expect(await overflow(), `live at ${width}`).toBeLessThanOrEqual(0);
   }
 });
+
+test("a sheet's head draws its rule once its content scrolls under it, in every engine", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await open(page, home.http);
+  const settings = await openSettings(page);
+  const rule = () =>
+    settings.evaluate((sheet: HTMLElement) => {
+      const head = sheet.querySelector(".sheet-head")!;
+      return getComputedStyle(head).borderBottomColor;
+    });
+  const scroll = (top: number) =>
+    settings.evaluate((sheet: HTMLElement, top: number) => {
+      const body = sheet.querySelector<HTMLElement>(".sheet-body")!;
+      body.scrollTop = top;
+      body.dispatchEvent(new Event("scroll"));
+    }, top);
+  const clear = (color: string) => color === "transparent" || /, 0\)$/.test(color);
+  expect(clear(await rule())).toBe(true);
+  await scroll(60);
+  await expect.poll(async () => clear(await rule())).toBe(false);
+  await scroll(0);
+  await expect.poll(async () => clear(await rule())).toBe(true);
+});

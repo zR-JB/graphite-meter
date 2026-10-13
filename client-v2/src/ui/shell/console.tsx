@@ -16,6 +16,7 @@ import { BINDINGS, RUN_CAP } from "./keys";
 import { land } from "./land";
 import { createLayout } from "./layout";
 import type { Panel } from "./navigation";
+import { markScrolled } from "./scrolled";
 import { Sheet } from "./sheet";
 import { createShell, SIDE, type Controller } from "./shell";
 import { TopBar } from "./topbar";
@@ -137,6 +138,7 @@ export function mountConsole(root: HTMLElement, app: App, views: Views): { shell
     finishSettled(measurement);
     nextFrame(() => finishSettled(measurement));
     ctl.start();
+    onCleanup(markScrolled());
     return shell;
   });
   return { shell, dispose };

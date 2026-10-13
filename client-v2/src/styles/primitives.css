@@ -333,6 +333,18 @@
       border-bottom-color: var(--border);
     }
   }
+  /* Elsewhere a scroller says it left its top (shell/scrolled.ts) and the rule fades in. */
+  @supports not (animation-timeline: scroll()) {
+    .sheet-head,
+    .column-head {
+      transition: border-bottom-color var(--dur-hover) var(--ease-out);
+    }
+    .sheet-head:has(+ .sheet-body[data-scrolled]),
+    .detail-pane[data-scrolled] .detail-head,
+    .history-list[data-scrolled] .column-head {
+      border-bottom-color: var(--border);
+    }
+  }
 
   /* A slider straddling an edge (actions/resize.ts); its ink line lights the edge on hover or focus. */
   .resize-handle {
