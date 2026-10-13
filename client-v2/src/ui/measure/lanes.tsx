@@ -1,6 +1,7 @@
 // The latency lanes: one ruled row per stage's probe population, its median, jitter, timeouts and added latency in
-// figures and its spread as a box plot on one shared axis. Each row's plot is an SVG sized by its attributes and laid
-// out alone; a mark that glides between summaries rewrites its own position and nothing else.
+// figures and its spread as a box plot on one shared axis. Each row's plot is marks placed by percentages of the
+// axis, so a resize moves them in layout alone; a mark that glides between summaries rewrites its own place and
+// nothing else.
 import type { App } from "../../app/app";
 import type { AddedLatency, LatencySummary } from "../../engine/measure/latency";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -33,7 +34,7 @@ import {
   type Values,
 } from "./lanes-model";
 import type { Live } from "./live";
-import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
+import { inView, measure, painter, scrub } from "./paint";
 
 /** One population's row. */
 export interface LaneInput {
@@ -187,16 +188,6 @@ export function LatencyProfileView(props: {
 }
 
 /** An SVG mark whose position attributes are written only when they change. */
-class Mark<E extends SVGElement> {
-  readonly #written = new Map<string, number>();
-  constructor(readonly node: E) {}
-  place(name: string, value: number): void {
-    if (this.#written.get(name) === value) return;
-    this.#written.set(name, value);
-    this.node.setAttribute(name, String(value));
-  }
-}
-
 function Lane(props: {
   row: Read<Row>;
   live: boolean;
@@ -283,31 +274,29 @@ function Lane(props: {
     />
   ) as HTMLElement;
   const size = measure({ track }).track;
-  const art = svg("svg", "lane-art");
-  art.setAttribute("aria-hidden", "true");
-  const grid = [0, 1, 2].map(() => new Mark(svg("line", "grid")));
-  const range = new Mark(svg("rect", "range"));
-  const overflowLine = new Mark(svg("rect", "overflow-line"));
-  const arrow = svg("path", "arrow");
-  const band = new Mark(svg("rect", "band"));
-  const baseline = new Mark(svg("rect", "baseline"));
-  const span = new Mark(svg("rect", "added-span"));
-  const center = new Mark(svg("rect", "center-marker"));
-  const current = new Mark(svg("circle", "current-marker"));
-  band.node.setAttribute("rx", "1.5");
-  center.node.setAttribute("rx", "1");
-  current.node.setAttribute("r", "4");
-  for (const line of grid) art.append(line.node);
-  // Marks paint in this order; each joins the plot while it has a value.
-  const order: SVGElement[] = [range.node, overflowLine.node, arrow, band.node, baseline.node, span.node, center.node];
-  order.push(current.node);
+  // The row's plot as marks placed by percentages of the axis, as v1 drew it: a resize moves them in layout with no
+  // script, and a glide rewrites only its marks' own places. Marks paint in this order; each is in the plot while it
+  // has a value.
+  const art = (<span class="lane-art" aria-hidden="true" />) as HTMLElement;
+  const mark = (name: string) => Object.assign(document.createElement("i"), { className: name });
+  const range = mark("range");
+  const reach = mark("overflow");
+  const band = mark("band");
+  const baseline = mark("baseline");
+  const span = mark("added-span");
+  const center = mark("center-marker");
+  const current = mark("current-marker");
+  const order = [range, reach, band, baseline, span, center, current];
   track.append(
     art,
-    <Show when={overflow}>{() => <span class="overflow">{() => `${fmtMs(shown().max)} ms`}</span>}</Show>,
     <Show when={selected}>
       {(metric) => <Reading metric={metric} values={shown} pct={pct} width={() => size().width} />}
     </Show>,
   );
+  // A whisker past the axis runs on to the track's end, points there and names its value.
+  effect(() => {
+    reach.dataset.max = `${fmtMs(shown().max)} ms`;
+  });
 
   // Marks glide to each summary on the frame clock while the lanes are seen; a saved or unseen row snaps. A glide is
   // made on a metric's first value and let go when the value goes.
@@ -329,104 +318,57 @@ function Lane(props: {
     }
     wake();
   });
-  // A mark is in the plot while it has a value; the box and the whisker grow from their middle as they arrive.
-  const present$ = (mark: SVGElement, on: boolean) => {
-    if (on === mark.isConnected) return;
-    if (!on) return mark.remove();
-    const later = order.slice(order.indexOf(mark) + 1).find((each) => each.isConnected);
-    art.insertBefore(mark, later ?? null);
+  const present$ = (node: HTMLElement, on: boolean) => {
+    if (on === node.isConnected) return;
+    if (!on) return node.remove();
+    const later = order.slice(order.indexOf(node) + 1).find((each) => each.isConnected);
+    art.insertBefore(node, later ?? null);
+  };
+  // What each mark was last given, so a frame writes only what moved.
+  const placed = new WeakMap<HTMLElement, string>();
+  const place = (node: HTMLElement, left: number, width?: number) => {
+    const at = width === undefined ? `${left}` : `${left} ${width}`;
+    if (placed.get(node) === at) return;
+    placed.set(node, at);
+    node.style.left = `${left}%`;
+    if (width !== undefined) node.style.width = `${Math.max(0, width)}%`;
   };
   function draw(now: number): boolean {
-    const { width, height } = size.peek();
-    if (!width || !height) return false;
-    const ratio = devicePixelRatio || 1;
-    const snap = (v: number) => Math.round(v * ratio) / ratio;
-    const hair = 1 / ratio;
-    const x = (percent: number) => snap(EDGE + (percent / 100) * (width - 2 * EDGE));
-    const middle = snap(height / 2);
     const at = (metric: (typeof GLIDED)[number]) => glides.get(metric)?.at(now) ?? null;
     let moving = false;
     for (const glide of glides.values()) moving ||= glide.at(now) !== glide.target;
-    // Gridlines at the axis's ends and middle, continuous from row to row.
-    [0, 50, 100].forEach((percent, index) => {
-      const line = grid[index]!;
-      const lineX = x(percent) + hair / 2;
-      line.place("x1", lineX);
-      line.place("x2", lineX);
-      line.place("y2", height);
-    });
     const values = shown.peek();
     const min = at("min");
     const max = at("max");
     const whisker = min !== null && max !== null;
-    present$(range.node, whisker);
-    if (whisker) {
-      range.place("x", x(min));
-      range.place("width", Math.max(0, x(max) - x(min)));
-      range.place("y", middle - snap(0.5));
-      range.place("height", hair);
-    }
-    // A whisker past the axis runs on to the track's end and points there.
+    present$(range, whisker);
+    if (whisker) place(range, min, max - min);
     const over = whisker && overflow.peek();
-    present$(overflowLine.node, over);
-    present$(arrow, over);
-    if (over) {
-      overflowLine.place("x", x(100));
-      overflowLine.place("width", width - x(100));
-      overflowLine.place("y", middle - snap(0.5));
-      overflowLine.place("height", hair);
-      setAttr(arrow, "d", `M${width} ${middle}L${width - 5} ${middle - 3.5}L${width - 5} ${middle + 3.5}Z`);
-    }
+    present$(reach, over);
+    if (over) place(reach, max);
     const p10 = at("p10");
     const p90 = at("p90");
     const box = p10 !== null && p90 !== null;
-    present$(band.node, box);
-    if (box) {
-      band.place("x", x(p10) + 0.5);
-      band.place("width", Math.max(0, x(p90) - x(p10) - 1));
-      band.place("y", middle - 5.5);
-      band.place("height", 11);
-    }
+    present$(band, box);
+    if (box) place(band, p10, p90 - p10);
     // Over the boxes: the idle median runs down through every loaded row, and each load's added span starts on it.
     const base = props.idle();
     const centre = at("center");
     const baselined = base !== null && props.several();
-    present$(baseline.node, baselined);
-    present$(span.node, baselined && centre !== null && values.center !== null && values.center > base!);
+    present$(baseline, baselined);
+    present$(span, baselined && centre !== null && values.center !== null && values.center > base!);
     if (baselined) {
-      const baseX = x(pct(base!));
-      baseline.place("x", baseX - snap(0.5));
-      baseline.place("width", hair);
-      baseline.place("y", stage === "latency" ? middle : 0);
-      baseline.place("height", stage === "latency" ? height - middle : height);
-      if (span.node.isConnected) {
-        span.place("x", baseX);
-        span.place("width", Math.max(0, x(centre!) - baseX));
-        span.place("y", middle - 1);
-        span.place("height", 2);
-      }
+      const from = pct(base!);
+      place(baseline, from);
+      if (span.isConnected) place(span, from, centre! - from);
     }
-    present$(center.node, centre !== null);
-    if (centre !== null) {
-      center.place("x", x(centre) - 1);
-      center.place("y", middle - 10);
-      center.place("width", 2);
-      center.place("height", 20);
-    }
+    present$(center, centre !== null);
+    if (centre !== null) place(center, centre);
     const latest = props.live ? at("current") : null;
-    present$(current.node, latest !== null);
-    if (latest !== null) {
-      current.place("cx", x(latest));
-      current.place("cy", middle);
-    }
+    present$(current, latest !== null);
+    if (latest !== null) place(current, latest);
     return moving;
   }
-  effect(() => {
-    const { width, height } = size();
-    art.setAttribute("width", String(width));
-    art.setAttribute("height", String(height));
-    wake(true);
-  });
   effect(() => {
     props.idle();
     props.several();
