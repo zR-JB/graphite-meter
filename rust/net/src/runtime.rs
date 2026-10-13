@@ -8,6 +8,9 @@ use tokio::{
     sync::watch,
 };
 
+/// Task polls between I/O driver polls on a pinned runtime: under load, readiness waits behind at most this many.
+const EVENT_INTERVAL: u32 = 16;
+
 /// Pinned current-thread runtimes, each on a thread of its own, or none; their threads end with the pool.
 #[derive(Default)]
 pub struct Pool {
@@ -26,7 +29,10 @@ impl Pool {
         let (running, ended) = watch::channel(());
         let runtimes = (0..if workers > 1 { workers } else { 0 })
             .map(|index| {
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .event_interval(EVENT_INTERVAL)
+                    .build()?;
                 let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
                 std::thread::Builder::new()
                     .name(format!("gm-worker-{index}"))
