@@ -95,10 +95,12 @@ impl Http1 {
                 .serve_connection(TokioIo::new(io), service)
                 .with_upgrades()
         );
+        // A child token: polling it never takes the server-wide token's waiter lock.
+        let shutdown = self.shutdown.child_token();
         tokio::select! {
             biased;
             _ = serving.as_mut() => {}
-            () = self.shutdown.cancelled() => {
+            () = shutdown.cancelled() => {
                 serving.as_mut().graceful_shutdown();
                 let _ = serving.await;
             }

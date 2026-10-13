@@ -172,7 +172,9 @@ impl Http3 {
         let (mut running, mut send_window) = (FuturesUnordered::new(), SendWindow::default());
         let mut tuning = interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        let mut stopping = pin!(self.shutdown.cancelled());
+        // A child token: polling it never takes the server-wide token's waiter lock.
+        let shutdown = self.shutdown.child_token();
+        let mut stopping = pin!(shutdown.cancelled());
         let mut stopped = false;
         loop {
             tokio::select! {

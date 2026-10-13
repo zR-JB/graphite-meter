@@ -112,7 +112,9 @@ impl Http2 {
         let window = Arc::new(Window::new(self.app.clone()));
         let mut lifecycle = Lifecycle::new(connection.work.clone(), Grace::Fresh);
         let mut streams = FuturesUnordered::new();
-        let mut stopping = pin!(self.shutdown.cancelled());
+        // A child token: polling it never takes the server-wide token's waiter lock.
+        let shutdown = self.shutdown.child_token();
+        let mut stopping = pin!(shutdown.cancelled());
         poll_fn(|cx| {
             if stopping.as_mut().poll(cx).is_ready() {
                 lifecycle.stop();

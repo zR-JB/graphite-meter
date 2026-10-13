@@ -50,7 +50,8 @@ impl Lane {
             moved: AtomicU64::new(0),
             ending: AtomicU8::new(RUNNING),
             decided: CancellationToken::new(),
-            shutdown: shutdown.clone(),
+            // A child token: polling it never takes the server-wide token's waiter lock.
+            shutdown: shutdown.child_token(),
             auth: auth.cloned(),
             _hold: hold,
             _work: work.start(),
