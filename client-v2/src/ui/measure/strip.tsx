@@ -15,6 +15,8 @@ import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
 import { columnsFor, Lane, monotoneTangents, nearestIndex, replyBars, type ReplyBar } from "./strip-model";
 
 const TOP_PAD = 3;
+/** Between the cursor and a readout beside it. */
+const GAP = 10;
 
 /** The running stage's leading edge at a frame: now on the timeline and each lane's glided rate (bytes/s). */
 export interface Head {
@@ -310,8 +312,8 @@ export function StageGraph(props: StripProps): HTMLElement {
     }
   });
 
-  // The readout: a small plate beside the cursor inside the strip, on the side with room and in the half of the plot
-  // the curve leaves free, so it never covers what it reads or the card's own figures. It glides from reading to
+  // The readout: a small plate beside the cursor inside the strip, on a side it fits, else centred within the strip,
+  // and in the half of the plot the curve leaves free, so it never covers what it reads or the card's own figures. It glides from reading to
   // reading; its rows are fixed nodes whose text a new reading rewrites.
   const keys: Row["key"][] = [...dirs.map((_, index): Row["key"] => (index ? "second" : "line")), "reply"];
   const readout = (
@@ -332,6 +334,8 @@ export function StageGraph(props: StripProps): HTMLElement {
     </span>
   ) as HTMLElement;
   graph.append(readout);
+  // Its width from the observer, never read on a move; hidden until known.
+  const plate = measure({ readout }).readout;
   let placed = false;
   effect(() => {
     const now = reading();
@@ -340,14 +344,21 @@ export function StageGraph(props: StripProps): HTMLElement {
       placed = false;
       return;
     }
-    const left = Math.round(now.x);
-    const flip = now.x > width() / 2;
+    const wide = plate().width;
+    const room = width();
+    readout.classList.toggle("unmeasured", !wide);
+    const left =
+      now.x + GAP + wide <= room
+        ? now.x + GAP
+        : now.x - GAP - wide >= 0
+          ? now.x - GAP - wide
+          : Math.max(0, Math.min(room - wide, now.x - wide / 2));
     // A curve in the plot's upper half sends the plate to its foot.
     const value = now.values[0] ?? null;
     readout.classList.toggle("low", value !== null && value / (props.ceiling() || 1) > 0.5);
     // A first reading appears where it reads; the next glide from there.
     if (!placed) readout.style.transition = "none";
-    readout.style.translate = flip ? `calc(${left}px - 100% - 10px) 0` : `${left + 10}px 0`;
+    readout.style.translate = `${Math.round(left)}px 0`;
     if (!placed) {
       placed = true;
       requestAnimationFrame(() => (readout.style.transition = ""));

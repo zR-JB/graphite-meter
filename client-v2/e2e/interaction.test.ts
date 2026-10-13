@@ -255,3 +255,28 @@ test.chrome("a phone's sheet leaves on a short quick flick and springs back from
   await drag(60, 50);
   await expect(sheet).toHaveCount(0);
 });
+
+test("a graph's reading stays inside a narrow card wherever it reads", async (page) => {
+  await page.setViewportSize({ width: 900, height: 800 });
+  await open(page, home.http);
+  await run(page);
+  const graph = page.locator('.results .card[data-tone="download"] .graph');
+  for (const at of [0.05, 0.5, 0.95]) {
+    const box = await graph.evaluate((el: Element) => {
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    await page.hover(box.x + box.width * at, box.y + box.height * 0.4);
+    await expect(page.locator(".results .graph .readout.shown")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        graph.evaluate((el: Element) => {
+          const card = el.closest(".card")!.getBoundingClientRect();
+          const plate = el.querySelector(".readout")!.getBoundingClientRect();
+          return plate.left >= card.left && plate.right <= card.right;
+        }),
+      )
+      .toBe(true);
+  }
+});

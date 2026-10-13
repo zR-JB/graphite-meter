@@ -1485,6 +1485,9 @@
     &.shown {
       opacity: 1;
     }
+    &.unmeasured {
+      visibility: hidden;
+    }
     &.low {
       top: auto;
       bottom: 28px;
