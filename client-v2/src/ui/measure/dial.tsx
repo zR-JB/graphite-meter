@@ -94,6 +94,7 @@ export function Dial(props: {
       return DIAL_LABELS.map((f) => fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)));
     },
     (labels) => (labels.length ? live.msScale.peek() : null),
+    (leaving) => (leaving.length ? HANDOFF_OUT_MS : 0),
   );
 
   // A result hands off to the live readout and back; the unit is not part of either, so a switch relabels in place.
@@ -114,6 +115,7 @@ export function Dial(props: {
   const stageName = handoff<Stage | null>(
     () => (run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null),
     (stage) => stage,
+    (leaving) => (leaving === null ? 0 : HANDOFF_OUT_MS),
   );
   const reading = computed<"rate" | "ms" | null>(() => {
     if (unusable()) return null;
@@ -132,6 +134,8 @@ export function Dial(props: {
       };
     },
     (view) => (view.reading === null ? MISSING : view.stage),
+    // A first value takes the dash's place at once; only a value hands off to the next.
+    (leaving) => (leaving.reading === null ? 0 : HANDOFF_OUT_MS),
   );
   // A screen reader hears the unanimated value: the receiver's accounting, or the round trip shown.
   const spoken = computed(() => {
@@ -189,6 +193,7 @@ export function Dial(props: {
       return known ? { hint: known.text, tip: known.tip } : {};
     },
     (view) => `${view.status}|${view.tip ?? view.hint}`,
+    (leaving) => (leaving.status || leaving.hint ? HANDOFF_OUT_MS : 0),
   );
   // Preparation speaks only through its outcome; the cards announce a completed run.
   announceChanges(() => {

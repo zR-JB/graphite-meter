@@ -86,7 +86,8 @@ export class Glide {
 export const HANDOFF_OUT_MS = 90;
 
 /** A keyed view: a new key fades the shown view out (`out`) and swaps it in once the fade-out ran; a key held
-    shorter than that never shows; the same key updates in place. The fades themselves are CSS (.handoff). */
+    shorter than that never shows; the same key updates in place; a view with nothing to fade out (`outMs` 0) swaps
+    in the same frame. The fades themselves are CSS (.handoff). */
 export class Handoff<T> {
   readonly #shown: Signal<T>;
   readonly #out = signal(false);
@@ -116,6 +117,8 @@ export class Handoff<T> {
     this.#latest = value;
     const hidden = typeof document !== "undefined" && document.hidden;
     if (this.keyOf(value) === this.#key || still.peek() || hidden) return this.#swap();
+    const shown = this.#shown.peek();
+    if ((typeof this.outMs === "function" ? this.outMs(shown) : this.outMs) <= 0) return this.#swap();
     this.#out.set(true);
     let start: number | null = null;
     this.#stop ??= animate((now) => {
