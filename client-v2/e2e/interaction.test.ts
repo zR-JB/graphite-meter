@@ -420,3 +420,32 @@ test("the run's toast fades out as it fades in, in every engine", async (page) =
   expect(sample.during[1]).toBeLessThan(1);
   expect(sample.after).toBe("hidden");
 });
+
+test("the diagnostic report copies on a page without the Clipboard API, and says when it cannot", async (page) => {
+  // As on a plain-HTTP page: no Clipboard API; the copy command's selection is recorded, or refused on request.
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "clipboard", { get: () => undefined, configurable: true });
+    const state = { copied: "", refuse: false };
+    Object.assign(window, { copying: state });
+    const exec = Document.prototype.execCommand;
+    Document.prototype.execCommand = function (this: Document, command: string, ...rest: [boolean?, string?]) {
+      if (command !== "copy") return exec.call(this, command, ...rest);
+      if (state.refuse) return false;
+      state.copied = String(getSelection()) || (document.activeElement as HTMLTextAreaElement | null)?.value || "";
+      return exec.call(this, command, ...rest);
+    };
+  });
+  await open(page, home.http);
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  const copy = page.getByRole("button", { name: /^Copy diagnostic report/ });
+  // The labels share one cell; the one shown is the one not hidden.
+  const shown = () =>
+    copy.evaluate((button: Element) => button.querySelector(":scope > span:not(.hidden)")?.textContent?.trim());
+  await copy.click();
+  await expect.poll(shown).toBe("Copied");
+  expect((await page.evaluate(() => (window as any).copying.copied as string)).length).toBeGreaterThan(100);
+  await expect.poll(shown, { timeout: 4_000 }).toBe("Copy diagnostic report");
+  await page.evaluate(() => ((window as any).copying.refuse = true));
+  await copy.click();
+  await expect.poll(shown).toBe("Could not copy");
+});

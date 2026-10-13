@@ -135,7 +135,8 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const supports = (items: string[] | null) =>
     items === null ? ["Checking server"] : items.length ? items : ["None advertised"];
 
-  const copied = signal(false);
+  /** How the last copy went, for a moment. */
+  const copied = signal<"" | "copied" | "failed">("");
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(copiedTimer));
   // Everything the page holds about the servers and the run, read on demand.
@@ -194,17 +195,20 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       },
     });
   };
-  async function copyReport() {
+  // A plain-HTTP page has no Clipboard API: there the report is copied through a selection, within the press.
+  async function copyReport(from: HTMLElement) {
     clearTimeout(copiedTimer);
+    const text = report();
+    let done: boolean;
     try {
-      await navigator.clipboard.writeText(report());
-      copied.set(true);
-      copiedTimer = setTimeout(() => copied.set(false), COPIED_MS);
-      announce("Diagnostic report copied");
+      if (navigator.clipboard) await navigator.clipboard.writeText(text);
+      done = !!navigator.clipboard || copyBySelection(text, from);
     } catch {
-      copied.set(false);
-      announce("Unable to copy diagnostic report");
+      done = false;
     }
+    copied.set(done ? "copied" : "failed");
+    copiedTimer = setTimeout(() => copied.set(""), COPIED_MS);
+    announce(done ? "Diagnostic report copied" : "Unable to copy diagnostic report");
   }
 
   const fact = (label: string, value: () => string, explain?: () => string, aside?: () => string) => (
@@ -395,12 +399,21 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       </div>
 
       <div class="kv">
-        <button class="link-row copy" type="button" onclick={() => void copyReport()}>
+        <button class="link-row copy" type="button" onclick={(event) => void copyReport(event.currentTarget)}>
           <span class={() => (copied() ? "hidden" : false)}>Copy diagnostic report</span>
-          <span class={() => (copied() ? false : "hidden")} aria-hidden={() => String(!copied())}>
+          <span
+            class={() => (copied() === "copied" ? false : "hidden")}
+            aria-hidden={() => String(copied() !== "copied")}
+          >
             Copied
           </span>
-          {() => <Icon name={copied() ? "check" : "copy"} />}
+          <span
+            class={() => (copied() === "failed" ? false : "hidden")}
+            aria-hidden={() => String(copied() !== "failed")}
+          >
+            Could not copy
+          </span>
+          {() => <Icon name={copied() === "copied" ? "check" : "copy"} />}
         </button>
         <button class="link-row" type="button" onclick={(event) => shell.legal(event.currentTarget)}>
           {"About & legal"}
@@ -409,4 +422,24 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       </div>
     </section>
   );
+}
+
+/** Copies `text` by selecting it in a field beside `at`, inside any dialog `at` is in; whether it copied. */
+function copyBySelection(text: string, at: HTMLElement): boolean {
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.readOnly = true;
+  field.setAttribute("aria-hidden", "true");
+  Object.assign(field.style, { position: "fixed", top: "0", left: "0", opacity: "0", pointerEvents: "none" });
+  at.after(field);
+  field.select();
+  let done = false;
+  try {
+    done = document.execCommand("copy");
+  } catch {
+    done = false;
+  }
+  field.remove();
+  at.focus({ preventScroll: true });
+  return done;
 }
