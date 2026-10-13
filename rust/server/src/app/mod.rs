@@ -19,6 +19,7 @@ use crate::{
     limits::{Budget, Hold, Pressure, Quotas, Transport},
     peer::{ClientKeys, Peer},
     transport::{
+        Burst,
         body::Body,
         websocket,
         webtransport::{Plan, Upload},
@@ -31,7 +32,13 @@ use graphite_meter_proto::{
     route::{Kind, Route},
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use std::{future::poll_fn, net::IpAddr, pin::pin, time::Duration};
+use std::{
+    future::poll_fn,
+    net::IpAddr,
+    pin::{Pin, pin},
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -316,22 +323,23 @@ impl App {
             Ok(sink) => sink,
             Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
-        let mut body = pin!(request.into_body());
-        let mut ended = pin!(lane.ended());
+        let (mut body, mut ended, mut burst) = (pin!(request.into_body()), pin!(lane.ended()), Burst::default());
         let ending = loop {
-            let frame = tokio::select! {
+            let batch = tokio::select! {
                 biased;
-                frame = poll_fn(|cx| body.as_mut().poll_frame(cx)) => frame,
+                batch = poll_fn(|cx| poll_batch(body.as_mut(), cx, &lane)) => batch,
                 ending = &mut ended => break ending,
             };
-            match frame {
-                Some(Ok(frame)) => sink.record(frame.data_ref().map_or(0, Buf::remaining)),
-                Some(Err(_)) => return Ok(Outcome::Abort),
-                None => break lane.finish(),
+            sink.record(batch.bytes);
+            match batch.end {
+                None => {}
+                Some(End::Finished) => break lane.finish(),
+                Some(End::Failed) => return Ok(Outcome::Abort),
+                Some(End::Lane(ending)) => break ending,
             }
-            if let Some(ending) = lane.due() {
-                break ending;
-            }
+            // HTTP/3 stream reads spend no coop budget, so a buffered window would otherwise drain in one poll.
+            burst.moved(batch.bytes);
+            poll_fn(|cx| burst.poll_turn(cx)).await;
         };
         let answer = match (ending, ending.upload_refusal()) {
             (LaneEnding::Finished, _) => response::json(format!("{{\"bytes\":{}}}", sink.bytes())),
@@ -341,6 +349,43 @@ impl App {
         let deadline = Instant::now() + EXCHANGE_BOUND;
         Ok(Outcome::Response(answer.map(|body| body.until(deadline))))
     }
+}
+
+/// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.
+const READ_BATCH: usize = 32;
+
+/// The data bytes of the frames one read took, and how the upload ended after them, if it did.
+struct Batch {
+    bytes: usize,
+    end: Option<End>,
+}
+
+enum End {
+    Finished,
+    Failed,
+    Lane(LaneEnding),
+}
+
+/// Up to `READ_BATCH` frames of `body` that are ready now, each followed by `lane`'s check; pending only while none is.
+fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
+    let mut bytes = 0;
+    for taken in 0..READ_BATCH {
+        let end = match body.as_mut().poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                bytes += frame.data_ref().map_or(0, Buf::remaining);
+                match lane.due() {
+                    Some(ending) => End::Lane(ending),
+                    None => continue,
+                }
+            }
+            Poll::Ready(Some(Err(_))) => End::Failed,
+            Poll::Ready(None) => End::Finished,
+            Poll::Pending if taken == 0 => return Poll::Pending,
+            Poll::Pending => break,
+        };
+        return Poll::Ready(Batch { bytes, end: Some(end) });
+    }
+    Poll::Ready(Batch { bytes, end: None })
 }
 
 /// The port of a listen address such as `:7246` or `[::]:7249`.
