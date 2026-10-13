@@ -86,30 +86,51 @@ export function inView(element: Element, initial: boolean): Read<boolean> {
   return seen;
 }
 
-/** Each element's border-box size in CSS px, from one observer; read in its callbacks, never by forcing layout. */
-export function measure<K extends string>(
-  elements: Record<K, Element>,
-): Record<K, Read<{ width: number; height: number }>> {
-  const sizes = {} as Record<K, ReturnType<typeof signal<{ width: number; height: number }>>>;
-  const keys = new Map<Element, K>();
-  for (const key in elements) {
-    sizes[key] = signal({ width: 0, height: 0 });
-    keys.set(elements[key], key);
-  }
-  const observer = new ResizeObserver((records) =>
+type Size = { width: number; height: number };
+
+/** Every measured element, its last size and the views that follow it. */
+const measured = new Map<Element, { size: Size; follow: Set<(size: Size) => void> }>();
+let sizer: ResizeObserver | null = null;
+
+/** Each element's border-box size in whole CSS px, as `clientWidth` reads it, so the sub-pixel steps at a slide's end
+    draw nothing until they add up to a pixel. One observer serves every view, so a frame's resizes arrive in one
+    callback and one batch; read there, never by forcing layout. */
+export function measure<K extends string>(elements: Record<K, Element>): Record<K, Read<Size>> {
+  sizer ??= new ResizeObserver((records) =>
     batch(() => {
       for (const record of records) {
+        const entry = measured.get(record.target);
+        if (!entry) continue;
         const box = record.borderBoxSize[0];
-        const key = keys.get(record.target)!;
-        const width = box?.inlineSize ?? record.contentRect.width;
-        const height = box?.blockSize ?? record.contentRect.height;
-        const previous = sizes[key].peek();
-        if (previous.width !== width || previous.height !== height) sizes[key].set({ width, height });
+        const width = Math.round(box?.inlineSize ?? record.contentRect.width);
+        const height = Math.round(box?.blockSize ?? record.contentRect.height);
+        if (entry.size.width === width && entry.size.height === height) continue;
+        entry.size = { width, height };
+        for (const follow of entry.follow) follow(entry.size);
       }
     }),
   );
-  for (const element of keys.keys()) observer.observe(element);
-  onCleanup(() => observer.disconnect());
+  const sizes = {} as Record<K, Read<Size>>;
+  for (const key in elements) {
+    const element = elements[key];
+    let entry = measured.get(element);
+    if (!entry) {
+      entry = { size: { width: 0, height: 0 }, follow: new Set() };
+      measured.set(element, entry);
+      sizer.observe(element);
+    }
+    const size = signal(entry.size);
+    const follow = (next: Size) => size.set(next);
+    const { follow: views } = entry;
+    views.add(follow);
+    onCleanup(() => {
+      views.delete(follow);
+      if (views.size) return;
+      measured.delete(element);
+      sizer!.unobserve(element);
+    });
+    sizes[key] = size;
+  }
   return sizes;
 }
 
