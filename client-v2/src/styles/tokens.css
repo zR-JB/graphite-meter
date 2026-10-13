@@ -106,16 +106,6 @@
   inherits: false;
   initial-value: 0px;
 }
-@property --panel-width {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
-@property --dial-width {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
-}
 @property --sheet-drag {
   syntax: "<number>";
   inherits: false;

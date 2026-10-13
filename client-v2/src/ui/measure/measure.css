@@ -13,12 +13,12 @@
   }
 
   /* The panel: stacked on a narrow panel, the dial beside the lanes on a wide one. Width classes come from the
-     measured box; --panel-width reaches only .instrument. */
+     measured box; every size the dial takes from the panel's width is a share of the instrument, resolved in the
+     layout that changes it, so a panel's slide sizes the dial in that layout and nothing after it lays it out again. */
   .gauge-panel {
     height: 100%;
   }
   .instrument {
-    --panel-width: inherit;
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
     gap: var(--space-4);
@@ -38,7 +38,6 @@
   }
   /* A tall screen's spare height goes into even air between the sections, not under the cards. */
   .wide .instrument {
-    --dial-width: clamp(300px, var(--panel-width) * 0.3, 560px);
     --dial-ratio: 0.86;
     min-height: 100%;
     align-content: space-evenly;
@@ -46,17 +45,17 @@
       "dial latency" auto
       "dial controls" auto
       "results results" auto
-      / var(--dial-width) minmax(0, 1fr);
+      / clamp(300px, 30%, 560px) minmax(0, 1fr);
     /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
     & .dial {
-      min-height: calc(var(--dial-width) * var(--dial-ratio));
+      place-self: stretch;
+      aspect-ratio: 1 / var(--dial-ratio);
     }
     /* The lanes start a step under the dial's top, nearer the ring's crown than its box. */
     & .latency-panel {
       margin-top: var(--space-6);
     }
     &.no-lanes {
-      --dial-width: clamp(360px, var(--panel-width) * 0.48, 720px);
       --dial-ratio: 0.6;
       grid-template:
         "dial" auto
@@ -65,7 +64,7 @@
         / minmax(0, 1fr);
       & .dial {
         justify-self: center;
-        width: var(--dial-width);
+        width: clamp(360px, 48%, 720px);
       }
     }
   }
@@ -73,14 +72,13 @@
      beside it; its note takes the lines it needs. */
   .wide.short .instrument,
   .wide.short .instrument.no-lanes {
-    --dial-width: clamp(240px, var(--panel-width) * 0.38, 360px);
     min-height: 0;
     align-content: start;
     grid-template:
       "dial latency" auto
       "dial controls" auto
       "dial results" auto
-      / var(--dial-width) minmax(0, 1fr);
+      / clamp(240px, 38%, 360px) minmax(0, 1fr);
     & .dial {
       position: sticky;
       top: var(--space-4);
@@ -89,6 +87,7 @@
       width: auto;
       height: calc(100svh - var(--topbar-h) - var(--space-4) - var(--space-2));
       min-height: 0;
+      aspect-ratio: auto;
     }
     & .latency-panel {
       margin-top: 0;
@@ -100,11 +99,12 @@
   /* A phone's ring is as wide as the face allows up to a share of the screen's height; the lens takes its own line. */
   .compact .instrument {
     --dial-height: auto;
-    --face-height: clamp(184px, calc(var(--panel-width) * 0.72), 44svh);
     gap: var(--space-2);
     & .gauge-face {
       flex: none;
-      height: var(--face-height);
+      aspect-ratio: 1 / 0.72;
+      min-height: 184px;
+      max-height: 44svh;
     }
   }
   :is(.compact, .wide.short) .server-indicator {
@@ -140,7 +140,6 @@
 
   /* The dial: the face, the lens in its corner, and the note under the ring. */
   .dial {
-    --dial-width: inherit;
     grid-area: dial;
     position: relative;
     display: flex;

@@ -47,7 +47,6 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
     list.toggle("short", wide() && short());
     list.toggle("compact", width() > 0 && width() <= 520);
     list.toggle("tight", width() > 0 && width() <= 430);
-    section.style.setProperty("--panel-width", `${width()}px`);
   });
 
   section.append(
