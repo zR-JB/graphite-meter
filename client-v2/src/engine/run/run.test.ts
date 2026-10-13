@@ -115,6 +115,29 @@ test("warmup probes never enter a measured population", async () => {
   expect((await h.result()).latencyByStage.latency).toMatchObject({ probeCount: 4, maxMs: 10 });
 });
 
+test("loaded latency ends with the stage's window, however late its final checkpoint answers", async () => {
+  // A probe every 80 ms: 10 ms replies through the 1 s upload window, 200 ms ones after it, while the final checkpoint
+  // takes 600 ms to answer.
+  const measure = (events: StageEvents) => {
+    const start = clock.t;
+    clock.every(80, () => {
+      const late = clock.t - start > 1_000;
+      events.probes([
+        { rttMs: late ? 200 : 10, timedOut: false, handlingMs: null, observedAt: clock.t, inWindow: true },
+      ]);
+    });
+  };
+  const h = setup(
+    [{ id: "self", measure, checkpointLagMs: 600 }],
+    { upload: true },
+    { uploadMs: 1_000 },
+    { loadedLatency: true },
+  );
+  h.start();
+  const loaded = (await h.result()).latencyByStage.upload;
+  expect(loaded).toMatchObject({ p90Ms: 10, maxMs: 10 });
+});
+
 test("replies delivered in separate batches stay adjacent for jitter", async () => {
   const measure = (events: StageEvents) => {
     for (const rttMs of [10, 20, 10]) {

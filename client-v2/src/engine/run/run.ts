@@ -207,6 +207,8 @@ interface StageRun {
   finishedEarly: boolean;
   /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
   ramp: { at: number; down: number } | null;
+  /** Page ms the measured window closed at, however long its final evidence takes; Infinity while it is open. */
+  sealedAt: number;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
   plan: StagePlans[Stage] | null;
 }
@@ -563,6 +565,7 @@ export class Run {
       evaluatedAt: -Infinity,
       finishedEarly: false,
       ramp: null,
+      sealedAt: Number.POSITIVE_INFINITY,
       plan: null,
     };
     this.#stage = stage;
@@ -732,9 +735,14 @@ export class Run {
         if (!counting() || server.removed) return;
         const position = this.#position();
         for (const outcome of outcomes) {
-          const t = this.#timelineAt(outcome.observedAt, position);
-          server.latency.observe(name, outcome, t, server.continuity);
-          if (outcome.inWindow) server.buckets.observe(t, outcome.rttMs, outcome.timedOut);
+          // The window ends when the stage closes, not when its final evidence arrives: a probe sent after it is not
+          // the stage's, and a reply after it stays out of its round trips.
+          if (outcome.observedAt - outcome.rttMs > stage.sealedAt) continue;
+          const shown =
+            outcome.inWindow && outcome.observedAt > stage.sealedAt ? { ...outcome, inWindow: false } : outcome;
+          const t = this.#timelineAt(shown.observedAt, position);
+          server.latency.observe(name, shown, t, server.continuity);
+          if (shown.inWindow) server.buckets.observe(t, shown.rttMs, shown.timedOut);
         }
         const now = this.#clock.read();
         if (now - seat.summaryAt >= SUMMARY_CADENCE_MS) {
@@ -1137,6 +1145,7 @@ export class Run {
       early: stage.finishedEarly,
     };
     stage.closedAt = this.#clock.activeMs();
+    stage.sealedAt = this.#clock.read();
     this.#clock.hold();
     const shown = this.#shown!;
     if (!preparing) {
