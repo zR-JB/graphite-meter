@@ -102,29 +102,40 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
       return put.apply(this, args);
     };
   });
-  await open(page, `${locked.url}/login`, {
-    servers: [{ id: "self", url: locked.url }],
-    config: { ...baseConfig, stages: { latency: true, download: false, upload: false, bidirectional: false } },
-  });
-  await signIn(page);
-  await ready(page);
-  await page.evaluate(() => ((window as any).writes.failing = true));
-  await runButton(page, "Start test").click();
-  await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
-  const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
-  const ask = page.getByRole("alertdialog", { name: "Sign out without saving?" });
-  await signOut.click();
-  await expect(ask).toBeVisible({ timeout: 10_000 });
-  await ask.getByRole("button", { name: "Stay signed in" }).click();
-  await expect(ask).toHaveCount(0);
-  // Storage recovers and the result saves; Sign out works again.
-  await page.evaluate(() => {
-    (window as any).writes.failing = false;
-    window.dispatchEvent(new Event("online"));
-  });
-  await savedResult(page);
-  await signOut.click();
-  await expect(page.getByRole("status")).toHaveText("You're signed out.");
+  // A server of its own, so this sign-in spends none of the shared one's budget.
+  const vault = await spawnPeer("Vault", (server) => ({
+    GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
+    GM_AUTH_MODE: "password",
+    GM_AUTH_PUBLIC_URL: server.url,
+    GM_AUTH_PASSWORD_HASH: passwordHash,
+  }));
+  try {
+    await open(page, `${vault.server.url}/login`, {
+      servers: [{ id: "self", url: vault.server.url }],
+      config: { ...baseConfig, stages: { latency: true, download: false, upload: false, bidirectional: false } },
+    });
+    await signIn(page);
+    await ready(page);
+    await page.evaluate(() => ((window as any).writes.failing = true));
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+    const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
+    const ask = page.getByRole("alertdialog", { name: "Sign out without saving?" });
+    await signOut.click();
+    await expect(ask).toBeVisible({ timeout: 10_000 });
+    await ask.getByRole("button", { name: "Stay signed in" }).click();
+    await expect(ask).toHaveCount(0);
+    // Storage recovers and the result saves; Sign out works again.
+    await page.evaluate(() => {
+      (window as any).writes.failing = false;
+      window.dispatchEvent(new Event("online"));
+    });
+    await savedResult(page);
+    await signOut.click();
+    await expect(page.getByRole("status")).toHaveText("You're signed out.");
+  } finally {
+    vault.kill("SIGKILL");
+  }
 });
 
 test("a session read that failed at boot is tried again when the network returns", async (page) => {
