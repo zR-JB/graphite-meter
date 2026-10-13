@@ -9,7 +9,7 @@ import {
   type HistoryEntry,
 } from "../../app/history/records";
 import { For, Show } from "../../lib/dom";
-import { nextFrame } from "../../lib/frame";
+import { animate, nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import { OUTCOME } from "../../view/words";
@@ -42,6 +42,8 @@ const BARS_PX = 901;
     need, exact until rows are added. */
 const unknown = () => ({ fits: Infinity, needs: 0, exact: false });
 
+/** Rows built in one frame: more than a tall screen shows. */
+const BUILD_ROWS = 16;
 export function ResultsList(props: {
   app: App;
   shell: Shell;
@@ -75,10 +77,29 @@ export function ResultsList(props: {
   const ordered = computed(() => sortHistory(props.records(), props.sort().by, props.sort().descending));
   // Only the pages asked for: a link to a result far down opens it without building every row above it.
   const shown = computed(() => Math.min(ordered().length, props.pages() * PAGE_ROWS));
+  // A screenful first, and the open result's row; the rest of the pages a screenful a frame, below the fold.
+  const built = signal(BUILD_ROWS);
+  const selectedAt = computed(() => {
+    const id = props.selectedId();
+    return id === null ? -1 : ordered().findIndex((entry) => entry.id === id);
+  });
+  const limit = computed(() => Math.min(shown(), Math.max(built(), selectedAt() + 1)));
+  effect(() => {
+    shown();
+    untrack(() => {
+      if (limit.peek() >= shown.peek()) return;
+      onCleanup(
+        animate(() => {
+          built.set(built.peek() + BUILD_ROWS);
+          return limit.peek() < shown.peek();
+        }),
+      );
+    });
+  });
   const visible = computed(() => {
     const [row, today] = [present(), days()];
     return ordered()
-      .slice(0, shown())
+      .slice(0, limit())
       .map((entry) => row(entry, today));
   });
   const groups = computed(() => groupRows(visible()));
