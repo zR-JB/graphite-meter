@@ -22,6 +22,7 @@ import { parseCount } from "./model";
 import { ConnectionPicker } from "./picker";
 import { Segments } from "./segments";
 import { ServerSelection } from "./servers";
+import { flip } from "../flip";
 import { Stepper } from "./stepper";
 import { Unfold } from "./unfold";
 
@@ -54,7 +55,12 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
 
   const edits: Edits = {
     edit(group, change) {
-      if (change()) {
+      // Whatever asks for it, a change that reshapes the console moves it as a chip's does.
+      let applied = false;
+      flip(() => {
+        applied = change();
+      });
+      if (applied) {
         refused.set(null);
         return true;
       }

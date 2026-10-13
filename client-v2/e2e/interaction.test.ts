@@ -456,3 +456,27 @@ test("the diagnostic report copies on a page without the Clipboard API, and says
   await copy.click();
   await expect.poll(shown).toBe("Could not copy");
 });
+
+test("a Settings change that reshapes the console moves it as a stage chip does", async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await open(page, home.http);
+  await ready(page);
+  // With the Latency stage off, the switch that keeps loaded latency brings the lanes back.
+  await page
+    .locator(".chips")
+    .evaluate((chips: Element) =>
+      [...chips.querySelectorAll<HTMLElement>("button")]
+        .find((key) => /^Latency/.test((key.getAttribute("aria-label") ?? key.textContent ?? "").trim()))!
+        .click(),
+    );
+  await expect(page.locator(".latency-panel")).toHaveCount(0);
+  const settings = await openSettings(page);
+  await page.evaluate(settled);
+  await settings
+    .getByRole("checkbox", { name: "Skip loaded latency if the Latency stage is off" })
+    .evaluate((input: HTMLElement) => input.click());
+  expect(
+    await page.locator('[data-flip="controls"]').evaluate((el: Element) => el.getAnimations().length),
+  ).toBeGreaterThan(0);
+  await expect(page.locator(".latency-panel")).toHaveCount(1);
+});
