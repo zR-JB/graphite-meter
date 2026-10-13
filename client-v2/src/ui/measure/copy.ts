@@ -9,6 +9,9 @@ export const PHASE_HINT: Partial<Record<ShownPhase, { text: string; tip?: string
   warmup: { text: "Warming up; not counted", tip: TIP.warmup },
 };
 
+const listed = (names: readonly string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
 export const DIAL = {
   restart: "Press Run again to restart",
   retry: "Press Run again to retry",
@@ -16,6 +19,9 @@ export const DIAL = {
   noData: (time: string) => `No data for ${time}`,
   noReplies: (time: string) => `No replies for ${time}`,
   checkFailed: "Connection check failed",
+  /** The stages a finished run lacks: those with no result, else those some servers did not measure. */
+  unfinished: (failed: readonly string[], partial: readonly string[]) =>
+    failed.length ? `${listed(failed)} failed` : `${listed(partial)} measured in part`,
   unavailable: (throughput: boolean, latency: boolean) =>
     throughput && latency
       ? "Throughput and latency paths are unavailable"

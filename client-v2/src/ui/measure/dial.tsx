@@ -2,14 +2,14 @@
 // takes the ring over at the end, the readout at its centre and the note under it. Every per-frame move is the
 // painter's: three transforms, a text node, and a class when the needle lights or goes out.
 import type { App } from "../../app/app";
-import type { Stage } from "../../engine/run/schedule";
+import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { pageMs } from "../../lib/frame";
 import { HANDOFF_OUT_MS, handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, type Read } from "../../lib/signal";
 import { fmtDuration, fmtMs, fmtSpeed, fmtTick, MISSING, rateUnit, toRateUnit, withUnit } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
-import { PHASE, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
+import { OUTCOME, PHASE, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
@@ -153,8 +153,8 @@ export function Dial(props: {
     return MISSING;
   });
 
-  // The note under the ring: a check under way, a refused start, how the run ended, a stall, or what comes next. A
-  // counting note updates in place; only a new kind of note hands off.
+  // The note under the ring: a check under way, a refused start, how the run ended (and, short of complete, which
+  // stages it lacks), a stall, or what comes next. A counting note updates in place; only a new kind hands off.
   const unanswered = computed(() => {
     if (phase() !== "latency" || !live.replies().lost) return null;
     const buckets = live.buckets();
@@ -177,10 +177,20 @@ export function Dial(props: {
     return { status: DIAL.checkFailed, detail: DIAL.unavailable(throughput, latency) };
   });
   const ending = computed(() => {
-    if (phase() === "aborted") return { status: PHASE.stopped, error: false, hint: DIAL.restart };
+    if (phase() === "aborted") return { status: PHASE.stopped, tone: "", hint: DIAL.restart };
+    const result = run.result();
+    if (phase() === "complete" && result && result.outcome !== "complete") {
+      const named = (status: string) =>
+        STAGES.filter((stage) => result.stages[stage] === status).map((stage) => STAGE[stage].label);
+      return {
+        status: OUTCOME[result.outcome].label,
+        tone: "warn",
+        hint: DIAL.unfinished(named("failed"), named("partial")),
+      };
+    }
     if (phase() !== "error") return null;
     const error = run.error();
-    return { status: error ? reasonLabel(error.reason) : DIAL.unknownError, error: true, hint: DIAL.retry };
+    return { status: error ? reasonLabel(error.reason) : DIAL.unknownError, tone: "error", hint: DIAL.retry };
   });
   const note = handoff(
     (): { status?: string; tone?: string; hint?: string; tip?: string } => {
@@ -188,7 +198,7 @@ export function Dial(props: {
       const ended = ending();
       if (run.preparing()) return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };
-      if (ended) return { status: ended.status, tone: ended.error ? "error" : "", hint: ended.hint };
+      if (ended) return { status: ended.status, tone: ended.tone, hint: ended.hint };
       const quiet = run.live()?.quietMs;
       if (quiet != null) return { hint: DIAL.noData(fmtDuration(quiet, 0)), tip: TIP.noData };
       const silent = unanswered();

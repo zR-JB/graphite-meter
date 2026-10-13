@@ -146,6 +146,14 @@ for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name
         ).toContainEqual(fault.failure);
       else expect(failures).toEqual([]);
       expect(saved.result.outcome).toBe(fault.outcome);
+      // Short of complete, the dial says so and names the stage it lacks, for as long as the result shows.
+      if (fault.failure) {
+        const stage = fault.failure.stage[0]!.toUpperCase() + fault.failure.stage.slice(1);
+        await expect(page.locator(".gauge-status.warn")).toHaveText(
+          fault.outcome === "partial" ? "Partial" : "Incomplete",
+        );
+        await expect(page.locator(".gauge-hint")).toContainText(stage);
+      }
       if (fault.interval)
         expect(
           saved.result.multiServer.intervals.map(({ stage, reason }) => ({

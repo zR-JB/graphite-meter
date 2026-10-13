@@ -513,6 +513,9 @@
     &.error {
       color: var(--err);
     }
+    &.warn {
+      color: var(--warn);
+    }
     &.preparation {
       color: var(--text-muted);
     }
