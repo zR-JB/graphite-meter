@@ -511,7 +511,8 @@ function Lane(props: {
   );
 }
 
-/** The plate naming the marker read, centred on it inside the track, over the box; hidden until measured. */
+/** The plate reading the row: every measured figure in order, the one read in ink, centred on its marker inside the
+    track over the box and wrapping within the track's width; hidden until measured. */
 function Reading(props: {
   metric: Read<Metric>;
   values: Read<Values>;
@@ -523,13 +524,19 @@ function Reading(props: {
   const guide = (<span class="guide" />) as HTMLElement;
   const plate = (
     <span class="inspect-card hover-card unmeasured">
-      <span>
-        <small>{() => metricLabel(props.metric())}</small> {() => `${fmtMs(value())} ms`}
-      </span>
+      {() =>
+        present(props.values()).map((metric) => (
+          <span class={metric === props.metric() ? "figure read" : "figure"}>
+            <small>{metricLabel(metric)}</small> {fmtMs(props.values()[metric])}
+          </span>
+        ))
+      }
+      <small>ms</small>
     </span>
   ) as HTMLElement;
   let measured = 0;
   const place = () => {
+    plate.style.maxWidth = `${props.width()}px`;
     plate.style.left = `${Math.max(0, Math.min(x.peek() - measured / 2, props.width() - measured))}px`;
   };
   const observer = new ResizeObserver(([record]) => {

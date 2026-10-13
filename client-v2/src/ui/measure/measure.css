@@ -733,11 +733,18 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
+  /* A row's readout: its figures in order, the one read in ink. */
   .hover-card {
     z-index: 10;
     bottom: calc(50% + 8px);
     &.unmeasured {
       visibility: hidden;
+    }
+    & .figure {
+      color: var(--text-muted);
+      &.read {
+        color: var(--text);
+      }
     }
   }
   .lanes .ticks {
@@ -1458,15 +1465,72 @@
       fill: var(--tone);
     }
   }
-  /* A reading stands in the top layer over the card's quiet line, on whole pixels, so the card's clip never cuts it. */
+  /* A reading: a plate of figures beside the cursor, at the top of the plot or its foot when the curve runs high,
+     each figure keyed to the mark it reads. It glides from reading to reading and fades as the pointer leaves. */
   .graph .readout {
-    position: fixed;
-    inset: auto;
-    margin: 0;
-    translate: 0 round(calc(-100% - 4px), 1px);
-    &.unmeasured {
-      visibility: hidden;
+    top: 2px;
+    left: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: baseline;
+    justify-items: start;
+    column-gap: var(--space-2);
+    row-gap: 0;
+    padding: 2px 7px;
+    opacity: 0;
+    transition:
+      translate 140ms var(--ease-out),
+      opacity var(--dur-hover) var(--ease-out);
+    &.shown {
+      opacity: 1;
     }
+    &.low {
+      top: auto;
+      bottom: 28px;
+    }
+    & small {
+      grid-row: 1;
+    }
+    & .row {
+      grid-column: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      &[hidden] {
+        display: none;
+      }
+    }
+    & .key {
+      flex: none;
+      width: 10px;
+      height: 2px;
+      border-radius: 1px;
+      background: var(--tone);
+      &[data-key="second"] {
+        background: repeating-linear-gradient(90deg, var(--tone) 0 3px, transparent 3px 6px);
+      }
+      &[data-key="reply"] {
+        width: 2px;
+        height: 9px;
+        margin-inline: 4px;
+      }
+    }
+  }
+  .graph.replies .readout.low {
+    bottom: auto;
+  }
+  /* The read marks: a dot on each curve and the read reply bar, drawn over the rest. */
+  .graph .cursor-dot {
+    fill: var(--surface-1);
+    stroke: var(--tone);
+    stroke-width: 2;
+    &.second {
+      stroke-dasharray: none;
+    }
+  }
+  .graph .reply-cursor {
+    stroke-width: 4;
   }
 
   /* The phase toast: failures, issues and stalls, at the stage's right edge so it never lands on a docked sheet. */

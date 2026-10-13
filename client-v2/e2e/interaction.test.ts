@@ -181,7 +181,7 @@ test.chrome(
     });
     await open(page, home.http);
     await run(page);
-    const readout = page.locator(".graph .readout");
+    const readout = page.locator(".graph .readout.shown");
     const stage = page.locator(".measurement-stage");
     const graph = page.locator(".results .graph");
 

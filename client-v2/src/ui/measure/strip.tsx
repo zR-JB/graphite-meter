@@ -6,7 +6,7 @@ import type { ThroughputSample } from "../../app/series";
 import type { Direction } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { Stage, TransferStage } from "../../engine/run/schedule";
-import { computed, effect, onCleanup, signal } from "../../lib/signal";
+import { computed, effect, signal } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtLatencyRange } from "../../view/format";
 import { STAGE } from "../../view/words";
 import { warmTips } from "../kit/tip";
@@ -52,6 +52,8 @@ interface Row {
   label: string;
   value: string;
   mark?: string;
+  /** The readout's key: the first lane's line, the second's, or a reply bar. */
+  key: "line" | "second" | "reply";
 }
 
 let strips = 0;
@@ -148,10 +150,11 @@ export function StageGraph(props: StripProps): HTMLElement {
     const reply = (bar: ReplyBar): Row => ({
       label: STAGE.latency.label,
       value: bar.lo < bar.hi ? fmtLatencyRange(bar.lo, bar.hi) : fmtLatency(bar.lo),
+      key: "reply",
     });
     if (trackOnly) {
       const found = bars()[nearestIndex(bars().length, (i) => bars()[i]!.t, t)];
-      return found ? { x: x(found.t), time: time(found.t), rows: [reply(found)] } : null;
+      return found ? { x: x(found.t), time: time(found.t), rows: [reply(found)], values: [], bar: found } : null;
     }
     const nearest = dirs.map((dir) => {
       const samples = props
@@ -165,10 +168,17 @@ export function StageGraph(props: StripProps): HTMLElement {
       label: dirs.length > 1 ? STAGE[index ? "upload" : "download"].label : CARDS.rate,
       value: sample ? props.rate(sample.bytesPerSec) : "",
       mark: dirs.length > 1 ? (index ? "↑" : "↓") : undefined,
+      key: index ? "second" : "line",
     }));
-    const bar = bars().find((each) => first.t >= each.t0 && first.t <= each.t1);
+    const bar = bars().find((each) => first.t >= each.t0 && first.t <= each.t1) ?? null;
     if (bar) rows.push(reply(bar));
-    return { x: x(first.t), time: time(first.t), rows };
+    return {
+      x: x(first.t),
+      time: time(first.t),
+      rows,
+      values: nearest.map((sample) => sample?.bytesPerSec ?? null),
+      bar,
+    };
   });
 
   const graph = (
@@ -300,47 +310,83 @@ export function StageGraph(props: StripProps): HTMLElement {
     }
   });
 
-  // The readout sits in the top layer over the card's quiet line, centred on the cursor inside the strip, and keeps
-  // to the strip as the page scrolls.
-  const open = computed(() => reading() !== null);
+  // The readout: a small plate beside the cursor inside the strip, on the side with room and in the half of the plot
+  // the curve leaves free, so it never covers what it reads or the card's own figures. It glides from reading to
+  // reading; its rows are fixed nodes whose text a new reading rewrites.
+  const keys: Row["key"][] = [...dirs.map((_, index): Row["key"] => (index ? "second" : "line")), "reply"];
+  const readout = (
+    <span class="inspect-card readout" aria-hidden="true">
+      <small>{() => reading()?.time ?? ""}</small>
+      {keys.map((key) => {
+        const row = computed(() => reading()?.rows.find((each) => each.key === key) ?? null);
+        return (
+          <span class="row" hidden={() => !row()}>
+            <i class="key" data-key={key} />
+            {() => {
+              const shown = row();
+              return shown?.mark ? `${shown.mark} ${shown.value}` : (shown?.value ?? "");
+            }}
+          </span>
+        );
+      })}
+    </span>
+  ) as HTMLElement;
+  graph.append(readout);
+  let placed = false;
   effect(() => {
-    if (!open()) return;
-    const readout = (
-      <span class="inspect-card readout unmeasured" popover="manual">
-        {() => {
-          const now = reading();
-          return (
-            now && [
-              <small>{now.time}</small>,
-              now.rows.map((row) => <span>{row.mark ? [<small>{row.mark}</small>, ` ${row.value}`] : row.value}</span>),
-            ]
-          );
-        }}
-      </span>
-    ) as HTMLElement;
-    graph.append(readout);
-    readout.showPopover();
-    const place = () => {
-      const now = reading.peek();
-      if (!now) return;
-      const box = graph.getBoundingClientRect();
-      const measured = readout.offsetWidth;
-      readout.style.maxWidth = `${box.width}px`;
-      readout.style.left = `${Math.round(box.left + Math.max(0, Math.min(now.x - measured / 2, box.width - measured)))}px`;
-      readout.style.top = `${box.top}px`;
-      readout.classList.remove("unmeasured");
-    };
-    effect(() => {
-      reading();
-      place();
+    const now = reading();
+    readout.classList.toggle("shown", !!now);
+    if (!now) {
+      placed = false;
+      return;
+    }
+    const left = Math.round(now.x);
+    const flip = now.x > width() / 2;
+    // A curve in the plot's upper half sends the plate to its foot.
+    const value = now.values[0] ?? null;
+    readout.classList.toggle("low", value !== null && value / (props.ceiling() || 1) > 0.5);
+    // A first reading appears where it reads; the next glide from there.
+    if (!placed) readout.style.transition = "none";
+    readout.style.translate = flip ? `calc(${left}px - 100% - 10px) 0` : `${left + 10}px 0`;
+    if (!placed) {
+      placed = true;
+      requestAnimationFrame(() => (readout.style.transition = ""));
+    }
+  });
+
+  // The reading's marks: a dot on each lane's curve and its reply bar drawn over the track.
+  const dots = dirs.map((_, index) => svg("circle", index ? "cursor-dot second" : "cursor-dot"));
+  for (const dot of dots) {
+    dot.setAttribute("r", "3.5");
+    shown(dot, false);
+  }
+  plotArt.append(...dots);
+  const replyMark = svg("line", "reply reply-cursor");
+  shown(replyMark, false);
+  trackArt.append(replyMark);
+  effect(() => {
+    const now = reading();
+    const h = sizes.plot().height;
+    const ceiling = props.ceiling() || 1;
+    dots.forEach((dot, index) => {
+      const value = now?.values[index] ?? null;
+      shown(dot, value !== null);
+      if (value === null) return;
+      setAttr(dot, "cx", fixed(now!.x));
+      setAttr(dot, "cy", fixed(h - Math.min(1, Math.max(0, value / ceiling)) * (h - TOP_PAD)));
     });
-    addEventListener("scroll", place, { capture: true, passive: true });
-    addEventListener("resize", place);
-    onCleanup(() => {
-      removeEventListener("scroll", place, { capture: true });
-      removeEventListener("resize", place);
-      readout.remove();
-    });
+    const bar = now?.bar ?? null;
+    shown(replyMark, !!bar);
+    if (!bar) return;
+    const th = sizes.track().height;
+    const top = props.latencyTop() || 1;
+    const y = (ms: number) => th - 1.5 - Math.min(1, Math.max(0, ms / top)) * (th - 3);
+    const at = String(Math.round(x(bar.t)));
+    const low = y(bar.lo);
+    setAttr(replyMark, "x1", at);
+    setAttr(replyMark, "x2", at);
+    setAttr(replyMark, "y1", fixed(low));
+    setAttr(replyMark, "y2", fixed(Math.min(y(bar.hi), low - 1.5)));
   });
   effect(() => {
     const now = reading();
