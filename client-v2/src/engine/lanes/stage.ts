@@ -303,7 +303,9 @@ class Stage implements StageResources {
     const { events } = this.#setup;
     return {
       bytes: (bytes) => {
-        if (this.#measuring && !this.#ended) events.download(bytes);
+        if (this.#ended) return;
+        if (this.#measuring) events.download(bytes);
+        else events.warmupDownload(bytes);
       },
       posted: (lane, bytes, elapsedMs) => {
         if (!this.#ended) events.uploadHint(lane, bytes, elapsedMs);
@@ -325,6 +327,7 @@ class Stage implements StageResources {
     observed: (checkpoint, grew) => {
       if (this.#ended) return;
       if (this.#measuring) this.#setup.events.receiver(checkpoint);
+      else this.#setup.events.warmupReceiver(checkpoint);
       if (grew) this.#progress("up");
     },
     ended: (ending, broken, delayMs, signal) => this.#reopen("up", "upload progress", ending, broken, delayMs, signal),

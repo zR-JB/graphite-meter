@@ -209,10 +209,17 @@
     }
     & path {
       fill: none;
-      stroke: var(--accent);
+      stroke: var(--accent, var(--text-soft));
     }
     & circle {
-      fill: var(--accent);
+      fill: var(--accent, var(--text-soft));
+    }
+    /* A warmup's reading is shown, not counted: muted until the window opens and the needle comes up to its hue. */
+    &.warming path {
+      stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
+    }
+    &.warming circle {
+      fill: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
     }
     & .ripple {
       position: absolute;

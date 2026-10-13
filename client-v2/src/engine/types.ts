@@ -152,6 +152,10 @@ export interface StageEvents {
   download(bytes: number): void;
   /** A receiver observation of a measured upload. */
   receiver(checkpoint: Checkpoint): void;
+  /** Client-consumed bytes before the measured window, which only the live rate reads. */
+  warmupDownload(bytes: number): void;
+  /** A receiver observation before the measured window, which only the live rate reads. */
+  warmupReceiver(checkpoint: Checkpoint): void;
   probes(outcomes: readonly ProbeOutcome[]): void;
   /** Probes that will get no verdict: lost with their connection, or never sent. Neither is a timeout. */
   probesInterrupted(count: number, reason: "unresolved" | "send-failed"): void;

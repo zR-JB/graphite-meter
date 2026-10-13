@@ -48,14 +48,15 @@ function createLive(app: App) {
     moved.set(moved.peek() + 1);
   };
 
-  // Running maxima of what the live ticks drew, so the axes never step back; a new run starts them over.
+  // Running maxima of what the live ticks drew, a warmup's included, so the axes never step back and the scale is
+  // sized before the window opens; a new run starts them over.
   const peaks = signal({ lane: 0, combined: 0 });
   effect(() => {
     run.throughputVersion();
     const sample = run.live();
     untrack(() => {
       const current = peaks.peek();
-      if (!run.throughput.length) {
+      if (!run.throughput.length && !sample) {
         if (current.lane || current.combined) peaks.set({ lane: 0, combined: 0 });
         return;
       }

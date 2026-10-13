@@ -67,9 +67,13 @@ export function Dial(props: {
       (phase() === "complete" && !arcs().length && !run.result()?.latency)
     );
   });
+  // A stage's warmup already reads its stage, muted: the checked round trip, or the rate the lanes are moving, which
+  // nothing counts yet.
+  const warming = computed(() => phase() === "warmup" && run.running());
+  const reads = computed<string>(() => (warming() ? (run.stage() ?? phase()) : phase()));
   // What the needle points at: the round trip on the millisecond scale, the stage's own rate, or nothing.
   const pointing = computed<"rate" | "ms" | null>(() => {
-    const now = phase();
+    const now = reads();
     if (now === "latency") return "ms";
     if (TRANSFER.includes(now)) return live.rateStage() !== null ? "rate" : null;
     return now === "complete" && live.completedRtt() !== null ? "ms" : null;
@@ -119,7 +123,7 @@ export function Dial(props: {
   );
   const reading = computed<"rate" | "ms" | null>(() => {
     if (unusable()) return null;
-    const now = phase();
+    const now = reads();
     if (now === "latency") return live.replies().lost ? null : "ms";
     if (TRANSFER.includes(now)) return live.rateStage() !== null ? "rate" : null;
     return now === "complete" && !headline() && live.completedRtt() !== null ? "ms" : null;
@@ -277,6 +281,7 @@ export function Dial(props: {
   const cap = ring.querySelector<SVGSVGElement>(".start-cap")!;
   const headArt = head.querySelector("svg")!;
   cap.style.visibility = "hidden";
+  effect(() => needleLayer.classList.toggle("warming", warming()));
   // Between runs the needle keeps the hue it last showed; a finished run's latency takes its own.
   effect(() => {
     const stage = run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null;
@@ -288,7 +293,9 @@ export function Dial(props: {
   number.set(MISSING);
   const value = (
     <span
-      class={() => `gauge-value handoff${figure.out() ? " handoff-out" : ""}${figure.shown().reading ? "" : " quiet"}`}
+      class={() =>
+        `gauge-value handoff${figure.out() ? " handoff-out" : ""}${figure.shown().reading && !warming() ? "" : " quiet"}`
+      }
     >
       {number.box}
     </span>

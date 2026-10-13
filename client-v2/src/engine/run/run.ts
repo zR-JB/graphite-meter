@@ -67,6 +67,8 @@ const PROGRESS_CADENCE_MS = 250;
 const SUMMARY_CADENCE_MS = 1_000;
 /** A direction that moved nothing for this long is quiet; a server that moved within it is moving. */
 const QUIET_MS = 500;
+/** A warmup's ramp shows once it spans this long. */
+const RAMP_MS = 100;
 /** A direction silent this long leaves, if another server moves it meanwhile. */
 const SILENCE_MS = 1_500;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
@@ -122,6 +124,8 @@ export interface LiveSample {
   stalled: boolean;
   /** Active ms since any server moved, once stalled for at least half a second. */
   quietMs: number | null;
+  /** From the stage's warmup: a live rate no result counts, never part of the series. */
+  warmup: boolean;
 }
 
 export type RunEvent =
@@ -163,6 +167,9 @@ interface Seat {
   resources: StageResources;
   /** Measured client-consumed bytes this stage. */
   down: number;
+  /** Client-consumed bytes since the stage opened, its warmup included: the count the live rate reads, never a
+      result. */
+  shown: number;
   /** The window closed and its lanes are reporting what they counted before it did. */
   flushing: boolean;
   /** The latest measured receiver checkpoint this stage. */
@@ -175,6 +182,8 @@ interface Seat {
   latencyStall: { at: number; detail: string } | null;
   /** Page ms of the last live summary. */
   summaryAt: number;
+  /** The warmup's first and latest receiver records of one upload id: its upload ramp. */
+  ramp: { first: Checkpoint; last: Checkpoint } | null;
 }
 
 /** One entered stage. Every callback its resources make checks that it is still the run's stage and not settled. */
@@ -196,6 +205,8 @@ interface StageRun {
   /** Page ms of the last early-finish evaluation. */
   evaluatedAt: number;
   finishedEarly: boolean;
+  /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
+  ramp: { at: number; down: number } | null;
   /** The plan as the window closed; later changes cannot reach a window that already ended. */
   plan: StagePlans[Stage] | null;
 }
@@ -491,7 +502,8 @@ export class Run {
       if (this.#state !== "running" || this.#clock.held) return;
     }
     for (const { buckets } of this.#servers) buckets.closeThrough(this.#elapsed);
-    if (stage?.phase === "measuring" && now - this.#sampledAt >= TICK_MS - 1) this.#sample(stage, now);
+    const sampled = stage?.phase === "measuring" || (stage?.phase === "warmup" && stage.activity.transfer.length > 0);
+    if (sampled && now - this.#sampledAt >= TICK_MS - 1) this.#sample(stage!, now);
     if (this.#elapsed >= (this.#segments.at(-1)?.end ?? 0))
       return stage && stage.phase !== "settled" ? void this.#endStage(stage) : this.#complete();
     const segment = segmentAt(this.#segments, this.#elapsed);
@@ -550,6 +562,7 @@ export class Run {
       armedAt: null,
       evaluatedAt: -Infinity,
       finishedEarly: false,
+      ramp: null,
       plan: null,
     };
     this.#stage = stage;
@@ -584,6 +597,12 @@ export class Run {
       const shown = this.#shown!;
       this.#show(shown, "running");
       stage.phase = "warmup";
+      // The live rate runs from the warmup on, so the window opens on a rate already moving.
+      if (stage.activity.transfer.length) {
+        const at = this.#clock.read();
+        this.#live.reset(this.#counts(stage), at);
+        stage.ramp = { at, down: active(stage).reduce((sum, seat) => sum + seat.shown, 0) };
+      }
       if (shown.phase !== "warmup") this.#measure(stage);
       this.#tick();
       this.#arm();
@@ -596,6 +615,7 @@ export class Run {
     const seat = {
       server,
       down: 0,
+      shown: 0,
       flushing: false,
       up: null,
       progressAt: { down: 0, up: 0 },
@@ -604,6 +624,7 @@ export class Run {
       recovery: null,
       latencyStall: null,
       summaryAt: -Infinity,
+      ramp: null,
     } as Partial<Seat> as Seat;
     seat.resources = this.#open({
       server: server.prepared,
@@ -644,8 +665,7 @@ export class Run {
       seat.resources.measure();
     }
     if (activity.stage === "latency") return;
-    // The live rate and the first upload window start at the window, not in the warmup.
-    this.#live.reset(this.#counts(stage), this.#clock.read());
+    // The first upload window starts at the window, not in the warmup.
     this.#aggregate.begin(
       activity.stage,
       seats.map(({ server }) => server.id),
@@ -681,10 +701,21 @@ export class Run {
       stage.phase === "finalizing" &&
       (!stage.measured || stage.activity.transfer.every((dir) => stage.closedAt - seat.progressAt[dir] < QUIET_MS));
     return {
+      // A warmup's evidence moves the live rate alone, so the instrument answers before the window opens.
+      warmupDownload: (bytes) => {
+        if (stage.phase === "warmup" && live() && bytes > 0) seat.shown += bytes;
+      },
+      warmupReceiver: (checkpoint) => {
+        if (stage.phase !== "warmup" || !live() || this.#stalled) return;
+        this.#live.receiver(server.id, checkpoint, this.#clock.read());
+        if (seat.ramp?.first.id === checkpoint.id) seat.ramp.last = checkpoint;
+        else seat.ramp = { first: checkpoint, last: checkpoint };
+      },
       download: (bytes) => {
         const flushed = seat.flushing && live();
         if (!(measuring() || flushed) || !stage.activity.transfer.includes("down") || !(bytes > 0)) return;
         seat.down += bytes;
+        seat.shown += bytes;
         // Flushed bytes were counted before the window closed: no evidence that the server moves now.
         if (!flushed) seat.progressAt.down = this.#clock.activeMs();
         this.#aggregate.addDownload(name as TransferStage, server.id, bytes);
@@ -727,7 +758,7 @@ export class Run {
         if (stage.phase !== "measuring") return;
         if (!seat.recovery) {
           seat.recovery = { abort: new AbortController(), stall };
-          this.#live.restart(server.id, seat.down, this.#clock.read());
+          this.#live.restart(server.id, seat.shown, this.#clock.read());
           this.#disturb(stage);
           this.#updateStalled();
         }
@@ -744,7 +775,7 @@ export class Run {
           return this.#updateStalled();
         }
         if (!seat.recovery) return;
-        this.#live.restart(server.id, seat.down, this.#clock.read());
+        this.#live.restart(server.id, seat.shown, this.#clock.read());
         seat.recovery.abort.abort();
         seat.recovery = null;
         this.#updateStalled();
@@ -793,7 +824,7 @@ export class Run {
   }
 
   #counts(stage: StageRun): Map<string, number> {
-    return new Map(active(stage).map((seat) => [seat.server.id, seat.down]));
+    return new Map(active(stage).map((seat) => [seat.server.id, seat.shown]));
   }
 
   #snapshot(stage: StageRun): Boundary {
@@ -838,8 +869,12 @@ export class Run {
     if (transfer.includes("down")) this.#boundary(stage);
     if (stage.activity.stage === "latency" || !this.#current(stage)) return;
     const seats = active(stage);
-    if (!this.#stalled) for (const seat of seats) this.#live.download(seat.server.id, seat.down, now);
-    const rate = (dir: Direction) => (!transfer.includes(dir) ? null : this.#stalled ? 0 : this.#live.rate(dir));
+    if (!this.#stalled) for (const seat of seats) this.#live.download(seat.server.id, seat.shown, now);
+    const rate = (dir: Direction) => {
+      if (!transfer.includes(dir)) return null;
+      if (this.#stalled) return 0;
+      return this.#live.rate(dir) ?? (stage.phase === "warmup" ? this.#ramp(stage, dir, now) : null);
+    };
     const lanes = (id: string) =>
       this.#servers.find((server) => server.id === id)?.prepared.throughput.target.transport === "fetch-stream"
         ? (stage.streams.get(id)?.streams.up ?? 0)
@@ -858,8 +893,27 @@ export class Run {
         bridgedUp: this.#stalled || !transfer.includes("up") ? null : this.#live.bridgedUpload(now, lanes),
         stalled: this.#stalled,
         quietMs: this.#stalled && quietMs >= QUIET_MS ? quietMs : null,
+        warmup: stage.phase === "warmup",
       },
     });
+  }
+
+  /** A warmup's rate before the live rate has its evidence: the average since the warmup began, which climbs as the
+      connections open; null until it spans RAMP_MS and moved bytes. */
+  #ramp(stage: StageRun, dir: Direction, now: number): number | null {
+    const seats = active(stage);
+    if (dir === "down") {
+      const ms = stage.ramp ? now - stage.ramp.at : 0;
+      const bytes = seats.reduce((sum, seat) => sum + seat.shown, 0) - (stage.ramp?.down ?? 0);
+      return ms >= RAMP_MS && bytes > 0 ? (bytes * 1000) / ms : null;
+    }
+    let sum = 0;
+    for (const { ramp } of seats) {
+      const ms = ramp ? (ramp.last.nanos - ramp.first.nanos) / 1e6 : 0;
+      if (ramp && ms >= RAMP_MS && ramp.last.bytes > ramp.first.bytes)
+        sum += ((ramp.last.bytes - ramp.first.bytes) * 1000) / ms;
+    }
+    return sum > 0 ? sum : null;
   }
 
   /** Silence and stall budgets count active time only, so a page gap is never a server's stall. */

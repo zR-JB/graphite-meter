@@ -136,6 +136,36 @@ test("an aborted latency stage keeps its summary after the run releases its repl
   expect(h.run.details().servers[0]!.latencyByStage.latency).toMatchObject({ probeCount: 4, p50Ms: 10 });
 });
 
+test("a warmup moves the live rate, which no result counts, and the window opens on that rate", async () => {
+  // 3 bytes per ms through the default 800 ms warmup, then the fixture's 1 byte per ms through the window. The live
+  // rate shows 500 ms after its first delivery, within the warmup.
+  let warming = () => {};
+  const h = setup(
+    [
+      {
+        id: "self",
+        rate: 1,
+        prepare: (_, events) => void (warming = clock.every(20, () => events.warmupDownload(60))),
+        measure: () => warming(),
+      },
+    ],
+    { download: true },
+    { warmupMs: 800, downloadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  const samples = h.events.flatMap((event) => (event.type === "live" ? [event.sample] : []));
+  const warm = samples.filter((sample) => sample.warmup);
+  expect(warm.length).toBeGreaterThan(2);
+  // Before the live rate has its evidence, the warmup's ramp already reads.
+  expect(warm.some((sample) => sample.t < 300 && (sample.down ?? 0) > 0)).toBe(true);
+  near(warm.at(-1)!.down!, 3_000);
+  expect(warm.every((sample) => sample.bytes === 0)).toBe(true);
+  // The first window sample is already moving: the rate carried over, nothing started from empty.
+  expect(samples.find((sample) => !sample.warmup)!.down).toBeGreaterThan(0);
+  near(result.download?.reportedBytesPerSec, 1_000);
+});
+
 test("one server runs every stage in order on one set of resources per stage", async () => {
   const h = setup(
     [{ id: "self", rate: 2, measure: probe(10, 4) }],

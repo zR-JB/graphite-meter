@@ -155,10 +155,9 @@ export function createRun(env: RunEnvironment) {
       switch (event.type) {
         case "phase":
           return batch(() => {
-            if (event.phase !== phase.peek()) {
-              stageBytes.set(0);
-              live.set(null);
-            }
+            if (event.phase !== phase.peek()) stageBytes.set(0);
+            // A stage's warmup hands its live rate on to its window; only a new stage starts without one.
+            if (event.stage !== stage.peek()) live.set(null);
             phase.set(event.phase);
             stage.set(event.stage);
             step.set(event.step);
@@ -172,6 +171,7 @@ export function createRun(env: RunEnvironment) {
           return stall.set(event.stall);
         case "live": {
           const { sample } = event;
+          if (sample.warmup) return live.set(sample);
           // A new stage counts from the last reading; a count that went backwards starts over.
           if (sample.stage !== stageBase.stage || sample.bytes < stageBase.last)
             stageBase = { stage: sample.stage, bytes: sample.bytes < stageBase.last ? 0 : stageBase.last, last: 0 };
