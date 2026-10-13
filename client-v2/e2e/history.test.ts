@@ -595,3 +595,27 @@ test("a result read late takes focus only while focus stays where it was chosen"
       .toBe(away ? "Settings" : "result-detail");
   }
 });
+
+test("closing a linked result far down the list returns to its row", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });
+  // Beside the list, and over it.
+  for (const [width, close] of [
+    [1280, "Close result"],
+    [700, "Back to results"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await history(page, id(60));
+    await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+    await page.getByRole("button", { name: close }).click();
+    const row = page.locator(`a[data-history-id="${id(60)}"]`);
+    await expect(row).toBeFocused();
+    expect(
+      await row.evaluate((link: HTMLElement) => {
+        const box = link.getBoundingClientRect();
+        const list = link.closest(".history-list")!.getBoundingClientRect();
+        return box.top >= list.top && box.bottom <= list.bottom;
+      }),
+    ).toBe(true);
+  }
+});

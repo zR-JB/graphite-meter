@@ -11,7 +11,7 @@ import {
 import { For, Show } from "../../lib/dom";
 import { animate, nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
-import { computed, effect, onCleanup, signal, untrack, type Read, type Signal } from "../../lib/signal";
+import { batch, computed, effect, onCleanup, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import { OUTCOME } from "../../view/words";
 import { activeModal, canFocus } from "../kit/focus";
 import { Icon } from "../kit/icon";
@@ -84,7 +84,13 @@ export function ResultsList(props: {
     const id = props.selectedId();
     return id === null ? -1 : ordered().findIndex((entry) => entry.id === id);
   });
-  const limit = computed(() => Math.min(shown(), Math.max(built(), selectedAt() + 1)));
+  // The result last closed: its row is built and shown, even past the pages asked for, so closing returns to it.
+  const returned = signal<string | null>(null);
+  const returnedAt = computed(() => {
+    const id = returned();
+    return id === null ? -1 : ordered().findIndex((entry) => entry.id === id);
+  });
+  const limit = computed(() => Math.min(shown(), Math.max(built(), selectedAt() + 1, returnedAt() + 1)));
   effect(() => {
     shown();
     untrack(() => {
@@ -124,6 +130,14 @@ export function ResultsList(props: {
     const closed = open;
     open = id;
     if (id !== null || closed === null) return;
+    untrack(() => {
+      const at = ordered().findIndex((entry) => entry.id === closed);
+      if (at < 0) return;
+      batch(() => {
+        props.pages.set(Math.max(props.pages(), Math.ceil((at + 1) / PAGE_ROWS)));
+        returned.set(closed);
+      });
+    });
     queueMicrotask(() => {
       if (activeModal() || props.selectedId.peek() !== null) return;
       const target =
