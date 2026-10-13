@@ -108,32 +108,69 @@
       font-weight: var(--w-strong);
     }
   }
-  /* 44 px coarse targets fit three direct actions to about 320 px, one to about 260 px. */
+  /* A row of N 44 px keys with their 4 px gaps needs 48 N + 46 px. History and Details fold into More where the
+     row they leave fits, and Theme too where it does not; the way back to a live run is one key more. */
   .topbar-more,
   .topbar [data-more] {
     display: none;
   }
-  @container topbar (max-width: 319px) {
-    .topbar.saving :is(.direct-history, .direct-details) {
-      display: none;
-    }
-    .topbar.saving .topbar-more {
-      display: block;
-    }
-    /* The Details item keeps the old client's name, as its URL does. */
-    .topbar.saving :is([data-more="history"], [data-more="endpoint"]) {
-      display: grid;
+  @container topbar (max-width: 333px) {
+    .topbar.saving:not(:has(.return-live)) {
+      & :is(.direct-history, .direct-details) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      /* The Details item keeps the old client's name, as its URL does. */
+      & :is([data-more="history"], [data-more="endpoint"]) {
+        display: grid;
+      }
     }
   }
-  @container topbar (max-width: 259px) {
-    .topbar :is(.direct-history, .direct-details, .direct-theme) {
+  @container topbar (max-width: 381px) {
+    .topbar.saving:has(.return-live) {
+      & :is(.direct-history, .direct-details) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & :is([data-more="history"], [data-more="endpoint"]) {
+        display: grid;
+      }
+    }
+  }
+  @container topbar (max-width: 285px) {
+    .topbar {
+      & :is(.direct-history, .direct-details, .direct-theme) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & [data-more] {
+        display: grid;
+      }
+    }
+  }
+  /* Narrower still, the way back to the live run, which names its stage and any recovery, stands for the dot. */
+  @container topbar (max-width: 285px) {
+    .topbar:has(.return-live) .connectivity {
       display: none;
     }
-    .topbar .topbar-more {
-      display: block;
-    }
-    .topbar [data-more] {
-      display: grid;
+  }
+  @container topbar (max-width: 333px) {
+    .topbar:has(.return-live) {
+      & :is(.direct-history, .direct-details, .direct-theme) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & [data-more] {
+        display: grid;
+      }
     }
   }
 

@@ -1,4 +1,4 @@
-import { closeSettings, home, open, openSettings, run } from "./fleet";
+import { baseConfig, closeSettings, home, open, openSettings, phase, ready, run } from "./fleet";
 import { expect, settled, test, type Locator, type Page } from "../../client/e2e/webview";
 
 const tip = (page: Page) => page.locator('[role="tooltip"]');
@@ -319,5 +319,32 @@ test("a graph's reading stays inside a narrow card wherever it reads", async (pa
         }),
       )
       .toBe(true);
+  }
+});
+
+test.chrome("a phone's top bar keeps every key in view, with a live run seen from History", async (page) => {
+  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  await open(page, home.http, {
+    config: { ...baseConfig, duration: { ...baseConfig.duration, latencyMs: 30_000 } },
+  });
+  await ready(page);
+  const overflow = () =>
+    page.evaluate(
+      () =>
+        Math.max(...[...document.querySelector(".topbar")!.children].map((key) => key.getBoundingClientRect().right)) -
+        innerWidth,
+    );
+  const widths = [280, 300, 320, 340, 360, 390];
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 800 });
+    expect(await overflow(), `idle at ${width}`).toBeLessThanOrEqual(0);
+  }
+  await page.press("r");
+  await expect(phase(page, "latency")).toHaveCount(1, { timeout: 10_000 });
+  await page.evaluate(() => (location.hash = "#/history"));
+  await expect(page.locator(".return-live")).toHaveCount(1);
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: 800 });
+    expect(await overflow(), `live at ${width}`).toBeLessThanOrEqual(0);
   }
 });
