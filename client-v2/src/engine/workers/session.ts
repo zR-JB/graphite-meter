@@ -13,10 +13,8 @@ type Upload = Extract<SessionCommand, { type: "upload" }>;
 
 /** A datagram loop settled within one microtask checkpoint would outrun the task carrying its own stop. */
 const YIELD_MS = 4;
-/** A datagram loop reads the clock, for its report window and its yield, once per this many datagrams. */
+/** An upload's datagram loop reads the clock, for its report window and its yield, once per this many datagrams. */
 const CLOCK_EVERY = 16;
-/** Bytes a datagram loop counted without a clock read are reported this soon at the latest. */
-const LATE_MS = 100;
 /** A flood of receiver progress reaches the page at most this often. */
 const RECORD_MS = 50;
 const UNESTABLISHED: EndReport = {
@@ -148,24 +146,13 @@ class Session {
     }
   }
 
+  /** Every datagram is counted with its own clock reading, so a cutoff knows which side of it each one fell on;
+      the reading also serves the report window and the yield. */
   async #readDatagrams(transport: WebTransport): Promise<void> {
-    let late: ReturnType<typeof setTimeout> | undefined;
     try {
       const reader = transport.datagrams.readable.getReader();
       let yielded = performance.now();
-      let unclocked = 0;
       for (let next = await reader.read(); !next.done; next = await reader.read()) {
-        if (++unclocked < CLOCK_EVERY) {
-          reports.add(next.value.byteLength);
-          // A slow link may bring the rest of the batch late; what it brought is still reported within LATE_MS.
-          late ??= setTimeout(() => {
-            late = undefined;
-            reports.count(0);
-          }, LATE_MS);
-          continue;
-        }
-        unclocked = 0;
-        // One clock read serves the report window and the yield.
         const now = performance.now();
         reports.count(next.value.byteLength, now);
         if (now - yielded < YIELD_MS) continue;
@@ -174,8 +161,6 @@ class Session {
       }
     } catch (error) {
       this.#broken(error);
-    } finally {
-      clearTimeout(late);
     }
   }
 

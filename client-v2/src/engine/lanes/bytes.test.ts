@@ -38,15 +38,17 @@ test("a flush reads the epoch's total as counted by its cutoff, from readings ke
   expect(reports.totalAt(10)).toEqual({ total: 89, at: 88 });
 });
 
-test("bytes counted without a clock reading reach a cutoff by its share of the time they could have arrived in", () => {
+test("a cutoff counts the bytes read by then, each at its own clock reading, whenever it is asked", () => {
   const reports = new ByteReports(() => {});
   reports.measure(1);
+  reports.flush(0);
   reports.count(1_000, 1_000);
-  // Sixteen datagrams' worth arrived after the count at 1,000 ms, by the time the flush asks at 1,010 ms.
-  for (let i = 0; i < 16; i++) reports.add(100);
-  expect(reports.totalAt(1_010, 1_010).total).toBe(2_600);
-  expect(reports.totalAt(1_005, 1_010).total).toBe(1_800);
-  expect(reports.totalAt(1_000, 1_010).total).toBe(1_000);
+  reports.count(100, 1_001);
+  expect(reports.totalAt(1_050)).toEqual({ total: 1_100, at: 1_050 });
+  // Bytes read after the cutoff stay out of it, however soon after.
+  reports.count(100, 1_080);
+  expect(reports.totalAt(1_050)).toEqual({ total: 1_100, at: 1_050 });
+  expect(reports.totalAt(1_080)).toEqual({ total: 1_200, at: 1_080 });
 });
 
 test("a lane's largest POST is v1's device-memory share divided across the lanes", () => {

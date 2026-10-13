@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import type { LaneCommand, ProbeCommand, SessionCommand } from "../../protocol/messages";
 import { elapse } from "../lanes/fakes.testutil";
 
@@ -242,69 +242,58 @@ test("a session relays a flood of receiver progress as its newest record every 5
   ]);
 });
 
-test("a datagram download reads the clock once per 16 datagrams and still counts every byte", async () => {
+const datagrams = async (epoch: number) => {
   const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
   session.send({
     type: "download",
     url: "https://peer.example/wt/download?datagrams=1",
     ticket: null,
     datagrams: true,
-    epoch: 0,
+    epoch,
   });
   const transport = FakeWebTransport.dialed.at(-1)!;
   transport.accept();
   await elapse(0);
-  const clock = spyOn(performance, "now");
+  return { session, transport };
+};
+
+test("a datagram download counts every byte", async () => {
+  const { session, transport } = await datagrams(0);
   for (let i = 0; i < 1_600; i++) transport.datagram(1_200);
   for (let turn = 0; turn < 10_000; turn++) await null;
-  expect(clock.mock.calls.length).toBeLessThanOrEqual(1_600 / 16 + 1);
-  clock.mockRestore();
   session.send({ type: "flush", at: performance.timeOrigin + performance.now() });
   const counted = session.posted.flatMap((report) => (report.type === "bytes" ? [report.bytes as number] : []));
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(1_600 * 1_200);
 });
 
-test("a final flush counts a datagram batch the loop has not read the clock for yet", async () => {
-  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
-  session.send({
-    type: "download",
-    url: "https://peer.example/wt/download?datagrams=1",
-    ticket: null,
-    datagrams: true,
-    epoch: 1,
-  });
-  const transport = FakeWebTransport.dialed.at(-1)!;
-  transport.accept();
-  await elapse(0);
+test("a final flush counts the datagrams read by its cutoff and none after, however late it is handled", async () => {
+  const { session, transport } = await datagrams(1);
+  await elapse(20);
   transport.datagram(1_200);
-  await elapse(0);
+  await elapse(10);
   const at = performance.timeOrigin + performance.now();
+  // A datagram read after the cutoff, and the flush handled 50 ms late.
+  await elapse(10);
+  transport.datagram(1_200);
+  await elapse(40);
   session.send({ type: "flush", at });
   expect(session.posted.find(({ type }) => type === "flushed")).toEqual({ type: "flushed", total: 1_200, at });
 });
 
-test("a slow datagram download reports what arrived within 100 ms, not after 16 datagrams", async () => {
-  const session = await boot<SessionCommand>("./session.ts", { WebTransport: FakeWebTransport });
-  session.send({
-    type: "download",
-    url: "https://peer.example/wt/download?datagrams=1",
-    ticket: null,
-    datagrams: true,
-    epoch: 0,
-  });
-  const transport = FakeWebTransport.dialed.at(-1)!;
-  transport.accept();
-  await elapse(0);
-  // Five datagrams a second: sixteen would take over three, past the run's 1.5 s silence rule.
-  const reported = () => session.posted.filter(({ type }) => type === "bytes").length;
+test("a slow datagram download reports each datagram as it arrives", async () => {
+  // Real time: the loop yields a task between datagrams, a message and then a timer.
+  jest.useRealTimers();
+  // Its own epoch: an earlier test's loop may still post into the shared port on real time.
+  const { session, transport } = await datagrams(7);
+  const reported = () => session.posted.filter((report) => report.type === "bytes" && report.epoch === 7).length;
+  // Five datagrams a second, each well past the report window.
+  await Bun.sleep(200);
   transport.datagram(1_200);
-  await elapse(0);
-  expect(reported()).toBe(0);
-  await elapse(100);
+  await Bun.sleep(20);
   expect(reported()).toBe(1);
-  await elapse(100);
+  await Bun.sleep(180);
   transport.datagram(1_200);
-  await elapse(100);
+  await Bun.sleep(20);
   expect(reported()).toBe(2);
 });
 
