@@ -185,6 +185,27 @@ test("the run key is never marked busy, as a start it prepares can still be canc
   expect(await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy"))).toBe(false);
 });
 
+test.chrome("a held shortcut acts on its press, and its repeats do nothing", async (page) => {
+  await open(page);
+  await ready(page);
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  const key = (type: string, autoRepeat = false) =>
+    page.cdp("Input.dispatchKeyEvent", {
+      type,
+      key: "h",
+      code: "KeyH",
+      text: type === "keyUp" ? undefined : "h",
+      windowsVirtualKeyCode: 72,
+      autoRepeat,
+    });
+  await key("keyDown");
+  // Five repeats: had each toggled, History would end closed.
+  for (let i = 0; i < 5; i++) await key("keyDown", true);
+  await key("keyUp");
+  await expect(page.locator(".history-workspace")).toHaveCount(1);
+  expect(await page.evaluate(() => location.hash)).toContain("history");
+});
+
 test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },

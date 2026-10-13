@@ -352,7 +352,8 @@ export function createShell(app: App, layout: Layout) {
     });
     if (!order) return;
     event.preventDefault();
-    run(order);
+    // Every shortcut toggles or acts once: a held key acts on its press, and its repeats do nothing.
+    if (!event.repeat) run(order);
   }
   // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first; a
   // sign-out asked already.
