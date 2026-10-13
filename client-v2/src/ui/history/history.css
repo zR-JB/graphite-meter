@@ -84,6 +84,11 @@
       scroll-timeline: --sheet block;
     }
   }
+  /* A result kept on show while the next is read dims, on its entry fade, unless the read is quick. */
+  .detail-pane[inert] {
+    opacity: 0.55;
+    transition-delay: 120ms;
+  }
   @container history (min-width: 821px) {
     /* The list keeps its share of the width; at any width both panes keep their minimum. */
     .has-detail {

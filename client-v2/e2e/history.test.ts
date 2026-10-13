@@ -502,3 +502,96 @@ test("starting over asks before clearing a result History refused to save", asyn
   await ask.getByRole("button", { name: "Keep result" }).click();
   await expect(runButton(page, "Run again")).toBeVisible();
 });
+
+/** Holds History's read of each result listed in `window.hold` until `release`, once the read is under way. */
+const holdReads = (page: Page) =>
+  page.addInitScript(() => {
+    const w = window as any;
+    w.hold = new Set<string>();
+    const held: (() => void)[] = [];
+    w.waiting = () => held.length;
+    w.release = () => {
+      w.hold.clear();
+      for (const deliver of held.splice(0)) deliver();
+    };
+    const get = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      const real = get.call(this, key);
+      if (!w.hold.has(key)) return real;
+      const late: any = { result: undefined, error: null, onsuccess: null, onerror: null };
+      real.onsuccess = () => {
+        late.result = real.result;
+        held.push(() => late.onsuccess?.());
+      };
+      real.onerror = () => {
+        late.error = real.error;
+        held.push(() => late.onerror?.());
+      };
+      return late;
+    };
+  });
+
+async function release(page: Page) {
+  await expect.poll(() => page.evaluate(() => (window as any).waiting())).toBe(1);
+  await page.evaluate(() => (window as any).release());
+}
+
+test("a result kept on show while another is read takes no action, and Delete names its result", async (page) => {
+  await holdReads(page);
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2)] });
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  await page.evaluate((held) => (window as any).hold.add(held), id(2));
+  await page.locator(`a[data-history-id="${id(2)}"]`).click();
+  // The first result stays on show while the second is read, and its Delete belongs to it alone.
+  await expect(page.locator(".detail-pane[inert] .result-detail")).toHaveCount(1);
+  await page
+    .locator('.detail-pane button[aria-label="Delete this result"]')
+    .evaluate((button: HTMLElement) => button.click());
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await release(page);
+  await expect(page.locator(".detail-pane:not([inert]) .result-detail")).toHaveCount(1);
+  await page.getByRole("button", { name: "Delete this result" }).click();
+  const prompt = page.getByRole("alertdialog", { name: "Delete this result?" });
+  const when = await page.evaluate(
+    (at) =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(at),
+    base - 2 * 60_000,
+  );
+  await expect(prompt).toContainText(when);
+  await prompt.getByRole("button", { name: "Delete result" }).click();
+  await expect.poll(async () => (await stored(page)).records.map((row: any) => row.id)).toEqual([id(1)]);
+});
+
+test("a result read late takes focus only while focus stays where it was chosen", async (page) => {
+  await holdReads(page);
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2), record(3)] });
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  for (const [result, away] of [
+    [id(2), false],
+    [id(3), true],
+  ] as const) {
+    await page.evaluate((held) => (window as any).hold.add(held), result);
+    await page.locator(`a[data-history-id="${result}"]`).click();
+    // Focus moves to a control outside History before the read lands.
+    if (away)
+      await page.getByRole("button", { name: "Settings", exact: true }).evaluate((key: HTMLElement) => key.focus());
+    await release(page);
+    await expect(page.locator(".detail-pane:not([inert]) .result-detail")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.className),
+      )
+      .toBe(away ? "Settings" : "result-detail");
+  }
+});

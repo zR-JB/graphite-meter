@@ -16,7 +16,7 @@ import { MoreMenu } from "../kit/menu";
 import { Splitter } from "../kit/splitter";
 import type { Shell } from "../shell/api";
 import { createArchive, type Selected } from "./archive";
-import { ResultDetail } from "./detail";
+import { ResultDetail, TITLE } from "./detail";
 import { ResultsList, type Sort } from "./list";
 import { span } from "./model";
 import { ViewControl } from "./view";
@@ -33,7 +33,7 @@ const dismissals = new WeakMap<HistoryRepository, number>();
 const CONFIRM = {
   delete: {
     title: "Delete this result?",
-    description: "This saved result is permanently removed from this browser.",
+    description: (when: number) => `The result from ${TITLE.format(when)} is permanently removed from this browser.`,
     cancel: "Keep result",
     confirm: "Delete result",
   },
@@ -44,7 +44,7 @@ const CONFIRM = {
     confirm: "Clear history",
   },
 };
-type Action = { kind: "delete"; id: string } | { kind: "clear" };
+type Action = { kind: "delete"; id: string; when: number } | { kind: "clear" };
 
 /** Built as History opens and disposed as it closes, which stops an archive read still under way. */
 export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Read<string | null> }): Node {
@@ -112,7 +112,8 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     actionError.set("");
     try {
       if (action.kind === "clear") await app.history.clear();
-      else await app.history.delete(action.id);
+      else if (action.id === props.selectedId.peek()) await app.history.delete(action.id);
+      else return;
     } catch {
       if (!disposed) actionError.set("History could not be changed. Try again.");
       return;
@@ -172,6 +173,22 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
 
   // The result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
+  // Where focus was as a result was chosen: its pane, built once the result is read, takes focus only while focus
+  // is still there and nothing outside History was used since.
+  let intent: { id: string; from: Element | null } | null = null;
+  effect(() => {
+    const id = props.selectedId();
+    untrack(() => (intent = id === null ? null : { id, from: document.activeElement }));
+  });
+  const elsewhere = (event: Event) => {
+    if (!workspace.contains(event.target as Node)) intent = null;
+  };
+  document.addEventListener("pointerdown", elsewhere, true);
+  document.addEventListener("focusin", elsewhere);
+  onCleanup(() => {
+    document.removeEventListener("pointerdown", elsewhere, true);
+    document.removeEventListener("focusin", elsewhere);
+  });
   /** A result whose views threw: it reads as unreadable for the rest of the visit. */
   const broken = signal<string | null>(null);
   function DetailPane(selected: Selected): Node | null {
@@ -188,7 +205,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
           app={app}
           record={record}
           onClose={() => shell.history(null)}
-          onDelete={(from) => ask({ kind: "delete", id: record.id }, from)}
+          onDelete={(from) => {
+            if (props.selectedId.peek() === record.id)
+              ask({ kind: "delete", id: record.id, when: record.completedAt }, from);
+          }}
           onBroken={() => broken.set(record.id)}
         />
       ) as HTMLElement;
@@ -199,11 +219,13 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     if (focused !== record.id) {
       focused = record.id;
       queueMicrotask(() => {
-        if (!activeModal() && canFocus(article)) article.focus({ preventScroll: true });
+        const owed = intent?.id === record.id && [intent.from, document.body, null].includes(document.activeElement);
+        if (owed && !activeModal() && canFocus(article)) article.focus({ preventScroll: true });
       });
     }
+    // Kept on show while another result is read, it takes no input: its actions belong to the result it shows.
     return (
-      <div class="detail-pane enter" data-flip="history-detail">
+      <div class="detail-pane enter" data-flip="history-detail" inert={() => props.selectedId() !== record.id}>
         {article}
       </div>
     );
@@ -446,7 +468,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         open={asking}
         id="history-confirm"
         title={() => CONFIRM[asked().kind].title}
-        description={() => CONFIRM[asked().kind].description}
+        description={() => {
+          const action = asked();
+          return action.kind === "delete" ? CONFIRM.delete.description(action.when) : CONFIRM.clear.description;
+        }}
         cancel={() => CONFIRM[asked().kind].cancel}
         confirm={() => CONFIRM[asked().kind].confirm}
         invoker={() => invoker}

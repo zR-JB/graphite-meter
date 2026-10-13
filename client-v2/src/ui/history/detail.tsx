@@ -28,7 +28,7 @@ import { tip } from "../kit/tip";
 import { LatencyProfileView, ResultSummary, type LaneInput } from "../measure";
 import { accountingNotice } from "../measure/lanes-model";
 
-const TITLE = new Intl.DateTimeFormat(undefined, {
+export const TITLE = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   month: "short",
   day: "numeric",
