@@ -1,30 +1,69 @@
 //! HTTP/3 frame and stream types (RFC 9114 §6.2, §7.2), read incrementally from chunks of any size.
 use crate::varint::{self, Partial};
 use bytes::{Buf, BufMut, Bytes};
+use std::marker::PhantomData;
 
-pub(crate) const DATA: u64 = 0x00;
-pub(crate) const HEADERS: u64 = 0x01;
-pub(crate) const CANCEL_PUSH: u64 = 0x03;
-pub(crate) const SETTINGS: u64 = 0x04;
-pub(crate) const PUSH_PROMISE: u64 = 0x05;
-pub(crate) const GOAWAY: u64 = 0x07;
-pub(crate) const MAX_PUSH_ID: u64 = 0x0d;
-/// Opens a peer's WebTransport bidirectional stream in place of a frame type; elsewhere it is H3_FRAME_ERROR.
-pub(crate) const WEBTRANSPORT_BIDI: u64 = 0x41;
-
-pub(crate) const CONTROL_STREAM: u64 = 0x00;
-pub(crate) const PUSH_STREAM: u64 = 0x01;
-pub(crate) const ENCODER_STREAM: u64 = 0x02;
-pub(crate) const DECODER_STREAM: u64 = 0x03;
-pub(crate) const WEBTRANSPORT_STREAM: u64 = 0x54;
-
-/// Frame types reserved for their HTTP/2 meaning; receipt is H3_FRAME_UNEXPECTED.
-pub(crate) fn is_http2(kind: u64) -> bool {
-    matches!(kind, 0x02 | 0x06 | 0x08 | 0x09)
+/// The type that leads a frame, a capsule or a unidirectional stream, each its own space of varint codes.
+pub(crate) trait Kind: Copy {
+    fn from_wire(code: u64) -> Self;
+    fn wire(self) -> u64;
 }
 
-pub(crate) fn put_header(kind: u64, length: u64, output: &mut impl BufMut) {
-    varint::put(kind, output);
+/// A frame type (RFC 9114 §7.2); peers may send ones not named here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FrameType(pub(crate) u64);
+
+impl FrameType {
+    pub(crate) const DATA: Self = Self(0x00);
+    pub(crate) const HEADERS: Self = Self(0x01);
+    pub(crate) const CANCEL_PUSH: Self = Self(0x03);
+    pub(crate) const SETTINGS: Self = Self(0x04);
+    pub(crate) const PUSH_PROMISE: Self = Self(0x05);
+    pub(crate) const GOAWAY: Self = Self(0x07);
+    pub(crate) const MAX_PUSH_ID: Self = Self(0x0d);
+    /// Opens a peer's WebTransport bidirectional stream in place of a frame type; elsewhere it is H3_FRAME_ERROR.
+    pub(crate) const WEBTRANSPORT_BIDI: Self = Self(0x41);
+
+    /// Reserved for its HTTP/2 meaning; receipt is H3_FRAME_UNEXPECTED.
+    pub(crate) fn is_http2(self) -> bool {
+        matches!(self.0, 0x02 | 0x06 | 0x08 | 0x09)
+    }
+}
+
+impl Kind for FrameType {
+    fn from_wire(code: u64) -> Self {
+        Self(code)
+    }
+
+    fn wire(self) -> u64 {
+        self.0
+    }
+}
+
+/// A unidirectional stream type (RFC 9114 §6.2); peers may open ones not named here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StreamType(pub(crate) u64);
+
+impl StreamType {
+    pub(crate) const CONTROL: Self = Self(0x00);
+    pub(crate) const PUSH: Self = Self(0x01);
+    pub(crate) const ENCODER: Self = Self(0x02);
+    pub(crate) const DECODER: Self = Self(0x03);
+    pub(crate) const WEBTRANSPORT: Self = Self(0x54);
+}
+
+impl Kind for StreamType {
+    fn from_wire(code: u64) -> Self {
+        Self(code)
+    }
+
+    fn wire(self) -> u64 {
+        self.0
+    }
+}
+
+pub(crate) fn put_header(kind: impl Kind, length: u64, output: &mut impl BufMut) {
+    varint::put(kind.wire(), output);
     varint::put(length, output);
 }
 
@@ -37,10 +76,11 @@ pub(crate) struct Header {
 }
 
 impl Header {
-    pub(crate) fn new(first: u64, second: u64) -> Self {
+    /// `kind`, then a frame's length, or the session ID after a WebTransport stream's type.
+    pub(crate) fn new(kind: impl Kind, second: u64) -> Self {
         let mut bytes = [0; 16];
         let mut rest = &mut bytes[..];
-        put_header(first, second, &mut rest);
+        put_header(kind, second, &mut rest);
         let end = (16 - rest.len()) as u8;
         Self { bytes, end, written: 0 }
     }
@@ -86,11 +126,12 @@ impl Pair {
     }
 
     /// A unidirectional stream's type, followed by a session ID on WebTransport streams.
-    pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(u64, Option<u64>)> {
-        match self.first.map_or_else(|| self.varint.read(input), Some)? {
-            WEBTRANSPORT_STREAM => {
-                self.first = Some(WEBTRANSPORT_STREAM);
-                self.read(input).map(|(kind, session)| (kind, Some(session)))
+    pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(StreamType, Option<u64>)> {
+        match StreamType(self.first.map_or_else(|| self.varint.read(input), Some)?) {
+            StreamType::WEBTRANSPORT => {
+                self.first = Some(StreamType::WEBTRANSPORT.0);
+                self.read(input)
+                    .map(|(_, session)| (StreamType::WEBTRANSPORT, Some(session)))
             }
             kind => Some((kind, None)),
         }
@@ -98,29 +139,30 @@ impl Pair {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Piece {
+pub(crate) enum Piece<K> {
     Header {
-        kind: u64,
+        kind: K,
         length: u64,
     },
     /// Part of the current frame's payload, sliced from the input without copying.
     Payload(Bytes),
 }
 
-/// Splits a stream into frame headers and payload slices.
+/// Splits a stream into headers of `K`, frame or capsule types, and payload slices.
 #[derive(Default)]
-pub(crate) struct Reader {
+pub(crate) struct Reader<K> {
     header: Pair,
     /// Payload bytes the current frame still owes.
     pub(crate) remaining: u64,
+    kind: PhantomData<K>,
 }
 
-impl Reader {
-    pub(crate) fn next(&mut self, input: &mut Bytes) -> Option<Piece> {
+impl<K: Kind> Reader<K> {
+    pub(crate) fn next(&mut self, input: &mut Bytes) -> Option<Piece<K>> {
         if self.remaining == 0 {
             let (kind, length) = self.header.read(input)?;
             self.remaining = length;
-            return Some(Piece::Header { kind, length });
+            return Some(Piece::Header { kind: K::from_wire(kind), length });
         }
         if input.is_empty() {
             return None;
@@ -143,13 +185,19 @@ mod tests {
     #[test]
     fn frames_read_the_same_from_every_split() {
         let mut stream = Vec::new();
-        for (kind, payload) in [(HEADERS, &b"head"[..]), (DATA, b""), (0x21 + 0x1f * 1000, b"grease"), (DATA, b"x")] {
+        let grease = FrameType(0x21 + 0x1f * 1000);
+        let expected = [
+            (FrameType::HEADERS, &b"head"[..]),
+            (FrameType::DATA, b""),
+            (grease, b"grease"),
+            (FrameType::DATA, b"x"),
+        ];
+        for (kind, payload) in expected {
             put_header(kind, payload.len() as u64, &mut stream);
             stream.extend_from_slice(payload);
         }
-        let expected = [(HEADERS, &b"head"[..]), (DATA, b""), (0x21 + 0x1f * 1000, b"grease"), (DATA, b"x")];
         for split in 0..=stream.len() {
-            let mut reader = Reader::default();
+            let mut reader = Reader::<FrameType>::default();
             let mut frames = Vec::new();
             for part in [&stream[..split], &stream[split..]] {
                 let mut part = Bytes::copy_from_slice(part);
@@ -168,7 +216,7 @@ mod tests {
             assert_eq!(frames, expected, "split {split}");
             assert!(reader.at_boundary());
         }
-        let mut reader = Reader::default();
+        let mut reader = Reader::<FrameType>::default();
         reader.next(&mut Bytes::from_static(&[0x00, 0x02, 0x61]));
         assert!(!reader.at_boundary(), "a truncated payload");
     }

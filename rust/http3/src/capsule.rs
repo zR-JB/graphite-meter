@@ -2,16 +2,30 @@
 use crate::{code::Code, frame, varint};
 use bytes::{Buf, BufMut, Bytes};
 
-const CLOSE: u64 = 0x2843;
+/// A capsule type (RFC 9297 §3.2): laid out as a frame, but its own space of codes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CapsuleType(u64);
+
+impl frame::Kind for CapsuleType {
+    fn from_wire(code: u64) -> Self {
+        Self(code)
+    }
+
+    fn wire(self) -> u64 {
+        self.0
+    }
+}
+
+const CLOSE: CapsuleType = CapsuleType(0x2843);
 /// WT_MAX_STREAM_DATA and WT_STREAM_DATA_BLOCKED exist only over HTTP/2.
-const HTTP2_ONLY: [u64; 2] = [0x190b4d3e, 0x190b4d42];
+const HTTP2_ONLY: [CapsuleType; 2] = [CapsuleType(0x190b4d3e), CapsuleType(0x190b4d42)];
 pub(crate) const MAX_REASON: usize = 1024;
 
 /// Reads CLOSE capsules, as code and reason, from a CONNECT stream's DATA; others, DRAIN included, skip unbuffered.
 #[derive(Default)]
 pub(crate) struct Reader {
-    frames: frame::Reader,
-    kind: u64,
+    frames: frame::Reader<CapsuleType>,
+    kind: CapsuleType,
     close: Vec<u8>,
 }
 
@@ -96,9 +110,9 @@ mod tests {
 
     #[test]
     fn every_split_skips_flow_control_grease_and_drain() {
-        let mut bytes = capsule(0x190b4d3d, &[0x80, 0, 0, 1]);
-        bytes.extend(capsule(0x17 + 41 * 3, b"grease"));
-        bytes.extend(capsule(0x78ae, b""));
+        let mut bytes = capsule(CapsuleType(0x190b4d3d), &[0x80, 0, 0, 1]);
+        bytes.extend(capsule(CapsuleType(0x17 + 41 * 3), b"grease"));
+        bytes.extend(capsule(CapsuleType(0x78ae), b""));
         bytes.extend(close(0xf123_4567, "done"));
         let expected = vec![(0xf123_4567, "done".into())];
         for split in 0..=bytes.len() {
@@ -115,8 +129,8 @@ mod tests {
             capsule(CLOSE, &[0; 3]),
             capsule(CLOSE, &[&[0; 4][..], &long].concat()),
             capsule(CLOSE, &[0, 0, 0, 1, 0xff]),
-            capsule(0x190b4d3e, &[0]),
-            capsule(0x190b4d42, &[0]),
+            capsule(CapsuleType(0x190b4d3e), &[0]),
+            capsule(CapsuleType(0x190b4d42), &[0]),
         ] {
             assert_eq!(read_all([bytes]), Err(Code::H3_MESSAGE_ERROR));
         }

@@ -5,7 +5,7 @@ use crate::{
     driver::{Role, Shared},
     error::Error,
     fields,
-    frame::{self, Header},
+    frame::{self, FrameType, Header},
     message::{Event, Message},
 };
 use bytes::Bytes;
@@ -48,7 +48,7 @@ impl RequestStream {
         (send_charge, recv_charge): (Charge, Charge),
     ) -> Self {
         shared.hold(2);
-        let message = Message::new(shared.field_limit(), shared.role == Role::Client);
+        let message = Message::new(shared.field_limit(), shared.role.peer());
         Self {
             send: SendHalf {
                 stream: send,
@@ -241,33 +241,33 @@ impl SendHalf {
     }
 
     /// Queues a frame; the previous one must be written.
-    pub(crate) fn queue(&mut self, kind: u64, payload: Bytes) {
+    pub(crate) fn queue(&mut self, kind: FrameType, payload: Bytes) {
         (self.header, self.payload) = (Header::new(kind, payload.len() as u64), payload);
     }
 
     /// Queues a frame after the pending one, which may be partly written.
-    pub(crate) fn queue_after(&mut self, kind: u64, payload: &[u8]) {
+    pub(crate) fn queue_after(&mut self, kind: FrameType, payload: &[u8]) {
         let mut frames = Vec::from(&self.payload[..]);
         frame::put_header(kind, payload.len() as u64, &mut frames);
         frames.extend_from_slice(payload);
         self.payload = frames.into();
     }
 
-    pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
+    pub(crate) async fn frame(&mut self, kind: FrameType, payload: Bytes) -> Result<(), Error> {
         poll_fn(|cx| self.poll_ready(cx)).await?;
         self.queue(kind, payload);
         poll_fn(|cx| self.poll_ready(cx)).await
     }
 
     pub async fn send_data(&mut self, data: Bytes) -> Result<(), Error> {
-        self.frame(frame::DATA, data).await
+        self.frame(FrameType::DATA, data).await
     }
 
     /// Queues a response head within the peer's field section limit.
     pub(crate) fn queue_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
         let (parts, ()) = response.into_parts();
         let section = fields::encode_response(&parts, self.shared.peer_field_limit()).map_err(|_| Error::Refused)?;
-        self.queue(frame::HEADERS, section.into());
+        self.queue(FrameType::HEADERS, section.into());
         Ok(())
     }
 

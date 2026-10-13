@@ -1,8 +1,9 @@
 //! A request stream's frames (RFC 9114 §4.1): HEADERS, DATA, optional trailers, then FIN.
 use crate::{
     code::{Code, WtCode},
+    driver::Role,
     fields,
-    frame::{self, Piece},
+    frame::{FrameType, Piece, Reader},
     qpack,
 };
 use bytes::Bytes;
@@ -24,10 +25,10 @@ enum Phase {
 
 #[derive(Default)]
 pub(crate) struct Message {
-    frames: frame::Reader,
+    frames: Reader<FrameType>,
     phase: Phase,
     started: bool,
-    kind: u64,
+    kind: FrameType,
     /// A field section split across chunks; its capacity is the frame's declared length.
     section: Vec<u8>,
     limit: u64,
@@ -38,8 +39,9 @@ pub(crate) struct Message {
 }
 
 impl Message {
-    pub(crate) fn new(limit: u64, response: bool) -> Self {
-        Self { limit, response, ..Self::default() }
+    /// A message `peer` sends: a server sends responses.
+    pub(crate) fn new(limit: u64, peer: Role) -> Self {
+        Self { limit, response: peer == Role::Server, ..Self::default() }
     }
 
     /// Takes a response head: `None` for an interim one, restarting the message, else the final one, bounded by status.
@@ -51,7 +53,7 @@ impl Message {
         let head = fields::decode_response(section, self.limit).map_err(qpack::Invalid::code)?;
         let status = head.message.status();
         if status.is_informational() {
-            *self = Self::new(self.limit, true);
+            *self = Self::new(self.limit, Role::Server);
             return Ok(None);
         }
         // A successful CONNECT ignores content-length (RFC 9110 §9.3.6); these have no content (RFC 9114 §4.1.2).
@@ -81,45 +83,47 @@ impl Message {
         Ok(None)
     }
 
-    fn header(&mut self, kind: u64, length: u64) -> Result<Option<Event>, Code> {
+    fn header(&mut self, kind: FrameType, length: u64) -> Result<Option<Event>, Code> {
         // The WebTransport signal may open a client's stream, before any frame.
         let opening = !std::mem::replace(&mut self.started, true) && !self.response;
         self.kind = kind;
         match (kind, self.phase) {
-            (frame::HEADERS, Phase::Head | Phase::Body) if length > self.limit => Err(Code::H3_EXCESSIVE_LOAD),
-            (frame::HEADERS, Phase::Head | Phase::Body) if length == 0 => Ok(Some(self.fields(Bytes::new()))),
-            (frame::HEADERS, Phase::Head | Phase::Body) | (frame::DATA, Phase::Body) => Ok(None),
-            (frame::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
-            (frame::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => Err(Code::H3_ID_ERROR),
+            (FrameType::HEADERS, Phase::Head | Phase::Body) if length > self.limit => Err(Code::H3_EXCESSIVE_LOAD),
+            (FrameType::HEADERS, Phase::Head | Phase::Body) if length == 0 => Ok(Some(self.fields(Bytes::new()))),
+            (FrameType::HEADERS, Phase::Head | Phase::Body) | (FrameType::DATA, Phase::Body) => Ok(None),
+            (FrameType::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
+            (FrameType::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => Err(Code::H3_ID_ERROR),
             // No route takes a peer's WebTransport stream: it is refused like a cancelled lane.
-            (frame::WEBTRANSPORT_BIDI, _) => Err(WtCode(0).to_http()),
+            (FrameType::WEBTRANSPORT_BIDI, _) => Err(WtCode(0).to_http()),
             // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
-            (frame::PUSH_PROMISE, _) if self.response => Err(Code::H3_ID_ERROR),
+            (FrameType::PUSH_PROMISE, _) if self.response => Err(Code::H3_ID_ERROR),
             (
-                frame::DATA
-                | frame::HEADERS
-                | frame::SETTINGS
-                | frame::GOAWAY
-                | frame::MAX_PUSH_ID
-                | frame::CANCEL_PUSH
-                | frame::PUSH_PROMISE,
+                FrameType::DATA
+                | FrameType::HEADERS
+                | FrameType::SETTINGS
+                | FrameType::GOAWAY
+                | FrameType::MAX_PUSH_ID
+                | FrameType::CANCEL_PUSH
+                | FrameType::PUSH_PROMISE,
                 _,
             ) => Err(Code::H3_FRAME_UNEXPECTED),
-            (kind, _) if frame::is_http2(kind) => Err(Code::H3_FRAME_UNEXPECTED),
+            (kind, _) if kind.is_http2() => Err(Code::H3_FRAME_UNEXPECTED),
             _ => Ok(None),
         }
     }
 
     fn payload(&mut self, payload: Bytes) -> Result<Option<Event>, Code> {
         match self.kind {
-            frame::DATA => {
+            FrameType::DATA => {
                 if let Some(owed) = &mut self.owed {
                     *owed = owed.checked_sub(payload.len() as u64).ok_or(Code::H3_MESSAGE_ERROR)?;
                 }
                 Ok(Some(Event::Data(payload)))
             }
-            frame::HEADERS if self.frames.remaining == 0 && self.section.is_empty() => Ok(Some(self.fields(payload))),
-            frame::HEADERS => {
+            FrameType::HEADERS if self.frames.remaining == 0 && self.section.is_empty() => {
+                Ok(Some(self.fields(payload)))
+            }
+            FrameType::HEADERS => {
                 if self.section.is_empty() {
                     self.section
                         .reserve_exact(payload.len() + self.frames.remaining as usize);
@@ -175,7 +179,7 @@ mod tests {
     use crate::testing::{frame, section};
 
     fn head(fields: &[(&str, &str)]) -> Vec<u8> {
-        frame(frame::HEADERS, &section(fields))
+        frame(FrameType::HEADERS, &section(fields))
     }
 
     /// Reads `bytes` in chunks of `chunk` bytes, then FIN; the events and how the stream ends.
@@ -196,16 +200,21 @@ mod tests {
     }
 
     fn request(bytes: &[u8]) -> Result<Vec<Event>, Code> {
-        let (events, end) = read(&mut Message::new(4096, false), bytes, bytes.len().max(1));
+        let (events, end) = read(&mut Message::new(4096, Role::Client), bytes, bytes.len().max(1));
         end.map(|()| events)
     }
 
     #[test]
     fn a_request_reads_the_same_in_any_chunks() {
         let section = head(&[(":method", "POST")]);
-        let bytes = [section.clone(), frame(frame::DATA, b"body"), frame(0x21, b"grease"), head(&[("x", "1")])];
+        let bytes = [
+            section.clone(),
+            frame(FrameType::DATA, b"body"),
+            frame(FrameType(0x21), b"grease"),
+            head(&[("x", "1")]),
+        ];
         for chunk in [1, 2, 7, 1024] {
-            let (events, end) = read(&mut Message::new(4096, false), &bytes.concat(), chunk);
+            let (events, end) = read(&mut Message::new(4096, Role::Client), &bytes.concat(), chunk);
             assert_eq!(end, Ok(()));
             let data: Vec<u8> = events
                 .iter()
@@ -224,28 +233,28 @@ mod tests {
     fn frame_decisions_on_a_request_stream() {
         let get = head(&[(":method", "GET")]);
         for (bytes, code) in [
-            (frame(frame::DATA, b"body"), Code::H3_FRAME_UNEXPECTED),
+            (frame(FrameType::DATA, b"body"), Code::H3_FRAME_UNEXPECTED),
             ([get.clone(), head(&[]), head(&[])].concat(), Code::H3_FRAME_UNEXPECTED),
-            ([get.clone(), frame(frame::PUSH_PROMISE, &[0])].concat(), Code::H3_FRAME_UNEXPECTED),
-            (frame(frame::HEADERS, &[0; 4097]), Code::H3_EXCESSIVE_LOAD),
-            ([get.clone(), frame(frame::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
-            (frame(frame::WEBTRANSPORT_BIDI, &[0; 2]), Code::H3_ID_ERROR),
-            (frame(frame::WEBTRANSPORT_BIDI, &[0; 4]), WtCode(0).to_http()),
+            ([get.clone(), frame(FrameType::PUSH_PROMISE, &[0])].concat(), Code::H3_FRAME_UNEXPECTED),
+            (frame(FrameType::HEADERS, &[0; 4097]), Code::H3_EXCESSIVE_LOAD),
+            ([get.clone(), frame(FrameType::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
+            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 2]), Code::H3_ID_ERROR),
+            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 4]), WtCode(0).to_http()),
             (get[..get.len() - 1].to_vec(), Code::H3_FRAME_ERROR),
-            (frame(0x21, b"grease"), Code::H3_REQUEST_INCOMPLETE),
+            (frame(FrameType(0x21), b"grease"), Code::H3_REQUEST_INCOMPLETE),
         ] {
             assert_eq!(request(&bytes), Err(code), "{bytes:x?}");
         }
-        assert_eq!(request(&frame(frame::HEADERS, &[])), Ok(vec![Event::Head(Bytes::new())]));
+        assert_eq!(request(&frame(FrameType::HEADERS, &[])), Ok(vec![Event::Head(Bytes::new())]));
     }
 
     #[test]
     fn responses_restart_after_interim_heads_and_bound_their_content() {
-        let mut message = Message::new(4096, true);
-        let push = frame(frame::PUSH_PROMISE, &[0, 0, 0]);
+        let mut message = Message::new(4096, Role::Server);
+        let push = frame(FrameType::PUSH_PROMISE, &[0, 0, 0]);
         assert_eq!(read(&mut message, &push, push.len()).1, Err(Code::H3_ID_ERROR));
         let section = |status| section(&[(":status", status), ("content-length", "2")]);
-        let mut message = Message::new(4096, true);
+        let mut message = Message::new(4096, Role::Server);
         assert!(matches!(message.response(&section("103"), &http::Method::GET), Ok(None)), "interim");
         for (method, status, body, end) in [
             (http::Method::GET, "200", &b"12"[..], Ok(())),
@@ -253,12 +262,12 @@ mod tests {
             (http::Method::HEAD, "200", b"", Ok(())),
             (http::Method::CONNECT, "200", b"capsules", Ok(())),
         ] {
-            let mut message = Message::new(4096, true);
+            let mut message = Message::new(4096, Role::Server);
             message
-                .next(&mut Bytes::from(frame(frame::HEADERS, &section(status))))
+                .next(&mut Bytes::from(frame(FrameType::HEADERS, &section(status))))
                 .unwrap();
             assert!(message.response(&section(status), &method).unwrap().is_some());
-            let data = frame(frame::DATA, body);
+            let data = frame(FrameType::DATA, body);
             assert_eq!(read(&mut message, &data, data.len()).1, end, "{method} {status}");
         }
     }

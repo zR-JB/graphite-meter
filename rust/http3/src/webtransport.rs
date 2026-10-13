@@ -7,7 +7,7 @@ use crate::{
     code::{Code, WtCode},
     driver::Shared,
     error::Error,
-    frame::{self, Header},
+    frame::{FrameType, Header, StreamType},
     settings::Dialect,
     stream::{RequestStream, poll_write_header},
 };
@@ -396,7 +396,7 @@ impl Connect {
             // An unwritten 200 head goes first.
             self.stream
                 .send
-                .queue_after(frame::DATA, &capsule::close(code, &reason));
+                .queue_after(FrameType::DATA, &capsule::close(code, &reason));
             self.end(Ok((code, reason)));
             self.closed_here = true;
         }
@@ -683,7 +683,7 @@ impl SendStream {
         let stream = shared.quic.open_uni().await?;
         let lane = Lane {
             stream,
-            header: Header::new(frame::WEBTRANSPORT_STREAM, id),
+            header: Header::new(StreamType::WEBTRANSPORT, id),
             code: LANE_CANCELLED.to_http(),
         };
         let mut opened = Self { lane: Some(lane), session, shared: shared.clone() };

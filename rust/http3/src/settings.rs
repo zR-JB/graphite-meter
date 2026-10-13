@@ -1,6 +1,10 @@
 //! SETTINGS (RFC 9114 §7.2.4): our profile per role, the peer's values and its WebTransport dialect.
-use crate::{code::Code, frame, varint};
-use bytes::{Buf, BufMut};
+use crate::{
+    code::Code,
+    frame::{self, FrameType, StreamType},
+    varint,
+};
+use bytes::Buf;
 
 const MAX_FIELD_SECTION_SIZE: u64 = 0x06;
 const ENABLE_CONNECT_PROTOCOL: u64 = 0x08;
@@ -36,8 +40,8 @@ pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
     let encoded = |&(id, value): &(u64, u64)| varint::len(id) + varint::len(value);
     let length: usize = settings.iter().map(encoded).sum();
     let mut bytes = Vec::with_capacity(length + 9);
-    bytes.put_u8(frame::CONTROL_STREAM as u8);
-    frame::put_header(frame::SETTINGS, length as u64, &mut bytes);
+    varint::put(StreamType::CONTROL.0, &mut bytes);
+    frame::put_header(FrameType::SETTINGS, length as u64, &mut bytes);
     for &(id, value) in settings {
         varint::put(id, &mut bytes);
         varint::put(value, &mut bytes);
@@ -160,7 +164,7 @@ mod tests {
     fn parse(settings: &[(u64, u64)]) -> Result<Peer, Code> {
         let stream = control_stream(settings);
         let (kind, length) = frame::Pair::default().read(&mut &stream[1..]).unwrap();
-        assert_eq!(kind, frame::SETTINGS);
+        assert_eq!(FrameType(kind), FrameType::SETTINGS);
         let payload = &stream[stream.len() - length as usize..];
         let mut reader = Reader::new(length)?;
         let mut peer = if payload.is_empty() { reader.read(&mut &payload[..])? } else { None };
