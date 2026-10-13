@@ -235,11 +235,6 @@ export function Dial(props: {
     return dialLayout(width, height, props.hung() ? sizes.footer().height : 0);
   });
   effect(() => {
-    const { center, height, faceMin } = layout();
-    face.style.setProperty("--gauge-center-offset", `${center.y - height / 2}px`);
-    face.style.setProperty("--face-min", `${faceMin}px`);
-  });
-  effect(() => {
     const { height, noteTop, noteWidth } = layout();
     const hung = props.hung();
     footer.style.top = hung ? `calc(100% - ${height - noteTop}px)` : "";
@@ -566,7 +561,13 @@ export function Dial(props: {
         </span>
       </div>
     </div>
-  );
+  ) as HTMLElement;
+  // Only the readout reads the face's size: set on it, a resize restyles its few elements, not the whole dial.
+  effect(() => {
+    const { center, height, faceMin } = layout();
+    readout.style.setProperty("--gauge-center-offset", `${center.y - height / 2}px`);
+    readout.style.setProperty("--face-min", `${faceMin}px`);
+  });
   face.append(dial, labels, readout);
 
   footer.append(
