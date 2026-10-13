@@ -6,7 +6,7 @@ import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { handoff } from "../../lib/motion";
-import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
+import { computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
 import {
   NEXT_RUN,
@@ -21,6 +21,7 @@ import {
 import { flip } from "../flip";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
+import { Roll } from "../kit/roll";
 import { clip, tip } from "../kit/tip";
 import { CHIPS } from "./copy";
 import type { Live } from "./live";
@@ -102,18 +103,21 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   const timed = computed(() => look() === "active" && live.budget() > 0);
   // A waiting chip shows its stage's length: the shown run's plan, or the next run's for a stage queued for it.
   const waiting = computed(() => selected() && look() === "pending");
-  const length = computed(() => fmtStageTime((nextRun() ? config() : (run.plan() ?? config())).duration[`${stage}Ms`]));
+  const lengthMs = computed(() => (nextRun() ? config() : (run.plan() ?? config())).duration[`${stage}Ms`]);
+  const length = computed(() => fmtStageTime(lengthMs()));
   const end = handoff(
     () => {
       const now = look();
       if (now === "complete") return { key: `${now}:check`, check: true, text: "", time: false, tone: null };
       if (timed()) return { key: `${now}:live`, check: false, text: "", time: true, tone: null };
-      if (waiting()) return { key: `${now}:${length()}`, check: false, text: length(), time: true, tone: null };
+      // A new length rolls in place; only another kind of tag hands off.
+      if (waiting()) return { key: `${now}:length`, check: false, text: length(), time: true, tone: null };
       const tone: Tone | null = now === "partial" || now === "recovering" ? "warn" : now === "failed" ? "err" : null;
       return { key: `${now}:${reason() ?? ""}`, check: false, text: reason() ?? "", time: false, tone };
     },
     (view) => view.key,
   );
+  const endKey = computed(() => end.shown().key);
 
   const value = computed(() => {
     if (stage === "latency") {
@@ -234,7 +238,12 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
                   class={() => `chip-tag handoff${end.shown().time ? " time" : ""}${end.out() ? " handoff-out" : ""}`}
                   data-tone={() => end.shown().tone ?? undefined}
                 >
-                  {() => (end.shown().key.endsWith(":live") ? [full.box, short.box] : end.shown().text)}
+                  {() => {
+                    const key = endKey();
+                    if (key.endsWith(":live")) return [full.box, short.box];
+                    if (key.endsWith(":length")) return <Roll text={length} rank={lengthMs} />;
+                    return untrack(() => end.shown().text);
+                  }}
                 </span>
               )}
             </Show>

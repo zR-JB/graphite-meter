@@ -1,6 +1,8 @@
 // A changed figure rolls like a counter: the old text leaves as the new one arrives, upward while its rank grows. When
 // the words between the figures stay, as in 10 s to 11 s or 1 min 30 s to 1 min 45 s, only the figures that changed
-// roll and the words hold still; a new shape, 59 s to 1 min, rolls whole.
+// roll and the words hold still; a new shape, 59 s to 1 min, rolls whole. A change that lands while the last still
+// rolls, a key held or pressed fast, ends that roll and swaps at once, so each value of a run of changes reads crisply.
+import { pageMs } from "../../lib/frame";
 import { reducedMotion } from "../../lib/motion";
 import { effect, untrack } from "../../lib/signal";
 
@@ -37,8 +39,21 @@ function value(text: string): HTMLSpanElement {
   return shown;
 }
 
+/** When each box last started a roll. */
+const rolled = new WeakMap<Element, number>();
+/** Whether `box` changed too recently for another roll: its roll ends where it was going, and the change swaps. */
+function hurried(box: Element): boolean {
+  const now = pageMs();
+  if (now - (rolled.get(box) ?? Number.NEGATIVE_INFINITY) >= ROLL_MS) return false;
+  for (const animation of box.getAnimations({ subtree: true })) animation.finish();
+  // A run of changes stays hurried until it pauses.
+  rolled.set(box, now);
+  return true;
+}
+
 /** Rolls `old` out and `next` in, both already in place; `old` is removed once it has left. */
-function roll(old: HTMLElement, next: HTMLElement, direction: number): void {
+function roll(box: Element, old: HTMLElement, next: HTMLElement, direction: number): void {
+  rolled.set(box, pageMs());
   const offset = (side: number) => `0 ${side * direction * ROLL_PX}px`;
   const leaving = old.animate(
     [
@@ -85,17 +100,19 @@ export function Roll(props: { text: () => string; rank: () => number }): Node {
           const slot = slots[index]!;
           const current = slot.lastElementChild as HTMLElement;
           if (current.textContent === figure) return;
-          roll(current, slot.appendChild(span("roll-figure", figure)), direction);
+          if (hurried(slot)) current.textContent = figure;
+          else roll(slot, current, slot.appendChild(span("roll-figure", figure)), direction);
         });
         shownText = text;
         return;
       }
       const old = shown;
+      const hurry = !still && !!old && hurried(root);
       shown = root.appendChild(value(text));
       shownText = text;
       if (!old) return;
-      if (still) return old.remove();
-      roll(old, shown, direction);
+      if (still || hurry) return old.remove();
+      roll(root, old, shown, direction);
     });
   });
   return root;
