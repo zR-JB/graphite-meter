@@ -41,11 +41,10 @@ function frame(now: number): void {
 function release(): void {
   if (pending) globalThis.cancelAnimationFrame?.(pending);
   pending = 0;
-  if (watching) document.removeEventListener("visibilitychange", wake);
-  watching = false;
 }
 
-// Painters stay registered while the page is hidden and resume from their own clocks when it shows again.
+// Painters stay registered while the page is hidden and resume from their own clocks when it shows again. The page's
+// one visibility listener stays from the first painter on, rather than come and go with every motion.
 function wake(): void {
   if (visible()) request();
   else if (pending) {
