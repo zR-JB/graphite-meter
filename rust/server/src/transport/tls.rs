@@ -35,8 +35,6 @@ use tokio_util::sync::CancellationToken;
 const RENEWAL_CHECK: Duration = Duration::from_secs(60);
 /// A certificate expiring sooner is logged with a warning.
 const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 3600);
-/// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
-const READ_BYTES: usize = 64 << 10;
 
 /// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
 type Fits = Box<dyn Fn(usize) -> Result<(), String> + Send + Sync>;
@@ -166,7 +164,7 @@ pub async fn accept<S>(acceptor: &TlsAcceptor, socket: S, peer: SocketAddr) -> O
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let socket = BufReader::with_capacity(READ_BYTES, socket);
+    let socket = BufReader::with_capacity(graphite_meter_net::TLS_READ_BYTES, socket);
     let error = match timeout(EXCHANGE_BOUND, acceptor.accept(socket)).await {
         Ok(Ok(stream)) => return Some(stream),
         Ok(Err(error)) => error.to_string(),
