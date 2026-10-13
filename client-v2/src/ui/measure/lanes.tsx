@@ -73,6 +73,8 @@ export function LatencyProfileView(props: {
   label?: string;
   added?: () => AddedLatency | null;
   head?: () => LanesHead;
+  /** While it holds the marks draw nothing, and they draw again as the lanes return. */
+  away?: Read<boolean>;
 }): HTMLElement {
   const live = props.variant !== "compact";
   const made = new WeakMap<LaneInput, Row>();
@@ -123,6 +125,7 @@ export function LatencyProfileView(props: {
         <Lane
           row={row}
           live={live}
+          away={props.away}
           motion={motion}
           axis={axis}
           idle={idleCenter}
@@ -187,10 +190,10 @@ export function LatencyProfileView(props: {
   ) as HTMLElement;
 }
 
-/** An SVG mark whose position attributes are written only when they change. */
 function Lane(props: {
   row: Read<Row>;
   live: boolean;
+  away?: Read<boolean>;
   motion: () => boolean;
   axis: () => number;
   idle: () => number | null;
@@ -301,7 +304,7 @@ function Lane(props: {
   // Marks glide to each summary on the frame clock while the lanes are seen; a saved or unseen row snaps. A glide is
   // made on a metric's first value and let go when the value goes.
   const glides = new Map<(typeof GLIDED)[number], Glide>();
-  const wake = painter((now) => draw(now));
+  const wake = painter((now) => draw(now), props.away);
   effect(() => {
     const values = shown();
     const snap = !props.motion();
@@ -502,7 +505,7 @@ function Reading(props: {
 
 /** The live console's lanes: the run's rows, whose latency to show when several servers run, and the idle stage's
     failure, heard once when it fails. A row stays the same object while its values do, so it draws nothing again. */
-export function LatencyProfile(props: { app: App; live: Live }): Node {
+export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;
   const servers = live.indicated;
@@ -584,7 +587,7 @@ export function LatencyProfile(props: { app: App; live: Live }): Node {
   });
   return (
     <div class="live-profile">
-      <LatencyProfileView lanes={lanes} variant="bare" added={added} head={head} />
+      <LatencyProfileView lanes={lanes} variant="bare" added={added} head={head} away={props.away} />
     </div>
   );
 }

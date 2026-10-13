@@ -55,7 +55,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
       <Show when={live.latencyEnabled}>
         {() => (
           <div class="latency-panel" data-flip="lanes">
-            <LatencyProfile app={app} live={live} />
+            <LatencyProfile app={app} live={live} away={away} />
           </div>
         )}
       </Show>
