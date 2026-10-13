@@ -77,7 +77,8 @@ export function ResultsList(props: {
   const ordered = computed(() => sortHistory(props.records(), props.sort().by, props.sort().descending));
   // Only the pages asked for: a link to a result far down opens it without building every row above it.
   const shown = computed(() => Math.min(ordered().length, props.pages() * PAGE_ROWS));
-  // A screenful first, and the open result's row; the rest of the pages a screenful a frame, below the fold.
+  // A screenful first, or every row down to the open result's when it lies further; the rest of the pages a screenful
+  // a frame after, below the fold.
   const built = signal(BUILD_ROWS);
   const selectedAt = computed(() => {
     const id = props.selectedId();
