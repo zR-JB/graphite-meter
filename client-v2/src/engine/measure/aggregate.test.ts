@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { json } from "../../protocol/pins.testutil";
 import { Aggregate, type ThroughputResult } from "./aggregate";
+import { stabilityPct } from "./stability";
 
 const reported = (result: ThroughputResult | null) =>
   result && { bytesPerSec: result.reportedBytesPerSec, peakBytesPerSec: result.peakBytesPerSec };
@@ -143,4 +144,26 @@ test("a stage keeps its result when every interval the log still holds measured 
   }
   expect(aggregate.omittedIntervals).toBeGreaterThan(0);
   expect(aggregate.settle("download", false).down?.result.reportedBytesPerSec).toBe(1_000);
+});
+
+test("a steady stretch after a burst reads the stability of its own rates", () => {
+  // One very fast bucket, then a tail 0.05% either side of its mean: the steady window is the tail alone.
+  for (const burst of [1e8, 1e9, 8e9])
+    for (const low of [4, 4_000, 40_000]) {
+      const rates = [burst, ...Array.from({ length: 40 }, (_, i) => low + (i % 2 ? low * 0.001 : 0))];
+      const aggregate = new Aggregate();
+      aggregate.begin("download", ["a"], 0);
+      aggregate.observe({ atMs: 0, down: { a: 0 }, up: {} });
+      let total = 0;
+      rates.forEach((rate, i) => {
+        total += rate * 0.25;
+        aggregate.addDownload("download", "a", rate * 0.25);
+        aggregate.observe({ atMs: (i + 1) * 250, down: { a: total }, up: {} });
+        aggregate.trackStable(aggregate.confidence().score);
+      });
+      const headline = aggregate.settle("download", true).down!;
+      const from = headline.window.startMs / 250;
+      expect(from).toBeGreaterThan(0);
+      expect(headline.result.stabilityPct).toBeCloseTo(stabilityPct(rates.slice(from)), 5);
+    }
 });

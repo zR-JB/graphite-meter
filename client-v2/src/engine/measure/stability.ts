@@ -8,17 +8,26 @@ const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 /** At most this many buckets in a series without a limit: past them pairs merge, so a day-long stage stays small. */
 const MAX_BUCKETS = 4_096;
 
-/** The 250 ms rates so far as sufficient statistics: their count, and the sums of their offsets and squared offsets
-    from the first rate, which keeps the arithmetic exact enough for a spread a thousand times below the mean. */
-export interface Moments {
+/** Running statistics of 250 ms rates, updated one rate at a time (Welford): exact for any spread at any level. */
+interface Moments {
   count: number;
-  sum: number;
+  mean: number;
+  /** Sum of squared deviations from the mean. */
   squares: number;
 }
 
-/** Byte and time evidence cut into fixed 250 ms rate buckets. Their spread is kept exactly as moments; the rates
-    kept for drawing are at most `limit` recent ones, or without a limit every bucket until MAX_BUCKETS of them
-    merge in pairs into buckets twice as long (17 minutes in), which the moments never see. */
+/** What `truncate` takes a series back to: its moments over every rate, and over the window open then. */
+export interface Mark {
+  all: Moments;
+  window: Moments | null;
+}
+
+const fresh = (): Moments => ({ count: 0, mean: 0, squares: 0 });
+
+/** Byte and time evidence cut into fixed 250 ms rate buckets. Their spread is kept as running moments over every
+    rate and over a window opened at a point (a steady stretch), each centred on what it covers; the rates kept for
+    drawing are at most `limit` recent ones, or without a limit every bucket until MAX_BUCKETS of them merge in pairs
+    into buckets twice as long (17 minutes in), which the moments never see. */
 export class RateBuckets {
   readonly rates: number[] = [];
   /** 250 ms buckets per rate. */
@@ -28,8 +37,8 @@ export class RateBuckets {
   /** Base buckets gathered towards the next rate of `width` of them. */
   #gathered = 0;
   #gatheredRate = 0;
-  #shift: number | null = null;
-  #moments: Moments = { count: 0, sum: 0, squares: 0 };
+  #all = fresh();
+  #window: Moments | null = null;
   constructor(readonly limit = Infinity) {}
 
   /** How long each rate spans. */
@@ -42,16 +51,23 @@ export class RateBuckets {
     return this.rates.length * this.width;
   }
 
-  /** Every 250 ms bucket so far, as a mark `truncate` and `stabilitySince` take. */
-  get moments(): Moments {
-    return { ...this.#moments };
+  /** The series now, as a mark `truncate` takes. */
+  get mark(): Mark {
+    return { all: { ...this.#all }, window: this.#window && { ...this.#window } };
   }
 
-  /** Takes the series back to an earlier mark: its kept rates to `buckets`, its moments to `moments`. */
-  truncate(buckets: number, moments?: Moments): void {
+  /** Takes the series back to an earlier mark: its kept rates to `buckets`, its moments to `mark`'s. */
+  truncate(buckets: number, mark?: Mark): void {
     this.rates.length = Math.min(this.rates.length, Math.floor(buckets / this.width));
     this.#gathered = this.#gatheredRate = 0;
-    if (moments) this.#moments = { ...moments };
+    if (!mark) return;
+    this.#all = { ...mark.all };
+    this.#window = mark.window && { ...mark.window };
+  }
+
+  /** Starts a window's moments from the next rate on. */
+  openWindow(): void {
+    this.#window = fresh();
   }
 
   observe(bytes: number, ms: number): void {
@@ -71,11 +87,8 @@ export class RateBuckets {
   }
 
   #complete(rate: number): void {
-    this.#shift ??= rate;
-    const offset = rate - this.#shift;
-    this.#moments.count++;
-    this.#moments.sum += offset;
-    this.#moments.squares += offset * offset;
+    add(this.#all, rate);
+    if (this.#window) add(this.#window, rate);
     this.#gatheredRate += rate;
     if (++this.#gathered < this.width) return;
     this.rates.push(this.#gatheredRate / this.width);
@@ -90,19 +103,19 @@ export class RateBuckets {
     this.width *= 2;
   }
 
-  /** stabilityPct of every 250 ms bucket since `mark`, or of all of them. */
-  stabilitySince(mark?: Moments): number {
-    const m = this.#moments;
-    const count = m.count - (mark?.count ?? 0);
-    if (count < 2) return 0;
-    const sum = m.sum - (mark?.sum ?? 0);
-    const squares = m.squares - (mark?.squares ?? 0);
-    const offset = sum / count;
-    const mean = (this.#shift ?? 0) + offset;
-    if (!(mean > 0)) return 0;
-    const variation = Math.sqrt(Math.max(0, squares / count - offset * offset)) / mean;
-    return Math.max(0, 1 - variation) * 100;
+  /** stabilityPct of every 250 ms bucket, or of the open window's. */
+  stability(window = false): number {
+    const m = window ? (this.#window ?? fresh()) : this.#all;
+    if (m.count < 2 || !(m.mean > 0)) return 0;
+    return Math.max(0, 1 - Math.sqrt(m.squares / m.count) / m.mean) * 100;
   }
+}
+
+function add(m: Moments, rate: number): void {
+  m.count++;
+  const delta = rate - m.mean;
+  m.mean += delta / m.count;
+  m.squares += delta * (rate - m.mean);
 }
 
 export interface Confidence {
