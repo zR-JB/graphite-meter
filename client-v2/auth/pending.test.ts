@@ -116,6 +116,18 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     createElement: (tag: string) => h(tag),
   };
   let answer: Reply | undefined;
+  // A clock the test moves by hand.
+  let now = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let ids = 0;
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at))
+      if (timer.at <= now) {
+        timers.delete(id);
+        timer.fn();
+      }
+  };
   install({
     document,
     location: {
@@ -128,7 +140,10 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     },
     fetch: async (url: URL, init: RequestInit) => {
       posts.push([url.href, init]);
-      answer = await reply();
+      const aborted = new Promise<never>((_, reject) =>
+        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+      );
+      answer = await Promise.race([reply(), aborted]);
       return { redirected: false, ok: true, status: 200, text: async () => "", ...answer };
     },
     DOMParser: class {
@@ -141,6 +156,11 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
       }
     },
     addEventListener: (type: string, listener: (event: object) => void) => shown.set(type, listener),
+    setTimeout: (fn: () => void, ms: number) => {
+      timers.set(++ids, { at: now + ms, fn });
+      return ids;
+    },
+    clearTimeout: (id: number) => timers.delete(id),
   } as unknown as Parameters<typeof install>[0]);
   const fire = (type: string, target: El) => {
     let prevented = false;
@@ -148,7 +168,16 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     return prevented;
   };
   const restore = (persisted: boolean) => shown.get("pageshow")!({ persisted });
-  return { root, document, effects, posts, fire, restore, settled: () => new Promise((done) => setImmediate(done)) };
+  return {
+    root,
+    document,
+    effects,
+    posts,
+    fire,
+    restore,
+    advance,
+    settled: () => new Promise((done) => setImmediate(done)),
+  };
 }
 
 test("only a redirect to another page leaves this page", () => {
@@ -258,6 +287,28 @@ test("a post that cannot reach the server says so once and leaves the form usabl
     ]);
     expect([form.previousElementSibling, page.effects]).toEqual([notices[0]!, []]);
   }
+});
+
+test("a post that gets no answer frees its form after 20 s, says the outcome is unknown and posts nothing again", async () => {
+  const card = signIn();
+  const page = load(card);
+  const form = card.querySelector("form")!;
+  page.fire("submit", form);
+  await page.settled();
+  page.advance(19_999);
+  await page.settled();
+  expect(form.hasAttribute("data-busy")).toBe(true);
+  page.advance(1);
+  await page.settled();
+  expect([form.hasAttribute("data-busy"), ...form.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  expect(card.querySelectorAll("[data-unreachable]").map((each) => each.textContent)).toEqual([
+    "The server did not answer in time. Reload to see whether it went through, or try again.",
+  ]);
+  expect(page.posts).toHaveLength(1);
 });
 
 test("a busy form takes no second submit, until the page returns from the back-forward cache", () => {

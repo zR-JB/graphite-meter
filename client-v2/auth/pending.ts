@@ -3,20 +3,33 @@
 
 type Page = Pick<
   Window & typeof globalThis,
-  "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener"
+  "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
 >;
 
 // A native sign-in POST leaves a dead spinner: password verification is deliberately slow, and the browser freezes
 // animations the instant a navigation commits. These forms post with fetch, so a refusal swaps the card in place and a
 // success follows the redirect; any other form, such as a provider's sign-in, submits natively.
 const IN_PLACE = new Set(["/auth/password", "/auth/cli/approve", "/auth/browser/approve"]);
+/** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
+const SUBMIT_MS = 20_000;
+const UNREACHABLE = "Could not reach the server. Try again.";
+const UNANSWERED = "The server did not answer in time. Reload to see whether it went through, or try again.";
 
 /** A refusal redirects back to the page in view (same path, an error query); a success to another page. */
 export function leftThisPage(response: Pick<Response, "redirected" | "url">, here: Pick<Location, "pathname">) {
   return response.redirected && new URL(response.url).pathname !== here.pathname;
 }
 
-export function install({ document, location, fetch, DOMParser, FormData, addEventListener }: Page): void {
+export function install({
+  document,
+  location,
+  fetch,
+  DOMParser,
+  FormData,
+  addEventListener,
+  setTimeout,
+  clearTimeout,
+}: Page): void {
   // Filled from the address bar, so a visitor sees which server asks, and nothing is disclosed.
   const wake = (root: ParentNode) => {
     for (const line of root.querySelectorAll("[data-host]")) line.textContent = location.host;
@@ -34,15 +47,19 @@ export function install({ document, location, fetch, DOMParser, FormData, addEve
     for (const button of form.querySelectorAll("button")) button.disabled = busy;
   };
   // One fixed sentence above the form, which stays usable: nothing a failing hop answered is shown.
-  const unreachable = (form: HTMLFormElement) => {
+  const unreachable = (form: HTMLFormElement, text = UNREACHABLE) => {
     setBusy(form, false);
-    if (form.previousElementSibling?.hasAttribute("data-unreachable")) return;
+    const shown = form.previousElementSibling;
+    if (shown?.hasAttribute("data-unreachable")) {
+      shown.textContent = text;
+      return;
+    }
     const notice = document.createElement("p");
     notice.setAttribute("class", "notice");
     notice.setAttribute("data-tone", "warn");
     notice.setAttribute("data-unreachable", "");
     notice.setAttribute("role", "alert");
-    notice.textContent = "Could not reach the server. Try again.";
+    notice.textContent = text;
     form.before(notice);
   };
 
@@ -76,7 +93,10 @@ export function install({ document, location, fetch, DOMParser, FormData, addEve
     // URL-encoded, not multipart: both servers read only that.
     const body = new URLSearchParams();
     for (const [name, value] of new FormData(form)) if (typeof value === "string") body.append(name, value);
-    fetch(action, { method: "POST", body, credentials: "same-origin", redirect: "follow" })
+    // The answer's body counts against the same bound; nothing is posted again on its own.
+    const answer = new AbortController();
+    const bound = setTimeout(() => answer.abort(), SUBMIT_MS);
+    fetch(action, { method: "POST", body, credentials: "same-origin", redirect: "follow", signal: answer.signal })
       .then(async (response) => {
         // The app document goes unparsed: DOMParser checks its inline styles against this page's strict CSP and
         // logs a spurious violation.
@@ -107,7 +127,8 @@ export function install({ document, location, fetch, DOMParser, FormData, addEve
           heading.focus();
         }
       })
-      .catch(() => unreachable(form));
+      .catch(() => unreachable(form, answer.signal.aborted ? UNANSWERED : UNREACHABLE))
+      .finally(() => clearTimeout(bound));
   });
 
   wake(document);
