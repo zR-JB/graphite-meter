@@ -239,10 +239,8 @@ def summarize(study: str, rows: list[dict[str, object]], results: Path) -> None:
             lines.append(f"| {case} | {'.'.join(metric)} | {cells[0]} | {cells[1]} |")
     (results / f"{study}-summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     text = "\n".join(lines) + "\n"
+    (results / f"{study}-summary.md").write_text(text + "\n")
     print(text, flush=True)
-    if step_summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(step_summary, "a") as out:
-            out.write(text + "\n")
 
 
 if __name__ == "__main__":

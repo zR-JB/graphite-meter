@@ -528,6 +528,9 @@ jobs:
         run: python3 -m scripts.ci.rust_latency_campaign measure server
       - name: Measure the client against base and candidate
         run: python3 -m scripts.ci.rust_latency_campaign measure client
+      - name: Summarize the campaign
+        if: always()
+        run: cat rust/target/campaign/results/*-summary.md >>"$GITHUB_STEP_SUMMARY" || true
       - name: Upload measurements and evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
