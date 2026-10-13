@@ -285,10 +285,17 @@ test.chrome(
     }
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(sheet).toHaveCount(1);
-    // Whichever box scrolls in this layout, scrolled from its top.
-    await sheet.evaluate((dialog: HTMLElement) => {
-      for (const box of [dialog, dialog.querySelector(".panel-body")!] as HTMLElement[]) box.scrollTop = 250;
-    });
+    await page.evaluate(settled);
+    // Whichever box scrolls in this layout, scrolled from its top, once the content is long enough to hold it.
+    await expect
+      .poll(() =>
+        sheet.evaluate((dialog: HTMLElement) => {
+          const boxes = [dialog, dialog.querySelector(".panel-body")!] as HTMLElement[];
+          for (const box of boxes) box.scrollTop = 250;
+          return Math.max(...boxes.map((box) => box.scrollTop));
+        }),
+      )
+      .toBeGreaterThan(200);
     await flick("dialog.panel[open] .panel-body");
     await Bun.sleep(300);
     await expect(sheet).toHaveCount(1);
