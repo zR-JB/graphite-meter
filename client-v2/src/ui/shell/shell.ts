@@ -354,8 +354,10 @@ export function createShell(app: App, layout: Layout) {
     event.preventDefault();
     run(order);
   }
-  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first.
+  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first; a
+  // sign-out asked already.
   const beforeunload = (event: BeforeUnloadEvent) => {
+    if (app.signingOut.peek()) return;
     if (!app.run.running.peek() && !app.saver.pending.peek() && !unsavable()) return;
     event.preventDefault();
     event.returnValue = "";

@@ -91,6 +91,42 @@ test("signing out lands on the signed-out notice, even with a token another sign
   expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
 });
 
+test("a sign-out that would leave a result unsaved asks first, and signs out after staying", async (page) => {
+  // History's writes fail, for now, as a busy disk's would: the saver keeps retrying.
+  await page.addInitScript(() => {
+    const state = { failing: false };
+    Object.assign(window, { writes: state });
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore["put"]>) {
+      if (state.failing && this.name === "results") throw new DOMException("busy", "UnknownError");
+      return put.apply(this, args);
+    };
+  });
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+    config: { ...baseConfig, stages: { latency: true, download: false, upload: false, bidirectional: false } },
+  });
+  await signIn(page);
+  await ready(page);
+  await page.evaluate(() => ((window as any).writes.failing = true));
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+  const signOut = page.getByRole("button", { name: "Sign out Local operator", exact: true });
+  const ask = page.getByRole("alertdialog", { name: "Sign out without saving?" });
+  await signOut.click();
+  await expect(ask).toBeVisible({ timeout: 10_000 });
+  await ask.getByRole("button", { name: "Stay signed in" }).click();
+  await expect(ask).toHaveCount(0);
+  // Storage recovers and the result saves; Sign out works again.
+  await page.evaluate(() => {
+    (window as any).writes.failing = false;
+    window.dispatchEvent(new Event("online"));
+  });
+  await savedResult(page);
+  await signOut.click();
+  await expect(page.getByRole("status")).toHaveText("You're signed out.");
+});
+
 test("a session read that failed at boot is tried again when the network returns", async (page) => {
   await page.addInitScript(() => {
     const state = { unreachable: true, refused: 0 };

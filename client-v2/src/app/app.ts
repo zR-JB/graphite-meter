@@ -8,7 +8,7 @@ import { openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { adaptWarmup, totalMs } from "../engine/run/schedule";
 import { pageMs } from "../lib/frame";
-import { computed, effect, signal, untrack } from "../lib/signal";
+import { computed, effect, signal, untrack, type Read } from "../lib/signal";
 import { historyRecord } from "./history/records";
 import { HistoryRepository } from "./history/repository";
 import { createHistorySaving } from "./history/saving";
@@ -134,7 +134,7 @@ export function createApp() {
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOnline);
 
-  let signingOut = false;
+  const signingOut = signal(false);
   /** Waits, at most a few seconds, until no run is live and the result shown is saved. */
   const settled = async () => {
     const deadline = pageMs() + SIGN_OUT_SAVE_MS;
@@ -144,8 +144,8 @@ export function createApp() {
   // A lapsed login ends the run, keeps what it can, and leaves for sign-in once.
   const stopSessionEnd = effect(() => {
     const reason = session.ended();
-    if (!reason || signingOut) return;
-    signingOut = true;
+    if (!reason || signingOut.peek()) return;
+    signingOut.set(true);
     untrack(() => {
       leaving.set(true);
       run.end("sign-in-required", "Signed out during the test");
@@ -193,9 +193,15 @@ export function createApp() {
     /** Before the sign-out form leaves: a running test ends as a lapsed login ends it, the result's write gets its few
         seconds, and the login the form ends is no reason to leave for sign-in. */
     async signOut(): Promise<void> {
-      signingOut = true;
+      signingOut.set(true);
       run.end("sign-in-required", "Signed out during the test");
       await settled();
+    },
+    /** Leaving for sign-out or an ended login, which unload no longer asks about. */
+    signingOut: signingOut as Read<boolean>,
+    /** A sign-out given up: the page goes on, and an ended login leaves for sign-in again. */
+    stay(): void {
+      signingOut.set(false);
     },
     dispose,
   };

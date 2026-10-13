@@ -34,11 +34,17 @@ export function AccountControl(props: { app: App }): Node {
         const label = computed(() => (local() ? "Local operator" : session().name));
         const provider = computed(() => (local() ? "Operator session" : session().provider));
         const confirming = signal(false);
+        // A result the sign-out would leave unsaved: asked here, so staying is known and Sign out works again.
+        const unsaved = signal(false);
         let form!: HTMLFormElement;
         let everywhere!: HTMLButtonElement;
         let csrf!: HTMLInputElement;
         let scope!: HTMLInputElement;
         let leaving = false;
+        const leave = () => {
+          csrf.value = csrfHeaders("POST", document.cookie)["X-CSRF-Token"] ?? csrf.value;
+          form.submit();
+        };
         return [
           <form
             class="account"
@@ -53,8 +59,9 @@ export function AccountControl(props: { app: App }): Node {
               leaving = true;
               scope.disabled = event.submitter !== everywhere;
               void props.app.signOut().then(() => {
-                csrf.value = csrfHeaders("POST", document.cookie)["X-CSRF-Token"] ?? csrf.value;
-                form.submit();
+                const { saver, run } = props.app;
+                if (saver.pending.peek() || (saver.failed.peek() && run.result.peek())) unsaved.set(true);
+                else leave();
               });
             }}
             ref={(node) => {
@@ -119,6 +126,23 @@ export function AccountControl(props: { app: App }): Node {
             onConfirm={() => {
               confirming.set(false);
               form.requestSubmit(everywhere);
+            }}
+          />,
+          <ConfirmDialog
+            open={unsaved}
+            id="sign-out-unsaved"
+            title="Sign out without saving?"
+            description="The result shown is not saved in History yet; signing out leaves it."
+            cancel="Stay signed in"
+            confirm="Sign out"
+            onCancel={() => {
+              unsaved.set(false);
+              leaving = false;
+              props.app.stay();
+            }}
+            onConfirm={() => {
+              unsaved.set(false);
+              leave();
             }}
           />,
         ];
