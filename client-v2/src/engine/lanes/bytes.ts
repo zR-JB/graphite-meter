@@ -57,6 +57,8 @@ export class ByteReports {
   /** The latest count's time, and the total it made. */
   #last = Number.NEGATIVE_INFINITY;
   #lastTotal = 0;
+  /** When the epoch began: bytes counted before any clock reading arrived after it. */
+  #measuredAt = performance.now();
 
   constructor(readonly report: (bytes: number, epoch: number) => void) {}
 
@@ -93,16 +95,23 @@ export class ByteReports {
     this.#bytes = 0;
     if (epoch === this.#epoch) return;
     this.#epoch = epoch;
+    this.#measuredAt = performance.now();
     this.#total = this.#lastTotal = 0;
     this.#taken = 0;
     this.#last = Number.NEGATIVE_INFINITY;
   }
 
-  /** The epoch's total as counted by `at`: the latest count's, else the latest reading's at or before it; past what is
-      kept, the earliest reading kept and its time. Every report reads the total, so it covers what was reported by
-      `at`. */
-  totalAt(at: number): { total: number; at: number } {
-    if (at >= this.#last) return { total: this.#lastTotal, at };
+  /** The epoch's total as counted by `at`, `now` being when it is asked: from the latest count on, that count's total
+      and the cutoff's share of the bytes counted since without a clock reading, which arrived between that count and
+      `now`; before it, the latest reading at or before `at`; past what is kept, the earliest reading kept and its
+      time. */
+  totalAt(at: number, now = performance.now()): { total: number; at: number } {
+    if (at >= this.#last) {
+      const unread = this.#total - this.#lastTotal;
+      const since = Math.max(this.#last, this.#measuredAt);
+      const share = now > since ? Math.min(1, Math.max(0, (at - since) / (now - since))) : 1;
+      return { total: this.#lastTotal + Math.round(unread * share), at };
+    }
     const kept = Math.min(this.#taken, TOTALS);
     for (let back = 1; back <= kept; back++) {
       const slot = (this.#taken - back) % TOTALS;
