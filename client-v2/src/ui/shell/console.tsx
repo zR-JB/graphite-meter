@@ -13,6 +13,7 @@ import { Announcements } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import type { Shell } from "./api";
 import { BINDINGS, RUN_CAP } from "./keys";
+import { land } from "./land";
 import { createLayout } from "./layout";
 import type { Panel } from "./navigation";
 import { Sheet } from "./sheet";
@@ -37,13 +38,6 @@ const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
 const finishSettled = (stage: HTMLElement) => {
   for (const animation of stage.getAnimations({ subtree: true }))
     if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName)) animation.finish();
-};
-/** Content that stops rendering never advances its animations, so what is still under way there lands at its end. */
-const land = (root: Element) => {
-  for (const animation of root.getAnimations({ subtree: true })) {
-    const end = animation.effect?.getComputedTiming().endTime;
-    if (animation.timeline === document.timeline && typeof end === "number" && Number.isFinite(end)) animation.finish();
-  }
 };
 
 /** Mounts the console into `root` and renders the URL it loaded with; the disposer takes it down again. */

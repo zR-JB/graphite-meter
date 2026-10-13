@@ -346,6 +346,11 @@
     &[data-rest] {
       content-visibility: hidden;
     }
+    /* Skipped content never advances a transition, so none starts there: a style read forced at rest (an audit
+       after a theme change) applies at once. */
+    &[data-rest] * {
+      transition: none !important;
+    }
   }
   /* Docked, the sheet is its column, flush with the bars and cut from the stage by one hairline; the column's move
      is its slide. Closed, its column is 0 wide and it hangs past the viewport's edge. */

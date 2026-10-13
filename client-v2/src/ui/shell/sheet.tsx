@@ -8,6 +8,7 @@ import { computed, effect, onCleanup, untrack, type Read } from "../../lib/signa
 import { Icon } from "../kit/icon";
 import { Splitter } from "../kit/splitter";
 import { dragSheet, type Edge } from "./drag";
+import { land } from "./land";
 import { DOCK, type DockWidths, type Side } from "./layout";
 
 export function Sheet(props: {
@@ -90,6 +91,7 @@ export function Sheet(props: {
       if (!live) return;
       const moving = sheet.getAnimations();
       if (moving.length) return void Promise.allSettled(moving.map((animation) => animation.finished)).then(rest);
+      land(sheet);
       sheet.setAttribute("data-rest", "");
     };
     // A layout move starts after the route renders, so the moves are gathered once it has.
