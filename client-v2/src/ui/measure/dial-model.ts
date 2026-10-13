@@ -1,6 +1,5 @@
 // The dial's pure rules: the ring and its labels in the measured face, the throughput transfer curve, the result
 // arcs and their beads, the result sweep's timing, and the needle's course from stage to stage.
-import type { StageResults } from "../../engine/run/result";
 import type { TransferStage } from "../../engine/run/schedule";
 import { STAGE } from "../../view/words";
 
@@ -142,7 +141,12 @@ export interface ResultArc {
 
 /** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
     both lanes, and a zero lane is evidence. */
-export function resultArcs(results: Pick<StageResults, TransferStage> | null): ResultArc[] {
+/** What a result's arcs read: each transfer's reported rate. */
+type Rated = { reportedBytesPerSec: number } | null | undefined;
+
+export function resultArcs(
+  results: { download: Rated; upload: Rated; bidirectional: { down: Rated; up: Rated } | null } | null,
+): ResultArc[] {
   if (!results) return [];
   const arcs: ResultArc[] = [];
   for (const stage of ["download", "upload"] as const) {

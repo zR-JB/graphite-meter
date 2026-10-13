@@ -97,8 +97,8 @@ const bidirectional = (down: number | null, up: number | null) => ({
 test("result arcs lie longest first, need both lanes for a combined value, and read out by role", () => {
   const arcs = (download: number | null, upload: number | null, bidi: ReturnType<typeof bidirectional> | null) =>
     resultArcs({
-      download: download === null ? null : { ...result(download), wire: null },
-      upload: upload === null ? null : { ...result(upload), wire: null },
+      download: download === null ? null : result(download),
+      upload: upload === null ? null : result(upload),
       bidirectional: bidi,
     }).map(
       ({ stage, direction, bytesPerSec, dashed }) => `${stage}:${direction}:${bytesPerSec}${dashed ? ":dashed" : ""}`,
@@ -114,8 +114,8 @@ test("result arcs lie longest first, need both lanes for a combined value, and r
   expect(arcs(null, null, bidirectional(null, null))).toEqual([]);
   expect(resultArcs(null)).toEqual([]);
   const all = resultArcs({
-    download: { ...result(5), wire: null },
-    upload: { ...result(50), wire: null },
+    download: result(5),
+    upload: result(50),
     bidirectional: bidirectional(60, 60),
   });
   expect(headlineArc(all)?.stage).toBe("download");

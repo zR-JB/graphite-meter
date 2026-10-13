@@ -201,3 +201,34 @@ test("every server's latency is saved; the lens starts on the first selected and
   await expect(page.locator(".result-detail")).toBeVisible();
   expect(await savedResult(page)).toEqual(saved);
 });
+
+test("the dial reads the server the lens shows, and the latency card the one latency is shown for, whole", async (page) => {
+  await open(page, home.url, { servers: [home, frankfurt], config: combined });
+  await ready(page);
+  await run(page);
+  const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+  const picker = page.getByRole("combobox", { name: "Show latency to" });
+  const figure = (selector: string) =>
+    page.evaluate(
+      (selector: string) => Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),
+      selector,
+    );
+  const dial = () => figure(".hero .terminal-readout");
+  const download = () => figure('.results .card[data-tone="download"] .headline');
+  const latency = () =>
+    page
+      .locator('.results .card[data-tone="latency"]')
+      .evaluate((card: Element) =>
+        [card.querySelector(".headline"), ...card.querySelectorAll(".facts dd")]
+          .map((el) => el?.textContent)
+          .join(" | "),
+      );
+  // Both together: the dial reads their sum, more than either card.
+  await lens.fill("server-1");
+  await expect.poll(async () => (await dial()) === (await download())).toBe(true);
+  const alone = await latency();
+  // Every server together again, latency shown for the second: the card is the second's, headline and spread.
+  await lens.fill("");
+  await picker.fill("server-1");
+  await expect.poll(latency).toBe(alone);
+});

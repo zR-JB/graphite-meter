@@ -13,6 +13,7 @@ import { OUTCOME, PHASE, reasonLabel, STAGE, statusLabel, TIP } from "../../view
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
+import { serverEvidence } from "./cards-model";
 import { DIAL, PHASE_HINT } from "./copy";
 import {
   ARC_START,
@@ -57,7 +58,13 @@ export function Dial(props: {
   const rate = (bytesPerSec: number) => fmtSpeed(toRateUnit(bytesPerSec, units(), units().tier ?? 0));
   const gaugeScale = computed(() => live.scales().gaugeBytesPerSec);
 
-  const arcs = computed(() => (phase() === "complete" ? resultArcs(run.result()) : []));
+  // A finished run's arcs read what the lens shows: every server together, or the one chosen under the dial.
+  const shown = computed(() => {
+    const id = live.lens();
+    const details = run.details();
+    return id && details ? serverEvidence(details, id) : run.result();
+  });
+  const arcs = computed(() => (phase() === "complete" ? resultArcs(shown()) : []));
   const headline = computed(() => headlineArc(arcs()));
   // A failed stage, or a finished run that measured nothing, has no value to show.
   const unusable = computed(() => {
@@ -108,7 +115,7 @@ export function Dial(props: {
       return {
         terminal: arc && { arc, value: rate(arc.bytesPerSec), unit: unit() },
         arcs: arcs(),
-        key: arc ? `${arc.stage}:${run.result()?.startedAt ?? ""}` : "live",
+        key: arc ? `${arc.stage}:${run.result()?.startedAt ?? ""}:${live.lens()}` : "live",
       };
     },
     (view) => view.key,
