@@ -525,22 +525,19 @@ function Reading(props: {
   const value = computed(() => props.values()[props.metric()]);
   const x = computed(() => EDGE + (props.pct(value() ?? 0) / 100) * (props.width() - 2 * EDGE));
   const guide = (<span class="guide" />) as HTMLElement;
+  // One figure, the mark nearest the pointer, over it and inside the plot; it and its guide glide from mark to mark.
   const plate = (
     <span class="inspect-card hover-card unmeasured">
-      {() =>
-        present(props.values()).map((metric) => (
-          <span class={metric === props.metric() ? "figure read" : "figure"}>
-            <small>{metricLabel(metric)}</small> {fmtMs(props.values()[metric])}
-          </span>
-        ))
-      }
-      <small>ms</small>
+      <span>
+        <small>{() => metricLabel(props.metric())}</small> {() => `${fmtMs(value())} ms`}
+      </span>
     </span>
   ) as HTMLElement;
   let measured = 0;
+  // Placed first once its width is known, so it appears where it reads rather than sliding there.
   const place = () => {
-    plate.style.maxWidth = `${props.width()}px`;
-    plate.style.left = `${Math.max(0, Math.min(x.peek() - measured / 2, props.width() - measured))}px`;
+    if (!measured) return;
+    plate.style.translate = `${Math.max(0, Math.min(x.peek() - measured / 2, props.width() - measured))}px 0`;
   };
   const observer = new ResizeObserver(([record]) => {
     measured = record?.borderBoxSize[0]?.inlineSize ?? 0;
@@ -550,7 +547,7 @@ function Reading(props: {
   observer.observe(plate);
   onCleanup(() => observer.disconnect());
   effect(() => {
-    guide.style.left = `${x()}px`;
+    guide.style.translate = `${x()}px 0`;
     place();
   });
   return (

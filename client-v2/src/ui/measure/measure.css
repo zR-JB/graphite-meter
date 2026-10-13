@@ -731,23 +731,21 @@
     position: absolute;
     z-index: 4;
     inset-block: 0;
+    left: 0;
     width: 1px;
     margin-left: -0.5px;
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
+    transition: translate var(--dur-slide) var(--ease-out);
   }
-  /* A row's readout: its figures in order, the one read in ink. */
+  /* A row's readout: the mark read, over it. */
   .hover-card {
     z-index: 10;
     bottom: calc(50% + 8px);
+    left: 0;
+    transition: translate var(--dur-slide) var(--ease-out);
     &.unmeasured {
       visibility: hidden;
-    }
-    & .figure {
-      color: var(--text-muted);
-      &.read {
-        color: var(--text);
-      }
     }
   }
   .lanes .ticks {
