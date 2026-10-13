@@ -297,6 +297,34 @@ test.chrome(
   },
 );
 
+test.chrome("a pinch on a phone's sheet zooms the page and leaves the sheet open", async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+  await open(page, home.http);
+  const sheet = page.locator("dialog.panel[open]");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(sheet).toHaveCount(1);
+  await page.evaluate(settled);
+  let clock = Date.now();
+  const touch = (type: string, points: { x: number; y: number; id: number }[]) =>
+    page.cdp("Input.dispatchTouchEvent", { type, timestamp: (clock += 8) / 1000, touchPoints: points });
+  // In the sheet's content: the lower finger first, then the upper, then they spread apart.
+  await touch("touchStart", [{ x: 90, y: 600, id: 0 }]);
+  await touch("touchStart", [
+    { x: 90, y: 600, id: 0 },
+    { x: 280, y: 280, id: 1 },
+  ]);
+  for (let step = 1; step <= 8; step++)
+    await touch("touchMove", [
+      { x: 90, y: 600 + step * 20, id: 0 },
+      { x: 280, y: 280 - step * 20, id: 1 },
+    ]);
+  await touch("touchEnd", []);
+  await Bun.sleep(700);
+  await expect(sheet).toHaveCount(1);
+  expect(await page.evaluate(() => visualViewport?.scale ?? 1)).toBeGreaterThan(1);
+});
+
 test("a graph's reading stays inside a narrow card wherever it reads", async (page) => {
   await page.setViewportSize({ width: 900, height: 800 });
   await open(page, home.http);

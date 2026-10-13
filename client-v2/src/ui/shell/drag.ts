@@ -80,8 +80,13 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
   };
 
   function start(event: TouchEvent) {
+    // A second finger is a pinch, not a drag: the sheet goes back to rest and the browser zooms.
+    if (event.touches.length > 1) {
+      if (gesture) settle(gesture, false, event.timeStamp);
+      return;
+    }
     const touch = event.touches[0];
-    if (event.touches.length !== 1 || !touch || !(event.target instanceof Element)) return;
+    if (!touch || !(event.target instanceof Element)) return;
     // A control that takes a sideways or held finger keeps it.
     if (event.target.closest("input, select, textarea, [role='slider'], [role='separator']")) return;
     const at = edge();
@@ -131,17 +136,19 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
   function end(event: TouchEvent) {
     const current = gesture;
     if (!current || ![...event.changedTouches].some((each) => each.identifier === current.id)) return;
+    settle(current, event.type === "touchend", event.timeStamp);
+  }
+
+  /** Lets go of a drag: lifted, out of view when its offset and speed carry it far enough; else back to rest. */
+  function settle(current: Gesture, lifted: boolean, time: number) {
     gesture = null;
     if (current.origin === null) return;
     const { edge: at, size, samples } = current;
     const first = samples[0];
     const last = samples.at(-1);
     const velocity =
-      first && last && last.t > first.t && event.timeStamp - last.t <= HELD_MS
-        ? (last.p - first.p) / (last.t - first.t)
-        : 0;
-    const leave =
-      event.type === "touchend" && offset + velocity * PROJECT_MS > Math.min(size * LEAVE_SHARE, LEAVE_MAX_PX);
+      first && last && last.t > first.t && time - last.t <= HELD_MS ? (last.p - first.p) / (last.t - first.t) : 0;
+    const leave = lifted && offset + velocity * PROJECT_MS > Math.min(size * LEAVE_SHARE, LEAVE_MAX_PX);
     const target = leave ? size : 0;
     // Left out of view, the route closes it and the stylesheet's closed place takes over where it already is.
     const finish = () => {
