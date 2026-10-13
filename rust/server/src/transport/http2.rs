@@ -3,7 +3,7 @@
 use super::{
     Burst,
     body::{Aborted, ReplyBound, Sink, pump},
-    lifecycle::{Event, Grace, Lifecycle},
+    lifecycle::{Activity, Event, Grace, Lifecycle},
     tls,
     window::{Incoming, ReceiveWindow},
 };
@@ -135,7 +135,7 @@ impl Http2 {
             }
             // Queued END_STREAM and reset frames keep h2's streams after their futures end.
             let live = !streams.is_empty() || h2.has_streams();
-            while let Poll::Ready(event) = lifecycle.poll(cx, window.raised(), live) {
+            while let Poll::Ready(event) = lifecycle.poll(cx, Activity { credited: window.raised(), streams: live }) {
                 match event {
                     Event::GoAway => {
                         h2.graceful_shutdown();

@@ -11,7 +11,7 @@ pub use endpoint::{Binding, Endpoints};
 use super::{
     PEER_FAILURES,
     accept::Listen,
-    lifecycle::{Event, Grace, Lifecycle},
+    lifecycle::{Activity, Event, Grace, Lifecycle},
     tls::Certificates,
 };
 use crate::{
@@ -190,7 +190,7 @@ impl Http3 {
                     http.shutdown(LaneEnding::Shutdown.webtransport_code(), LaneEnding::Shutdown.reason());
                 }
                 // The layer closes connections without a live request itself.
-                event = poll_fn(|cx| lifecycle.poll(cx, window.raised(), true)) => match event {
+                event = poll_fn(|cx| lifecycle.poll(cx, Activity { credited: window.raised(), streams: true })) => match event {
                     Event::GoAway => http.goaway(),
                     Event::Close => return Ok(()),
                 },

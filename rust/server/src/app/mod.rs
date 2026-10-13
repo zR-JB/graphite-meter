@@ -22,7 +22,7 @@ use crate::{
         Burst,
         body::Body,
         websocket,
-        webtransport::{Plan, Upload},
+        webtransport::{Form, Plan, Upload},
     },
 };
 use bytes::Buf;
@@ -262,8 +262,11 @@ impl App {
         let plan = match route {
             Route::WtDownload => Plan::Download {
                 source: self.block.source(query::transfer_bytes(query)),
-                streams: query::streams(query),
-                datagrams: query::datagrams(query),
+                form: if query::datagrams(query) {
+                    Form::Datagrams
+                } else {
+                    Form::Streams(query::streams(query))
+                },
             },
             Route::WtUpload => Plan::Upload(Upload {
                 uploads: self.uploads.clone(),
@@ -279,10 +282,9 @@ impl App {
     /// The WebSocket bus, admitted before its handshake is checked.
     fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Admitted {
         let lane = self.admit(peer, connection, exchange, false)?;
-        let answer = websocket::handshake(request);
-        Ok(match answer.status() == StatusCode::SWITCHING_PROTOCOLS {
-            true => Outcome::WebSocket(answer, lane),
-            false => Outcome::Response(answer),
+        Ok(match websocket::handshake(request) {
+            Ok(accepted) => Outcome::WebSocket(accepted, lane),
+            Err(refused) => Outcome::Response(refused),
         })
     }
 

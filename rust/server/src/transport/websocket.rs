@@ -23,8 +23,8 @@ const MAX_MESSAGE_BYTES: usize = 2048;
 /// The close handshake, so that an unresponsive peer cannot hold its admission.
 const CLOSE_BOUND: Duration = Duration::from_secs(5);
 
-/// The `101` accepting an upgrade or its refusal, in Go's order; HEAD gets `Allow: GET`, HTTP/1.0 `Upgrade: websocket`.
-pub fn handshake<B>(request: &Request<B>) -> Response<Body> {
+/// The `101` accepting an upgrade, or its refusal in Go's order; HEAD gets `Allow: GET`, HTTP/1.0 `Upgrade: websocket`.
+pub fn handshake<B>(request: &Request<B>) -> Result<Response<Body>, Response<Body>> {
     // Token lists may spread over repeated headers, which tungstenite expects as one value each.
     let mut normalized = Request::new(());
     *normalized.version_mut() = request.version();
@@ -43,21 +43,22 @@ pub fn handshake<B>(request: &Request<B>) -> Response<Body> {
             ProtocolError::WrongHttpVersion
             | ProtocolError::MissingConnectionUpgradeHeader
             | ProtocolError::MissingUpgradeWebSocketHeader,
-        )) => refusal(
+        )) => Err(refusal(
             StatusCode::UPGRADE_REQUIRED,
             &[(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")],
-        ),
-        _ if request.method() != Method::GET => refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")]),
+        )),
+        _ if request.method() != Method::GET => Err(refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")])),
         Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => {
-            refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")])
+            Err(refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")]))
         }
         _ if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 => {
-            refusal(StatusCode::BAD_REQUEST, &[])
+            Err(refusal(StatusCode::BAD_REQUEST, &[]))
         }
-        Ok(accepted) => accepted,
-        Err(_) => refusal(StatusCode::BAD_REQUEST, &[]),
+        Ok(accepted) => Ok(accepted),
+        Err(_) => Err(refusal(StatusCode::BAD_REQUEST, &[])),
     };
-    answer.map(|()| Body::empty())
+    let empty = |answer: Response<()>| answer.map(|()| Body::empty());
+    answer.map(empty).map_err(empty)
 }
 
 fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -> Response<()> {
