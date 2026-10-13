@@ -33,18 +33,17 @@ pub fn provider() -> Arc<CryptoProvider> {
 }
 
 /// Go's hasAESGCMHardwareSupport on the architectures the binaries ship for.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn aes_hardware() -> bool {
-    use std::arch::is_x86_feature_detected as has;
-    has!("aes") && has!("pclmulqdq") && has!("sse4.1") && has!("ssse3")
-}
-#[cfg(target_arch = "aarch64")]
-fn aes_hardware() -> bool {
-    std::arch::is_aarch64_feature_detected!("aes") && std::arch::is_aarch64_feature_detected!("pmull")
-}
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
-fn aes_hardware() -> bool {
-    false
+pub fn aes_hardware() -> bool {
+    cfg_select! {
+        any(target_arch = "x86", target_arch = "x86_64") => {
+            use std::arch::is_x86_feature_detected as has;
+            has!("aes") && has!("pclmulqdq") && has!("sse4.1") && has!("ssse3")
+        }
+        target_arch = "aarch64" => {
+            std::arch::is_aarch64_feature_detected!("aes") && std::arch::is_aarch64_feature_detected!("pmull")
+        }
+        _ => false,
+    }
 }
 
 /// How a client checks server certificates.

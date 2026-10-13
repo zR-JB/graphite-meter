@@ -9,7 +9,7 @@ mod trust;
 mod udp;
 
 pub use connect::{ConnectError, Connection, Connector, RequestForm, Stream};
-pub use crypto::{Verify, client_config, provider};
+pub use crypto::{Verify, aes_hardware, client_config, provider};
 pub use dial::resolve;
 pub use proxy::{Proxy, UnusableProxy, Upstream};
 pub use runtime::Pool;

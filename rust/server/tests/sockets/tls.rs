@@ -29,6 +29,14 @@ async fn the_https_listener_serves_http_1_1_over_tls_1_3_only() {
         .await
         .unwrap();
     assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"http/1.1"[..]));
+    // The client offers AES-256-GCM first; a server without AES hardware takes ChaCha20-Poly1305 instead.
+    let suite = stream.get_ref().1.negotiated_cipher_suite().map(|suite| suite.suite());
+    let expected = if graphite_meter_net::aes_hardware() {
+        rustls::CipherSuite::TLS13_AES_256_GCM_SHA384
+    } else {
+        rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256
+    };
+    assert_eq!(suite, Some(expected));
     let mut client = Client::new(stream);
     let answer = client.request("GET /probe", "").await;
     assert_eq!(answer.status, 200);

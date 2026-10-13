@@ -187,8 +187,8 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - HTTP/3 SETTINGS over 8 KiB or with more than 64 identifiers close with `H3_EXCESSIVE_LOAD`.
 - A QUIC handshake has 10 s in all, and a silent client holds it that long; quic-go ends one after 5 s without a
   packet.
-- The server follows the client's TLS 1.3 suite order, so OpenSSL clients get AES-256-GCM (about 3% more CPU per
-  byte); Go prefers AES-128-GCM.
+- With AES hardware the server follows the client's TLS 1.3 suite order, so OpenSSL clients get AES-256-GCM (about
+  3% more CPU per byte); Go prefers AES-128-GCM. Without it both pick ChaCha20-Poly1305.
 - The WebSocket close handshake has 5 s in all; refused upgrades add `Allow: GET` for HEAD and
   `Upgrade: websocket` for HTTP/1.0, with empty bodies.
 - Shutdown drains for 5 s; HTTP/3 then takes up to 1 s more to send its closes.
