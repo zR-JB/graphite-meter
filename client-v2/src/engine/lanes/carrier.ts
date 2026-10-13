@@ -2,7 +2,14 @@
 // streams. A worker lives as long as its carrier: a lane that ends reopens on it once the stage has settled what the
 // ending means, so a session's unspent ticket survives its redials. The carrier is ready when enough lanes delivered
 // since they last opened.
-import type { FeedRecord, LaneCommand, LaneReport, SessionCommand, SessionReport } from "../../protocol/messages";
+import type {
+  FeedRecord,
+  Flushed,
+  LaneCommand,
+  LaneReport,
+  SessionCommand,
+  SessionReport,
+} from "../../protocol/messages";
 import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
 import { Backoff, lost } from "./endings";
@@ -44,8 +51,12 @@ interface Lane {
   worker: Worker;
   delivered: boolean;
   backoff: Backoff;
-  /** Resolves the flush awaiting this lane's answer, with when the lane read its count. */
-  flushed: ((at: number) => void) | null;
+  /** Download bytes of the current epoch passed on to the host. */
+  counted: number;
+  /** Bytes reported while a flush awaits this lane's answer, which counts them itself; null when none awaits. */
+  held: number | null;
+  /** Resolves the flush awaiting this lane's answer. */
+  flushed: ((answer: Flushed) => void) | null;
   /** Answered the final flush: what it counts later lies past the boundary. */
   cut: boolean;
 }
@@ -69,6 +80,8 @@ export class Carrier {
         worker: new Worker(workerScript(plan.worker), { type: "module" }),
         delivered: false,
         backoff: new Backoff(),
+        counted: 0,
+        held: null,
         flushed: null,
         cut: false,
       };
@@ -96,27 +109,38 @@ export class Carrier {
   /** A new epoch: download bytes counted before it no longer count. */
   measure(): void {
     this.#epoch++;
-    for (const { worker } of this.#lanes) worker.postMessage({ type: "measure", epoch: this.#epoch });
+    for (const lane of this.#lanes) {
+      lane.counted = 0;
+      lane.worker.postMessage({ type: "measure", epoch: this.#epoch });
+    }
   }
 
-  /** Resolves once every lane reported the download bytes it counted so far, within 250 ms, with the latest page
-      time a lane read its count at, or null when none answered. A lane that answered counts nothing more. */
-  async flush(): Promise<number | null> {
+  /** Resolves once every lane answered the download bytes it had counted by `cutoff` (page time), within 250 ms,
+      with the latest page time those counts stand at (the cutoff, unless a lane no longer kept it), or null when none
+      answered. A lane that answered counts nothing more; one that did not counts on. */
+  async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;
     const answers = this.#lanes.map(
       (lane) =>
         new Promise<void>((resolve) => {
-          lane.flushed = (at) => {
+          lane.held = 0;
+          lane.flushed = ({ total, at }) => {
             lane.cut = true;
+            lane.held = null;
+            if (total > lane.counted) this.#count(lane, total - lane.counted);
             latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, fromEpoch(at));
             resolve();
           };
-          lane.worker.postMessage({ type: "flush" });
+          lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + cutoff });
         }),
     );
     await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
     answered.abort();
+    for (const lane of this.#lanes) {
+      if (lane.held) this.#count(lane, lane.held);
+      lane.held = lane.flushed = null;
+    }
     return latest;
   }
 
@@ -150,7 +174,9 @@ export class Carrier {
     switch (report.type) {
       case "bytes":
         this.#delivered(lane);
-        if (report.epoch === this.#epoch && !lane.cut) this.#host.bytes(report.bytes);
+        if (report.epoch !== this.#epoch || lane.cut) return;
+        if (lane.held === null) this.#count(lane, report.bytes);
+        else lane.held += report.bytes;
         return;
       case "posted":
         this.#delivered(lane);
@@ -161,7 +187,7 @@ export class Carrier {
       case "stopped":
         return this.#acknowledged.abort();
       case "flushed":
-        lane.flushed?.(report.at);
+        lane.flushed?.(report);
         lane.flushed = null;
         return;
       case "ended":
@@ -169,6 +195,11 @@ export class Carrier {
       case "broken":
         return void this.#ended(lane, lost(report.detail), true);
     }
+  }
+
+  #count(lane: Lane, bytes: number): void {
+    lane.counted += bytes;
+    this.#host.bytes(bytes);
   }
 
   #delivered(lane: Lane): void {

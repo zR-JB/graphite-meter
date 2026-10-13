@@ -195,7 +195,7 @@ test("a broken lane reopens after its pause while a slow sign-in check runs, whi
   }
 });
 
-test("a flush resolves once every lane reported what it counted, at most 250 ms", async () => {
+test("a flush resolves once every lane answered what it counted by the cutoff, at most 250 ms", async () => {
   for (const answering of [3, 2]) {
     const flushing = stage(DOWNLOAD);
     void flushing.resources.prepare(new AbortController().signal);
@@ -203,22 +203,47 @@ test("a flush resolves once every lane reported what it counted, at most 250 ms"
     const lanes = flushing.lanes();
     for (const lane of lanes) bytes(lane, 0);
     flushing.resources.measure();
-    const answer = flushing.resources.flush();
+    const cutoff = performance.now();
+    const answer = flushing.resources.flush(cutoff);
     const flushed = outcome(answer);
     let read: number | null | undefined;
     void answer.then((value) => (read = value));
-    expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "flush" }));
-    for (const lane of lanes.slice(0, answering)) {
-      bytes(lane, 1);
-      lane.report({ type: "flushed", at: performance.timeOrigin + performance.now() });
-    }
+    const at = performance.timeOrigin + cutoff;
+    expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "flush", at }));
+    // Each lane's report after the cutoff is in its answer's total; the one that never answers counts on.
+    for (const lane of lanes) bytes(lane, 1);
+    for (const lane of lanes.slice(0, answering)) lane.report({ type: "flushed", total: 1_000, at });
     await elapse(300);
     expect(flushed.at).toBe(answering === 3 ? 0 : 250);
-    expect(read).toEqual(expect.any(Number));
+    expect(read).toBe(cutoff);
     // A lane that answered counts nothing more: its later bytes lie past the boundary.
-    for (const lane of lanes.slice(0, answering)) bytes(lane, 1);
-    expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering);
+    for (const lane of lanes) bytes(lane, 1);
+    expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering + 2 * (3 - answering));
   }
+});
+
+test("lanes answering a flush at different times each count what they had by the one cutoff", async () => {
+  const flushing = stage(DOWNLOAD);
+  void flushing.resources.prepare(new AbortController().signal);
+  await elapse(150);
+  const lanes = flushing.lanes();
+  flushing.resources.measure();
+  for (const lane of lanes) bytes(lane, 1);
+  const cutoff = performance.now();
+  const answer = outcome(flushing.resources.flush(cutoff));
+  const at = performance.timeOrigin + cutoff;
+  // The first answers at once; the second's report sent before the cutoff arrives after it, and its answer 200 ms
+  // later; the third had counted 400 more bytes by the cutoff, and had counted more by the time it answered.
+  lanes[0]!.report({ type: "flushed", total: 1_000, at });
+  bytes(lanes[1]!, 1);
+  await elapse(200);
+  lanes[1]!.report({ type: "flushed", total: 2_000, at });
+  bytes(lanes[2]!, 1);
+  lanes[2]!.report({ type: "flushed", total: 1_400, at });
+  await elapse(0);
+  expect(answer.at).toBe(200);
+  const counted = flushing.events.flatMap(([type, bytes]) => (type === "download" ? [bytes as number] : []));
+  expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(4_400);
 });
 
 test("a session's stop waits for its worker's acknowledgement, at most 2.5 s", async () => {

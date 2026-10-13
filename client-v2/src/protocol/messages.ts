@@ -48,9 +48,17 @@ export interface BytesReport {
     classifies because a login or grant that ended shows first as one. */
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
+/** A lane's answer to `flush`: its epoch's download total as counted by `at`. */
+export interface Flushed {
+  type: "flushed";
+  total: number;
+  at: number;
+}
+
 /** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
-    reports the download bytes counted so far, then answers `flushed` with when it read that count
-    (`performance.timeOrigin + performance.now()`). */
+    reports the download bytes counted so far, then answers `flushed` with the epoch's total as counted by its cutoff,
+    and the time that total stands at: the cutoff, unless it lies further back than the lane keeps. Both times are
+    `performance.timeOrigin + performance.now()`. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
   | {
@@ -62,14 +70,10 @@ export type LaneCommand =
       rttMs: number | null;
     }
   | { type: "measure"; epoch: number }
-  | { type: "flush" };
+  | { type: "flush"; at: number };
 
 /** `posted` is one completed upload POST, timed on the worker clock: presentation evidence, never a measurement. */
-export type LaneReport =
-  | BytesReport
-  | { type: "posted"; bytes: number; elapsedMs: number }
-  | EndReport
-  | { type: "flushed"; at: number };
+export type LaneReport = BytesReport | { type: "posted"; bytes: number; elapsedMs: number } | EndReport | Flushed;
 
 /** A session worker (re)dials with `download` or `upload` after its previous ending; `stop` finalizes an upload and
     is acknowledged by `stopped` whatever ended the session; `flush` is a lane's. */
@@ -85,7 +89,7 @@ export type SessionCommand =
       finalize: { url: string; request: RequestRecipe };
     }
   | { type: "measure"; epoch: number }
-  | { type: "flush" }
+  | { type: "flush"; at: number }
   | { type: "stop" };
 
 /** An upload session relays its feed's observations; a refusal record ends the session instead. */
@@ -95,7 +99,7 @@ export type SessionReport =
   | { type: "record"; record: FeedRecord }
   | EndReport
   | { type: "stopped" }
-  | { type: "flushed"; at: number };
+  | Flushed;
 
 export type ProbeCommand =
   | {

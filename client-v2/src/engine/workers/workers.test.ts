@@ -119,9 +119,10 @@ test("a flush reports the bytes counted so far before it answers", async () => {
   await elapse(0);
   body.push("counted");
   await elapse(0);
-  lane.send({ type: "flush" });
-  lane.send({ type: "flush" });
-  const flushed = { type: "flushed", at: expect.any(Number) };
+  const at = performance.timeOrigin + performance.now();
+  lane.send({ type: "flush", at });
+  lane.send({ type: "flush", at });
+  const flushed = { type: "flushed", total: 7, at };
   expect(lane.posted).toEqual([{ type: "bytes", bytes: 7, epoch: 1 }, flushed, flushed]);
 });
 
@@ -258,7 +259,7 @@ test("a datagram download reads the clock once per 16 datagrams and still counts
   for (let turn = 0; turn < 10_000; turn++) await null;
   expect(clock.mock.calls.length).toBeLessThanOrEqual(1_600 / 16 + 1);
   clock.mockRestore();
-  session.send({ type: "flush" });
+  session.send({ type: "flush", at: performance.timeOrigin + performance.now() });
   const counted = session.posted.flatMap((report) => (report.type === "bytes" ? [report.bytes as number] : []));
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(1_600 * 1_200);
 });

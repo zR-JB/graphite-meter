@@ -46,9 +46,10 @@ contributions share the client's connection and are not independent capacity tes
 - **Intervals** have fixed membership. Downloads sum client-consumed byte deltas over one client monotonic window.
   Uploads take each receiver's latest observation, divide its byte delta by its own elapsed time and add the rates;
   receiver durations are never added. The final boundary always requests fresh receiver checkpoints, and in the
-  browser waits up to 250 ms for every download lane to report what it has counted and when it read that count; a
-  lane that answered counts nothing more, and the boundary closes at the latest such reading, not at the answers'
-  arrival.
+  browser asks every download lane what it had counted by one cutoff, waiting up to 250 ms for the answers. Each
+  lane answers from readings of its running total kept at least once a millisecond, so however late its answer
+  arrives it counts to the same moment as every other lane, and the boundary closes at that cutoff; a lane that
+  answered counts nothing more.
 - **Headline and peak** come from the combined boundary samples, never from per-server windows; per-server
   headlines do not add up to the all-servers value.
 - **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or

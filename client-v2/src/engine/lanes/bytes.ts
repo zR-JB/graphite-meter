@@ -9,6 +9,8 @@ const MIB = 1024 * 1024;
 const BLOCK_BYTES = 4 * MIB;
 /** crypto.getRandomValues fills at most this much per call. */
 const RANDOM_QUOTA = 65_536;
+/** Readings of a download's running total a flush can look back over: well past the 250 ms a flush waits. */
+const TOTALS = 512;
 
 /** Counts `body` through one reused 1 MiB buffer: a default reader allocates per chunk, which halves what a worker
     reads at multi-Gbit/s. A stream without byte support is read chunk by chunk. */
@@ -40,12 +42,21 @@ export async function countBytes(body: ReadableStream<Uint8Array>, count: (bytes
 }
 
 /** A download's counted bytes, reported at most every 10 ms per reporter of its server with the measurement epoch they
-    belong to. */
+    belong to. The epoch's running total is read at most once a millisecond and at every report, and the last 512
+    readings kept, so a flush can answer what was counted by a moment up to about half a second back. */
 export class ByteReports {
   #bytes = 0;
   #since = performance.now();
   #epoch = 0;
   #reportMs = REPORT_MS;
+  #total = 0;
+  readonly #times = new Float64Array(TOTALS);
+  readonly #totals = new Float64Array(TOTALS);
+  /** Readings taken this epoch; the latest is at `(#taken - 1) % TOTALS`. */
+  #taken = 0;
+  /** The latest count's time, and the total it made. */
+  #last = Number.NEGATIVE_INFINITY;
+  #lastTotal = 0;
 
   constructor(readonly report: (bytes: number, epoch: number) => void) {}
 
@@ -57,24 +68,57 @@ export class ByteReports {
   /** Bound for read loops; a datagram loop passes the clock reading it already made. */
   count = (bytes: number, now = performance.now()): void => {
     this.#bytes += bytes;
+    this.#total += bytes;
+    this.#last = now;
+    this.#lastTotal = this.#total;
     if (now - this.#since >= this.#reportMs) this.flush(now);
+    else this.#keep(now);
   };
 
   /** Counts without reading the clock; the next count or flush reports the bytes. */
   add(bytes: number): void {
     this.#bytes += bytes;
+    this.#total += bytes;
   }
 
   flush(now = performance.now()): void {
     if (this.#bytes) this.report(this.#bytes, this.#epoch);
     this.#bytes = 0;
     this.#since = now;
+    this.#keep(now, true);
   }
 
-  /** Bytes not yet reported belong to the previous epoch. */
+  /** Bytes not yet reported belong to the previous epoch; a lane reopening in its epoch keeps the epoch's total. */
   measure(epoch: number): void {
-    this.#epoch = epoch;
     this.#bytes = 0;
+    if (epoch === this.#epoch) return;
+    this.#epoch = epoch;
+    this.#total = this.#lastTotal = 0;
+    this.#taken = 0;
+    this.#last = Number.NEGATIVE_INFINITY;
+  }
+
+  /** The epoch's total as counted by `at`: the latest count's, else the latest reading's at or before it; past what is
+      kept, the earliest reading kept and its time. Every report reads the total, so it covers what was reported by
+      `at`. */
+  totalAt(at: number): { total: number; at: number } {
+    if (at >= this.#last) return { total: this.#lastTotal, at };
+    const kept = Math.min(this.#taken, TOTALS);
+    for (let back = 1; back <= kept; back++) {
+      const slot = (this.#taken - back) % TOTALS;
+      if (this.#times[slot]! <= at) return { total: this.#totals[slot]!, at };
+    }
+    if (this.#taken <= TOTALS) return { total: 0, at };
+    const oldest = this.#taken % TOTALS;
+    return { total: this.#totals[oldest]!, at: this.#times[oldest]! };
+  }
+
+  /** A reading at most every millisecond, and at every report. */
+  #keep(now: number, reported = false): void {
+    if (!reported && this.#taken && now - this.#times[(this.#taken - 1) % TOTALS]! < 1) return;
+    const slot = this.#taken++ % TOTALS;
+    this.#times[slot] = now;
+    this.#totals[slot] = this.#total;
   }
 }
 

@@ -1143,17 +1143,16 @@ export class Run {
     // was moving look silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
-    // Bytes lanes counted but had not reported yet still count. Lanes read and report on until every server's
-    // lanes have answered; the download boundary closes then, for every server at once, so each count is as current
-    // as at any boundary mid-stage (one report interval) at the same moment.
+    // Bytes lanes counted but had not reported yet still count. Every server's lanes answer what they had counted by
+    // one cutoff, however late their answers arrive, and the download boundary closes there for every server at once.
     const flushed = transfer.includes("down")
       ? (async () => {
           for (const seat of seats) seat.flushing = true;
-          // The boundary's time is when the lanes read their counts, not when their answers reached the page.
+          const cutoff = this.#clock.read();
           let read: number | null = null;
           await Promise.allSettled(
             seats.map(async (seat) => {
-              const at = await seat.resources.flush();
+              const at = await seat.resources.flush(cutoff);
               if (at !== null) read = Math.max(read ?? at, at);
             }),
           );

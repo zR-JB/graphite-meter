@@ -26,7 +26,8 @@ onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch);
   if (data.type === "flush") {
     reports.flush();
-    return post({ type: "flushed", at: performance.timeOrigin + performance.now() });
+    const { total, at } = reports.totalAt(data.at - performance.timeOrigin);
+    return post({ type: "flushed", total, at: performance.timeOrigin + at });
   }
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.
   void (data.type === "download" ? download(data) : upload(data)).then(post, (error) =>

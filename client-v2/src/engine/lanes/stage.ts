@@ -107,8 +107,8 @@ class Stage implements StageResources {
     return this.#receiver ? this.#receiver.checkpoint(signal, final) : null;
   }
 
-  async flush(): Promise<number | null> {
-    return (await this.#down?.flush()) ?? null;
+  async flush(cutoff: number): Promise<number | null> {
+    return (await this.#down?.flush(cutoff)) ?? null;
   }
 
   async replaceUpload(signal: AbortSignal): Promise<void> {
