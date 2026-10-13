@@ -175,6 +175,14 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* A figure rolls in its own slot, the old one over the new until it has left, against the words that follow. */
+  .roll-slot {
+    display: inline-grid;
+    justify-items: end;
+  }
+  .roll-figure {
+    grid-area: 1 / 1;
+  }
   /* A unit keeps its spaces, so it reads and copies as "1 min 30 s", and sits within its figures' line. */
   .roll-unit {
     color: var(--text-soft);
