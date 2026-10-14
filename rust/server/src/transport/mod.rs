@@ -31,12 +31,15 @@ const BURST_BYTES: usize = 256 << 10;
 pub(crate) struct Burst(usize);
 
 impl Burst {
-    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran.
+    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran,
+    /// and the thread offers its CPU to threads waiting for it.
     pub fn poll_turn(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.0 < BURST_BYTES {
             return Poll::Ready(());
         }
         self.0 = 0;
+        // The scheduler lets a busy thread finish its slice, about 3 ms, before a woken bus thread on its CPU runs.
+        std::thread::yield_now();
         // A fresh `yield_now` is pending on its first poll, with the wake deferred past the driver.
         let _ = pin!(tokio::task::yield_now()).poll(cx);
         Poll::Pending

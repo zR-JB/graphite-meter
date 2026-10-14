@@ -97,9 +97,9 @@ kernel refuses the program, connections stay where they arrive and an endpoint f
 Admission, Retry and limits stay server-wide.
 After its upgrade a WebSocket bus moves to the multi-thread runtime, which runs no transfer, its socket re-registered
 with that runtime's driver, so its probes never queue behind a transfer's task; on Linux the per-worker runtimes run
-five nice steps lower, so the bus's thread also preempts them. A WebTransport bus stays on its
-endpoint's runtime, where an HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other
-tasks run. Log lines reach stderr from a thread of their own through a 1024-line queue; while stderr stalls, lines are
+five nice steps lower. An HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other
+tasks run and its thread offers the CPU to waiting threads, so the bus's thread does not wait out a transfer's scheduler
+slice. A WebTransport bus stays on its endpoint's runtime. Log lines reach stderr from a thread of their own through a 1024-line queue; while stderr stalls, lines are
 dropped and counted instead of blocking a runtime.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
