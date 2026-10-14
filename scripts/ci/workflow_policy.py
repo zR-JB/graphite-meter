@@ -116,7 +116,6 @@ IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.output
 SELECTED_BY = {
     "e2e": "code", "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
-    "rust-campaign": "rust",
 }
 ALWAYS = ("plan", "checks", "gate")
 # The plan output that selects each task of the checks job; its other tasks run on every change.
