@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     config::Config,
-    events::{Event, Events},
+    events::{Event, Events, Probed},
     measure::{
         aggregate::{Reading, Receiver},
         latency::ProbeOutcome,
@@ -157,6 +157,7 @@ impl Run<'_> {
             departed: Vec::new(),
             checkpoint: None,
             window: None,
+            open: false,
             finished: false,
         };
         let token = self.token.child_token();
@@ -198,8 +199,10 @@ struct Live<'a> {
     /// Participants that could not open, for the next tick.
     departed: Vec<(ServerId, Failure)>,
     checkpoint: Option<Duration>,
-    /// The window's start while it is open.
-    window: Option<Instant>,
+    /// The measured window once it opened; probes sent within it are announced until the stage ends.
+    window: Option<(Instant, Instant)>,
+    /// The window is open, so the boundaries' live rates are announced.
+    open: bool,
     finished: bool,
 }
 
@@ -257,7 +260,7 @@ impl Live<'_> {
         for decision in std::mem::take(&mut tick.decisions) {
             match decision {
                 Decision::OpenWindow { start, end } => {
-                    self.window = Some(start);
+                    (self.window, self.open) = (Some((start, end)), true);
                     participants.iter().for_each(|participant| participant.opened(end));
                     self.run.events.send(Event::Measuring(self.stage));
                 }
@@ -283,29 +286,33 @@ impl Live<'_> {
                 Decision::Finish => self.finished = true,
             }
         }
-        if let Some(start) = self.window {
-            self.announce(&tick, probes, now.saturating_duration_since(start), start);
+        if let Some(window) = self.window {
+            self.announce(&tick, probes, now, window);
         }
-        if closed {
-            self.window = None;
-        }
+        self.open &= !closed;
     }
 
-    /// Announces the window's in-window probes and the boundary's live rates `at` into the window.
-    fn announce(&self, tick: &Tick, probes: &[(ServerId, Probe)], at: Duration, start: Instant) {
+    /// Announces each server's probes sent within the window, as the engine counts them, and while the window is
+    /// open the boundary's live rates `now` into it.
+    fn announce(&self, tick: &Tick, probes: &[(ServerId, Probe)], now: Instant, (start, end): (Instant, Instant)) {
         let events = self.run.events;
-        for (server, probe) in probes {
-            let (sent, rtt) = match probe {
-                Probe::Outcome { sent, outcome: ProbeOutcome::Reply { rtt, .. } } => (*sent, Some(*rtt)),
-                Probe::Outcome { sent, outcome: ProbeOutcome::Timeout } => (*sent, None),
-                _ => continue,
-            };
-            if let Some(at) = sent.checked_duration_since(start) {
-                events.send(Event::Probe { server: server.clone(), at, rtt });
+        // Each participant's probes arrive together.
+        for own in probes.chunk_by(|(one, _), (other, _)| one == other) {
+            let probed = own.iter().filter_map(|(_, probe)| {
+                let (sent, rtt) = match probe {
+                    Probe::Outcome { sent, outcome: ProbeOutcome::Reply { rtt, .. } } => (*sent, Some(*rtt)),
+                    Probe::Outcome { sent, outcome: ProbeOutcome::Timeout } => (*sent, None),
+                    _ => return None,
+                };
+                (start..end).contains(&sent).then(|| Probed { at: sent - start, rtt })
+            });
+            let probes: Box<[Probed]> = probed.collect();
+            if !probes.is_empty() {
+                events.send(Event::Probes { server: own[0].0.clone(), probes });
             }
         }
-        if let Some(rates) = tick.live {
-            events.send(Event::Sample { at, rates });
+        if let Some(rates) = tick.live.filter(|_| self.open) {
+            events.send(Event::Sample { at: now.saturating_duration_since(start), rates });
         }
     }
 }

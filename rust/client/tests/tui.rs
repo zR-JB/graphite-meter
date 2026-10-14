@@ -4,7 +4,7 @@ use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
     config::{self, Config},
     controller::Command,
-    events::{Event, SignInEnd, SignInPrompt},
+    events::{Event, Probed, SignInEnd, SignInPrompt},
     measure::aggregate::Rate,
     model::{Dir, Failure, Outcome, Stage, StageResult, Throughput},
     net::{ThroughputPath, approval::Unapproved},
@@ -402,9 +402,10 @@ fn idle_latency_fills_its_lane_live_from_the_replies() {
     measuring(&mut app, Stage::Latency, SECOND * 4, now);
     for ms in 10..=29 {
         let (at, rtt) = (Duration::from_millis(100 * (ms - 9)), Some(Duration::from_millis(ms)));
-        app.event(&Event::Probe { server: id("a"), at, rtt }, now + at);
+        app.event(&Event::Probes { server: id("a"), probes: Box::new([Probed { at, rtt }]) }, now + at);
     }
-    app.event(&Event::Probe { server: id("a"), at: SECOND * 3, rtt: None }, now + SECOND * 3);
+    let timeout = Probed { at: SECOND * 3, rtt: None };
+    app.event(&Event::Probes { server: id("a"), probes: Box::new([timeout]) }, now + SECOND * 3);
     let later = now + SECOND * 3;
     let lane = frame(&mut app, later)
         .into_iter()

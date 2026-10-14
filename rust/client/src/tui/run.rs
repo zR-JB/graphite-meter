@@ -78,21 +78,24 @@ impl Live {
                     };
                 }
             }
-            Event::Probe { server, rtt, .. } => {
+            Event::Probes { server, probes } => {
                 let at = self.probes.iter().position(|(probed, ..)| probed == server);
                 let at = at.unwrap_or_else(|| {
                     self.probes.push((server.clone(), None, 0));
                     self.probes.len() - 1
                 });
                 let (_, latest, streak) = &mut self.probes[at];
-                (*latest, *streak) = match rtt {
-                    Some(rtt) => (Some(*rtt), 0),
-                    None => (*latest, *streak + 1),
-                };
+                for probe in probes {
+                    (*latest, *streak) = match probe.rtt {
+                        Some(rtt) => (Some(rtt), 0),
+                        None => (*latest, *streak + 1),
+                    };
+                }
                 let idle = run
                     .and_then(|run| run.stage.as_ref())
                     .is_some_and(|(plan, _)| plan.stage == Stage::Latency);
-                if let Some(rtt) = rtt.filter(|_| idle && Some(server) == shown) {
+                let slowest = probes.iter().filter_map(|probe| probe.rtt).max();
+                if let Some(rtt) = slowest.filter(|_| idle && Some(server) == shown) {
                     let ceiling = ceil_step(rtt.as_secs_f64() * 1e3 * 1.25, &[1.0, 2.0, 4.0]);
                     self.rtt_scale = self.rtt_scale.max(ceiling);
                 }

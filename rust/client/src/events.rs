@@ -44,11 +44,10 @@ pub enum Event {
         at: Duration,
         rates: Dir<Option<f64>>,
     },
-    /// A probe sent `at` into the window: its round trip, or none for a timeout.
-    Probe {
+    /// A server's probes resolved since the last tick that it sent within the window, in resolution order.
+    Probes {
         server: ServerId,
-        at: Duration,
-        rtt: Option<Duration>,
+        probes: Box<[Probed]>,
     },
     /// A failure as it happens.
     ServerFailed(ServerFailure),
@@ -107,6 +106,13 @@ pub struct Series {
     pub points: Vec<Point>,
     step: Duration,
     pub span: Duration,
+}
+
+/// A probe sent `at` into the window: its round trip, or none for a timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probed {
+    pub at: Duration,
+    pub rtt: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -319,14 +325,12 @@ impl Run {
                 let presented = Direction::BOTH.map(|direction| self.live[direction].presented().unwrap_or_default());
                 self.peak = self.peak.max(presented.iter().sum());
             }
-            Event::Probe { server, at, rtt } => {
+            Event::Probes { server, probes } => {
                 let Some((stage, offset)) = self.window() else { return };
-                self.series(server)
-                    .push(offset + *at, rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
-                let outcome = match rtt {
-                    Some(rtt) => ProbeOutcome::Reply { rtt: *rtt, handling: Duration::ZERO },
-                    None => ProbeOutcome::Timeout,
-                };
+                let series = self.series(server);
+                for probe in probes {
+                    series.push(offset + probe.at, probe.rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
+                }
                 let at = self
                     .replies
                     .iter()
@@ -335,7 +339,12 @@ impl Run {
                     self.replies.push((stage, server.clone(), Latency::default()));
                     self.replies.len() - 1
                 });
-                self.replies[at].2.record(outcome);
+                for probe in probes {
+                    self.replies[at].2.record(match probe.rtt {
+                        Some(rtt) => ProbeOutcome::Reply { rtt, handling: Duration::ZERO },
+                        None => ProbeOutcome::Timeout,
+                    });
+                }
             }
             Event::ServerFailed(failure) => {
                 let stage = self.stage.as_ref().map(|(plan, _)| plan.stage);
