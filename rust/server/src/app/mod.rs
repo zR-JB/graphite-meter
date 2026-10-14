@@ -364,17 +364,15 @@ enum End {
     Lane(LaneEnding),
 }
 
-/// Up to `READ_BATCH` frames of `body` that are ready now, each followed by `lane`'s check; pending only while none is.
+/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check, finer than Go's 64 KiB reads; pending
+/// only while none is.
 fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
     let mut bytes = 0;
     for taken in 0..READ_BATCH {
         let end = match body.as_mut().poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 bytes += frame.data_ref().map_or(0, Buf::remaining);
-                match lane.due() {
-                    Some(ending) => End::Lane(ending),
-                    None => continue,
-                }
+                continue;
             }
             Poll::Ready(Some(Err(_))) => End::Failed,
             Poll::Ready(None) => End::Finished,
@@ -383,7 +381,7 @@ fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, l
         };
         return Poll::Ready(Batch { bytes, end: Some(end) });
     }
-    Poll::Ready(Batch { bytes, end: None })
+    Poll::Ready(Batch { bytes, end: lane.due().map(End::Lane) })
 }
 
 /// The port of a listen address such as `:7246` or `[::]:7249`.
