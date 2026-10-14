@@ -11,6 +11,7 @@ use graphite_meter_proto::{
     text::{quote, safe},
 };
 use std::collections::HashMap;
+use zeroize::Zeroizing;
 
 pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, String> {
     let mut catalog = settings.catalog.clone();
@@ -302,7 +303,7 @@ fn secret(inline: &str, file: &str) -> Option<Secret> {
     match (inline, file) {
         ("", "") => None,
         ("", file) => Some(Secret::File(file.into())),
-        (inline, _) => Some(Secret::Inline(inline.into())),
+        (inline, _) => Some(Secret::Inline(Zeroizing::new(inline.into()))),
     }
 }
 

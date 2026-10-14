@@ -38,8 +38,8 @@ const FORM_BYTES: usize = 4096;
 /// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
-/// A form's fields in order.
-pub(super) type Form = Vec<(String, String)>;
+/// A form's fields in order, zeroized when dropped.
+pub(super) type Form = Zeroizing<Vec<(String, String)>>;
 
 /// Answers a controller route the policy let through; a path no route claims is not found.
 pub(super) async fn handle<B: http_body::Body>(
@@ -311,14 +311,14 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
         return (head, None);
     }
     let bytes = self::body(body).await;
-    let form = bytes.and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?));
+    let form = bytes.and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?).map(Zeroizing::new));
     (head, form)
 }
 
-/// A request body of at most 4 KiB.
-pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Vec<u8>> {
+/// A request body of at most 4 KiB, in one allocation zeroized when dropped.
+pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
     let mut body = pin!(body);
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::with_capacity(FORM_BYTES));
     while let Some(frame) = poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
         if let Ok(data) = frame.ok()?.into_data() {
             if bytes.len() + data.remaining() > FORM_BYTES {

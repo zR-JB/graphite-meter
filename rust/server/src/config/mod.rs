@@ -234,7 +234,7 @@ impl Groups {
 /// A secret given inline in the environment or as a file to read.
 #[derive(Clone)]
 pub enum Secret {
-    Inline(String),
+    Inline(Zeroizing<String>),
     File(PathBuf),
 }
 
