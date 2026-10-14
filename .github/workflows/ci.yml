@@ -524,10 +524,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
       - name: Build base and candidate binaries
         run: python3 -m scripts.ci.rust_latency_campaign build
-      - name: Measure the server against base and candidate
+      - name: Measure the server across base, candidate and one-knob variants
         run: python3 -m scripts.ci.rust_latency_campaign measure server
-      - name: Measure the client against base and candidate
-        run: python3 -m scripts.ci.rust_latency_campaign measure client
       - name: Summarize the campaign
         if: always()
         run: cat rust/target/campaign/results/*-summary.md >>"$GITHUB_STEP_SUMMARY" || true

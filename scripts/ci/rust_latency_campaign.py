@@ -1,6 +1,7 @@
 """Temporary latency campaign for the bounded-burst pull request: base against candidate, alternating.
 
-build: ci-profile musl server and client of the merge commit's base (HEAD^1) and of the merge commit itself.
+build: ci-profile musl server and client of the merge commit's base (HEAD^1), of the merge commit itself, and of
+    variants of it that each undo one knob, so each knob's cost and effect show on their own.
 measure server: the server pinned to two cores; a Python WebSocket prober on its own core records every RTT while the
     candidate TUI moves bulk traffic on the fourth. Reports RTT tails, throughput and server CPU per GiB.
 measure client: the client varied against the candidate server; reports the TUI's own loaded latency and its CPU.
@@ -26,16 +27,25 @@ from rust.interop.fixture import Fixture, Server, musl_target
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "rust/target/campaign"
 BIN = OUT / "bin"
-VARIANTS = ("base", "cand")
-SECONDS, REPEATS = 20, 5
+# Each variant's edits to the merge commit; base is the merge commit's first parent.
+PATCHES: dict[str, list[tuple[str, str, str]]] = {
+    "base": [], "cand": [],
+    "ei31": [("rust/net/src/runtime.rs", "EVENT_INTERVAL: u32 = 16;", "EVENT_INTERVAL: u32 = 31;")],
+    "ei61": [("rust/net/src/runtime.rs", "EVENT_INTERVAL: u32 = 16;", "EVENT_INTERVAL: u32 = 61;")],
+    "noburst": [("rust/server/src/transport/mod.rs", "BURST_BYTES: usize = 256 << 10;",
+                 "BURST_BYTES: usize = usize::MAX;")],
+    "nolowat": [("rust/server/src/transport/http1.rs", "NOTSENT_LOWAT: u32 = 256 << 10;",
+                 "NOTSENT_LOWAT: u32 = u32::MAX;")],
+}
+VARIANTS = tuple(PATCHES)
+SECONDS, REPEATS = 20, 4
 # The server; the TUI beside the prober, or alone on two cores; the prober.
 SERVER_CPUS, BULK_CPUS, CLIENT_CPUS, PROBE_CPU = "0,1", "2", "2,3", 3
 # The probe interval; RTTs are measured, not the cadence.
 PROBE_GAP = 0.001
 # Bulk work beside the probes: listener, direction; None probes an idle server.
 SERVER_CASES: list[tuple[str, str | None]] = [
-    ("idle", None), ("http1-tls", "download"), ("http1-tls", "upload"), ("http2", "download"),
-    ("http3", "download"), ("http3", "upload"),
+    ("http1-tls", "download"), ("http1-tls", "upload"), ("http3", "download"), ("http3", "upload"),
 ]
 # The TUI's own loaded latency: throughput listener, latency transport.
 CLIENT_CASES = [("http3", "webtransport"), ("http1-tls", "websocket")]
@@ -52,11 +62,17 @@ def build() -> None:
                    if not key.startswith(("GM_", "CARGO_PROFILE_")) and not key.endswith("RUSTFLAGS")}
     environment |= {"CARGO_INCREMENTAL": "0",
                     "CC_" + target.replace("-", "_"): f"{target.split('-')[0]}-linux-musl-gcc"}
-    base = OUT / "base-src"
-    if not base.exists():
-        git("worktree", "add", "--detach", str(base), git("rev-parse", "HEAD^1"))
+    head, first_parent = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^1")
     subprocess.run(["rustup", "target", "add", target], cwd=ROOT / "rust", check=True)
-    for label, tree in (("base", base), ("cand", ROOT)):
+    for label, edits in PATCHES.items():
+        tree = ROOT if label == "cand" else OUT / f"{label}-src"
+        if tree != ROOT and not tree.exists():
+            git("worktree", "add", "--detach", str(tree), first_parent if label == "base" else head)
+            for path, old, new in edits:
+                text = (tree / path).read_text()
+                if text.count(old) != 1:
+                    sys.exit(f"{label}: {old!r} is not in {path} exactly once")
+                (tree / path).write_text(text.replace(old, new))
         # Legal notice embedding needs each workspace's build outputs under its own target directory.
         built = tree / "rust/target/campaign-build"
         command = ["cargo", "build", "--locked", "--profile", "ci", "--target", target,
@@ -203,7 +219,8 @@ def measure(study: str) -> None:
         for repeat in range(REPEATS):
             for index in range(len(cases)):
                 case = cases[(index + repeat) % len(cases)]
-                for variant in VARIANTS if repeat % 2 == 0 else VARIANTS[::-1]:
+                shift = (repeat + index) % len(VARIANTS)
+                for variant in VARIANTS[shift:] + VARIANTS[:shift]:
                     row = cell(fixture, study, variant, case) | {"repeat": repeat}
                     rows.append(row)
                     sink.write(json.dumps(row) + "\n")
@@ -223,8 +240,8 @@ def summarize(study: str, rows: list[dict[str, object]], results: Path) -> None:
 
     metrics = ([("rtt", "p50"), ("rtt", "p99"), ("rtt", "p999"), ("rtt", "max"), ("gbps",), ("serverCpuPerGiB",)]
                if study == "server" else [("loaded", "median"), ("loaded", "p95"), ("gbps",), ("clientCpu",)])
-    lines = [f"### Latency campaign · {study} study · {os.uname().machine} · ci profile, musl",
-             "", "| Case | Metric | base median (range) | cand median (range) |", "|---|---|---|---|"]
+    lines = [f"### Latency campaign · {study} study · {os.uname().machine} · ci profile, musl · median (range)", "",
+             "| Case | Metric | " + " | ".join(VARIANTS) + " |", "|---|---|" + "---|" * len(VARIANTS)]
     summary: dict[str, dict[str, dict[str, object]]] = {}
     for case in sorted({str(row["case"]) for row in rows}):
         for metric in metrics:
@@ -236,7 +253,7 @@ def summarize(study: str, rows: list[dict[str, object]], results: Path) -> None:
                          "max": round(max(values), 3), "n": len(values)} if values else {}
                 summary.setdefault(case, {}).setdefault(".".join(metric), {})[variant] = entry
                 cells.append(f"{entry['median']} ({entry['min']}–{entry['max']})" if entry else "—")
-            lines.append(f"| {case} | {'.'.join(metric)} | {cells[0]} | {cells[1]} |")
+            lines.append(f"| {case} | {'.'.join(metric)} | " + " | ".join(cells) + " |")
     (results / f"{study}-summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     text = "\n".join(lines) + "\n"
     (results / f"{study}-summary.md").write_text(text + "\n")
