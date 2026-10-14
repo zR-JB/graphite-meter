@@ -523,7 +523,7 @@ jobs:
         with: {rust: 'true', go: 'true', cache: 'false'}
       - name: Install musl headers and compiler, and ethtool
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools ethtool
-      - name: Build noq without GSO at three ACK thresholds, and Go's peers
+      - name: Build noq without GSO with path statistics, and Go's peers
         run: python3 -m scripts.ci.rust_latency_campaign build-loss
       - name: Measure per-packet loss of 0.5%
         run: python3 -m scripts.ci.rust_latency_campaign measure loss05
@@ -538,48 +538,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  rust-campaign-profiles:
-    name: Temporary profile campaign (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
-    needs: plan
-    if: needs.plan.outputs.rust == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    steps:
-      - name: Checkout the merge commit with its history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0}
-      - name: Set up pinned Python, Go and Rust without build caches
-        uses: ./.github/actions/setup-project
-        with: {rust: 'true', go: 'true', cache: 'false'}
-      - name: Install musl headers and compiler, and ethtool
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools ethtool
-      - name: Build the ci, release and thin LTO profiles
-        run: python3 -m scripts.ci.rust_latency_campaign build-profiles
-      - name: Measure server CPU per GiB
-        run: python3 -m scripts.ci.rust_latency_campaign measure cpu
-      - name: Measure the TUI's CPU per GiB
-        run: python3 -m scripts.ci.rust_latency_campaign measure client
-      - name: Upload measurements and evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: rust-review-profiles-${{ matrix.runner }}
-          path: rust/target/campaign/results
-          if-no-files-found: error
-          retention-days: 7
-
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, e2e, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-release, rust-windows, rust-campaign,
-      rust-campaign-profiles]
+      rust-e2e, rust-tui, rust-release, rust-windows, rust-campaign]
     steps:
       - name: Require every selected job
         env:

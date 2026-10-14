@@ -1,11 +1,9 @@
-"""Temporary campaign for the Rust review pull request, seventh run: per-packet loss and build profiles.
+"""Temporary campaign for the Rust review pull request, eighth run: where noq's HTTP/3 loses under per-packet loss.
 
-build-loss: ci-profile musl binaries whose noq sends one datagram per system call, at ACK thresholds 9 (the head), off
-    and 31, and Go's server and TUI.
+build-loss: ci-profile musl binaries whose noq sends one datagram per system call and whose server logs each QUIC
+    connection's path statistics as it closes, and Go's server and TUI.
 measure loss05|loss01: HTTP/3 over loopback at MTU 1500 with offloads off, so netem drops single packets (40 ms;
-    0.5% at 50 Mbit/s, 0.1% at 100 Mbit/s), against HTTP/2 over Linux TCP and Go's HTTP/3 without GSO.
-build-profiles: musl binaries of the head with the ci profile, the release profile (fat LTO) and thin LTO.
-measure cpu|client: server and TUI CPU per GiB of each profile over loopback.
+    0.5% at 50 Mbit/s, 0.1% at 100 Mbit/s): Rust and Go servers and TUIs crossed, against HTTP/2 over Linux TCP.
 """
 from __future__ import annotations
 
@@ -28,22 +26,22 @@ RESULTS = OUT / "results"
 SECONDS = 15
 REPEATS = 6
 SERVER_CPUS, CLIENT_CPUS = "0,1", "2,3"
-QUIC = "rust/net/src/quic.rs"
-THRESHOLD = "const ACK_ELICITING_THRESHOLD: u32 = 9;"
-ASK = "    transport.ack_frequency_config(Some(ack_frequency()));\n"
 NOQ_PIN = 'noq = { git = "https://github.com/zR-JB/noq", rev = "a459ad8525063ddae3bc9fa1385826d6848a0ce3" }'
 Edit = tuple[str, str, str, int]
-LOSS_BUILDS: dict[str, list[Edit]] = {
-    "head": [],
-    "noack": [(QUIC, ASK, "", 2)],
-    "ack31": [(QUIC, THRESHOLD, THRESHOLD.replace("9;", "31;"), 1)],
-}
-# Each profile: the Cargo profile and its overrides.
-PROFILES: dict[str, tuple[str, dict[str, str]]] = {
-    "ci": ("ci", {}),
-    "release": ("release", {}),
-    "thin": ("release", {"CARGO_PROFILE_RELEASE_LTO": "thin"}),
-}
+STATS = (
+    "rust/server/src/transport/quic.rs",
+    "            if let Err(error) = listener.serve(quic, budget, peer).await\n",
+    "            let observed = quic.clone();\n"
+    "            let served = listener.serve(quic, budget, peer).await;\n"
+    "            if let Some(stats) = observed.path_stats(noq::PathId::ZERO) {\n"
+    "                eprintln!(\"GM_STATS sent={} lost={} congestion={} spurious={} cwnd={} rtt_us={}\", "
+    "stats.udp_tx.datagrams, stats.lost_packets, stats.congestion_events, stats.spurious_congestion_events, "
+    "stats.cwnd, stats.rtt.as_micros());\n"
+    "            }\n"
+    "            if let Err(error) = served\n",
+    1,
+)
+LOSS_BUILDS: dict[str, list[Edit]] = {"head": [STATS]}
 # netem applies to loopback in both directions: each delay counts twice in a round trip.
 SHAPES = {
     "loss05": ["delay", "20ms", "loss", "0.5%", "rate", "50mbit", "limit", "20000"],
@@ -52,12 +50,10 @@ SHAPES = {
 # Each loss variant: server build, client build, listener, extra environment.
 GO_ONE_DATAGRAM = {"QUIC_GO_DISABLE_GSO": "true"}
 LOSS_VARIANTS: dict[str, tuple[str, str, str, dict[str, str]]] = {
-    "head": ("head", "head", "http3", {}), "noack": ("noack", "noack", "http3", {}),
-    "ack31": ("ack31", "ack31", "http3", {}), "http2": ("head", "head", "http2", {}),
-    "go": ("go", "go", "http3", GO_ONE_DATAGRAM),
+    "rust": ("head", "head", "http3", {}), "rust-go": ("head", "go", "http3", GO_ONE_DATAGRAM),
+    "go-rust": ("go", "head", "http3", GO_ONE_DATAGRAM), "go": ("go", "go", "http3", GO_ONE_DATAGRAM),
+    "http2": ("head", "head", "http2", {}),
 }
-PROFILE_CASES = {"cpu": [("http3", "download"), ("http3", "upload"), ("http2", "download"), ("http1-tls", "upload")],
-                 "client": [("http3", "download"), ("http3", "upload"), ("http2", "download")]}
 
 
 def git(*arguments: str) -> str:
@@ -129,12 +125,6 @@ def build_loss() -> None:
     shutil.copy2(fixture.go_build("go-client", "./cmd/graphite-meter-client"), BIN / "go-client")
 
 
-def build_profiles() -> None:
-    setup()
-    for label, (profile, overrides) in PROFILES.items():
-        compile_tree(label, ROOT, profile, overrides)
-
-
 def cpu(pid: int) -> float:
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
     return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
@@ -177,12 +167,19 @@ def transfer(fixture: Fixture, server_bin: str, client_bin: str, listener: str, 
                               *bulk(BIN / f"{client_bin}-client", server, listener, direction)],
                              capture_output=True, text=True, timeout=SECONDS * 8, env=os.environ | extra)
         seconds = cpu(pid) - before
+    # The transfer's connection is the one that sent the most; control connections send little.
+    stats = [dict(field.split("=") for field in line.split()[1:])
+             for line in server.output().splitlines() if line.startswith("GM_STATS ")]
+    busiest = max(stats, key=lambda fields: int(fields["sent"]), default={})
     output = run.stdout + run.stderr
     clock = re.search(r"GM_TIME ([\d.]+) ([\d.]+)", output)
     used = float(clock[1]) + float(clock[2]) if clock else None
     gbps = rate(run.stdout)
+    sent = int(busiest.get("sent", 0))
     return {"mbps": gbps * 1000 if gbps else None, "clientCpuPerGiB": per_gib(used, gbps),
-            "serverCpuPerGiB": per_gib(seconds, gbps), "report": run.stdout[-1500:], "status": run.returncode}
+            "serverCpuPerGiB": per_gib(seconds, gbps), "report": run.stdout[-1500:], "status": run.returncode,
+            "stats": busiest, "lostPct": round(100 * int(busiest["lost"]) / sent, 3) if sent else None,
+            "congestionPer1000": round(1000 * int(busiest["congestion"]) / sent, 3) if sent else None}
 
 
 def rotated(items: tuple[str, ...], shift: int) -> tuple[str, ...]:
@@ -221,15 +218,7 @@ def measure(study: str) -> None:
             subprocess.run(["sudo", "tc", "qdisc", "del", "dev", "lo", "root"], check=False)
             subprocess.run(["sudo", "ethtool", "-K", "lo", "tso", "on", "gso", "on"], check=False)
             subprocess.run(["sudo", "ip", "link", "set", "lo", "mtu", "65536"], check=False)
-        return summarize(study, variants, rows, ("mbps",))
-    variants = tuple(PROFILES)
-    if study == "cpu":
-        cell = lambda variant, case: transfer(fixture, variant, "release", case[0], case[1], {})
-        metrics = ("mbps", "serverCpuPerGiB")
-    else:
-        cell = lambda variant, case: transfer(fixture, "release", variant, case[0], case[1], {})
-        metrics = ("mbps", "clientCpuPerGiB", "serverCpuPerGiB")
-    summarize(study, variants, run_rows(study, PROFILE_CASES[study], variants, cell), metrics)
+        summarize(study, variants, rows, ("mbps", "lostPct", "congestionPer1000"))
 
 
 def summarize(study: str, variants: tuple[str, ...], rows: list[dict], metrics: tuple[str, ...]) -> None:
@@ -253,8 +242,6 @@ def summarize(study: str, variants: tuple[str, ...], rows: list[dict], metrics: 
 if __name__ == "__main__":
     if sys.argv[1] == "build-loss":
         build_loss()
-    elif sys.argv[1] == "build-profiles":
-        build_profiles()
     else:
         # The study name comes from this module's constants, never from the command line.
-        measure(next(name for name in (*SHAPES, *PROFILE_CASES) if name == sys.argv[2]))
+        measure(next(name for name in SHAPES if name == sys.argv[2]))
