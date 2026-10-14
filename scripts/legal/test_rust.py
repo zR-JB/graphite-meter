@@ -23,7 +23,7 @@ from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
-NOQ = "git+https://github.com/zR-JB/noq?rev=372553a7ec2011c94e80ccf51c17965a0e131f9b#372553a7ec2011c94e80ccf51c17965a0e131f9b"
+NOQ = "git+https://github.com/zR-JB/noq?rev=a459ad8525063ddae3bc9fa1385826d6848a0ce3#a459ad8525063ddae3bc9fa1385826d6848a0ce3"
 
 
 class Scratch(unittest.TestCase):
@@ -69,11 +69,11 @@ class InventoryTests(Scratch):
                                                                    self.review("noq", "1.3.0", NOQ, True)], [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
-        self.assertEqual(inventory[0]["upstreamRevision"], "372553a7ec2011c94e80ccf51c17965a0e131f9b")
+        self.assertEqual(inventory[0]["upstreamRevision"], "a459ad8525063ddae3bc9fa1385826d6848a0ce3")
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
                                                        self.review("noq", "1.2.0", NOQ, True)], [])
         self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
-        other = NOQ.replace("372553a", "0000000")
+        other = NOQ.replace(NOQ[-40:], "0" * 40)
         with self.assertRaisesRegex(LegalError, "unreviewed Cargo git source"):
             components({"packages": [self.package("noq", "1.3.0", other)], "workspace_members": []},
                        {"noq@1.3.0": {}}, [], [])
