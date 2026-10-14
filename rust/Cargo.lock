@@ -564,6 +564,7 @@ name = "graphite-meter-proto"
 version = "0.0.0"
 dependencies = [
  "base64",
+ "http",
  "ring",
  "serde",
  "serde_json",

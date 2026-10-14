@@ -46,11 +46,11 @@ graphite_meter_proto::table! {
     /// Why a quota refused.
     pub enum Refusal {
         /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
-        status.0: u16,
+        status.0: http::StatusCode,
     } {
         /// A client's share is full.
-        Client => (429,),
-        Total => (503,),
+        Client => (http::StatusCode::TOO_MANY_REQUESTS,),
+        Total => (http::StatusCode::SERVICE_UNAVAILABLE,),
     }
 }
 

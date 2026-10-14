@@ -60,7 +60,7 @@ impl Address {
 /// peer it saw, so a different last hop means the `X-Real-IP` came from further out, such as a client whose own header
 /// the proxy passed on. `Forwarded` is ignored: no common proxy writes it, and some pass a client's on.
 fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
-    let mut real = headers.get_all("x-real-ip").iter();
+    let mut real = headers.get_all(crate::headers::X_REAL_IP).iter();
     let (Some(value), None) = (real.next(), real.next()) else {
         return Err("the proxy must send X-Real-IP once".into());
     };
@@ -70,7 +70,7 @@ fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
         .and_then(|text| text.trim().parse::<IpAddr>().ok())
         .ok_or("X-Real-IP is not one IP address")?
         .to_canonical();
-    if let Some(chain) = headers.get_all("x-forwarded-for").iter().next_back() {
+    if let Some(chain) = headers.get_all(crate::headers::X_FORWARDED_FOR).iter().next_back() {
         let chain = chain.to_str().map_err(|_| "X-Forwarded-For is not text")?;
         let last = chain.rsplit(',').next().unwrap_or_default().trim();
         if !last.is_empty() && hop(last) != Some(client) {

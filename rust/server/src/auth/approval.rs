@@ -8,6 +8,7 @@ use super::{
     routes::{Form, body, field, redirect},
     store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
 };
+use crate::headers::{SEC_FETCH_DEST, SEC_FETCH_MODE, SEC_FETCH_SITE};
 use crate::{
     app::{finalize::Access, query, response},
     lock,
@@ -306,7 +307,7 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
 /// A document navigation from another site, which reenters with the strictly same-site session cookie.
 fn cross_site_navigation(headers: &HeaderMap) -> bool {
     let sent = |name, value| headers.get(name).is_some_and(|given| given == value);
-    sent("sec-fetch-site", "cross-site") && sent("sec-fetch-mode", "navigate") && sent("sec-fetch-dest", "document")
+    sent(SEC_FETCH_SITE, "cross-site") && sent(SEC_FETCH_MODE, "navigate") && sent(SEC_FETCH_DEST, "document")
 }
 
 /// The cookie login of a request that carries no `Authorization`.

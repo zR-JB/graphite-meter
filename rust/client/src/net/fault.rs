@@ -137,7 +137,7 @@ impl fmt::Display for Fault {
                 formatter.write_str(&text::clean(&unusable.to_string(), 320))
             }
             Self::Status { status, from, .. } => write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from)),
-            Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status()),
+            Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status().as_u16()),
             Self::Ended(ending) => write!(formatter, "the server ended the lane: {}", ending.name()),
             Self::SignIn(_) => formatter.write_str("authentication required"),
             Self::Malformed(detail) => {

@@ -158,7 +158,7 @@ impl App {
         let headers = response.headers_mut();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-ndjson"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));
-        headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+        headers.insert(crate::headers::X_ACCEL_BUFFERING, HeaderValue::from_static("no"));
         Ok(response)
     }
 }

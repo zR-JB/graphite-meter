@@ -28,7 +28,7 @@ impl Access {
             Self::Bearer(origin) => (origin.clone(), BEARER),
         };
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
-        headers.insert("timing-allow-origin", origin);
+        headers.insert(crate::headers::TIMING_ALLOW_ORIGIN, origin);
         headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static(exposed));
         headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
         if let Self::Cookie(_) = self {
@@ -56,10 +56,10 @@ impl Access {
 
 /// The hardening headers, and HSTS once a request is known to have arrived over TLS.
 pub fn harden(headers: &mut HeaderMap, secure: bool) {
-    headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     let permissions = HeaderValue::from_static("camera=(), microphone=(), geolocation=()");
-    headers.insert("permissions-policy", permissions);
+    headers.insert(crate::headers::PERMISSIONS_POLICY, permissions);
     if secure {
         headers.insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));
     }

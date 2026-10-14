@@ -85,7 +85,7 @@ pub fn method_not_allowed(allow: &str) -> Response<Body> {
 
 /// A full handler pool or client share: 503 or 429, asking for a retry after a second.
 pub fn busy(refusal: Refusal) -> Response<Body> {
-    let mut response = status(StatusCode::from_u16(refusal.status()).expect("a client error or server error"));
+    let mut response = status(refusal.status());
     response
         .headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
@@ -103,16 +103,15 @@ pub fn ambiguous() -> Response<Body> {
 
 /// An upload refusal's message, status and name (`api/uploadrefusals.txt`).
 pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
-    let status = StatusCode::from_u16(refusal.status()).expect("a client error or server error");
-    let mut response = text(status, refusal.message());
+    let mut response = text(refusal.status(), refusal.message());
     let headers = response.headers_mut();
-    headers.insert("x-graphite-upload-refusal", HeaderValue::from_static(refusal.name()));
+    headers.insert(crate::headers::X_GRAPHITE_UPLOAD_REFUSAL, HeaderValue::from_static(refusal.name()));
     match refusal {
         UploadRefusal::GlobalFull | UploadRefusal::ClientFull => {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         }
         UploadRefusal::Revoked => {
-            headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
+            headers.insert(crate::headers::GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
         }
         UploadRefusal::Invalid | UploadRefusal::OwnerMismatch | UploadRefusal::Idle => {}
     }

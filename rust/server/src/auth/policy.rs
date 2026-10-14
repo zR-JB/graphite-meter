@@ -1,6 +1,10 @@
 //! Which requests pass under authentication: trust in the connection, credentials, origins, preflights and refusals.
 
 use super::{AuthLease, Decision, Store, Via, protect};
+use crate::headers::{
+    GRAPHITE_METER_AUTH, GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN,
+    X_FORWARDED_HOST, X_FORWARDED_PROTO,
+};
 use crate::{
     app::{Endpoint, finalize::Access, finalize::close, query, response},
     config,
@@ -10,16 +14,16 @@ use graphite_meter_proto::{
     origin::{Origin, Scheme},
     route::{Kind, Route},
 };
-use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
 
 /// Fields a request may carry at most once.
-const SINGLE: [&str; 6] = [
-    "authorization",
-    "origin",
-    "sec-fetch-site",
-    "x-csrf-token",
-    "access-control-request-method",
-    "access-control-request-headers",
+const SINGLE: [HeaderName; 6] = [
+    header::AUTHORIZATION,
+    header::ORIGIN,
+    SEC_FETCH_SITE,
+    X_CSRF_TOKEN,
+    header::ACCESS_CONTROL_REQUEST_METHOD,
+    header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
 const BROWSER_TOKEN: &str = "/auth/browser/token";
 
@@ -90,7 +94,7 @@ impl Policy {
         peer: &Peer,
     ) -> Decision {
         let headers = request.headers();
-        if SINGLE.iter().any(|name| headers.get_all(*name).iter().nth(1).is_some()) {
+        if SINGLE.iter().any(|name| headers.get_all(name).iter().nth(1).is_some()) {
             return self.forbidden(false);
         }
         let trust = self.trust(request, endpoint, peer);
@@ -163,8 +167,8 @@ impl Policy {
         let headers = request.headers();
         let forwarded = !matches!(peer.address(), Address::Socket(_))
             // Traefik names a WebSocket upgrade's TLS "wss".
-            && matches!(single(headers, "x-forwarded-proto"), Some("https" | "wss"))
-            && single(headers, "x-forwarded-host").is_some_and(|host| same_host(host, authority));
+            && matches!(single(headers, &X_FORWARDED_PROTO), Some("https" | "wss"))
+            && single(headers, &X_FORWARDED_HOST).is_some_and(|host| same_host(host, authority));
         if forwarded { Trust::Canonical } else { Trust::Insecure }
     }
 
@@ -199,7 +203,7 @@ impl Policy {
     /// Origin rules: browser grants serve only their origin's measurement routes; unsafe cookie requests prove CSRF.
     fn valid_origin<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>, lease: &AuthLease) -> bool {
         let headers = request.headers();
-        let Some(origin) = text(headers, "origin") else { return false };
+        let Some(origin) = text(headers, &header::ORIGIN) else { return false };
         let public = self.origin.to_str().unwrap_or_default();
         if let Some(browser) = lease.browser() {
             return origin.as_bytes() == browser.header().as_bytes()
@@ -212,20 +216,20 @@ impl Policy {
             return true;
         }
         let ours = origin == public;
-        match text(headers, "sec-fetch-site") {
+        match text(headers, &SEC_FETCH_SITE) {
             Some("" | "same-origin" | "none") => {}
             Some("same-site") if ours => {}
             _ => return false,
         }
         let read = matches!(*request.method(), Method::GET | Method::HEAD);
-        let same_origin = text(headers, "sec-fetch-site") == Some("same-origin");
+        let same_origin = text(headers, &SEC_FETCH_SITE) == Some("same-origin");
         if route.is_some() && read && !ours && !same_origin || route == Some(Route::Ping) && !ours {
             return false;
         }
         if read || request.method() == Method::OPTIONS {
             return true;
         }
-        let proof = || text(headers, "x-csrf-token").is_some_and(|proof| store.csrf(lease.login(), proof));
+        let proof = || text(headers, &X_CSRF_TOKEN).is_some_and(|proof| store.csrf(lease.login(), proof));
         ours && (route.is_none() || proof())
     }
 
@@ -233,7 +237,7 @@ impl Policy {
     fn preflight(&self, headers: &HeaderMap, route: Option<Route>, trust: Trust) -> Decision {
         let secure = trust >= Trust::Secure;
         let origin = headers.get(header::ORIGIN).and_then(BrowserOrigin::parse);
-        let method = text(headers, "access-control-request-method").unwrap_or_default();
+        let method = text(headers, &header::ACCESS_CONTROL_REQUEST_METHOD).unwrap_or_default();
         let allowed = route.is_some_and(|route| route.methods().contains(&method));
         let mut answer = response::empty(StatusCode::NO_CONTENT);
         let answered = answer.headers_mut();
@@ -301,9 +305,9 @@ impl Policy {
         {
             Access::Bearer(origin.header().clone()).apply(headers);
         }
-        headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
-        headers.insert("graphite-meter-browser-auth", HeaderValue::from_static("1"));
-        headers.insert("graphite-meter-auth-url", self.login.clone());
+        headers.insert(GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
+        headers.insert(GRAPHITE_METER_BROWSER_AUTH, HeaderValue::from_static("1"));
+        headers.insert(GRAPHITE_METER_AUTH_URL, self.login.clone());
         close(headers, request.version());
         Err(answer)
     }
@@ -318,12 +322,12 @@ fn request_authority<B>(request: &Request<B>) -> Option<&str> {
 }
 
 /// A field's first value: empty when absent, `None` when it is no text.
-fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+fn text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).map_or(Some(""), |value| value.to_str().ok())
 }
 
 /// A field present once with one comma-free value.
-fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
     (!value.contains(',')).then(|| value.trim())
@@ -353,7 +357,7 @@ impl BrowserOrigin {
 
 /// The preflight's requested headers in lower case, when each is `Content-Type` or one of `allowed`.
 fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
-    let names = text(headers, "access-control-request-headers")
+    let names = text(headers, &header::ACCESS_CONTROL_REQUEST_HEADERS)
         .unwrap_or_default()
         .split(',');
     let names = names

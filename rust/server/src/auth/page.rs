@@ -61,7 +61,7 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     // A private server's sign-in and approval pages stay out of search indexes.
-    headers.insert("x-robots-tag", HeaderValue::from_static("noindex, nofollow"));
+    headers.insert(crate::headers::X_ROBOTS_TAG, HeaderValue::from_static("noindex, nofollow"));
     crate::app::finalize::harden(headers, secure);
     headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
 }
