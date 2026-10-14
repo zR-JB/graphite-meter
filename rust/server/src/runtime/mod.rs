@@ -373,9 +373,10 @@ async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>)
         if let Ok(local) = socket.local_addr() {
             *configured = bound(configured, local.port());
         }
-        let socket = match (endpoint, tls) {
-            (Endpoint::H2, Some(tls)) => Socket::Http2(socket, tls),
-            (_, tls) => Socket::Http1(socket, tls),
+        let socket = match (listener.kind, tls) {
+            (ListenerKind::H2, Some(tls)) => Socket::Http2(socket, tls),
+            (ListenerKind::H2, None) => return Err("TLS listeners need a certificate".into()),
+            (ListenerKind::H1 | ListenerKind::H1Tls | ListenerKind::H3, tls) => Socket::Http1(socket, tls),
         };
         listeners.push(Listening { endpoint, address, socket });
     }

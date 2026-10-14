@@ -79,7 +79,16 @@ impl fmt::Display for ConnectError {
     }
 }
 
-impl std::error::Error for ConnectError {}
+/// Display already shows the wrapped error, so its cause is the wrapped error's own.
+impl std::error::Error for ConnectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unreachable(error) | Self::Io(error) => error.source(),
+            Self::Tls(error) => error.source(),
+            Self::Proxy(_) | Self::Refused(_) => None,
+        }
+    }
+}
 
 impl From<io::Error> for ConnectError {
     fn from(error: io::Error) -> Self {

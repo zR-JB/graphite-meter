@@ -9,7 +9,7 @@ use crate::{
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint::{self, Partial},
-    webtransport::{RecvStream, Registry, Sessions, Unrouted},
+    webtransport::{RecvStream, Registry, SessionId, Sessions, Unrouted},
 };
 use bytes::Bytes;
 use std::{
@@ -313,8 +313,12 @@ impl Driver {
     }
 }
 
-/// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
+/// Hands a peer's session stream to the registry; one naming no possible session is refused at once, and one the
+/// budget cannot hold as unbuffered.
 fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
+    let Some(session) = SessionId::new(session) else {
+        return drop(stream.stop(Code::H3_ID_ERROR.into()));
+    };
     match Charge::new(&shared.budget, size_of::<RecvStream>()) {
         Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
         None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),

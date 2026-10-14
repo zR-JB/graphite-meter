@@ -5,7 +5,10 @@ use super::{
     http3::{Connection, H3, pass, transport},
     *,
 };
-use graphite_meter_http3::{Code, webtransport::Session};
+use graphite_meter_http3::{
+    Code,
+    webtransport::{Session, SessionClose},
+};
 use http::{Request, Response};
 
 impl Connection {
@@ -28,8 +31,8 @@ pub(super) async fn open(session: &Session) -> bool {
         .is_err()
 }
 
-pub(super) fn ending(code: u32, reason: &str) -> (u32, String) {
-    (code, reason.into())
+pub(super) fn ending(code: u32, reason: &str) -> SessionClose {
+    SessionClose { code, reason: reason.into() }
 }
 
 #[tokio::test]

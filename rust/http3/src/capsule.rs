@@ -1,5 +1,9 @@
 //! HTTP datagrams and capsules (RFC 9297) as WebTransport sessions use them.
-use crate::{code::Code, frame, varint};
+use crate::{
+    code::Code,
+    frame, varint,
+    webtransport::{SessionClose, SessionId},
+};
 use bytes::{Buf, BufMut, Bytes};
 
 /// A capsule type (RFC 9297 §3.2): laid out as a frame, but its own space of codes.
@@ -30,7 +34,7 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
-    pub(crate) fn read(&mut self, input: &mut Bytes) -> Result<Option<(u32, String)>, Code> {
+    pub(crate) fn read(&mut self, input: &mut Bytes) -> Result<Option<SessionClose>, Code> {
         while let Some(piece) = self.frames.next(input) {
             match piece {
                 frame::Piece::Header { kind, length } => {
@@ -45,7 +49,7 @@ impl Reader {
                         let close = std::mem::take(&mut self.close);
                         let (code, reason) = close.split_first_chunk().ok_or(Code::H3_MESSAGE_ERROR)?;
                         let reason = std::str::from_utf8(reason).map_err(|_| Code::H3_MESSAGE_ERROR)?;
-                        return Ok(Some((u32::from_be_bytes(*code), reason.to_owned())));
+                        return Ok(Some(SessionClose { code: u32::from_be_bytes(*code), reason: reason.to_owned() }));
                     }
                 }
                 frame::Piece::Payload(_) => {}
@@ -70,22 +74,19 @@ pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
     capsule
 }
 
-/// Splits an HTTP datagram into its session, the CONNECT stream's ID, and its payload.
-pub(crate) fn datagram(mut payload: Bytes) -> Result<(u64, Bytes), Code> {
-    match varint::decode(&payload) {
-        Some((quarter, size)) if quarter < 1 << 60 => {
-            payload.advance(size);
-            Ok((quarter * 4, payload))
-        }
-        _ => Err(Code::H3_DATAGRAM_ERROR),
-    }
+/// Splits an HTTP datagram into its session and its payload.
+pub(crate) fn datagram(mut payload: Bytes) -> Result<(SessionId, Bytes), Code> {
+    let (quarter, size) = varint::decode(&payload).ok_or(Code::H3_DATAGRAM_ERROR)?;
+    let session = SessionId::from_quarter(quarter).ok_or(Code::H3_DATAGRAM_ERROR)?;
+    payload.advance(size);
+    Ok((session, payload))
 }
 
 /// The prefix of every datagram in session `id`.
-pub(crate) fn datagram_prefix(id: u64) -> ([u8; 8], usize) {
+pub(crate) fn datagram_prefix(id: SessionId) -> ([u8; 8], usize) {
     let mut prefix = [0; 8];
     let mut rest = &mut prefix[..];
-    varint::put(id / 4, &mut rest);
+    varint::put(id.quarter(), &mut rest);
     let length = 8 - rest.len();
     (prefix, length)
 }
@@ -95,7 +96,7 @@ mod tests {
     use super::*;
     use crate::testing::frame as capsule;
 
-    fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<(u32, String)>, bool), Code> {
+    fn read_all(chunks: impl IntoIterator<Item = Vec<u8>>) -> Result<(Vec<SessionClose>, bool), Code> {
         let mut reader = Reader::default();
         let mut capsules = Vec::new();
         for chunk in chunks {
@@ -114,7 +115,7 @@ mod tests {
         bytes.extend(capsule(CapsuleType(0x17 + 41 * 3), b"grease"));
         bytes.extend(capsule(CapsuleType(0x78ae), b""));
         bytes.extend(close(0xf123_4567, "done"));
-        let expected = vec![(0xf123_4567, "done".into())];
+        let expected = vec![SessionClose { code: 0xf123_4567, reason: "done".into() }];
         for split in 0..=bytes.len() {
             let (first, second) = bytes.split_at(split);
             assert_eq!(read_all([first.to_vec(), second.to_vec()]), Ok((expected.clone(), true)), "split {split}");
@@ -135,7 +136,8 @@ mod tests {
             assert_eq!(read_all([bytes]), Err(Code::H3_MESSAGE_ERROR));
         }
         let text = format!("{}€tail", "a".repeat(MAX_REASON - 1));
-        assert_eq!(read_all([close(1, &text)]), Ok((vec![(1, "a".repeat(MAX_REASON - 1))], true)));
+        let expected = SessionClose { code: 1, reason: "a".repeat(MAX_REASON - 1) };
+        assert_eq!(read_all([close(1, &text)]), Ok((vec![expected], true)));
         let bytes = close(7, "bye");
         for end in 1..bytes.len() {
             assert_eq!(read_all([bytes[..end].to_vec()]), Ok((vec![], false)), "end {end}");
@@ -145,9 +147,10 @@ mod tests {
     #[test]
     fn datagrams_route_by_quarter_stream_id() {
         for quarter in [0, 1, 63, 64, 16384, (1 << 60) - 1] {
-            let (prefix, length) = datagram_prefix(quarter * 4);
+            let session = SessionId::from_quarter(quarter).unwrap();
+            let (prefix, length) = datagram_prefix(session);
             let bytes = [&prefix[..length], b"PING,42"].concat();
-            assert_eq!(datagram(bytes.into()), Ok((quarter * 4, Bytes::from_static(b"PING,42"))));
+            assert_eq!(datagram(bytes.into()), Ok((session, Bytes::from_static(b"PING,42"))));
         }
         for invalid in [&b""[..], b"\x40", b"\xd0\x00\x00\x00\x00\x00\x00\x00"] {
             assert_eq!(datagram(Bytes::from_static(invalid)), Err(Code::H3_DATAGRAM_ERROR));
