@@ -386,7 +386,9 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   await open(page, home.url, {
     servers: [home, locked],
     config: {
-      duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
+      // Wherever the revocation lands, the interval before or after it spans the 800 ms evidence floor; in 1.5 s a
+      // dropout near the middle left neither, and the download failed.
+      duration: { ...baseConfig.duration, downloadMs: 3000, uploadMs: 1000 },
     },
   });
   await openSettings(page);
