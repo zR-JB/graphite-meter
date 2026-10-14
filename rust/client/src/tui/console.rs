@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     config::Invalid,
-    events::{Point, Series},
+    events::{Point, Running, Series},
     measure::{format, latency::Summary, wire},
     model::{Outcome, ServerFailure, Stage, StageResult, StageStatus},
     report::vocabulary::{self as words, MISSING},
@@ -776,10 +776,10 @@ impl App {
             return at_rest(rate_ticks, muted(note));
         };
         if self.running() {
-            let Some((plan, window)) = &run.stage else {
+            let Some(running) = &run.stage else {
                 return at_rest(rate_ticks, muted("Verifying the selected paths"));
             };
-            let stage = plan.stage;
+            let stage = running.plan().stage;
             let track = palette.wash(stage, 0.22, border);
             let ticks = if stage == Stage::Latency { ms_ticks.clone() } else { rate_ticks.clone() };
             let needle = |to| {
@@ -788,7 +788,7 @@ impl App {
                     color: palette.trace(stage),
                 }]
             };
-            if window.is_none() {
+            if let Running::Warmup(_) = running {
                 let warming = at_rest(ticks, muted("Warming up; not counted"));
                 return Dial { track, label: label(stage), arcs: needle(0.0), ..warming };
             }

@@ -40,6 +40,13 @@ pub enum Command {
     Stop,
 }
 
+/// What an operation does: check the paths, or run over them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Check,
+    Run,
+}
+
 /// What operations hand on: the last check for a run to reuse, and each signed-in server's grant.
 #[derive(Default)]
 struct State {
@@ -48,7 +55,7 @@ struct State {
 }
 
 struct Operation {
-    run: bool,
+    kind: Kind,
     config: Config,
     /// The unfinished check a run replaced, which a stop starts again.
     replaced: Option<Config>,
@@ -85,13 +92,13 @@ impl Controller {
 
     pub fn command(&mut self, command: Command) {
         match command {
-            Command::Check(config) => self.launch(config, false),
-            Command::Run(config) => self.launch(config, true),
+            Command::Check(config) => self.launch(config, Kind::Check),
+            Command::Run(config) => self.launch(config, Kind::Run),
             Command::Stop => {
                 let Some(current) = &self.current else { return };
                 current.stop.cancel();
                 if let Some(config) = current.replaced.clone() {
-                    self.launch(config, false);
+                    self.launch(config, Kind::Check);
                 }
             }
         }
@@ -105,12 +112,14 @@ impl Controller {
     }
 
     /// Cancels the current operation and starts one for `config` once it ended.
-    fn launch(&mut self, config: Config, run: bool) {
+    fn launch(&mut self, config: Config, kind: Kind) {
         let previous = self.current.take();
         let unfinished = previous
             .as_ref()
-            .filter(|check| !check.run && !check.task.is_finished());
-        let replaced = unfinished.filter(|_| run).map(|check| check.config.clone());
+            .filter(|check| check.kind == Kind::Check && !check.task.is_finished());
+        let replaced = unfinished
+            .filter(|_| kind == Kind::Run)
+            .map(|check| check.config.clone());
         if let Some(previous) = &previous {
             previous.token.cancel();
         }
@@ -122,9 +131,9 @@ impl Controller {
                 Some(previous) => previous.task.await.unwrap_or_default(),
                 None => idle,
             };
-            work.operate(settings, run, state).await
+            work.operate(settings, kind, state).await
         });
-        self.current = Some(Operation { run, config, replaced, token, stop, task });
+        self.current = Some(Operation { kind, config, replaced, token, stop, task });
     }
 }
 
@@ -149,12 +158,12 @@ struct Work {
 }
 
 impl Work {
-    async fn operate(self, config: Config, run: bool, mut state: State) -> State {
+    async fn operate(self, config: Config, kind: Kind, mut state: State) -> State {
         let started = Instant::now();
         let work = async {
-            match run {
-                true => self.run(&config, &mut state).await,
-                false => self.check(&config, &mut state).await,
+            match kind {
+                Kind::Run => self.run(&config, &mut state).await,
+                Kind::Check => self.check(&config, &mut state).await,
             }
         };
         let overdue = async {
@@ -162,8 +171,8 @@ impl Work {
             tokio::time::sleep(GRACE).await;
         };
         tokio::select! {
-            () = guarded(&self.events, run, started, work) => {}
-            () = overdue => if run {
+            () = guarded(&self.events, kind, started, work) => {}
+            () = overdue => if kind == Kind::Run {
                 let (outcome, elapsed) = (Outcome::Stopped, started.elapsed());
                 self.events.send(Event::RunFinished { outcome, error: None, elapsed });
             }
@@ -172,7 +181,7 @@ impl Work {
     }
 
     async fn check(&self, config: &Config, state: &mut State) {
-        self.events.send(Event::Checking { run: false });
+        self.events.send(Event::Checking(Kind::Check));
         match self.prepare(config, state).await {
             Some(Ok(prepared)) => {
                 self.events.send(prepared.event());
@@ -186,7 +195,7 @@ impl Work {
     /// Runs `config` over its check's paths while they are fresh, else over new ones.
     async fn run(&self, config: &Config, state: &mut State) {
         let started = Instant::now();
-        self.events.send(Event::Checking { run: true });
+        self.events.send(Event::Checking(Kind::Run));
         let key = config.key();
         let reused = state.prepared.take().filter(|check| check.reusable(&key, started));
         let prepared = match reused {
@@ -260,14 +269,14 @@ impl Work {
 }
 
 /// Runs `work`, the operation begun at `started`; a panic in it ends the check or run as failed.
-async fn guarded(events: &Events, run: bool, started: Instant, work: impl Future<Output = ()>) {
+async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Future<Output = ()>) {
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
     }
     let (failure, elapsed) = (Failure::new(FailureReason::ConnectionLost, INTERNAL), started.elapsed());
-    events.send(match run {
-        true => Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), elapsed },
-        false => Event::CheckFailed(failure),
+    events.send(match kind {
+        Kind::Run => Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), elapsed },
+        Kind::Check => Event::CheckFailed(failure),
     });
 }
 
@@ -308,16 +317,16 @@ mod tests {
     #[tokio::test]
     async fn an_operation_that_panics_ends_its_run_or_check_as_failed() {
         let (events, mut received) = Events::channel();
-        for run in [true, false] {
-            guarded(&events, run, Instant::now(), async { panic!("an operation's bug") }).await;
-            let failure = match received.try_recv().unwrap() {
-                Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), .. } if run => failure,
-                Event::CheckFailed(failure) if !run => failure,
-                event => panic!("{event:?}"),
+        for kind in [Kind::Run, Kind::Check] {
+            guarded(&events, kind, Instant::now(), async { panic!("an operation's bug") }).await;
+            let failure = match (kind, received.try_recv().unwrap()) {
+                (Kind::Run, Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), .. }) => failure,
+                (Kind::Check, Event::CheckFailed(failure)) => failure,
+                (_, event) => panic!("{event:?}"),
             };
             assert_eq!(failure.text, INTERNAL);
         }
-        guarded(&events, true, Instant::now(), async {}).await;
+        guarded(&events, Kind::Run, Instant::now(), async {}).await;
         assert!(received.try_recv().is_err(), "a finished operation sends nothing more");
     }
 }

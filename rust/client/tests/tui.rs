@@ -3,7 +3,7 @@ use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseBut
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
     config::{self, Config},
-    controller::Command,
+    controller::{Command, Kind},
     events::{Event, Probed, SignInEnd, SignInPrompt},
     measure::aggregate::Rate,
     model::{Dir, Failure, Outcome, Stage, StageResult, Throughput},
@@ -224,7 +224,7 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
 fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
     let (mut app, now) = app();
     let failure = Failure::new(FailureReason::PreparationFailed, graphite_meter_client::net::UNREACHABLE);
-    app.event(&Event::Checking { run: false }, now);
+    app.event(&Event::Checking(Kind::Check), now);
     app.event(&Event::CheckFailed(failure), now);
     assert!(frame(&mut app, now)[0].ends_with("● Unreachable"), "{:?}", frame(&mut app, now)[0]);
     assert!(shows(&mut app, now, "Couldn't reach meter.example."));
@@ -235,7 +235,7 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
     ));
     press(&mut app, KeyCode::Enter, now);
     assert_eq!(checked(app.tick(now)), config(), "enter checks again at once");
-    app.event(&Event::Checking { run: false }, now);
+    app.event(&Event::Checking(Kind::Check), now);
     assert!(shows(&mut app, now, "Checking meter.example…"));
     app.event(&prepared(), now);
     assert!(!shows(&mut app, now, "Connect to a server"), "a server that prepared closes the address");
@@ -245,7 +245,7 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
 fn a_cancelled_or_expired_sign_in_asks_again_on_the_next_start() {
     for (end, notice) in [(SignInEnd::Cancelled, "Sign-in canceled"), (SignInEnd::Expired, "Sign-in expired")] {
         let (mut app, now) = app();
-        app.event(&Event::Checking { run: false }, now);
+        app.event(&Event::Checking(Kind::Check), now);
         app.event(&Event::SignIn(prompt(now)), now);
         assert!(shows(&mut app, now, "Sign in to Meter") && shows(&mut app, now, "ABCD-EFGH"));
         assert_eq!(press(&mut app, KeyCode::Enter, now), [Effect::OpenBrowser(PAGE.into())]);
@@ -263,7 +263,7 @@ fn a_cancelled_or_expired_sign_in_asks_again_on_the_next_start() {
             "a start signs in again"
         );
         let (mut app, now) = self::app();
-        app.event(&Event::Checking { run: false }, now);
+        app.event(&Event::Checking(Kind::Check), now);
         app.event(&Event::SignIn(prompt(now)), now);
         app.event(&Event::SignInEnded(end), now);
         press(&mut app, KeyCode::Char('v'), now);
@@ -349,7 +349,7 @@ fn a_first_start_asks_for_the_server_and_remembers_it_only_when_asked() {
     app.input(Input::Paste("meter.example/history\n".into()), now);
     press(&mut app, KeyCode::Enter, now);
     assert_eq!(checked(app.tick(now)), config(), "the address is checked at once");
-    app.event(&Event::Checking { run: false }, now);
+    app.event(&Event::Checking(Kind::Check), now);
     assert!(shows(&mut app, now, "Checking meter.example…"));
     let kept = Origin::parse("https://meter.example").unwrap();
     assert_eq!(
@@ -505,7 +505,7 @@ fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them
     let now = Instant::now();
     let mut app = downloaded(now);
     assert_matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_));
-    app.event(&Event::Checking { run: true }, now);
+    app.event(&Event::Checking(Kind::Run), now);
     assert!(shows(&mut app, now, "Transferred 125.0 MB"), "the results stay while the next run checks");
     assert!(frame(&mut app, now).last().unwrap().starts_with("Checking paths"));
     assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
@@ -516,7 +516,7 @@ fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them
 
     let mut app = downloaded(now);
     press(&mut app, KeyCode::Enter, now);
-    app.event(&Event::Checking { run: true }, now);
+    app.event(&Event::Checking(Kind::Run), now);
     app.event(
         &Event::RunStarted {
             plan: vec![(Stage::Upload, SECOND * 10)],
@@ -557,7 +557,7 @@ fn a_settings_change_during_a_run_is_checked_once_the_run_ends() {
 #[test]
 fn the_sign_in_card_stays_for_a_press_beside_it_and_ctrl_c_while_typing_stops_a_run_first() {
     let (mut app, now) = app();
-    app.event(&Event::Checking { run: false }, now);
+    app.event(&Event::Checking(Kind::Check), now);
     app.event(&Event::SignIn(prompt(now)), now);
     click(&mut app, now, (2, 20));
     assert!(shows(&mut app, now, "Sign in to Meter"), "the sign-in still waits");

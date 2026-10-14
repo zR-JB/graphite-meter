@@ -1,5 +1,6 @@
 //! The printed report of a reduced view: its lines, plain and in the 16-colour profile, and its width.
 use graphite_meter_client::{
+    controller::Kind,
     events::{Event, View},
     measure::{
         aggregate::{Aggregate, Boundary, Rate, Reading},
@@ -61,7 +62,7 @@ fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>,
         path: Err(unchecked.clone()),
     });
     let mut events = vec![
-        Event::Checking { run: true },
+        Event::Checking(Kind::Run),
         Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
         Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at },
     ];

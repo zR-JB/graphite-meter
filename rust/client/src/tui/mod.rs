@@ -300,7 +300,12 @@ impl App {
                     return vec![Effect::Quit];
                 }
             }
-            _ => {}
+            Event::Checking(_)
+            | Event::StageStarted(_)
+            | Event::Measuring(_)
+            | Event::Sample { .. }
+            | Event::Probes { .. }
+            | Event::StageFinished(_) => {}
         }
         Vec::new()
     }

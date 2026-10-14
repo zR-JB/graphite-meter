@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     VERSION,
-    events::Check,
+    events::{Check, Running},
     measure::format,
     model::Stage,
     report::vocabulary as words,
@@ -245,8 +245,10 @@ impl App {
             _ if self.view.starting => ("Checking paths", palette.muted),
             Some((Some(outcome), _)) => (words::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
-            Some((None, Some((plan, Some(_))))) => (words::label(plan.stage), palette.stage(plan.stage)),
-            Some((None, Some((_, None)))) => ("Warmup", palette.muted),
+            Some((None, Some(Running::Measuring { plan, .. }))) => {
+                (words::label(plan.stage), palette.stage(plan.stage))
+            }
+            Some((None, Some(Running::Warmup(_)))) => ("Warmup", palette.muted),
             Some((None, None)) => ("Checking paths", palette.muted),
             None if self.config.url.is_none() => ("Not started", palette.muted),
             None => match &self.overlay {
