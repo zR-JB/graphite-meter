@@ -54,8 +54,7 @@ pub struct Auth(Option<Box<Enabled>>);
 pub struct Enabled {
     policy: Policy,
     store: Store,
-    verifier: Option<Password>,
-    oidc: Option<Oidc>,
+    sign_in: SignIn,
     /// Approval pages opened per client address.
     browser_approvals: Attempts,
     security: Security,
@@ -79,13 +78,16 @@ impl Auth {
             security.debug(format_args!("password hash loaded: valid"));
             Ok::<_, String>(verifier)
         };
-        let verifier = config.methods.password().map(load).transpose()?;
         let oidc = |settings: &config::Oidc| {
             let secret = settings.secret.read(16 * 1024);
             let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
             Oidc::new(&config.public_origin, settings, secret, outbound)
         };
-        let oidc = settings.map(oidc).transpose()?;
+        let sign_in = match &config.methods {
+            Methods::Password(secret) => SignIn::Password(load(secret)?),
+            Methods::Oidc(settings) => SignIn::Oidc(Box::new(oidc(settings)?)),
+            Methods::Hybrid(secret, settings) => SignIn::Hybrid(load(secret)?, Box::new(oidc(settings)?)),
+        };
         // How people sign in, one line per concern, with only the settings the mode uses.
         // Go's form without zero units: 8h, 8h30m, 10m.
         let lifetime = duration::format(LOGIN_LIFETIME);
@@ -99,18 +101,16 @@ impl Auth {
             .unwrap_or(lifetime);
         log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
         if let Some(oidc) = settings {
-            let groups = match oidc.allowed_groups.len() {
-                0 => "every group allowed".to_owned(),
-                1 => "1 group allowed".to_owned(),
-                n => format!("{n} groups allowed"),
+            let groups = match oidc.allowed_groups.as_slice() {
+                [_] => "1 group allowed".to_owned(),
+                groups => format!("{} groups allowed", groups.len()),
             };
             log!(Info, "auth", "OIDC provider {} at {}; {groups}", config.provider, oidc.issuer);
         }
         Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),
             store: Store::default(),
-            verifier,
-            oidc,
+            sign_in,
             browser_approvals: Attempts::new("browser-approval", 10),
             security,
             provider: config.provider.clone(),
@@ -120,7 +120,7 @@ impl Auth {
     /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
         let Some(auth) = &self.0 else { return Ok(()) };
-        match &auth.oidc {
+        match auth.sign_in.oidc() {
             Some(oidc) => oidc.discover(&auth.security).await,
             None => Ok(()),
         }
@@ -129,7 +129,7 @@ impl Auth {
     /// Hybrid mode's discovery, retried in the background until the provider answers; it never completes.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
-        let oidc = auth.oidc.as_ref().filter(|_| auth.verifier.is_some())?;
+        let SignIn::Hybrid(_, oidc) = &auth.sign_in else { return None };
         Some(oidc.retry(&auth.security))
     }
 
@@ -188,6 +188,29 @@ impl Auth {
         match &self.0 {
             None => response::json_of(&SocketTicket::unauthenticated()),
             Some(auth) => routes::mint(auth, request, lease, kind),
+        }
+    }
+}
+
+/// How people sign in, as configured: the password, OIDC or both.
+enum SignIn {
+    Password(Password),
+    Oidc(Box<Oidc>),
+    Hybrid(Password, Box<Oidc>),
+}
+
+impl SignIn {
+    fn password(&self) -> Option<&Password> {
+        match self {
+            Self::Password(password) | Self::Hybrid(password, _) => Some(password),
+            Self::Oidc(_) => None,
+        }
+    }
+
+    fn oidc(&self) -> Option<&Oidc> {
+        match self {
+            Self::Oidc(oidc) | Self::Hybrid(_, oidc) => Some(oidc),
+            Self::Password(_) => None,
         }
     }
 }

@@ -210,7 +210,25 @@ pub struct Oidc {
     pub issuer: String,
     pub client_id: String,
     pub secret: Secret,
-    pub allowed_groups: Vec<String>,
+    pub allowed_groups: Groups,
+}
+
+/// The OIDC groups allowed to sign in, never none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Groups(Vec<String>);
+
+impl Groups {
+    pub fn new(groups: Vec<String>) -> Option<Self> {
+        (!groups.is_empty()).then_some(Self(groups))
+    }
+
+    pub fn contains(&self, group: &str) -> bool {
+        self.0.iter().any(|allowed| allowed == group)
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
 }
 
 /// A secret given inline in the environment or as a file to read.

@@ -189,8 +189,13 @@ impl Oidc {
         Ok(transaction)
     }
 
-    /// The login principal and display name the provider vouches for.
-    async fn identify(&self, transaction: &Transaction, code: &str) -> Result<(Principal, String), Reason> {
+    /// The login principal and display name the provider vouches for; provider failures go to `security`'s log.
+    async fn identify(
+        &self,
+        transaction: &Transaction,
+        code: &str,
+        security: &Security,
+    ) -> Result<(Principal, String), Reason> {
         #[derive(Deserialize)]
         struct Info {
             sub: Option<String>,
@@ -199,12 +204,12 @@ impl Oidc {
             groups: Option<Vec<String>>,
         }
         let (provider, settings) = (&transaction.provider, &self.settings);
-        let (access_token, id_token) = self.exchange(provider, code, &transaction.verifier).await?;
+        let (access_token, id_token) = self.exchange(provider, code, &transaction.verifier, security).await?;
         let verified = provider.verify(&self.client, &id_token).await;
         let verified = verified.ok_or(Reason::IdTokenVerification)?;
         let (issuer, client) = (&settings.issuer, &settings.client_id);
         let (subject, names) = jwt::id_token(&verified, issuer, client, &transaction.nonce, &access_token)?;
-        let info = self.user_info(provider, &access_token).await;
+        let info = self.user_info(provider, &access_token, security).await;
         let info = info.ok_or(Reason::UserInfoOrSubject)?;
         let info: Info = serde_json::from_slice(&info).map_err(|_| Reason::UserInfoClaims)?;
         if info.sub.as_ref() != Some(&subject) {
@@ -228,7 +233,13 @@ impl Oidc {
     }
 
     /// The access token and ID token `code` exchanges for, authenticated with the client secret.
-    async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<(String, String), Reason> {
+    async fn exchange(
+        &self,
+        provider: &Provider,
+        code: &str,
+        verifier: &str,
+        security: &Security,
+    ) -> Result<(String, String), Reason> {
         #[derive(Deserialize)]
         struct Tokens {
             #[serde(default)]
@@ -248,6 +259,7 @@ impl Oidc {
         ]);
         let authorization = Some((header::AUTHORIZATION, authorization));
         let answer = self.client.send(&provider.token, authorization, Some(form)).await;
+        let answer = answer.inspect_err(|error| security.debug(format_args!("OIDC token exchange failed: {error}")));
         let tokens = answer
             .ok()
             .and_then(|answer| serde_json::from_slice::<Tokens>(&answer.body).ok());
@@ -260,11 +272,13 @@ impl Oidc {
     }
 
     /// The user information document; a signed one must verify and name the issuer and this client.
-    async fn user_info(&self, provider: &Provider, access_token: &str) -> Option<Vec<u8>> {
+    async fn user_info(&self, provider: &Provider, access_token: &str, security: &Security) -> Option<Vec<u8>> {
         let mut bearer = HeaderValue::from_str(&format!("Bearer {access_token}")).ok()?;
         bearer.set_sensitive(true);
         let bearer = Some((header::AUTHORIZATION, bearer));
-        let answer = self.client.send(&provider.userinfo, bearer, None).await.ok()?;
+        let answer = self.client.send(&provider.userinfo, bearer, None).await;
+        let answer = answer.inspect_err(|error| security.debug(format_args!("OIDC user information failed: {error}")));
+        let answer = answer.ok()?;
         if answer.media != "application/jwt" {
             return Some(answer.body);
         }
@@ -352,7 +366,7 @@ async fn sign_in(
     if !peer.keys().is_some_and(|keys| oidc.exchanges.allow(&keys, false, None)) {
         return Err(fail(Reason::ExchangeRateLimited));
     }
-    let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code));
+    let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code, &auth.security));
     let (principal, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
     let challenge = transaction.challenge.as_ref().map_or("", Challenge::as_str);
     let page = response::html(page::render(Page::Continue, &[("Challenge", challenge)]));

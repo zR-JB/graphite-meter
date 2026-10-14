@@ -1,7 +1,8 @@
 //! Cross-field validation into a `Config`, in Go's order: catalogue, authentication, limits, listeners, origins.
 
 use super::{
-    Auth, Config, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret, TlsFiles,
+    Auth, Config, Groups, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret,
+    TlsFiles,
     settings::{Advertised, Settings},
 };
 use graphite_meter_proto::{
@@ -276,12 +277,14 @@ fn methods(settings: &Settings, mode: AuthMode) -> Result<Methods, String> {
     } else if name.len() > 64 || !name.chars().all(safe) {
         "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
     } else {
-        let oidc = client_secret.map(|secret| Oidc {
-            issuer: issuer.clone(),
-            client_id: client_id.clone(),
-            secret,
-            allowed_groups: groups.clone(),
-        });
+        let oidc = client_secret
+            .zip(Groups::new(groups.clone()))
+            .map(|(secret, allowed_groups)| Oidc {
+                issuer: issuer.clone(),
+                client_id: client_id.clone(),
+                secret,
+                allowed_groups,
+            });
         // The checks above leave each mode exactly its methods' secrets.
         let methods = match mode {
             AuthMode::Password => password.map(Methods::Password),
