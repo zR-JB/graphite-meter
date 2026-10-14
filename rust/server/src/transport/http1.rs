@@ -40,9 +40,6 @@ use tokio_util::sync::CancellationToken;
 const BUFFER_BYTES: usize = 128 << 10;
 /// A connection between requests closes after this long.
 const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(15);
-/// Unsent downloads wait in hyper's buffer: a writable wake encrypts and the kernel holds about one block.
-#[cfg(target_os = "linux")]
-const NOTSENT_LOWAT: u32 = 256 << 10;
 
 /// What an HTTP/1 listener's connections share.
 #[derive(Clone)]
@@ -65,8 +62,6 @@ impl Http1 {
                 return;
             };
             let _ = socket.set_nodelay(true);
-            #[cfg(target_os = "linux")]
-            let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(NOTSENT_LOWAT);
             let connection = Connection::new(listener.endpoint, peer.ip());
             let Some(acceptor) = &listener.tls else {
                 return listener.serve(socket, connection, accepted).await;

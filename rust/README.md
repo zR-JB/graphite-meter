@@ -98,7 +98,7 @@ on the multi-thread runtime, away from the lanes. Upload control requests use th
 connection except over HTTP/3.
 
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
-holds no floor, and its sockets keep at most about 256 KiB unsent in the kernel (`TCP_NOTSENT_LOWAT`). Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
+holds no floor. Startup refuses a budget below `GM_MAX_CONNECTIONS` times the larger connection floor, the QUIC
 endpoint buffers and the 256 KiB download block. A QUIC connection holds a floor of its handshake, certificate
 flights and Noq's stream state (481 KiB at default limits, 978 KiB with per-client limits at the totals), about
 0.5 MiB in all at default limits; an HTTP/2 connection 1.5 MiB.
