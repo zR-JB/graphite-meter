@@ -36,9 +36,9 @@ fn config(url: &Origin, args: &[&str]) -> Config {
     e2e::config(&[&["-url", &url, "-warmup", "0s", "-auto-streams", "2"], args].concat())
 }
 
-/// The pinned runtimes beside the test's multi-thread runtime.
+/// The pinned runtimes and the latency runtime beside the test's multi-thread runtime, as the binary runs them.
 fn pinned() -> Arc<Pool> {
-    Arc::new(Pool::beside(&Handle::current()).unwrap())
+    Arc::new(Pool::probing(&Handle::current()).unwrap())
 }
 
 /// Prepares and runs `config` on pinned runtimes, handing each event to `seen` as it arrives.

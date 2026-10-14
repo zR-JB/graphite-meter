@@ -109,6 +109,10 @@ A failed stage keeps its measured population, marked incomplete. Every selected 
 is the shown server's when the run starts (the first selected unless the browser was switched to another), or a
 survivor's once it leaves; switching the shown server never retargets probes or changes saved statistics.
 
+The native client probes from a thread of its own, apart from the threads that carry transfers, which run five nice
+steps lower on Linux. On Windows its timers can follow the system timer resolution (15.6 ms by default), so fixed
+cadences send on that grid; RTTs and deadlines are read from the monotonic clock and are unaffected.
+
 ## Paired server timing
 
 Every reply carries the server's handling time in nanoseconds, from just after its receive call to just before reply

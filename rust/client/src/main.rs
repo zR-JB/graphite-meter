@@ -73,7 +73,7 @@ fn fail(error: &str) -> ExitCode {
 /// `kept` is the server remembered for later starts, if any.
 fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let pool = Arc::new(Pool::beside(runtime.handle())?);
+    let pool = Arc::new(Pool::probing(runtime.handle())?);
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
         let interactive = terminal && !config.report;

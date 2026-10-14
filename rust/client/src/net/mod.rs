@@ -97,6 +97,11 @@ impl Client {
         Self { shared, connections: Arc::default() }
     }
 
+    /// Where latency probes run, apart from the runtimes that carry transfers.
+    pub fn latency_runtime(&self) -> Handle {
+        self.shared.runtimes.latency()
+    }
+
     /// The same client with control connections of its own, apart from those its lanes may share.
     pub fn apart(&self) -> Self {
         Self { shared: self.shared.clone(), connections: Arc::default() }

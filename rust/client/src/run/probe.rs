@@ -187,14 +187,16 @@ enum Window {
 }
 
 impl Prober {
-    /// Probes `path` at `cadence` for `stage` until `token` is cancelled; a panic ends the population as down.
+    /// Probes `path` at `cadence` for `stage` on the latency runtime, where its bus also runs, until `token` is
+    /// cancelled; a panic ends the population as down.
     pub fn spawn(client: Client, path: LatencyPath, stage: Stage, cadence: Cadence, token: CancellationToken) -> Self {
         let (window, windows) = watch::channel(Window::Waiting);
         let (sender, probes) = mpsc::unbounded_channel();
         let schedule = Schedule::new(cadence, self::window(stage, cadence), Instant::now());
+        let runtime = client.latency_runtime();
         let probing = AssertUnwindSafe(probe(client, path, schedule, windows, sender.clone())).catch_unwind();
         let running = token.clone();
-        tokio::spawn(async move {
+        runtime.spawn(async move {
             if let Some(Err(_)) = running.run_until_cancelled_owned(probing).await {
                 let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
                 drop(sender.send(Probe::Down { at: Instant::now(), failure }));
