@@ -1,7 +1,9 @@
 //! OIDC sign-in as a confidential client: browser-bound state, nonce and PKCE, routes, code exchange, ID token, groups.
 
 use super::{
-    Counter, Enabled, Identity, LoginKey, Principal, Reason, Security, jwt,
+    Counter, Enabled, Identity, LoginKey, Principal, Reason, Security,
+    approval::Challenge,
+    jwt,
     page::{self, Page},
     policy::{Cookie, cookie, cookie_lease},
     provider::{Client, Provider},
@@ -47,8 +49,8 @@ struct Transaction {
     verifier: Zeroizing<String>,
     deadline: Instant,
     clients: Vec<ClientKey>,
-    /// The terminal approval to show after sign-in, or empty.
-    challenge: String,
+    /// The approval to show after sign-in.
+    challenge: Option<Challenge>,
     /// The login the browser presented at the start, which the new one replaces.
     prior: Option<LoginKey>,
 }
@@ -120,7 +122,12 @@ impl Oidc {
     }
 
     /// Opens a transaction for `keys`, returning the provider's sign-in URL and the transaction cookie's value.
-    fn start(&self, keys: &ClientKeys, challenge: &str, prior: Option<LoginKey>) -> Result<(String, String), Reason> {
+    fn start(
+        &self,
+        keys: &ClientKeys,
+        challenge: Option<Challenge>,
+        prior: Option<LoginKey>,
+    ) -> Result<(String, String), Reason> {
         let provider = self.provider.get().ok_or(Reason::ProviderNotReady)?.clone();
         let (browser, state) = (random::<32>(), random::<32>());
         let (nonce, verifier) = (Zeroizing::new(random::<32>()), Zeroizing::new(random::<32>()));
@@ -153,7 +160,7 @@ impl Oidc {
             verifier,
             deadline: now + TRANSACTION_LIFETIME,
             clients: keys.iter().collect(),
-            challenge: challenge.into(),
+            challenge,
             prior,
         };
         table.insert(digest(&state), transaction);
@@ -161,10 +168,15 @@ impl Oidc {
     }
 
     /// Ends `state`'s transaction for cookie `browser`, checking `issuer`; a refusal carries its challenge if found.
-    fn take(&self, state: &str, browser: &str, issuer: Option<&str>) -> Result<Transaction, (Reason, String)> {
+    fn take(
+        &self,
+        state: &str,
+        browser: &str,
+        issuer: Option<&str>,
+    ) -> Result<Transaction, (Reason, Option<Challenge>)> {
         let found = lock(&self.transactions).0.remove(&digest(state));
         let Some(transaction) = found else {
-            return Err((Reason::TransactionReplay, String::new()));
+            return Err((Reason::TransactionReplay, None));
         };
         let bound = bool::from(transaction.browser.ct_eq(&digest(browser)));
         if Instant::now() >= transaction.deadline || !bound {
@@ -271,7 +283,9 @@ pub(super) async fn start<B: http_body::Body>(
     peer: &Peer,
 ) -> Response<Body> {
     let (head, form) = form(request).await;
-    let challenge = form.as_deref().map_or("", |form| field(form, "challenge"));
+    let challenge = form
+        .as_deref()
+        .and_then(|form| Challenge::parse(field(form, "challenge")));
     let started = (|| {
         oidc.provider().ok_or(Reason::ProviderNotReady)?;
         check_csrf(auth, &head.headers, field(form.as_deref().ok_or(Reason::MalformedForm)?, "csrf"))?;
@@ -279,8 +293,11 @@ pub(super) async fn start<B: http_body::Body>(
         let keys = Some(keys)
             .filter(|keys| oidc.starts.allow(keys, false, None))
             .ok_or(Reason::Throttled)?;
-        let approval = if approval::verification_code(challenge).is_some() { challenge } else { "" };
-        oidc.start(&keys, approval, cookie_lease(&auth.store, &head.headers).map(|lease| lease.login()))
+        oidc.start(
+            &keys,
+            challenge.clone(),
+            cookie_lease(&auth.store, &head.headers).map(|lease| lease.login()),
+        )
     })();
     match started {
         Ok((url, browser)) => {
@@ -288,7 +305,7 @@ pub(super) async fn start<B: http_body::Body>(
             set_cookie(&mut answer, Cookie::Transaction, &browser, SystemTime::now() + TRANSACTION_LIFETIME);
             answer
         }
-        Err(reason) => refused(auth, reason, challenge),
+        Err(reason) => refused(auth, reason, challenge.as_ref()),
     }
 }
 
@@ -302,10 +319,11 @@ pub(super) async fn callback(
 ) -> Response<Body> {
     let mut answer = match sign_in(auth, oidc, &head, deadline, peer).await {
         Ok(answer) => answer,
-        Err((reason, challenge)) if challenge.is_empty() => {
-            refused(auth, reason, &query::get(head.uri.query(), "challenge").unwrap_or_default())
+        Err((reason, None)) => {
+            let challenge = query::get(head.uri.query(), "challenge").and_then(|text| Challenge::parse(&text));
+            refused(auth, reason, challenge.as_ref())
         }
-        Err((reason, challenge)) => refused(auth, reason, &challenge),
+        Err((reason, challenge)) => refused(auth, reason, challenge.as_ref()),
     };
     clear_cookie(&mut answer, Cookie::Transaction);
     answer
@@ -317,8 +335,8 @@ async fn sign_in(
     head: &Parts,
     deadline: Instant,
     peer: &Peer,
-) -> Result<Response<Body>, (Reason, String)> {
-    let (query, refuse) = (head.uri.query(), |reason| (reason, String::new()));
+) -> Result<Response<Body>, (Reason, Option<Challenge>)> {
+    let (query, refuse) = (head.uri.query(), |reason| (reason, None));
     let values = |name| query::values(query, name).collect::<Vec<_>>();
     let (code, state, issuer) = (values("code"), values("state"), values("iss"));
     let ([code], [state]) = (&code[..], &state[..]) else {
@@ -336,7 +354,8 @@ async fn sign_in(
     }
     let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code));
     let (principal, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
-    let page = response::html(page::render(Page::Continue, &[("Challenge", &transaction.challenge)]));
+    let challenge = transaction.challenge.as_ref().map_or("", Challenge::as_str);
+    let page = response::html(page::render(Page::Continue, &[("Challenge", challenge)]));
     let identity = Identity { principal, name: &name, provider: &auth.provider };
     let answer = establish(auth, identity, transaction.prior, page).map_err(fail)?;
     auth.security.count(Counter::Oidc);
@@ -345,7 +364,7 @@ async fn sign_in(
 }
 
 /// An OIDC refusal, which the security log also counts as an OIDC failure.
-fn refused(auth: &Enabled, reason: Reason, challenge: &str) -> Response<Body> {
+fn refused(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
     auth.security.count(Counter::OidcFailure);
     rejected(auth, reason, challenge)
 }

@@ -1,9 +1,9 @@
 //! Sign-in approvals: a terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
 
 use super::{
-    AuthLease, Counter, Enabled, LOGIN_LIFETIME, LoginKey,
+    AuthLease, BrowserOrigin, Counter, Enabled, LOGIN_LIFETIME, LoginKey,
     page::{self, Page},
-    policy::{browser_origin, cookie_lease},
+    policy::cookie_lease,
     rate::share_full,
     routes::{Form, body, field, redirect},
     store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
@@ -29,72 +29,127 @@ const MAX_CLIENT_APPROVALS: usize = 8;
 const MAX_VERIFIER: usize = 128;
 const MIN_BROWSER_VERIFIER: usize = 32;
 
+/// An approval challenge, checked once: an S256 digest, with the code the operator compares it by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct Challenge {
+    text: String,
+    code: String,
+}
+
+impl Challenge {
+    pub(super) fn parse(text: &str) -> Option<Self> {
+        Some(Self { code: verification_code(text)?, text: text.to_owned() })
+    }
+
+    /// The challenge `verifier` answers.
+    fn of(verifier: &str) -> Option<Self> {
+        Self::parse(&challenge(verifier))
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
 /// A pending approval of one challenge.
 pub(super) struct Approval {
     /// The browser origin asking, or none for a terminal.
-    browser: Option<HeaderValue>,
+    browser: Option<BrowserOrigin>,
     clients: Vec<ClientKey>,
-    /// The login approving it, once known.
-    pub login: Option<LoginKey>,
+    stage: Stage,
     pub deadline: Instant,
-    approved: bool,
+}
+
+/// How far an approval is: unclaimed, claimed by the login that may approve it, or approved by that login.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Open,
+    Claimed(LoginKey),
+    Approved(LoginKey),
+}
+
+impl Approval {
+    /// The login that claimed it.
+    pub(super) fn login(&self) -> Option<LoginKey> {
+        match self.stage {
+            Stage::Open => None,
+            Stage::Claimed(login) | Stage::Approved(login) => Some(login),
+        }
+    }
+}
+
+/// Room for one more approval: within its login's eight, and within the server bounds and the client's share.
+struct Room {
+    login: bool,
+    shared: bool,
 }
 
 impl State {
-    /// Whether one more approval fits `login`'s eight, the client's share and server bounds; half at most pre-sign-in.
-    fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> (bool, bool) {
+    /// The room for one more approval of `login`; before sign-in at most half the server's approvals.
+    fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> Room {
         let count =
             |held: &dyn Fn(&Approval) -> bool| self.approvals.values().filter(|approval| held(approval)).count();
-        let held = count(&|approval| approval.login == login);
+        let held = count(&|approval| approval.login() == login);
         let client = |key: &ClientKey| count(&|approval| approval.clients.contains(key));
         let total = self.approvals.len() < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
-        (held < MAX_LOGIN_APPROVALS, total && !share_full(keys, MAX_CLIENT_APPROVALS, client))
+        Room {
+            login: held < MAX_LOGIN_APPROVALS,
+            shared: total && !share_full(keys, MAX_CLIENT_APPROVALS, client),
+        }
     }
 
     /// The approval of `challenge` while it lasts.
-    fn pending(&self, challenge: &str) -> Option<&Approval> {
+    fn pending(&self, challenge: &Challenge) -> Option<&Approval> {
         self.approvals
             .get(challenge)
             .filter(|approval| Instant::now() < approval.deadline)
     }
 
-    fn open(&mut self, challenge: &str, browser: Option<HeaderValue>, keys: &ClientKeys, login: Option<LoginKey>) {
+    fn open(
+        &mut self,
+        challenge: Challenge,
+        browser: Option<BrowserOrigin>,
+        keys: &ClientKeys,
+        login: Option<LoginKey>,
+    ) {
         let (clients, deadline) = (keys.iter().collect(), Instant::now() + LIFETIME);
-        let approval = Approval { browser, clients, login, deadline, approved: false };
-        self.approvals.insert(challenge.to_owned(), approval);
+        let stage = login.map_or(Stage::Open, Stage::Claimed);
+        self.approvals
+            .insert(challenge, Approval { browser, clients, stage, deadline });
     }
 }
 
 /// `GET /auth/cli`: the signed-in login's approval page for a terminal's challenge.
 pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> Response<Body> {
     let challenge = query::get(request.uri().query(), "challenge").unwrap_or_default();
-    if verification_code(&challenge).is_none() {
-        return refused(false);
-    }
+    let Some(challenge) = Challenge::parse(&challenge) else {
+        return refused(Refused::Link);
+    };
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
     let found = state.pending(&challenge);
-    let found = found.map(|approval| (approval.browser.clone(), approval.login));
+    let found = found.map(|approval| (approval.browser.clone(), approval.login()));
     if let Some((Some(origin), _)) = &found {
-        let origin = origin.to_str().unwrap_or_default();
-        let query = query::encode(&[("challenge", &challenge), ("client_origin", origin)]);
+        let origin = origin.header().to_str().unwrap_or_default();
+        let query = query::encode(&[("challenge", challenge.as_str()), ("client_origin", origin)]);
         return redirect(&format!("/auth/browser?{query}"));
     }
     let Some(lease) = lease else {
-        return redirect(&format!("/login?challenge={challenge}"));
+        return redirect(&format!("/login?challenge={}", challenge.as_str()));
     };
-    let Some(keys) = peer.keys() else { return refused(true) };
+    let Some(keys) = peer.keys() else { return refused(Refused::Busy) };
     match found {
-        Some((_, login)) if login != Some(lease.login()) => return refused(false),
+        Some((_, login)) if login != Some(lease.login()) => return refused(Refused::Link),
         Some(_) => {}
         None => {
             state.sweep(Instant::now());
-            if state.approval_room(Some(lease.login()), &keys) != (true, true) {
+            let room = state.approval_room(Some(lease.login()), &keys);
+            if !(room.login && room.shared) {
                 drop(state);
                 auth.security.count(Counter::Capacity);
-                return refused(true);
+                return refused(Refused::Busy);
             }
-            state.open(&challenge, None, &keys, Some(lease.login()));
+            state.open(challenge.clone(), None, &keys, Some(lease.login()));
         }
     }
     drop(state);
@@ -104,45 +159,47 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
 /// `GET /auth/browser`: the approval page for a browser origin's challenge, opened before sign-in when need be.
 pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> Response<Body> {
     let (headers, query) = (request.headers(), request.uri().query());
-    let challenge = query::get(query, "challenge").unwrap_or_default();
+    let challenge = query::get(query, "challenge").and_then(|challenge| Challenge::parse(&challenge));
     let origin = query::get(query, "client_origin").and_then(|origin| HeaderValue::from_str(&origin).ok());
-    let Some(origin) = origin.filter(|origin| browser_origin(origin) && verification_code(&challenge).is_some()) else {
-        return refused(false);
+    let (Some(challenge), Some(origin)) = (challenge, origin.as_ref().and_then(BrowserOrigin::parse)) else {
+        return refused(Refused::Link);
     };
     let known = lock(&auth.store.0).pending(&challenge).is_some();
     let keys = peer
         .keys()
         .filter(|keys| known || auth.browser_approvals.allow(keys, false, None));
-    let Some(keys) = keys else { return refused(true) };
+    let Some(keys) = keys else { return refused(Refused::Busy) };
     let login = signed_in(auth, headers);
     let mut state = lock(&auth.store.0);
     if state.pending(&challenge).is_none() {
         state.sweep(Instant::now());
-        if !state.approval_room(login.as_ref().map(AuthLease::login), &keys).1 {
-            return refused(true);
+        if !state.approval_room(login.as_ref().map(AuthLease::login), &keys).shared {
+            return refused(Refused::Busy);
         }
-        state.open(&challenge, Some(origin.clone()), &keys, None);
+        state.open(challenge.clone(), Some(origin.clone()), &keys, None);
     }
-    let approval = &state.approvals[&challenge];
-    let (asked, holder) = (approval.browser.as_ref() == Some(&origin), approval.login);
-    if !asked {
-        return refused(false);
+    let room = login
+        .as_ref()
+        .map(|lease| state.approval_room(Some(lease.login()), &keys).login);
+    let Some(approval) = state.approvals.get_mut(&challenge) else {
+        return refused(Refused::Link);
+    };
+    if approval.browser.as_ref() != Some(&origin) {
+        return refused(Refused::Link);
     }
     let Some(lease) = login else {
         drop(state);
+        let fields = [("Challenge", challenge.as_str()), ("Opening", "true")];
         return match cross_site_navigation(headers) {
-            true => response::html(page::render(Page::Continue, &[("Challenge", &challenge), ("Opening", "true")])),
-            false => redirect(&format!("/login?challenge={challenge}")),
+            true => response::html(page::render(Page::Continue, &fields)),
+            false => redirect(&format!("/login?challenge={}", challenge.as_str())),
         };
     };
-    if holder != Some(lease.login()) {
-        if holder.is_some() {
-            return refused(false);
-        }
-        if !state.approval_room(Some(lease.login()), &keys).0 {
-            return refused(true);
-        }
-        state.approvals.get_mut(&challenge).expect("the approval exists").login = Some(lease.login());
+    match approval.stage {
+        Stage::Open if room == Some(true) => approval.stage = Stage::Claimed(lease.login()),
+        Stage::Open => return refused(Refused::Busy),
+        Stage::Claimed(login) | Stage::Approved(login) if login != lease.login() => return refused(Refused::Link),
+        Stage::Claimed(_) | Stage::Approved(_) => {}
     }
     let full = state.grants_of(lease.login()) >= MAX_LOGIN_GRANTS;
     drop(state);
@@ -160,19 +217,22 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     if !auth.store.csrf(lease.login(), field(&form, "csrf")) {
         return response::empty(StatusCode::FORBIDDEN);
     }
+    let Some(challenge) = Challenge::parse(field(&form, "challenge")) else {
+        return response::empty(StatusCode::FORBIDDEN);
+    };
     let mut state = lock(&auth.store.0);
     let full = browser && state.grants_of(lease.login()) >= MAX_LOGIN_GRANTS;
     let now = Instant::now();
-    let pending = state.approvals.get_mut(field(&form, "challenge"));
+    let pending = state.approvals.get_mut(&challenge);
     let Some(approval) = pending.filter(|approval| {
-        now < approval.deadline && approval.login == Some(lease.login()) && approval.browser.is_some() == browser
+        now < approval.deadline && approval.login() == Some(lease.login()) && approval.browser.is_some() == browser
     }) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
     if full {
         return capacity();
     }
-    approval.approved = true;
+    approval.stage = Stage::Approved(lease.login());
     drop(state);
     auth.security.count(Counter::CliApproval);
     crate::log!(Info, "auth", "sign-in approved for a {}", if browser { "browser" } else { "terminal" });
@@ -185,8 +245,8 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     struct Exchange {
         verifier: String,
     }
-    let origin = request.headers().get(header::ORIGIN).cloned();
-    let origin = origin.filter(|origin| browser && browser_origin(origin));
+    let origin = request.headers().get(header::ORIGIN).and_then(BrowserOrigin::parse);
+    let origin = origin.filter(|_| browser);
     if browser && origin.is_none() {
         return response::empty(StatusCode::FORBIDDEN);
     }
@@ -200,18 +260,22 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
         None => pending(),
     };
     if let Some(origin) = origin {
-        Access::Bearer(origin).apply(answer.headers_mut());
+        Access::Bearer(origin.header().clone()).apply(answer.headers_mut());
     }
     answer
 }
 
 /// Issues the grant an approved challenge of `verifier` holds for `origin`, ending the approval.
-fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Response<Body> {
-    let (challenge, credentials) = (challenge(verifier), credentials());
+fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Response<Body> {
+    let (Some(challenge), credentials) = (Challenge::of(verifier), credentials()) else {
+        return pending();
+    };
     let mut state = lock(&auth.store.0);
     let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
-    let Some((login, approved)) = approval.and_then(|approval| Some((approval.login?, approval.approved))) else {
-        return pending();
+    let (login, approved) = match approval.map(|approval| approval.stage) {
+        Some(Stage::Claimed(login)) => (login, false),
+        Some(Stage::Approved(login)) => (login, true),
+        Some(Stage::Open) | None => return pending(),
     };
     let Some(expires) = state.login(&login.0).map(|login| login.expires) else {
         return pending();
@@ -254,22 +318,39 @@ fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
 }
 
 /// The page approving `challenge` for a terminal, or for the browser `origin`.
-fn approval_page(auth: &Enabled, lease: &AuthLease, challenge: &str, origin: Option<&HeaderValue>) -> Response<Body> {
-    let Some(login) = auth.store.view(lease.login()) else { return refused(false) };
-    let code = verification_code(challenge).unwrap_or_default();
-    let origin = origin.and_then(|origin| origin.to_str().ok()).unwrap_or_default();
+fn approval_page(
+    auth: &Enabled,
+    lease: &AuthLease,
+    challenge: &Challenge,
+    origin: Option<&BrowserOrigin>,
+) -> Response<Body> {
+    let Some(login) = auth.store.view(lease.login()) else {
+        return refused(Refused::Link);
+    };
+    let origin = origin
+        .and_then(|origin| origin.header().to_str().ok())
+        .unwrap_or_default();
     let fields = [
-        ("Code", code.as_str()),
-        ("Challenge", challenge),
+        ("Code", challenge.code.as_str()),
+        ("Challenge", challenge.as_str()),
         ("CSRF", login.csrf.as_str()),
         ("BrowserOrigin", origin),
     ];
     response::html(page::render(Page::Cli, &fields))
 }
 
-/// The approval page's refusal: a link it cannot approve, or bounds spent for now.
-fn refused(busy: bool) -> Response<Body> {
-    let page = page::render(Page::Cli, &[("Refused", if busy { "busy" } else { "link" })]);
+graphite_meter_proto::table! {
+    /// Why the approval page refuses: a link it cannot approve, or bounds spent for now.
+    enum Refused {
+        name.0: &'static str,
+    } {
+        Link => ("link",),
+        Busy => ("busy",),
+    }
+}
+
+fn refused(refused: Refused) -> Response<Body> {
+    let page = page::render(Page::Cli, &[("Refused", refused.name())]);
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 

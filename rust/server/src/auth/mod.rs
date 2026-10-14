@@ -11,7 +11,7 @@ mod rate;
 mod routes;
 mod store;
 
-pub use policy::Policy;
+pub use policy::{BrowserOrigin, Policy};
 pub use store::{
     CsrfToken, GrantRefusal, GrantToken, Identity, LOGIN_LIFETIME, LoginKey, NewLogin, SessionToken, Store,
 };
@@ -28,7 +28,7 @@ use graphite_meter_proto::{
     route::{Kind, Route},
     token::SocketTicket,
 };
-use http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
+use http::{HeaderMap, Request, Response, StatusCode};
 use oidc::Oidc;
 use page::protect;
 use password::Password;
@@ -221,7 +221,7 @@ pub enum Via {
     /// The login's session cookie.
     Cookie,
     /// A grant's bearer token or a socket ticket, with the browser origin a browser grant serves.
-    Bearer(Option<HeaderValue>),
+    Bearer(Option<BrowserOrigin>),
 }
 
 /// A signed-in request's identity, and what ends it: its login's expiry, sign-out, or the grant's revocation.
@@ -241,7 +241,7 @@ impl AuthLease {
     }
 
     /// The browser origin a browser grant serves.
-    pub fn browser(&self) -> Option<&HeaderValue> {
+    pub fn browser(&self) -> Option<&BrowserOrigin> {
         match &self.via {
             Via::Bearer(browser) => browser.as_ref(),
             Via::Cookie => None,

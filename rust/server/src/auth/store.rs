@@ -1,6 +1,9 @@
 //! The store of logins, grants and one-use socket tickets; raw credentials go only to their issuer, keyed by SHA-256.
 
-use super::{AuthLease, Holder, Principal, Via, approval::Approval};
+use super::{
+    AuthLease, BrowserOrigin, Holder, Principal, Via,
+    approval::{Approval, Challenge},
+};
 use crate::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_proto::token::SocketTicket;
@@ -122,7 +125,7 @@ pub(super) struct Login {
 struct Grant {
     login: LoginKey,
     id: Arc<str>,
-    browser: Option<HeaderValue>,
+    browser: Option<BrowserOrigin>,
     sequence: u64,
     revoked: CancellationToken,
 }
@@ -140,7 +143,7 @@ pub(super) struct State {
     grants: HashMap<Digest, Grant>,
     tickets: HashMap<Digest, Ticket>,
     /// Pending approvals by their challenge.
-    pub(super) approvals: HashMap<String, Approval>,
+    pub(super) approvals: HashMap<Challenge, Approval>,
     sequence: u64,
 }
 
@@ -224,7 +227,7 @@ impl Store {
     }
 
     /// A test hook: issues a grant as an approved challenge does.
-    pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<GrantToken, GrantRefusal> {
+    pub fn grant(&self, login: LoginKey, browser: Option<BrowserOrigin>) -> Result<GrantToken, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
     }
@@ -286,7 +289,7 @@ impl State {
     pub(super) fn grant(
         &mut self,
         login: LoginKey,
-        browser: Option<HeaderValue>,
+        browser: Option<BrowserOrigin>,
         Credentials { token, id }: Credentials,
     ) -> Result<GrantToken, GrantRefusal> {
         let revoked = self.login(&login.0).ok_or(GrantRefusal::NoLogin)?.revoked.child_token();
@@ -331,7 +334,7 @@ impl State {
         self.grants.retain(|_, grant| grant.login.0 != *key);
         self.tickets.retain(|_, ticket| ticket.lease.login.0 != *key);
         self.approvals
-            .retain(|_, approval| approval.login.is_none_or(|login| login.0 != *key));
+            .retain(|_, approval| approval.login().is_none_or(|login| login.0 != *key));
     }
 
     pub(super) fn sweep(&mut self, now: Instant) {

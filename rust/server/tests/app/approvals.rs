@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::approval::challenge;
-use graphite_meter_server::auth::{NewLogin, Principal};
+use graphite_meter_server::auth::{BrowserOrigin, NewLogin, Principal};
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
 
@@ -114,5 +114,5 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     assert!(issued["remainingMs"].as_u64().unwrap() > 28_700_000);
     assert_eq!(issued["maximumLifetimeMs"], 28_800_000);
     let grant = store(&app).bearer(issued["token"].as_str().unwrap()).unwrap();
-    assert_eq!(grant.browser(), Some(&HeaderValue::from_static(BROWSER)));
+    assert_eq!(grant.browser().map(BrowserOrigin::header), Some(&HeaderValue::from_static(BROWSER)));
 }

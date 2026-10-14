@@ -2,7 +2,7 @@
 
 use super::*;
 use graphite_meter_server::{
-    auth::{Identity, NewLogin, Principal, Store},
+    auth::{BrowserOrigin, Identity, NewLogin, Principal, Store},
     limits::CONNECTION_CREDIT,
     peer::ClientKeys,
 };
@@ -191,7 +191,7 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     let app = auth_app(&[]);
     let login = login(&app, Principal::operator());
     let browser = store(&app)
-        .grant(login.key, Some(HeaderValue::from_static(BROWSER)))
+        .grant(login.key, BrowserOrigin::parse(&HeaderValue::from_static(BROWSER)))
         .unwrap()
         .as_str()
         .to_owned();

@@ -142,7 +142,7 @@ impl Policy {
     /// Who may read a signed-in request's answer: a browser grant's origin, or the public origin with its cookie.
     pub(super) fn access(&self, lease: &AuthLease, headers: &HeaderMap) -> Option<Access> {
         if let Some(browser) = lease.browser() {
-            return Some(Access::Bearer(browser.clone()));
+            return Some(Access::Bearer(browser.header().clone()));
         }
         (headers.get(header::ORIGIN) == Some(&self.origin)).then(|| Access::Cookie(self.origin.clone()))
     }
@@ -202,7 +202,8 @@ impl Policy {
         let Some(origin) = text(headers, "origin") else { return false };
         let public = self.origin.to_str().unwrap_or_default();
         if let Some(browser) = lease.browser() {
-            return origin.as_bytes() == browser.as_bytes() && route.is_some_and(|route| route != Route::Servers);
+            return origin.as_bytes() == browser.header().as_bytes()
+                && route.is_some_and(|route| route != Route::Servers);
         }
         if !origin.is_empty() && origin != public {
             return false;
@@ -231,7 +232,7 @@ impl Policy {
     /// Preflights: the browser token exchange, a browser grant's measurement routes, else the public origin's.
     fn preflight(&self, headers: &HeaderMap, route: Option<Route>, trust: Trust) -> Decision {
         let secure = trust >= Trust::Secure;
-        let origin = headers.get(header::ORIGIN).filter(|origin| browser_origin(origin));
+        let origin = headers.get(header::ORIGIN).and_then(BrowserOrigin::parse);
         let method = text(headers, "access-control-request-method").unwrap_or_default();
         let allowed = route.is_some_and(|route| route.methods().contains(&method));
         let mut answer = response::empty(StatusCode::NO_CONTENT);
@@ -240,17 +241,17 @@ impl Policy {
             (None, Some(origin))
                 if trust == Trust::Canonical && method == "POST" && requested(headers, &[]).is_some() =>
             {
-                Access::Bearer(origin.clone()).apply(answered);
+                Access::Bearer(origin.header().clone()).apply(answered);
                 answered.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
                 answered.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type"));
                 answered.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
             }
-            (Some(route), Some(origin)) if secure && *origin != self.origin && route != Route::Servers => {
+            (Some(route), Some(origin)) if secure && *origin.header() != self.origin && route != Route::Servers => {
                 let names = requested(headers, &["authorization"]);
                 if !allowed || !names.is_some_and(|names| names.contains(&"authorization".into())) {
                     return self.forbidden(secure);
                 }
-                Access::Bearer(origin.clone()).apply_measurement(answered);
+                Access::Bearer(origin.header().clone()).apply_measurement(answered);
             }
             (Some(_), _) if secure && headers.get(header::ORIGIN) == Some(&self.origin) && allowed => {
                 if requested(headers, &["authorization", "x-csrf-token"]).is_none() {
@@ -295,10 +296,10 @@ impl Policy {
         let origin = request.headers().get(header::ORIGIN);
         if origin == Some(&self.origin) {
             Access::Cookie(self.origin.clone()).apply(headers);
-        } else if let Some(origin) = origin.filter(|origin| browser_origin(origin))
+        } else if let Some(origin) = origin.and_then(BrowserOrigin::parse)
             && Route::from_path(request.uri().path()).is_some()
         {
-            Access::Bearer(origin.clone()).apply(headers);
+            Access::Bearer(origin.header().clone()).apply(headers);
         }
         headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
         headers.insert("graphite-meter-browser-auth", HeaderValue::from_static("1"));
@@ -335,9 +336,19 @@ fn same_host(first: &str, second: &str) -> bool {
 }
 
 /// An exact canonical HTTPS origin, as a browser grant's audience must be.
-pub(super) fn browser_origin(origin: &HeaderValue) -> bool {
-    let text = origin.to_str().unwrap_or_default();
-    Origin::parse(text).is_ok_and(|parsed| parsed.scheme == Scheme::Https && parsed.to_string() == text)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserOrigin(HeaderValue);
+
+impl BrowserOrigin {
+    pub fn parse(origin: &HeaderValue) -> Option<Self> {
+        let text = origin.to_str().ok()?;
+        let parsed = Origin::parse(text).ok()?;
+        (parsed.scheme == Scheme::Https && parsed.to_string() == text).then(|| Self(origin.clone()))
+    }
+
+    pub fn header(&self) -> &HeaderValue {
+        &self.0
+    }
 }
 
 /// The preflight's requested headers in lower case, when each is `Content-Type` or one of `allowed`.

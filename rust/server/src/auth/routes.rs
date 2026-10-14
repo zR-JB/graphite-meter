@@ -1,7 +1,8 @@
 //! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
 
 use super::{
-    AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via, approval,
+    AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via,
+    approval::{self, Challenge},
     oidc::{self, Oidc},
     page::{self, Page},
     password::{Password, Verdict},
@@ -18,7 +19,6 @@ use crate::{
 };
 use bytes::{Buf, BufMut};
 use graphite_meter_proto::{
-    approval::verification_code,
     origin::{Origin, Scheme},
     route::{Kind, Route},
 };
@@ -109,8 +109,7 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
 /// The sign-in page; its form proves a fresh token the login cookie holds for ten minutes.
 fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     let read = |name| query::get(request.uri().query(), name).unwrap_or_default();
-    let (challenge, error, reason) = (read("challenge"), read("error"), read("reason"));
-    let challenge = if verification_code(&challenge).is_some() { challenge.as_str() } else { "" };
+    let (challenge, error, reason) = (Challenge::parse(&read("challenge")), read("error"), read("reason"));
     let notice = match error.as_str() {
         notice @ ("" | "provider" | "busy" | "stale" | "throttled" | "password" | "proxy") => notice,
         _ => "failed",
@@ -127,7 +126,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
         &[
             ("CSRF", &csrf),
             ("Provider", &auth.provider),
-            ("Challenge", challenge),
+            ("Challenge", challenge.as_ref().map_or("", Challenge::as_str)),
             ("Notice", notice),
             ("Status", status),
             ("Password", flag(auth.verifier.is_some())),
@@ -150,25 +149,25 @@ async fn sign_in<B: http_body::Body>(
     let (head, form) = form(request).await;
     let headers = &head.headers;
     let Some(form) = form else {
-        return rejected(auth, Reason::MalformedForm, "");
+        return rejected(auth, Reason::MalformedForm, None);
     };
-    let challenge = field(&form, "challenge");
+    let challenge = Challenge::parse(field(&form, "challenge"));
     let admitted = || match password.admit(peer.keys(), cookie(headers, Cookie::Device)) {
         true => Ok(()),
         false if peer.keys().is_none() => Err(Reason::ClientAddress),
         false => Err(Reason::Throttled),
     };
     if let Err(reason) = check_csrf(auth, headers, field(&form, "csrf")).and_then(|()| admitted()) {
-        return rejected(auth, reason, challenge);
+        return rejected(auth, reason, challenge.as_ref());
     }
     let entered = Zeroizing::new(field(&form, "password").to_owned());
     match password.verify(entered).await {
         Verdict::Match => {}
-        Verdict::Mismatch => return rejected(auth, Reason::PasswordMismatch, challenge),
-        Verdict::Busy => return rejected(auth, Reason::VerifierBusy, challenge),
+        Verdict::Mismatch => return rejected(auth, Reason::PasswordMismatch, challenge.as_ref()),
+        Verdict::Busy => return rejected(auth, Reason::VerifierBusy, challenge.as_ref()),
     }
-    let target = match verification_code(challenge) {
-        Some(_) => format!("/auth/cli?challenge={challenge}"),
+    let target = match &challenge {
+        Some(challenge) => format!("/auth/cli?challenge={}", challenge.as_str()),
         None => "/".into(),
     };
     let identity = Identity {
@@ -179,7 +178,7 @@ async fn sign_in<B: http_body::Body>(
     let prior = cookie_lease(&auth.store, headers).map(|lease| lease.login());
     let mut answer = match establish(auth, identity, prior, redirect(&target)) {
         Ok(answer) => answer,
-        Err(reason) => return rejected(auth, reason, challenge),
+        Err(reason) => return rejected(auth, reason, challenge.as_ref()),
     };
     auth.security.count(Counter::Local);
     crate::log!(Info, "auth", "signed in: local operator, with the password");
@@ -221,12 +220,12 @@ pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Re
     }
 }
 
-/// Back to the sign-in page with the refusal's notice, keeping a valid approval challenge.
-pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: &str) -> Response<Body> {
+/// Back to the sign-in page with the refusal's notice, keeping the approval challenge.
+pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
     auth.security.refused(reason);
     let notice = reason.notice();
-    redirect(&match verification_code(challenge) {
-        Some(_) => format!("/login?challenge={challenge}&error={notice}"),
+    redirect(&match challenge {
+        Some(challenge) => format!("/login?challenge={}&error={notice}", challenge.as_str()),
         None => format!("/login?error={notice}"),
     })
 }
