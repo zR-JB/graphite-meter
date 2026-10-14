@@ -312,12 +312,12 @@ impl Run {
                     };
                     self.live[direction].observe(rate * ms / 1e3, ms);
                     self.moved += rate * ms / 1e3;
-                    let presented = self.live[direction].presented();
-                    if presented > 0.0 {
+                    if let Some(presented) = self.live[direction].presented() {
                         self.throughput[direction].push(offset + *at, Some(presented));
                     }
                 }
-                self.peak = self.peak.max(self.live.down.presented() + self.live.up.presented());
+                let presented = Direction::BOTH.map(|direction| self.live[direction].presented().unwrap_or_default());
+                self.peak = self.peak.max(presented.iter().sum());
             }
             Event::Probe { server, at, rtt } => {
                 let Some((stage, offset)) = self.window() else { return };

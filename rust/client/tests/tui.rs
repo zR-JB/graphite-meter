@@ -19,7 +19,7 @@ use graphite_meter_client::{
 };
 use graphite_meter_proto::{
     catalog::{ServerEntry, ServerId},
-    discovery::{Protocol, ThroughputTransport},
+    discovery::{IpFamily, Protocol, ThroughputTransport},
     origin::{BaseUrl, Origin},
     reason::FailureReason,
 };
@@ -125,8 +125,8 @@ fn paths(origin: &Origin) -> Paths {
         control: Protocol::Http2,
         latency: None,
         stage_limit: SECOND * 300,
-        idle_rtt: Duration::ZERO,
-        ip_version: 4,
+        idle_rtt: None,
+        ip_family: IpFamily::V4,
     }
 }
 

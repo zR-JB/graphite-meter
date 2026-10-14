@@ -200,7 +200,7 @@ impl Prober {
         self.window.send_replace(Window::Closed);
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = Probe> + '_ {
+    pub fn drain(&mut self) -> impl Iterator<Item = Probe> {
         std::iter::from_fn(|| self.probes.try_recv().ok())
     }
 }

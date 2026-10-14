@@ -224,7 +224,7 @@ fn live_rate() {
         for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
             let number = |at: usize| step[at].as_f64().unwrap();
             let changed = rate.observe(number(0), number(1));
-            let (presented, expected) = (rate.presented(), number(2));
+            let (presented, expected) = (rate.presented().unwrap_or_default(), number(2));
             let close = (presented - expected).abs() <= 1e-9 * expected.max(1.0);
             assert!(close && changed == step[3], "{} step {index}: {presented} {changed}", case["name"]);
         }
@@ -248,9 +248,9 @@ fn the_wire_rate_matches_the_browser_s_model() {
         };
         let origin = Origin::parse(&format!("{}://meter.example", text("scheme"))).unwrap();
         let path = ThroughputPath { origin, transport, protocol };
-        let ip_version = case["ipVersion"].as_u64().unwrap() as u8;
+        let family = serde_json::from_value(case["ipVersion"].clone()).unwrap();
         let expected = case["multiplier"].as_f64().unwrap();
-        let got = wire::multiplier(&path, ip_version);
+        let got = wire::multiplier(&path, family);
         assert!((got - expected).abs() < 1e-6, "{case}: {got}");
     }
 }

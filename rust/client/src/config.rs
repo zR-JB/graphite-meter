@@ -10,7 +10,12 @@ use graphite_meter_proto::{
     origin::Origin,
     text::quote,
 };
-use std::{ffi::OsString, num::IntErrorKind, path::PathBuf, time::Duration};
+use std::{
+    ffi::OsString,
+    num::{IntErrorKind, NonZero},
+    path::PathBuf,
+    time::Duration,
+};
 
 /// Why settings without a server address cannot run; nothing has a sensible default one.
 pub const NO_SERVER: &str = "enter the server's address";
@@ -31,8 +36,8 @@ pub struct Config {
     /// Distinct, in run order.
     pub stages: Vec<Stage>,
     pub warmup: Duration,
-    /// Each stage's measured window, by `Stage as usize`.
-    pub durations: [Duration; 4],
+    /// Each stage's measured window, by `Stage::index`.
+    pub durations: [Duration; Stage::ALL.len()],
     pub streams: Streams,
     pub ping: Cadence,
     pub loaded_ping: Cadence,
@@ -51,11 +56,25 @@ pub struct PathChoice {
     pub latency_transport: Option<LatencyTransport>,
 }
 
-/// Lanes per server and direction: HTTP/1.1's automatic count, and a forced count for every path (0: none).
+/// Lanes per server and direction: HTTP/1.1's automatic count, and a count forced on every path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Streams {
     pub auto: usize,
-    pub forced: usize,
+    pub forced: Option<NonZero<usize>>,
+}
+
+impl Streams {
+    /// The count the settings show and edit: the forced one, or the automatic maximum.
+    pub fn shown(&self) -> usize {
+        self.forced.map_or(self.auto, NonZero::get)
+    }
+
+    pub fn show(&mut self, count: NonZero<usize>) {
+        match &mut self.forced {
+            Some(forced) => *forced = count,
+            None => self.auto = count.get(),
+        }
+    }
 }
 
 /// What a path check depends on; a run reuses a check whose key is equal.
@@ -80,7 +99,7 @@ impl Default for Config {
             stages: vec![Stage::Latency, Stage::Download, Stage::Upload],
             warmup: Duration::from_millis(800),
             durations: [4, 10, 10, 10].map(Duration::from_secs),
-            streams: Streams { auto: 6, forced: 0 },
+            streams: Streams { auto: 6, forced: None },
             ping: Cadence::ReplyDriven,
             loaded_ping: Cadence::Every(Duration::from_millis(250)),
             loaded_latency: true,
@@ -92,7 +111,7 @@ impl Default for Config {
 
 impl Config {
     pub fn duration(&self, stage: Stage) -> Duration {
-        self.durations[stage as usize]
+        self.durations[stage.index()]
     }
 
     /// The stages to run with their windows.
@@ -129,11 +148,11 @@ impl Config {
     /// Lanes per direction on a fetch-stream path of `protocol`, or a WebTransport one.
     pub fn lanes(&self, protocol: Protocol, transport: ThroughputTransport) -> Dir<usize> {
         let (down, up) = match (self.streams.forced, transport, protocol) {
-            (0, ThroughputTransport::FetchStream, Protocol::Http2) => (1, 4),
-            (0, ThroughputTransport::FetchStream, Protocol::Http3) => (1, 1),
-            (0, ThroughputTransport::FetchStream, _) => (self.streams.auto, self.streams.auto),
-            (0, ..) => (1, 1),
-            (forced, ..) => (forced, forced),
+            (Some(forced), ..) => (forced.get(), forced.get()),
+            (None, ThroughputTransport::FetchStream, Protocol::Http2) => (1, 4),
+            (None, ThroughputTransport::FetchStream, Protocol::Http3) => (1, 1),
+            (None, ThroughputTransport::FetchStream, _) => (self.streams.auto, self.streams.auto),
+            (None, ..) => (1, 1),
         };
         Dir { down, up }
     }
@@ -157,7 +176,7 @@ impl Config {
         if fast(self.ping) || fast(self.loaded_ping) {
             return Err("latency cadence must be reply-driven or at least 80ms".into());
         }
-        if self.streams.forced > MAX_STREAMS {
+        if self.streams.forced.is_some_and(|forced| forced.get() > MAX_STREAMS) {
             return Err(format!(
                 "forced streams must be from 1 to {MAX_STREAMS} per server and direction, or 0 for automatic"
             ));
@@ -459,8 +478,8 @@ macro_rules! stage_duration {
             $name,
             Duration,
             $usage,
-            |f, v| f.config.durations[Stage::$stage as usize] = span(v, Duration::ZERO)?,
-            |f| duration::format(f.config.durations[Stage::$stage as usize])
+            |f, v| f.config.durations[Stage::$stage.index()] = span(v, Duration::ZERO)?,
+            |f| duration::format(f.config.durations[Stage::$stage.index()])
         )
     };
 }
@@ -494,7 +513,8 @@ const FLAGS: [Flag<Flags>; 22] = [
     row!("stages", Value, "comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) \
         (default latency,download,upload)", |f, v| f.config.stages = stages(v)?, |_f| String::new()),
     row!("streams", Int, "force exact streams per server and direction (0 = automatic; at most 14)",
-        |f, v| f.config.streams.forced = count(v)?, |f| f.config.streams.forced.to_string()),
+        |f, v| f.config.streams.forced = NonZero::new(count(v)?),
+        |f| f.config.streams.forced.map_or(0, NonZero::get).to_string()),
     row!("throughput-origin", String, "throughput origin from discovery, or auto",
         |f, v| f.config.paths.throughput_origin = origin(v)?, |f| show_origin(&f.config.paths.throughput_origin)),
     row!("throughput-protocol", String, "protocol for a negotiated throughput origin: auto, http1, http2, or http3",

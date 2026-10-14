@@ -71,11 +71,10 @@ impl Live {
             Event::Sample { rates, .. } => {
                 let Some(run) = run else { return };
                 for direction in Direction::BOTH {
-                    let presented = run.live[direction].presented();
-                    self.shown[direction] = match rates[direction] {
-                        None => Glide::default(),
-                        Some(_) if presented > 0.0 => self.shown[direction].toward(presented, now),
-                        Some(_) => self.shown[direction],
+                    self.shown[direction] = match (rates[direction], run.live[direction].presented()) {
+                        (None, _) => Glide::default(),
+                        (Some(_), Some(presented)) => self.shown[direction].toward(presented, now),
+                        (Some(_), None) => self.shown[direction],
                     };
                 }
             }

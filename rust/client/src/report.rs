@@ -81,8 +81,12 @@ impl Report<'_> {
 
     /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        self.status(stage)
-            .map_or("Skipped", |status| [MISSING, PARTIAL, "Failed", "Stopped"][status as usize])
+        self.status(stage).map_or("Skipped", |status| match status {
+            StageStatus::Complete => MISSING,
+            StageStatus::Partial => PARTIAL,
+            StageStatus::Failed => "Failed",
+            StageStatus::Stopped => "Stopped",
+        })
     }
 
     /// The latency server's population in `stage`.

@@ -10,7 +10,7 @@ use crate::{
 };
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol, Preflight, Probe, Protocol,
+        Capabilities, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol, Preflight, Probe, Protocol,
         ServerInfo, ThroughputTarget, ThroughputTransport,
     },
     origin::{BaseUrl, Origin},
@@ -38,7 +38,7 @@ impl App {
         };
         response::json_of(&Probe {
             client_ip: address.ip().to_string(),
-            client_ip_version: if address.ip().is_ipv4() { 4 } else { 6 },
+            client_ip_version: IpFamily::of(address.ip()),
             client_ip_source: source,
             protocol_negotiated: protocol,
             load: Some(Load { active: active as u64, max: max as u64 }),

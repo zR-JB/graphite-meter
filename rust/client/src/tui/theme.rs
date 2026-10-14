@@ -29,13 +29,13 @@ const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
 const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
 const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
 const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
-const STAGES: [Tone; 4] = [
+const STAGES: [Tone; Stage::ALL.len()] = [
     tone((0x1d7a73, 30, 6), (0x70dbc4, 80, 14)),
     tone((0x254ea3, 25, 4), (0x71a3ff, 75, 12)),
     tone((0xa35d1d, 130, 1), (0xfeb66a, 215, 9)),
     tone((0x7f2456, 89, 1), (0xe472ac, 169, 9)),
 ];
-const TRACES: [Tone; 4] = [
+const TRACES: [Tone; Stage::ALL.len()] = [
     tone((0x0f9485, 30, 6), (0x70dbc4, 80, 14)),
     tone((0x275ac8, 26, 4), (0x71a3ff, 75, 12)),
     tone((0xca6e03, 166, 1), (0xfeb66a, 215, 9)),
@@ -118,12 +118,12 @@ impl Palette {
     }
 
     pub fn stage(&self, stage: Stage) -> Style {
-        Style::fg(STAGES[stage as usize][usize::from(self.dark)])
+        Style::fg(STAGES[stage.index()][usize::from(self.dark)])
     }
 
     /// A stage's chart trace.
     pub fn trace(&self, stage: Stage) -> Color {
-        TRACES[stage as usize][usize::from(self.dark)]
+        TRACES[stage.index()][usize::from(self.dark)]
     }
 
     /// `share` of a stage's hue over `under`: a tile's wash, a chart's field, a box plot's box.
@@ -133,7 +133,12 @@ impl Palette {
 
     /// An outcome's label: bold in its badge's colour.
     pub fn outcome(&self, outcome: Outcome) -> Style {
-        let tone = [GOOD, CAUTION, CAUTION, SOFT, BAD][outcome as usize];
+        let tone = match outcome {
+            Outcome::Complete => GOOD,
+            Outcome::Partial | Outcome::Incomplete => CAUTION,
+            Outcome::Stopped => SOFT,
+            Outcome::Failed => BAD,
+        };
         Style::fg(tone[usize::from(self.dark)]).bold()
     }
 }

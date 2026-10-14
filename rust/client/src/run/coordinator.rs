@@ -34,7 +34,7 @@ const NO_SURVIVORS: &str = "all selected servers failed";
 /// A prepared server across the run.
 struct Seat<'a> {
     server: &'a ServerPath,
-    idle_rtt: Duration,
+    idle_rtt: Option<Duration>,
     /// Its one replacement upload receiver in the run.
     replaced: Arc<AtomicBool>,
     present: bool,
@@ -82,7 +82,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
             };
             seat.present &= !server.left;
             let median = server.latency.and_then(|latency| latency.summary.p50);
-            seat.idle_rtt = median.filter(|_| *stage == Stage::Latency).unwrap_or(seat.idle_rtt);
+            seat.idle_rtt = median.filter(|_| *stage == Stage::Latency).or(seat.idle_rtt);
         }
         events.send(Event::StageFinished(result.clone()));
         results.push(result);

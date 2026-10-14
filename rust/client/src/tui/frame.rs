@@ -540,10 +540,10 @@ impl App {
                         .as_ref()
                         .map_or(words::MISSING.into(), words::latency_path);
                     entries.push(item("Latency path", latency));
-                    if !paths.idle_rtt.is_zero() {
-                        entries.push(item("Pre-test latency", words::ms(paths.idle_rtt)));
+                    if let Some(rtt) = paths.idle_rtt {
+                        entries.push(item("Pre-test latency", words::ms(rtt)));
                     }
-                    entries.push(item("IP family", format!("IPv{}", paths.ip_version)));
+                    entries.push(item("IP family", format!("IPv{}", paths.ip_family.version())));
                 }
                 Err(failure) => entries.push(Entry::Text(Line::styled(&failure.text, palette.warn))),
             }

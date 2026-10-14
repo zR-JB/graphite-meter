@@ -24,7 +24,12 @@ pub(super) enum Readiness {
 
 impl Readiness {
     pub(super) fn label(self) -> &'static str {
-        ["Ready", "Checking", "Failed", "Sign in"][self as usize]
+        match self {
+            Self::Ready => "Ready",
+            Self::Checking => "Checking",
+            Self::Failed => "Failed",
+            Self::SignIn => "Sign in",
+        }
     }
 }
 

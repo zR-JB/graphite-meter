@@ -45,9 +45,9 @@ fn window(age: f64) -> f64 {
 }
 
 impl LiveRate {
-    /// The rate shown in bytes per second; zero while there is none.
-    pub fn presented(&self) -> f64 {
-        self.presented
+    /// The rate shown in bytes per second, once there is a positive one.
+    pub fn presented(&self) -> Option<f64> {
+        Some(self.presented).filter(|&rate| rate > 0.0)
     }
 
     /// Adds `bytes` measured over `ms` and reports whether a new regime was confirmed.

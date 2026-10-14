@@ -67,7 +67,12 @@ pub fn latency_facts(summary: Summary, measured: Duration) -> Vec<String> {
 }
 
 pub fn label(stage: Stage) -> &'static str {
-    ["Latency", "Download", "Upload", "Bidirectional"][stage as usize]
+    match stage {
+        Stage::Latency => "Latency",
+        Stage::Download => "Download",
+        Stage::Upload => "Upload",
+        Stage::Bidirectional => "Bidirectional",
+    }
 }
 
 pub fn compact_stage(stage: Stage) -> &'static str {
@@ -75,7 +80,12 @@ pub fn compact_stage(stage: Stage) -> &'static str {
 }
 
 pub fn compact_population(stage: Stage) -> &'static str {
-    ["Idle", "Loaded down", "Loaded up", "Loaded bi-dir"][stage as usize]
+    match stage {
+        Stage::Latency => "Idle",
+        Stage::Download => "Loaded down",
+        Stage::Upload => "Loaded up",
+        Stage::Bidirectional => "Loaded bi-dir",
+    }
 }
 
 pub fn population_label(stage: Stage) -> String {
@@ -97,7 +107,13 @@ pub fn arrow(direction: Direction) -> &'static str {
 }
 
 pub fn outcome_label(outcome: Outcome) -> &'static str {
-    ["Complete", "Partial", "Incomplete", "Stopped", "Failed"][outcome as usize]
+    match outcome {
+        Outcome::Complete => "Complete",
+        Outcome::Partial => "Partial",
+        Outcome::Incomplete => "Incomplete",
+        Outcome::Stopped => "Stopped",
+        Outcome::Failed => "Failed",
+    }
 }
 
 pub fn clock(duration: Duration) -> String {
@@ -137,20 +153,36 @@ pub fn setting(duration: Duration) -> String {
 
 /// An HTTP version; none is automatic.
 pub fn protocol(protocol: Option<Protocol>) -> &'static str {
-    protocol.map_or("Automatic", |protocol| ["HTTP/1.1", "HTTP/2", "HTTP/3", "Negotiated"][protocol as usize])
+    match protocol {
+        None => "Automatic",
+        Some(Protocol::Http1) => "HTTP/1.1",
+        Some(Protocol::Http2) => "HTTP/2",
+        Some(Protocol::Http3) => "HTTP/3",
+        Some(Protocol::Negotiated) => "Negotiated",
+    }
 }
 
 pub fn throughput_transport(transport: ThroughputTransport) -> &'static str {
-    ["Fetch streams", "WebTransport streams", "WebTransport datagrams"][transport as usize]
+    match transport {
+        ThroughputTransport::FetchStream => "Fetch streams",
+        ThroughputTransport::WebTransport => "WebTransport streams",
+        ThroughputTransport::WebTransportDatagram => "WebTransport datagrams",
+    }
 }
 
 pub fn latency_transport(transport: LatencyTransport) -> &'static str {
-    ["WebSocket", "WebTransport datagrams"][transport as usize]
+    match transport {
+        LatencyTransport::WebSocket => "WebSocket",
+        LatencyTransport::WebTransport => "WebTransport datagrams",
+    }
 }
 
 /// The HTTP version a latency transport runs over.
 pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
-    [Protocol::Http1, Protocol::Http3][transport as usize]
+    match transport {
+        LatencyTransport::WebSocket => Protocol::Http1,
+        LatencyTransport::WebTransport => Protocol::Http3,
+    }
 }
 
 /// A path as its transport, HTTP version and security.
@@ -171,7 +203,7 @@ pub fn latency_path(path: &LatencyPath) -> String {
 pub fn streams(config: &Config, path: &ThroughputPath) -> String {
     let lanes = config.lanes(path.protocol, path.transport);
     match (config.streams.forced, path.transport, path.protocol) {
-        (forced @ 1.., ..) => format!("Forced · {forced} per direction"),
+        (Some(forced), ..) => format!("Forced · {forced} per direction"),
         (_, ThroughputTransport::FetchStream, Protocol::Http1) => {
             format!("Automatic · up to {} per direction", lanes.down)
         }

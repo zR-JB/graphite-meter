@@ -73,7 +73,12 @@ pub fn gauge_tick(v: f64) -> String {
 }
 
 pub fn icon(stage: Stage) -> &'static str {
-    ["≈", "↓", "↑", "↕"][stage as usize]
+    match stage {
+        Stage::Latency => "≈",
+        Stage::Download => "↓",
+        Stage::Upload => "↑",
+        Stage::Bidirectional => "↕",
+    }
 }
 
 /// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with 3% headroom, and from

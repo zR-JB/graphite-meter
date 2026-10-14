@@ -572,8 +572,9 @@ pub fn lateness(fired: Instant, due: Instant, returned: Instant) -> Duration {
 }
 
 /// A server's warmup: `base` stretched to ten of its idle round trips, at most 4 s.
-pub fn warmup(base: Duration, idle_rtt: Duration) -> Duration {
-    base.max(idle_rtt.saturating_mul(10)).min(MAX_WARMUP)
+pub fn warmup(base: Duration, idle_rtt: Option<Duration>) -> Duration {
+    base.max(idle_rtt.map_or(Duration::ZERO, |rtt| rtt.saturating_mul(10)))
+        .min(MAX_WARMUP)
 }
 
 /// The spacing between lane starts: half the server's own warmup spread over its lanes, at most 75 ms.

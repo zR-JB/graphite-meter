@@ -18,7 +18,7 @@ pub const UNREACHABLE: &str = "Server could not be reached";
 use conn::{Answer, Failed};
 use graphite_meter_net::{Connector, Pool, Proxy, Verify};
 use graphite_meter_proto::{
-    discovery::{Probe, Protocol},
+    discovery::{IpFamily, Probe, Protocol},
     lane::LaneEnding,
     origin::{Origin, Scheme},
     refusal::UploadRefusal,
@@ -107,9 +107,9 @@ impl Client {
         Ok(self.exchange(via, request, decode).await?.1)
     }
 
-    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family,
-    /// 4 or 6, the server saw the probe arrive from.
-    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<(Protocol, u8), Fault> {
+    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family
+    /// the server saw the probe arrive from.
+    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<(Protocol, IpFamily), Fault> {
         let request = Request::new(Method::GET, origin, Route::Probe);
         let (version, probe) = self.exchange(via, request, Probe::decode).await?;
         let protocol = match (via, version) {
