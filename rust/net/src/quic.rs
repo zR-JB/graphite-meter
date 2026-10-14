@@ -1,6 +1,6 @@
 //! QUIC transport settings for both roles, with the shared receive and send windows.
 use graphite_meter_proto::lane::IDLE_BOUND;
-use noq::{AckFrequencyConfig, IdleTimeout, TransportConfig, VarInt};
+use noq::{IdleTimeout, TransportConfig, VarInt};
 
 /// The receive window autotuning grows each stream to.
 pub const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
@@ -22,8 +22,6 @@ const SERVER_UNI_STREAMS: u32 = 3 + 16 + 4;
 const CLIENT_DATAGRAM_BUFFER: usize = 256 << 10;
 const SERVER_DATAGRAM_BUFFER: usize = 64 << 10;
 const CLIENT_IDLE_MILLIS: u32 = 60_000;
-/// Ack-eliciting packets a peer may receive before it must acknowledge: one ACK per ten.
-const ACK_ELICITING_THRESHOLD: u32 = 9;
 
 /// A client connection's transport: no streams opened by the server but unidirectional ones.
 pub fn client_transport() -> TransportConfig {
@@ -36,7 +34,6 @@ pub fn client_transport() -> TransportConfig {
     transport.send_window(MAX_SEND_WINDOW);
     transport.datagram_receive_buffer_size(Some(CLIENT_DATAGRAM_BUFFER));
     transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(CLIENT_IDLE_MILLIS))));
-    transport.ack_frequency_config(Some(ack_frequency()));
     transport
 }
 
@@ -57,14 +54,5 @@ pub fn server_transport(requests: u32) -> TransportConfig {
         millis as u32
     };
     transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(IDLE_MILLIS))));
-    transport.ack_frequency_config(Some(ack_frequency()));
     transport
-}
-
-/// The acknowledgement frequency both roles ask their peer for; reordering still draws an immediate ACK at noq's
-/// threshold.
-fn ack_frequency() -> AckFrequencyConfig {
-    let mut ack = AckFrequencyConfig::default();
-    ack.ack_eliciting_threshold(VarInt::from_u32(ACK_ELICITING_THRESHOLD));
-    ack
 }
