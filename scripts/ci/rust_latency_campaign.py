@@ -28,24 +28,17 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "rust/target/campaign"
 BIN = OUT / "bin"
 # Each variant's edits to the merge commit; base is the merge commit's first parent.
-PATCHES: dict[str, list[tuple[str, str, str]]] = {
-    "base": [], "cand": [],
-    "ei31": [("rust/net/src/runtime.rs", "EVENT_INTERVAL: u32 = 16;", "EVENT_INTERVAL: u32 = 31;")],
-    "ei61": [("rust/net/src/runtime.rs", "EVENT_INTERVAL: u32 = 16;", "EVENT_INTERVAL: u32 = 61;")],
-    "noburst": [("rust/server/src/transport/mod.rs", "BURST_BYTES: usize = 256 << 10;",
-                 "BURST_BYTES: usize = usize::MAX;")],
-    "nolowat": [("rust/server/src/transport/http1.rs", "NOTSENT_LOWAT: u32 = 256 << 10;",
-                 "NOTSENT_LOWAT: u32 = u32::MAX;")],
-}
+PATCHES: dict[str, list[tuple[str, str, str]]] = {"base": [], "cand": []}
 VARIANTS = tuple(PATCHES)
-SECONDS, REPEATS = 20, 4
+SECONDS, REPEATS = 20, 5
 # The server; the TUI beside the prober, or alone on two cores; the prober.
 SERVER_CPUS, BULK_CPUS, CLIENT_CPUS, PROBE_CPU = "0,1", "2", "2,3", 3
 # The probe interval; RTTs are measured, not the cadence.
 PROBE_GAP = 0.001
 # Bulk work beside the probes: listener, direction; None probes an idle server.
 SERVER_CASES: list[tuple[str, str | None]] = [
-    ("http1-tls", "download"), ("http1-tls", "upload"), ("http3", "download"), ("http3", "upload"),
+    ("idle", None), ("http1-tls", "download"), ("http1-tls", "upload"), ("http2", "download"),
+    ("http3", "download"), ("http3", "upload"),
 ]
 # The TUI's own loaded latency: throughput listener, latency transport.
 CLIENT_CASES = [("http3", "webtransport"), ("http1-tls", "websocket")]
