@@ -4,7 +4,6 @@
 // other element that got wider opens from its old width. An arriving element waits for its neighbours to make room,
 // then rises in; a leaving one goes at once. A move that interrupts another keeps its speed. A docked panel stays
 // displayed beside its closed column, so its slide is an ordinary move in every engine.
-import { pageMs } from "../lib/frame";
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];
@@ -16,12 +15,14 @@ const ARRIVAL_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
 const ROOM_MS = 140;
 const STEPS = 30;
 
-const moving = new WeakMap<Element, { at: number; axes: Axes; run: Animation }>();
+const moving = new WeakMap<Element, { axes: Axes; run: Animation }>();
 let flipping = false;
 
-const velocity = (el: Element, now: number): Axes => {
+/** The speed of `el`'s move, at its animation's own time: moves started together read the same instant, and a move
+    still waiting for its first frame keeps its starting speed. */
+const velocity = (el: Element): Axes => {
   const move = moving.get(el);
-  const t = move ? now - move.at : SPRING_MS;
+  const t = move ? Number(move.run.currentTime ?? SPRING_MS) : SPRING_MS;
   const v = (axis: keyof Axes): Axis => [0, t < SPRING_MS ? spring(move!.axes[axis], t)[1] : 0];
   return { x: v("x"), y: v("y"), w: v("w") };
 };
@@ -33,7 +34,7 @@ function settle(el: Element, axes: Axes, frame: (x: number, y: number, w: number
     const at = (axis: Axis) => (i === STEPS ? 0 : spring(axis, t)[0]);
     return frame(at(axes.x), at(axes.y), at(axes.w));
   });
-  moving.set(el, { at: pageMs(), axes, run: el.animate(frames, { duration: SPRING_MS }) });
+  moving.set(el, { axes, run: el.animate(frames, { duration: SPRING_MS }) });
 }
 
 /** The displayed elements marked `data-flip`, by key. */
@@ -52,9 +53,8 @@ function boxes(only?: readonly string[]): Map<string, { el: HTMLElement; box: DO
     within a flip is part of the outer one. */
 export function flip(update: () => void, only?: readonly string[]): void {
   if (flipping || reducedMotion.peek() || document.hidden) return update();
-  const now = pageMs();
   const before = boxes(only);
-  const speed = new Map([...before].map(([key, { el }]) => [key, velocity(el, now)]));
+  const speed = new Map([...before].map(([key, { el }]) => [key, velocity(el)]));
   // The new places are measured without the moves still under way.
   for (const { el } of before.values()) moving.get(el)?.run.cancel();
   flipping = true;
