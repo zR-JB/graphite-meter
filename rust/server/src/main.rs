@@ -41,7 +41,7 @@ fn main() -> ExitCode {
             Err(error) => Some(("config", error)),
         },
     };
-    match failure {
+    let status = match failure {
         // A failure's lines log one after another, so a long one never wraps.
         Some((topic, failure)) => {
             for line in failure.lines() {
@@ -50,7 +50,9 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,
-    }
+    };
+    log::flush();
+    status
 }
 
 /// Prints the notices; the status is 141 into a closed pipe on Unix.

@@ -10,7 +10,8 @@ use std::{
     io::{IsTerminal, Write},
     sync::{
         LazyLock, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, SyncSender, TrySendError},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -73,9 +74,81 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
     }
 });
 
+/// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled log pipe never
+/// blocks the thread that logs.
+const QUEUE: usize = 1024;
+/// How long `flush` waits for the queue to drain.
+const FLUSH_WAIT: Duration = Duration::from_secs(2);
+
+enum Entry {
+    Line(String),
+    /// Answered once every earlier line is written.
+    Flush(SyncSender<()>),
+}
+
+/// The writer thread's queue; none if the thread could not start, and lines are then written in place.
+static WRITER: LazyLock<Option<SyncSender<Entry>>> = LazyLock::new(|| {
+    let (queue, entries) = mpsc::sync_channel(QUEUE);
+    let writer = std::thread::Builder::new().name("gm-log".into()).spawn(move || {
+        for entry in entries {
+            match entry {
+                Entry::Line(line) => emit(&line),
+                Entry::Flush(done) => drop(done.send(())),
+            }
+            let dropped = DROPPED.swap(0, Ordering::Relaxed);
+            if dropped > 0 {
+                let message = format_args!("log lines dropped: {dropped}; stderr was not taking writes");
+                emit(&line(Level::Warn, "log", module_path!(), message, &now(), *STYLE));
+            }
+        }
+    });
+    writer.ok().map(|_| queue)
+});
+static DROPPED: AtomicU64 = AtomicU64::new(0);
+
 pub fn write(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>) {
-    let line = line(level, topic, module, message, &crate::clock::local(SystemTime::now()), *STYLE);
+    let line = line(level, topic, module, message, &now(), *STYLE);
+    let Some(writer) = WRITER.as_ref() else { return emit(&line) };
+    match writer.try_send(Entry::Line(line)) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) => {
+            DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+        Err(TrySendError::Disconnected(entry)) => {
+            if let Entry::Line(line) = entry {
+                emit(&line);
+            }
+        }
+    }
+}
+
+/// Waits until the lines logged so far are written, at most `FLUSH_WAIT`, so lines logged before an exit survive it.
+pub fn flush() {
+    let Some(writer) = WRITER.as_ref() else { return };
+    let (done, written) = mpsc::sync_channel(1);
+    let deadline = Instant::now() + FLUSH_WAIT;
+    let mut entry = Entry::Flush(done);
+    loop {
+        match writer.try_send(entry) {
+            Ok(()) => {
+                let _ = written.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+                return;
+            }
+            Err(TrySendError::Full(again)) if Instant::now() < deadline => {
+                entry = again;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+fn emit(line: &str) {
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
+}
+
+fn now() -> String {
+    crate::clock::local(SystemTime::now())
 }
 
 /// Topics are padded to the longest, `discovery:`, so messages start in one column.
