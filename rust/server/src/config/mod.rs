@@ -16,6 +16,7 @@ use std::{
     fmt,
     fs::File,
     io::{Read, Write},
+    num::NonZero,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -153,12 +154,12 @@ pub struct PublicOrigins {
 /// Concurrency limits, each positive and per-client ones within their totals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    pub operations: usize,
-    pub operations_per_client: usize,
-    pub sessions: usize,
-    pub sessions_per_client: usize,
-    pub connections: usize,
-    pub connections_per_client: usize,
+    pub operations: NonZero<usize>,
+    pub operations_per_client: NonZero<usize>,
+    pub sessions: NonZero<usize>,
+    pub sessions_per_client: NonZero<usize>,
+    pub connections: NonZero<usize>,
+    pub connections_per_client: NonZero<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

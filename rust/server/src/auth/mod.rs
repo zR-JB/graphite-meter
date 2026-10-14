@@ -366,7 +366,7 @@ impl Security {
     }
 
     fn count(&self, counter: Counter) {
-        self.counts[counter as usize].fetch_add(1, Ordering::Relaxed);
+        self.counts[counter.index()].fetch_add(1, Ordering::Relaxed);
     }
 
     fn debug(&self, message: fmt::Arguments<'_>) {

@@ -106,6 +106,16 @@ fn unset_lifetimes_cover_the_stage_limit() {
 }
 
 #[test]
+fn counts_are_positive_and_nested() {
+    let zero = "GM_MAX_CONNECTIONS_PER_CLIENT must be greater than zero";
+    assert_eq!(error(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "0")], &[]), zero);
+    let nested = "GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS";
+    assert_eq!(error(&[("GM_MAX_CONNECTIONS", "8"), ("GM_MAX_CONNECTIONS_PER_CLIENT", "9")], &[]), nested);
+    let config = config(&[("GM_MAX_CONNECTIONS", "8"), ("GM_MAX_CONNECTIONS_PER_CLIENT", "8")], &[]);
+    assert_eq!(config.limits.connections_per_client.get(), 8);
+}
+
+#[test]
 fn trusted_proxies_take_cidrs_without_default_routes() {
     let config = config(&[("GM_TRUSTED_PROXIES", "192.0.2.77/24, 2001:db8::1/48")], &[]);
     let proxies: Vec<_> = config.trusted_proxies.iter().map(ToString::to_string).collect();

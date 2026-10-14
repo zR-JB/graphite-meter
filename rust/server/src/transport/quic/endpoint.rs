@@ -142,7 +142,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let crypto = QuicServerConfig::try_from(self.certificates.server_config(b"h3"));
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto.map_err(|error| error.to_string())?));
         config
-            .max_incoming(self.limits.connections.div_ceil(shards))
+            .max_incoming(self.limits.connections.get().div_ceil(shards))
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
         let mut transport = budget::transport(self.limits)?;
@@ -186,7 +186,7 @@ impl Udp {
     /// What one of `shards` endpoints on this socket holds of the budget.
     fn bytes(&self, config: &noq::EndpointConfig, shards: usize, limits: &Limits) -> Result<usize, String> {
         let segments = self.socket.max_receive_segments().get();
-        endpoint_bytes(config, shards, limits.connections, self.kernel, segments).ok_or_else(|| OVERFLOW.into())
+        endpoint_bytes(config, shards, limits.connections.get(), self.kernel, segments).ok_or_else(|| OVERFLOW.into())
     }
 }
 

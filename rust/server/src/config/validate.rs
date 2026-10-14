@@ -10,7 +10,7 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin, Scheme},
     text::{quote, safe},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZero};
 use zeroize::Zeroizing;
 
 pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, String> {
@@ -54,10 +54,16 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     let client_sessions = ("GM_MAX_SESSIONS_PER_CLIENT", settings.max_sessions_per_client);
     let connections = ("GM_MAX_CONNECTIONS", settings.max_connections);
     let client_connections = ("GM_MAX_CONNECTIONS_PER_CLIENT", settings.max_connections_per_client);
-    let all = [operations, client_operations, sessions, client_sessions, connections, client_connections];
-    if let Some((name, _)) = all.into_iter().find(|&(_, value)| value == 0) {
-        return Err(format!("{name} must be greater than zero"));
-    }
+    let positive =
+        |(name, value): (&str, usize)| NonZero::new(value).ok_or_else(|| format!("{name} must be greater than zero"));
+    let limits = Limits {
+        operations: positive(operations)?,
+        operations_per_client: positive(client_operations)?,
+        sessions: positive(sessions)?,
+        sessions_per_client: positive(client_sessions)?,
+        connections: positive(connections)?,
+        connections_per_client: positive(client_connections)?,
+    };
     for ((name, value), (outer, limit)) in [
         (client_operations, operations),
         (sessions, operations),
@@ -83,14 +89,6 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     if !STAGE_LIMITS.contains(&lifetimes.stage) {
         return Err("GM_MAX_STAGE_DURATION must be from 1s to 24h".into());
     }
-    let limits = Limits {
-        operations: operations.1,
-        operations_per_client: client_operations.1,
-        sessions: sessions.1,
-        sessions_per_client: client_sessions.1,
-        connections: connections.1,
-        connections_per_client: client_connections.1,
-    };
     Ok((limits, lifetimes))
 }
 
@@ -139,7 +137,11 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
         }
     }
     if let Advertised::Only(kinds) = &settings.advertised
-        && let Some(kind) = kinds.iter().find(|kind| natives[**kind as usize].1.is_empty())
+        && let Some(kind) = kinds.iter().find(|&&kind| {
+            natives
+                .iter()
+                .any(|&(native, address, _)| native == kind && address.is_empty())
+        })
     {
         return Err(format!("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}", kind.name()));
     }

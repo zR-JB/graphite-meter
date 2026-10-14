@@ -430,7 +430,7 @@ pub fn check_budget(config: &Config) -> Result<(), String> {
 /// The QUIC endpoint's buffers without its socket's, or none without HTTP/3.
 fn configured_endpoint(config: &Config) -> Result<usize, String> {
     match config.listener(ListenerKind::H3) {
-        Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections, 0, 1)
+        Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections.get(), 0, 1)
             .ok_or_else(|| "QUIC endpoint buffer size overflow".into()),
         None => Ok(0),
     }
@@ -451,7 +451,7 @@ impl Terms {
         let h3 = config.listener(ListenerKind::H3);
         Ok(Self {
             limit: config.max_buffer_bytes,
-            connections: config.limits.connections,
+            connections: config.limits.connections.get(),
             h2: config.listener(ListenerKind::H2).is_some(),
             quic: h3.map(|_| quic::noq_floor(&config.limits)).transpose()?,
         })

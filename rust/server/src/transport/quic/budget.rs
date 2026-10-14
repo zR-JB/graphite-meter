@@ -29,8 +29,10 @@ pub(super) const INCOMING_TOTAL_BYTES: u64 = 4 << 20;
 
 /// A connection's request streams: a client's admission shares and control streams, if a QUIC stream count fits.
 pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
-    let streams = limits.operations_per_client.checked_add(limits.sessions_per_client);
-    let streams = streams.and_then(|streams| u32::try_from(streams.checked_add(CONTROL_STREAMS)?).ok());
+    let streams = limits
+        .operations_per_client
+        .checked_add(limits.sessions_per_client.get());
+    let streams = streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
     streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
