@@ -89,8 +89,12 @@ C and assembly.
 
 **Threading.** The server runs one current-thread runtime per worker and serves each TCP connection and its streams
 on one of them. On Linux HTTP/3 runs one endpoint per two runtime threads, two to sixteen, as many as the budget
-covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their endpoint, which forwards short-header
-packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
+covers, on one port shared through `SO_REUSEPORT`. Connection IDs carry their endpoint, and a classic BPF program on
+the port has the kernel deliver each datagram to the endpoint its ID names, so a migrating client keeps its connection
+and no endpoint's thread handles another's datagrams. A new connection starts on the endpoint holding the fewest, so
+a client's WebTransport bus and its transfers run on different threads while there are threads to spare. Where the
+kernel refuses the program, connections stay where they arrive and an endpoint forwards what names another.
+Admission, Retry and limits stay server-wide.
 After its upgrade a WebSocket bus moves to the multi-thread runtime, which runs no transfer, its socket re-registered
 with that runtime's driver, so its probes never queue behind a transfer's task; on Linux the per-worker runtimes run
 five nice steps lower, so the bus's thread also preempts them. A WebTransport bus stays on its

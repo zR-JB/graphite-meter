@@ -24,6 +24,7 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::lane::LaneEnding;
 use request::Requests;
+use shard::{Occupant, Shard};
 use std::{
     future::{Future, poll_fn},
     io,
@@ -50,6 +51,13 @@ pub struct Listener {
     endpoint: noq::Endpoint,
     app: Arc<App>,
     runtime: Handle,
+    shard: Option<Shard>,
+}
+
+/// An accepted handshake and its share of its endpoint's connections.
+pub struct Arrival {
+    incoming: noq::Incoming,
+    occupant: Option<Occupant>,
 }
 
 /// What the endpoints' connections share.
@@ -74,17 +82,18 @@ impl Listener {
 }
 
 impl Listen for Listener {
-    type Connection = noq::Incoming;
+    type Connection = Arrival;
 
     /// The next handshake, or `None` once Retry answered it: a round trip protects admission from spoofed Initials.
-    async fn accept(&mut self) -> io::Result<Option<(noq::Incoming, SocketAddr)>> {
+    async fn accept(&mut self) -> io::Result<Option<(Arrival, SocketAddr)>> {
         let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
         let peer = incoming.remote_address();
         if !incoming.remote_address_validated() && self.app.quic_retry(peer.ip().to_canonical()) {
             let _ = incoming.retry();
             return Ok(None);
         }
-        Ok(Some((incoming, peer)))
+        let occupant = self.shard.as_ref().map(Shard::occupy);
+        Ok(Some((Arrival { incoming, occupant }, peer)))
     }
 
     fn name(&self) -> String {
@@ -110,11 +119,13 @@ impl Drop for Listener {
 
 impl Http3 {
     /// An incoming connection's work, holding its floor from now; one whose floor does not fit is refused.
-    pub fn connection(&self, incoming: noq::Incoming, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
+    pub fn connection(&self, arrival: Arrival, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
         let floor = floor_bytes(self.certificates.handshake_bytes());
         let budget = self.app.budget().lease(floor).map(|floor| self.budget(floor));
         let listener = self.clone();
+        let Arrival { incoming, occupant } = arrival;
         async move {
+            let _occupant = occupant;
             let Some((budget, config)) = budget else {
                 return incoming.refuse();
             };

@@ -41,6 +41,9 @@ zeroize.workspace = true
 [build-dependencies]
 graphite-meter-legal = { workspace = true, features = ["build"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
+
 [target.'cfg(target_env = "musl")'.dependencies]
 rustfs-mimalloc.workspace = true
 
