@@ -1,6 +1,6 @@
 use graphite_meter_proto::origin::BaseUrl;
 use graphite_meter_server::config::{self, Config, ListenerKind, Loaded, Methods, Secret};
-use std::ffi::OsString;
+use std::{assert_matches, ffi::OsString};
 
 fn load(env: &[(&str, &str)], args: &[&str]) -> (Result<Loaded, String>, String) {
     let mut usage = Vec::new();
@@ -62,7 +62,7 @@ fn flag_errors_print_go_messages_then_the_usage() {
 fn help_lists_every_flag_with_its_variable_as_go_does() {
     for flag in ["-h", "-help", "--help"] {
         let (loaded, usage) = load(&[("GM_MAX_CONNECTIONS", "x")], &[flag]);
-        assert!(matches!(loaded, Ok(Loaded::Help)));
+        assert_matches!(loaded, Ok(Loaded::Help));
         assert_eq!(usage, include_str!("usage.txt"));
     }
 }
@@ -193,7 +193,7 @@ fn password_auth() -> Vec<(&'static str, &'static str)> {
 fn authentication_settings_are_complete_and_canonical() {
     let auth = config(&password_auth(), &[]).auth.unwrap();
     assert_eq!(auth.public_origin.to_string(), "https://meter.example:8443");
-    assert!(matches!(auth.methods, Methods::Password(Secret::File(ref path)) if path.to_str() == Some("/hash")));
+    assert_matches!(auth.methods, Methods::Password(Secret::File(ref path)) if path.to_str() == Some("/hash"));
     let mut env = password_auth();
     env.extend([
         ("GM_AUTH_MODE", "hybrid"),

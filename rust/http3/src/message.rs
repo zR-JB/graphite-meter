@@ -177,6 +177,7 @@ impl Message {
 mod tests {
     use super::*;
     use crate::testing::{frame, section};
+    use std::assert_matches;
 
     fn head(fields: &[(&str, &str)]) -> Vec<u8> {
         frame(FrameType::HEADERS, &section(fields))
@@ -225,7 +226,7 @@ mod tests {
                 .collect();
             assert_eq!(events.first(), Some(&Event::Head(section[2..].to_vec().into())));
             assert_eq!(data, b"body");
-            assert!(matches!(events.last(), Some(Event::Trailers(_))), "chunk {chunk}");
+            assert_matches!(events.last(), Some(Event::Trailers(_)), "chunk {chunk}");
         }
     }
 
@@ -255,7 +256,7 @@ mod tests {
         assert_eq!(read(&mut message, &push, push.len()).1, Err(Code::H3_ID_ERROR));
         let section = |status| section(&[(":status", status), ("content-length", "2")]);
         let mut message = Message::new(4096, Role::Server);
-        assert!(matches!(message.response(&section("103"), &http::Method::GET), Ok(None)), "interim");
+        assert_matches!(message.response(&section("103"), &http::Method::GET), Ok(None), "interim");
         for (method, status, body, end) in [
             (http::Method::GET, "200", &b"12"[..], Ok(())),
             (http::Method::GET, "200", b"1", Err(Code::H3_MESSAGE_ERROR)),

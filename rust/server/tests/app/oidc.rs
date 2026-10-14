@@ -16,6 +16,7 @@ use http::StatusCode;
 use http_body_util::Full;
 use serde_json::{Value, json};
 use std::{
+    assert_matches,
     pin::pin,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -135,7 +136,7 @@ async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookie
     );
 
     let lease = store(&app).cookie(&token).unwrap();
-    assert!(matches!(lease.keys(), ClientKeys::Auth(_, principal) if principal == Principal::oidc("operator")));
+    assert_matches!(lease.keys(), ClientKeys::Auth(_, principal) if principal == Principal::oidc("operator"));
     let report = public("GET", "/auth/session").header("cookie", format!("__Host-gm_session={token}"));
     let report = json(tls(&app, empty(report)).await).await;
     assert_eq!((&report["name"], &report["provider"]), (&json!("Example Operator"), &json!("Id")));

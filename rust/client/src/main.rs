@@ -87,13 +87,13 @@ fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
             return Ok(ExitCode::from(status));
         }
         let columns = columns(terminal);
-        #[cfg(unix)]
-        let named = match columns.is_some() && io::stdin().is_terminal() {
-            true => background(std::time::Duration::from_secs(2)).await,
-            false => None,
+        let named = cfg_select! {
+            unix => match columns.is_some() && io::stdin().is_terminal() {
+                true => background(std::time::Duration::from_secs(2)).await,
+                false => None,
+            },
+            _ => None,
         };
-        #[cfg(not(unix))]
-        let named = None;
         let (view, status) = headless(config, pool, first(signals)).await;
         if let Some(reason) = report::unreported(&view) {
             eprintln!("graphite-meter-client: {reason}");

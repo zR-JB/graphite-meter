@@ -2,7 +2,7 @@
 use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
 use graphite_meter_proto::{discovery::Protocol, origin::Origin};
 use graphite_meter_testkit::Identity;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{assert_matches, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -121,7 +121,7 @@ async fn connect_answers_other_than_200_are_refused() {
             .await
             .err()
             .unwrap();
-        assert!(matches!(&refused, ConnectError::Refused(text) if text == reason), "{refused:?}");
+        assert_matches!(&refused, ConnectError::Refused(text) if text == reason);
         let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
         assert_eq!(proxy.await.unwrap(), head);
     }

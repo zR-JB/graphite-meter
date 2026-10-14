@@ -25,6 +25,7 @@ use graphite_meter_proto::{
 };
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::{
+    assert_matches,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -169,7 +170,7 @@ fn prompt(now: Instant) -> SignInPrompt {
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
     let mut app = App::new(Config { stages, ..config() }, None, Profile::Plain, now);
-    assert!(matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_)));
+    assert_matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_));
     let origin = Origin::parse("https://meter.example").unwrap();
     let servers = names.iter().map(|name| prepared_server(name, &origin)).collect();
     app.event(&Event::Prepared { servers, catalogue: Arc::new([]) }, now);
@@ -455,7 +456,7 @@ fn the_console_follows_a_download_and_takes_presses() {
 
     // The key, a chip, a bar's cap and a sheet's backdrop each take a press.
     let key = find(&mut app, later, "Run again");
-    assert!(matches!(command(&click(&mut app, later, key)), Command::Run(_)));
+    assert_matches!(command(&click(&mut app, later, key)), Command::Run(_));
     let (mut app, now) = self::app();
     app.event(&prepared(), now);
     let chip = find(&mut app, now, "↑ Upload");
@@ -502,7 +503,7 @@ fn downloaded(now: Instant) -> App {
 fn results_stay_until_the_next_run_starts_and_a_start_that_ends_first_keeps_them() {
     let now = Instant::now();
     let mut app = downloaded(now);
-    assert!(matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_)));
+    assert_matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_));
     app.event(&Event::Checking { run: true }, now);
     assert!(shows(&mut app, now, "Transferred 125.0 MB"), "the results stay while the next run checks");
     assert!(frame(&mut app, now).last().unwrap().starts_with("Checking paths"));

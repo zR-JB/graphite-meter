@@ -187,6 +187,7 @@ fn untrusted(certificate: &CertificateError) -> String {
 mod tests {
     use super::*;
     use http::HeaderValue;
+    use std::assert_matches;
 
     fn answer(status: u16, headers: &[(&'static str, &'static str)]) -> Option<Fault> {
         let headers = headers
@@ -234,7 +235,7 @@ mod tests {
         let lane = Fault::answer(StatusCode::BAD_GATEWAY, &HeaderMap::new(), Route::Upload, || unreachable!());
         assert_eq!(lane.unwrap().class(), Class::Final, "a lane's server error stands");
         let issuer = answer(403, &AUTH);
-        assert!(matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example"));
+        assert_matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example");
     }
 
     #[test]

@@ -266,21 +266,21 @@ fn until_stopped<'a>(stopping: &'a CancellationToken, work: impl Future<Output =
 
 /// Completes at SIGINT or SIGTERM, listening from its call, so a signal during startup stops the server once it serves.
 pub fn stop_signal() -> io::Result<impl Future<Output = ()>> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let (mut interrupt, mut terminate) = (signal(SignalKind::interrupt())?, signal(SignalKind::terminate())?);
-        Ok(async move {
-            tokio::select! {
-                _ = interrupt.recv() => {}
-                _ = terminate.recv() => {}
-            }
-        })
+    cfg_select! {
+        unix => {
+            use tokio::signal::unix::{SignalKind, signal};
+            let (mut interrupt, mut terminate) = (signal(SignalKind::interrupt())?, signal(SignalKind::terminate())?);
+            Ok(async move {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+            })
+        }
+        _ => Ok(async {
+            let _ = tokio::signal::ctrl_c().await;
+        }),
     }
-    #[cfg(not(unix))]
-    Ok(async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
 }
 
 /// The server returns freed memory once it has had no connection for this long.
