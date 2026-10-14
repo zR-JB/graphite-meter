@@ -213,9 +213,9 @@ impl App {
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping => return self.websocket(&request, peer, connection, exchange),
-            Route::WtDownload | Route::WtUpload | Route::WtPing => {
-                return self.webtransport(&request, route, peer, connection, exchange);
-            }
+            Route::WtPing => return self.webtransport(&request, WtRoute::Ping, peer, connection, exchange),
+            Route::WtDownload => return self.webtransport(&request, WtRoute::Download, peer, connection, exchange),
+            Route::WtUpload => return self.webtransport(&request, WtRoute::Upload, peer, connection, exchange),
             Route::Download => self.download(&request, peer, connection, exchange)?,
             Route::UploadProgress => self.progress(&request, peer, connection, exchange)?,
             Route::Probe => self.probe(peer, connection.endpoint),
@@ -251,15 +251,15 @@ impl App {
     fn webtransport<B>(
         &self,
         request: &Request<B>,
-        route: Route,
+        route: WtRoute,
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
     ) -> Admitted {
-        let lane = self.admit(peer, connection, exchange, route != Route::WtPing)?;
+        let lane = self.admit(peer, connection, exchange, route != WtRoute::Ping)?;
         let query = request.uri().query();
         let plan = match route {
-            Route::WtDownload => Plan::Download {
+            WtRoute::Download => Plan::Download {
                 source: self.block.source(query::transfer_bytes(query)),
                 form: if query::datagrams(query) {
                     Form::Datagrams
@@ -267,13 +267,13 @@ impl App {
                     Form::Streams(query::streams(query))
                 },
             },
-            Route::WtUpload => Plan::Upload(Upload {
+            WtRoute::Upload => Plan::Upload(Upload {
                 uploads: self.uploads.clone(),
                 id: query::get(query, "id").unwrap_or_default(),
                 owner: peer.keys(),
                 datagrams: query::datagrams(query),
             }),
-            _ => Plan::Ping,
+            WtRoute::Ping => Plan::Ping,
         };
         Ok(Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan))
     }
@@ -347,6 +347,14 @@ impl App {
         let deadline = Instant::now() + EXCHANGE_BOUND;
         Ok(Outcome::Response(answer.map(|body| body.until(deadline))))
     }
+}
+
+/// The routes a WebTransport session serves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WtRoute {
+    Ping,
+    Download,
+    Upload,
 }
 
 /// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.

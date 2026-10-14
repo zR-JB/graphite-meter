@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use tokio::time::{Instant, sleep_until};
-use uploads::Aggregate;
+use uploads::{Aggregate, Phase};
 
 /// One direction's counts while verbose logs are on; clones share them.
 #[derive(Debug, Clone, Default)]
@@ -218,7 +218,7 @@ impl ProgressFeed {
         if life.reader != self.reader {
             return Step::Superseded;
         }
-        if life.expired {
+        if life.phase == Phase::Expired {
             return Step::Last(UploadRefusal::Invalid.into());
         }
         if !self.ready {
@@ -226,10 +226,10 @@ impl ProgressFeed {
             return Step::Line(Record::Ready);
         }
         let counters = self.aggregate.counters();
-        match life.finished {
-            true if life.lanes == 0 => Step::Last(Record::Complete(counters)),
-            false if ticked && counters.nanos() > 0 => Step::Line(Record::Progress(counters)),
-            _ => Step::Wait,
+        match life.phase {
+            Phase::Finished if life.lanes == 0 => Step::Last(Record::Complete(counters)),
+            Phase::Open if ticked && counters.nanos() > 0 => Step::Line(Record::Progress(counters)),
+            Phase::Open | Phase::Finished | Phase::Expired => Step::Wait,
         }
     }
 
