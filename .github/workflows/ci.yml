@@ -523,14 +523,12 @@ jobs:
         with: {rust: 'true', cache: 'false'}
       - name: Install musl headers and compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Build base, candidate and glibc binaries
+      - name: Build base, candidate and niced variants
         run: python3 -m scripts.ci.rust_latency_campaign build
-      - name: Measure the server across base, candidate, purge delay and glibc
+      - name: Measure the server across base, candidate and niced pinned runtimes
         run: python3 -m scripts.ci.rust_latency_campaign measure server
-      - name: Measure the client's probe CPU and loaded latency against base
+      - name: Measure the client with niced and un-niced lanes
         run: python3 -m scripts.ci.rust_latency_campaign measure client
-      - name: Measure TLS handshakes with P-256 and RSA-2048 leaves
-        run: python3 -m scripts.ci.rust_latency_campaign measure handshake
       - name: Upload measurements and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
