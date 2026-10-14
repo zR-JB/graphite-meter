@@ -11,6 +11,7 @@ use crate::{
 use bytes::Bytes;
 use std::{
     future::{Future, poll_fn},
+    ops::Range,
     pin::pin,
     sync::Arc,
     task::{Context, Poll, Waker, ready},
@@ -21,6 +22,9 @@ pub struct RequestStream {
     pub(crate) send: SendHalf,
     pub(crate) recv: RecvHalf,
 }
+
+/// Chunks one read takes from noq under a single lock of the connection.
+const READ_CHUNKS: usize = 16;
 
 /// Charges for a request stream's two halves, so each can drop on its own.
 pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
@@ -62,6 +66,8 @@ impl RequestStream {
                 stream: recv,
                 message,
                 input: Bytes::new(),
+                chunks: Default::default(),
+                read: 0..0,
                 shared: shared.clone(),
                 charge: recv_charge,
                 method: http::Method::default(),
@@ -96,6 +102,9 @@ pub struct RecvHalf {
     stream: noq::RecvStream,
     pub(crate) message: Message,
     input: Bytes,
+    /// Chunks read past `input`, the unparsed ones at `read`; noq charges them until they drop.
+    chunks: [Bytes; READ_CHUNKS],
+    read: Range<usize>,
     shared: Arc<Shared>,
     charge: Charge,
     /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
@@ -168,9 +177,13 @@ impl RecvHalf {
                 Ok(Some(event)) => return Poll::Ready(Ok(Some(event))),
                 Ok(None) => {}
             }
-            let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX)).poll(cx));
-            match chunk {
-                Ok(Some(chunk)) => self.input = chunk,
+            if let Some(next) = self.read.next() {
+                self.input = std::mem::take(&mut self.chunks[next]);
+                continue;
+            }
+            let read = ready!(pin!(self.stream.read_many_chunks(&mut self.chunks)).poll(cx));
+            match read {
+                Ok(Some(count)) => self.read = 0..count,
                 Ok(None) => {
                     self.done = true;
                     return Poll::Ready(self.message.finish().map(|()| None).map_err(|code| self.abort(code)));
@@ -198,7 +211,7 @@ impl RecvHalf {
     /// Whether FIN already arrived unread, after a complete message.
     fn finished_unread(&mut self) -> bool {
         let mut cx = Context::from_waker(Waker::noop());
-        let complete = self.input.is_empty() && self.message.finish().is_ok();
+        let complete = self.input.is_empty() && self.read.is_empty() && self.message.finish().is_ok();
         complete && matches!(pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx), Poll::Ready(Ok(None)))
     }
 }

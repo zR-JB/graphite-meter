@@ -87,7 +87,7 @@ async fn quic_downloads_outgrow_a_fixed_window() {
 
 /// A download's body or WebTransport stream.
 enum Lane {
-    Http(RecvHalf),
+    Http(Box<RecvHalf>),
     Stream(RecvStream),
 }
 
@@ -115,7 +115,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> f64 {
     } else {
         let (answer, body) = connection.send("GET", "/download?bytes=4294967296", b"").await;
         assert_eq!(answer.status(), 200);
-        (Lane::Http(body), None)
+        (Lane::Http(Box::new(body)), None)
     };
     let started = Instant::now();
     let (mut marks, mut total, mut next) = (Vec::new(), 0, Duration::from_millis(500));
