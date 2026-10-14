@@ -241,7 +241,7 @@ class Stage implements StageResources {
   /** One direction's carrier, opening its lanes now; none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#ended) return null;
-    const { server, streams, gating, seed } = this.#setup;
+    const { server, streams, uploadLanes, gating, seed } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
     const count = streams[direction];
@@ -258,7 +258,8 @@ class Stage implements StageResources {
             if (direction === "up") {
               const url = `${fetch.origin}${ROUTES.upload}?cb=${seed}-${lane}&${upload}`;
               const rttMs = server.latency?.rttMs ?? null;
-              return { type: "upload", url, request: auth.request(url, "POST"), streams: count, rttMs };
+              const request = auth.request(url, "POST");
+              return { type: "upload", url, request, streams: count, sharing: uploadLanes, rttMs };
             }
             const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
             return { type: "download", url, request: auth.request(url, "GET"), epoch, streams: count };

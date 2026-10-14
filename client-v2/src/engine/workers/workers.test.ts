@@ -141,7 +141,14 @@ test("an upload drains each answer and breaks on one past 64 KiB rather than kee
   const endless = source();
   const answers = [new Response("ok"), new Response(endless.stream)];
   const lane = await boot<LaneCommand>("./lane.ts", { fetch: async () => answers.shift() });
-  lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1, rttMs: null });
+  lane.send({
+    type: "upload",
+    url: "https://peer.example/upload",
+    request: RECIPE,
+    streams: 1,
+    sharing: 1,
+    rttMs: null,
+  });
   await elapse(0);
   for (let chunk = 0; chunk < 3; chunk++) endless.push("x".repeat(32 * 1024));
   await elapse(0);
@@ -167,7 +174,7 @@ test("upload POSTs grow past their turnaround, so one lane stays about 90 % busy
           setTimeout(() => done || resolve(new Response("ok")), ms + pathMs);
         }),
     });
-    lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1, rttMs });
+    lane.send({ type: "upload", url: "https://peer.example/upload", request: RECIPE, streams: 1, sharing: 1, rttMs });
     await elapse(30_000);
     done = true;
     const steady = sends.slice(-4);

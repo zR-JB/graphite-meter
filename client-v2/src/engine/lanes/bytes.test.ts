@@ -51,17 +51,21 @@ test("a cutoff counts the bytes read by then, each at its own clock reading, whe
   expect(reports.totalAt(1_080)).toEqual({ total: 1_200, at: 1_080 });
 });
 
-test("a lane's largest POST is v1's device-memory share divided across the lanes", () => {
-  for (const [lanes, deviceMemory, expected] of [
-    [1, 8, 256 * MiB],
-    [4, 8, 64 * MiB],
-    [4, 2, 4 * MiB],
-    [4, 4, 6 * MiB],
-    [16, 2, 2 * MiB],
-    [0, 8, 256 * MiB],
-    [1, undefined, 128 * MiB],
-    [4, undefined, 32 * MiB],
-    [128, undefined, 2 * MiB],
+test("a lane's largest POST is v1's device-memory share of its server's lanes, Firefox's of the run's", () => {
+  for (const [lanes, sharing, deviceMemory, expected] of [
+    [1, 3, 8, 256 * MiB],
+    [4, 4, 8, 64 * MiB],
+    [4, 4, 2, 4 * MiB],
+    [4, 4, 4, 6 * MiB],
+    [16, 16, 2, 2 * MiB],
+    [0, 0, 8, 256 * MiB],
+    [1, 1, undefined, 128 * MiB],
+    [4, 4, undefined, 32 * MiB],
+    // Three servers of one lane each share Firefox's budget.
+    [1, 3, undefined, 42 * MiB + Math.floor((2 * MiB) / 3)],
+    [128, 128, undefined, 2 * MiB],
   ] as const)
-    expect(largestPost(lanes, deviceMemory), `${lanes} lanes, ${deviceMemory} GB`).toBe(expected);
+    expect(largestPost(lanes, sharing, deviceMemory), `${lanes} of ${sharing} lanes, ${deviceMemory} GB`).toBe(
+      expected,
+    );
 });
