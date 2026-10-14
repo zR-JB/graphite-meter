@@ -507,7 +507,7 @@ jobs:
   rust-campaign:
     name: Temporary review campaign (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 150
     needs: plan
     if: needs.plan.outputs.rust == 'true'
     strategy:
@@ -518,22 +518,105 @@ jobs:
       - name: Checkout the merge commit with its history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false, fetch-depth: 0}
-      - name: Set up pinned Python and Rust without build caches
+      - name: Set up pinned Python, Go and Rust without build caches
         uses: ./.github/actions/setup-project
-        with: {rust: 'true', cache: 'false'}
+        with: {rust: 'true', go: 'true', cache: 'false'}
       - name: Install musl headers and compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Build the head and the head with ACK frequency
-        run: python3 -m scripts.ci.rust_latency_campaign build
+      - name: Build the ACK frequency variants, a server without AES and Go's peers
+        run: python3 -m scripts.ci.rust_latency_campaign build-net
       - name: Measure HTTP/3 over a lossy link
         run: python3 -m scripts.ci.rust_latency_campaign measure lossy
-      - name: Measure HTTP/3 over a slow link
-        run: python3 -m scripts.ci.rust_latency_campaign measure slow
+      - name: Measure HTTP/3 over a fast shaped link
+        run: python3 -m scripts.ci.rust_latency_campaign measure shaped
+      - name: Measure each TLS 1.3 suite with and without AES
+        run: python3 -m scripts.ci.rust_latency_campaign measure cipher
       - name: Upload measurements and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-review-campaign-${{ matrix.runner }}
+          path: rust/target/campaign/results
+          if-no-files-found: error
+          retention-days: 7
+
+  rust-campaign-pgo:
+    name: Temporary PGO campaign (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout the merge commit with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Set up pinned Python, Go and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', go: 'true', cache: 'false'}
+      - name: Install musl headers and compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Build release binaries, train a profile and build with it
+        run: python3 -m scripts.ci.rust_latency_campaign build-pgo
+      - name: Measure server CPU per GiB
+        if: matrix.runner == 'ubuntu-24.04'
+        run: python3 -m scripts.ci.rust_latency_campaign measure cpu
+      - name: Measure the TUI's CPU per GiB
+        if: matrix.runner == 'ubuntu-24.04'
+        run: python3 -m scripts.ci.rust_latency_campaign measure client
+      - name: Upload the binaries and the profile
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-review-pgo-${{ matrix.runner }}
+          path: rust/target/campaign/export
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload measurements and evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-review-pgo-results-${{ matrix.runner }}
+          path: rust/target/campaign/results
+          if-no-files-found: error
+          retention-days: 7
+
+  rust-campaign-cross:
+    name: Temporary cross-PGO campaign (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    needs: [plan, rust-campaign-pgo]
+    if: needs.plan.outputs.rust == 'true'
+    steps:
+      - name: Checkout the merge commit with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Set up pinned Python, Go and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', go: 'true', cache: 'false'}
+      - name: Install musl headers and compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Download the arm64 binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: rust-review-pgo-ubuntu-24.04-arm, path: rust/target/campaign/bin}
+      - name: Download the amd64 profile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: rust-review-pgo-ubuntu-24.04, path: rust/target/campaign/amd64}
+      - name: Build release binaries with the amd64 profile
+        run: |
+          chmod +x rust/target/campaign/bin/*-server rust/target/campaign/bin/*-client
+          python3 -m scripts.ci.rust_latency_campaign build-cross rust/target/campaign/amd64/pgo-x86_64.profdata
+      - name: Measure server CPU per GiB
+        run: python3 -m scripts.ci.rust_latency_campaign measure cpu
+      - name: Measure the TUI's CPU per GiB
+        run: python3 -m scripts.ci.rust_latency_campaign measure client
+      - name: Upload measurements and evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-review-cross-results
           path: rust/target/campaign/results
           if-no-files-found: error
           retention-days: 7
@@ -544,7 +627,8 @@ jobs:
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, e2e, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-release, rust-windows, rust-campaign]
+      rust-e2e, rust-tui, rust-release, rust-windows, rust-campaign,
+      rust-campaign-pgo, rust-campaign-cross]
     steps:
       - name: Require every selected job
         env:
