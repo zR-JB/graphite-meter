@@ -46,7 +46,8 @@ It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key
 [TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
 
 Prefer an ECDSA P-256 key, which the TLS Quadlet issues (`certbot --key-type ecdsa`): every TLS and QUIC handshake
-signs with it, and an RSA-2048 signature costs several times the CPU of a P-256 one, which a Raspberry Pi feels.
+signs with it, and with an RSA-2048 key the Rust server spends about four times the CPU per full TLS handshake
+(1.6 ms against 0.38 ms on an x86 CI runner), which a Raspberry Pi feels.
 
 ### Authentication overlay
 
