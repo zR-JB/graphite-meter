@@ -633,6 +633,7 @@ export class Run {
       server: server.prepared,
       activity,
       ...(stage.streams.get(server.id) ?? { streams: { down: 0, up: 0 } }),
+      uploadLanes: [...stage.streams.values()].reduce((sum, lanes) => sum + lanes.streams.up, 0),
       cadence: activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence,
       seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),

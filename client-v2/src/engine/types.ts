@@ -179,6 +179,8 @@ export interface StageSetup {
   activity: Activity;
   /** Lanes per direction for this server and stage; 0 for a direction the stage does not move. */
   streams: Record<Direction, number>;
+  /** Upload lanes across every server of the stage. */
+  uploadLanes: number;
   /** Of those, the lanes the browser can run at once, which readiness waits for (the plan's `gating`): fewer when an
       HTTP/1.1 origin's connection pool queues the rest; all of `streams` when absent. Uploads gate on their
       receiver instead. */

@@ -123,17 +123,14 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
 /** Bodies repeat one random block, so memory stays at the block whatever their size. */
 export const MAX_POST_BYTES = 256 * MIB;
 
-/** A lane's share of what a server's lanes post at once, as v1 sizes it: 16 MiB on a device with 2 GB or less, 24 MiB
-    up to 4 GB, else 256 MiB; 128 MiB where the browser does not say (Firefox, which can stall a larger body without
-    an error). Never under 2 MiB a lane. */
-export function largestPost(streams: number, deviceMemory: number | undefined): number {
-  const pool =
+/** A lane's share of what a server's `streams` lanes post at once, as v1 sizes it: 16 MiB on a device with 2 GB or
+    less, 24 MiB up to 4 GB, else 256 MiB. Where the browser does not say (Firefox), 128 MiB across all `sharing` lanes
+    of the run: Firefox stalls a body without an error when its POSTs together grow larger, more often under load.
+    Never under 2 MiB a lane. */
+export function largestPost(streams: number, sharing: number, deviceMemory: number | undefined): number {
+  const [pool, lanes] =
     deviceMemory === undefined
-      ? 128 * MIB
-      : deviceMemory <= 2
-        ? 16 * MIB
-        : deviceMemory <= 4
-          ? 24 * MIB
-          : MAX_POST_BYTES;
-  return Math.max(2 * MIB, Math.floor(pool / Math.max(1, streams)));
+      ? [128 * MIB, sharing]
+      : [deviceMemory <= 2 ? 16 * MIB : deviceMemory <= 4 ? 24 * MIB : MAX_POST_BYTES, streams];
+  return Math.max(2 * MIB, Math.floor(pool / Math.max(1, lanes)));
 }
