@@ -116,8 +116,9 @@ encoding ([wire protocol](../api/wire.md#reflector-handling-time)). The paired p
 replies with a valid handling time. A handling time above that reply's raw RTT, or one the client cannot represent
 exactly, omits the pair but keeps the raw reply; values are never clamped. Malformed replies are ignored.
 
-Handling time is a diagnostic of the server's own share (about 100 ns by design); raw RTT stays primary for latency,
-jitter, deadlines and added latency.
+Handling time is a diagnostic of parsing and handling alone (about 100 ns by design). The server's receive queue, its
+wait for a thread, TLS and the reply's encoding and write fall outside it, so under load the server's share of an RTT
+can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added latency.
 
 ## Client differences
 
