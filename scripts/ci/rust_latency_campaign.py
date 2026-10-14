@@ -28,7 +28,21 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "rust/target/campaign"
 BIN = OUT / "bin"
 # Each variant's edits to the merge commit; base is the merge commit's first parent.
-PATCHES: dict[str, list[tuple[str, str, str]]] = {"base": [], "cand": []}
+LOOP = "rust/server/src/app/mod.rs"
+OPEN = "let (mut body, mut ended) = (pin!(request.into_body()), pin!(lane.ended()));"
+TURN = "                Some(End::Lane(ending)) => break ending,\n            }\n        };"
+
+
+def yielding(bytes: int) -> list[tuple[str, str, str]]:
+    """The upload loop yielding, past the driver, every `bytes` it records."""
+    turn = (f"{TURN[:-11]}\n            moved += batch.bytes;\n            if moved >= {bytes} {{\n"
+            "                moved = 0;\n                tokio::task::yield_now().await;\n            }\n        };")
+    return [(LOOP, OPEN, OPEN + "\n        let mut moved = 0;"), (LOOP, TURN, turn)]
+
+
+PATCHES: dict[str, list[tuple[str, str, str]]] = {
+    "base": [], "cand": [], "y256k": yielding(256 << 10), "y1m": yielding(1 << 20), "y4m": yielding(4 << 20),
+}
 VARIANTS = tuple(PATCHES)
 SECONDS, REPEATS = 20, 5
 # The server; the TUI beside the prober, or alone on two cores; the prober.
@@ -36,10 +50,7 @@ SERVER_CPUS, BULK_CPUS, CLIENT_CPUS, PROBE_CPU = "0,1", "2", "2,3", 3
 # The probe interval; RTTs are measured, not the cadence.
 PROBE_GAP = 0.001
 # Bulk work beside the probes: listener, direction; None probes an idle server.
-SERVER_CASES: list[tuple[str, str | None]] = [
-    ("idle", None), ("http1-tls", "download"), ("http1-tls", "upload"), ("http2", "download"),
-    ("http3", "download"), ("http3", "upload"),
-]
+SERVER_CASES: list[tuple[str, str | None]] = [("http3", "upload"), ("http1-tls", "upload")]
 # The TUI's own loaded latency: throughput listener, latency transport.
 CLIENT_CASES = [("http3", "webtransport"), ("http1-tls", "websocket")]
 
