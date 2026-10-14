@@ -110,6 +110,11 @@ resident-memory bound.
 **Measured decisions**, with their evidence:
 
 - Release builds use fat LTO and one codegen unit; the `ci` profile only for local runs and CI checks.
+- Image and TUI builds use a PGO profile per architecture, trained in the builder on loopback transfers over every
+  listener (`scripts/pgo.py`): amd64 natively, arm64 under QEMU's user mode, the Windows TUI with amd64's. With
+  profiles trained natively, server CPU per byte fell 8–20 % on amd64 and 8–9 % on arm64 for HTTP/3 and 2–4 % for
+  HTTP/2, while an amd64 profile gave arm64 only 1–2 % (release profile, campaign run 38643628063). Local builds take
+  no profile.
 - Static musl builds link mimalloc (`rustfs-mimalloc` 0.5.6) with transparent huge pages off: with musl's allocator
   the TUI downloaded HTTP/2 at 3.5 instead of 20 Gbit/s (CI runs 37322843663 and 37326242534). Two seconds after the
   last connection closes, once per idle period, the server returns every runtime thread's free pages.

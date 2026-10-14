@@ -51,8 +51,11 @@ run asks.
    linux/amd64 + linux/arm64 image, and for a stable release exports the
    server source offers from that same build, which its fresh builder holds;
    the `rust-tui` job after it the Linux and Windows TUI archives with their
-   source offers, which that job checks by running the amd64 TUI. Every image
-   build takes the source the build job resolved.
+   source offers, which that job checks by running the amd64 TUI. Before its
+   reviewed builds each job trains a PGO profile per architecture on loopback
+   transfers, amd64 natively and arm64 under QEMU's user mode
+   (`scripts/pgo.py`). Every image build takes the source the build job
+   resolved.
    `rust_release.py` stages exactly the release files out of each export.
    Rust builds have no macOS archive.
 2. **Trusted verification.** `release.yml` runs main's tooling on

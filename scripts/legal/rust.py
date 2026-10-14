@@ -41,6 +41,8 @@ from .rust_inventory import Metadata, candidates, cargo_metadata, compiled, comp
 
 PACKAGES = ("graphite-meter-client", "graphite-meter-server")
 PROFILES = ("ci", "release")
+# Trained profiles, one per architecture, which reviewed builds use when present (scripts/pgo.py).
+PGO = ROOT / "rust/target/pgo"
 VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 # A PR prerelease, which publishes only its image: no tag, GitHub Release or source offer.
 PRERELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-(?:alpha|beta|rc)\.[0-9]+")
@@ -217,6 +219,11 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     return shared
 
 
+def pgo_profile(target: str) -> Path:
+    """The trained profile of `target`'s architecture, which a build of any of its targets may use."""
+    return PGO / f"{target.split('-')[0]}.profdata"
+
+
 def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     """Build the binary once with the prepared notices and check what it compiled, linked and embedded."""
     rust = ROOT / "rust"
@@ -231,8 +238,10 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     if build.target is not None:
         cargo_home = os.environ.get("CARGO_HOME") or str(Path.home() / ".cargo")
         # A distributed build names neither the checkout nor Cargo's home.
-        environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
-            f"--remap-path-prefix={path}={name}" for path, name in ((ROOT, "/src"), (cargo_home, "/cargo")))
+        flags = [f"--remap-path-prefix={path}={name}" for path, name in ((ROOT, "/src"), (cargo_home, "/cargo"))]
+        if (profile := pgo_profile(build.target)).is_file():
+            flags.append(f"-Cprofile-use={profile}")
+        environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
         link_map = platform.link_map(build.out, build.target, build.profile)
         command += ["--target", build.target, "--", f"-Clink-arg=-Wl,-Map={link_map}"]
     output = subprocess.run(command, cwd=rust, env=environment, stdout=subprocess.PIPE, check=True, text=True).stdout
@@ -396,7 +405,8 @@ def main() -> None:
         return
     executable = collect(build)
     kind = "development" if build.development else "reviewed"
-    print(f"Rust {build.package} [{build.profile} profile, {kind} notices]: {executable}")
+    pgo = ", PGO" if build.target is not None and pgo_profile(build.target).is_file() else ""
+    print(f"Rust {build.package} [{build.profile} profile{pgo}, {kind} notices]: {executable}")
 
 
 if __name__ == "__main__":

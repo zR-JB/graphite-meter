@@ -25,11 +25,13 @@ RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T18
     && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.3-1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-# The pinned toolchain, checked against its channel manifest, with the standard library of every shipped target.
+# The pinned toolchain, checked against its channel manifest, with the standard library of every shipped target and
+# the LLVM tools that merge PGO profiles.
 COPY mise.toml ./
 COPY rust/rust-toolchain.toml rust/Cargo.toml rust/
 COPY scripts/ci/rust_workspace.py scripts/ci/toolchains.py scripts/ci/
 RUN cd rust && rustup toolchain install --no-self-update \
+    && rustup component add llvm-tools \
     && python3 ../scripts/ci/toolchains.py verify-rust \
     && rustup target add $( (python3 ../scripts/ci/rust_workspace.py targets tui; \
         python3 ../scripts/ci/rust_workspace.py targets server) | sort -u)
@@ -49,13 +51,32 @@ COPY legal/ legal/
 COPY rust/ rust/
 COPY go/internal/auth/assets/ go/internal/auth/assets/
 
-# The TUI archives for every TUI platform of the workspace metadata, each with its source offer.
+# A PGO profile per architecture, trained on that architecture's own code: amd64 natively, arm64 under QEMU.
+FROM rust-amd64 AS pgo-amd64
+ARG PROFILE=release
+COPY --from=source / /src/
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/rust_workspace.py target server linux/amd64)" --profile "$PROFILE"
+
+FROM rust-arm64 AS pgo-arm64
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static=1:7.2+dfsg-7+deb12u18+b3 \
+    && rm -rf /var/lib/apt/lists/*
+ARG PROFILE=release
+COPY --from=source / /src/
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/rust_workspace.py target server linux/arm64)" --profile "$PROFILE" \
+        --runner qemu-aarch64-static
+
+FROM pgo-${TARGETARCH} AS pgo
+
+# The TUI archives for every TUI platform of the workspace metadata, each with its source offer; the Windows TUI uses
+# amd64's profile.
 FROM rust-arm64 AS tui-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
     && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 COPY --from=source / /src/
+COPY --from=pgo-amd64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+COPY --from=pgo-arm64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
 ARG VERSION
 RUN python3 -m scripts.package_rust "$VERSION" --output dist
 
@@ -84,6 +105,7 @@ FROM rust-${TARGETARCH} AS server-build
 ARG TARGETARCH
 ARG PROFILE=release
 COPY --from=source / /src/
+COPY --from=pgo /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
 COPY --from=browser /src/client-v2/ /src/client-v2/
 COPY --from=browser /src/client/public/ /src/client/public/
 # The legal scan names the bundled packages at their paths in Bun's installation cache.
