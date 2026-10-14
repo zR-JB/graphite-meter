@@ -87,8 +87,14 @@ async function drained(response: Response): Promise<boolean> {
   return true;
 }
 
-async function upload({ url, request, streams, rttMs }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  const largest = largestPost(streams, (navigator as { deviceMemory?: number }).deviceMemory);
+async function upload({
+  url,
+  request,
+  streams,
+  sharing,
+  rttMs,
+}: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
+  const largest = largestPost(streams, sharing, (navigator as { deviceMemory?: number }).deviceMemory);
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
