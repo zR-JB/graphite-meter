@@ -6,31 +6,99 @@ use std::{fmt::Write as _, sync::LazyLock};
 const STYLES: &str = include_str!("../../../../go/internal/auth/assets/auth.css");
 const THEME: &str = include_str!("../../../../go/internal/auth/assets/theme.js");
 const PENDING: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
-static TEMPLATES: LazyLock<[Template; 4]> = LazyLock::new(|| {
-    [
-        include_str!("../../../../go/internal/auth/assets/login.tmpl"),
-        include_str!("../../../../go/internal/auth/assets/cli.tmpl"),
-        include_str!("../../../../go/internal/auth/assets/cli-done.tmpl"),
-        include_str!("../../../../go/internal/auth/assets/continue.tmpl"),
-    ]
-    .map(Template::parse)
-});
+static LOGIN: LazyLock<Template> =
+    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/login.tmpl")));
+static CLI: LazyLock<Template> =
+    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/cli.tmpl")));
+static CLI_DONE: LazyLock<Template> =
+    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/cli-done.tmpl")));
+static CONTINUE: LazyLock<Template> =
+    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/continue.tmpl")));
 
-/// The pages, in `TEMPLATES` order.
-#[derive(Clone, Copy)]
-pub(super) enum Page {
-    Login,
-    /// An approval, its refusal or the client limit.
-    Cli,
-    /// An approval's confirmation.
-    CliDone,
-    /// The step back from a provider or another site to this one.
-    Continue,
+/// The sign-in page.
+pub(super) struct Login<'a> {
+    pub csrf: &'a str,
+    pub provider: &'a str,
+    pub challenge: Option<&'a str>,
+    pub notice: &'a str,
+    pub status: &'a str,
+    pub password: bool,
+    pub oidc: bool,
+    pub oidc_ready: bool,
 }
 
-/// `page` with `fields` set, such as `("CSRF", token)`; a flag is `"true"` or empty.
-pub(super) fn render(page: Page, fields: &[(&str, &str)]) -> String {
-    TEMPLATES[page as usize].render(fields)
+impl Login<'_> {
+    pub(super) fn render(&self) -> String {
+        LOGIN.render(&[
+            ("CSRF", self.csrf),
+            ("Provider", self.provider),
+            ("Challenge", self.challenge.unwrap_or_default()),
+            ("Notice", self.notice),
+            ("Status", self.status),
+            ("Password", flag(self.password)),
+            ("OIDC", flag(self.oidc)),
+            ("OIDCReady", flag(self.oidc_ready)),
+        ])
+    }
+}
+
+/// The approval page: an approval to confirm, a refusal, or a login at its client limit.
+pub(super) enum Cli<'a> {
+    Approval {
+        code: &'a str,
+        challenge: &'a str,
+        csrf: &'a str,
+        browser_origin: &'a str,
+    },
+    Refused(&'static str),
+    Capacity {
+        limit: usize,
+    },
+}
+
+impl Cli<'_> {
+    pub(super) fn render(&self) -> String {
+        match self {
+            Self::Approval { code, challenge, csrf, browser_origin } => CLI.render(&[
+                ("Code", code),
+                ("Challenge", challenge),
+                ("CSRF", csrf),
+                ("BrowserOrigin", browser_origin),
+            ]),
+            Self::Refused(refused) => CLI.render(&[("Refused", refused)]),
+            Self::Capacity { limit } => {
+                CLI.render(&[("BrowserCapacity", flag(true)), ("ClientLimit", &limit.to_string())])
+            }
+        }
+    }
+}
+
+/// An approval's confirmation, for a browser or a terminal.
+pub(super) struct CliDone {
+    pub browser: bool,
+}
+
+impl CliDone {
+    pub(super) fn render(&self) -> String {
+        CLI_DONE.render(&[("Browser", flag(self.browser))])
+    }
+}
+
+/// The step back from a provider or another site to this one, opening the approval when `opening`.
+pub(super) struct Continue<'a> {
+    pub challenge: Option<&'a str>,
+    pub opening: bool,
+}
+
+impl Continue<'_> {
+    pub(super) fn render(&self) -> String {
+        CONTINUE.render(&[("Challenge", self.challenge.unwrap_or_default()), ("Opening", flag(self.opening))])
+    }
+}
+
+/// A template flag: `"true"` or empty.
+fn flag(on: bool) -> &'static str {
+    if on { "true" } else { "" }
 }
 
 /// Lets the page's forms post to the OIDC provider's authorization `origin` as well.
@@ -180,8 +248,17 @@ mod tests {
 
     #[test]
     fn the_sign_in_page_shows_the_notice_and_form_its_fields_choose() {
-        let login = |fields: &[(&str, &str)]| render(Page::Login, fields);
-        let page = login(&[("CSRF", "a+b\"<"), ("Notice", "password"), ("Password", "true"), ("Provider", "Id")]);
+        let page = Login {
+            csrf: "a+b\"<",
+            provider: "Id",
+            challenge: None,
+            notice: "password",
+            status: "",
+            password: true,
+            oidc: false,
+            oidc_ready: false,
+        }
+        .render();
         assert!(page.contains("<input type=\"hidden\" name=\"csrf\" value=\"a&#43;b&#34;&lt;\">"));
         assert!(page.contains("Incorrect password. Check it and try again."));
         assert!(!page.contains("Too many attempts") && !page.contains("Sign-in failed"));

@@ -1,8 +1,7 @@
 //! Sign-in approvals: a terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
 
 use super::{
-    AuthLease, BrowserOrigin, Counter, Enabled, LOGIN_LIFETIME, LoginKey,
-    page::{self, Page},
+    AuthLease, BrowserOrigin, Counter, Enabled, LOGIN_LIFETIME, LoginKey, page,
     policy::cookie_lease,
     rate::share_full,
     routes::{Form, body, field, redirect},
@@ -190,9 +189,9 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     }
     let Some(lease) = login else {
         drop(state);
-        let fields = [("Challenge", challenge.as_str()), ("Opening", "true")];
+        let opening = page::Continue { challenge: Some(challenge.as_str()), opening: true };
         return match cross_site_navigation(headers) {
-            true => response::html(page::render(Page::Continue, &fields)),
+            true => response::html(opening.render()),
             false => redirect(&format!("/login?challenge={}", challenge.as_str())),
         };
     };
@@ -237,7 +236,7 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     drop(state);
     auth.security.count(Counter::CliApproval);
     crate::log!(Info, "auth", "sign-in approved for a {}", if browser { "browser" } else { "terminal" });
-    response::html(page::render(Page::CliDone, &[("Browser", if browser { "true" } else { "" })]))
+    response::html(page::CliDone { browser }.render())
 }
 
 /// `POST /auth/{cli,browser}/token`: the grant for an approved challenge's verifier; a browser's from its origin.
@@ -328,16 +327,17 @@ fn approval_page(
     let Some(login) = auth.store.view(lease.login()) else {
         return refused(Refused::Link);
     };
-    let origin = origin
+    let browser_origin = origin
         .and_then(|origin| origin.header().to_str().ok())
         .unwrap_or_default();
-    let fields = [
-        ("Code", challenge.code.as_str()),
-        ("Challenge", challenge.as_str()),
-        ("CSRF", login.csrf.as_str()),
-        ("BrowserOrigin", origin),
-    ];
-    response::html(page::render(Page::Cli, &fields))
+    let csrf = login.csrf.as_str();
+    let page = page::Cli::Approval {
+        code: &challenge.code,
+        challenge: challenge.as_str(),
+        csrf,
+        browser_origin,
+    };
+    response::html(page.render())
 }
 
 graphite_meter_proto::table! {
@@ -351,13 +351,13 @@ graphite_meter_proto::table! {
 }
 
 fn refused(refused: Refused) -> Response<Body> {
-    let page = page::render(Page::Cli, &[("Refused", refused.name())]);
+    let page = page::Cli::Refused(refused.name()).render();
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 
 /// The page of a login holding its eight grants.
 fn capacity() -> Response<Body> {
-    let page = page::render(Page::Cli, &[("BrowserCapacity", "true"), ("ClientLimit", &MAX_LOGIN_GRANTS.to_string())]);
+    let page = page::Cli::Capacity { limit: MAX_LOGIN_GRANTS }.render();
     with_status(StatusCode::TOO_MANY_REQUESTS, response::html(page))
 }
 

@@ -4,9 +4,9 @@ use super::{
     AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via,
     approval::{self, Challenge},
     oidc::{self, Oidc},
-    page::{self, Page},
+    page,
     password::{Password, Verdict},
-    policy::{Cookie, cookie, cookie_lease},
+    policy::{AuthRoute, Cookie, cookie, cookie_lease},
     protect,
     store::{MintRefusal, random},
 };
@@ -48,37 +48,40 @@ pub(super) async fn handle<B: http_body::Body>(
     deadline: Instant,
     peer: &Peer,
 ) -> Response<Body> {
+    // A HEAD reaches the GET route.
     let method = match request.method() {
         &Method::HEAD => Method::GET,
         method => method.clone(),
     };
-    let path = request.uri().path().to_owned();
+    let route = AuthRoute::find(method.as_str(), request.uri().path());
     let lease = peer.auth().filter(|lease| lease.via() == &Via::Cookie);
     let from_public = request.headers().get(header::ORIGIN) == Some(&auth.policy.origin);
     let oidc = auth.sign_in.oidc();
-    let mut answer = match (&method, path.as_str(), auth.sign_in.password(), oidc) {
-        (&Method::GET, "/login", ..) => login_page(auth, &request),
-        (&Method::POST, "/auth/password", Some(password), _) => sign_in(auth, password, request, peer).await,
-        (&Method::POST, "/auth/oidc/start", _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
-        (&Method::GET, "/auth/oidc/callback", _, Some(provider)) => {
+    let mut answer = match (route, auth.sign_in.password(), oidc) {
+        (Some(AuthRoute::LoginPage), ..) => login_page(auth, &request),
+        (Some(AuthRoute::Password), Some(password), _) => sign_in(auth, password, request, peer).await,
+        (Some(AuthRoute::OidcStart), _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
+        (Some(AuthRoute::OidcCallback), _, Some(provider)) => {
             oidc::callback(auth, provider, request.into_parts().0, deadline, peer).await
         }
-        (&Method::GET, "/auth/session", ..) => session(auth, lease),
-        (&Method::GET, "/auth/cli", ..) => approval::cli_page(auth, &request, peer),
-        (&Method::GET, "/auth/browser", ..) => approval::browser_page(auth, &request, peer),
-        (&Method::POST, "/auth/cli/approve" | "/auth/browser/approve", ..) => {
+        (Some(AuthRoute::Session), ..) => session(auth, lease),
+        (Some(AuthRoute::CliPage), ..) => approval::cli_page(auth, &request, peer),
+        (Some(AuthRoute::BrowserPage), ..) => approval::browser_page(auth, &request, peer),
+        (Some(route @ (AuthRoute::CliApprove | AuthRoute::BrowserApprove)), ..) => {
             let form = form(request).await.1.filter(|_| from_public);
-            approval::approve(auth, lease, form, path.starts_with("/auth/browser"))
+            approval::approve(auth, lease, form, route == AuthRoute::BrowserApprove)
         }
-        (&Method::POST, "/auth/cli/token" | "/auth/browser/token", ..) => {
-            approval::token(auth, request, path.starts_with("/auth/browser")).await
+        (Some(route @ (AuthRoute::CliToken | AuthRoute::BrowserToken)), ..) => {
+            approval::token(auth, request, route == AuthRoute::BrowserToken).await
         }
-        (&Method::POST, "/auth/logout", ..) => sign_out(auth, lease, form(request).await.1.filter(|_| from_public)),
-        _ => response::status(StatusCode::NOT_FOUND),
+        (Some(AuthRoute::Logout), ..) => sign_out(auth, lease, form(request).await.1.filter(|_| from_public)),
+        (Some(AuthRoute::Password | AuthRoute::OidcStart | AuthRoute::OidcCallback), ..) | (None, ..) => {
+            response::status(StatusCode::NOT_FOUND)
+        }
     };
     protect(answer.headers_mut(), true);
     if let Some(provider) = oidc.and_then(Oidc::provider)
-        && matches!(path.as_str(), "/login" | "/auth/oidc/start")
+        && matches!(route, Some(AuthRoute::LoginPage | AuthRoute::OidcStart))
     {
         page::allow_form_action(answer.headers_mut(), &provider.origin);
     }
@@ -119,21 +122,18 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
         _ => "",
     };
     let csrf = random::<32>();
-    let flag = |on: bool| if on { "true" } else { "" };
     let oidc = auth.sign_in.oidc();
-    let page = page::render(
-        Page::Login,
-        &[
-            ("CSRF", &csrf),
-            ("Provider", &auth.provider),
-            ("Challenge", challenge.as_ref().map_or("", Challenge::as_str)),
-            ("Notice", notice),
-            ("Status", status),
-            ("Password", flag(auth.sign_in.password().is_some())),
-            ("OIDC", flag(oidc.is_some())),
-            ("OIDCReady", flag(oidc.and_then(Oidc::provider).is_some())),
-        ],
-    );
+    let page = page::Login {
+        csrf: &csrf,
+        provider: &auth.provider,
+        challenge: challenge.as_ref().map(Challenge::as_str),
+        notice,
+        status,
+        password: auth.sign_in.password().is_some(),
+        oidc: oidc.is_some(),
+        oidc_ready: oidc.and_then(Oidc::provider).is_some(),
+    }
+    .render();
     let mut answer = response::html(page);
     set_cookie(&mut answer, Cookie::Login, &csrf, SystemTime::now() + FORM_LIFETIME);
     answer

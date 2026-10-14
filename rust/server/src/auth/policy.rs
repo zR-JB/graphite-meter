@@ -25,7 +25,49 @@ const SINGLE: [HeaderName; 6] = [
     header::ACCESS_CONTROL_REQUEST_METHOD,
     header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
-const BROWSER_TOKEN: &str = "/auth/browser/token";
+
+/// When a controller route serves without a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Open {
+    Always,
+    /// While password sign-in is enabled.
+    Password,
+    /// While OIDC sign-in is enabled.
+    Oidc,
+    Never,
+}
+
+graphite_meter_proto::table! {
+    /// The controller's routes: method, path, and when each serves without a session.
+    pub(super) enum AuthRoute {
+        method.0: &'static str,
+        path.1: &'static str,
+        open.2: Open,
+    } {
+        LoginPage => ("GET", "/login", Open::Always),
+        Password => ("POST", "/auth/password", Open::Password),
+        OidcStart => ("POST", "/auth/oidc/start", Open::Oidc),
+        OidcCallback => ("GET", "/auth/oidc/callback", Open::Oidc),
+        Session => ("GET", "/auth/session", Open::Never),
+        CliPage => ("GET", "/auth/cli", Open::Always),
+        BrowserPage => ("GET", "/auth/browser", Open::Always),
+        CliApprove => ("POST", "/auth/cli/approve", Open::Never),
+        BrowserApprove => ("POST", "/auth/browser/approve", Open::Never),
+        CliToken => ("POST", "/auth/cli/token", Open::Always),
+        BrowserToken => ("POST", "/auth/browser/token", Open::Always),
+        Logout => ("POST", "/auth/logout", Open::Never),
+    }
+}
+
+impl AuthRoute {
+    /// The route `method` and `path` name exactly.
+    pub(super) fn find(method: &str, path: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|route| route.method() == method && route.path() == path)
+    }
+}
 
 graphite_meter_proto::table! {
     /// A cookie the controller sets: host-only and secure, HttpOnly unless scripts read it, strictly same-site unless
@@ -104,7 +146,7 @@ impl Policy {
         if trust == Trust::Foreign {
             return self.required(request, endpoint, false);
         }
-        if method == Method::OPTIONS && (route.is_some() || path == BROWSER_TOKEN) {
+        if method == Method::OPTIONS && (route.is_some() || path == AuthRoute::BrowserToken.path()) {
             return self.preflight(headers, route, trust);
         }
         let controller = path == "/login" || path.starts_with("/auth/");
@@ -273,13 +315,15 @@ impl Policy {
     fn public(&self, method: &Method, path: &str) -> bool {
         const SANS: &str = "/fonts/ibm-plex-sans-var-latin1.woff2";
         const MONO: &str = "/fonts/ibm-plex-mono-600-latin1.woff2";
-        match (method.as_str(), path) {
-            ("GET", "/login" | "/auth/cli" | "/auth/browser") | ("POST", "/auth/cli/token" | BROWSER_TOKEN) => true,
-            ("GET" | "HEAD", SANS | MONO) => true,
-            ("POST", "/auth/password") => self.password,
-            ("POST", "/auth/oidc/start") | ("GET", "/auth/oidc/callback") => self.oidc,
-            _ => false,
+        if matches!(*method, Method::GET | Method::HEAD) && matches!(path, SANS | MONO) {
+            return true;
         }
+        AuthRoute::find(method.as_str(), path).is_some_and(|route| match route.open() {
+            Open::Always => true,
+            Open::Password => self.password,
+            Open::Oidc => self.oidc,
+            Open::Never => false,
+        })
     }
 
     fn forbidden(&self, secure: bool) -> Decision {

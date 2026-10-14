@@ -3,8 +3,7 @@
 use super::{
     Counter, Enabled, Identity, LoginKey, Principal, Reason, Security,
     approval::Challenge,
-    jwt,
-    page::{self, Page},
+    jwt, page,
     policy::{Cookie, cookie, cookie_lease},
     provider::{Client, Provider},
     rate::{Attempts, engage, share_full},
@@ -368,8 +367,8 @@ async fn sign_in(
     }
     let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code, &auth.security));
     let (principal, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
-    let challenge = transaction.challenge.as_ref().map_or("", Challenge::as_str);
-    let page = response::html(page::render(Page::Continue, &[("Challenge", challenge)]));
+    let challenge = transaction.challenge.as_ref().map(Challenge::as_str);
+    let page = response::html(page::Continue { challenge, opening: false }.render());
     let identity = Identity { principal, name: &name, provider: &auth.provider };
     let answer = establish(auth, identity, transaction.prior, page).map_err(fail)?;
     auth.security.count(Counter::Oidc);
