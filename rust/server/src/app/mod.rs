@@ -19,7 +19,6 @@ use crate::{
     limits::{Budget, Hold, Pressure, Quotas, Transport},
     peer::{ClientKeys, Peer},
     transport::{
-        Burst,
         body::Body,
         websocket,
         webtransport::{Form, Plan, Upload},
@@ -325,7 +324,7 @@ impl App {
             Ok(sink) => sink,
             Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
-        let (mut body, mut ended, mut burst) = (pin!(request.into_body()), pin!(lane.ended()), Burst::default());
+        let (mut body, mut ended) = (pin!(request.into_body()), pin!(lane.ended()));
         let ending = loop {
             let batch = tokio::select! {
                 biased;
@@ -339,9 +338,6 @@ impl App {
                 Some(End::Failed) => return Ok(Outcome::Abort),
                 Some(End::Lane(ending)) => break ending,
             }
-            // HTTP/3 stream reads spend no coop budget, so a buffered window would otherwise drain in one poll.
-            burst.moved(batch.bytes);
-            poll_fn(|cx| burst.poll_turn(cx)).await;
         };
         let answer = match (ending, ending.upload_refusal()) {
             (LaneEnding::Finished, _) => response::json(format!("{{\"bytes\":{}}}", sink.bytes())),
