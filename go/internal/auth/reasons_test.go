@@ -56,6 +56,11 @@ func TestSignInRefusalPaths(t *testing.T) {
 		{"OIDC start with a bad form token", func(t *testing.T) *Service { return newFakeOIDC(t).service(t) }, nil,
 			func(s *Service) *http.Request { return post(s, "/auth/oidc/start", "csrf=nope", false) },
 			func(s *Service) http.HandlerFunc { return s.oidcStart }, noticeStale},
+		{"form whose login cookie another tab replaced", testService, nil, func(s *Service) *http.Request {
+			r := post(s, "/auth/password", "password=secret", true)
+			r.Header.Set("Cookie", loginCookie+"=another-long-unpredictable-sign-in-nonce")
+			return r
+		}, func(s *Service) http.HandlerFunc { return s.passwordLogin }, noticeStale},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := tc.service(t)

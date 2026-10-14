@@ -189,8 +189,9 @@ def verify_offer(path: Path, package: str, target: str, profile: str, root: Path
              for item in expect_array(inventory.get("components"), f"{path.name} components")}
     browser = {tree("npm", expect_object(item, path.name))
                for item in expect_array(inventory.get("browser"), f"{path.name} browser")}
-    if (package == SERVER) != bool(browser):
-        fail(f"{path.name} must inventory browser packages exactly when it offers the server's source")
+    # The server's browser client may bundle no packages at all; only its offer may name any.
+    if package != SERVER and browser:
+        fail(f"{path.name}: only the server's source offer inventories browser packages")
     trees |= browser
     for name in files:
         relative = name.removeprefix(top + "/")

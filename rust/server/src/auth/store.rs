@@ -142,7 +142,7 @@ pub(super) struct State {
     logins: HashMap<Digest, Login>,
     grants: HashMap<Digest, Grant>,
     tickets: HashMap<Digest, Ticket>,
-    /// Pending approvals by their challenge.
+    /// Approvals by their challenge.
     pub(super) approvals: HashMap<Challenge, Approval>,
     sequence: u64,
 }
@@ -301,6 +301,7 @@ impl State {
             if let Some(evicted) = self.grants.remove(&oldest) {
                 evicted.revoked.cancel();
             }
+            self.approvals.retain(|_, approval| !approval.became(&oldest));
         }
         self.sequence += 1;
         let grant = Grant { login, id, browser, sequence: self.sequence, revoked };

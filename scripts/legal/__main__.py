@@ -17,21 +17,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = ("check", "generate", "review-template", "review-audit", "third-party-source-bundle")
     parser.add_argument("--mode", choices=modes, default="check")
-    parser.add_argument("--browser-scan", type=Path, default=os.environ.get("GM_LEGAL_SCAN_MODULES"))
+    parser.add_argument("--browser-scan", default=os.environ.get("GM_LEGAL_SCAN_MODULES"),
+                        help="the browser builds' module scans, joined like PATH")
     parser.add_argument("--version", default=os.environ.get("VERSION") or "development")
     parser.add_argument("--out", type=Path, default=os.environ.get("LEGAL_THIRD_PARTY_SOURCE_OUT"))
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
-    if args.browser_scan is None:
-        parser.error("browser scan output is required; run the temporary production Vite scan first")
-    browser_scan = local_path(args.browser_scan, repo)
+    if not args.browser_scan:
+        parser.error("browser scan output is required; run the clients' temporary production scans first")
+    browser_scans = [local_path(scan, repo) for scan in args.browser_scan.split(os.pathsep)]
     project = Project.read(repo)
     reviews = [Review.parse(item) for item in array(read_json(repo / "legal/reviewed-components.json"))]
     provenance = [Provenance.parse(item) for item in array(read_json(repo / "legal/provenance.json"))]
     server, tui = discover_go(repo, reviews, provenance)
     scopes = {
         "server/browser": add_provenance(
-            repo, server + discover_browser(browser_scan, reviews), provenance, "server/browser"),
+            repo, server + discover_browser(browser_scans, reviews), provenance, "server/browser"),
         "tui": add_provenance(repo, tui, provenance, "tui"),
     }
     scopes["container"] = add_provenance(repo, scopes["server/browser"], provenance, "container")

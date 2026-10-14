@@ -179,7 +179,7 @@ impl Template {
                     "template \"theme\"" => {
                         page.push_str(concat!(
                             "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"#0d1013\">",
-                            "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f0f3f6\">"
+                            "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f1f2f5\">"
                         ));
                         page.extend(["<script>", THEME, "</script>"]);
                     }

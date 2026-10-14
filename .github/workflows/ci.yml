@@ -52,9 +52,8 @@ jobs:
           printf '### CI plan for `%s`\n\nSelected: `%s`; the policy, pipeline and secret checks always run.\n' \
             "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
 
-  # The quick gates share one runner. What only reads the checkout runs at once; the component checks follow, since
-  # svelte-check writes into the checkout the container build reads; the race tests run alone last, since they time
-  # loopback.
+  # The quick gates share one runner. What only reads the checkout runs at once; the component checks follow; the race
+  # tests run alone last, since they time loopback.
   checks:
     name: Checks
     runs-on: ubuntu-24.04
@@ -73,6 +72,7 @@ jobs:
           go: ${{ needs.plan.outputs.code == 'true' || needs.plan.outputs.go == 'true' || needs.plan.outputs.deps == 'true' }}
           bun: ${{ needs.plan.outputs.code == 'true' || needs.plan.outputs.deps == 'true' }}
           client-deps: ${{ needs.plan.outputs.code == 'true' || needs.plan.outputs.deps == 'true' }}
+          biome: ${{ needs.plan.outputs.code }}
           staticcheck: ${{ needs.plan.outputs.code }}
           govulncheck: ${{ needs.plan.outputs.deps }}
       - parallel:
@@ -123,7 +123,8 @@ jobs:
         name: Read the pinned browsers
         run: |
           for pin in chrome firefox firefox_sha256; do
-            printf '%s=%s\n' "${pin//_/-}" "$(python3 scripts/ci/toolchains.py get "browser.$pin")"
+            value=$(python3 scripts/ci/toolchains.py get "browser.$pin")
+            printf '%s=%s\n' "${pin//_/-}" "$value"
           done >> "$GITHUB_OUTPUT"
       - parallel:
           - name: Set up E2E toolchain
@@ -167,8 +168,8 @@ jobs:
         with:
           name: e2e-failures-${{ matrix.browser }}
           path: |
-            client/test-results/webview
-            client/test-results/servers
+            client-v2/test-results/webview
+            client-v2/test-results/servers
           if-no-files-found: ignore
 
   rust:
@@ -388,8 +389,8 @@ jobs:
           name: rust-e2e-failures-${{ matrix.group }}
           retention-days: 7
           path: |
-            client/test-results/webview
-            client/test-results/servers
+            client-v2/test-results/webview
+            client-v2/test-results/servers
             ${{ runner.temp }}/browser-*/*.log
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore

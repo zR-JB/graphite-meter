@@ -112,10 +112,29 @@ func TestPublicConnectionPolicyKeepsSelfAndDNSSourcesForIPv6Page(t *testing.T) {
 	cfg.ServerCatalog.Servers = append(cfg.ServerCatalog.Servers, wire.ServerEntry{ID: "remote", Name: "Remote",
 		URL: "https://meter.example", AdditionalOrigins: []string{"https://[2001:db8::2]:7248"}})
 	policy := NewDiscovery(&cfg).PagePolicy(RequestHost(httptest.NewRequest(http.MethodGet, "http://[::1]:7246/",
-		nil)))
+		nil)), false)
 	if strings.Contains(policy, "[") || !strings.Contains(policy, "connect-src 'self' ") ||
 		!strings.Contains(policy, "https://meter.example:*") {
 		t.Fatalf("unexpected public connection policy: %s", policy)
+	}
+}
+
+// An HTTPS page cannot reach a clear-text catalogue server, so its policy names none; a plain-HTTP page's names both.
+func TestHTTPSPageConnectsOnlyOverTLS(t *testing.T) {
+	cfg := config.Default()
+	cfg.ServerCatalog.Servers = append(cfg.ServerCatalog.Servers, wire.ServerEntry{ID: "remote", Name: "Remote",
+		URL: "https://meter.example", AdditionalOrigins: []string{"http://cdn.example:8080"}})
+	d := NewDiscovery(&cfg)
+	plain, secure := d.PagePolicy("localhost", false)+" ", d.PagePolicy("localhost", true)+" "
+	tls := []string{"https://meter.example:*", "wss://meter.example:*"}
+	for _, source := range append([]string{"http://meter.example:*", "ws://meter.example:*",
+		"http://cdn.example:8080", "ws://cdn.example:8080"}, tls...) {
+		if !strings.Contains(plain, " "+source+" ") {
+			t.Errorf("plain-HTTP page policy lacks %s: %s", source, plain)
+		}
+		if strings.Contains(secure, " "+source+" ") != slices.Contains(tls, source) {
+			t.Errorf("HTTPS page policy names only TLS sources, not %s: %s", source, secure)
+		}
 	}
 }
 

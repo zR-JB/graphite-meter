@@ -20,6 +20,7 @@ TOOL_KEYS = {
     "ty": "aqua:astral-sh/ty",
     "jactionlint": "github:jdx/jactionlint",
     "zizmor": "aqua:zizmorcore/zizmor",
+    "biome": "aqua:biomejs/biome",
     "cargo-deny": "aqua:EmbarkStudios/cargo-deny",
     "cargo-nextest": "aqua:nextest-rs/nextest/cargo-nextest",
 }

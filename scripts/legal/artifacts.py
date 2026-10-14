@@ -75,7 +75,9 @@ def about(repo: Path, project: Project, version: str, source_url: str, component
     """The browser's legal/about.json."""
     forks = {(text(fork, "fork"), text(fork, "rev")): fork
              for fork in map(obj, array(read_json(repo / "legal/rust-forks.json")))}
-    patches = obj(obj(read_json(repo / "client/package.json")).get("patchedDependencies", {}))
+    # Only client v1 patches a bundled package; client v2 bundles none.
+    patched = any(component.modified and component.ecosystem == "npm" for component in components)
+    patches = obj(obj(read_json(repo / "client/package.json")).get("patchedDependencies", {})) if patched else {}
     # The client's patches as the named source holds them: at a release's tag, otherwise on the default branch.
     blob = source_url.replace("/tree/", "/blob/", 1) if "/tree/" in source_url else source_url + "/blob/HEAD"
     listed: list[Json] = []

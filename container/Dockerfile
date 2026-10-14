@@ -1,5 +1,5 @@
 # Graphite Meter - production image.
-# Multi-stage: build the Svelte client (bun), then build the Go server with the
+# Multi-stage: build the browser client (bun), then build the Go server with the
 # client embedded, then ship a single static binary on scratch.
 #
 # Build from the REPO ROOT:
@@ -9,34 +9,35 @@
 # prerelease automation supplies the public server and client versions.
 ARG VERSION=0.0.0-dev
 ARG CLIENT_VERSION
-
-# ---------------------------------------------------------------------------
-# Stage: client - build the Svelte app with bun.
-# ---------------------------------------------------------------------------
-FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
-# Build-time client config (override with --build-arg). ARG must be promoted
-# to ENV so it reaches `bun run build`'s process.env.
+# Build-time client config (override with --build-arg). The client stage declares it again, since only a stage's
+# own arguments reach its steps and Podman's cache keys, and promotes it to ENV for `bun run build`'s process.env.
 ARG GM_CLIENT_BUILD_PROFILE=prod
 ARG GM_CLIENT_REVISION=source
 # Keep Docker builds self-validating. Stable release builds set this to 0 only
 # after main's CI has already checked the same commit.
 ARG GM_CLIENT_VALIDATE=1
-ARG VERSION
+
+# ---------------------------------------------------------------------------
+# Stage: client - the browser client (client-v2/), the one the image's notices
+# cover; it ships v1's fonts, favicon and legal files.
+# ---------------------------------------------------------------------------
+FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
+ARG GM_CLIENT_BUILD_PROFILE
+ARG GM_CLIENT_REVISION
+ARG GM_CLIENT_VALIDATE
 ARG CLIENT_VERSION
 ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
     VERSION=$CLIENT_VERSION
-WORKDIR /app/client
-# Install deps first for layer caching. Every official build uses the
-# repository's exact Bun release and the committed lockfile.
-COPY client/package.json client/bun.lock client/bunfig.toml ./
-COPY client/patches/ ./patches/
+WORKDIR /app/client-v2
+COPY client-v2/package.json client-v2/bun.lock client-v2/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
-# Then the source, then build. The check reads the shared API vectors and the sign-in page script.
-COPY client/ ./
-COPY api/ /app/api/
-COPY go/internal/auth/assets/ /app/go/internal/auth/assets/
+COPY client-v2/ ./
+COPY client/public/ /app/client/public/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
+
+FROM scratch AS client-dist
+COPY --from=client /app/client-v2/dist /
 
 # ---------------------------------------------------------------------------
 # Stage: server - build the Go binary with the client embedded.
@@ -53,7 +54,7 @@ COPY go/ ./
 # server/browser and container inventories.
 COPY LICENSE COPYRIGHT legal/generated/container/THIRD_PARTY_NOTICES.txt legal/generated/container/SOURCE.txt /legal/graphite-meter/
 # Embed the built client.
-COPY --from=client /app/client/dist ./internal/static/dist
+COPY --from=client-dist / ./internal/static/dist
 RUN CGO_ENABLED=0 go build \
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=${VERSION}" \
       -trimpath \
@@ -61,7 +62,7 @@ RUN CGO_ENABLED=0 go build \
 RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/ca-certificates; cp /usr/share/doc/ca-certificates/copyright /legal/ca-certificates/COPYRIGHT
 
 # ---------------------------------------------------------------------------
-# Final: a single static binary. The Svelte client is embedded inside it.
+# Final: a single static binary. The browser client is embedded inside it.
 # Config comes from GM_* env and/or flags - read natively by the
 # binary, so no shell entrypoint is needed (scratch has no shell anyway).
 # ---------------------------------------------------------------------------

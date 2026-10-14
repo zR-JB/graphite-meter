@@ -1,0 +1,270 @@
+/* The element defaults every component starts from: a reset, reduced motion, scrollbars, focus, links and fields. */
+@layer reset {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  dialog {
+    margin: auto;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    tab-size: 4;
+    line-height: 1.5;
+  }
+  img,
+  svg,
+  video,
+  canvas {
+    display: block;
+    max-width: 100%;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: transparent;
+  }
+  button,
+  summary,
+  label:has(input:not(:disabled)) {
+    cursor: pointer;
+  }
+  :disabled {
+    cursor: not-allowed;
+  }
+  ol,
+  ul,
+  menu {
+    list-style: none;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-size: inherit;
+    font-weight: inherit;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  [hidden]:not([hidden="until-found"]) {
+    display: none !important;
+  }
+  /* Every value still updates, in one frame rather than an animation. In the first layer, these important
+     declarations win over every later one. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after,
+    ::backdrop {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    /* The centre workspace scrolls; browser chrome changes resize the shell. */
+    overflow: clip;
+    overscroll-behavior: none;
+  }
+  /* One thin scrollbar for every scroll area. Chromium draws step buttons for the
+     standard properties on Linux, so engines with the pseudo-elements use those. */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-color: var(--border-strong) transparent;
+    }
+    * {
+      scrollbar-width: thin;
+    }
+  }
+  /* A finger keeps the platform's overlay bars; a styled bar would take 10 px of every touch screen's width. */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: var(--r-full);
+      background: var(--border-strong) padding-box;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: var(--ring-offset, 2px);
+  }
+  label > :is([type="radio"], [type="checkbox"]):focus-visible,
+  :is(section, article, h2)[tabindex="-1"]:focus-visible {
+    outline: none;
+  }
+  :is(p, dd) a:not(.btn) {
+    color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  select,
+  input:where([type="number"], [type="text"], [type="search"]) {
+    width: 100%;
+    min-width: 0;
+    height: var(--control-h);
+    padding: 0 10px;
+    border: 1px solid var(--field-edge);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+    color: var(--text);
+    font: var(--role-row);
+    font-variant-numeric: tabular-nums;
+    transition: var(--transition-control);
+  }
+  @media (pointer: coarse) {
+    select,
+    input:where([type="number"], [type="text"], [type="search"]) {
+      height: var(--hit);
+    }
+  }
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    select::picker-icon {
+      flex: none;
+      width: 7px;
+      height: 7px;
+      margin-left: auto;
+      margin-top: -3px;
+      border: solid var(--text-soft);
+      border-width: 0 1.5px 1.5px 0;
+      rotate: 45deg;
+      content: "";
+      transition: rotate var(--dur-hover) var(--ease-out);
+    }
+    select:open::picker-icon {
+      margin-top: 3px;
+      rotate: 225deg;
+    }
+    ::picker(select) {
+      min-width: anchor-size(width);
+      margin: 4px 0;
+      padding: 4px;
+      border: var(--hairline) solid var(--border-strong);
+      border-radius: var(--r-surface);
+      background: var(--surface-2);
+      box-shadow: var(--elev-float);
+      opacity: 0;
+      transition:
+        opacity var(--dur-hover) var(--ease-out),
+        overlay var(--dur-hover) allow-discrete,
+        display var(--dur-hover) allow-discrete;
+    }
+    select:open::picker(select) {
+      opacity: 1;
+    }
+    @starting-style {
+      select:open::picker(select) {
+        opacity: 0;
+      }
+    }
+    option {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: var(--control-h);
+      padding: 0 10px;
+      border-radius: var(--r-chrome);
+      color: var(--text);
+      font: var(--role-row);
+      transition: var(--transition-control);
+    }
+    @media (pointer: coarse) {
+      option {
+        min-height: var(--hit);
+      }
+    }
+    @media (hover: hover) {
+      option:hover {
+        background: var(--hover-wash);
+      }
+    }
+    option:checked {
+      background: var(--selected-wash);
+    }
+    option:disabled {
+      opacity: 0.5;
+    }
+    option::checkmark {
+      order: 1;
+      margin-left: auto;
+      color: var(--text-muted);
+    }
+  }
+  select:focus-visible,
+  input:where([type="number"], [type="text"], [type="search"]):focus-visible {
+    outline: none;
+    border-color: var(--brand-line);
+    box-shadow: var(--ring-halo);
+  }
+  kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border: var(--hairline) solid var(--border-strong);
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 32%, transparent);
+  }
+  /* An explained word brightens as it is read; a component's own transition, if it has one, wins. */
+  @media (hover: hover) {
+    [data-tip] {
+      transition:
+        color var(--dur-hover) var(--ease-out),
+        text-decoration-color var(--dur-hover) var(--ease-out);
+    }
+  }
+}

@@ -193,7 +193,7 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     assert build.browser is not None
     assets, scan = build.browser
     browser_reviews = [Review.parse(item) for item in array(read_json(ROOT / "legal/reviewed-components.json"))]
-    scopes = {"server/browser": add_provenance(ROOT, discover_browser(scan, browser_reviews), state.provenance,
+    scopes = {"server/browser": add_provenance(ROOT, discover_browser([scan], browser_reviews), state.provenance,
                                                "server/browser")}
     shipped = {component_key(component) for component in scopes["server/browser"]}
     # The image adds what Go's image adds to its server, such as the CA roots.

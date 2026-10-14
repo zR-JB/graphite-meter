@@ -1,0 +1,1777 @@
+/* The instrument: the console body (dial, lanes, run key and chips, cards and strips), the status strip's facts, the
+   phase toast and the connection dot. What moves every frame is a transform, a text node in a fixed cell, a small
+   custom property or a canvas; the dial and the readouts never resize as their figures change. */
+@layer components {
+  /* A stage's mark is an 18 px plate with a 10 px glyph wherever the instrument names a stage. */
+  :is(.gauge-panel, .latency-card, .result-summary) .tone-icon {
+    width: 18px;
+    height: 18px;
+    & :where(svg) {
+      width: 10px;
+      height: 10px;
+    }
+  }
+
+  /* The panel: stacked on a narrow panel, the dial beside the lanes on a wide one. Width classes come from the
+     measured box; every size the dial takes from the panel's width is a share of the instrument, resolved in the
+     layout that changes it, so a panel's slide sizes the dial in that layout and nothing after it lays it out again. */
+  .gauge-panel {
+    height: 100%;
+  }
+  .instrument {
+    --dial-height: clamp(320px, 40svh, 380px);
+    display: grid;
+    gap: var(--space-4);
+    grid-template:
+      "dial" var(--dial-height)
+      "controls" auto
+      "results" auto
+      "latency" auto
+      / minmax(0, 1fr);
+    &.no-lanes {
+      grid-template:
+        "dial" var(--dial-height)
+        "controls" auto
+        "results" auto
+        / minmax(0, 1fr);
+    }
+  }
+  /* A tall screen's spare height goes into even air between the sections, not under the cards. */
+  .wide .instrument {
+    --dial-ratio: 0.86;
+    min-height: 100%;
+    align-content: space-evenly;
+    grid-template:
+      "dial latency" auto
+      "dial controls" auto
+      "results results" auto
+      / clamp(300px, 30%, 560px) minmax(0, 1fr);
+    /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
+    & .dial {
+      place-self: stretch;
+      aspect-ratio: 1 / var(--dial-ratio);
+    }
+    /* The lanes start a step under the dial's top, nearer the ring's crown than its box. */
+    & .latency-panel {
+      margin-top: var(--space-6);
+    }
+    &.no-lanes {
+      --dial-ratio: 0.6;
+      grid-template:
+        "dial" auto
+        "controls" auto
+        "results" auto
+        / minmax(0, 1fr);
+      & .dial {
+        justify-self: center;
+        width: clamp(360px, 48%, 720px);
+      }
+    }
+  }
+  /* A phone on its side keeps the dial in view at the left, as tall as the screen leaves, while the rest scrolls
+     beside it; its note takes the lines it needs. */
+  .wide.short .instrument,
+  .wide.short .instrument.no-lanes {
+    min-height: 0;
+    align-content: start;
+    grid-template:
+      "dial latency" auto
+      "dial controls" auto
+      "dial results" auto
+      / clamp(240px, 38%, 360px) minmax(0, 1fr);
+    & .dial {
+      position: sticky;
+      top: var(--space-4);
+      align-self: start;
+      justify-self: stretch;
+      width: auto;
+      height: calc(100svh - var(--topbar-h) - var(--space-4) - var(--space-2));
+      min-height: 0;
+      aspect-ratio: auto;
+    }
+    & .latency-panel {
+      margin-top: 0;
+    }
+    & .gauge-footer {
+      min-height: 0;
+    }
+  }
+  /* A phone's ring is as wide as the face allows up to a share of the screen's height; the lens takes its own line. */
+  .compact .instrument {
+    --dial-height: auto;
+    gap: var(--space-2);
+    & .gauge-face {
+      flex: none;
+      aspect-ratio: 1 / 0.72;
+      min-height: 184px;
+      max-height: 44svh;
+    }
+  }
+  :is(.compact, .wide.short) .server-indicator {
+    position: static;
+    padding: var(--space-1) 0 0;
+  }
+  .controls {
+    grid-area: controls;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    min-width: 0;
+  }
+  .latency-panel {
+    grid-area: latency;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .live-profile {
+    display: grid;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+  .instrument > .results {
+    grid-area: results;
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* The dial: the face, the lens in its corner, and the note under the ring. */
+  .dial {
+    grid-area: dial;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .server-indicator {
+    position: absolute;
+    z-index: 1;
+    inset: var(--space-2) auto auto var(--space-2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    & :where(svg) {
+      width: 14px;
+      height: 14px;
+    }
+  }
+  .gauge-face {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .gauge-dial,
+  .live,
+  .result-layer {
+    position: absolute;
+    inset: 0;
+  }
+  /* Every drawing in the instrument is sized by its attributes and laid out alone. */
+  :is(.dial-art, .graph .art) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: none;
+    overflow: visible;
+    contain: size layout style;
+  }
+  :is(.rotor, .start-cap, .live-head) svg,
+  .start-cap {
+    max-width: none;
+  }
+  /* The track takes a faint tint of the running stage from its warmup on. */
+  .dial-art .track {
+    stroke: color-mix(in oklab, var(--ring, var(--border-strong)) 22%, var(--border-strong));
+  }
+  .dial-art .ticks {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+    stroke-opacity: 0.7;
+  }
+  .gauge-dial.motion .dial-art .track {
+    transition: stroke 379ms var(--ease-out-head);
+  }
+  /* The needle turns as squares; their empty corners must not widen a phone's page. */
+  .live {
+    opacity: 0;
+    pointer-events: none;
+    overflow: clip;
+    &.visible {
+      opacity: 1;
+    }
+    & path {
+      fill: none;
+      stroke: var(--accent, var(--text-soft));
+    }
+    & circle {
+      fill: var(--accent, var(--text-soft));
+    }
+    /* A warmup's reading is shown, not counted: muted until the window opens and the needle comes up to its hue. */
+    &.warming path {
+      stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
+    }
+    &.warming circle {
+      fill: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
+    }
+    & .ripple {
+      position: absolute;
+      left: calc(var(--radius) - var(--head-r));
+      top: calc(-1 * var(--head-r));
+      width: calc(2 * var(--head-r));
+      height: calc(2 * var(--head-r));
+      border: 1px solid var(--accent);
+      border-radius: var(--r-full);
+      opacity: 0;
+      animation: ripple var(--dur-pulse) var(--ease-out);
+    }
+  }
+  .gauge-dial.motion .live {
+    transition: opacity var(--dur-slide) var(--ease-out);
+    /* A draining needle blends into the next stage's hue on its way down. */
+    & :is(path, circle) {
+      transition:
+        stroke calc(0.54 * var(--dur-stage)) var(--ease-out-head),
+        fill calc(0.54 * var(--dur-stage)) var(--ease-out-head);
+    }
+  }
+  /* The rotors and the head are their own layers: a frame of the needle moves them and paints nothing. */
+  .sweep-ring {
+    position: absolute;
+    transform: rotate(225deg);
+  }
+  .half-clip {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 50%;
+    height: 100%;
+    overflow: hidden;
+    /* One pixel of overlap, so the two halves never meet on an antialiased crack. */
+    &.second {
+      right: auto;
+      left: 0;
+      width: calc(50% + 1px);
+    }
+  }
+  .rotor {
+    position: absolute;
+    top: 0;
+    right: 0;
+    .second > & {
+      right: auto;
+      left: 0;
+    }
+  }
+  .start-cap {
+    position: absolute;
+    inset: 0;
+  }
+  .live-head {
+    position: absolute;
+    width: 0;
+    height: 0;
+    & svg {
+      position: absolute;
+      max-width: none;
+      overflow: visible;
+    }
+  }
+  .head-target {
+    position: absolute;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    translate: -50% -50%;
+  }
+  /* A result's arc draws its share of the ring up to the sweep's front, in lengths: Firefox drops a dash array that
+     computes over bare numbers, and the arc would draw whole. */
+  .result-arc {
+    stroke: var(--tone);
+    stroke-dasharray: calc(var(--arc) * min(var(--fraction), var(--sweep))) var(--arc);
+  }
+  .bead {
+    fill: var(--tone);
+    paint-order: stroke;
+    &.stacked {
+      stroke: var(--canvas);
+      stroke-width: 3;
+    }
+    &.hollow {
+      fill: none;
+      stroke: var(--tone);
+      stroke-width: 2;
+    }
+    /* Almost level with the head beneath, a bead shows its trailing half: one bead in both hues. */
+    &.split {
+      clip-path: inset(0 0 50% 0);
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    /* The result sweeps the ring once from where the needle stood; each bead pops as the front reaches it. A scale or
+       unit change glides the arcs and beads, never replaying the sweep. */
+    .result-arc {
+      transition: --fraction 360ms var(--ease-out);
+      animation: result-sweep var(--sweep-ms) cubic-bezier(0.33, 1, 0.68, 1) backwards;
+    }
+    .head.result {
+      transition: transform 360ms var(--ease-out);
+    }
+    .bead {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pop 400ms var(--ease-spring) var(--at) backwards;
+    }
+    /* A new run rewinds the result: the arcs drain back to zero together and the beads drop off. */
+    .result-layer.handoff-out {
+      opacity: 1;
+      & .result-arc {
+        animation: result-drain 160ms var(--ease-out) forwards;
+      }
+      & .bead {
+        animation: bead-out 120ms var(--ease-out) forwards;
+      }
+    }
+  }
+
+  .gauge-ticks,
+  .metric-wrap {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .gauge-tick {
+    --x: -50%;
+    --y: -50%;
+    position: absolute;
+    translate: var(--x) var(--y);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    &[data-anchor-x="end"] {
+      --x: -100%;
+    }
+    &[data-anchor-x="start"] {
+      --x: 0;
+    }
+    &[data-anchor-y="end"] {
+      --y: -100%;
+    }
+    &[data-anchor-y="start"] {
+      --y: 0;
+    }
+  }
+  /* The readout centres on the ring's centre; its figure rises into place as each stage's value arrives. */
+  .metric-wrap {
+    --rise: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 9%;
+    padding-top: calc(2 * var(--gauge-center-offset));
+  }
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 100%;
+    border-radius: var(--r-chrome);
+    pointer-events: auto;
+    &.terminal {
+      max-width: 72%;
+    }
+  }
+  .terminal-readout {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+    max-width: 100%;
+  }
+  .gauge-value,
+  .terminal-number {
+    max-width: 100%;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: clamp(24px, calc(var(--face-min) * 0.17), 76px);
+    font-weight: 500;
+    font-variant-numeric: lining-nums tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .gauge-value {
+    text-align: center;
+    &.quiet {
+      color: var(--text-soft);
+    }
+  }
+  /* A figure written every frame or sample: a box of fixed size whose text lays out alone in a contained box placed
+     over it. The box has no line of its own, so its baseline is its bottom edge; it sits as far below the line's
+     baseline as Plex Mono's baseline lies above the bottom of a line of --lh. */
+  .figure {
+    --lh: 1;
+    position: relative;
+    display: inline-block;
+    block-size: calc(var(--lh) * 1em);
+    vertical-align: calc((0.375 - var(--lh) / 2) * 1em);
+    & > span {
+      position: absolute;
+      inset: 0;
+      contain: strict;
+      line-height: var(--lh);
+      white-space: pre;
+    }
+  }
+  .card .facts .figure {
+    --lh: 1.3;
+    text-align: end;
+  }
+  :is(.chip-tag, footer.status) .figure {
+    text-align: end;
+  }
+  /* Spoken values change with every sample: each lays out alone, inside a box whose container is no grid. */
+  .spoken {
+    position: absolute;
+    inset: 0;
+    contain: strict;
+  }
+
+  /* The stage named over the figure, out of its flow, so a result lands where the live value stood. */
+  .terminal-direction {
+    position: absolute;
+    bottom: calc(100% + clamp(10px, var(--face-min) * 0.04, 16px));
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font: var(--w-strong) clamp(var(--type-xs), var(--face-min) * 0.036, 14px) / 1 var(--font-sans);
+    white-space: nowrap;
+    .hero.short & {
+      display: none;
+    }
+  }
+  @starting-style {
+    .terminal-direction.handoff {
+      opacity: 0;
+    }
+  }
+  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  .terminal-unit,
+  .gauge-unit {
+    color: var(--text-muted);
+    font:
+      var(--w-normal) clamp(var(--type-sm), var(--face-min) * 0.04, var(--type-lg)) / var(--type-md) var(--font-sans);
+  }
+  /* Empty, it keeps its line, so "—" sits where the value arrives. */
+  .gauge-unit {
+    min-height: 1lh;
+    margin-top: var(--space-1);
+  }
+  .terminal-partial {
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    color: var(--tone-ink);
+    font-size: var(--type-xs);
+  }
+  /* The note holds two lines, so a longer one never shrinks the ring. */
+  .gauge-footer {
+    display: grid;
+    align-items: center;
+    min-height: calc(var(--space-2) + 2.7 * var(--type-body));
+    padding: var(--space-1) var(--space-3) var(--space-2);
+    .hung > & {
+      position: absolute;
+      inset-inline: 0;
+      align-items: start;
+      height: calc(var(--space-2) + 2.7 * var(--type-body));
+    }
+  }
+  .gauge-notes {
+    display: grid;
+    gap: 2px;
+    max-width: var(--note-width, none);
+    margin-inline: auto;
+    text-align: center;
+  }
+  .gauge-hint {
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+  }
+  .gauge-status {
+    color: var(--text);
+    font: var(--w-strong) var(--type-sm) / 1.35 var(--font-sans);
+    &.error {
+      color: var(--err);
+    }
+    &.warn {
+      color: var(--warn);
+    }
+    &.preparation {
+      color: var(--text-muted);
+    }
+  }
+
+  /* The latency lanes: one ruled row per population in the lanes' area, a box plot per row on one shared axis. */
+  .latency-card {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-3);
+    min-width: 0;
+    height: 100%;
+    padding: var(--space-3) var(--space-4) var(--space-5);
+    container: latency / inline-size;
+    & .card-head {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+      min-height: 20px;
+    }
+    & h3 {
+      color: var(--text);
+      font: var(--role-title);
+      line-height: 22px;
+      white-space: nowrap;
+    }
+    & .source {
+      display: inline-flex;
+      min-width: 0;
+      margin-block: calc((20px - var(--control-h)) / 2);
+      /* The head's picker is the lens without its mark. */
+      & .lens-mark {
+        display: none;
+      }
+    }
+    /* Firefox cuts descenders in a one-line clip box. */
+    & .aside {
+      min-width: 0;
+      margin-block: -0.2em;
+      padding-block: 0.2em;
+      overflow: hidden;
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      &.failure {
+        color: var(--err);
+        font-weight: var(--w-strong);
+      }
+    }
+    & .body {
+      display: grid;
+      align-self: center;
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .lanes {
+    display: grid;
+    align-self: center;
+    max-height: 100%;
+    grid-template-columns: repeat(4, max-content) [track] minmax(120px, 1fr) minmax(64px, max-content);
+    grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto;
+    column-gap: var(--space-3);
+    min-width: 0;
+    isolation: isolate;
+  }
+  .lane-head,
+  .lane {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: center;
+  }
+  .lane-head {
+    padding-bottom: var(--space-1);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
+    text-align: end;
+  }
+  .lane {
+    position: relative;
+    & + & {
+      border-top: var(--hairline) solid var(--border-subtle);
+    }
+    /* A running stage's row washes in its hue edge to edge of the area, on its own layer. */
+    &::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0 calc(-1 * var(--space-4));
+      background: color-mix(in oklab, var(--tone) 7%, transparent);
+      opacity: 0;
+      transition: opacity calc(0.54 * var(--dur-graph)) var(--ease-out-head);
+      pointer-events: none;
+    }
+    &[data-active="true"]::before {
+      opacity: 1;
+      transition: opacity calc(0.54 * var(--dur-stage)) var(--ease-out-head) var(--beat);
+    }
+  }
+  /* Every figure in a row sits on the median's baseline. */
+  .lane-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    margin-top: calc(var(--type-md) - var(--type-body));
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+    white-space: nowrap;
+  }
+  .lane-label.failed {
+    color: var(--err);
+  }
+  .lane-median,
+  .lane-jitter,
+  .lane-timeouts,
+  .lane-added {
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+    white-space: nowrap;
+  }
+  /* Figures take their longest value's width from Start, so arriving values never shift the plot. */
+  .lane-median {
+    min-width: 8ch;
+    font: 500 var(--type-md) / 1 var(--font-mono);
+  }
+  .lane-jitter,
+  .lane-timeouts {
+    margin-top: calc(var(--type-md) - var(--type-sm));
+    color: var(--text-muted);
+    font: 500 var(--type-sm) / 1 var(--font-mono);
+  }
+  .lane-jitter {
+    min-width: 8ch;
+  }
+  :is(.lane-median, .lane-jitter, .lane-timeouts).quiet {
+    color: var(--text-soft);
+  }
+  .lane-timeouts.noted {
+    color: var(--text);
+    &.many {
+      color: var(--warn);
+    }
+  }
+  .lane-added {
+    margin-top: calc(var(--type-md) - var(--type-sm));
+    color: var(--tone-ink);
+    font: 600 var(--type-sm) / 1 var(--font-mono);
+    &.quiet {
+      color: var(--text-soft);
+      font-weight: var(--w-normal);
+    }
+  }
+  .lanes .track {
+    position: relative;
+    align-self: stretch;
+    border-radius: var(--r-well);
+    cursor: crosshair;
+    touch-action: pan-y pinch-zoom;
+    &[aria-disabled="true"] {
+      cursor: default;
+    }
+  }
+  /* A row's box plot, drawn in its hue: whisker, box, the idle median, the added span, the median and the latest,
+     each placed by percentages of the axis within the marks' margin; layout keeps their edges on whole pixels. */
+  .lane-art {
+    position: absolute;
+    inset: 0 var(--edge);
+    isolation: isolate;
+    pointer-events: none;
+    & > i,
+    &::before,
+    &::after {
+      position: absolute;
+    }
+    /* The axis's ends and middle run up through the rows as gridlines, behind the marks. */
+    &::before,
+    &::after {
+      content: "";
+      z-index: -1;
+      inset-block: 0;
+      border-left: var(--hairline) solid var(--border-subtle);
+    }
+    &::before {
+      inset-inline: 0;
+      border-right: var(--hairline) solid var(--border-subtle);
+    }
+    &::after {
+      left: 50%;
+    }
+    & :is(.range, .overflow) {
+      top: calc(50% - var(--hairline) / 2);
+      height: var(--hairline);
+      background: color-mix(in oklab, var(--tone) 45%, transparent);
+    }
+    /* A whisker past the axis runs on to the track's end, ends in an arrowhead and names its value inside the axis. */
+    & .overflow {
+      width: var(--edge);
+      &::before,
+      &::after {
+        position: absolute;
+        right: 0;
+      }
+      &::before {
+        content: attr(data-max);
+        right: calc(var(--edge) + var(--space-1));
+        bottom: var(--space-1);
+        color: var(--text-soft);
+        font: 500 var(--type-2xs) / 1 var(--font-mono);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      &::after {
+        content: "";
+        top: calc(var(--hairline) / 2 - 3.5px);
+        border-left: 5px solid var(--tone);
+        border-block: 3.5px solid transparent;
+      }
+    }
+    & .band {
+      top: calc(50% - 5.5px);
+      height: 11px;
+      border-radius: 1.5px;
+      background: color-mix(in oklab, var(--tone) 22%, var(--canvas));
+      box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tone) 34%, transparent);
+    }
+    /* The idle median drops from its own row's middle through every loaded row. */
+    & .baseline {
+      inset-block: 0;
+      width: var(--hairline);
+      margin-left: calc(var(--hairline) / -2);
+      background: color-mix(in oklab, var(--phase-latency) 60%, transparent);
+    }
+    & .added-span {
+      top: calc(50% - 1px);
+      height: 2px;
+      background: color-mix(in oklab, var(--tone) 50%, transparent);
+    }
+    & .center-marker {
+      top: calc(50% - 10px);
+      width: 2px;
+      height: 20px;
+      margin-left: -1px;
+      border-radius: 1px;
+      background: var(--tone);
+    }
+    & .current-marker {
+      top: calc(50% - 4px);
+      width: 8px;
+      height: 8px;
+      margin-left: -4px;
+      border-radius: var(--r-full);
+      background: var(--tone);
+    }
+  }
+  .lane[data-tone="latency"] .lane-art .baseline {
+    top: 50%;
+  }
+  /* A measured span grows from its middle the first time it is drawn. */
+  @media (prefers-reduced-motion: no-preference) {
+    .lane-art :is(.band, .range) {
+      animation: grow-x var(--dur-stage) var(--ease-settle) backwards;
+    }
+  }
+  .lanes .guide {
+    position: absolute;
+    z-index: 4;
+    inset-block: 0;
+    left: 0;
+    width: 1px;
+    margin-left: -0.5px;
+    background: color-mix(in srgb, var(--text) 54%, transparent);
+    pointer-events: none;
+    transition: translate var(--dur-slide) var(--ease-out);
+  }
+  /* A row's readout: the mark read, over it. */
+  .hover-card {
+    z-index: 10;
+    bottom: calc(50% + 8px);
+    left: 0;
+    transition: translate var(--dur-slide) var(--ease-out);
+    &.unmeasured {
+      visibility: hidden;
+    }
+  }
+  .lanes .ticks {
+    position: relative;
+    grid-column: track;
+    height: 16px;
+    margin-inline: var(--edge);
+    border-top: var(--hairline) solid var(--border-subtle);
+    & span {
+      position: absolute;
+      top: 4px;
+      translate: -50%;
+      color: var(--text-soft);
+      font: 500 var(--type-2xs) / 1.2 var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      &:first-child {
+        translate: none;
+      }
+      &:last-child {
+        translate: -100%;
+      }
+    }
+  }
+  /* A narrow panel drops jitter, never timeouts. */
+  @container latency (max-width: 560px) {
+    .lanes {
+      grid-template-columns: repeat(3, max-content) [track] minmax(80px, 1fr) max-content;
+    }
+    .lane-jitter,
+    .lane-head > :nth-child(3) {
+      display: none;
+    }
+  }
+  /* A phone's row is two lines: its figures, then a plot tall enough that an overflow's value under its whisker
+     clears the row's rule. */
+  @container latency (max-width: 440px) {
+    .lanes {
+      grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
+      grid-template-rows: none;
+    }
+    .lane {
+      row-gap: 2px;
+      padding-top: var(--space-2);
+    }
+    .lane-name {
+      white-space: normal;
+    }
+    .lane-median {
+      min-width: 0;
+    }
+    .lane-head > :nth-child(5) {
+      display: none;
+    }
+    .lanes .track {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      height: 34px;
+    }
+    .lanes .ticks {
+      grid-column: 1 / -1;
+    }
+    .lane-art .overflow::before {
+      top: var(--space-1);
+      bottom: auto;
+    }
+  }
+
+  /* The run key over the chips, both as wide as the chip row: as many chips to a line as fit, 140–172 px each. */
+  .stage-track {
+    container: track / inline-size;
+    display: grid;
+    gap: var(--space-3);
+    width: min(100%, calc(var(--chips) * 172px + (var(--chips) - 1) * var(--space-2)));
+  }
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 6px var(--space-2);
+    & .legend {
+      grid-column: 1 / -1;
+    }
+  }
+  .track-refusal {
+    color: var(--err);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
+    text-align: center;
+  }
+  /* Four chips that cannot stand in one row stand two and two, never three and one. */
+  @container track (max-width: 583px) {
+    .chips[data-count="4"] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .chip {
+    display: grid;
+    container-type: inline-size;
+    gap: 7px;
+    align-content: center;
+    min-width: 0;
+    height: 46px;
+    padding: 8px 10px;
+    overflow: hidden;
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+    color: var(--text);
+    text-align: start;
+    transition: var(--transition-control);
+    /* One off stays operable, so it reads soft. */
+    &:not(.on) {
+      border-color: var(--border-subtle);
+      color: var(--text-soft);
+    }
+    &:disabled {
+      cursor: default;
+    }
+    &.chip--disabled:disabled {
+      opacity: 0.5;
+    }
+    &:is(.chip--active, .chip--warmup, .chip--recovering) {
+      border-color: color-mix(in oklab, var(--tone) 55%, var(--border));
+    }
+    /* A press never moves what it presses: the chip's contents give and spring back. */
+    & > * {
+      transition: scale var(--dur-graph) var(--ease-spring);
+    }
+  }
+  @media (hover: hover) {
+    .chip:hover:not(:disabled) {
+      border-color: var(--border-strong);
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .chip:active:not(:disabled) > * {
+      scale: 0.96;
+      transition-duration: var(--dur-hover);
+    }
+    .chip-check {
+      animation: pop 380ms var(--ease-spring) backwards;
+    }
+  }
+  .chip-bar {
+    position: relative;
+    height: 3px;
+    overflow: hidden;
+    border-radius: var(--r-full);
+    background: var(--surface-inset);
+  }
+  .chip-fill {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--tone);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition:
+      transform var(--dur-graph) var(--ease-out),
+      background-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
+    /* While live the frame clock draws the width, on its own layer. */
+    &.is-live {
+      transition: background-color var(--dur-graph) var(--ease-out);
+    }
+    &.is-partial {
+      background: repeating-linear-gradient(90deg, var(--tone) 0 6px, transparent 6px 9px);
+    }
+    &.chip-fill--failed {
+      background: var(--err);
+      opacity: 0.45;
+    }
+    &.is-stalled {
+      animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
+    }
+    /* A warmup scans the bar at an even pace, one pass leaving as the next enters, until the window opens. */
+    &.chip-fill--warmup {
+      width: 45%;
+      background: color-mix(in oklab, var(--tone) 55%, transparent);
+      animation: warmup-sweep 900ms linear infinite;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chip-fill.chip-fill--warmup {
+      width: 100%;
+      opacity: 0.55;
+    }
+  }
+  .chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 16px;
+    min-width: 0;
+  }
+  .chip-ico {
+    display: grid;
+    flex: none;
+    place-items: center;
+    & :where(svg) {
+      width: 14px;
+      height: 14px;
+    }
+  }
+  .chip-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-block: -0.2em;
+    padding-block: 0.2em;
+    overflow: hidden;
+    font: var(--w-heavy) var(--type-sm) / 1 var(--font-sans);
+    letter-spacing: var(--track-tight);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-check {
+    display: grid;
+    flex: none;
+    color: var(--ok);
+    & :where(svg) {
+      width: 12px;
+      height: 12px;
+    }
+  }
+  .chip-tag {
+    flex: none;
+    padding: 2px 5px;
+    border-radius: var(--r-well);
+    background: var(--surface-inset);
+    color: var(--text-soft);
+    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+    &[data-tone] {
+      color: var(--tone-ink);
+    }
+    &.time {
+      padding: 0;
+      background: none;
+      color: var(--text-muted);
+      font: var(--role-figure-sm);
+      line-height: 1;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    & .short {
+      display: none;
+    }
+  }
+  /* A narrow chip keeps the time into the stage and drops its length. */
+  @container (max-width: 172px) {
+    .chip-tag .full {
+      display: none;
+    }
+    .chip-tag .short {
+      display: inline;
+    }
+  }
+  /* Narrower still, the name takes its own line over the time; nothing goes under the 10 px floor. */
+  @container (max-width: 124px) {
+    .chip-ico {
+      display: none;
+    }
+    .chip-row {
+      flex-wrap: wrap;
+      row-gap: 3px;
+      height: auto;
+    }
+    .chip-label {
+      flex-basis: 100%;
+      font-size: var(--type-xs);
+    }
+    .chip-tag {
+      font-size: var(--type-2xs);
+      &:not(.time) {
+        padding: 1px 3px;
+      }
+    }
+  }
+  .tight .chips {
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    & .legend {
+      display: none;
+    }
+  }
+  .tight .chip {
+    gap: 5px;
+    padding: 6px 8px;
+  }
+
+  /* The one primary action is ink; pressed, it gives under the finger and comes up as the quiet Stop plate, in the
+     frame the run's state changes. */
+  .run-button {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    width: 100%;
+    height: 48px;
+    padding-inline: 14px;
+    border: 0;
+    border-radius: var(--r-chrome);
+    background: none;
+    color: var(--text-inverse);
+    font: var(--w-strong) var(--type-md) / 1 var(--font-sans);
+    &.running {
+      color: var(--text);
+    }
+    &[aria-disabled="true"] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    & > * {
+      transition: scale var(--dur-graph) var(--ease-spring);
+    }
+    &:active:not([aria-disabled="true"]) > * {
+      scale: 0.975;
+      transition-duration: var(--dur-hover);
+    }
+    & .skin {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      border-radius: inherit;
+      background: var(--brand);
+      transition:
+        background-color var(--dur-hover) var(--ease-out),
+        box-shadow var(--dur-hover) var(--ease-out);
+      &.stop {
+        background: var(--surface-1);
+        box-shadow: inset 0 0 0 var(--hairline) var(--border-strong);
+        opacity: 0;
+      }
+    }
+    &.running .skin.stop {
+      opacity: 1;
+    }
+    .compact & {
+      height: var(--hit);
+    }
+  }
+  @media (hover: hover) {
+    .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
+      background: var(--brand-strong);
+      &.stop {
+        background: linear-gradient(var(--hover-wash) 0 0), var(--surface-1);
+      }
+    }
+  }
+  .run-button-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .stop-sq {
+    width: 9px;
+    height: 9px;
+    border-radius: 1px;
+    background: currentColor;
+  }
+  .run-button .duration {
+    font: var(--role-figure-sm);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+  }
+
+  /* The cards: one per stage across the console, pairing up and then stacking as it narrows. */
+  .result-summary {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    width: 100%;
+    height: 100%;
+    container: results / inline-size;
+  }
+  .result-cards {
+    display: grid;
+    grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
+    gap: var(--space-4);
+    min-height: 0;
+  }
+  @container results (max-width: 1100px) {
+    .result-cards {
+      gap: var(--space-3);
+    }
+  }
+  @container results (max-width: 960px) {
+    .result-cards[data-cards="4"] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @container results (max-width: 720px) {
+    .result-cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2);
+    }
+  }
+  .card {
+    --card-edge: var(--border);
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+    max-height: 300px;
+    padding: 10px var(--space-4) var(--space-3);
+    overflow: hidden;
+    border: var(--hairline) solid var(--card-edge);
+    border-top: 2px solid var(--tone);
+    border-radius: var(--r-surface);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+    transition:
+      background-color var(--dur-hover) var(--ease-out),
+      border-color var(--dur-hover) var(--ease-out),
+      opacity var(--dur-hover) var(--ease-out);
+    &.with-strip {
+      grid-template-rows: auto auto minmax(68px, 1fr) auto;
+    }
+    /* A running card lifts on a glow in its hue, two beats after its chip; the glow comes and goes in one step, as
+       a blurred shadow is never redrawn frame by frame. */
+    &:is(.active, .recovering) {
+      --card-edge: color-mix(in oklab, var(--tone) 55%, var(--border));
+      box-shadow:
+        var(--elev-tile),
+        0 12px 32px -16px color-mix(in oklab, var(--tone) 60%, transparent);
+      transition:
+        border-color calc(0.54 * var(--dur-stage)) var(--ease-out-head) calc(2 * var(--beat)),
+        box-shadow 0s linear calc(2 * var(--beat));
+    }
+    &:is(.pending, .not-run) {
+      --card-edge: var(--border-subtle);
+      border-top-color: color-mix(in oklab, var(--tone) 45%, transparent);
+    }
+  }
+  .card .face {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .card .name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    height: 20px;
+    color: var(--text);
+    font: var(--role-title);
+    white-space: nowrap;
+  }
+  .card .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
+  }
+  .card .headline {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    font: var(--role-readout);
+    font-size: 26px;
+    white-space: nowrap;
+    /* A zero-width strut keeps one value's height. */
+    &::after {
+      content: "\200b";
+    }
+    & .num {
+      font-variant-numeric: tabular-nums;
+    }
+    /* Every dash that waits for a value is soft, and so is a warmup's figure, which nothing counts yet. */
+    &:is(.quiet, .waiting, .warming) .num {
+      color: var(--text-soft);
+    }
+    & .pair {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 2px;
+      & .num {
+        font-size: 20px;
+      }
+      & + .pair {
+        margin-left: 4px;
+      }
+    }
+    & .arrow {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+    }
+    & .unit {
+      color: var(--text-muted);
+      font: var(--role-figure-sm);
+      line-height: 1;
+    }
+  }
+  .card .line {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    min-width: 0;
+    height: 16px;
+    overflow: hidden;
+    /* The line clips, so a focused term draws its ring inside itself. */
+    --ring-offset: -2px;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
+    white-space: nowrap;
+    & :is(.reason, .wire) {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    & :is(.wire, .no-data) {
+      color: var(--text-muted);
+      font: var(--role-figure-sm);
+      line-height: 16px;
+    }
+    & .label {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
+    }
+    & .no-data {
+      flex: none;
+      margin-left: auto;
+    }
+    & .delta {
+      color: var(--text);
+    }
+    & .reason {
+      color: var(--err);
+      font-weight: var(--w-strong);
+    }
+  }
+  .card .strip {
+    min-height: 68px;
+    max-height: 120px;
+    margin-top: var(--space-1);
+    padding: 6px 8px 0;
+    border-radius: var(--r-well);
+    background: color-mix(in oklab, var(--tone) 7%, var(--surface-1));
+  }
+  .card .facts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    margin-top: var(--space-2);
+    border-top: var(--hairline) solid var(--border-subtle);
+    color: var(--text);
+    font: var(--role-figure-sm);
+    & > div {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3);
+      height: 22px;
+      min-width: 0;
+      white-space: nowrap;
+      & + div {
+        border-top: var(--hairline) solid var(--border-subtle);
+      }
+    }
+    & dt {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+      /* A finger's target is 24 px tall, over its figure, in margin the label gives back. */
+      @media (pointer: coarse) {
+        position: relative;
+        z-index: 1;
+        padding-block: calc((24px - 1em) / 2);
+        margin-block: calc((1em - 24px) / 2);
+      }
+    }
+    & dd {
+      font-variant-numeric: tabular-nums;
+    }
+    &.unknown dd,
+    & dd.quiet {
+      color: var(--text-soft);
+    }
+  }
+  .result-summary .issues {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: center;
+    gap: 2px var(--space-3);
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
+    &.attributed {
+      grid-template-columns: auto auto auto;
+      & dt {
+        color: var(--text);
+        font-weight: var(--w-strong);
+      }
+    }
+    & .reason {
+      color: var(--text-soft);
+    }
+  }
+  /* A phone's card: the name and status at the left, the headline at the right, the facts a wrapping row. */
+  @container results (max-width: 520px) {
+    .result-cards,
+    .result-cards[data-cards="4"] {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
+    }
+    .card {
+      gap: 2px;
+      padding: 7px var(--space-3) 8px;
+      &.with-strip {
+        grid-template-rows: auto auto 52px auto;
+      }
+      & .face {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0 var(--space-3);
+      }
+      & .name {
+        align-self: center;
+      }
+      & .status {
+        margin-left: var(--space-1);
+      }
+      & .headline {
+        margin-left: auto;
+        font-size: 22px;
+        line-height: 26px;
+      }
+      /* Room enough for a rate plot over its reply track. */
+      & .strip {
+        min-height: 52px;
+        max-height: 52px;
+      }
+      & .facts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 0 var(--space-3);
+        margin-top: 2px;
+        & > div {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 3px;
+          height: auto;
+          padding-top: 4px;
+          & + div {
+            border-top: 0;
+          }
+        }
+        & dt {
+          font-size: var(--type-xs);
+        }
+      }
+    }
+  }
+
+  /* A strip: the rate plot over its reply track, or the reply track alone on the latency card. */
+  .graph {
+    position: relative;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 6px;
+    height: 100%;
+    min-height: 0;
+    border-radius: var(--r-well);
+    cursor: crosshair;
+    outline-offset: 4px;
+    touch-action: pan-y pinch-zoom;
+    &[tabindex="-1"] {
+      cursor: default;
+    }
+    &.replies {
+      grid-template-rows: minmax(0, 1fr);
+    }
+    & .plot,
+    & .track {
+      position: relative;
+      min-height: 0;
+    }
+    & .track {
+      height: 20px;
+      &.full {
+        height: 100%;
+      }
+    }
+    & .cursor {
+      stroke: color-mix(in oklab, var(--text) 45%, transparent);
+      stroke-width: 1;
+      shape-rendering: crispEdges;
+    }
+    & .axis {
+      stroke: var(--border);
+      stroke-width: 1;
+      shape-rendering: crispEdges;
+    }
+    & stop {
+      stop-color: var(--tone);
+    }
+    & .line {
+      fill: none;
+      stroke: var(--tone);
+      stroke-width: 1.6;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      &.second {
+        stroke-dasharray: 3 3;
+      }
+    }
+    & .head {
+      fill: var(--tone);
+    }
+  }
+  /* A reading: a plate of figures beside the cursor, at the top of the plot or its foot when the curve runs high,
+     each figure keyed to the mark it reads. It glides from reading to reading and fades as the pointer leaves. */
+  .graph .readout {
+    top: 2px;
+    left: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: baseline;
+    justify-items: start;
+    column-gap: var(--space-2);
+    row-gap: 0;
+    padding: 2px 7px;
+    opacity: 0;
+    transition:
+      translate 140ms var(--ease-out),
+      opacity var(--dur-hover) var(--ease-out);
+    &.shown {
+      opacity: 1;
+    }
+    &.unmeasured {
+      visibility: hidden;
+    }
+    &.low {
+      top: auto;
+      bottom: 28px;
+    }
+    & small {
+      grid-row: 1;
+    }
+    & .row {
+      grid-column: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      &[hidden] {
+        display: none;
+      }
+    }
+    & .key {
+      flex: none;
+      width: 10px;
+      height: 2px;
+      border-radius: 1px;
+      background: var(--tone);
+      &[data-key="second"] {
+        background: repeating-linear-gradient(90deg, var(--tone) 0 3px, transparent 3px 6px);
+      }
+      &[data-key="reply"] {
+        width: 2px;
+        height: 9px;
+        margin-inline: 4px;
+      }
+    }
+  }
+  .graph.replies .readout.low {
+    bottom: auto;
+  }
+  /* The read marks: a dot on each curve and the read reply bar, drawn over the rest. */
+  .graph .cursor-dot {
+    fill: var(--surface-1);
+    stroke: var(--tone);
+    stroke-width: 2;
+    &.second {
+      stroke-dasharray: none;
+    }
+  }
+  .graph .reply-cursor {
+    stroke-width: 4;
+  }
+
+  /* The phase toast: failures, issues and stalls, at the stage's right edge so it never lands on a docked sheet. */
+  .phase-toast {
+    position: fixed;
+    right: var(--space-4);
+    right: calc(anchor(--stage right) + var(--space-4));
+    bottom: 40px;
+    z-index: var(--z-toast);
+    display: none;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-2);
+    min-width: 220px;
+    max-width: min(360px, calc(100vw - 24px));
+    padding: var(--space-2) var(--space-3);
+    opacity: 0;
+    translate: 0 4px;
+    pointer-events: none;
+    /* Shown, and while it fades out (status.tsx), it is laid out; else it is out of layout, so a stage that resizes
+       never positions it against its anchor. */
+    transition:
+      opacity var(--dur-slide) var(--ease-out),
+      translate var(--dur-slide) var(--ease-out);
+    &:is(.visible, .leaving) {
+      display: grid;
+    }
+    &.visible {
+      opacity: 1;
+      translate: none;
+    }
+    & .notice-icon {
+      grid-row: 1 / 3;
+      display: grid;
+      place-items: center;
+      color: var(--tone);
+      & :where(svg) {
+        width: var(--icon);
+        height: var(--icon);
+      }
+    }
+    & .kicker {
+      color: var(--text-muted);
+      font-size: var(--type-2xs);
+      font-weight: var(--w-strong);
+    }
+    & strong {
+      margin-top: 2px;
+      font-size: var(--type-sm);
+      font-weight: var(--w-normal);
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+  }
+  @starting-style {
+    .phase-toast.visible {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  /* A phone has no status strip: a stall shows for its reading time too. */
+  @media (max-width: 759px) {
+    .phase-toast {
+      inset-inline: var(--space-4);
+      min-width: 0;
+      max-width: none;
+      &.stall {
+        animation: linger var(--dur-slide) var(--ease-out) var(--linger) forwards;
+      }
+    }
+  }
+
+  /* The connection dot: a tone and, in its tip, the facts behind it. */
+  .pulse {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 6px;
+    @media (pointer: coarse) {
+      justify-content: center;
+      min-width: var(--hit);
+      min-height: var(--hit);
+    }
+  }
+
+  /* The status strip's facts: the word and its figures from the left edge, each figure in a cell as wide as its
+     longest value, the build alone at the right. */
+  footer.status {
+    & > span {
+      white-space: nowrap;
+    }
+    & .label-cell {
+      display: inline-grid;
+      & > * {
+        grid-area: 1 / 1;
+      }
+    }
+    & .sizer {
+      visibility: hidden;
+    }
+    & :is(.label, .sizer) {
+      color: var(--text);
+      font-weight: var(--w-strong);
+    }
+    & .elapsed {
+      margin-left: var(--space-2);
+    }
+    & .readout {
+      color: var(--text-muted);
+      font: var(--role-figure-sm);
+      font-variant-numeric: tabular-nums;
+    }
+    & .remaining[data-tone] {
+      color: var(--tone-ink);
+      font-weight: var(--w-strong);
+    }
+    & .build {
+      margin-left: auto;
+      color: var(--text-soft);
+    }
+  }
+  @container status (max-width: 800px) {
+    footer.status .build {
+      display: none;
+    }
+  }
+  /* A phone's strip keeps one time in one place. */
+  @container status (max-width: 520px) {
+    footer.status :is(.transferred, .elapsed.secondary) {
+      display: none;
+    }
+  }
+}
+
+@keyframes result-sweep {
+  from {
+    --sweep: var(--from);
+  }
+  to {
+    --sweep: 1;
+  }
+}
+@keyframes result-drain {
+  from {
+    --sweep: 1;
+  }
+  to {
+    --sweep: 0;
+  }
+}
+@keyframes bead-out {
+  to {
+    opacity: 0;
+    scale: 0.3;
+  }
+}
+@keyframes ripple {
+  from {
+    scale: 1;
+    opacity: 0.32;
+  }
+  to {
+    scale: 2.2;
+    opacity: 0;
+  }
+}
+@keyframes stall-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+@keyframes warmup-sweep {
+  from {
+    translate: -100%;
+  }
+  to {
+    translate: calc(100% / 0.45);
+  }
+}
+@keyframes linger {
+  to {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}

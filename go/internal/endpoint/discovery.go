@@ -33,7 +33,8 @@ type hostDiscovery struct {
 	servers    []byte
 	serversErr error
 	connect    []string // distinct cross-origin targets
-	csp        string
+	csp        string   // for a plain-HTTP page
+	secureCSP  string   // for an HTTPS page
 }
 
 // Request hostnames are untrusted: one that is not a valid host is read as localhost, and the cache is bounded.
@@ -118,7 +119,13 @@ func (d *Discovery) ServeServers(w http.ResponseWriter, r *http.Request) {
 
 func (d *Discovery) ConnectOrigins(host string) []string { return d.forHost(host).connect }
 
-func (d *Discovery) PagePolicy(host string) string { return d.forHost(host).csp }
+// PagePolicy is the page's CSP at host, loaded over HTTPS when secure.
+func (d *Discovery) PagePolicy(host string, secure bool) string {
+	if secure {
+		return d.forHost(host).secureCSP
+	}
+	return d.forHost(host).csp
+}
 
 func (d *Discovery) build(host string) *hostDiscovery {
 	pf := d.preflightFor(host)
@@ -150,7 +157,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 			sources = append(sources, raw)
 		}
 	}
-	h.csp = static.PagePolicy(sources)
+	h.csp, h.secureCSP = static.PagePolicy(sources), static.PagePolicy(static.SecureSources(sources))
 	return h
 }
 

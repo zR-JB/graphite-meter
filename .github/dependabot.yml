@@ -37,3 +37,12 @@ updates:
     groups:
       client-deps:
         patterns: ["*"]
+  - package-ecosystem: bun
+    directory: /client-v2
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      client-v2-deps:
+        patterns: ["*"]

@@ -5,7 +5,7 @@ use super::{
     policy::cookie_lease,
     rate::share_full,
     routes::{Form, body, field, redirect},
-    store::{GrantRefusal, MAX_LOGIN_GRANTS, State, credentials},
+    store::{Digest, GrantRefusal, GrantToken, MAX_LOGIN_GRANTS, State, credentials, digest},
 };
 use crate::headers::{SEC_FETCH_DEST, SEC_FETCH_MODE, SEC_FETCH_SITE};
 use crate::{
@@ -19,10 +19,15 @@ use graphite_meter_proto::approval::{challenge, verification_code};
 use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use serde::Deserialize;
 use serde_json::json;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::time::Instant;
 
 const LIFETIME: Duration = Duration::from_mins(2);
+/// How long an issued grant answers its verifier again, for an exchange whose answer was lost.
+const REPLAY: Duration = Duration::from_secs(30);
 const MAX_APPROVALS: usize = 256;
 const MAX_LOGIN_APPROVALS: usize = 8;
 const MAX_CLIENT_APPROVALS: usize = 8;
@@ -51,7 +56,7 @@ impl Challenge {
     }
 }
 
-/// A pending approval of one challenge.
+/// An approval of one challenge: pending, then the grant it issued while that lasts.
 pub(super) struct Approval {
     /// The browser origin asking, or none for a terminal.
     browser: Option<BrowserOrigin>,
@@ -60,21 +65,42 @@ pub(super) struct Approval {
     pub deadline: Instant,
 }
 
-/// How far an approval is: unclaimed, claimed by the login that may approve it, or approved by that login.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by that login, or the grant
+/// it issued.
+#[derive(Clone)]
 enum Stage {
     Open,
     Claimed(LoginKey),
     Approved(LoginKey),
+    Issued(Issued),
+}
+
+/// The grant an approval issued, and its token while the verifier may ask again.
+#[derive(Clone)]
+struct Issued {
+    login: LoginKey,
+    grant: Digest,
+    token: Option<GrantToken>,
+    replay_until: Instant,
 }
 
 impl Approval {
     /// The login that claimed it.
     pub(super) fn login(&self) -> Option<LoginKey> {
-        match self.stage {
+        match &self.stage {
             Stage::Open => None,
-            Stage::Claimed(login) | Stage::Approved(login) => Some(login),
+            Stage::Claimed(login) | Stage::Approved(login) => Some(*login),
+            Stage::Issued(issued) => Some(issued.login),
         }
+    }
+
+    fn issued(&self) -> bool {
+        matches!(self.stage, Stage::Issued(_))
+    }
+
+    /// Whether it issued the grant keyed `grant`.
+    pub(super) fn became(&self, grant: &Digest) -> bool {
+        matches!(&self.stage, Stage::Issued(issued) if issued.grant == *grant)
     }
 }
 
@@ -87,11 +113,14 @@ struct Room {
 impl State {
     /// The room for one more approval of `login`; before sign-in at most half the server's approvals.
     fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> Room {
-        let count =
-            |held: &dyn Fn(&Approval) -> bool| self.approvals.values().filter(|approval| held(approval)).count();
+        // An issued approval is bounded by its live grant, so only pending ones count.
+        let count = |held: &dyn Fn(&Approval) -> bool| {
+            let pending = self.approvals.values().filter(|approval| !approval.issued());
+            pending.filter(|approval| held(approval)).count()
+        };
         let held = count(&|approval| approval.login() == login);
         let client = |key: &ClientKey| count(&|approval| approval.clients.contains(key));
-        let total = self.approvals.len() < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
+        let total = count(&|_| true) < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
         Room {
             login: held < MAX_LOGIN_APPROVALS,
             shared: total && !share_full(keys, MAX_CLIENT_APPROVALS, client),
@@ -128,8 +157,8 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
     let found = state.pending(&challenge);
-    let found = found.map(|approval| (approval.browser.clone(), approval.login()));
-    if let Some((Some(origin), _)) = &found {
+    let found = found.map(|approval| (approval.browser.clone(), approval.login(), approval.issued()));
+    if let Some((Some(origin), ..)) = &found {
         let origin = origin.header().to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", challenge.as_str()), ("client_origin", origin)]);
         return redirect(&format!("/auth/browser?{query}"));
@@ -139,7 +168,7 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     };
     let Some(keys) = peer.keys() else { return refused(Refused::Busy) };
     match found {
-        Some((_, login)) if login != Some(lease.login()) => return refused(Refused::Link),
+        Some((_, login, issued)) if issued || login != Some(lease.login()) => return refused(Refused::Link),
         Some(_) => {}
         None => {
             state.sweep(Instant::now());
@@ -184,7 +213,7 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     let Some(approval) = state.approvals.get_mut(&challenge) else {
         return refused(Refused::Link);
     };
-    if approval.browser.as_ref() != Some(&origin) {
+    if approval.browser.as_ref() != Some(&origin) || approval.issued() {
         return refused(Refused::Link);
     }
     let Some(lease) = login else {
@@ -200,6 +229,7 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
         Stage::Open => return refused(Refused::Busy),
         Stage::Claimed(login) | Stage::Approved(login) if login != lease.login() => return refused(Refused::Link),
         Stage::Claimed(_) | Stage::Approved(_) => {}
+        Stage::Issued(_) => return refused(Refused::Link),
     }
     let full = state.grants_of(lease.login()) >= MAX_LOGIN_GRANTS;
     drop(state);
@@ -225,7 +255,10 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     let now = Instant::now();
     let pending = state.approvals.get_mut(&challenge);
     let Some(approval) = pending.filter(|approval| {
-        now < approval.deadline && approval.login() == Some(lease.login()) && approval.browser.is_some() == browser
+        now < approval.deadline
+            && approval.login() == Some(lease.login())
+            && approval.browser.is_some() == browser
+            && !approval.issued()
     }) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
@@ -265,31 +298,54 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     answer
 }
 
-/// Issues the grant an approved challenge of `verifier` holds for `origin`, ending the approval.
+/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again for 30 s.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Response<Body> {
     let (Some(challenge), credentials) = (Challenge::of(verifier), credentials()) else {
         return pending();
     };
     let mut state = lock(&auth.store.0);
     let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
-    let (login, approved) = match approval.map(|approval| approval.stage) {
-        Some(Stage::Claimed(login)) => (login, false),
-        Some(Stage::Approved(login)) => (login, true),
-        Some(Stage::Open) | None => return pending(),
+    let Some(stage) = approval.map(|approval| approval.stage.clone()) else {
+        return pending();
+    };
+    let Some(login) = approval.and_then(Approval::login) else {
+        return pending();
     };
     let Some(expires) = state.login(&login.0).map(|login| login.expires) else {
         return pending();
     };
-    if !approved {
-        let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
-        return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
-    }
-    let token = match state.grant(login, origin.clone(), credentials) {
-        Ok(token) => token,
-        Err(GrantRefusal::Full) => return response::empty(StatusCode::TOO_MANY_REQUESTS),
-        Err(GrantRefusal::NoLogin) => return pending(),
+    let now = Instant::now();
+    let token = match stage {
+        // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
+        Stage::Issued(Issued { token: Some(token), replay_until, .. }) if now < replay_until => token,
+        Stage::Issued(_) => {
+            forget_token(&mut state, &challenge, None);
+            return response::empty(StatusCode::GONE);
+        }
+        Stage::Open | Stage::Claimed(_) => {
+            let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
+            return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
+        }
+        Stage::Approved(_) => {
+            let token = match state.grant(login, origin.clone(), credentials) {
+                Ok(token) => token,
+                Err(GrantRefusal::Full) => return response::empty(StatusCode::TOO_MANY_REQUESTS),
+                Err(GrantRefusal::NoLogin) => return pending(),
+            };
+            let (replay_until, grant) = (now + REPLAY, digest(token.as_str()));
+            if let Some(approval) = state.approvals.get_mut(&challenge) {
+                approval.deadline = approval.deadline.max(replay_until);
+                approval.stage = Stage::Issued(Issued { login, grant, token: Some(token.clone()), replay_until });
+            }
+            // The token is kept for its window only, whether or not it is asked for again.
+            let (store, kept) = (Arc::clone(&auth.store.0), challenge.clone());
+            tokio::spawn(async move {
+                tokio::time::sleep(REPLAY).await;
+                forget_token(&mut lock(&store), &kept, Some(&grant));
+            });
+            token
+        }
     };
-    state.approvals.remove(&challenge);
     drop(state);
     let remaining = expires.duration_since(SystemTime::now()).unwrap_or_default();
     response::json_of(&match origin {
@@ -301,6 +357,20 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
             "maximumLifetimeMs": LOGIN_LIFETIME.as_millis(),
         }),
     })
+}
+
+/// Drops the token `challenge` issued, the grant keyed `grant` only when given: the challenge may have issued another.
+fn forget_token(state: &mut State, challenge: &Challenge, grant: Option<&Digest>) {
+    let issued = state
+        .approvals
+        .get_mut(challenge)
+        .and_then(|approval| match &mut approval.stage {
+            Stage::Issued(issued) => Some(issued),
+            Stage::Open | Stage::Claimed(_) | Stage::Approved(_) => None,
+        });
+    if let Some(issued) = issued.filter(|issued| grant.is_none_or(|grant| issued.grant == *grant)) {
+        issued.token = None;
+    }
 }
 
 /// A document navigation from another site, which reenters with the strictly same-site session cookie.

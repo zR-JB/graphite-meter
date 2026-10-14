@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -210,6 +211,36 @@ func TestRunServicesStopsEveryServiceTogether(t *testing.T) {
 				t.Fatalf("runServices ended by %v did not stop its services together", failure)
 			}
 		})
+	}
+}
+
+// The page is HTTPS on a TLS listener, or behind a trusted proxy that sends one X-Forwarded-Proto of https.
+func TestPageSecure(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	for _, tc := range []struct {
+		name, peer string
+		tls        bool
+		proto      []string
+		want       bool
+	}{
+		{"plain", "192.0.2.1:1", false, nil, false},
+		{"TLS", "192.0.2.1:1", true, nil, true},
+		{"trusted proxy", "10.0.0.1:1", false, []string{"https"}, true},
+		{"untrusted proxy", "192.0.2.1:1", false, []string{"https"}, false},
+		{"trusted clear-text proxy", "10.0.0.1:1", false, []string{"http"}, false},
+		{"repeated header", "10.0.0.1:1", false, []string{"https", "https"}, false},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = tc.peer
+		if tc.tls {
+			r.TLS = &tls.ConnectionState{}
+		}
+		for _, proto := range tc.proto {
+			r.Header.Add("X-Forwarded-Proto", proto)
+		}
+		if got := pageSecure(r, trusted); got != tc.want {
+			t.Errorf("%s: secure = %t, want %t", tc.name, got, tc.want)
+		}
 	}
 }
 

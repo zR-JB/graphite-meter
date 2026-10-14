@@ -63,7 +63,7 @@ function removeProfiles() {
         const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(
           cmdline,
         );
-        if (dir) profiles.push(dir[1]);
+        if (dir?.[1]) profiles.push(dir[1]);
       }
   } catch {}
   Bun.WebView.closeAll();

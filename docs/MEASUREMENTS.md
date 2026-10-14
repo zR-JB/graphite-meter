@@ -45,7 +45,11 @@ contributions share the client's connection and are not independent capacity tes
 
 - **Intervals** have fixed membership. Downloads sum client-consumed byte deltas over one client monotonic window.
   Uploads take each receiver's latest observation, divide its byte delta by its own elapsed time and add the rates;
-  receiver durations are never added. The final boundary always requests fresh receiver checkpoints.
+  receiver durations are never added. The final boundary always requests fresh receiver checkpoints, and in the
+  browser asks every download lane what it had counted by one cutoff, waiting up to 250 ms for the answers. Each
+  lane answers from readings of its running total kept at least once a millisecond, so however late its answer
+  arrives it counts to the same moment as every other lane, and the boundary closes at that cutoff; a lane that
+  answered counts nothing more.
 - **Headline and peak** come from the combined boundary samples, never from per-server windows; per-server
   headlines do not add up to the all-servers value.
 - **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
@@ -56,16 +60,18 @@ contributions share the client's connection and are not independent capacity tes
   server's still grow, a lane fails for good, or its grant is refused (which asks for sign-in). Silence that every
   server shares is the link's: nobody leaves for it, the run shows it as Recovering and the stage keeps its planned
   time. The browser times an upload receiver that still reports on that receiver's clock, and one that sends no record
-  at all only after 4 s, since its feed can lag a busy uplink; the native client times every direction on its own clock
-  from the boundary where the server's counted bytes last grew. At the final boundary a refused grant
+  at all only after 4 s, since its feed can lag a busy uplink, and reconnects an HTTP progress feed that sends no line,
+  heartbeats included, for 1.5 s; the native client times every direction on its own clock from the boundary where
+  the server's counted bytes last grew. At the final boundary a refused grant
   removes a server, and so does a direction still silent past the limit or a stream still retrying a failure while
   that direction's bytes have not moved for 500 ms; the stage then records that failure. The interval ends at the
   boundary where the departing server's bytes last moved (in a bidirectional stage, where its first direction
   stopped; at its first boundary, without a window, if they never moved), so its silence is never measured, and the
   survivors' `dropout` interval starts there. A server that cannot prepare a stage leaves the same way, and the run
   fails only when none survives. A removed server stays out for the rest of the run, except that a sole server
-  retries at the next stage. A latency-only failure keeps throughput, except in the latency stage: a server lost
-  there (connection lost or timed out) leaves the run while another remains.
+  retries at the next stage; its own statuses show the stages it never began as not run. A latency-only failure keeps
+  throughput, except in the latency stage: a server lost there (connection lost or timed out) leaves the run while
+  another remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes; time in it when no bytes moved lowers the mean. After a late
   dropout the interval before it can hold the headline and the stage is Partial. With no such interval the stage
@@ -100,7 +106,7 @@ after three replies and timeouts.
 | In-flight window | 16 idle at a fixed cadence, 4 reply-driven, 2 under load. A full window skips the send, never a timeout.         |
 | Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms–10 s; 250 ms before the first reply. |
 | Stage end        | Sending stops; in-window probes drain to their deadlines, at most 10 s.                                          |
-| Interruptions    | Disconnects leave pending probes unfinished; local send failures are separate; neither is a timeout.             |
+| Interruptions    | Disconnects and freezes over 1.5 s leave pending probes unfinished; send failures are separate; no timeouts.     |
 
 Cadence is a scheduling policy, not an observed sampling rate: reply-driven density follows RTT alone (tens of
 thousands of probes a second on loopback), and no coverage is inferred from cadence and elapsed time. The idle
@@ -141,7 +147,7 @@ can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added la
 | Path freshness            | A verified path older than 2 min is checked again before a run                                                                                                                                               | Preparation is reused for 30 s                                                                                                                                |
 | Latency recovery          | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down                                                           | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down                                      |
 | Warmup RTT                | The latency focus server's path-check RTT                                                                                                                                                                    | The highest RTT among active servers, updated to latency-stage medians                                                                                        |
-| Live rates                | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate; 500 ms without bytes anywhere fades the sum to zero; a new stage shows none before its evidence          | All-servers boundary rate, eased in the TUI                                                                                                                   |
+| Live rates                | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate; 500 ms without bytes anywhere fades the sum to zero; a stage's warmup shows its ramp, muted and never counted, and runs on into the window | All-servers boundary rate, eased in the TUI                                                                                                                   |
 | Latency cadence           | Reply-driven, Fast, Medium or Slow                                                                                                                                                                           | Also a custom spacing from 80 ms to 15 s                                                                                                                      |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s                                                                                                                                                                                          | The probe deadline                                                                                                                                            |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter                                                                                                                                                              | Counts in RTT and jitter if before its deadline                                                                                                               |

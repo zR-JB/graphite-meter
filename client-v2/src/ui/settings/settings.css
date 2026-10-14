@@ -1,0 +1,359 @@
+/* The Settings sheet's body: its groups, the server checklist, path pickers, steppers and the duration strip. */
+@layer components {
+  .settings {
+    display: grid;
+    gap: var(--space-5);
+    container: settings / inline-size;
+
+    & .group-head > .aside {
+      color: var(--text-soft);
+      font: var(--role-label);
+      font-variant-numeric: tabular-nums;
+    }
+    & .presets {
+      padding-block: var(--space-3) 0;
+      & .segmented {
+        flex: 1;
+      }
+      & button {
+        min-width: max-content;
+      }
+    }
+    & .kv > .presets + .strip-row {
+      border-top: 0;
+    }
+    /* The strip keeps its own spacing. */
+    & .strip-row {
+      display: block;
+      padding-block: 0;
+    }
+    & .stage-row {
+      align-items: center;
+    }
+    /* A label then its controls: they stand at its end while the row holds both, against the right edge when they wrap. */
+    & .units {
+      column-gap: var(--space-2);
+      & > :first-child {
+        flex: 1 0 auto;
+        margin-inline-end: auto;
+      }
+      /* A stepper wraps under its label at the start. */
+      & > :not(:first-child, .stepper) {
+        margin-inline-start: auto;
+      }
+    }
+    /* A field drawn around a number and its unit. */
+    & .field-unit {
+      display: flex;
+      flex-wrap: wrap;
+      align-content: center;
+      align-items: baseline;
+      width: 7rem;
+      height: var(--control-h);
+      padding-inline: 10px;
+      border: 1px solid var(--field-edge);
+      border-radius: var(--r-chrome);
+      background: var(--surface-1);
+      transition: var(--transition-control);
+      &:has(input:focus-visible) {
+        border-color: var(--brand-line);
+        box-shadow: var(--ring-halo);
+      }
+      @media (pointer: coarse) {
+        height: var(--hit);
+      }
+      & input {
+        flex: 1;
+        width: 0;
+        height: auto;
+        padding: 0;
+        border: 0;
+        background: none;
+        box-shadow: none;
+        text-align: end;
+        appearance: textfield;
+        &::-webkit-inner-spin-button {
+          appearance: none;
+        }
+      }
+      & .unit {
+        margin-inline: 2px 4px;
+        color: var(--text-soft);
+        font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+      }
+    }
+    /* A narrow sheet stacks every stepper row and the units rows alike, so no row wraps where its neighbour does not. */
+    @container settings (max-width: 320px) {
+      & .stage-row:has(.stepper) {
+        flex-flow: column nowrap;
+        align-items: flex-start;
+        gap: var(--space-2);
+        padding-block: var(--space-3);
+      }
+      & .units {
+        row-gap: var(--space-2);
+        padding-block: var(--space-3);
+        & > :first-child {
+          flex-basis: 100%;
+        }
+      }
+    }
+    & .reset {
+      justify-self: start;
+    }
+
+    /* Test servers */
+    & .servers {
+      display: grid;
+      gap: 6px;
+    }
+    & .list-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3);
+    }
+    & :is(.list-label, .server-feedback) small,
+    & .server-status {
+      color: var(--text-soft);
+      font: var(--role-caption);
+    }
+    & .servers .choices > label {
+      grid-template-columns: var(--check) minmax(0, 1fr) auto 7ch;
+      &:not(.checked):has(input:disabled) {
+        opacity: 0.5;
+      }
+    }
+    /* Name over its place, like every two-line choice. */
+    & .server-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    & .server-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    & .server-preflight {
+      grid-column: 4;
+      justify-self: end;
+      color: var(--text-muted);
+      font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      & .unit {
+        margin-inline-start: 2px;
+        color: var(--text-soft);
+      }
+    }
+    & :is(.server-feedback, .selection-notice) {
+      display: grid;
+      justify-items: start;
+      gap: var(--space-1);
+      padding-inline: var(--row-inset);
+      font: var(--role-caption);
+      text-wrap: pretty;
+      & p {
+        color: var(--text-muted);
+        overflow-wrap: anywhere;
+      }
+    }
+    & .server-feedback {
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: var(--space-3);
+      & > * {
+        grid-column: 1 / -1;
+      }
+      & > div {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px;
+        grid-column: 1;
+      }
+    }
+    & .feedback-message {
+      grid-column: 1;
+      min-height: 1.5em;
+      & span {
+        display: inline-block;
+      }
+      & + .btn {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        align-self: center;
+      }
+    }
+    & .approval-code strong {
+      display: block;
+      padding-block: var(--space-1);
+      font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
+      letter-spacing: var(--track-wide);
+    }
+
+    /* Path pickers */
+    & .picker {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      margin-top: var(--space-3);
+    }
+    /* A narrow sheet wraps a choice's name and note rather than cutting them. */
+    & .choice-label {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      & small {
+        overflow-wrap: anywhere;
+      }
+    }
+    & .unavailable {
+      cursor: not-allowed;
+      & > * {
+        opacity: 0.5;
+      }
+    }
+    /* On the choices' text edge. */
+    & .fold {
+      justify-content: start;
+      padding-inline-start: calc(var(--row-inset) - 2px + var(--check) + var(--space-3));
+      color: var(--text-soft);
+      font: var(--role-caption);
+      @media (hover: hover) {
+        &:hover {
+          color: var(--text);
+        }
+      }
+    }
+    /* The line keeps a control's height with or without a key, so a re-check never moves the rows below. */
+    & .validation {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: var(--control-h);
+      padding-inline: var(--row-inset);
+      font: var(--role-caption);
+      & p {
+        flex: 1;
+        min-width: 0;
+        color: var(--text-soft);
+      }
+      & strong {
+        color: var(--text);
+        font-weight: var(--w-strong);
+      }
+      & .status-dot {
+        margin-inline-end: 4px;
+      }
+    }
+
+    /* Stepper: the value rolls in a recessed track; while the field has focus it is plain text to edit. */
+    & .stepper {
+      --control-h: 28px;
+      --field-min: 5.5rem;
+      display: inline-grid;
+      grid-template-columns: auto minmax(var(--field-min), max-content) auto;
+      align-items: center;
+      padding: 2px;
+      border-radius: var(--r-chrome);
+      background: var(--track);
+      box-shadow: var(--elev-recess);
+      @media (pointer: coarse) {
+        --control-h: 40px;
+      }
+      &.count {
+        --field-min: 3ch;
+      }
+      /* The stepper grows as a whole for touch, so its keys add no hit border. */
+      & .btn {
+        --hit-pad: 0px;
+        width: var(--control-h);
+        border-radius: calc(var(--r-chrome) - 2px);
+        font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+        touch-action: manipulation;
+        user-select: none;
+        &:focus-visible {
+          outline-offset: -2px;
+        }
+      }
+    }
+    & .stepper-field {
+      display: grid;
+      min-width: 0;
+      & > * {
+        grid-area: 1 / 1;
+        align-self: center;
+        text-align: center;
+      }
+      /* The shown value sizes the field; the input only fills it, on top to take clicks and typing. */
+      & input {
+        z-index: 1;
+        width: 0;
+        min-width: 100%;
+        height: var(--control-h);
+        padding: 0 var(--space-1);
+        border-radius: calc(var(--r-chrome) - 2px);
+        caret-color: var(--text);
+        text-align: center;
+        &:not(:focus-visible) {
+          border-color: transparent;
+          background: none;
+          color: transparent;
+        }
+        &:disabled {
+          cursor: not-allowed;
+        }
+      }
+      &:has(input:focus-visible) .stepper-shown {
+        visibility: hidden;
+      }
+      &:has(input:disabled) .stepper-shown {
+        opacity: 0.5;
+      }
+    }
+    & .stepper-shown {
+      font: var(--role-row);
+      pointer-events: none;
+    }
+
+    /* Duration strip: widths follow the times, but never below a segment's own words. */
+    & .duration-strip {
+      display: flex;
+      gap: 2px;
+      padding-block: var(--space-4) var(--space-3);
+    }
+    & .strip-segment {
+      display: grid;
+      flex: var(--ms) 1 0;
+      gap: 2px;
+      transition: flex-grow var(--dur-graph) var(--ease-out);
+    }
+    /* The hues are data, so forced colours keep them. */
+    & .strip-bar {
+      height: 4px;
+      margin-bottom: 6px;
+      border-radius: var(--r-full);
+      background: var(--tone);
+      forced-color-adjust: none;
+    }
+    & :is(.strip-time, .strip-name) {
+      padding-inline-end: var(--space-2);
+      white-space: nowrap;
+    }
+    & .strip-time {
+      font: var(--w-normal) var(--type-md) / 16px var(--font-sans);
+    }
+    & .strip-name {
+      color: var(--text-soft);
+      font: var(--w-normal) var(--type-sm) / 16px var(--font-sans);
+    }
+  }
+  /* A stage that joins grows from its words' width instead of popping in at its share. */
+  @starting-style {
+    .settings .strip-segment {
+      flex-grow: 0;
+    }
+  }
+}

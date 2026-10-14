@@ -203,7 +203,7 @@ impl App {
                 return Ok(self.auth.handle(request, exchange.deadline(), peer).await);
             }
             return Ok(Outcome::Response(match endpoint.ui() {
-                true => self.page(&request),
+                true => self.page(&request, endpoint, peer),
                 false => response::status(StatusCode::NOT_FOUND),
             }));
         };

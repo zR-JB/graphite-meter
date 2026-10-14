@@ -32,7 +32,7 @@ mise run rust-client-run -- --report --url https://meter.example
 | `rust-interop` | Go's QUIC, HTTP/3 and WebTransport peers and the Go TUI against the static Rust server. |
 | `rust-client-interop` | The Rust TUI against Go's server, signed in through Go's approval pages. |
 | `rust-delayed-downloads` | The delayed-link HTTP/3 and WebTransport download gate; a run that measures nothing fails. |
-| `rust-e2e SERVER [GROUP]` | The browser suite against a Rust server executable; `heavy` or `rest` runs half of it, as CI does. |
+| `rust-e2e SERVER [GROUP]` | The browser suite against a Rust server executable; `reversals`, `heavy`, `rest-1` or `rest-2` runs a shard, as CI does. |
 | `rust-container-build` | The server image `graphite-meter:latest-rust` (amd64 build host). |
 | `rust-client-package` | The Linux and Windows TUI archives and their source offers in the pinned builder (amd64 build host). |
 
@@ -47,8 +47,10 @@ performance only between equal optimized profiles.
 
 Local builds embed development notices, so their executables say `UNREVIEWED DEVELOPMENT BUILD` and are not
 distributable; the pinned builder in `container/Dockerfile.rust` makes reviewed release builds
-([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per profile into
-`target/browser/` and reused until a browser input changes.
+([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per client and profile
+into `target/browser/` and reused until a browser input changes. The server embeds browser client v2; `GM_CLIENT=v1`
+makes `rust-server-build`, `rust-server-run`, `dev` and `prod` embed v1 for comparison, and the image always embeds
+v2.
 
 Build-time variables:
 

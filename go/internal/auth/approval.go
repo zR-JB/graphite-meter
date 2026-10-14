@@ -25,6 +25,7 @@ const (
 	maxClientApprovals  = 8
 	maxSessionGrants    = 8
 	approvalLifetime    = 2 * time.Minute
+	grantReplay         = 30 * time.Second
 )
 
 // approval is a pending delegation of a login to a native client, or to one browser origin.
@@ -35,17 +36,22 @@ type approval struct {
 	session       *session
 	expires       time.Time
 	approved      bool
+	// issued is the grant this approval became; its token answers the same verifier again until replayUntil.
+	issued      *grant
+	token       string
+	replayUntil time.Time
 }
 
 // grant is the bearer credential an approval becomes; it ends with its login or on eviction.
 type grant struct {
-	sess   *session
-	key    [32]byte
-	origin string // the browser origin it serves, or "" for a native client
-	id     string
-	seq    uint64
-	ctx    context.Context
-	cancel context.CancelFunc
+	sess      *session
+	key       [32]byte
+	origin    string // the browser origin it serves, or "" for a native client
+	id        string
+	challenge string // the approval that issued it
+	seq       uint64
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 func validChallenge(v string) bool {
@@ -91,23 +97,27 @@ func loginRedirect(w http.ResponseWriter, r *http.Request, challenge string) {
 
 func (s *Service) approvalRoomLocked(sess *session, clients []string, now time.Time) (bool, bool) {
 	maps.DeleteFunc(s.approvals, func(_ string, a *approval) bool { return !now.Before(a.expires) })
-	bySession := 0
+	// An issued approval is bounded by its live grant, so only pending ones count.
+	pending, bySession := 0, 0
 	for a := range maps.Values(s.approvals) {
-		if a.session == sess {
-			bySession++
+		if a.issued == nil {
+			pending++
+			if a.session == sess {
+				bySession++
+			}
 		}
 	}
 	clientFull := transport.ShareFull(clients, maxClientApprovals, func(key string) int {
 		n := 0
 		for a := range maps.Values(s.approvals) {
-			if slices.Contains(a.clients, key) {
+			if a.issued == nil && slices.Contains(a.clients, key) {
 				n++
 			}
 		}
 		return n
 	})
 	// Approvals opened before sign-in leave half the table to signed-in callers.
-	global := len(s.approvals) < maxApprovals && (sess != nil || bySession < maxApprovals/2)
+	global := pending < maxApprovals && (sess != nil || bySession < maxApprovals/2)
 	return bySession < maxSessionApprovals, !clientFull && global
 }
 
@@ -133,9 +143,14 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	a := s.approvals[challenge]
+	// The exchange may extend expires under the lock, so what this page reads of it is taken here.
+	browserOrigin, live := "", false
+	if a != nil {
+		browserOrigin, live = a.browserOrigin, time.Now().Before(a.expires)
+	}
 	s.mu.Unlock()
-	if a != nil && a.browserOrigin != "" && time.Now().Before(a.expires) {
-		query := url.Values{"challenge": {challenge}, "client_origin": {a.browserOrigin}}
+	if browserOrigin != "" && live {
+		query := url.Values{"challenge": {challenge}, "client_origin": {browserOrigin}}
 		http.Redirect(w, r, "/auth/browser?"+query.Encode(), http.StatusSeeOther)
 		return
 	}
@@ -158,10 +173,16 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 			expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = a
 	}
+	// The exchange sets issued under the lock, so it is read here, not after.
+	issued := a != nil && a.issued != nil
 	s.mu.Unlock()
 	if a == nil {
 		s.count(countCapacity)
 		refusePage(w, refusedBusy)
+		return
+	}
+	if issued {
+		refusePage(w, refusedLink)
 		return
 	}
 	render(w, cliTemplate,
@@ -198,12 +219,13 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 			browserOrigin: clientOrigin, clients: clients}
 		s.approvals[challenge] = a
 	}
+	issued := a != nil && a.issued != nil
 	s.mu.Unlock()
 	if a == nil {
 		refusePage(w, refusedBusy)
 		return
 	}
-	if a.browserOrigin != clientOrigin {
+	if a.browserOrigin != clientOrigin || issued {
 		refusePage(w, refusedLink)
 		return
 	}
@@ -219,7 +241,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	sessionRoom, _ := s.approvalRoomLocked(p.session, clients, now)
-	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && sessionRoom)
+	valid = s.approvals[challenge] == a && a.issued == nil && (a.session == p.session || a.session == nil && sessionRoom)
 	refusal := refusedLink
 	if a.session == nil && !sessionRoom {
 		refusal = refusedBusy
@@ -261,7 +283,8 @@ func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
 	browser := r.URL.Path == "/auth/browser/approve"
 	s.mu.Lock()
 	a := s.approvals[r.FormValue("challenge")]
-	if a == nil || a.session != p.session || (a.browserOrigin != "") != browser || !time.Now().Before(a.expires) {
+	if a == nil || a.session != p.session || (a.browserOrigin != "") != browser || !time.Now().Before(a.expires) ||
+		a.issued != nil {
 		s.mu.Unlock()
 		forbidden(w)
 		return
@@ -277,7 +300,8 @@ func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
 	render(w, cliDoneTemplate, map[string]any{"Styles": authStyles, "Browser": browser})
 }
 
-// token exchanges a verifier for a grant; at capacity a native grant evicts only the oldest native one.
+// token exchanges a verifier for a grant, and for the same grant again within grantReplay; at capacity a native grant
+// evicts only the oldest native one.
 func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 	origin, browser := "", r.URL.Path == "/auth/browser/token"
 	if browser {
@@ -326,6 +350,15 @@ func (s *Service) exchangeLocked(verifier, origin string, now time.Time) (string
 		return "", nil, http.StatusAccepted
 	}
 	sess := a.session
+	// A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
+	if a.issued != nil {
+		if now.Before(a.replayUntil) && a.token != "" {
+			return a.token, sess, http.StatusOK
+		}
+		// Past its window the token is no longer kept.
+		a.token = ""
+		return "", nil, http.StatusGone
+	}
 	if len(sess.grants) >= maxSessionGrants {
 		var oldest *grant
 		for g := range maps.Values(sess.grants) {
@@ -341,13 +374,22 @@ func (s *Service) exchangeLocked(verifier, origin string, now time.Time) (string
 	if !a.approved {
 		return "", nil, http.StatusAccepted
 	}
-	delete(s.approvals, challenge)
 	raw := randomToken(32)
 	ctx, cancel := context.WithCancel(sess.ctx)
 	s.grantSeq++
 	g := &grant{sess: sess, key: sha256.Sum256([]byte(raw)), origin: origin, id: randomToken(16), seq: s.grantSeq,
-		ctx: ctx, cancel: cancel}
+		challenge: challenge, ctx: ctx, cancel: cancel}
 	s.grants[g.key], sess.grants[g.key] = g, g
+	a.issued, a.token, a.replayUntil = g, raw, now.Add(grantReplay)
+	// The token is kept for its window only, whether or not it is asked for again.
+	time.AfterFunc(grantReplay, func() {
+		s.mu.Lock()
+		a.token = ""
+		s.mu.Unlock()
+	})
+	if a.expires.Before(a.replayUntil) {
+		a.expires = a.replayUntil
+	}
 	return raw, sess, http.StatusOK
 }
 
@@ -360,6 +402,9 @@ func writeGrantPending(w http.ResponseWriter) {
 func (s *Service) deleteGrantLocked(g *grant) {
 	delete(g.sess.grants, g.key)
 	delete(s.grants, g.key)
+	if a := s.approvals[g.challenge]; a != nil && a.issued == g {
+		delete(s.approvals, g.challenge)
+	}
 	g.cancel()
 }
 

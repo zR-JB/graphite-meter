@@ -180,14 +180,15 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	e := buildEndpoints(ctx, cfg)
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
 	if authn.Enabled() {
-		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
-			cfg.ServerCatalog.ConnectSources()))
+		// Authentication serves the page over HTTPS only.
+		authn.SetConnectOrigins(static.SecureSources(slices.Concat(
+			e.discovery.ConnectOrigins(authn.PublicHostname()), cfg.ServerCatalog.ConnectSources())))
 	}
 	page := static.Handler(authn.Enabled(), cfg.ResultHistoryDefault)
 	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		policy := authn.PagePolicy()
 		if policy == "" {
-			policy = e.discovery.PagePolicy(endpoint.RequestHost(r))
+			policy = e.discovery.PagePolicy(endpoint.RequestHost(r), pageSecure(r, cfg.TrustedProxies))
 		}
 		w.Header().Set("Content-Security-Policy", policy)
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -199,6 +200,15 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	}
 	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa,
 		sockets: sockets}, nil
+}
+
+// pageSecure reports whether the browser loaded the page over HTTPS: on a TLS listener, or through a trusted proxy
+// that says so.
+func pageSecure(r *http.Request, trusted []netip.Prefix) bool {
+	proto := r.Header.Values("X-Forwarded-Proto")
+	forwarded := len(proto) == 1 && strings.TrimSpace(proto[0]) == "https"
+	peer, ok := transport.Peer(r.RemoteAddr)
+	return r.TLS != nil || forwarded && ok && transport.Trusted(peer, trusted)
 }
 
 type listenerBuild struct {

@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export const host = "127.0.0.1";
-export const logs = resolve(import.meta.dir, "../test-results/servers");
+export const logs = resolve("test-results/servers");
 
 export interface Server {
   id: string;
