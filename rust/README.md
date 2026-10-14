@@ -96,8 +96,8 @@ tasks run. Log lines reach stderr from a thread of their own through a 1024-line
 dropped and counted instead of blocking a runtime.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
-WebTransport session per group of up to 16 lanes. Its latency bus, WebSocket or WebTransport, runs beside its prober
-on the multi-thread runtime, away from the lanes. Upload control requests use the throughput check's protocol, on its
+WebTransport session per group of up to 16 lanes. Its prober and latency bus, WebSocket or WebTransport, run on a
+latency runtime of their own, away from the lanes, whose threads run five nice steps lower on Linux. Upload control requests use the throughput check's protocol, on its
 connection except over HTTP/3.
 
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
