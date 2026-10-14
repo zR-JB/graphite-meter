@@ -504,13 +504,47 @@ jobs:
         working-directory: rust
         run: cargo check --locked -p graphite-meter-server
 
+  rust-campaign:
+    name: Temporary review campaign (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 170
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout the merge commit with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0}
+      - name: Set up pinned Python and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cache: 'false'}
+      - name: Install musl headers and compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Build the previous and the updated fork pins
+        run: python3 -m scripts.ci.rust_latency_campaign build
+      - name: Measure the server with each pin
+        run: python3 -m scripts.ci.rust_latency_campaign measure server
+      - name: Measure the client with each pin
+        run: python3 -m scripts.ci.rust_latency_campaign measure client
+      - name: Upload measurements and evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-review-campaign-${{ matrix.runner }}
+          path: rust/target/campaign/results
+          if-no-files-found: error
+          retention-days: 7
+
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, e2e, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-release, rust-windows]
+      rust-e2e, rust-tui, rust-release, rust-windows, rust-campaign]
     steps:
       - name: Require every selected job
         env:
