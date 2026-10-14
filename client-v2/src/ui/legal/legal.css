@@ -1,0 +1,101 @@
+/* The About & legal dialog: a sheet-built modal of the project's facts and the third-party components by ecosystem. */
+@layer components {
+  dialog.legal-dialog {
+    --dialog-width: 880px;
+    --dialog-height: min(86svh, 760px);
+    --panel-pad: var(--space-5);
+  }
+  .legal-body {
+    display: grid;
+    align-content: start;
+    gap: var(--space-6);
+    & .group > .kv + .kv {
+      margin-top: var(--space-2);
+    }
+  }
+  .legal-status {
+    display: grid;
+    place-items: start;
+    gap: var(--space-3);
+    min-height: 10rem;
+    padding-inline: var(--row-inset);
+    color: var(--text-muted);
+    font: var(--role-row);
+  }
+  .third-party {
+    display: grid;
+    gap: var(--space-4);
+    & > .group-head {
+      padding-inline: var(--row-inset);
+    }
+  }
+  .components {
+    --kv-label: 16rem;
+    & dd {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2.4fr);
+      align-items: baseline;
+      gap: 2px var(--space-3);
+    }
+    & .version {
+      font-variant-numeric: tabular-nums;
+    }
+    & .where {
+      display: grid;
+      justify-items: start;
+      gap: 2px;
+      min-width: 0;
+    }
+    & .modified {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 var(--space-2);
+      font-size: var(--type-sm);
+      & > .aside {
+        margin: 0;
+        color: var(--text-soft);
+      }
+    }
+    /* A link's place never wraps: it ends in an ellipsis instead. */
+    & a {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      max-width: 100%;
+      color: var(--text-muted);
+      text-decoration-color: transparent;
+      text-underline-offset: 0.2em;
+      & > span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      & svg {
+        flex: none;
+        width: var(--icon-sm);
+        height: var(--icon-sm);
+      }
+      @media (hover: hover) {
+        &:hover {
+          color: var(--brand-strong);
+          text-decoration-color: currentColor;
+        }
+      }
+    }
+  }
+  @media (max-width: 759px) {
+    dialog.legal-dialog {
+      --panel-pad: var(--space-3);
+    }
+    .components {
+      & dd {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+      & .where {
+        grid-column: 1 / -1;
+      }
+    }
+  }
+}

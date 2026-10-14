@@ -145,10 +145,11 @@ class OfferTests(Scratch):
             ("graphite-meter-server", [package], {}, None),
             ("graphite-meter-server", [package, {"name": "@scope/absent", "version": "2.0.0"}], {},
              r"lacks the source of \[.*npm/@scope/absent-2.0.0/"),
-            ("graphite-meter-server", [], {}, "browser packages exactly when"),
+            # A client bundling no packages inventories none; the fixture's npm source then has no owner.
+            ("graphite-meter-server", [], {}, "neither dependency"),
             ("graphite-meter-server", [package], {f"{top}/third_party/npm/other-1.0.0/index.js": b"x"},
              "neither dependency"),
-            ("graphite-meter-client", [package], {}, "browser packages exactly when"),
+            ("graphite-meter-client", [package], {}, "only the server's source offer inventories browser packages"),
         ):
             with self.subTest(package=name, browser=browser, extra=sorted(extra)):
                 inventory = {"schemaVersion": 1, "package": name, "target": AMD64, "profile": "release",

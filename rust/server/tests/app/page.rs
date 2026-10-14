@@ -67,7 +67,7 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     let (script, style) = (sha256("let theme='dark';"), sha256("html{background:#131518}"));
     let expected = format!(
         "default-src 'self'; script-src 'self' 'sha256-{script}'; style-src 'self' 'sha256-{style}'; \
-         img-src 'self' data:; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; \
+         img-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; \
          form-action 'self'; frame-ancestors 'none'; connect-src 'self' http://speed.example:7246 \
          ws://speed.example:7246"
     );
@@ -85,6 +85,24 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     let tags = "<meta name=\"graphite-meter-auth\" content=\"enabled\">\
                 <meta name=\"graphite-meter-result-history-default\" content=\"false\"></head>";
     assert!(std::str::from_utf8(&auth).unwrap().contains(tags));
+}
+
+#[test]
+fn a_shell_naming_its_trusted_types_policy_has_the_page_require_it() {
+    static SHELL: &[Asset] = &[asset(
+        "index.html",
+        "text/html; charset=utf-8",
+        b"<html><head><meta name=\"graphite-meter-trusted-types\" content=\"graphite-meter\" /></head></html>",
+    )];
+    let required = "frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types graphite-meter; \
+                    connect-src 'self'";
+    assert!(
+        Assets::new(SHELL, notices(), false, false)
+            .policy(&[])
+            .ends_with(required)
+    );
+    let unmarked = Assets::new(FILES, notices(), false, false).policy(&[]);
+    assert!(unmarked.ends_with("frame-ancestors 'none'; connect-src 'self'"), "{unmarked}");
 }
 
 #[tokio::test]
@@ -180,14 +198,28 @@ async fn the_page_connects_to_catalogue_servers_and_offered_targets() {
         ("GM_H3_ADDR", ":7249"),
         ("GM_PUBLIC_ORIGINS", "self"),
         ("GM_SERVER_CATALOG", catalog),
+        ("GM_TRUSTED_PROXIES", "10.0.0.0/8"),
     ];
     let app = served(&env);
-    let response = send(&app, Endpoint::H1, empty(request("GET", "/"))).await;
-    let policy = header(&response, "content-security-policy").unwrap();
-    let connect = policy.rsplit("; ").next().unwrap();
-    let expected = "connect-src 'self' http://other.example:* https://other.example:* ws://other.example:* \
-                    wss://other.example:* https://cdn.other.example:8443 wss://cdn.other.example:8443 \
-                    http://speed.example:7246 https://speed.example:7249 ws://speed.example:7246 \
-                    wss://speed.example:7249";
-    assert_eq!(connect, expected);
+    let plain = "connect-src 'self' http://other.example:* https://other.example:* ws://other.example:* \
+                 wss://other.example:* https://cdn.other.example:8443 wss://cdn.other.example:8443 \
+                 http://speed.example:7246 https://speed.example:7249 ws://speed.example:7246 \
+                 wss://speed.example:7249";
+    // An HTTPS page cannot use a clear-text source on any host but loopback.
+    let secure = "connect-src 'self' https://other.example:* wss://other.example:* https://cdn.other.example:8443 \
+                  wss://cdn.other.example:8443 https://speed.example:7249 wss://speed.example:7249";
+    let proxied = || {
+        let forwarded = request("GET", "/").header("x-real-ip", "198.51.100.8");
+        empty(forwarded.header("x-forwarded-proto", "https"))
+    };
+    for (endpoint, peer, request, expected) in [
+        (Endpoint::H1, "192.0.2.1", empty(request("GET", "/")), plain),
+        (Endpoint::H1Tls, "192.0.2.1", empty(request("GET", "/")), secure),
+        (Endpoint::H1, "10.1.2.3", proxied(), secure),
+        (Endpoint::H1, "192.0.2.1", proxied(), plain),
+    ] {
+        let response = send_from(&app, endpoint, peer, request).await;
+        let policy = header(&response, "content-security-policy").unwrap();
+        assert_eq!(policy.rsplit("; ").next().unwrap(), expected, "{endpoint:?} from {peer}");
+    }
 }

@@ -11,6 +11,7 @@ go = "1.27.2"
 "aqua:astral-sh/ty" = "0.0.86"
 "github:jdx/jactionlint" = "2.1.0"
 "aqua:zizmorcore/zizmor" = "1.30.1"
+"aqua:biomejs/biome" = "2.5.15"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
@@ -47,11 +48,16 @@ CGO_ENABLED = "0"
 description = "Install pinned tools, dependencies, and the commit hook"
 run = [
   "mise install",
-  "cd client && bun install --frozen-lockfile --prefer-offline",
+  { task = "client-install" },
   "cd go && go mod download",
   "git config core.hooksPath .githooks",
   { task = "doctor" },
 ]
+
+[tasks.client-install]
+shell = "bash -e -o pipefail -c"
+description = "Install every browser client's locked dependencies"
+run = 'for client in client client-v2; do (cd "$client" && bun install --frozen-lockfile --prefer-offline); done'
 
 [tasks.doctor]
 description = "Check local, CI, and Docker toolchain drift"
@@ -110,39 +116,46 @@ run = [
   { task = "staticcheck" },
 ]
 
+# GM_CLIENT=v1 points the client, dev, prod and E2E tasks back at client v1 in client/; both define the same scripts.
 [tasks.client-ci]
-description = "Check client formatting, types, dependencies, and tests"
+shell = "bash -e -o pipefail -c"
+description = "Check client formatting, types, dependencies, and tests (GM_CLIENT=v2|v1)"
 run = [
-  "cd client && bun run format:check ../go/internal/auth/assets",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun run format:check',
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
-  "cd client && bun dedupe --dry-run",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun dedupe --dry-run',
   { task = "client-test" },
 ]
 
+[tasks.client-v1-ci]
+description = "Check client v1's formatting, types, dependencies and tests"
+env = { GM_CLIENT = "v1" }
+run = [{ task = "client-ci" }]
+
 [tasks.client-build-dev]
-description = "Build the development client"
-dir = "client"
+shell = "bash -e -o pipefail -c"
+description = "Build the development client (GM_CLIENT=v2|v1)"
 env = { GM_CLIENT_BUILD_PROFILE = "dev", VERSION = false }
-run = "bun run build"
+run = 'client=$(scripts/client-dir.sh); cd "$client"; bun run build'
 
 [tasks.client-build-prod]
-description = "Build the production client"
-dir = "client"
+shell = "bash -e -o pipefail -c"
+description = "Build the production client (GM_CLIENT=v2|v1)"
 env = { GM_CLIENT_BUILD_PROFILE = "prod" }
-run = "bun run build"
+run = 'client=$(scripts/client-dir.sh); cd "$client"; bun run build'
 
+# The notices cover the client the server ships, client v2; client v1 builds are for comparison only.
 [tasks._legal-run]
 hide = true
 usage = 'arg "[mode]" default="check"'
 run = '''
 #!/usr/bin/env sh
 set -eu
-scan=$(mktemp)
 out=$(mktemp -d)
-trap 'rm -f "$scan"; rm -rf "$out"' EXIT
-(cd client && GM_LEGAL_SCAN_OUT="$scan" GM_LEGAL_SCAN_DIR="$out" bun run build:bundle -- --outDir "$out")
-VERSION="${VERSION:-development}" GM_LEGAL_SCAN_MODULES="$scan" python3 -m scripts.legal --mode "$usage_mode"
+trap 'rm -rf "$out"' EXIT
+(cd client-v2 && GM_LEGAL_SCAN_OUT="$out/scan.json" GM_LEGAL_SCAN_DIR="$out/build" bun run build:bundle)
+VERSION="${VERSION:-development}" GM_LEGAL_SCAN_MODULES="$out/scan.json" python3 -m scripts.legal --mode "$usage_mode"
 '''
 
 [tasks.legal-generate]
@@ -160,25 +173,26 @@ usage = 'arg "[mode]" default="audit"'
 run = 'mise run _legal-run "review-${usage_mode?}"'
 
 [tasks.client-check]
-description = "Type-check the client and Bun tests"
-dir = "client"
-run = "bun run check"
+shell = "bash -e -o pipefail -c"
+description = "Type-check the client and Bun tests (GM_CLIENT=v2|v1)"
+run = 'client=$(scripts/client-dir.sh); cd "$client"; bun run check'
 
 [tasks.client-test]
-description = "Run all browser-source unit tests"
-dir = "client"
-run = "bun test src --parallel"
+shell = "bash -e -o pipefail -c"
+description = "Run all browser-source unit tests (GM_CLIENT=v2|v1)"
+run = 'client=$(scripts/client-dir.sh); cd "$client"; bun test src --parallel'
 
 [tasks.client-audit]
-description = "Check the live registry advisory database"
-dir = "client"
-run = "bun audit"
+shell = "bash -e -o pipefail -c"
+description = "Check the live registry advisory database (GM_CLIENT=v2|v1)"
+run = 'client=$(scripts/client-dir.sh); cd "$client"; bun audit'
 
 [tasks.client-watch]
-description = "Run the standalone Vite development server"
-dir = "client"
+shell = "bash -e -o pipefail -c"
+description = "Run the standalone Vite development server of client v1"
 raw = true
-run = "bun run dev"
+dir = "client"
+run = "exec bun run dev"
 
 [tasks.auth-preview]
 shell = "bash -e -o pipefail -c"
@@ -193,14 +207,16 @@ run = 'go run ./internal/auth/cmd/authpreview --mode "${usage_mode?}" --oidc-rea
 
 [tasks._embed-client]
 hide = true
-run = [
-  "rm -rf go/internal/static/dist",
-  "cp -R client/dist go/internal/static/dist",
-  "touch go/internal/static/dist/.gitkeep",
-]
+shell = "bash -e -o pipefail -c"
+run = '''
+client=$(scripts/client-dir.sh)
+rm -rf go/internal/static/dist
+cp -R "$client/dist" go/internal/static/dist
+touch go/internal/static/dist/.gitkeep
+'''
 
 [tasks.server-build-dev]
-description = "Build the development server with embedded client assets"
+description = "Build the development server with embedded client assets (GM_CLIENT=v2|v1)"
 run = [
   { task = "client-build-dev" },
   { task = "_embed-client" },
@@ -209,7 +225,7 @@ run = [
 
 [tasks.server-build-prod]
 shell = "bash -e -o pipefail -c"
-description = "Build the stamped production server with embedded client assets"
+description = "Build the stamped production server with embedded client assets (GM_CLIENT=v2|v1)"
 run = [
   { task = "client-build-prod" },
   { task = "_embed-client" },
@@ -263,28 +279,31 @@ fi
 
 [tasks._e2e-build]
 hide = true
+shell = "bash -e -o pipefail -c"
 env = { GM_CLIENT_BUILD_PROFILE = "prod" }
-run = [
-  "cd client && bun run build:bundle && bun run build:e2e-harness",
-  { task = "_embed-client" },
-  "cd go && go build -trimpath -o ../client/test-results/graphite-meter ./cmd/graphite-meter",
-]
+run = '''
+client=$(scripts/client-dir.sh)
+(cd "$client" && bun run build:bundle)
+mise run _embed-client
+cd go && go build -trimpath -o "../$client/test-results/graphite-meter" ./cmd/graphite-meter
+'''
 
 [tasks.e2e]
-description = "Run the browser suite against one local server fleet (GM_E2E_BROWSER=chrome|firefox)"
-dir = "client"
-run = [{ task = "_e2e-build" }, "bun run scripts/e2e.ts"]
+shell = "bash -e -o pipefail -c"
+description = "Run the browser suite against one local server fleet (GM_CLIENT=v2|v1, GM_E2E_BROWSER=chrome|firefox)"
+run = [{ task = "_e2e-build" }, 'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e']
 
 # CI passes the Rust image's server; mise run rust-server-build builds one here.
 [tasks.rust-e2e]
 shell = "bash -e -o pipefail -c"
-description = "Run Chromium against one local fleet of a Rust server executable"
+description = "Run Chromium against one local fleet of a Rust server executable (GM_CLIENT=v2|v1)"
 usage = '''
 arg "<server>" help="The server executable, such as rust/target/release/graphite-meter-server"
 arg "[group]" default="all" help="all; reversals or heavy: halves of performance.test.ts; rest-1 or rest-2: halves of the other files"
 '''
 env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = '''
+client=$(scripts/client-dir.sh)
 export GM_E2E_SERVER_BIN=$(realpath "$usage_server")
 # The surface reversals run serially under CPU throttling, so performance.test.ts splits by test name; the other
 # files split into two shards of equal time by e2e/timings.json, which --update-timings refreshes.
@@ -297,25 +316,24 @@ case "$usage_group" in
     "--shard=${usage_group#rest-}/2" --timings=e2e/timings.json ;;
   *) echo "group must be all, reversals, heavy, rest-1 or rest-2" >&2; exit 2 ;;
 esac
-cd client
-bun run build:e2e-harness
-bun run scripts/e2e.ts "$@"
+cd "$client"
+bun run e2e "$@"
 '''
 
 [tasks.bench-ui]
-description = "Measure UI frame delivery against the local server fleet (manual)"
-dir = "client"
+shell = "bash -e -o pipefail -c"
+description = "Measure UI frame delivery against the local server fleet (manual; GM_CLIENT=v2|v1)"
 run = [
   { task = "_e2e-build" },
-  "bun run scripts/e2e.ts bun test ./bench/ui.bench.ts --no-orphans --timeout=600000",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e bun test ./bench/ui.bench.ts --no-orphans --timeout=600000',
 ]
 
 [tasks.bench-session]
-description = "Measure retained browser resources across repeated tests (manual)"
-dir = "client"
+shell = "bash -e -o pipefail -c"
+description = "Measure retained browser resources across repeated tests (manual; GM_CLIENT=v2|v1)"
 run = [
   { task = "_e2e-build" },
-  "bun run scripts/e2e.ts bun test ./bench/session.bench.ts --no-orphans --timeout=600000",
+  'client=$(scripts/client-dir.sh); cd "$client"; bun run e2e bun test ./bench/session.bench.ts --no-orphans --timeout=600000',
 ]
 
 [tasks.stress]
@@ -331,14 +349,16 @@ run = [
   "cd client && bun run src/lib/runner/real/wire.bench.ts",
 ]
 
+# The throughput and server benchmarks drive client v1's bench page.
 [tasks.bench-throughput]
 shell = "bash -e -o pipefail -c"
 description = "Measure throughput cells against the local server fleet (manual)"
 dir = "client"
+env = { GM_CLIENT = "v1" }
 usage = 'arg "[filter]" default=""'
 run = [
   { task = "_e2e-build" },
-  'GM_BENCH_FILTER="${usage_filter?}" bun run scripts/e2e.ts bun test ./bench/throughput.bench.ts --no-orphans --timeout=1800000',
+  'GM_BENCH_FILTER="${usage_filter?}" bun run e2e bun test ./bench/throughput.bench.ts --no-orphans --timeout=1800000',
 ]
 
 [tasks.codeql]
@@ -348,6 +368,7 @@ run = "scripts/codeql.sh"
 
 [tasks.bench-servers]
 description = "Measure one, two, and four real servers in isolated Linux network namespaces (manual)"
+env = { GM_CLIENT = "v1" }
 run = [
   { task = "server-build-prod" },
   "bash client/bench/server-collection.sh",
@@ -374,7 +395,7 @@ usage = 'arg "[version]" default="development"'
 run = 'scripts/release-artifacts.sh "$usage_version"'
 
 [tasks.container-smoke]
-description = "Build and smoke-test the local production image"
+description = "Build and smoke-test the local production image (GM_CLIENT=v2|v1)"
 env = { VERSION = "0.0.0-ci", GM_CLIENT_REVISION = "local" }
 run = [
   { task = "container-build", args = ["graphite-meter:smoke"] },
@@ -435,9 +456,10 @@ exec "$@"'''
 
 [tasks.dev]
 shell = "bash -e -o pipefail -c"
-description = "Build the development client and run the embedded server (GM_IMPLEMENTATION=go|rust)"
+description = "Build the development client and run the embedded server (GM_CLIENT=v2|v1, GM_IMPLEMENTATION=go|rust)"
 raw = true
 run = '''
+scripts/client-dir.sh >/dev/null
 case "${GM_IMPLEMENTATION:-go}" in
   go)
     mise run client-build-dev
@@ -451,9 +473,10 @@ exec "$@"'''
 
 [tasks.prod]
 shell = "bash -e -o pipefail -c"
-description = "Build the production client and run the stamped server (GM_IMPLEMENTATION=go|rust)"
+description = "Build the production client and run the stamped server (GM_CLIENT=v2|v1, GM_IMPLEMENTATION=go|rust)"
 raw = true
 run = '''
+scripts/client-dir.sh >/dev/null
 version=$(scripts/build-version.sh)
 case "${GM_IMPLEMENTATION:-go}" in
   go)
@@ -471,15 +494,16 @@ esac
 exec "$@"'''
 
 [tasks.container-build]
-description = "Build the production Docker or Podman image"
+description = "Build the production Docker or Podman image (GM_CLIENT=v2|v1)"
 usage = 'arg "[tag]" default="graphite-meter:latest"'
 run = '''
 #!/usr/bin/env sh
 set -eu
+scripts/client-dir.sh >/dev/null
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
 "$engine" build -f container/Dockerfile -t "$usage_tag" --build-arg VERSION="${VERSION:-$revision}" \
-  --build-arg CLIENT_VERSION="${VERSION:-}" \
+  --build-arg CLIENT_VERSION="${VERSION:-}" --build-arg GM_CLIENT="${GM_CLIENT:-v2}" \
   --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
   --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
 '''
@@ -493,10 +517,12 @@ run = "cargo fmt --all"
 # distributable. The build tasks use the release profile, the run tasks the ci profile (no LTO, 16 codegen units).
 [tasks.rust-server-build]
 shell = "bash -e -o pipefail -c"
-description = "Build the Rust server, rust/target/release/graphite-meter-server, with the production browser app"
+description = "Build rust/target/release/graphite-meter-server with the production browser app (GM_CLIENT=v2|v1)"
 run = '''
 version=$(scripts/build-version.sh)
-python3 -m scripts.rust_build --package graphite-meter-server --profile release --browser prod --version "$version"
+client=$(scripts/client-dir.sh)
+python3 -m scripts.rust_build --package graphite-meter-server --profile release --browser prod --client "$client" \
+  --version "$version"
 '''
 
 [tasks.rust-client-build]
@@ -508,12 +534,14 @@ python3 -m scripts.rust_build --package graphite-meter-client --profile release 
 '''
 
 [tasks.rust-server-run]
-description = "Run the Rust server (ci profile) with the development browser app; arguments after -- go to the server"
+shell = "bash -e -o pipefail -c"
+description = "Run the Rust server (ci profile) with the development browser app (GM_CLIENT=v2|v1); arguments after -- go to it"
 raw = true
-run = [
-  "python3 -m scripts.rust_build --package graphite-meter-server --profile ci --browser dev",
-  "cd rust && exec target/ci/graphite-meter-server",
-]
+run = '''
+client=$(scripts/client-dir.sh)
+python3 -m scripts.rust_build --package graphite-meter-server --profile ci --browser dev --client "$client"
+cd rust
+exec target/ci/graphite-meter-server'''
 
 [tasks.rust-client-run]
 description = "Run the Rust TUI (ci profile); arguments after -- go to the client"
@@ -530,6 +558,10 @@ usage = 'arg "[tag]" default="graphite-meter:latest-rust"'
 run = '''
 #!/usr/bin/env sh
 set -eu
+if [ "${GM_CLIENT:-v2}" != v2 ]; then
+  echo "the Rust image embeds client v2" >&2
+  exit 2
+fi
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
 # One VERSION stamps the server, the browser app and SOURCE.txt.

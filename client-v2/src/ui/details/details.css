@@ -1,0 +1,67 @@
+/* The Details sheet's body: groups of facts, path rows with their status, and the masked address with its key. */
+@layer components {
+  .infra {
+    display: grid;
+    gap: var(--space-5);
+
+    & .path dd {
+      display: grid;
+      gap: 2px;
+    }
+    & .path-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-soft);
+      font: var(--role-caption);
+    }
+    & .list {
+      display: grid;
+    }
+    & .kv button.link-row {
+      min-height: var(--row-h);
+      text-align: start;
+    }
+    /* Both labels share one cell, so the row never reflows. */
+    & .copy {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      & > span {
+        grid-area: 1 / 1;
+      }
+      & > .hidden {
+        visibility: hidden;
+      }
+    }
+    /* The key stays on the value's line however the row wraps; until it is pressed the page holds only the mask. */
+    & .secret {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    /* The address breaks after a colon, and its aside wraps onto the value's edge, not an indent. */
+    & .secret-text {
+      display: flex;
+      flex: 1;
+      flex-wrap: wrap;
+      align-items: baseline;
+      column-gap: var(--space-2);
+      min-width: 0;
+      & .aside {
+        margin-inline-start: 0;
+      }
+    }
+    & .secret-mask {
+      color: var(--text-soft);
+      letter-spacing: var(--track-wide);
+    }
+    /* The glyph, not the key's plate, lines up with the sheet's text edge, as a link row's icon does. */
+    & .secret-key {
+      flex: none;
+      margin-inline-end: calc((var(--icon) - var(--control-h)) / 2 - var(--hit-pad));
+      &:not([aria-pressed="true"]) .strike {
+        display: none;
+      }
+    }
+  }
+}

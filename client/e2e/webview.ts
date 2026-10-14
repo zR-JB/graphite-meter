@@ -19,7 +19,7 @@ interface ElementState {
   attrs: Record<string, string>;
 }
 
-const artifacts = resolve(import.meta.dir, "../test-results/webview");
+const artifacts = resolve("test-results/webview");
 // JSON is already a valid JavaScript expression for CDP evaluation.
 const encode = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
@@ -667,10 +667,7 @@ export const test = Object.assign(pageTest, {
   ) => pageTest(name, fn, { ...options, chrome: true }),
 });
 
-const axeSource = resolve(
-  import.meta.dir,
-  "../node_modules/axe-core/axe.min.js",
-);
+const axeSource = resolve("node_modules/axe-core/axe.min.js");
 // Contrast and pointer targets are judged on settled layout, not mid-way through a transition.
 export function settled() {
   const finite = document

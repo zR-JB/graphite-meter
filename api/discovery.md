@@ -45,9 +45,9 @@ require.
 
 Protected servers expose `/auth/browser`, `/auth/browser/approve` and `/auth/browser/token`. The requesting page
 needs an exact HTTPS origin. Login and CSRF-protected approval run on the issuing server; the requester polls a
-verifier-bound exchange for the single-use approval. The resulting bearer grant stays in memory, is bound to the
-requesting origin and the parent login's lifetime, works only on the issuer's own hostname, and is revoked by
-logout. It does not authorize `/servers`.
+verifier-bound exchange for the approval, which issues one grant. The resulting bearer grant stays in memory, is
+bound to the requesting origin and the parent login's lifetime, works only on the issuer's own hostname, and is
+revoked by logout. It does not authorize `/servers`.
 
 Both pages show the same comparison code: the first five SHA-256 bytes of the verifier as unpadded RFC 4648 base32
 (eight characters). The verifier never leaves the requester.
@@ -57,14 +57,15 @@ Both pages show the same comparison code: the first five SHA-256 bytes of the ve
 | Grants per login | 8, native and browser together. At capacity a native exchange replaces the login's oldest native grant; a browser exchange, or a native one when all 8 are browser grants, answers HTTP 429 without evicting one. Explicit renewal revokes the old grants and their connections. |
 | Pending approvals | 8 per login, 8 per client, 256 in total of which at most 128 opened before sign-in; each expires after 2 minutes. |
 | Socket tickets | Single use, ≤ 30 s, at most 8 outstanding per login. |
+| Repeated exchange | For 30 s after the grant was issued, the same verifier from the same origin gets the same grant again, so a requester whose answer was lost can ask again; it counts once toward the 8. Afterwards the exchange answers `410` until the approval would have expired. An issued approval's page and approval refuse. |
 
 The exchanges and the session read answer JSON; a native `expires` is an RFC 3339 time, a browser one epoch
 milliseconds:
 
 | Request | Answers |
 | --- | --- |
-| `POST /auth/cli/token` `{"verifier": "…"}` (≤ 128 bytes) | `202 {"status":"pending"}` until approved, also for a malformed body; `200 {"token", "expires"}`; `429` at grant capacity. |
-| `POST /auth/browser/token` `{"verifier": "…"}` (32–128 bytes) from an exact HTTPS `Origin` | `202 {"status":"pending"}` until approved; `200 {"token", "expires", "remainingMs", "maximumLifetimeMs"}`; `429` at grant capacity; `403` for a malformed body or origin. |
+| `POST /auth/cli/token` `{"verifier": "…"}` (≤ 128 bytes) | `202 {"status":"pending"}` until approved, also for a malformed body; `200 {"token", "expires"}`; `410` once a repeated exchange's 30 s have passed; `429` at grant capacity. |
+| `POST /auth/browser/token` `{"verifier": "…"}` (32–128 bytes) from an exact HTTPS `Origin` | `202 {"status":"pending"}` until approved; `200 {"token", "expires", "remainingMs", "maximumLifetimeMs"}`; `410` once a repeated exchange's 30 s have passed; `429` at grant capacity; `403` for a malformed body or origin. |
 | `GET /auth/session` with the session cookie | `200 {"name", "provider", "expires", "csrf", "remainingMs", "maximumLifetimeMs"}`; `403` without a session. |
 
 Auth routes read at most 4 KiB of request body and answer with `Cache-Control: no-store`, `X-Frame-Options: DENY`

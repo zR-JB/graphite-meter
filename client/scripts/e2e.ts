@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
+// Paths resolve from the client folder the suite runs in, so both clients share this runner.
 const bin =
-  process.env.GM_E2E_SERVER_BIN ??
-  resolve(import.meta.dir, "../test-results/graphite-meter");
+  process.env.GM_E2E_SERVER_BIN ?? resolve("test-results/graphite-meter");
 if (!(await Bun.file(bin).exists()))
-  throw new Error(`${bin} is missing; build it with mise run e2e`);
+  throw new Error(
+    `${bin} is missing; build it with mise run e2e (GM_CLIENT=v1 for client v1)`,
+  );
 // CI runs the browser mise.toml pins; a local run takes whichever is installed.
 for (const [path, expected, name] of [
   [
@@ -81,7 +83,7 @@ const children = await Promise.all(
   fleet.map((server, i) => launch(launched, server, environments[i])),
 );
 
-const root = resolve(import.meta.dir, "../.e2e-dist");
+const root = resolve(".e2e-dist");
 const harness = Bun.serve({
   hostname: host,
   port: 0,
@@ -132,7 +134,6 @@ const suite = Bun.spawn(
     ? command
     : [process.execPath, "run", "test:e2e", `--parallel=${workers}`],
   {
-    cwd: resolve(import.meta.dir, ".."),
     stdio: ["inherit", "inherit", "inherit"],
     env: {
       ...process.env,

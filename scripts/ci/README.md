@@ -23,7 +23,8 @@ narrow PR runs only; every push to main runs every job. Each job runs on the
 filter `workflow_policy.py` names for it, and a filter never selects a job
 without the jobs it needs, which the Gate would pass as skipped. The Checks job
 runs the quick gates together, each step on the filter the policy names for its
-task.
+task. `code` covers browser client v2 and the static files and E2E harness
+modules it shares from `client/`; client v1 has no CI jobs.
 
 ## Releases
 
@@ -87,7 +88,7 @@ and a source-availability note naming them. A prerelease publishes only its
 images and creates no GitHub Release. Go's and Rust's prerelease images both
 ship their notices, name the repository in `SOURCE.txt` and the built commit in
 their `revision` label; that commit's lockfiles (`go/go.sum`,
-`client/bun.lock`, `rust/Cargo.lock` with the forks in
+`client-v2/bun.lock`, `rust/Cargo.lock` with the forks in
 `legal/rust-forks.json`) pin the third-party source they were built from.
 
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
@@ -151,9 +152,12 @@ Dependabot and run the checks above.
 The hook refuses commits to `main` and whitespace errors, and scans the index
 with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
 paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
-select the full `check`. The checks run on the exact staged tree in a disposable
-worktree with frozen client dependencies. `workflow-check` refuses tracked TLS
-key and certificate names and PEM material.
+select the full `check`; `client-v2/`, the E2E harness modules it imports
+from v1 and the auth assets it generates (`go/internal/auth/assets/`) select
+`client-ci`, and `client/` selects `client-v1-ci`. The checks run on the exact staged tree
+in a disposable worktree with both clients' frozen dependencies.
+`workflow-check` refuses tracked TLS key and certificate names and PEM
+material.
 
 ## Python and dependencies
 

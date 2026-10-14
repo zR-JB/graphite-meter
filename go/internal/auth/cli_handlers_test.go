@@ -185,7 +185,7 @@ func TestCliApprove(t *testing.T) {
 	}
 }
 
-func TestCLIExchangeIsSingleUse(t *testing.T) {
+func TestCLIExchangeIssuesOneGrant(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("subject", "Name", "local")
 	if rr := cliExchange(s, `{"verifier":"not-known"}`); rr.Code != http.StatusAccepted || len(s.approvals) != 0 {
@@ -207,8 +207,23 @@ func TestCLIExchangeIsSingleUse(t *testing.T) {
 	if _, ok := s.authenticateGrant(out.Token); !ok {
 		t.Fatal("grant not accepted")
 	}
-	if replay := cliExchange(s, `{"verifier":"terminal-verifier"}`); replay.Code != http.StatusAccepted {
-		t.Fatalf("replay code=%d, want 202", replay.Code)
+	// The same token again; its remaining time may have moved on.
+	replay := cliExchange(s, `{"verifier":"terminal-verifier"}`)
+	var again struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(replay.Body.Bytes(), &again); replay.Code != http.StatusOK || err != nil ||
+		again.Token != out.Token || len(sess.grants) != 1 {
+		t.Fatalf("repeated exchange code=%d grants=%d, want the same grant", replay.Code, len(sess.grants))
+	}
+	if w := serveMounted(s, cliPageRequest(challengeFor("terminal-verifier"), raw)); w.Code != http.StatusForbidden {
+		t.Fatalf("issued approval page = %d, want 403", w.Code)
+	}
+	s.mu.Lock()
+	_, _, late := s.exchangeLocked("terminal-verifier", "", time.Now().Add(grantReplay))
+	s.mu.Unlock()
+	if late != http.StatusGone {
+		t.Fatalf("exchange after the replay window = %d, want 410", late)
 	}
 }
 

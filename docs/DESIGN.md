@@ -88,9 +88,10 @@ page, white panels, ink controls. **Gamut.** Base values fit sRGB; `@media (colo
 status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more` strengthens subtle
 edges and `--text-soft`.
 
-The auth pages keep a pinned copy of the page, ink, text and latency tokens and of the Plex Sans and Plex Mono 600
-faces (`go/internal/auth/assets/auth.css`; those two font files are the only ones served before sign-in), notices are
-app.css's `.notice`, and every page's card starts at one height so a notice grows it downward. The sign-in card is a
+The auth pages' assets are generated from client v2 (`client-v2/auth`, written to `go/internal/auth/assets`): their
+stylesheet carries the tokens its rules use and the Plex Sans and Plex Mono 600 faces (those two font files are the
+only ones served before sign-in), their brand mark and favicon stroke the hexagon in the latency hue, notices are
+the app's `.notice`, and every page's card starts at one height so a notice grows it downward. The sign-in card is a
 faceplate: the dial at rest with a lock at its centre, over a centred title and the host the page was reached at in
 Plex Mono, filled by script so nothing is disclosed. While a sign-in is checked the ring sweeps in the latency hue,
 its bead ahead, and the key dims rather than spin; a dial that a short screen hides leaves the spinner to the key. The

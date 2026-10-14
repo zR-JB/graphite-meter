@@ -57,7 +57,8 @@ func noticeFor(why reason) notice {
 		return noticePassword
 	case reasonClientAddress:
 		return noticeProxy
-	case reasonCSRFCookieMissing, reasonCSRFTokenMissing, reasonTransactionCookie:
+	// A mismatched token usually means a second sign-in tab replaced the login cookie this form was made for.
+	case reasonCSRFCookieMissing, reasonCSRFTokenMissing, reasonCSRFTokenMismatch, reasonTransactionCookie:
 		return noticeStale
 	}
 	return noticeGeneric

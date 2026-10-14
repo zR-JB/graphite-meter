@@ -189,7 +189,7 @@ class LegalTests(unittest.TestCase):
         module = root / "dist/index.js"
         self.assertEqual(package_root(str(module)), root)
         scan = self.write("scan.json", json.dumps([str(module), str(module), "/app/src/main.ts"]))
-        components = discover_browser(scan, [])
+        components = discover_browser([scan], [])
         self.assertEqual(len(components), 1)
         self.assertEqual((components[0].name, components[0].source),
                          ("@scope/package", "https://example.invalid/package"))
@@ -198,6 +198,17 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(source_for("github.com/example/module"), "https://github.com/example/module")
         self.assertEqual(source_for("anything", "explicit"), "explicit")
         self.assertEqual(source_for("charm.land/lipgloss/v2"), "https://github.com/charmbracelet/lipgloss")
+
+    def test_browser_scans_of_both_clients_form_one_scope(self) -> None:
+        modules = []
+        for name in ("shared", "only-v2"):
+            metadata = {"name": name, "version": "1", "license": "MIT"}
+            self.write(f"node_modules/{name}/package.json", json.dumps(metadata))
+            self.write(f"node_modules/{name}/LICENSE", "MIT License\n")
+            modules.append(str(self.root / f"node_modules/{name}/index.js"))
+        v1 = self.write("v1.json", json.dumps([modules[0], "/app/client/src/main.ts"]))
+        v2 = self.write("v2.json", json.dumps(modules))
+        self.assertEqual([item.name for item in discover_browser([v1, v2], [])], ["only-v2", "shared"])
 
     def test_browser_scan_identifies_exact_patched_packages_in_isolated_installs(self) -> None:
         self.write("client/package.json", json.dumps({
@@ -209,11 +220,11 @@ class LegalTests(unittest.TestCase):
             self.write(f"{root}/LICENSE", "MIT License\n")
             modules.append(str(self.root / root / "index.js"))
         scan = self.write("scan.json", json.dumps(modules))
-        components = {item.name: item for item in discover_browser(scan, [])}
+        components = {item.name: item for item in discover_browser([scan], [])}
         self.assertTrue(components["svelte"].modified)
         self.assertFalse(components["esm-env"].modified)
         self.write("client/package.json", json.dumps({"patchedDependencies": {"svelte@5.57.0": "old.patch"}}))
-        self.assertFalse(next(item for item in discover_browser(scan, []) if item.name == "svelte").modified)
+        self.assertFalse(next(item for item in discover_browser([scan], []) if item.name == "svelte").modified)
 
     def test_go_targets_and_replacements_preserve_scope(self) -> None:
         targets = go_discovery_targets(ROOT)

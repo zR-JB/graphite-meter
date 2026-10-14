@@ -14,7 +14,7 @@ inputs:
     required: false
     default: 'false'
   client-deps:
-    description: Install frozen client dependencies
+    description: Install every browser client's frozen dependencies
     required: false
     default: 'false'
   rust:
@@ -35,6 +35,10 @@ inputs:
     default: 'false'
   gitleaks:
     description: Include pinned Gitleaks
+    required: false
+    default: 'false'
+  biome:
+    description: Include pinned Biome, client v2's formatter
     required: false
     default: 'false'
   cargo-deny:
@@ -58,6 +62,7 @@ runs:
         INCLUDE_STATICCHECK: ${{ inputs.staticcheck }}
         INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
         INCLUDE_GITLEAKS: ${{ inputs.gitleaks }}
+        INCLUDE_BIOME: ${{ inputs.biome }}
         INCLUDE_CARGO_DENY: ${{ inputs.cargo-deny }}
         INCLUDE_CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
       run: |
@@ -68,6 +73,7 @@ runs:
         if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(go:honnef.co/go/tools/cmd/staticcheck); fi
         if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
         if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
+        if [[ "$INCLUDE_BIOME" == true ]]; then tools+=(aqua:biomejs/biome); fi
         if [[ "$INCLUDE_CARGO_DENY" == true ]]; then tools+=(aqua:EmbarkStudios/cargo-deny); fi
         if [[ "$INCLUDE_CARGO_NEXTEST" == true ]]; then tools+=(aqua:nextest-rs/nextest/cargo-nextest); fi
         printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
@@ -137,12 +143,12 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock', 'client-v2/bun.lock') }}
 
     - name: Install client dependencies
       if: inputs.client-deps == 'true'
       shell: bash
-      run: cd client && bun install --frozen-lockfile --prefer-offline
+      run: mise run client-install
 
     - name: Install and verify the pinned Rust toolchain
       if: inputs.rust == 'true'

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/testkit"
@@ -60,10 +62,57 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 		t.Fatalf("invalid grant: %v %s", err, w.Body.String())
 	}
 	w = testkit.Record(handler.ServeHTTP, browserExchangeRequest(verifier, requestingUI))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("approval replay: %d", w.Code)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"token":"`+result.Token+`"`) {
+		t.Fatalf("repeated exchange: %d %s", w.Code, w.Body.String())
 	}
 	return result.Token, verifier
+}
+
+// An exchange whose answer was lost is asked again: the same verifier and origin get the same grant for a short
+// while, which spends one of the login's grants once, and a clear refusal after.
+func TestRepeatedBrowserExchangeReturnsTheSameGrantBriefly(t *testing.T) {
+	s := testService(t)
+	raw, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grant, verifier string
+	for range maxSessionGrants {
+		grant, verifier = approveBrowser(t, s, raw, sess)
+	}
+	challenge := challengeFor(verifier)
+	for _, exchange := range []struct {
+		r    *http.Request
+		want int
+	}{
+		{browserExchangeRequest(verifier, requestingUI), http.StatusOK},
+		{browserExchangeRequest(verifier, "https://wrong.example"), http.StatusAccepted},
+		{secureRequest(http.MethodPost, "/auth/cli/token", strings.NewReader(`{"verifier":"`+verifier+`"}`)),
+			http.StatusAccepted},
+	} {
+		if w := serveMounted(s, exchange.r); w.Code != exchange.want ||
+			w.Code == http.StatusOK && !strings.Contains(w.Body.String(), grant) {
+			t.Fatalf("repeated exchange = %d %s, want %d", w.Code, w.Body.String(), exchange.want)
+		}
+	}
+	if len(sess.grants) != maxSessionGrants {
+		t.Fatalf("repeated exchanges hold %d grants, want %d", len(sess.grants), maxSessionGrants)
+	}
+	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+	if w := serveMounted(s, withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)); w.Code != 403 {
+		t.Fatalf("issued approval page = %d, want 403", w.Code)
+	}
+	if w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, raw, sess)); w.Code != 403 {
+		t.Fatalf("issued approval approved again = %d, want 403", w.Code)
+	}
+	s.mu.Lock()
+	_, _, late := s.exchangeLocked(verifier, requestingUI, time.Now().Add(grantReplay))
+	s.deleteGrantLocked(sess.grants[sha256.Sum256([]byte(grant))])
+	_, _, revoked := s.exchangeLocked(verifier, requestingUI, time.Now())
+	s.mu.Unlock()
+	if late != http.StatusGone || revoked != http.StatusAccepted {
+		t.Fatalf("exchange after the window = %d, after revocation = %d, want 410 and 202", late, revoked)
+	}
 }
 
 func browserBearerRequest(path, grant, origin string) *http.Request {

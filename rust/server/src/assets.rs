@@ -51,6 +51,8 @@ pub struct Assets {
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
+    /// The policy's Trusted Types directives, when the index names its policy; client v1's names none.
+    trusted_types: Option<String>,
 }
 
 impl Assets {
@@ -70,6 +72,9 @@ impl Assets {
                 None => format!("{directive} 'self'"),
             }
         });
+        let trusted_types = index
+            .and_then(trusted_types_policy)
+            .map(|name| format!("require-trusted-types-for 'script'; trusted-types {name}"));
         let auth = if auth {
             "<meta name=\"graphite-meter-auth\" content=\"enabled\">"
         } else {
@@ -93,7 +98,14 @@ impl Assets {
                 (file.path, File { plain: tagged(file), encoded })
             })
             .collect();
-        Self { files, notices, notice_tag: OnceLock::new(), index, inline }
+        Self {
+            files,
+            notices,
+            notice_tag: OnceLock::new(),
+            index,
+            inline,
+            trusted_types,
+        }
     }
 
     /// The file at `path`, a request path without its query, as `request` asks for it: `/` is the index, only exact
@@ -162,15 +174,18 @@ impl Assets {
             "default-src 'self'",
             script,
             style,
-            "img-src 'self' data:",
+            "img-src 'self'",
             "font-src 'self'",
             "worker-src 'self'",
             "object-src 'none'",
             "base-uri 'none'",
             "form-action 'self'",
             "frame-ancestors 'none'",
-            &connect,
         ]
+        .into_iter()
+        .chain(self.trusted_types.as_deref())
+        .chain([connect.as_str()])
+        .collect::<Vec<_>>()
         .join("; ")
     }
 }
@@ -181,6 +196,15 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let (_, content) = html.split_once(&format!("<{tag}>"))?;
     let (content, _) = content.split_once(&format!("</{tag}>"))?;
     Some(STANDARD.encode(Sha256::digest(content.as_bytes())))
+}
+
+/// The policy name the index's Trusted Types marker carries.
+fn trusted_types_policy(html: &[u8]) -> Option<&str> {
+    let html = std::str::from_utf8(html).ok()?;
+    let (_, marker) = html.split_once("<meta name=\"graphite-meter-trusted-types\" content=\"")?;
+    let (name, _) = marker.split_once('"')?;
+    let valid = |byte: u8| byte.is_ascii_alphanumeric() || b"-_".contains(&byte);
+    (!name.is_empty() && name.bytes().all(valid)).then_some(name)
 }
 
 /// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
@@ -225,5 +249,21 @@ fn none_match(mut header: &str, tag: Option<&HeaderValue>) -> bool {
             return true;
         }
         header = &quoted[end + 1..];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_marker_with_a_valid_name_names_a_trusted_types_policy() {
+        let marker =
+            |name: &str| format!("<head><meta name=\"graphite-meter-trusted-types\" content=\"{name}\" /></head>");
+        assert_eq!(trusted_types_policy(marker("graphite-meter").as_bytes()), Some("graphite-meter"));
+        for invalid in ["", "a b", "a'; script-src *"] {
+            assert_eq!(trusted_types_policy(marker(invalid).as_bytes()), None, "{invalid}");
+        }
+        assert_eq!(trusted_types_policy(b"<head></head>"), None);
     }
 }
