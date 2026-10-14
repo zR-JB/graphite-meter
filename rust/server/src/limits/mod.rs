@@ -124,7 +124,7 @@ impl Quotas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::Holder;
+    use crate::auth::{Holder, Principal};
 
     fn limits() -> Limits {
         Limits {
@@ -165,13 +165,13 @@ mod tests {
 
     #[test]
     fn window_credit_covers_eight_connection_windows_per_client() {
-        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal("op".into())));
+        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal(Principal::operator())));
         let source = client("2001:db8::1");
         let funded: Vec<_> = (0..8)
             .map(|_| quotas.credit(&source, CONNECTION_CREDIT).unwrap())
             .collect();
         assert!(quotas.credit(&source, 1).is_none());
-        let operator = |id: &str| ClientKeys::Auth(Holder::Login(id.into()), "op".into());
+        let operator = |id: &str| ClientKeys::Auth(Holder::Login(id.into()), Principal::operator());
         let logins: Vec<_> = ["a", "b", "c"]
             .map(|id| quotas.credit(&operator(id), 8 * CONNECTION_CREDIT))
             .into();

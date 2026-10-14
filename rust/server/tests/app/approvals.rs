@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::approval::challenge;
-use graphite_meter_server::auth::NewLogin;
+use graphite_meter_server::auth::{NewLogin, Principal};
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
 
@@ -27,7 +27,7 @@ async fn page(app: &App, path: &str, login: Option<&NewLogin>) -> Response<Body>
 async fn approve(app: &App, path: &str, login: &NewLogin, challenge: &str) -> Response<Body> {
     let request = signed("POST", path, login)
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(Full::new(Bytes::from(format!("csrf={}&challenge={challenge}", login.csrf))))
+        .body(Full::new(Bytes::from(format!("csrf={}&challenge={challenge}", login.csrf.as_str()))))
         .unwrap();
     tls(app, request).await
 }
@@ -52,7 +52,7 @@ async fn pending(response: Response<Body>) -> bool {
 #[tokio::test]
 async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     let app = auth_app(&[]);
-    let operator = login(&app, "operator");
+    let operator = login(&app, Principal::operator());
     let approval = challenge(VERIFIER);
     let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
     assert_eq!(location(&page(&app, &path, None).await), format!("/login?challenge={approval}"));

@@ -1,6 +1,6 @@
 //! The store of logins, grants and one-use socket tickets; raw credentials go only to their issuer, keyed by SHA-256.
 
-use super::{AuthLease, Holder, Via, approval::Approval};
+use super::{AuthLease, Holder, Principal, Via, approval::Approval};
 use crate::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_proto::token::SocketTicket;
@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// A login lasts this long from sign-in.
 pub const LOGIN_LIFETIME: Duration = Duration::from_hours(8);
 const MAX_LOGINS: usize = 1024;
-const MAX_SUBJECT_LOGINS: usize = 8;
+const MAX_PRINCIPAL_LOGINS: usize = 8;
 pub(super) const MAX_LOGIN_GRANTS: usize = 8;
 const MAX_LOGIN_TICKETS: usize = 8;
 const TICKET_LIFETIME: Duration = Duration::from_secs(30);
@@ -36,11 +36,48 @@ impl fmt::Debug for LoginKey {
     }
 }
 
+/// Credentials, which never print.
+macro_rules! secret {
+    ($($(#[$meta:meta])* $name:ident,)+) => {$(
+        $(#[$meta])*
+        #[derive(Clone)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(concat!(stringify!($name), "(..)"))
+            }
+        }
+    )+};
+}
+
+secret! {
+    /// A login's session cookie.
+    SessionToken,
+    /// A login's CSRF token, which the app sends back in a header.
+    CsrfToken,
+    /// A grant's bearer token.
+    GrantToken,
+}
+
+/// Who signs in, and how the login presents itself.
+pub struct Identity<'a> {
+    pub principal: Principal,
+    pub name: &'a str,
+    pub provider: &'a str,
+}
+
 /// A new login's credentials, for its cookies.
 pub struct NewLogin {
     pub key: LoginKey,
-    pub token: String,
-    pub csrf: String,
+    pub token: SessionToken,
+    pub csrf: CsrfToken,
     pub expires: SystemTime,
 }
 
@@ -66,15 +103,15 @@ pub(super) struct LoginView {
     pub name: String,
     pub provider: String,
     pub expires: SystemTime,
-    pub csrf: String,
+    pub csrf: CsrfToken,
 }
 
 pub(super) struct Login {
     id: Arc<str>,
-    subject: Arc<str>,
+    principal: Principal,
     name: String,
     provider: String,
-    csrf: String,
+    csrf: CsrfToken,
     sequence: u64,
     deadline: Instant,
     pub(super) expires: SystemTime,
@@ -112,15 +149,15 @@ pub(super) struct State {
 pub struct Store(pub(super) Arc<Mutex<State>>);
 
 impl Store {
-    /// Signs `subject` in, ending its oldest login when it holds eight; `None` when the server holds 1024.
-    pub fn sign_in(&self, subject: &str, name: &str, provider: &str) -> Option<NewLogin> {
-        let (token, csrf, id) = (random::<32>(), random::<32>(), random::<16>());
-        let key = digest(&token);
+    /// Signs `identity` in, ending its principal's oldest login at eight; `None` when the server holds 1024.
+    pub fn sign_in(&self, identity: Identity<'_>) -> Option<NewLogin> {
+        let (token, csrf, id) = (SessionToken(random::<32>()), CsrfToken(random::<32>()), random::<16>());
+        let key = digest(token.as_str());
         let now = Instant::now();
         let mut state = lock(&self.0);
         state.sweep(now);
-        let held = state.held(subject);
-        if held.len() >= MAX_SUBJECT_LOGINS {
+        let held = state.held(&identity.principal);
+        if held.len() >= MAX_PRINCIPAL_LOGINS {
             state.end(&held[0]);
         }
         if state.logins.len() >= MAX_LOGINS {
@@ -130,9 +167,9 @@ impl Store {
         let expires = SystemTime::now() + LOGIN_LIFETIME;
         let login = Login {
             id: id.into(),
-            subject: subject.into(),
-            name: name.into(),
-            provider: provider.into(),
+            principal: identity.principal,
+            name: identity.name.into(),
+            provider: identity.provider.into(),
             csrf: csrf.clone(),
             sequence: state.sequence,
             deadline: now + LOGIN_LIFETIME,
@@ -143,13 +180,13 @@ impl Store {
         Some(NewLogin { key: LoginKey(key), token, csrf, expires })
     }
 
-    /// Ends the login, or with `every` its subject's logins, with grants and tickets; `false` when it already ended.
+    /// Ends the login, or with `every` its principal's logins, with grants and tickets; `false` when it already ended.
     pub fn sign_out(&self, login: LoginKey, every: bool) -> bool {
         let mut state = lock(&self.0);
-        let Some(subject) = state.login(&login.0).map(|login| login.subject.clone()) else {
+        let Some(principal) = state.login(&login.0).map(|login| login.principal.clone()) else {
             return false;
         };
-        let ended = if every { state.held(&subject) } else { vec![login.0] };
+        let ended = if every { state.held(&principal) } else { vec![login.0] };
         for key in ended {
             state.end(&key);
         }
@@ -187,7 +224,7 @@ impl Store {
     }
 
     /// A test hook: issues a grant as an approved challenge does.
-    pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<String, GrantRefusal> {
+    pub fn grant(&self, login: LoginKey, browser: Option<HeaderValue>) -> Result<GrantToken, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
     }
@@ -233,7 +270,7 @@ impl Store {
         let state = lock(&self.0);
         state
             .login(&login.0)
-            .is_some_and(|login| login.csrf.as_bytes().ct_eq(proof.as_bytes()).into())
+            .is_some_and(|login| login.csrf.as_str().as_bytes().ct_eq(proof.as_bytes()).into())
     }
 
     pub(super) fn view(&self, login: LoginKey) -> Option<LoginView> {
@@ -250,8 +287,8 @@ impl State {
         &mut self,
         login: LoginKey,
         browser: Option<HeaderValue>,
-        (token, id): (String, String),
-    ) -> Result<String, GrantRefusal> {
+        Credentials { token, id }: Credentials,
+    ) -> Result<GrantToken, GrantRefusal> {
         let revoked = self.login(&login.0).ok_or(GrantRefusal::NoLogin)?.revoked.child_token();
         let held: Vec<_> = self.grants.iter().filter(|(_, grant)| grant.login == login).collect();
         if held.len() >= MAX_LOGIN_GRANTS {
@@ -263,14 +300,8 @@ impl State {
             }
         }
         self.sequence += 1;
-        let grant = Grant {
-            login,
-            id: id.into(),
-            browser,
-            sequence: self.sequence,
-            revoked,
-        };
-        self.grants.insert(digest(&token), grant);
+        let grant = Grant { login, id, browser, sequence: self.sequence, revoked };
+        self.grants.insert(digest(token.as_str()), grant);
         Ok(token)
     }
 
@@ -279,9 +310,9 @@ impl State {
         self.grants.values().filter(|grant| grant.login == login).count()
     }
 
-    /// The logins of `subject`, oldest first.
-    fn held(&self, subject: &str) -> Vec<Digest> {
-        let held = self.logins.iter().filter(|(_, login)| &*login.subject == subject);
+    /// The logins of `principal`, oldest first.
+    fn held(&self, principal: &Principal) -> Vec<Digest> {
+        let held = self.logins.iter().filter(|(_, login)| login.principal == *principal);
         let mut held: Vec<_> = held.map(|(key, login)| (login.sequence, *key)).collect();
         held.sort_unstable();
         held.into_iter().map(|(_, key)| key).collect()
@@ -316,7 +347,7 @@ impl State {
 
 impl Login {
     fn lease(&self, login: LoginKey, holder: Holder, via: Via, revoked: CancellationToken) -> AuthLease {
-        let (principal, expires) = (self.subject.clone(), self.deadline);
+        let (principal, expires) = (self.principal.clone(), self.deadline);
         AuthLease { holder, principal, login, via, revoked, expires }
     }
 }
@@ -330,7 +361,13 @@ pub(super) fn random<const N: usize>() -> String {
     URL_SAFE_NO_PAD.encode(crate::random::<N>())
 }
 
-/// A new grant's bearer token and id, drawn before the store is locked.
-pub(super) fn credentials() -> (String, String) {
-    (random::<32>(), random::<16>())
+/// A new grant's bearer token and id.
+pub(super) struct Credentials {
+    token: GrantToken,
+    id: Arc<str>,
+}
+
+/// A new grant's credentials, drawn before the store is locked.
+pub(super) fn credentials() -> Credentials {
+    Credentials { token: GrantToken(random::<32>()), id: random::<16>().into() }
 }

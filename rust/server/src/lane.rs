@@ -184,7 +184,7 @@ impl Drop for WorkGuard {
 mod tests {
     use super::*;
     use crate::{
-        auth::{NewLogin, Store},
+        auth::{Identity, NewLogin, Principal, Store},
         exchange::Exchange,
         limits::Quota,
         peer::ClientKeys,
@@ -201,7 +201,12 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let store = Store::default();
-            let login = store.sign_in("p", "P", "local").unwrap();
+            let identity = Identity {
+                principal: Principal::oidc("p"),
+                name: "P",
+                provider: "local",
+            };
+            let login = store.sign_in(identity).unwrap();
             Self {
                 quota: Quota::new(10, 10),
                 work: Work::default(),
@@ -213,7 +218,7 @@ mod tests {
 
         fn lane(&self, lifetime: Duration) -> Lane {
             let hold = self.quota.acquire(&ClientKeys::Exempt, 1).unwrap();
-            let auth = self.store.cookie(&self.login.token).unwrap();
+            let auth = self.store.cookie(self.login.token.as_str()).unwrap();
             Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &self.work, &self.shutdown, Some(&auth))
         }
 

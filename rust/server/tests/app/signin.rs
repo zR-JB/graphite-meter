@@ -6,7 +6,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::approval::challenge;
-use graphite_meter_server::auth::COUNTERS;
+use graphite_meter_server::auth::{COUNTERS, Principal};
 use http::StatusCode;
 use http_body_util::Full;
 use std::time::Duration;
@@ -165,12 +165,12 @@ async fn wrong_passwords_are_refused_counted_and_throttled_until_the_minute_pass
 #[tokio::test]
 async fn signing_in_again_ends_the_presented_login_and_its_grants() {
     let app = auth_app(&[]);
-    let (prior, sibling) = (login(&app, "local-operator"), login(&app, "local-operator"));
+    let (prior, sibling) = (login(&app, Principal::operator()), login(&app, Principal::operator()));
     let grant = store(&app).grant(prior.key, None).unwrap();
-    let cookies = format!("__Host-gm_login={NONCE}; __Host-gm_session={}", prior.token);
+    let cookies = format!("__Host-gm_login={NONCE}; __Host-gm_session={}", prior.token.as_str());
     let renewed = post(&app, "192.0.2.1", NONCE, &cookies, &format!("password={}", right())).await;
     assert_eq!(location(&renewed), Some("/"));
     let store = store(&app);
-    assert!(store.cookie(&prior.token).is_none() && store.bearer(&grant).is_none());
-    assert!(store.cookie(&sibling.token).is_some());
+    assert!(store.cookie(prior.token.as_str()).is_none() && store.bearer(grant.as_str()).is_none());
+    assert!(store.cookie(sibling.token.as_str()).is_some());
 }

@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::upload::Session;
-use graphite_meter_server::auth::{COUNTERS, NewLogin};
+use graphite_meter_server::auth::{COUNTERS, NewLogin, Principal};
 use http::StatusCode;
 use http_body_util::Full;
 use std::time::Duration;
@@ -39,7 +39,7 @@ fn is_socket(outcome: &Outcome) -> bool {
 #[tokio::test(start_paused = true)]
 async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
     let app = auth_app(&[]);
-    let login = login(&app, "operator");
+    let login = login(&app, Principal::operator());
     let target = "https://meter.example/ws/ping";
     let token = ticket(&app, &login, "/ws/session", target).await;
     assert!(token.starts_with("gmw_"));
@@ -85,7 +85,7 @@ async fn socket_tickets_are_one_use_bound_to_target_and_origin_and_expire() {
 #[tokio::test]
 async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject() {
     let app = auth_app(&[]);
-    let current = login(&app, "operator");
+    let current = login(&app, Principal::operator());
     let report = json(tls(&app, empty(signed("GET", "/auth/session", &current))).await).await;
     assert_eq!(
         (report["name"].as_str(), report["provider"].as_str()),
@@ -95,7 +95,11 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
     assert_eq!(report["maximumLifetimeMs"], 28_800_000);
     assert!(report["remainingMs"].as_u64().unwrap() > 28_700_000 && report["expires"].as_str().unwrap().ends_with('Z'));
     for scope in ["", "all"] {
-        let (current, sibling, other) = (login(&app, "operator"), login(&app, "operator"), login(&app, "other"));
+        let (current, sibling, other) = (
+            login(&app, Principal::operator()),
+            login(&app, Principal::operator()),
+            login(&app, Principal::oidc("other")),
+        );
         let logout = |csrf: &str| {
             let request =
                 signed("POST", "/auth/logout", &current).header("content-type", "application/x-www-form-urlencoded");
@@ -104,7 +108,7 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
                 .unwrap()
         };
         assert_eq!(tls(&app, logout("forged-proof-of-the-csrf-token")).await.status(), StatusCode::FORBIDDEN);
-        let signed_out = tls(&app, logout(&current.csrf)).await;
+        let signed_out = tls(&app, logout(current.csrf.as_str())).await;
         assert_eq!(signed_out.status(), StatusCode::SEE_OTHER);
         assert_eq!(header(&signed_out, "location"), Some("/login?reason=signed_out"));
         let cleared: Vec<_> = signed_out
@@ -123,8 +127,8 @@ async fn sign_out_proves_csrf_and_ends_the_login_or_every_login_of_its_subject()
             ]
         );
         let store = store(&app);
-        assert!(store.cookie(&current.token).is_none() && store.cookie(&other.token).is_some());
-        assert_eq!(store.cookie(&sibling.token).is_some(), scope.is_empty(), "scope {scope:?}");
+        assert!(store.cookie(current.token.as_str()).is_none() && store.cookie(other.token.as_str()).is_some());
+        assert_eq!(store.cookie(sibling.token.as_str()).is_some(), scope.is_empty(), "scope {scope:?}");
     }
     let minute = app.auth().security().unwrap().line(&mut [0; COUNTERS]).unwrap();
     assert!(minute.contains(" logout=2 "), "{minute}");
@@ -138,12 +142,12 @@ async fn upload_id(app: &App, login: &NewLogin) -> String {
 #[tokio::test]
 async fn an_upload_belongs_to_the_login_or_grant_that_started_it() {
     let app = auth_app(&[]);
-    let (owner, sibling) = (login(&app, "operator"), login(&app, "operator"));
+    let (owner, sibling) = (login(&app, Principal::operator()), login(&app, Principal::operator()));
     let id = upload_id(&app, &owner).await;
     let started = signed("POST", &format!("/upload?id={id}"), &owner).body(Full::new(Bytes::from_static(b"abc")));
     assert_eq!(text(tls(&app, started.unwrap()).await).await, r#"{"bytes":3}"#);
     let checkpoint = format!("/upload/checkpoint?id={id}");
-    let grant = store(&app).grant(owner.key, None).unwrap();
+    let grant = store(&app).grant(owner.key, None).unwrap().as_str().to_owned();
     for refused in [signed("POST", &checkpoint, &sibling), bearer("POST", &checkpoint, &grant)] {
         let refused = tls(&app, empty(refused)).await;
         assert_eq!(header(&refused, "x-graphite-upload-refusal"), Some("ownerMismatch"));

@@ -202,7 +202,7 @@ impl Drop for Hold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::Holder;
+    use crate::auth::{Holder, Principal};
 
     fn v6(address: &str) -> ClientKeys {
         ClientKeys::address(address.parse().unwrap())
@@ -230,22 +230,25 @@ mod tests {
 
     #[test]
     fn a_principal_shares_twice_unless_exempt() {
-        let login = |id: &str, principal: &str| ClientKeys::Auth(Holder::Login(id.into()), principal.into());
+        let login = |id: &str, principal: Principal| ClientKeys::Auth(Holder::Login(id.into()), principal);
         let quota = Quota::new(100, 1);
-        let held = [quota.acquire(&login("a", "p"), 1).unwrap(), quota.acquire(&login("b", "p"), 1).unwrap()];
-        assert_eq!(quota.acquire(&login("c", "p"), 1).err(), Some(Refusal::Client));
+        let held = [
+            quota.acquire(&login("a", Principal::oidc("p")), 1).unwrap(),
+            quota.acquire(&login("b", Principal::oidc("p")), 1).unwrap(),
+        ];
+        assert_eq!(quota.acquire(&login("c", Principal::oidc("p")), 1).err(), Some(Refusal::Client));
         drop(held);
-        let operator = ClientKey::Principal("operator".into());
+        let operator = ClientKey::Principal(Principal::operator());
         let credit = Quota::client_windows(Budget::new(usize::MAX), 10, Some(operator));
         let logins: Vec<_> = ["a", "b", "c", "d"]
             .map(|id| {
                 credit
-                    .acquire(&login(id, "operator"), 10)
+                    .acquire(&login(id, Principal::operator()), 10)
                     .expect("the operator principal bounds nothing")
             })
             .into();
         assert_eq!(
-            credit.acquire(&login("a", "operator"), 1).err(),
+            credit.acquire(&login("a", Principal::operator()), 1).err(),
             Some(Refusal::Client),
             "each login alone"
         );

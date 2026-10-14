@@ -12,10 +12,9 @@ mod routes;
 mod store;
 
 pub use policy::Policy;
-pub use store::{GrantRefusal, LOGIN_LIFETIME, LoginKey, NewLogin, Store};
-
-/// The principal every password login shares.
-pub const OPERATOR: &str = "local-operator";
+pub use store::{
+    CsrfToken, GrantRefusal, GrantToken, Identity, LOGIN_LIFETIME, LoginKey, NewLogin, SessionToken, Store,
+};
 
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
@@ -193,6 +192,22 @@ impl Auth {
     }
 }
 
+/// Who a login belongs to, the key its admission share and uploads count under.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Principal(Arc<str>);
+
+impl Principal {
+    /// The principal every password login shares.
+    pub fn operator() -> Self {
+        Self("local-operator".into())
+    }
+
+    /// The principal of an OIDC subject.
+    pub fn oidc(subject: &str) -> Self {
+        Self(format!("oidc:{subject}").into())
+    }
+}
+
 /// What a lease is held through: a login's session or a measurement grant issued to it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Holder {
@@ -213,7 +228,7 @@ pub enum Via {
 #[derive(Debug, Clone)]
 pub struct AuthLease {
     holder: Holder,
-    principal: Arc<str>,
+    principal: Principal,
     login: LoginKey,
     via: Via,
     revoked: CancellationToken,

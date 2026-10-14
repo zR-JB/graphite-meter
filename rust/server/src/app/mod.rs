@@ -99,7 +99,7 @@ impl App {
             HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
         });
         let password = config.auth.as_ref().and_then(|auth| auth.methods.password());
-        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::OPERATOR.into()));
+        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
         let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, operator),

@@ -1,9 +1,9 @@
 //! OIDC sign-in as a confidential client: browser-bound state, nonce and PKCE, routes, code exchange, ID token, groups.
 
 use super::{
-    Counter, Enabled, LoginKey, Reason, Security, jwt,
+    Counter, Enabled, Identity, LoginKey, Principal, Reason, Security, jwt,
     page::{self, Page},
-    policy::{cookie, cookie_lease},
+    policy::{Cookie, cookie, cookie_lease},
     provider::{Client, Provider},
     rate::{Attempts, engage, share_full},
     routes::{check_csrf, clear_cookie, establish, field, form, redirect, rejected, set_cookie},
@@ -37,8 +37,6 @@ const TRANSACTION_LIFETIME: Duration = Duration::from_mins(10);
 const ANSWER_MARGIN: Duration = Duration::from_secs(3);
 /// Discovery retries back off from one second, doubling up to this.
 const RETRY_MAX: Duration = Duration::from_mins(1);
-/// The transaction's cookie, the one a browser sends on the provider's cross-site redirect back.
-pub(super) const TRANSACTION_COOKIE: &str = "__Host-gm_oidc";
 
 /// A sign-in sent to the provider, keyed by its state's digest.
 struct Transaction {
@@ -179,8 +177,8 @@ impl Oidc {
         Ok(transaction)
     }
 
-    /// The login subject and display name the provider vouches for.
-    async fn identify(&self, transaction: &Transaction, code: &str) -> Result<(String, String), Reason> {
+    /// The login principal and display name the provider vouches for.
+    async fn identify(&self, transaction: &Transaction, code: &str) -> Result<(Principal, String), Reason> {
         #[derive(Deserialize)]
         struct Info {
             sub: Option<String>,
@@ -214,7 +212,7 @@ impl Oidc {
             "" => "OIDC user",
             name => name,
         };
-        Ok((format!("oidc:{subject}"), name.to_owned()))
+        Ok((Principal::oidc(&subject), name.to_owned()))
     }
 
     /// The access token and ID token `code` exchanges for, authenticated with the client secret.
@@ -287,7 +285,7 @@ pub(super) async fn start<B: http_body::Body>(
     match started {
         Ok((url, browser)) => {
             let mut answer = redirect(&url);
-            set_cookie(&mut answer, TRANSACTION_COOKIE, &browser, SystemTime::now() + TRANSACTION_LIFETIME);
+            set_cookie(&mut answer, Cookie::Transaction, &browser, SystemTime::now() + TRANSACTION_LIFETIME);
             answer
         }
         Err(reason) => refused(auth, reason, challenge),
@@ -309,7 +307,7 @@ pub(super) async fn callback(
         }
         Err((reason, challenge)) => refused(auth, reason, &challenge),
     };
-    clear_cookie(&mut answer, TRANSACTION_COOKIE);
+    clear_cookie(&mut answer, Cookie::Transaction);
     answer
 }
 
@@ -330,16 +328,17 @@ async fn sign_in(
     if code.is_empty() || state.is_empty() || !printable || issuer.len() > 1 || query::get(query, "error").is_some() {
         return Err(refuse(Reason::CallbackParameters));
     }
-    let browser = cookie(&head.headers, TRANSACTION_COOKIE).ok_or(refuse(Reason::TransactionCookie))?;
+    let browser = cookie(&head.headers, Cookie::Transaction).ok_or(refuse(Reason::TransactionCookie))?;
     let transaction = oidc.take(state, browser, issuer.first().map(String::as_str))?;
     let fail = |reason| (reason, transaction.challenge.clone());
     if !peer.keys().is_some_and(|keys| oidc.exchanges.allow(&keys, false, None)) {
         return Err(fail(Reason::ExchangeRateLimited));
     }
     let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code));
-    let (subject, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
+    let (principal, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
     let page = response::html(page::render(Page::Continue, &[("Challenge", &transaction.challenge)]));
-    let answer = establish(auth, (&subject, &name, &auth.provider), transaction.prior, page).map_err(fail)?;
+    let identity = Identity { principal, name: &name, provider: &auth.provider };
+    let answer = establish(auth, identity, transaction.prior, page).map_err(fail)?;
     auth.security.count(Counter::Oidc);
     log!(Info, "auth", "signed in: {name}, through {}", auth.provider);
     Ok(answer)

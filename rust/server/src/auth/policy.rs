@@ -21,8 +21,27 @@ const SINGLE: [&str; 6] = [
     "access-control-request-method",
     "access-control-request-headers",
 ];
-pub(super) const SESSION_COOKIE: &str = "__Host-gm_session";
 const BROWSER_TOKEN: &str = "/auth/browser/token";
+
+graphite_meter_proto::table! {
+    /// A cookie the controller sets: host-only and secure, HttpOnly unless scripts read it, strictly same-site unless
+    /// a cross-site redirect must carry it.
+    pub(super) enum Cookie {
+        name.0: &'static str,
+        script.1: bool,
+        same_site.2: &'static str,
+    } {
+        Session => ("__Host-gm_session", false, "Strict"),
+        /// A sign-in form's token.
+        Login => ("__Host-gm_login", false, "Strict"),
+        /// The login's CSRF token, which the app sends back in a header.
+        Csrf => ("__Host-gm_csrf", true, "Strict"),
+        /// A browser's password attempt budget.
+        Device => ("__Host-gm_device", false, "Strict"),
+        /// The OIDC transaction, carried on the provider's cross-site redirect back.
+        Transaction => ("__Host-gm_oidc", false, "Lax"),
+    }
+}
 
 /// How far a request's connection is trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -335,11 +354,12 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
 
 /// The lease of the login whose session cookie `headers` carry.
 pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
-    store.cookie(cookie(headers, SESSION_COOKIE)?)
+    store.cookie(cookie(headers, Cookie::Session)?)
 }
 
-/// The cookie `name`: invalid pairs are skipped, and two valid ones are ambiguous.
-pub(super) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+/// The cookie's value: invalid pairs are skipped, and two valid ones are ambiguous.
+pub(super) fn cookie(headers: &HeaderMap, cookie: Cookie) -> Option<&str> {
+    let name = cookie.name();
     let values = headers.get_all(header::COOKIE).iter();
     let pairs: Vec<_> = values
         .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))

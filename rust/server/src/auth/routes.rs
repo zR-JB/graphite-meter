@@ -1,11 +1,11 @@
 //! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
 
 use super::{
-    AuthLease, Counter, Enabled, LOGIN_LIFETIME, LoginKey, Reason, Via, approval,
-    oidc::{self, Oidc, TRANSACTION_COOKIE},
+    AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via, approval,
+    oidc::{self, Oidc},
     page::{self, Page},
     password::{Password, Verdict},
-    policy::{SESSION_COOKIE, cookie, cookie_lease},
+    policy::{Cookie, cookie, cookie_lease},
     protect,
     store::{MintRefusal, random},
 };
@@ -35,9 +35,6 @@ use zeroize::Zeroizing;
 
 /// A controller route reads at most this many body bytes.
 const FORM_BYTES: usize = 4096;
-const LOGIN_COOKIE: &str = "__Host-gm_login";
-const CSRF_COOKIE: &str = "__Host-gm_csrf";
-const DEVICE_COOKIE: &str = "__Host-gm_device";
 /// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
@@ -139,7 +136,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
         ],
     );
     let mut answer = response::html(page);
-    set_cookie(&mut answer, LOGIN_COOKIE, &csrf, SystemTime::now() + FORM_LIFETIME);
+    set_cookie(&mut answer, Cookie::Login, &csrf, SystemTime::now() + FORM_LIFETIME);
     answer
 }
 
@@ -156,7 +153,7 @@ async fn sign_in<B: http_body::Body>(
         return rejected(auth, Reason::MalformedForm, "");
     };
     let challenge = field(&form, "challenge");
-    let admitted = || match password.admit(peer.keys(), cookie(headers, DEVICE_COOKIE)) {
+    let admitted = || match password.admit(peer.keys(), cookie(headers, Cookie::Device)) {
         true => Ok(()),
         false if peer.keys().is_none() => Err(Reason::ClientAddress),
         false => Err(Reason::Throttled),
@@ -174,7 +171,11 @@ async fn sign_in<B: http_body::Body>(
         Some(_) => format!("/auth/cli?challenge={challenge}"),
         None => "/".into(),
     };
-    let identity = (super::OPERATOR, "Local operator", "local");
+    let identity = Identity {
+        principal: Principal::operator(),
+        name: "Local operator",
+        provider: "local",
+    };
     let prior = cookie_lease(&auth.store, headers).map(|lease| lease.login());
     let mut answer = match establish(auth, identity, prior, redirect(&target)) {
         Ok(answer) => answer,
@@ -183,32 +184,32 @@ async fn sign_in<B: http_body::Body>(
     auth.security.count(Counter::Local);
     crate::log!(Info, "auth", "signed in: local operator, with the password");
     let (device, expires) = password.device(SystemTime::now());
-    set_cookie(&mut answer, DEVICE_COOKIE, &device, expires);
+    set_cookie(&mut answer, Cookie::Device, &device, expires);
     answer
 }
 
-/// Signs `(subject, name, provider)` in, ending the `prior` login, and sets the login's cookies on `answer`.
+/// Signs `identity` in, ending the `prior` login, and sets the login's cookies on `answer`.
 pub(super) fn establish(
     auth: &Enabled,
-    (subject, name, provider): (&str, &str, &str),
+    identity: Identity<'_>,
     prior: Option<LoginKey>,
     mut answer: Response<Body>,
 ) -> Result<Response<Body>, Reason> {
-    let login = auth.store.sign_in(subject, name, provider);
+    let login = auth.store.sign_in(identity);
     let login = login.ok_or(Reason::SessionCapacity)?;
     if let Some(prior) = prior {
         auth.store.sign_out(prior, false);
     }
-    set_cookie(&mut answer, SESSION_COOKIE, &login.token, login.expires);
-    set_cookie(&mut answer, CSRF_COOKIE, &login.csrf, login.expires);
-    clear_cookie(&mut answer, LOGIN_COOKIE);
+    set_cookie(&mut answer, Cookie::Session, login.token.as_str(), login.expires);
+    set_cookie(&mut answer, Cookie::Csrf, login.csrf.as_str(), login.expires);
+    clear_cookie(&mut answer, Cookie::Login);
     Ok(answer)
 }
 
 /// Checks a sign-in form: posted from the public origin with the token its login cookie holds.
 pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
     let origin = headers.get(header::ORIGIN).filter(|origin| !origin.is_empty());
-    match (origin, cookie(headers, LOGIN_COOKIE)) {
+    match (origin, cookie(headers, Cookie::Login)) {
         (None, _) => Err(Reason::CsrfOriginMissing),
         (Some(origin), _) if *origin != auth.policy.origin => Err(Reason::CsrfOriginMismatch),
         (_, None) => Err(Reason::CsrfCookieMissing),
@@ -250,7 +251,7 @@ fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
         name: login.name,
         provider: login.provider,
         expires: rfc3339(login.expires),
-        csrf: login.csrf,
+        csrf: login.csrf.as_str().to_owned(),
         remaining_ms: remaining.as_millis(),
         maximum_lifetime_ms: LOGIN_LIFETIME.as_millis(),
     })
@@ -267,8 +268,8 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Re
     }
     auth.security.count(Counter::Logout);
     let mut answer = redirect("/login?reason=signed_out");
-    for name in [SESSION_COOKIE, LOGIN_COOKIE, CSRF_COOKIE] {
-        clear_cookie(&mut answer, name);
+    for cookie in [Cookie::Session, Cookie::Login, Cookie::Csrf] {
+        clear_cookie(&mut answer, cookie);
     }
     answer
 }
@@ -279,11 +280,11 @@ pub(super) fn redirect(target: &str) -> Response<Body> {
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Sets a host-only secure cookie, HttpOnly but for CSRF, strictly same-site but for the OIDC transaction's.
-pub(super) fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, expires: SystemTime) {
+/// Sets `cookie` to `value` until `expires`.
+pub(super) fn set_cookie(answer: &mut Response<Body>, cookie: Cookie, value: &str, expires: SystemTime) {
     let age = expires.duration_since(SystemTime::now()).map_or(0, |age| age.as_secs());
-    let http_only = if name == CSRF_COOKIE { "" } else { "; HttpOnly" };
-    let same_site = if name == TRANSACTION_COOKIE { "Lax" } else { "Strict" };
+    let (name, same_site) = (cookie.name(), cookie.same_site());
+    let http_only = if cookie.script() { "" } else { "; HttpOnly" };
     let date = http_date(expires);
     let cookie =
         format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}");
@@ -291,8 +292,8 @@ pub(super) fn set_cookie(answer: &mut Response<Body>, name: &str, value: &str, e
     answer.headers_mut().append(header::SET_COOKIE, cookie);
 }
 
-pub(super) fn clear_cookie(answer: &mut Response<Body>, name: &str) {
-    set_cookie(answer, name, "", UNIX_EPOCH + Duration::from_secs(1));
+pub(super) fn clear_cookie(answer: &mut Response<Body>, cookie: Cookie) {
+    set_cookie(answer, cookie, "", UNIX_EPOCH + Duration::from_secs(1));
 }
 
 /// A form field's value; empty when absent.

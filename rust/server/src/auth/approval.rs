@@ -229,9 +229,9 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<HeaderValue>) -> Respons
     drop(state);
     let remaining = expires.duration_since(SystemTime::now()).unwrap_or_default();
     response::json_of(&match origin {
-        None => json!({"token": token, "expires": rfc3339(expires)}),
+        None => json!({"token": token.as_str(), "expires": rfc3339(expires)}),
         Some(_) => json!({
-            "token": token,
+            "token": token.as_str(),
             "expires": expires.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
             "remainingMs": remaining.as_millis(),
             "maximumLifetimeMs": LOGIN_LIFETIME.as_millis(),
@@ -261,7 +261,7 @@ fn approval_page(auth: &Enabled, lease: &AuthLease, challenge: &str, origin: Opt
     let fields = [
         ("Code", code.as_str()),
         ("Challenge", challenge),
-        ("CSRF", &login.csrf),
+        ("CSRF", login.csrf.as_str()),
         ("BrowserOrigin", origin),
     ];
     response::html(page::render(Page::Cli, &fields))

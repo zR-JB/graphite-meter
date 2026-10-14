@@ -2,7 +2,7 @@
 
 use super::*;
 use graphite_meter_server::{
-    auth::{NewLogin, OPERATOR, Store},
+    auth::{Identity, NewLogin, Principal, Store},
     limits::CONNECTION_CREDIT,
     peer::ClientKeys,
 };
@@ -32,8 +32,10 @@ pub(super) fn store(app: &App) -> &Store {
     app.auth().store().unwrap()
 }
 
-pub(super) fn login(app: &App, subject: &str) -> NewLogin {
-    store(app).sign_in(subject, "Local operator", "local").unwrap()
+pub(super) fn login(app: &App, principal: Principal) -> NewLogin {
+    store(app)
+        .sign_in(Identity { principal, name: "Local operator", provider: "local" })
+        .unwrap()
 }
 
 /// A request naming the public host.
@@ -48,8 +50,8 @@ pub(super) fn public(method: &str, uri: &str) -> Builder {
 pub(super) fn signed(method: &str, uri: &str, login: &NewLogin) -> Builder {
     public(method, uri)
         .header("origin", PUBLIC)
-        .header("cookie", format!("theme=dark; __Host-gm_session={}", login.token))
-        .header("x-csrf-token", &login.csrf)
+        .header("cookie", format!("theme=dark; __Host-gm_session={}", login.token.as_str()))
+        .header("x-csrf-token", login.csrf.as_str())
 }
 
 pub(super) fn bearer(method: &str, uri: &str, grant: &str) -> Builder {
@@ -117,10 +119,10 @@ async fn an_unauthenticated_request_gets_gos_refusal_and_the_app_root_a_redirect
 #[tokio::test]
 async fn only_https_at_the_public_hostname_is_trusted() {
     let app = auth_app(&[("GM_TRUSTED_PROXIES", "10.0.0.0/8")]);
-    let login = login(&app, "operator");
+    let login = login(&app, Principal::operator());
     let foreign = tls(
         &app,
-        empty(request("GET", "/probe").header("cookie", format!("__Host-gm_session={}", login.token))),
+        empty(request("GET", "/probe").header("cookie", format!("__Host-gm_session={}", login.token.as_str()))),
     )
     .await;
     assert_headers(
@@ -154,7 +156,7 @@ async fn only_https_at_the_public_hostname_is_trusted() {
 #[tokio::test]
 async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writes() {
     let app = auth_app(&[]);
-    let login = login(&app, "operator");
+    let login = login(&app, Principal::operator());
     let probe = tls(&app, empty(signed("GET", "/probe", &login))).await;
     assert_eq!(probe.status(), StatusCode::OK);
     assert_headers(
@@ -187,10 +189,12 @@ async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writ
 #[tokio::test]
 async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     let app = auth_app(&[]);
-    let login = login(&app, "operator");
+    let login = login(&app, Principal::operator());
     let browser = store(&app)
         .grant(login.key, Some(HeaderValue::from_static(BROWSER)))
-        .unwrap();
+        .unwrap()
+        .as_str()
+        .to_owned();
     let probe = tls(&app, empty(bearer("GET", "/probe", &browser).header("origin", BROWSER))).await;
     assert_eq!(probe.status(), StatusCode::OK);
     assert_headers(
@@ -201,7 +205,7 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
         let refused = tls(&app, empty(bearer("GET", path, &browser).header("origin", origin))).await;
         assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{path} from {origin:?}");
     }
-    let native = store(&app).grant(login.key, None).unwrap();
+    let native = store(&app).grant(login.key, None).unwrap().as_str().to_owned();
     assert_eq!(tls(&app, empty(bearer("GET", "/servers", &native))).await.status(), StatusCode::OK);
     let mint = bearer("POST", "/ws/session?target=https://meter.example/ws/ping", &native);
     assert_eq!(
@@ -221,8 +225,13 @@ async fn password_logins_fund_windows_past_one_client_s_share() {
     let funded = |app: &App| {
         let held: Vec<_> = (0..3)
             .map(|_| {
-                let token = store(app).sign_in(OPERATOR, "Local operator", "local").unwrap().token;
-                app.window_credit(&store(app).cookie(&token).unwrap().keys(), share)
+                let identity = Identity {
+                    principal: Principal::operator(),
+                    name: "Local operator",
+                    provider: "local",
+                };
+                let token = store(app).sign_in(identity).unwrap().token;
+                app.window_credit(&store(app).cookie(token.as_str()).unwrap().keys(), share)
             })
             .collect();
         held.iter().flatten().count()

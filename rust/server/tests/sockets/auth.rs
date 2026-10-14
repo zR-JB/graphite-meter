@@ -10,7 +10,7 @@ use super::{
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_http3::webtransport::Session;
 use graphite_meter_proto::upload::Record;
-use graphite_meter_server::auth::{NewLogin, Store};
+use graphite_meter_server::auth::{Identity, NewLogin, Principal, Store};
 use http::{Request, Response};
 use tokio_tungstenite::{
     client_async,
@@ -31,7 +31,12 @@ const AUTH: [(&str, &str); 5] = [
 
 fn signed_in(h3: &H3) -> (Store, NewLogin) {
     let store = h3.server.app.auth().store().unwrap().clone();
-    let login = store.sign_in("operator", "Operator", "local").unwrap();
+    let login = store.sign_in(Identity {
+        principal: Principal::operator(),
+        name: "Operator",
+        provider: "local",
+    });
+    let login = login.unwrap();
     (store, login)
 }
 
@@ -50,7 +55,7 @@ async fn session(connection: &Connection, path: &str, grant: Option<&str>) -> Re
 async fn sign_out_closes_a_bus_with_1008() {
     let h3 = H3::start(&AUTH).await;
     let (store, login) = signed_in(&h3);
-    let grant = store.grant(login.key, None).unwrap();
+    let grant = store.grant(login.key, None).unwrap().as_str().to_owned();
     let address = h3.server.address;
     let mut request = format!("ws://{address}/ws/ping").into_client_request().unwrap();
     let headers = request.headers_mut();
@@ -81,7 +86,7 @@ async fn a_connect_needs_a_grant_and_sign_out_ends_its_session_with_3() {
     assert_eq!(refused.status(), 403);
     assert_eq!(refused.headers()["graphite-meter-auth"], "required");
     assert_eq!(refused.headers()["strict-transport-security"], "max-age=31536000");
-    let grant = store.grant(login.key, None).unwrap();
+    let grant = store.grant(login.key, None).unwrap().as_str().to_owned();
     let opened = session(&connection, "/wt/ping", Some(&grant)).await.unwrap();
     assert!(open(&opened).await);
     assert!(store.sign_out(login.key, false));
@@ -92,8 +97,14 @@ async fn a_connect_needs_a_grant_and_sign_out_ends_its_session_with_3() {
 async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
     let h3 = H3::start(&AUTH).await;
     let (store, login) = signed_in(&h3);
-    let other = store.sign_in("other", "Other", "local").unwrap();
-    let (owner, other) = (store.grant(login.key, None).unwrap(), store.grant(other.key, None).unwrap());
+    let other = store.sign_in(Identity {
+        principal: Principal::oidc("other"),
+        name: "Other",
+        provider: "local",
+    });
+    let other = other.unwrap();
+    let grant = |key| store.grant(key, None).unwrap().as_str().to_owned();
+    let (owner, other) = (grant(login.key), grant(other.key));
     let connection = h3.connect(transport(None)).await;
     let request = Request::post("https://localhost/upload/session").header("authorization", format!("Bearer {owner}"));
     let (mut send, mut answer) = connection
