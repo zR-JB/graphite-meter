@@ -34,7 +34,7 @@ function harness(
     },
     start() {
       run = new Run({
-        servers: peers.map((peer) => prepared(peer.id, peer.latency !== false)),
+        servers: peers.map((peer) => prepared(peer.id, peer.latency !== false, peer.signedOut)),
         focus: options.focus ?? peers[0]!.id,
         dropped: [],
         plan,
@@ -639,6 +639,25 @@ test("a final checkpoint answered late over a full uplink keeps a server that wa
   const result = await h.result();
   expect(result.multiServer.participants).toEqual(["a"]);
   expect(result.multiServer.failures).toEqual([]);
+});
+
+test("a stream that breaks as its grant ends leaves asking for sign-in, once the check says so", async () => {
+  // The stream breaks 300 ms in and stays silent; the silence rule removes the server before any check could answer.
+  const broken: Partial<Peer> = {
+    silent: (activity, ms) => activity.stage === "download" && ms >= 300,
+    measure: (events) =>
+      later(300, () => events.stalled({ reason: "connection-lost", detail: "stream broke", direction: "down" })),
+  };
+  for (const [signedOut, reason] of [
+    [true, "sign-in-required"],
+    [false, "connection-lost"],
+  ] as const) {
+    const h = setup(two({ ...broken, signedOut }), { download: true }, { downloadMs: 3_000 });
+    h.start();
+    const result = await h.result();
+    expect(result.multiServer.failures).toMatchObject([{ serverId: "a", stage: "download", reason }]);
+    expect(result.outcome).toBe("partial");
+  }
 });
 
 test("an expired grant at the final checkpoint asks for sign-in and removes only that server", async () => {
