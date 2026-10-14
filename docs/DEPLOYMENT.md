@@ -115,8 +115,9 @@ listeners share. It must cover every allowed connection's floor, about 1.5 MiB e
 `GM_MAX_CONNECTIONS` of 4096 needs about 6 GiB: a small host that lowers the budget lowers the connections with
 it, such as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the
 server at start with the values that fit. Connections run on one pinned thread per runtime worker, a CPU each by
-default; `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. Its log lines carry a level, a
-topic and local time; the image has no zone data, so mount
+default; `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run
+five nice steps lower, so transfers yield to the host's other services and to the server's own probes. Its log lines
+carry a level, a topic and local time; the image has no zone data, so mount
 `/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
 instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
 On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its

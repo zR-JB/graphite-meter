@@ -8,11 +8,12 @@ use tokio::{
     sync::watch,
 };
 
-/// How much lower than its other threads a probing pool runs its pinned ones, in nice steps.
+/// How much lower than the caller's threads a pool runs its pinned ones on Linux, in nice steps.
 const PINNED_NICE: i32 = 5;
 
 /// Pinned current-thread runtimes, each on a thread of its own, or none, and a latency runtime in a probing pool;
-/// their threads end with the pool.
+/// their threads end with the pool. On Linux the pinned runtimes, which carry bulk transfers, run niced, so the
+/// caller's threads and the latency runtime preempt them.
 #[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
@@ -27,8 +28,7 @@ impl Pool {
         Self::spawn(runtime, false)
     }
 
-    /// `beside`, plus a runtime of its own for latency probes and their channels; on Linux the pinned runtimes,
-    /// which carry bulk transfers, run niced below it.
+    /// `beside`, plus a runtime of its own for latency probes and their channels.
     pub fn probing(runtime: &Handle) -> io::Result<Self> {
         Self::spawn(runtime, true)
     }
@@ -51,7 +51,7 @@ impl Pool {
             Ok(handle)
         };
         let runtimes = (0..if workers > 1 { workers } else { 0 })
-            .map(|index| thread(format!("gm-worker-{index}"), probing))
+            .map(|index| thread(format!("gm-worker-{index}"), true))
             .collect::<io::Result<_>>()?;
         let latency = probing.then(|| thread("gm-latency".into(), false)).transpose()?;
         Ok(Self {

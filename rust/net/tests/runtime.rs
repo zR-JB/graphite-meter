@@ -40,7 +40,7 @@ fn nice() -> i64 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_probing_pool_runs_latency_on_its_own_thread_above_the_pinned_ones() {
+async fn pinned_threads_run_below_the_caller_s_and_a_probing_pool_s_latency_runtime() {
     let pool = Pool::probing(&Handle::current()).unwrap();
     assert_eq!(pool.runtimes().len(), 2);
     assert_eq!(thread_of(pool.latency()).await, "gm-latency");
@@ -50,5 +50,7 @@ async fn a_probing_pool_runs_latency_on_its_own_thread_above_the_pinned_ones() {
         let (latency, pinned) = (nice_of(pool.latency()).await, nice_of(pool.next()).await);
         // Linux caps nice at 19.
         assert_eq!(pinned, (latency + 5).min(19), "pinned threads run five steps below the latency runtime");
+        let plain = Pool::beside(&Handle::current()).unwrap();
+        assert_eq!(nice_of(plain.next()).await, (nice() + 5).min(19), "and below the caller's");
     }
 }

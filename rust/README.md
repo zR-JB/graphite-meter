@@ -92,7 +92,8 @@ on one of them. On Linux HTTP/3 runs one endpoint per two runtime threads, two t
 covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their endpoint, which forwards short-header
 packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
 After its upgrade a WebSocket bus moves to the multi-thread runtime, which runs no transfer, its socket re-registered
-with that runtime's driver, so its probes never queue behind a transfer's task. A WebTransport bus stays on its
+with that runtime's driver, so its probes never queue behind a transfer's task; on Linux the per-worker runtimes run
+five nice steps lower, so the bus's thread also preempts them. A WebTransport bus stays on its
 endpoint's runtime, where an HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other
 tasks run. Log lines reach stderr from a thread of their own through a 1024-line queue; while stderr stalls, lines are
 dropped and counted instead of blocking a runtime.
