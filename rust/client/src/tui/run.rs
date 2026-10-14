@@ -170,8 +170,9 @@ impl App {
     /// The latency server shown: the one `l` picked while it remains, else the run's.
     pub(super) fn latency_server(&self) -> Option<&ServerId> {
         let focus = self.view.run.as_ref()?.focus.as_ref();
-        let pick = self.live.pick.as_ref();
-        pick.filter(|pick| self.participants().contains(pick)).or(focus)
+        let remains =
+            |pick: &&ServerId| self.view.servers.iter().any(|server| server.id == **pick) && self.view.remains(pick);
+        self.live.pick.as_ref().filter(remains).or(focus)
     }
 
     /// Steps the latency server to the next one remaining.

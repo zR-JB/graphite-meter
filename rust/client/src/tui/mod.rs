@@ -529,6 +529,11 @@ impl App {
         }
     }
 
+    /// Whether a frame tick has work: something animates, or a check is due.
+    pub fn waiting(&self) -> bool {
+        self.animating() || self.recheck.is_some()
+    }
+
     /// Whether frames change without input: a spinner turns, the needle moves, or a notice waits to lapse.
     pub fn animating(&self) -> bool {
         let busy = self.checking() || self.running() || matches!(self.overlay, Overlay::SignIn(_));

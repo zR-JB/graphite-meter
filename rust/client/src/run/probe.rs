@@ -14,11 +14,12 @@ use graphite_meter_proto::{
 use std::{
     collections::BTreeMap,
     panic::AssertUnwindSafe,
+    pin::pin,
     time::{Duration, Instant},
 };
 use tokio::{
     sync::{mpsc, watch},
-    time::{sleep_until, timeout, timeout_at},
+    time::{self, sleep_until, timeout, timeout_at},
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 
@@ -258,11 +259,15 @@ async fn serve(
     window: &mut watch::Receiver<Window>,
     emit: &impl Fn(Probe),
 ) -> Result<(), Fault> {
+    let mut timer = pin!(sleep_until(time::Instant::now()));
     loop {
         if *window.borrow_and_update() == Window::Closed {
             schedule.stop();
         }
         let Some(wake) = schedule.wake() else { return Ok(()) };
+        if timer.deadline() != wake.into() {
+            timer.as_mut().reset(wake.into());
+        }
         // A reply that already arrived resolves before a deadline due at the same poll can expire it.
         tokio::select! {
             biased;
@@ -271,7 +276,7 @@ async fn serve(
                 schedule.reply(pong, arrived).into_iter().for_each(emit);
             }
             Ok(()) = window.changed() => continue,
-            () = sleep_until(wake.into()) => {}
+            () = &mut timer => {}
         }
         let now = Instant::now();
         schedule.expire(now).into_iter().for_each(emit);

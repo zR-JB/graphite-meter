@@ -15,7 +15,11 @@ fn bus_messages_pass_the_shared_vectors() {
             handling_nanos: nanos.parse().unwrap(),
         };
         let actual = match operation {
-            "encode-ping" => Some(Ping { id: input.parse().unwrap() }.encode()),
+            "encode-ping" => {
+                let ping = Ping { id: input.parse().unwrap() };
+                assert_eq!(ping.write(&mut [0; Ping::MAX_BYTES]), ping.encode().as_bytes(), "{line}");
+                Some(ping.encode())
+            }
             "encode-pong" => input.split_once(',').map(|(id, nanos)| pong(id, nanos).encode()),
             "decode-ping" => Ping::decode(input.as_bytes()).map(|ping| ping.id.to_string()),
             "decode-pong" => Pong::decode(input.as_bytes()).map(|pong| format!("{},{}", pong.id, pong.handling_nanos)),
@@ -39,6 +43,11 @@ fn messages_have_no_framing_and_unknown_frames_are_malformed() {
 fn probe_ids_count_up_and_wrap_and_replies_echo_them() {
     assert_eq!(Ping { id: 41 }.next(), Ping { id: 42 });
     assert_eq!(Ping { id: u32::MAX }.next(), Ping { id: 0 });
+    assert_eq!(
+        Ping { id: u32::MAX }.write(&mut [0; Ping::MAX_BYTES]),
+        b"PING,4294967295",
+        "the longest probe fits"
+    );
     let ping = Ping::decode(b"PING,00042").unwrap();
     assert_eq!(ping.reply(15).encode(), "PONG,42,15");
 }

@@ -17,7 +17,7 @@ use crate::{
 };
 use graphite_meter_proto::reason::FailureReason;
 use ratatui_core::layout::Rect;
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 /// From this size the dial stands beside the lanes over the cards; below it the console stacks without the ring.
 const WIDE: (u16, u16) = (110, 32);
@@ -257,7 +257,8 @@ impl App {
         let planned = match self.running() {
             true => self
                 .plan()
-                .into_iter()
+                .iter()
+                .copied()
                 .find(|(own, _)| *own == stage)
                 .map(|(_, duration)| duration),
             false => on.then(|| self.config.duration(stage)),
@@ -496,10 +497,11 @@ impl App {
         let peak = run.map_or(0.0, |run| run.peak);
         let rate = ceil_step(peak.max(1.0) * 8.0 * 1.03, &CHART_STEPS) / 8.0;
         let series = run.and_then(|run| run.rtt.iter().find(|(id, _)| Some(id) == self.latency_server()));
+        let plan = self.plan();
         let top = |idle: bool| {
-            let windows = self
-                .plan()
-                .into_iter()
+            let windows = plan
+                .iter()
+                .copied()
                 .filter(|(stage, _)| (*stage == Stage::Latency) == idle);
             let spans = windows.filter_map(|(stage, duration)| {
                 let open = self.window(run?, stage)?.0;
@@ -871,9 +873,10 @@ impl App {
     /// A lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
     pub(super) fn lanes(&self) -> Vec<Lane> {
         let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency;
-        let lanes = self
-            .plan()
-            .into_iter()
+        let plan = self.plan();
+        let lanes = plan
+            .iter()
+            .copied()
             .filter(|(stage, _)| loaded(*stage))
             .map(|(stage, _)| {
                 let live = self.stage_state(stage) == State::Measuring;
@@ -888,10 +891,10 @@ impl App {
     }
 
     /// The stages shown: the run's plan once it started, else the settings'.
-    pub(super) fn plan(&self) -> Vec<(Stage, Duration)> {
+    pub(super) fn plan(&self) -> Cow<'_, [(Stage, Duration)]> {
         match &self.view.run {
-            Some(run) if !run.plan.is_empty() => run.plan.clone(),
-            _ => self.config.plan(),
+            Some(run) if !run.plan.is_empty() => Cow::Borrowed(&run.plan),
+            _ => Cow::Owned(self.config.plan()),
         }
     }
 }

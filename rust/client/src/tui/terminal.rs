@@ -56,7 +56,8 @@ pub async fn interactive(
                 changed |= paint;
                 (effects, paint)
             }
-            _ = frames.tick() => {
+            // Idle, nothing ticks: the frame clock runs only while there is something to paint or a check is due.
+            _ = frames.tick(), if changed || app.waiting() => {
                 // While anything animates, and once after, so its last state shows.
                 let animated = app.animating();
                 let effects = app.tick(Instant::now());

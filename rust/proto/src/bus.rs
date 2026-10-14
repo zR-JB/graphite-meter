@@ -19,9 +19,22 @@ pub struct Pong {
 }
 
 impl Ping {
+    /// The longest probe: `PING,` and ten digits.
+    pub const MAX_BYTES: usize = 15;
+
     pub fn encode(self) -> String {
         let mut id = NumBuffer::new();
         exact(&["PING,", self.id.format_into(&mut id)])
+    }
+
+    /// The probe's bytes, written into `bytes` without allocating.
+    pub fn write(self, bytes: &mut [u8; Self::MAX_BYTES]) -> &[u8] {
+        let mut id = NumBuffer::new();
+        let id = self.id.format_into(&mut id).as_bytes();
+        let (prefix, digits) = bytes.split_at_mut(5);
+        prefix.copy_from_slice(b"PING,");
+        digits[..id.len()].copy_from_slice(id);
+        &bytes[..5 + id.len()]
     }
 
     /// Reads a probe; `None` for a malformed message, which receivers ignore without replying or closing.

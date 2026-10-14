@@ -123,7 +123,7 @@ impl Bus {
                 let sent = socket.send(Message::text(ping.encode())).await;
                 sent.map_err(|error| Fault::Lost(error.to_string()))
             }
-            Channel::Datagrams(session) => session.send_datagram(ping.encode().as_bytes()).await,
+            Channel::Datagrams(session) => session.send_datagram(ping.write(&mut [0; Ping::MAX_BYTES])).await,
         }
     }
 
