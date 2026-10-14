@@ -66,6 +66,8 @@ export type LaneCommand =
       url: string;
       request: RequestRecipe;
       streams: number;
+      /** Upload lanes posting at once across the run's servers. */
+      sharing: number;
       /** The server's idle round trip, which sizes POSTs around their turnaround; null when unknown. */
       rttMs: number | null;
     }

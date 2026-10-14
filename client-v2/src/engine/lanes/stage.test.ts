@@ -54,6 +54,7 @@ function stage(
     } as unknown as PreparedServer,
     activity,
     streams: { down: activity.transfer.includes("down") ? 3 : 0, up: activity.transfer.includes("up") ? 1 : 0 },
+    uploadLanes: activity.transfer.includes("up") ? 1 : 0,
     gating: { down: 2, up: 0 },
     cadence: "fast",
     seed: "s",
