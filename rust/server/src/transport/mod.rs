@@ -13,9 +13,12 @@ mod window;
 
 use crate::log::{Level, RateLimited};
 use std::{
+    io,
     pin::pin,
     task::{Context, Poll},
 };
+use tokio::{io::BufReader, net::TcpStream};
+use tokio_rustls::server::TlsStream;
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
 pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(Level::Info, "peer", "peer connection failures");
@@ -49,6 +52,33 @@ impl Burst {
     }
 }
 
+/// A stream over one TCP socket, which can move to another runtime's I/O driver.
+pub(crate) trait Rehome {
+    fn socket(&mut self) -> &mut TcpStream;
+
+    /// Registers the socket with the calling runtime's driver through a duplicate of its descriptor; on an error it
+    /// stays with its first runtime.
+    fn rehome(&mut self) -> io::Result<()> {
+        let socket = self.socket();
+        let copy = std::net::TcpStream::from(socket2::SockRef::from(&*socket).try_clone()?);
+        copy.set_nonblocking(true)?;
+        *socket = TcpStream::from_std(copy)?;
+        Ok(())
+    }
+}
+
+impl Rehome for TcpStream {
+    fn socket(&mut self) -> &mut TcpStream {
+        self
+    }
+}
+
+impl Rehome for TlsStream<BufReader<TcpStream>> {
+    fn socket(&mut self) -> &mut TcpStream {
+        self.get_mut().0.get_mut()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +106,31 @@ mod tests {
         bulk.await.unwrap();
         probe.await.unwrap();
         assert_eq!(*order.lock().unwrap(), ["under", "probe", "spent", "fresh"]);
+    }
+
+    #[test]
+    fn a_rehomed_socket_reads_without_its_first_runtime() {
+        use tokio::io::AsyncReadExt;
+        let runtime = || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        };
+        let (first, second) = (runtime(), runtime());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let accepted = listener.accept().unwrap().0;
+        accepted.set_nonblocking(true).unwrap();
+        // Registered with the first runtime's driver, which nothing polls again.
+        let mut socket = first.block_on(async { TcpStream::from_std(accepted) }).unwrap();
+        let read = second.block_on(async move {
+            socket.rehome().unwrap();
+            std::io::Write::write_all(&mut peer, b"ping").unwrap();
+            let mut buffer = [0; 4];
+            let reading = tokio::time::timeout(std::time::Duration::from_secs(5), socket.read_exact(&mut buffer));
+            reading.await.map(|_| buffer)
+        });
+        assert_eq!(read.unwrap(), *b"ping");
     }
 }

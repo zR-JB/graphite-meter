@@ -89,8 +89,10 @@ C and assembly.
 on one of them. On Linux HTTP/3 runs one endpoint per two runtime threads, two to sixteen, as many as the budget
 covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their endpoint, which forwards short-header
 packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
-An HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other tasks on its runtime run,
-so a latency probe sharing a thread with such a transfer waits behind one burst at most.
+After its upgrade a WebSocket bus moves to the multi-thread runtime, which runs no transfer, its socket re-registered
+with that runtime's driver, so its probes never queue behind a transfer's task. A WebTransport bus stays on its
+endpoint's runtime, where an HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other
+tasks run.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
 WebTransport session per group of up to 16 lanes. Its latency bus, WebSocket or WebTransport, runs beside its prober

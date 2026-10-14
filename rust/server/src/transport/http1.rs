@@ -1,7 +1,7 @@
 //! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
 
 use super::{
-    Burst,
+    Burst, Rehome,
     body::{Aborted, Body, ReplyBound},
     tls, websocket,
 };
@@ -14,7 +14,12 @@ use crate::{
 use bytes::Bytes;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
-use hyper::{body::Incoming, server::conn::http1, service::service_fn, upgrade::OnUpgrade};
+use hyper::{
+    body::Incoming,
+    server::conn::http1,
+    service::service_fn,
+    upgrade::{OnUpgrade, Parts, Upgraded},
+};
 use hyper_util::rt::TokioIo;
 use std::{
     future::Future,
@@ -31,6 +36,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
+    runtime::Handle,
     time::{Instant, Sleep, sleep_until},
 };
 use tokio_rustls::TlsAcceptor;
@@ -48,6 +54,8 @@ pub struct Http1 {
     pub endpoint: Endpoint,
     /// Present on a TLS listener.
     pub tls: Option<TlsAcceptor>,
+    /// The runtime WebSocket buses move to, which runs no bulk transfer.
+    pub buses: Handle,
     pub shutdown: CancellationToken,
 }
 
@@ -80,7 +88,7 @@ impl Http1 {
     /// Serves requests until the connection ends; the first request's exchange began at `start`.
     async fn serve<S>(&self, stream: S, connection: Connection, start: Instant)
     where
-        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
     {
         let shared = Arc::new(Shared::default());
         let io = Io::new(stream, shared.clone(), start + EXCHANGE_BOUND);
@@ -108,9 +116,29 @@ impl Http1 {
         }
         let upgraded = lock(&bus).take();
         if let Some((upgrade, lane)) = upgraded {
-            websocket::serve(upgrade, lane).await;
+            // This task, holding the connection's admission, waits off the bus's path.
+            let _ = self.buses.spawn(run_bus::<S>(upgrade, lane)).await;
         }
     }
+}
+
+/// Runs a WebSocket bus on the calling runtime, its socket moved there, until `lane` ends or the peer leaves.
+async fn run_bus<S>(upgrade: OnUpgrade, lane: Lane)
+where
+    S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
+{
+    let upgraded = tokio::select! {
+        biased;
+        _ = lane.ended() => return,
+        upgraded = upgrade => upgraded,
+    };
+    let Ok(Ok(Parts { io, read_buf, .. })) = upgraded.map(Upgraded::downcast::<TokioIo<Io<S>>>) else {
+        return;
+    };
+    let mut stream = io.into_inner().inner;
+    // A socket that cannot move still works through its first runtime's driver.
+    let _ = stream.rehome();
+    websocket::serve(stream, read_buf, lane).await;
 }
 
 /// Answers one request; an error closes the connection unanswered.

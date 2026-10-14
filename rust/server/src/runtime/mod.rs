@@ -161,7 +161,13 @@ impl Server {
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
-                    let http1 = Http1 { app: app.clone(), endpoint, tls, shutdown };
+                    let http1 = Http1 {
+                        app: app.clone(),
+                        endpoint,
+                        tls,
+                        buses: Handle::current(),
+                        shutdown,
+                    };
                     let serve = move |socket, peer| http1.connection(socket, peer);
                     services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"

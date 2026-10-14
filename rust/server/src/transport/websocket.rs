@@ -2,12 +2,12 @@
 
 use super::body::Body;
 use crate::{engine::reflect, lane::Lane};
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_proto::lane::LaneEnding;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use hyper::upgrade::{OnUpgrade, Upgraded};
-use hyper_util::rt::TokioIo;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
@@ -70,23 +70,16 @@ fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -
     response
 }
 
-/// Runs the bus over the upgraded connection until `lane` ends or the peer leaves.
-pub async fn serve(upgrade: OnUpgrade, lane: Lane) {
-    let upgraded = tokio::select! {
-        biased;
-        _ = lane.ended() => return,
-        upgraded = upgrade => match upgraded {
-            Ok(upgraded) => upgraded,
-            Err(_) => return,
-        },
-    };
+/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head, until `lane` ends or
+/// the peer leaves.
+pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, lane: Lane) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(8192)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let mut socket = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config)).await;
+    let mut socket = WebSocketStream::from_partially_read(stream, read.into(), Role::Server, Some(config)).await;
     let (code, reason) = tokio::select! {
         biased;
         ending = lane.ended() => close(ending),
@@ -113,7 +106,10 @@ fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
 }
 
 /// Answers each PING, text or binary, until the peer closes.
-async fn exchange(socket: &mut WebSocketStream<TokioIo<Upgraded>>, lane: &Lane) -> Result<(), Error> {
+async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
+    lane: &Lane,
+) -> Result<(), Error> {
     while let Some(message) = socket.next().await {
         let received = std::time::Instant::now();
         match message? {
