@@ -24,7 +24,7 @@ use crate::{
     model::{Outcome, Stage},
     net::approval,
     report,
-    text::{Line, Profile, Style},
+    text::{self, Line, Profile, Style},
 };
 use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use dialogs::{Chooser, SignIn};
@@ -587,8 +587,8 @@ impl App {
             self.ask_for_server();
             return Vec::new();
         }
-        if let Err(error) = self.config.validate() {
-            let text = format!("{}{}.", error[..1].to_uppercase(), &error[1..]);
+        if let Err(invalid) = self.config.validate() {
+            let text = format!("{}.", text::capitalised(&invalid.to_string()));
             self.notify(Line::styled(text, self.palette.warn));
             return Vec::new();
         }

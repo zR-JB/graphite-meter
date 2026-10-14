@@ -33,7 +33,9 @@ pub async fn interactive(
     terminal.hide_cursor()?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
-    let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
+    // A read error ends the input, which quits, instead of polling a broken terminal again.
+    let input = EventStream::new().take_while(|input| std::future::ready(input.is_ok()));
+    let mut input = pin!(input.filter_map(|input| std::future::ready(input.ok())));
     let (mut app, mut shown) = (App::new(config, kept, profile, Instant::now()), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

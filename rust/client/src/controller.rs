@@ -30,7 +30,8 @@ const GRACE: Duration = Duration::from_secs(5);
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "server rejected the approved credential; verify its authentication configuration";
 /// What an operation that panicked ends with.
-const INTERNAL: &str = "internal error";
+/// What a failure from a panic says.
+pub const INTERNAL: &str = "internal error";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {

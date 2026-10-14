@@ -8,7 +8,7 @@ use graphite_meter_client::{
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
     report::{WIDTH, details, report},
     run::prepare::ServerPath,
-    text::{Line, Profile, write},
+    text::{Line, Profile, capitalised, write},
     tui::theme::Palette,
 };
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
@@ -290,4 +290,11 @@ fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
     let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
     let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
     assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
+}
+
+#[test]
+fn capitalising_takes_the_first_character_whatever_its_width() {
+    assert_eq!(capitalised("élan to spare"), "Élan to spare");
+    assert_eq!(capitalised("warmup must be from 0s to 4s"), "Warmup must be from 0s to 4s");
+    assert_eq!(capitalised(""), "");
 }

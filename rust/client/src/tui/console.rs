@@ -8,6 +8,7 @@ use super::{
     theme::mix,
 };
 use crate::{
+    config::Invalid,
     events::{Point, Series},
     measure::{format, latency::Summary, wire},
     model::{Outcome, ServerFailure, Stage, StageResult, StageStatus},
@@ -218,7 +219,11 @@ impl App {
         match () {
             _ if self.running() => None,
             _ if self.config.url.is_none() => Some("needs a server".into()),
-            _ => self.config.validate().err().map(|_| "turn on a stage".into()),
+            _ => match self.config.validate() {
+                Ok(()) => None,
+                Err(Invalid::NoStages) => Some("turn on a stage".into()),
+                Err(invalid) => Some(invalid.to_string()),
+            },
         }
     }
 

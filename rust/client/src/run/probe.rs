@@ -1,13 +1,19 @@
 //! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
+    controller::INTERNAL,
     measure::latency::{Deadline, ProbeOutcome},
-    model::{Cadence, Stage},
+    model::{Cadence, Failure, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
     run::engine::Probe,
 };
-use graphite_meter_proto::bus::{Ping, Pong};
+use futures_util::FutureExt;
+use graphite_meter_proto::{
+    bus::{Ping, Pong},
+    reason::FailureReason,
+};
 use std::{
     collections::BTreeMap,
+    panic::AssertUnwindSafe,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -180,13 +186,19 @@ enum Window {
 }
 
 impl Prober {
-    /// Probes `path` at `cadence` for `stage` until `token` is cancelled.
+    /// Probes `path` at `cadence` for `stage` until `token` is cancelled; a panic ends the population as down.
     pub fn spawn(client: Client, path: LatencyPath, stage: Stage, cadence: Cadence, token: CancellationToken) -> Self {
         let (window, windows) = watch::channel(Window::Waiting);
         let (sender, probes) = mpsc::unbounded_channel();
         let schedule = Schedule::new(cadence, self::window(stage, cadence), Instant::now());
-        let probing = probe(client, path, schedule, windows, sender);
-        tokio::spawn(token.clone().run_until_cancelled_owned(probing));
+        let probing = AssertUnwindSafe(probe(client, path, schedule, windows, sender.clone())).catch_unwind();
+        let running = token.clone();
+        tokio::spawn(async move {
+            if let Some(Err(_)) = running.run_until_cancelled_owned(probing).await {
+                let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
+                drop(sender.send(Probe::Down { at: Instant::now(), failure }));
+            }
+        });
         Self { window, probes, _ends: token.drop_guard() }
     }
 

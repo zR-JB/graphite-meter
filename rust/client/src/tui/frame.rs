@@ -14,7 +14,7 @@ use crate::{
     measure::format,
     model::Stage,
     report::vocabulary as words,
-    text::{Line, Style, fill},
+    text::{self, Line, Style, fill},
 };
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::time::Instant;
@@ -490,7 +490,7 @@ impl App {
             entries.push(Entry::Heading(title.into()));
             for binding in table.iter().filter(|binding| binding.help.is_some()) {
                 let (key, does) = binding.help.unwrap_or_default();
-                let label = Line::styled(does[..1].to_uppercase() + &does[1..], self.palette.text);
+                let label = Line::styled(text::capitalised(does), self.palette.text);
                 entries.push(Entry::Item {
                     label,
                     value: Line::styled(key, self.palette.value),

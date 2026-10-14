@@ -12,6 +12,7 @@ use graphite_meter_proto::{
 };
 use std::{
     ffi::OsString,
+    fmt,
     num::{IntErrorKind, NonZero},
     path::PathBuf,
     time::Duration,
@@ -158,33 +159,52 @@ impl Config {
     }
 
     /// Why the settings cannot run, if they cannot.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.url.is_none() {
-            return Err(NO_SERVER.into());
-        }
-        if self.stages.is_empty() {
-            return Err("select at least one stage: latency, download, upload or bidirectional".into());
-        }
-        if self.warmup > MAX_WARMUP {
-            return Err("warmup must be from 0s to 4s".into());
-        }
-        let outside = |stage: &Stage| !STAGE_LIMITS.contains(&self.duration(*stage));
-        if let Some(stage) = Stage::ALL.iter().find(|stage| outside(stage)) {
-            return Err(format!("{} duration must be from 1s to 24h", stage.name()));
-        }
+    pub fn validate(&self) -> Result<(), Invalid> {
+        let outside = |stage: &&Stage| !STAGE_LIMITS.contains(&self.duration(**stage));
         let fast = |cadence| matches!(cadence, Cadence::Every(spacing) if spacing < FASTEST_CADENCE);
-        if fast(self.ping) || fast(self.loaded_ping) {
-            return Err("latency cadence must be reply-driven or at least 80ms".into());
+        match () {
+            _ if self.url.is_none() => Err(Invalid::NoServer),
+            _ if self.stages.is_empty() => Err(Invalid::NoStages),
+            _ if self.warmup > MAX_WARMUP => Err(Invalid::Warmup),
+            _ if let Some(stage) = Stage::ALL.iter().find(outside) => Err(Invalid::StageDuration(*stage)),
+            _ if fast(self.ping) || fast(self.loaded_ping) => Err(Invalid::Cadence),
+            _ if self.streams.forced.is_some_and(|forced| forced.get() > MAX_STREAMS) => Err(Invalid::ForcedStreams),
+            _ if !(1..=MAX_STREAMS).contains(&self.streams.auto) => Err(Invalid::AutoStreams),
+            _ => Ok(()),
         }
-        if self.streams.forced.is_some_and(|forced| forced.get() > MAX_STREAMS) {
-            return Err(format!(
+    }
+}
+
+/// Why settings cannot run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Invalid {
+    NoServer,
+    NoStages,
+    Warmup,
+    StageDuration(Stage),
+    Cadence,
+    ForcedStreams,
+    AutoStreams,
+}
+
+impl fmt::Display for Invalid {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoServer => formatter.write_str(NO_SERVER),
+            Self::NoStages => {
+                formatter.write_str("select at least one stage: latency, download, upload or bidirectional")
+            }
+            Self::Warmup => formatter.write_str("warmup must be from 0s to 4s"),
+            Self::StageDuration(stage) => write!(formatter, "{} duration must be from 1s to 24h", stage.name()),
+            Self::Cadence => formatter.write_str("latency cadence must be reply-driven or at least 80ms"),
+            Self::ForcedStreams => write!(
+                formatter,
                 "forced streams must be from 1 to {MAX_STREAMS} per server and direction, or 0 for automatic"
-            ));
+            ),
+            Self::AutoStreams => {
+                write!(formatter, "the automatic stream maximum must be from 1 to {MAX_STREAMS} per direction")
+            }
         }
-        if !(1..=MAX_STREAMS).contains(&self.streams.auto) {
-            return Err(format!("the automatic stream maximum must be from 1 to {MAX_STREAMS} per direction"));
-        }
-        Ok(())
     }
 }
 
@@ -244,9 +264,10 @@ struct Flags {
 impl Flags {
     /// The settings; a missing server is for `main` to recall or refuse.
     fn finish(mut self) -> Result<Config, String> {
-        self.config
-            .validate()
-            .or_else(|error| if error == NO_SERVER { Ok(()) } else { Err(error) })?;
+        match self.config.validate() {
+            Ok(()) | Err(Invalid::NoServer) => {}
+            Err(invalid) => return Err(invalid.to_string()),
+        }
         let paths = &mut self.config.paths;
         let protocols = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
         paths.protocol = choice("throughput protocol", &self.protocol, &protocols, Protocol::name)?;
@@ -549,7 +570,7 @@ mod tests {
     fn no_flags_take_go_defaults_without_a_server() {
         let config = run("").unwrap();
         assert_eq!(config, Config::default());
-        assert_eq!((config.url.as_ref(), config.validate()), (None, Err(NO_SERVER.into())));
+        assert_eq!((config.url.as_ref(), config.validate()), (None, Err(Invalid::NoServer)));
         assert_eq!(run("-url=").unwrap().url, None);
         let plan = [(Stage::Latency, 4), (Stage::Download, 10), (Stage::Upload, 10)];
         assert_eq!(config.plan(), plan.map(|(stage, seconds)| (stage, Duration::from_secs(seconds))));

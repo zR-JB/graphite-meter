@@ -93,7 +93,7 @@ impl Window {
     /// The shortest clock the window spans.
     pub fn shortest(&self) -> Duration {
         let receivers = self.components.up.iter().map(|component| component.duration);
-        receivers.fold(self.end - self.start, Duration::min)
+        receivers.fold(self.end.saturating_duration_since(self.start), Duration::min)
     }
 }
 
@@ -297,7 +297,8 @@ impl Aggregate {
     /// The headline: the latest counted interval with enough evidence in `direction`.
     pub fn result(&self, direction: Direction) -> Option<Rate> {
         self.counted().find_map(|(interval, window)| {
-            let enough = interval.end - interval.start >= MIN_EVIDENCE && evidence(&window.components[direction]);
+            let span = interval.end.saturating_duration_since(interval.start);
+            let enough = span >= MIN_EVIDENCE && evidence(&window.components[direction]);
             let mean = window.rates[direction].filter(|_| enough)?;
             Some(Rate { mean, peak: interval.peaks.combined[direction].max(mean) })
         })

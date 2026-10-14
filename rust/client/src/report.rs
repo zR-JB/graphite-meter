@@ -260,12 +260,13 @@ impl Report<'_> {
         notes
     }
 
-    /// The label and its facts, wrapped under the label when the first does not fit beside it.
+    /// The label and its facts, wrapped under the label when the first does not fit beside it; none without facts.
     fn note(&self, label: &str, facts: &[String]) -> Vec<Line> {
         let room = self.width.saturating_sub(2);
-        let first = format!("{label}: {}", facts[0]);
+        let Some((head, rest)) = facts.split_first() else { return Vec::new() };
+        let first = format!("{label}: {head}");
         let (mut lines, facts) = match crate::text::width(&first) <= room {
-            true => (Vec::new(), [vec![first], facts[1..].to_vec()].concat()),
+            true => (Vec::new(), [vec![first], rest.to_vec()].concat()),
             false => (vec![format!("{label}:")], facts.to_vec()),
         };
         for line in wrap(&facts, room) {
