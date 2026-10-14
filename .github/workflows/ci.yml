@@ -504,13 +504,78 @@ jobs:
         working-directory: rust
         run: cargo check --locked -p graphite-meter-server
 
+  pgo-export:
+    name: Temporary PGO campaign export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    needs: plan
+    if: needs.plan.outputs.rust-release == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned Python and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cache: 'false'}
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
+      - name: Build the release image's servers with their profiles
+        run: python3 -m scripts.ci.pgo_campaign export
+      - name: Upload the servers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pgo-pipeline
+          path: rust/target/campaign/export
+          if-no-files-found: error
+          retention-days: 7
+
+  pgo-measure:
+    name: Temporary PGO campaign (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    needs: [plan, pgo-export, rust-tui]
+    if: needs.plan.outputs.rust-release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned Python and Rust without build caches
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cache: 'false'}
+      - name: Install musl headers and compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Download the image's servers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: pgo-pipeline, path: rust/target/campaign/pipeline}
+      - name: Download the TUI archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: rust-tui, path: rust/target/campaign/tui}
+      - name: Build the baseline without a profile
+        run: python3 -m scripts.ci.pgo_campaign baseline
+      - name: Measure server CPU per GiB
+        run: python3 -m scripts.ci.pgo_campaign measure cpu
+      - name: Measure the TUI's CPU per GiB
+        run: python3 -m scripts.ci.pgo_campaign measure client
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pgo-results-${{ matrix.runner }}
+          path: rust/target/campaign/results
+          if-no-files-found: error
+          retention-days: 7
+
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, e2e, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-release, rust-windows]
+      rust-e2e, rust-tui, rust-release, rust-windows, pgo-export, pgo-measure]
     steps:
       - name: Require every selected job
         env:

@@ -114,7 +114,7 @@ OFFERS_EXPORT = "target: server-artifacts\n"
 IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.outputs.context }}")
 # The plan output that selects each CI job; the jobs ALWAYS names run on every change.
 SELECTED_BY = {
-    "e2e": "code", "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
+    "e2e": "code", "rust": "rust", "rust-windows": "rust", "pgo-export": "rust-release", "pgo-measure": "rust-release", "rust-interop": "rust-interop",
     "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
 }
 ALWAYS = ("plan", "checks", "gate")
