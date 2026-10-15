@@ -19,7 +19,7 @@ import {
   type CatalogEntry,
 } from "../../protocol/documents";
 import { ROUTES } from "../../protocol/routes";
-import { planned } from "../run/schedule";
+import { activities as stageActivities, planned } from "../run/schedule";
 import type { DroppedServer } from "../run/run";
 import type {
   FailureReason,
@@ -39,7 +39,7 @@ import {
   initialAuth,
   type Grant,
 } from "./auth";
-import { describeStreams, needsPings, planError, plannedActivities, type PlanServer } from "./budget";
+import { describeStreams, needsPings, planError, type PlanServer } from "./budget";
 import { createConnection, FRESH_MS, type Connection, type ConnectionEnv, type ServerView } from "./connection";
 import { createLimiter } from "./limiter";
 import { CoverageError, type PageConfig, type PageSession } from "./page";
@@ -241,7 +241,7 @@ export function createServers(env: ServersEnv): Servers {
     return computed(() => parseSelection(text()));
   };
   const selections = { throughput: choice("throughput"), latency: choice("latency") };
-  const activities = computed(() => plannedActivities(config()));
+  const activities = computed(() => stageActivities(config()));
   const latencyNeeded = computed(() => activities().some(needsPings));
   const checkpoints = computed(() => planned(config(), "upload") || planned(config(), "bidirectional"));
   const representative = computed(() => selected()[0] ?? null);

@@ -91,6 +91,41 @@ const faults: Fault[] = [
   },
 ];
 
+test.chrome("a download graph leaves separate curves and fills across a page-clock gap", async (page) => {
+  await open(page, undefined, {
+    config: {
+      stages: { latency: false, download: true, upload: false, bidirectional: false },
+      duration: { ...baseConfig.duration, downloadMs: 8_000 },
+    },
+  });
+  await ready(page);
+  const startedAt = Date.now();
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "download")).toHaveCount(1);
+  await Bun.sleep(1_200);
+  // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
+  await page.evaluate(() => {
+    const until = performance.now() + 2_000;
+    while (performance.now() < until) {}
+  });
+  await savedResult(page, startedAt, 20_000);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (document.querySelector(".graph .plot path.line")?.getAttribute("d")?.match(/M/g) ?? []).length >= 2,
+      ),
+    )
+    .toBe(true);
+  const [line, area] = await page.evaluate(() =>
+    [".graph .plot path.line", ".graph .plot path.area"].map(
+      (selector) => document.querySelector(selector)?.getAttribute("d") ?? "",
+    ),
+  );
+  expect((line!.match(/M/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  expect((area!.match(/M/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+  expect((area!.match(/Z/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+});
+
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Download stage time"]')!;

@@ -31,7 +31,7 @@ export interface HistorySaving {
 
 interface Entry {
   record: HistoryRecord;
-  clears: Promise<number | null>;
+  clears: Promise<number | null | HistoryRefusal>;
 }
 
 export function createHistorySaving(
@@ -78,7 +78,7 @@ export function createHistorySaving(
     // A refusal is final and says why; any other failure falls back on the count known to be current.
     queue.push({
       record,
-      clears: read().catch((error) => (error instanceof HistoryRefusal ? Promise.reject(error) : known)),
+      clears: read().catch((error) => (error instanceof HistoryRefusal ? error : known)),
     });
     pending.set(true);
     void drain();
@@ -102,6 +102,7 @@ export function createHistorySaving(
         const entry = queue[0]!;
         try {
           const clears = await entry.clears;
+          if (clears instanceof HistoryRefusal) throw clears;
           if (clears === null) {
             settle(entry, false, UNORDERED);
             continue;

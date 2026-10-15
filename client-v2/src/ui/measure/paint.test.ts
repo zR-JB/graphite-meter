@@ -46,3 +46,16 @@ test("a painter whose view is away draws nothing until it returns, then draws on
   expect(drawn).toEqual([0, 60]);
   dispose();
 });
+
+test("a queued resize never paints or restarts after its view is disposed", async () => {
+  let draws = 0;
+  const [wake, dispose] = scope(() => painter(() => (draws++, true)));
+  wake(true);
+  dispose();
+  await Promise.resolve();
+  frames.shift()?.(0);
+  expect(draws).toBe(0);
+  wake();
+  frames.shift()?.(20);
+  expect(draws).toBe(0);
+});

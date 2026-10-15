@@ -233,6 +233,25 @@ test("without storage for History a write is refused at once, so signing out nev
   saver.dispose();
 });
 
+test("a queued clear-count refusal stays handled while an earlier write is pending", async () => {
+  jest.useRealTimers();
+  const history = memoryHistory();
+  const saver = createHistorySaving(history.repository, signal(true), windowEvents());
+  saver.offer(record("a"));
+  await turns();
+  history.repository.clears = async () => {
+    throw new HistoryRefusal("History storage is unavailable.");
+  };
+  saver.offer(record("b"));
+  // The rejection must be handled before the queue gets around to this entry.
+  await Bun.sleep(0);
+  expect(history.writes.map(({ id }) => id)).toEqual(["a"]);
+  history.writes[0]!.answer();
+  await turns();
+  expect([saver.pending(), saver.failed(), saver.warning()]).toEqual([false, true, "History storage is unavailable."]);
+  saver.dispose();
+});
+
 test("while storage keeps failing, results wait in a bounded queue and the oldest waiting ones are given up", async () => {
   const history = memoryHistory();
   const saver = createHistorySaving(history.repository, signal(true), windowEvents());

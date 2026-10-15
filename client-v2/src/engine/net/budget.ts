@@ -1,7 +1,7 @@
 // One stage's lanes per server and direction, from one model of each HTTP/1.1 origin's browser connection pool:
 // control requests reserve connections by name, lanes share the rest, and the lanes the pool can run are the lanes
 // that must deliver before the stage is ready.
-import { timeline, type Activity, type Plan } from "../run/schedule";
+import { activities, type Activity } from "../run/schedule";
 import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, ThroughputTarget } from "../types";
 
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
@@ -44,11 +44,6 @@ export const normalizeStreamCount = (count: number) =>
 /** The latency stage, or a transfer stage with loaded latency, runs a probe channel. */
 export const needsPings = (activity: Activity) =>
   activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
-
-/** The activities of the stages `plan` runs, in order. */
-export const plannedActivities = (plan: Plan): Activity[] => [
-  ...new Map(timeline(plan).map((segment) => [segment.activity.stage, segment.activity])).values(),
-];
 
 /** Every lane keeps one stream; the rest is dealt round-robin up to each ceiling. */
 function deal(available: number, ceilings: readonly number[]): number[] {
@@ -122,10 +117,10 @@ export function planStreams(servers: readonly PlanServer[], activity: Activity, 
 
 /** Why `config`'s stages cannot run on `servers`, or "" when they can. */
 export function planError(config: TestConfig, servers: readonly PlanServer[]): string {
-  const activities = plannedActivities(config);
-  if (!activities.length) return "Give at least one stage a duration";
+  const planned = activities(config);
+  if (!planned.length) return "Give at least one stage a duration";
   try {
-    for (const activity of activities)
+    for (const activity of planned)
       if (activity.transfer.length) planStreams(servers, activity, config.transferStreams);
     return "";
   } catch (error) {

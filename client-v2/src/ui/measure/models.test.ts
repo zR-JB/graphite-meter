@@ -5,7 +5,8 @@ import type { LatencySummary } from "../../engine/measure/latency";
 import type { MultiServerResult } from "../../engine/run/result";
 import { liveCard, serverIssues, settledCard, shownEvidence, type Evidence, type LiveEvidence } from "./cards-model";
 import { lanesAxisMs, nearestMetric, present, stepMetric, values } from "./lanes-model";
-import { monotoneTangents, replyBars } from "./strip-model";
+import { Lane, monotoneTangents, replyBars } from "./strip-model";
+import type { ThroughputSample } from "../../app/series";
 
 const bucket = (startT: number, lo: number, hi: number, median = (lo + hi) / 2): LatencyBucket => ({
   phase: "latency",
@@ -34,6 +35,10 @@ test("reply bars join whole buckets to a bar's pitch, and a live bar only grows 
   // A bucket of timeouts draws nothing; another stage's buckets belong to another strip.
   const silent = { ...bucket(2200, 1, 1), medianRttMs: null };
   expect(bars([silent, { ...bucket(2400, 5, 6), phase: "download" }])).toEqual([]);
+  expect(bars([bucket(1000, 10, 15), { ...bucket(1200, 11, 14), continuityId: 1 }])).toEqual([
+    [10, 15, 1000, 1200],
+    [11, 14, 1200, 1400],
+  ]);
 });
 
 test("the strip's curve passes every bin and never overshoots a step", () => {
@@ -49,6 +54,25 @@ test("the strip's curve passes every bin and never overshoots a step", () => {
       expect(control).toBeGreaterThanOrEqual(Math.min(y[i]!, y[i + 1]!));
     }
   }
+});
+
+test("a plot bin never averages across a recovery and its curves end at each continuity boundary", () => {
+  const lane = new Lane();
+  const sample = (t: number, bytesPerSec: number, continuityId: number): ThroughputSample => ({
+    t,
+    bytesPerSec,
+    continuityId,
+    bytesCumulative: 0,
+    stage: "download",
+    dir: "down",
+  });
+  lane.fill([sample(10, 10, 0), sample(20, 90, 1), sample(120, 100, 1)], "download", "down", 0, 1_000, 10);
+  expect([...lane.v.slice(0, lane.n)]).toEqual([90, 100]);
+  const x = [0, 1, 2, 3];
+  const y = [10, 20, 100, 90];
+  const tangents = new Float64Array(4);
+  monotoneTangents(x, y, 4, tangents, [0, 0, 1, 1]);
+  expect([...tangents]).toEqual([10, 10, -10, -10]);
 });
 
 const summary = (p10: number, p50: number, p90: number, extra: Partial<LatencySummary> = {}): LatencySummary => ({
