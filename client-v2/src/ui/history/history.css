@@ -473,6 +473,10 @@
       display: none;
       margin-left: calc(-1 * (var(--space-3) + var(--hit-pad)));
     }
+    /* In the head's margin on the pane's edge, a step from the title. */
+    & .fold {
+      margin-inline: calc(-1 * (var(--space-3) + var(--hit-pad))) calc(-1 * var(--space-3));
+    }
     & dd.status {
       display: flex;
       align-items: baseline;
@@ -505,7 +509,7 @@
     .result-detail .back {
       display: inline-flex;
     }
-    .result-detail .close-detail {
+    .result-detail .fold {
       display: none;
     }
   }

@@ -7,7 +7,7 @@ import type { AddedLatency, LatencySummary } from "../../engine/measure/latency"
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { Glide, handoff, reducedMotion } from "../../lib/motion";
-import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
+import { computed, effect, signal, type Read } from "../../lib/signal";
 import { fmtAddedMs, fmtLatency, fmtMs, fmtTick, MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
@@ -285,11 +285,10 @@ function Lane(props: {
   const range = mark("range");
   const reach = mark("overflow");
   const band = mark("band");
-  const baseline = mark("baseline");
   const span = mark("added-span");
   const center = mark("center-marker");
   const current = mark("current-marker");
-  const order = [range, reach, band, baseline, span, center, current];
+  const order = [range, reach, band, span, center, current];
   track.append(
     art,
     <Show when={selected}>
@@ -354,17 +353,12 @@ function Lane(props: {
     const box = p10 !== null && p90 !== null;
     present$(band, box);
     if (box) place(band, p10, p90 - p10);
-    // Over the boxes: the idle median runs down through every loaded row, and each load's added span starts on it.
+    // Under the box, clear of the whisker: a bracket from the idle median to a loaded median, what the load added.
     const base = props.idle();
     const centre = at("center");
-    const baselined = base !== null && props.several();
-    present$(baseline, baselined);
-    present$(span, baselined && centre !== null && values.center !== null && values.center > base!);
-    if (baselined) {
-      const from = pct(base!);
-      place(baseline, from);
-      if (span.isConnected) place(span, from, centre! - from);
-    }
+    const from = base !== null && props.several() && (values.center ?? 0) > base ? pct(base) : null;
+    present$(span, from !== null && centre !== null);
+    if (from !== null && centre !== null) place(span, from, centre - from);
     present$(center, centre !== null);
     if (centre !== null) place(center, centre);
     const latest = props.live ? at("current") : null;
@@ -459,8 +453,9 @@ function Lane(props: {
   );
 }
 
-/** The plate reading the row: every measured figure in order, the one read in ink, centred on its marker inside the
-    track over the box and wrapping within the track's width; hidden until measured. */
+/** The plate reading the row: the figure of the mark nearest the pointer, over it and inside the plot, and a guide on
+    the mark. The plate stands as far along its own width as the mark lies along the plot, so it never leaves the
+    plot and is never measured; both are placed before they show, then glide from mark to mark. */
 function Reading(props: {
   metric: Read<Metric>;
   values: Read<Values>;
@@ -468,32 +463,19 @@ function Reading(props: {
   width: () => number;
 }): Node {
   const value = computed(() => props.values()[props.metric()]);
-  const x = computed(() => EDGE + (props.pct(value() ?? 0) / 100) * (props.width() - 2 * EDGE));
+  const along = computed(() => props.pct(value() ?? 0));
   const guide = (<span class="guide" />) as HTMLElement;
-  // One figure, the mark nearest the pointer, over it and inside the plot; it and its guide glide from mark to mark.
   const plate = (
-    <span class="inspect-card hover-card unmeasured">
+    <span class="inspect-card hover-card">
       <span>
         <small>{() => metricLabel(props.metric())}</small> {() => `${fmtMs(value())} ms`}
       </span>
     </span>
   ) as HTMLElement;
-  let measured = 0;
-  // Placed first once its width is known, so it appears where it reads rather than sliding there.
-  const place = () => {
-    if (!measured) return;
-    plate.style.translate = `${Math.max(0, Math.min(x.peek() - measured / 2, props.width() - measured))}px 0`;
-  };
-  const observer = new ResizeObserver(([record]) => {
-    measured = record?.borderBoxSize[0]?.inlineSize ?? 0;
-    plate.classList.toggle("unmeasured", !measured);
-    place();
-  });
-  observer.observe(plate);
-  onCleanup(() => observer.disconnect());
   effect(() => {
-    guide.style.translate = `${x()}px 0`;
-    place();
+    const x = EDGE + (along() / 100) * (props.width() - 2 * EDGE);
+    guide.style.translate = `${x}px 0`;
+    plate.style.translate = `calc(${x}px - ${along()}%) 0`;
   });
   return (
     <>

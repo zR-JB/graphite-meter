@@ -39,6 +39,7 @@ export const TITLE = new Intl.DateTimeFormat(undefined, {
 const PROBES_TIP =
   "Probe accounting\nA timeout: no reply by the probe's deadline\nUnfinished or failed sends are not timeouts";
 const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
+const CLOSE_TIP = "Close result (Esc)\n↑ ↓ open the result above or below";
 
 /** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. A version left to
     negotiation that the browser did not report is not named. */
@@ -216,11 +217,21 @@ export function ResultDetail(props: {
   });
 
   return (
-    <article class="result-detail" aria-labelledby={title} tabindex="-1">
+    <article class="result-detail" aria-labelledby={title} aria-keyshortcuts="ArrowUp ArrowDown" tabindex="-1">
       <header class="sheet-head detail-head page-fill">
         <button class="btn btn-quiet back" type="button" aria-label="Back to results" onclick={props.onClose}>
           <span aria-hidden="true">←</span>
           Results
+        </button>
+        {/* Beside the list the result folds away from its own edge, apart from History's close and unlike it. */}
+        <button
+          class="btn btn-icon btn-quiet fold"
+          type="button"
+          aria-label="Close result"
+          ref={tip(() => CLOSE_TIP)}
+          onclick={props.onClose}
+        >
+          <Icon name="chevrons" />
         </button>
         <div class="title">
           <h2 id={title}>
@@ -267,14 +278,6 @@ export function ResultDetail(props: {
             onclick={(event) => props.onDelete(event.currentTarget)}
           >
             <Icon name="trash" />
-          </button>
-          <button
-            class="btn btn-icon btn-quiet close-detail"
-            type="button"
-            aria-label="Close result"
-            onclick={props.onClose}
-          >
-            <Icon name="close" />
           </button>
         </div>
       </header>

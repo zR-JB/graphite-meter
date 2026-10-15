@@ -39,6 +39,7 @@ export function Sheet(props: {
       inert={() => !props.open()}
       data-rest={untrack(props.open) ? undefined : ""}
       data-flip={() => (props.docked() ? `sheet-${side}` : undefined)}
+      data-flip-layout=""
     >
       <div class="sheet-handle" aria-hidden="true">
         <span class="sheet-grip" />

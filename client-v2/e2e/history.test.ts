@@ -613,6 +613,49 @@ test("a result read late takes focus only while focus stays where it was chosen"
   }
 });
 
+test("Up and Down open the results beside the open one on its history entry, past the first page", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: Array.from({ length: 52 }, (_, index) => record(index + 1)) });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await history(page, id(50));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  const entries = await page.evaluate(() => history.length);
+  const open = () => page.evaluate(() => decodeURIComponent(location.hash.replace("#/history/", "")));
+  for (const [key, expected] of [
+    ["ArrowDown", id(51)],
+    ["ArrowUp", id(50)],
+    ["ArrowUp", id(49)],
+  ] as const) {
+    await page.press(key);
+    await expect.poll(open).toBe(expected);
+    await expect(page.locator(`.detail-pane:not([inert]) .result-detail`)).toHaveCount(1);
+  }
+  // The row past the first page was built, and the open row stays in the list's view.
+  const row = page.locator(`a[data-history-id="${id(49)}"]`);
+  await expect(row).toHaveAttribute("aria-current", "true");
+  await expect
+    .poll(() =>
+      row.evaluate((link: HTMLElement) => {
+        const box = link.getBoundingClientRect();
+        const list = link.closest(".history-list")!.getBoundingClientRect();
+        return box.top >= list.top && box.bottom <= list.bottom;
+      }),
+    )
+    .toBe(true);
+  await expect(page.locator(`a[data-history-id="${id(51)}"]`)).toHaveCount(1);
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+  // Closing steps back to the list, as from the result first opened.
+  await page.press("Escape");
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/history");
+  await expect(row).toBeFocused();
+  // Past the newest result Up does nothing.
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  await page.press("ArrowUp");
+  await Bun.sleep(200);
+  expect(await open()).toBe(id(1));
+});
+
 test("closing a linked result far down the list returns to its row", async (page) => {
   await fixturePage(page);
   await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });

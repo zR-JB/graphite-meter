@@ -11,6 +11,7 @@ import {
 import { For, Show } from "../../lib/dom";
 import { animate, nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
+import { reducedMotion } from "../../lib/motion";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import { OUTCOME } from "../../view/words";
 import { activeModal, canFocus } from "../kit/focus";
@@ -54,7 +55,7 @@ export function ResultsList(props: {
   selectedId: Read<string | null>;
   /** Epoch ms, a minute apart. */
   now: Read<number>;
-}): { element: HTMLElement; fitTo(width: number): void } {
+}): { element: HTMLElement; fitTo(width: number): void; neighbour(id: string, by: 1 | -1): string | null } {
   const { app } = props;
   const columns = app.preferences.historyColumns;
   const units = computed(() => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
@@ -119,10 +120,23 @@ export function ResultsList(props: {
     current = link;
     current?.setAttribute("aria-current", "true");
   };
+  // A result opened, or stepped to, brings its row into the list's view below the sticky heads, once its row is built.
+  let revealing: (() => void) | null = null;
+  const reveal = () => {
+    revealing = null;
+    if (!current) return;
+    const view = list.getBoundingClientRect();
+    const row = current.getBoundingClientRect();
+    const top = view.top + (table.querySelector<HTMLElement>(".column-head")?.offsetHeight ?? 0);
+    const by = row.top < top ? row.top - top : row.bottom > view.bottom ? row.bottom - view.bottom : 0;
+    if (by) list.scrollBy({ top: by, behavior: reducedMotion.peek() ? "instant" : "smooth" });
+  };
   effect(() => {
     const id = props.selectedId();
     untrack(() => markCurrent(id === null ? undefined : links.get(id)));
+    if (id !== null) revealing ??= nextFrame(reveal);
   });
+  onCleanup(() => revealing?.());
   // Closing a result returns focus to its row, or to Close History once the row is gone; after the panes settle.
   let open = props.selectedId.peek();
   effect(() => {
@@ -394,6 +408,15 @@ export function ResultsList(props: {
     fitTo(width) {
       const fits = judge(width - gutter);
       if (fits !== null) fold(!fits);
+    },
+    /** The result `by` rows from `id` in the list's order, its page added to those shown; null past either end. */
+    neighbour(id, by) {
+      const order = ordered.peek();
+      const at = order.findIndex((entry) => entry.id === id);
+      const next = at < 0 ? undefined : order[at + by];
+      if (!next) return null;
+      props.pages.set(Math.max(props.pages.peek(), Math.ceil((at + by + 1) / PAGE_ROWS)));
+      return next.id;
     },
   };
 }

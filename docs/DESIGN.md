@@ -194,9 +194,11 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
   starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the
   shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
-  its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
-  from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
-  stage's hue on the way down. End: the last needle holds, and the result takes the ring over where it stands.
+  its hue and the console's light from above (`--ambient`) shifts to it, and the needle rises to the warmup's ramp
+  (520 ms) in its hue faded toward the page, from zero or, while the last stage still drains, turning round where
+  it stands, never jumping; when the stage starts measuring, the needle comes up to its hue; when it ends, the
+  needle drains back to zero (300 ms) and blends into the next stage's hue on the way down. End: the last needle
+  holds, and the result takes the ring over where it stands.
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
   stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
   and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is
@@ -215,8 +217,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) springs from where it is seen to its new place on the compositor, a card or the stage
-  changing width with it, and any other wider one opens from its old width. The spring sets off from rest, or at
-  the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
+  changing width with it, and any other wider one opens from its old width. What changes width, and the docked
+  sheets that move with the stage, move by offsets in layout instead, so a width and its neighbours are drawn in
+  the same frame (Firefox would draw a translate on its compositor apart from them). The spring sets off from rest,
+  or at the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
   one move shares it, so edges that meet stay together through the bob, and nothing starts or stops at once. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
   arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
   moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
@@ -329,11 +333,13 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   or unaccounted replies brighten its timeouts figure under a dotted mark whose tip gives every probe outcome, and
   only a twentieth or more of the probes turns it to `--warn`; a failed population tints its name. The rows share one ms axis on the gauge's ladder over their P90s, so
   the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead and names its value. The axis
-  sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
-  is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
-  pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker; the
-  reading (the marker's name and value) stands centred on the marker, above the box's band. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
-  stage names its reason under the headline.
+  sits under the last row and its ticks run up through the rows as gridlines behind the plots. Under a loaded
+  row's box, clear of its whisker, a bracket runs from the idle median, where it rises in the idle hue, to the
+  row's median tick: what the load added. A pointer anywhere on a row's plot reads the marker nearest it and
+  follows the pointer from marker to marker; the reading (the marker's name in the row's ink, and its value) stands
+  over the marker, as far along its own width as the marker lies along the axis, so it never leaves the plot. It
+  fades in where it reads and glides from marker to marker in 100 ms. A narrow panel drops jitter, never timeouts;
+  a phone gives each population its figures, then its plot. A failed stage names its reason under the headline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
   ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
@@ -366,7 +372,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
   sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
-  across from a 1366 px window), never under 360 px, and the detail never under 460 px.
+  across from a 1366 px window), never under 360 px, and the detail never under 460 px. Beside the list the
+  result's head leads with a fold mark (») on the pane's edge that closes the result, far from History's own ✕ and
+  unlike it; over the list it leads with ← Results. Up and Down open the result above or below in the list in its
+  place, on the same history entry, its row kept in view.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
   A private value (Details' "Your address") is a mask until the eye key at its row's end is pressed, its glyph on the
   row's text edge; no hover or focus reveals it, and the page holds the value only while it shows.
@@ -428,8 +437,9 @@ share its layout, words and keys.
   the cards, and the lanes when rows are left.
 - **Latency lanes** take a row each, two on a tall console: the median, jitter and timeouts, then a box plot from the
   10th to the 90th percentile with whiskers to the fastest and slowest reply, the median a heavy tick, the latest
-  reply a mark in the second row, the idle median dotted down every loaded lane, and an arrow with its value where a
-  reply passes the axis. The axis steps 1-2-4 over the 90th percentiles with a quarter's room; `Added` ends each row.
+  reply a mark in the second row, a bracket under each loaded box from the idle median to its own, and an arrow
+  with its value where a reply passes the axis. The axis steps 1-2-4 over the 90th percentiles with a quarter's
+  room; `Added` ends each row.
 - **The key** is the console's one plate, three rows: `Start test`, `■ Stop test` while a run goes, `Run again` after,
   with the plan's time and its cap; a key that cannot start says why on it. Under it a chip per stage fills a heavy
   rule in the stage's hue as it runs, half a cell at a time, and sweeps through its warmup; it ends in the planned

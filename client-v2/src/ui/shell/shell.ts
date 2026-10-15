@@ -239,6 +239,10 @@ export function createShell(app: App, layout: Layout) {
     }
     navigate(withWorkspace(current, { kind: "history", id }), "push", focusAfter);
   }
+  /** Stepping through results rewrites the entry, so Back and closing still return to where the first opened. */
+  function swapResult(id: string): void {
+    if (resultOf(route.peek())) navigate(withWorkspace(route.peek(), { kind: "history", id }), "replace");
+  }
   function closeHistory(focusAfter?: Focus): void {
     const invoker = invokers.get("history");
     invokers.delete("history");
@@ -390,6 +394,7 @@ export function createShell(app: App, layout: Layout) {
     open: (panel, invoker) => untrack(() => open(panel, invoker)),
     close: (panel) => untrack(() => close(panel)),
     history: (id, invoker) => untrack(() => showHistory(id, invoker)),
+    swapResult: (id) => untrack(() => swapResult(id)),
     closeHistory: () => untrack(() => closeHistory()),
     legal: (invoker) => untrack(() => legal(invoker)),
     startOver: () => untrack(startOver),

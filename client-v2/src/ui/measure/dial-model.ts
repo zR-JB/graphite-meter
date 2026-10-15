@@ -222,9 +222,10 @@ export interface NeedleInput {
   course: string;
 }
 
-/** The needle's course. A stage's first value rises from zero; within a stage the needle follows the live value, and
-    a scale change glides it across; when the value ends it drains to zero, so one stage hands the ring to the next
-    through zero. A result takes over the ring where the needle stands. Angles are degrees of the 270° ring. */
+/** The needle's course. A stage's first value rises from zero, or turns the needle round from where the last stage's
+    drain has taken it, at the speed it drains; within a stage the needle follows the live value, and a scale change
+    glides it across; when the value ends it drains to zero, so one stage hands the ring to the next through zero. A
+    result takes over the ring where the needle stands. Angles are degrees of the 270° ring. */
 export class Needle {
   #from = 0;
   #at = 0;
@@ -281,8 +282,8 @@ export class Needle {
       this.#drawn = 0;
       this.#velocity = 0;
     }
-    if (!this.#revealed && motion && this.#drawn < 0.5) this.#move(now, RISE_MS, "target");
-    else if (!motion || !this.#revealed) this.#move(now, 0, "target");
+    if (!motion) this.#move(now, 0, "target");
+    else if (!this.#revealed) this.#move(now, RISE_MS, "target");
     else if (course !== this.#course) this.#move(now, RESCALE_MS, "target");
     this.#revealed = true;
     this.#course = course;

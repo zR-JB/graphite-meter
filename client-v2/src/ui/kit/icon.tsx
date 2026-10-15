@@ -30,6 +30,7 @@ const GLYPHS = {
   ],
   check: () => [<path d="M20 6 9 17l-5-5" />],
   chevron: () => [<path d="m9 5 7 7-7 7" />],
+  chevrons: () => [<path d="m6 6 6 6-6 6" />, <path d="m13 6 6 6-6 6" />],
   external: () => [<path d="M8 16 16 8M9 8h7v7" />],
   copy: () => [
     <rect x="9" y="9" width="12" height="12" rx="2" />,

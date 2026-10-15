@@ -1,9 +1,12 @@
 // Layout moves. A change that reshapes the console applies at once, in the frame of the input that asked for it;
 // then every element marked `data-flip` that stayed springs from where it is seen to its new place on the
-// compositor. One also marked `data-flip-resize` changes width on the same spring (a layout per frame within it); any
-// other element that got wider opens from its old width. An arriving element waits for its neighbours to make room,
-// then rises in; a leaving one goes at once. A move that interrupts another keeps its speed. A docked panel stays
-// displayed beside its closed column, so its slide is an ordinary move in every engine.
+// compositor. One also marked `data-flip-resize` changes width on the same spring (a layout per frame within it); it,
+// and one marked `data-flip-layout`, moves by relative offsets in layout, so a width and every surface that moves with
+// it are drawn in the same frame: Firefox runs a translate on its compositor apart from those frames, and would draw
+// a move that replaces another a frame off its place. Any other element that got wider opens from its old width. An
+// arriving element waits for its neighbours to make room, then rises in; a leaving one goes at once. A move that
+// interrupts another keeps its speed. A docked panel stays displayed beside its closed column, so its slide is an
+// ordinary move in every engine.
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];
@@ -83,8 +86,9 @@ export function flip(update: () => void, only?: readonly string[]): void {
     const opened = !resized && axes.w[0] <= -1;
     if (!shifted && !resized && !opened) continue;
     moved = true;
+    const layout = el.dataset.flipResize !== undefined || el.dataset.flipLayout !== undefined;
     settle(el, axes, (x, y, w) => ({
-      translate: `${x}px ${y}px`,
+      ...(layout ? { left: `${x}px`, top: `${y}px` } : { translate: `${x}px ${y}px` }),
       ...(resized && { width: `${box.width + w}px` }),
       ...(opened && { clipPath: `inset(0 ${-w}px 0 0 round var(--r-surface))` }),
     }));
