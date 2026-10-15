@@ -53,6 +53,7 @@ case $profile in
     # The sign-in pages from a private server on loopback.
     hash=$(printf '%s\n%s\n' gallery-password gallery-password | "$work/graphite-meter" hash-password)
     GM_SERVER_NAME="Home server" GM_TLS_CERT=$work/cert.pem GM_TLS_KEY=$work/key.pem GM_H1_TLS_ADDR=127.0.0.1:8898 \
+      GM_H1_ADDR=127.0.0.1:18890 GM_H2_ADDR=127.0.0.1:18892 GM_H3_ADDR=127.0.0.1:18893 \
       GM_ADVERTISED_NATIVE_ENDPOINTS=http1-tls,http2,http3 GM_AUTH_MODE=password GM_AUTH_PUBLIC_URL=https://127.0.0.1:8898 \
       GM_AUTH_PASSWORD_HASH="$hash" \
       "$work/graphite-meter" >"$work/server-signin.log" 2>&1 &
