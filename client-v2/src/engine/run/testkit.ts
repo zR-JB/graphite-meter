@@ -81,9 +81,11 @@ export interface Peer {
   /** May answer with the clock time its count stands at. */
   flush?(events: StageEvents, cutoff: number): void | number | Promise<void | number>;
   receives?: false;
+  /** Whether the server's login or grant has ended, as its auth check answers. */
+  signedOut?: boolean;
 }
 
-export function prepared(id: string, latency: boolean): PreparedServer {
+export function prepared(id: string, latency: boolean, signedOut = false): PreparedServer {
   const origin = `https://${id}.example`;
   const fetch: FetchTarget = { id: origin, origin, transport: "fetch-stream", protocol: "http1", tls: true };
   const probe = {
@@ -95,7 +97,7 @@ export function prepared(id: string, latency: boolean): PreparedServer {
   const verified = { generation: "g", verifiedAt: 0, verifiedFor: { selection: "auto", head: origin } };
   return {
     server: { id, url: origin, name: id },
-    auth: {} as ServerAuth,
+    auth: { ended: async () => signedOut } as Partial<ServerAuth> as ServerAuth,
     discovery: { engineVersion: "test" } as Discovery,
     throughput: { target: fetch, fetch, probe, browserProtocol: "http/1.1", ...verified },
     latency: latency
