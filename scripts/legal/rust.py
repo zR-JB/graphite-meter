@@ -219,6 +219,12 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     return shared
 
 
+def remap_flags() -> list[str]:
+    """The rustc flags with which a distributed build names neither the checkout nor Cargo's home."""
+    cargo_home = os.environ.get("CARGO_HOME") or str(Path.home() / ".cargo")
+    return [f"--remap-path-prefix={path}={name}" for path, name in ((ROOT, "/src"), (cargo_home, "/cargo"))]
+
+
 def pgo_profile(target: str) -> Path:
     """The trained profile of `target`'s architecture, which a build of any of its targets may use."""
     return PGO / f"{target.split('-')[0]}.profdata"
@@ -236,9 +242,7 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
                "--profile", build.profile, "--message-format=json-render-diagnostics"]
     link_map = None
     if build.target is not None:
-        cargo_home = os.environ.get("CARGO_HOME") or str(Path.home() / ".cargo")
-        # A distributed build names neither the checkout nor Cargo's home.
-        flags = [f"--remap-path-prefix={path}={name}" for path, name in ((ROOT, "/src"), (cargo_home, "/cargo"))]
+        flags = remap_flags()
         if (profile := pgo_profile(build.target)).is_file():
             flags.append(f"-Cprofile-use={profile}")
         environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)

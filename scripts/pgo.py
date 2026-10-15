@@ -20,7 +20,7 @@ from pathlib import Path
 from rust.interop.fixture import Fixture, Server
 
 from .ci.rust_workspace import load
-from .legal.rust import PGO, PROFILES, pgo_profile
+from .legal.rust import PGO, PROFILES, pgo_profile, remap_flags
 
 ROOT = Path(__file__).resolve().parents[1]
 RUST = ROOT / "rust"
@@ -34,9 +34,13 @@ def instrumented(target: str, profile: str, raw: Path) -> Path:
     built = PGO / "build"
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith("GM_") and key not in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS")}
-    environment |= {"CARGO_TARGET_DIR": str(built), "CARGO_ENCODED_RUSTFLAGS": f"-Cprofile-generate={raw}"}
-    subprocess.run(["cargo", "build", "--locked", "--profile", profile, "--target", target,
-                    "-p", "graphite-meter-server", "-p", "graphite-meter-client"], cwd=RUST, env=environment, check=True)
+    flags = [*remap_flags(), f"-Cprofile-generate={raw}"]
+    environment |= {"CARGO_TARGET_DIR": str(built), "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags)}
+    # A profile names a local function by its codegen unit, whose hash follows the crate's features and those of its
+    # dependencies: each package builds alone, as its reviewed build does, so the names match.
+    for package in ("graphite-meter-server", "graphite-meter-client"):
+        subprocess.run(["cargo", "build", "--locked", "--profile", profile, "--target", target, "-p", package],
+                       cwd=RUST, env=environment, check=True)
     return built / target / profile
 
 
