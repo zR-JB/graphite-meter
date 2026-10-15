@@ -1,5 +1,5 @@
 {
-  "comment": "GrowingRateEstimator (client/src/lib/runner/liveRates.ts): each step observes [bytes, ms] and then presents [presented bytes/s, whether a new regime was confirmed]. Generated from the TypeScript; the Go and Rust terminal clients must match within 1e-9.",
+  "comment": "RateEstimator (client/src/engine/measure/live.ts): each step observes [bytes, ms] and then presents [presented bytes/s, whether a new regime was confirmed]. Generated from the TypeScript; the Go and Rust terminal clients must match within 1e-9.",
   "cases": [
     {"name": "the first delivery anchors and nothing shows before 500 ms of evidence", "steps": [
       [0, 60, 0, false],

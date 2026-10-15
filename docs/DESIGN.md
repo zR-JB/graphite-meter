@@ -1,7 +1,8 @@
 # Design system
 
-The browser client's look is owned by the tokens and primitives in `client/src/app.css`. This page states the rules
-they encode. A component uses tokens and primitives; it never restates a colour, radius, shadow or type recipe.
+The browser client's look is owned by the tokens and primitives in `client/src/styles/` (`tokens.css`,
+`primitives.css`). This page states the rules they encode. A component uses tokens and primitives; it never restates
+a colour, radius, shadow or type recipe.
 
 [Project overview](../README.md) · [Development](DEVELOPMENT.md) · [Measurement definitions](MEASUREMENTS.md)
 
@@ -40,7 +41,7 @@ size of a result), glass, grain, glow and 3D light (effects over data, and compo
    and History column.
 3. **Precise.** Hairlines, a 4 px grid, concentric radii, tabular figures and aligned columns. Every number can be
    explained on hover or focus: a title line, then short lines.
-4. **One owner.** A second component that needs a recipe means the recipe belongs in `app.css`.
+4. **One owner.** A second component that needs a recipe means the recipe belongs in `primitives.css`.
 
 ## Banned
 
@@ -88,9 +89,9 @@ page, white panels, ink controls. **Gamut.** Base values fit sRGB; `@media (colo
 status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more` strengthens subtle
 edges and `--text-soft`.
 
-The auth pages' assets are generated from client v2 (`client-v2/auth`, written to `go/internal/auth/assets`): their
-stylesheet carries the tokens its rules use and the Plex Sans and Plex Mono 600 faces (those two font files are the
-only ones served before sign-in), their brand mark and favicon stroke the hexagon in the latency hue, notices are
+The auth pages' assets are generated from the browser client (`client/auth`, written to `go/internal/auth/assets`):
+their stylesheet carries the tokens its rules use and the Plex Sans and Plex Mono 600 faces (those two font files are
+the only ones served before sign-in), their brand mark and favicon stroke the hexagon in the latency hue, notices are
 the app's `.notice`, and every page's card starts at one height so a notice grows it downward. The sign-in card is a
 faceplate: the dial at rest with a lock at its centre, over a centred title and the host the page was reached at in
 Plex Mono, filled by script so nothing is disclosed. While a sign-in is checked the ring sweeps in the latency hue,
@@ -166,7 +167,7 @@ opaque `--surface-1` take `--border-strong`.
 ## Icons
 
 Line drawings on a 24-unit grid with a 1.9 stroke and round caps and joins, in `currentColor`
-(`presentation/icons.ts`), at `--icon` 16 px or `--icon-sm` 13 px, or 10 px inside a `.tone-icon`: an 18 px plate
+(`client/src/ui/kit/icon.tsx`), at `--icon` 16 px or `--icon-sm` 13 px, or 10 px inside a `.tone-icon`: an 18 px plate
 washed in the stage's hue with a tone hairline, which marks a stage on its card, its lane, the dial's result and
 History's column heads. One glyph per concept: download, upload, bidirectional and ping are the stage marks.
 
@@ -176,7 +177,8 @@ Motion takes the user through the run without touching it: nothing moves that th
 nothing moves twice for one cause, and every move is transform or opacity or a paint that runs once per event;
 nothing loops while a stage runs, so a slow device's frames stay even. A one-time animation fills backwards only,
 so once it has run it leaves no effect for the browser to reapply on every restyle. The vocabulary is a handful
-of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
+of keyframes, each with one meaning: `pop` and `grow-x` in `styles/overrides.css`, and the instrument's own in
+`ui/measure/measure.css`.
 
 - Tokens: `--dur-hover` 100 ms, `--dur-slide` 150 ms (popovers, dialogs, tips), `--dur-sheet` 320 ms (sheets and
   their column), `--dur-graph` 220 ms (bars, keys, scale changes), `--dur-stage` 380 ms (a stage event's wave),
@@ -226,8 +228,8 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result
   in History moves its panes the same way: the list keeps its place while its width changes, so the result rises in
   at once; closing, the result goes at once and the list opens across its place from its old width, like a curtain.
-- Live values and the running strip's leading edge move on the single frame clock in
-  `presentation/motion.svelte.ts`; a glide smooths only the rendering.
+- Live values and the running strip's leading edge move on the single frame clock in `client/src/lib/frame.ts`;
+  a glide (`client/src/lib/motion.ts`) smooths only the rendering.
 - A view hands off by a class: the old fades out in 90 ms and the new in over 180 (`.handoff`, `.handoff-out`,
   `--dur-handoff-out`, `--dur-handoff-in`); the frame clock flips the class once at the start and once at the
   swap, so the fade itself runs on the compositor and no element writes its opacity per frame. A view that
@@ -465,5 +467,5 @@ share its layout, words and keys.
 | Colour the download strip, lane, key bar, bead, card rule and History note with `--phase-download`.                 | Colour a fast result green, or a control blue. |
 | Put facts in an aligned `dl.kv`.                                                                                    | Join facts with " · " in grey prose.           |
 | Set a readout, a result and a key on a flat panel; tint only a strip's field.                                       | Recess a well, wash a card, or box a panel.    |
-| Add a recipe to `app.css` when a second component needs it.                                                         | Restyle `.btn` inside a component.             |
+| Add a recipe to `primitives.css` when a second component needs it.                                                  | Restyle `.btn` inside a component.             |
 | Review idle, live, complete, partial and stopped frames in both themes, at 1024, 1440, 1920 and phone width, at 2×. | Judge a change from metrics alone.             |

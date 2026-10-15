@@ -9,16 +9,10 @@ workflow: &workflow
   - 'go/go.mod'
   - 'go/go.sum'
 
-# Client v2 and what it shares from client v1: static files and the E2E harness modules.
 code:
   - *workflow
   - 'api/**'
-  - 'client-v2/**'
-  - 'client/public/**'
-  - 'client/e2e/browsers.ts'
-  - 'client/e2e/servers.ts'
-  - 'client/e2e/webview.ts'
-  - 'client/scripts/e2e.ts'
+  - 'client/**'
   - 'go/**'
   - 'legal/**'
   - 'container/**'
@@ -34,9 +28,9 @@ go:
 deps:
   - *workflow
   - 'go/**'
-  - 'client-v2/package.json'
-  - 'client-v2/bun.lock'
-  - 'client-v2/bunfig.toml'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'
 
 # Inputs of the Rust workspace's checks and tests.
 rust:
@@ -57,12 +51,7 @@ rust-image:
   - *workflow
   - 'rust/**'
   - 'legal/**'
-  - 'client-v2/**'
-  - 'client/public/**'
-  - 'client/e2e/browsers.ts'
-  - 'client/e2e/servers.ts'
-  - 'client/e2e/webview.ts'
-  - 'client/scripts/e2e.ts'
+  - 'client/**'
   - 'go/internal/auth/assets/**'
   - 'container/Dockerfile.rust'
   - '.dockerignore'
@@ -76,9 +65,9 @@ rust-release:
   - 'rust/**'
   - 'legal/**'
   - 'go/internal/auth/assets/**'
-  - 'client-v2/package.json'
-  - 'client-v2/bun.lock'
-  - 'client-v2/bunfig.toml'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'
   - 'container/Dockerfile.rust'
   - '.dockerignore'
   - 'LICENSE'

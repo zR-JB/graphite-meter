@@ -2,10 +2,10 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-Every capture is a real run of version 0.10.1. The servers are local, each behind a link shaper that models one
-client's path into a 10 GbE home network: a laptop on Wi-Fi 7 for the completed views, a workstation wired at 10 GbE
-in the README's hero, and a phone on Wi-Fi 6E. The figures are what the meter measured over those paths, not a
-benchmark of a network.
+Every browser capture is a real run of a production build after version 0.11.1. The servers are local, each behind
+a link shaper that models one client's path into a 10 GbE home network: a laptop on Wi-Fi 7 for the desktop views and
+the README's hero, and a phone on Wi-Fi 6E. The figures are what the meter measured over those paths, not a benchmark
+of a network.
 
 ## The completed test
 
@@ -13,7 +13,7 @@ The dial carries the run's headline and every stage's result on one ring; the la
 latency side by side with what each load added; one card per stage, under its key, keeps the stage's graph with
 the latency its load caused underneath.
 
-<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.26 Gbit/s down, 1.81 Gbit/s up, 2.5 ms idle latency, the latency lanes and one card per stage" width="1080">
+<img src="assets/desktop.png" alt="Completed test from a laptop on Wi-Fi 7: 3.26 Gbit/s down, 1.82 Gbit/s up, 2.2 ms idle latency, the latency lanes and one card per stage" width="1080">
 
 <img src="assets/light.png" alt="The same completed test in the light theme" width="1080">
 
@@ -54,7 +54,7 @@ the latency lanes under them; nothing overlaps whatever the stages, servers or s
 the dial in view while the rest scrolls beside it, and a sheet follows the finger and leaves on a flick.
 
 <p align="center">
-<img src="assets/mobile.png" alt="Phone view of a completed test over Wi-Fi 6E: 1.55 Gbit/s down, 0.82 Gbit/s up, 3.6 ms idle latency, the dial over the stages and their cards" width="320">
+<img src="assets/mobile.png" alt="Phone view of a completed test over Wi-Fi 6E: 1.58 Gbit/s down, 0.82 Gbit/s up, 3.3 ms idle latency, the dial over the stages and their cards" width="320">
 <img src="assets/mobile-history.png" alt="Phone view of a saved result" width="320">
 </p>
 
@@ -75,16 +75,16 @@ over its stage chips, and a card per stage.
 
 <img src="assets/tui.png" alt="Native terminal client after a complete latency, download and upload run" width="1080">
 
-Browser captures: production build of 0.10.1 over HTTPS, Chrome 154, 1600 × 1000 (workspace 1920 × 1080) at 2×
-density, and 430 × 839 at 3× (the screen of a 430 × 932 phone between its status bar and home indicator); stages
-latency 4 s, download and upload 8 s, bidirectional 6 s, a 1 s warmup; the dial's maximum automatic.
-Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-way delay; the workstation's
-9.4 Gbit/s each way with no added delay, of which the capture host's CPU reached about 9; the phone's 1.65 Gbit/s
+Browser captures: production build of revision 10f36298, which the status bars name, over HTTPS, headless Chrome 154
+on a GitHub-hosted Ubuntu 24.04 runner, 1600 × 1000 (workspace 1920 × 1080) at 2× density, and 430 × 839 at 3× (the
+screen of a 430 × 932 phone between its status bar and home indicator); stages latency 4 s, download and upload 8 s,
+bidirectional 6 s, a 1 s warmup; the dial's maximum automatic.
+Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-way delay; the phone's 1.65 Gbit/s
 down and 0.86 Gbit/s up with 1.5 ms. Each queues up to 4 ms of data, so latency under load comes from real
 queueing. The three servers of the multi-server run each have their own path (1.3, 1.1 and 1.0 Gbit/s down with 1,
 1.5 and 2 ms), together about the laptop's, and the partial run stops the Mini PC's server during download. The
-terminal capture is a source build of the Go TUI with its default stages at 120 × 40 in VTE at 2×, over TLS on
-loopback, which runs far faster than any of those paths. Each capture is shown as a plain screen; the README's hero
-sets two in a laptop and a phone outline. The sign-in pages come from a local server with password sign-in, at the
-phone's size.
+terminal capture is a source build of the Go TUI from 0.11.0's development with its default stages at 120 × 40 in
+VTE at 2×, over TLS on loopback, which runs far faster than any of those paths. Each capture is shown as a plain screen;
+the README's hero sets the laptop's upload stage and the phone's result in a laptop and a phone outline. The sign-in
+pages come from a local server with password sign-in, at the phone's size.
 To measure your own network, follow [deployment and configuration](DEPLOYMENT.md).

@@ -12,9 +12,6 @@
 /client/package.json             @zR-JB
 /client/bun.lock                 @zR-JB
 /client/bunfig.toml              @zR-JB
-/client-v2/package.json          @zR-JB
-/client-v2/bun.lock              @zR-JB
-/client-v2/bunfig.toml           @zR-JB
 /rust/Cargo.toml                 @zR-JB
 /rust/Cargo.lock                 @zR-JB
 /rust/deny.toml                  @zR-JB

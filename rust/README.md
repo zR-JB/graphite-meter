@@ -47,10 +47,8 @@ performance only between equal optimized profiles.
 
 Local builds embed development notices, so their executables say `UNREVIEWED DEVELOPMENT BUILD` and are not
 distributable; the pinned builder in `container/Dockerfile.rust` makes reviewed release builds
-([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per client and profile
-into `target/browser/` and reused until a browser input changes. The server embeds browser client v2; `GM_CLIENT=v1`
-makes `rust-server-build`, `rust-server-run`, `dev` and `prod` embed v1 for comparison, and the image always embeds
-v2.
+([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per profile into
+`target/browser/` and reused until a browser input changes.
 
 Build-time variables:
 

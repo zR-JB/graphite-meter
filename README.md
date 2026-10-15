@@ -11,7 +11,7 @@ One Go server, a responsive web interface, and a native terminal client.
 
 [Quick start](#quick-start) · [Measurements](#what-you-can-measure) · [Browser](#browser-client) · [Terminal](#native-terminal-client) · [Documentation](#documentation)
 
-<img src="docs/assets/hero.png" alt="A laptop screen with a wired 10 GbE test mid-run, uploading at 8.97 Gbit/s with 0.2 ms idle latency, and a phone beside it with its finished Wi-Fi 6E result" width="1080">
+<img src="docs/assets/hero.png" alt="A laptop screen with a Wi-Fi 7 test mid-run, uploading at 1.81 Gbit/s with 2.2 ms idle latency, and a phone beside it with its finished Wi-Fi 6E result" width="1080">
 
 <sub>Real runs over shaped home-network paths · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
@@ -78,7 +78,7 @@ result replays on the dial when the run ends.
 - **Local history:** optionally save up to 2,000 results on your device, grouped by day. Inspect past runs
   while the live test continues, then return to it from the toolbar. History is not a server-side archive.
 
-<img src="docs/assets/workspace.png" alt="Settings and Details docked on both sides of a completed 10 GbE test on a wide desktop" width="1080">
+<img src="docs/assets/workspace.png" alt="Settings and Details docked on both sides of a completed Wi-Fi 7 test on a wide desktop" width="1080">
 
 <p align="center"><sub>Resizable desktop panels · more in the <a href="docs/SCREENSHOTS.md">gallery</a></sub></p>
 

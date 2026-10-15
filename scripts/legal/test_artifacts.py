@@ -52,16 +52,16 @@ class SourceArchiveTests(unittest.TestCase):
             self.assertIn(text.encode(), files[prefix + "README.txt"])
 
     def test_archive_uses_resolved_browser_and_go_replacement_paths(self) -> None:
-        npm = self.write("client/node_modules/outer/node_modules/svelte/LICENSE.md", "MIT\n").parent
+        npm = self.write("client/node_modules/outer/node_modules/patched-lib/LICENSE.md", "MIT\n").parent
         go = self.write("replacement/replacement.go", "package replacement\n").parent
-        self.scopes["server/browser"] = [Component("svelte", "5", "npm", source_path=npm),
+        self.scopes["server/browser"] = [Component("patched-lib", "5", "npm", source_path=npm),
                                          Component("../replacement", ecosystem="go", source_path=go)]
         self.scopes["container"] = list(self.scopes["server/browser"])
         output = self.root / "sources.tar.gz"
         third_party_source_bundle(self.root, Project(), "development", self.scopes, [], output)
         files = self.contents(output)
         prefix = "graphite-meter_development_third-party-source/third_party/"
-        self.assertEqual(files[prefix + "npm/svelte_at_5/LICENSE.md"], b"MIT\n")
+        self.assertEqual(files[prefix + "npm/patched-lib_at_5/LICENSE.md"], b"MIT\n")
         self.assertEqual(files[prefix + "go/.._replacement_at_/replacement.go"], b"package replacement\n")
         self.assertEqual(sum(name.endswith("/replacement.go") for name in files), 1)
         inventory = files["graphite-meter_development_third-party-source/LEGAL_INVENTORY.json"]

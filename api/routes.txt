@@ -14,7 +14,7 @@
 # Every route test loads THIS file as its fixture:
 #   Go — go/internal/route/catalog_test.go (the catalog the server mounts from)
 #   Go — go/internal/auth/routes_test.go (the CORS preflight of every route)
-#   TS — client/src/lib/runner/real/routes.test.ts (runner/paths.ts ROUTES)
+#   TS — client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES)
 #
 preflight | /preflight | http
 probe | /probe | http

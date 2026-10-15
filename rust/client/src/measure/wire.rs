@@ -1,5 +1,5 @@
 //! The wire rate a payload rate takes: every layer's headers at a 1,500 B MTU, as the browser estimates it
-//! (`client/src/lib/compensation.ts`, its central estimate).
+//! (`client/src/engine/measure/overhead.ts`, its central estimate).
 use crate::{
     model::{Direction, StageResult},
     net::ThroughputPath,

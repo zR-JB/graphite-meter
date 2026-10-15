@@ -31,29 +31,25 @@ class BrowserCacheTests(Scratch):
         self.enterContext(patch("subprocess.check_output", side_effect=output))
         self.enterContext(patch.dict(os.environ, {"VERSION": "1.2.3"}))
         self.enterContext(patch("sys.stdout", io.StringIO()))
-        assets, scan = rust_build.browser("client", "prod")
+        assets, scan = rust_build.browser("prod")
         self.assertEqual(((assets / "index.html").read_text(), scan.read_text()), ("1.2.3", "[]"))
-        self.assertEqual(rust_build.browser("client", "dev")[0].joinpath("index.html").read_text(), "unversioned")
+        self.assertEqual(rust_build.browser("dev")[0].joinpath("index.html").read_text(), "unversioned")
         for change, rebuilds in (
             (lambda: None, False),
             (lambda: os.environ.update(GM_LISTEN=":7000", GM_TLS_CERT="cert.pem"), False),
             (lambda: self.write("client/src/app.ts", "changed"), True),
-            (lambda: os.environ.update(VITE_FLAG="1"), True),
+            (lambda: os.environ.update(GM_CLIENT_FLAG="1"), True),
             (lambda: os.environ.update(VERSION="1.2.4"), True),
             (lambda: (assets / "index.html").write_text("edited"), True),
             (lambda: scan.unlink(), True),
         ):
             before = len(builds)
             change()
-            rust_build.browser("client", "prod")
+            rust_build.browser("prod")
             self.assertEqual(len(builds) - before, int(rebuilds))
         self.assertEqual([profile for _, profile in builds].count("dev"), 1)
-        # Client v2 builds in its own folder into its own cache, so v1's stays valid.
-        v2 = rust_build.browser("client-v2", "prod")[0]
-        self.assertEqual((v2, builds[-1]), (self.root / "rust/target/browser/client-v2/prod/assets",
-                                            (self.root / "client-v2", "prod")))
-        rust_build.browser("client", "prod")
-        self.assertEqual(builds[-1][0], self.root / "client-v2")
+        self.assertEqual((assets, builds[-1]),
+                         (self.root / "rust/target/browser/prod/assets", (self.root / "client", "prod")))
 
 
 if __name__ == "__main__":

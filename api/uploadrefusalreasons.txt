@@ -8,7 +8,7 @@
 #            (`invalid` first replaces the receiver once per server and run)
 #
 # Every refusal in uploadrefusals.txt has exactly one row. Read by go/internal/goclient/refusal_test.go and
-# client/src/lib/runner/workers/progressFeed.test.ts.
+# client/src/engine/lanes/endings.test.ts.
 
 invalid | protocol-error
 globalFull | server-busy

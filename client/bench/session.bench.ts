@@ -69,9 +69,7 @@ test("one page stays responsive through repeated runs and History visits", async
       const saved = await savedResult(page, started, 20_000);
       expect(saved.result.outcome).toBe("complete");
       await bounds("normal");
-      await expect(page.locator('#console[data-phase="complete"]')).toHaveCount(
-        1,
-      );
+      await expect(page.locator('#console[data-phase="complete"]')).toHaveCount(1);
     } else {
       const saved = await run(page);
       expect(saved.result.outcome).toBe("complete");
@@ -107,22 +105,16 @@ test("one page stays responsive through repeated runs and History visits", async
     console.log(samples.at(-1));
   }
   console.table(samples);
-  if (process.env.GM_PERF_METRICS)
-    await Bun.write(process.env.GM_PERF_METRICS, JSON.stringify(samples));
+  if (process.env.GM_PERF_METRICS) await Bun.write(process.env.GM_PERF_METRICS, JSON.stringify(samples));
   if (process.env.GM_PERF_HEAP) {
     const chunks: string[] = [];
-    page.onCdp("HeapProfiler.addHeapSnapshotChunk", (event: any) =>
-      chunks.push(event.data.chunk),
-    );
+    page.onCdp("HeapProfiler.addHeapSnapshotChunk", (event: any) => chunks.push(event.data.chunk));
     await page.cdp("HeapProfiler.takeHeapSnapshot");
     await Bun.write(process.env.GM_PERF_HEAP, chunks.join(""));
   }
   expect(samples.at(-1)!.workers).toBe(samples[0].workers);
   expect(samples.at(-1)!.nodes - samples[0].nodes).toBeLessThan(100);
-  expect(
-    samples.at(-1)!.jsEventListeners - samples[0].jsEventListeners,
-  ).toBeLessThan(10);
+  expect(samples.at(-1)!.jsEventListeners - samples[0].jsEventListeners).toBeLessThan(10);
   expect(samples.at(-1)!.pending).toBe(0);
-  for (const sample of samples)
-    expect(sample.maxAnchors).toBeLessThanOrEqual(1);
+  for (const sample of samples) expect(sample.maxAnchors).toBeLessThanOrEqual(1);
 });

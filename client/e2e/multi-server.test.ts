@@ -1,4 +1,5 @@
-import { readHistoryRecord } from "../src/lib/history/types";
+import { readHistoryRecord } from "../src/app/history/records";
+import type { ServerMeasurementSummary } from "../src/engine/run/result";
 import {
   amsterdam,
   baseConfig,
@@ -36,14 +37,12 @@ test("four servers share one run and keep separate receiver windows", async (pag
   });
   await ready(page);
   const saved = await run(page);
-  expect(readHistoryRecord(saved)).toBe(saved);
+  expect(readHistoryRecord(saved)).toEqual(saved);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
   expect(saved.result.multiServer.participants).toEqual(four.map((s) => s.id));
   for (const stage of ["download", "upload", "bidirectional"] as const) {
-    const interval = saved.result.multiServer.intervals.find(
-      (candidate) => candidate.stage === stage,
-    )!;
+    const interval = saved.result.multiServer.intervals.find((candidate) => candidate.stage === stage)!;
     expect(interval.complete).toBe(true);
     expect(interval.participants).toHaveLength(4);
     const dirs = stage === "download" ? ["down"] : ["up"];
@@ -75,9 +74,7 @@ test("four servers share one run and keep separate receiver windows", async (pag
 });
 
 test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
-  await page.addInitScript(() =>
-    Object.defineProperty(window, "WebTransport", { value: undefined }),
-  );
+  await page.addInitScript(() => Object.defineProperty(window, "WebTransport", { value: undefined }));
   await open(page, home.http, {
     servers: [{ id: "self", url: home.http }, frankfurt],
     config: {
@@ -88,7 +85,7 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await ready(page);
   const saved = await run(page);
   expect(saved.result.multiServer.failures).toEqual([]);
-  const [self, peer] = saved.result.multiServer.servers;
+  const [self, peer] = saved.result.multiServer.servers as [ServerMeasurementSummary, ServerMeasurementSummary];
   expect(self.throughput?.origin).toBe(home.http);
   // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt may be measured through any of its origins.
   const origins = [frankfurt.url, frankfurt.http, frankfurt.h2, frankfurt.h3];
@@ -120,9 +117,7 @@ test("the lanes switch servers mid-run and Details inspects another without movi
   await lanes.fill("server-1");
   await expect(lanes).toHaveValue("server-1");
   await page.getByRole("button", { name: "Details" }).click();
-  const inspect = page
-    .locator(".infra")
-    .getByRole("combobox", { name: "Inspect server" });
+  const inspect = page.locator(".infra").getByRole("combobox", { name: "Inspect server" });
   await expect(inspect).toBeEnabled();
   await inspect.fill("self");
   await expect(page.locator(".infra .server-card")).toContainText(home.url);
@@ -153,9 +148,7 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
     Object.assign(window, { checkpoints: 0 });
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), location.href);
-      const uploading =
-        document.querySelector<HTMLElement>("#console")?.dataset.phase ===
-        "upload";
+      const uploading = document.querySelector<HTMLElement>("#console")?.dataset.phase === "upload";
       if (
         !uploading ||
         !origins.includes(url.origin) ||
@@ -167,14 +160,10 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
     }) as typeof fetch;
   }, origins);
   const saved = await run(page);
-  expect(
-    await page.evaluate(() => (window as any).checkpoints),
-  ).toBeGreaterThan(1);
+  expect(await page.evaluate(() => (window as any).checkpoints)).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
-  const upload = saved.result.multiServer.intervals.filter(
-    (interval) => interval.stage === "upload",
-  );
+  const upload = saved.result.multiServer.intervals.filter((interval) => interval.stage === "upload");
   expect(upload).toHaveLength(1);
   expect(upload[0]).toMatchObject({
     reason: "stage-start",
@@ -211,4 +200,35 @@ test("every server's latency is saved; the lens starts on the first selected and
   await page.reload();
   await expect(page.locator(".result-detail")).toBeVisible();
   expect(await savedResult(page)).toEqual(saved);
+});
+
+test("the dial reads the server the lens shows, and the latency card the one latency is shown for, whole", async (page) => {
+  await open(page, home.url, { servers: [home, frankfurt], config: combined });
+  await ready(page);
+  await run(page);
+  const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+  const picker = page.getByRole("combobox", { name: "Show latency to" });
+  const figure = (selector: string) =>
+    page.evaluate(
+      (selector: string) => Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),
+      selector,
+    );
+  const dial = () => figure(".hero .terminal-readout");
+  const download = () => figure('.results .card[data-tone="download"] .headline');
+  const latency = () =>
+    page
+      .locator('.results .card[data-tone="latency"]')
+      .evaluate((card: Element) =>
+        [card.querySelector(".headline"), ...card.querySelectorAll(".facts dd")]
+          .map((el) => el?.textContent)
+          .join(" | "),
+      );
+  // Both together: the dial reads their sum, more than either card.
+  await lens.fill("server-1");
+  await expect.poll(async () => (await dial()) === (await download())).toBe(true);
+  const alone = await latency();
+  // Every server together again, latency shown for the second: the card is the second's, headline and spread.
+  await lens.fill("");
+  await picker.fill("server-1");
+  await expect.poll(latency).toBe(alone);
 });

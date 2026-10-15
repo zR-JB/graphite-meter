@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// The live rate the browser presents (client/src/lib/runner/liveRates.ts), shared through
+// The live rate the browser presents (client/src/engine/measure/live.ts), shared through
 // api/liverate.testvectors.json: a growing average that restarts on a confirmed shift.
 const (
 	presentationMinWindowMS = 800.0

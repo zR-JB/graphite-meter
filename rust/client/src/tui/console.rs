@@ -21,12 +21,12 @@ use std::{borrow::Cow, time::Duration};
 
 /// From this size the dial stands beside the lanes over the cards; below it the console stacks without the ring.
 const WIDE: (u16, u16) = (110, 32);
-/// The browser's chart steps (`client/src/lib/presentation/scales.ts`) and its latency ladder.
+/// The browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
 const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
 /// The run key's and the chips' widest.
 const CONTROLS: u16 = 64;
-/// The browser's dial transfer curve (`client/src/lib/components/gaugeScale.ts`): equal sweeps for each knot.
+/// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
 
 /// Where `value` sits on a dial reaching `scale`, from 0 to 1.
@@ -47,7 +47,7 @@ pub fn gauge_value(fraction: f64, scale: f64) -> f64 {
     scale * (KNOTS[i] + (at - i as f64) * (KNOTS[i + 1] - KNOTS[i]))
 }
 
-/// The browser's axis ceiling (`client/src/lib/presentation/scales.ts`): the first step at or above `v`.
+/// The browser's axis ceiling (`client/src/view/scales.ts`): the first step at or above `v`.
 pub fn ceil_step(v: f64, steps: &[f64]) -> f64 {
     if !v.is_finite() || v <= 0.0 {
         return steps[0];

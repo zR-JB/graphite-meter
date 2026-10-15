@@ -18,8 +18,7 @@ ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
 
 # ---------------------------------------------------------------------------
-# Stage: client - the browser client (client-v2/), the one the image's notices
-# cover; it ships v1's fonts, favicon and legal files.
+# Stage: client - the browser client (client/).
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
 ARG GM_CLIENT_BUILD_PROFILE
@@ -29,15 +28,14 @@ ARG CLIENT_VERSION
 ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
     VERSION=$CLIENT_VERSION
-WORKDIR /app/client-v2
-COPY client-v2/package.json client-v2/bun.lock client-v2/bunfig.toml ./
+WORKDIR /app/client
+COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
-COPY client-v2/ ./
-COPY client/public/ /app/client/public/
+COPY client/ ./
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 FROM scratch AS client-dist
-COPY --from=client /app/client-v2/dist /
+COPY --from=client /app/client/dist /
 
 # ---------------------------------------------------------------------------
 # Stage: server - build the Go binary with the client embedded.

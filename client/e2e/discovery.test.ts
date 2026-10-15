@@ -1,13 +1,4 @@
-import {
-  closeSettings,
-  fleet,
-  frankfurt,
-  helsinki,
-  home,
-  locked,
-  open,
-  openSettings,
-} from "./fleet";
+import { closeSettings, fleet, frankfurt, helsinki, home, locked, open, openSettings } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 interface Activity {
@@ -28,8 +19,11 @@ async function observe(page: Page, hold: string[] = []) {
   await page.addInitScript(
     (activity: Activity) => {
       Object.assign(window, { activity });
+      // Both clocks move: freshness is judged on page time, the record on the wall clock.
       const now = Date.now.bind(Date);
       Date.now = () => now() + activity.nowOffset;
+      const page = performance.now.bind(performance);
+      performance.now = () => page() + activity.nowOffset;
       const original = window.fetch.bind(window);
       window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), location.href);
@@ -40,8 +34,7 @@ async function observe(page: Page, hold: string[] = []) {
         // The selected page server's own check may overlap; it is not settings discovery.
         const discovery = url.origin !== location.origin;
         activity.inFlight++;
-        if (discovery)
-          activity.peak = Math.max(activity.peak, ++activity.discovering);
+        if (discovery) activity.peak = Math.max(activity.peak, ++activity.discovering);
         try {
           if (activity.hold.includes(url.origin))
             await new Promise((_resolve, reject) => {
@@ -98,83 +91,71 @@ async function observe(page: Page, hold: string[] = []) {
   };
 }
 
-test.chrome(
-  "settings discovery is bounded, reused and cancelled on close",
-  async (page) => {
-    const activity = await observe(page);
-    await open(page, home.url, {
-      config: {
-        transports: {
-          throughputTarget: "protocol:http1",
-          latencyTarget: "auto",
-        },
+test.chrome("settings discovery is bounded, reused and cancelled on close", async (page) => {
+  const activity = await observe(page);
+  await open(page, home.url, {
+    config: {
+      transports: {
+        throughputTarget: "protocol:http1",
+        latencyTarget: "auto",
       },
-    });
-    const settings = await openSettings(page);
-    const choices = settings.getByRole("group", { name: "Test servers" });
-    const ready = settings.locator('[data-readiness="verified"]');
-    await expect(ready).toBeVisible({ timeout: 15_000 });
-    await expect(choices.locator(".server-preflight")).toHaveCount(4);
-    await expect(choices).toHaveAttribute("aria-busy", "false");
-    const first = await activity.read();
-    expect(first.requests).toEqual(fleet.map((server) => server.url));
-    expect(first.peak).toBeLessThanOrEqual(4);
-    expect([first.probes, first.workers, first.activeWorkers]).toEqual([
-      2, 1, 1,
-    ]);
-    await closeSettings(page);
-    await openSettings(page);
-    expect(await activity.read()).toEqual(first);
+    },
+  });
+  const settings = await openSettings(page);
+  const choices = settings.getByRole("group", { name: "Test servers" });
+  const ready = settings.locator('[data-readiness="verified"]');
+  await expect(ready).toBeVisible({ timeout: 15_000 });
+  await expect(choices.locator(".server-preflight")).toHaveCount(4);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  const first = await activity.read();
+  expect(first.requests).toEqual(fleet.map((server) => server.url));
+  expect(first.peak).toBeLessThanOrEqual(4);
+  expect([first.probes, first.workers, first.activeWorkers]).toEqual([2, 1, 1]);
+  await closeSettings(page);
+  await openSettings(page);
+  expect(await activity.read()).toEqual(first);
 
-    const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
-    await peer.click();
-    await expect(ready).toBeVisible({ timeout: 15_000 });
-    await expect
-      .poll(async () => (await activity.read()).activeWorkers)
-      .toBe(1);
-    const selected = await activity.read();
-    expect(selected.requests).toEqual(first.requests);
-    expect([selected.probes, selected.workers]).toEqual([4, 2]);
-    await peer.click();
-    await closeSettings(page);
+  const peer = choices.getByRole("checkbox", { name: /^Frankfurt/ });
+  await peer.click();
+  await expect(ready).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () => (await activity.read()).activeWorkers).toBe(1);
+  const selected = await activity.read();
+  expect(selected.requests).toEqual(first.requests);
+  expect([selected.probes, selected.workers]).toEqual([4, 2]);
+  await peer.click();
+  await closeSettings(page);
 
-    await activity.set({ nowOffset: 121_000 });
-    await openSettings(page);
-    await expect
-      .poll(async () => (await activity.read()).requests.length)
-      .toBe(8);
-    await expect(choices).toHaveAttribute("aria-busy", "false");
-    const refreshed = await activity.read();
-    const signIn = refreshed.requests.filter((origin) => origin === locked.url);
-    expect(signIn).toHaveLength(1);
-    expect([refreshed.probes, refreshed.workers]).toEqual([4, 2]);
-    expect(refreshed.peak).toBeLessThanOrEqual(4);
+  await activity.set({ nowOffset: 121_000 });
+  await openSettings(page);
+  await expect.poll(async () => (await activity.read()).requests.length).toBe(8);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  const refreshed = await activity.read();
+  const signIn = refreshed.requests.filter((origin) => origin === locked.url);
+  expect(signIn).toHaveLength(1);
+  expect([refreshed.probes, refreshed.workers]).toEqual([4, 2]);
+  expect(refreshed.peak).toBeLessThanOrEqual(4);
 
-    await closeSettings(page);
-    await activity.set({ nowOffset: 121_000, hold: [frankfurt.url] });
-    await openSettings(page);
-    await expect.poll(async () => (await activity.read()).inFlight).toBe(1);
-    await closeSettings(page);
-    await expect.poll(async () => (await activity.read()).aborted).toBe(1);
-    expect((await activity.read()).catalogs).toEqual([home.url]);
-  },
-);
+  await closeSettings(page);
+  await activity.set({ nowOffset: 121_000, hold: [frankfurt.url] });
+  await openSettings(page);
+  await expect.poll(async () => (await activity.read()).inFlight).toBe(1);
+  await closeSettings(page);
+  await expect.poll(async () => (await activity.read()).aborted).toBe(1);
+  expect((await activity.read()).catalogs).toEqual([home.url]);
+});
 
 test("metadata timeouts back off without starving later servers", async (page) => {
-  const activity = await observe(page, [frankfurt.url, fleet[2].url]);
+  const activity = await observe(page, [frankfurt.url, fleet[2]!.url]);
   await open(page);
   const settings = await openSettings(page);
   const choices = settings.getByRole("group", { name: "Test servers" });
-  const status = (name: string) =>
-    choices.locator("label", { hasText: name }).locator(".server-status");
+  const status = (name: string) => choices.locator("label", { hasText: name }).locator(".server-status");
   await expect(choices).toHaveAttribute("aria-busy", "true");
-  await expect(
-    choices
-      .locator("label", { hasText: "Helsinki" })
-      .locator(".server-preflight"),
-  ).toHaveCount(1, { timeout: 15_000 });
+  await expect(choices.locator("label", { hasText: "Helsinki" }).locator(".server-preflight")).toHaveCount(1, {
+    timeout: 15_000,
+  });
   await expect(status("Private")).toHaveText("Sign in", { timeout: 15_000 });
-  for (const held of [frankfurt.name, fleet[2].name])
+  for (const held of [frankfurt.name, fleet[2]!.name])
     await expect(status(held)).toHaveText("Failed", { timeout: 30_000 });
   const urls = fleet.map((server) => server.url);
   expect((await activity.read()).requests).toEqual(urls);
@@ -183,9 +164,7 @@ test("metadata timeouts back off without starving later servers", async (page) =
   await expect(choices).toHaveAttribute("aria-busy", "false");
   expect((await activity.read()).requests).toEqual(urls);
   await expect(choices.locator(".server-preflight")).toHaveCount(2);
-  await expect(
-    choices.getByRole("checkbox", { name: /^Helsinki/ }),
-  ).toBeVisible();
+  await expect(choices.getByRole("checkbox", { name: /^Helsinki/ })).toBeVisible();
 });
 
 test("an origin-only catalog discovers peer identity without traversal", async (page) => {

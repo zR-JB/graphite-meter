@@ -22,8 +22,7 @@ interface Network {
   catalogs: string[];
   preflights: Record<string, number>;
 }
-const origins = (...servers: Server[]) =>
-  servers.flatMap((server) => [server.http, server.url, server.h2, server.h3]);
+const origins = (...servers: Server[]) => servers.flatMap((server) => [server.http, server.url, server.h2, server.h3]);
 
 // Only browser reachability is simulated; measurement traffic stays real.
 async function limit(page: Page, failed: Server[], hanging: Server[]) {
@@ -32,16 +31,10 @@ async function limit(page: Page, failed: Server[], hanging: Server[]) {
       Object.assign(window, { network });
       const original = window.fetch.bind(window);
       window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(
-          input instanceof Request ? input.url : String(input),
-          location.href,
-        );
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
         if (url.pathname === "/servers") network.catalogs.push(url.origin);
-        if (url.pathname === "/preflight")
-          network.preflights[url.origin] =
-            (network.preflights[url.origin] ?? 0) + 1;
-        if (network.failed.includes(url.origin))
-          return Promise.reject(new TypeError("Failed to fetch"));
+        if (url.pathname === "/preflight") network.preflights[url.origin] = (network.preflights[url.origin] ?? 0) + 1;
+        if (network.failed.includes(url.origin)) return Promise.reject(new TypeError("Failed to fetch"));
         if (!network.hanging.includes(url.origin)) return original(input, init);
         return new Promise((_resolve, reject) => {
           const signal = init?.signal;
@@ -57,13 +50,10 @@ async function limit(page: Page, failed: Server[], hanging: Server[]) {
     },
   );
 }
-const network = (page: Page) =>
-  page.evaluate<Network>(() => (window as any).network);
+const network = (page: Page) => page.evaluate<Network>(() => (window as any).network);
 const selection = (page: Page) =>
   page.evaluate(() =>
-    JSON.parse(localStorage.getItem("graphite-meter:server-selection:v1")!).map(
-      (server: { id: string }) => server.id,
-    ),
+    JSON.parse(localStorage.getItem("graphite-meter:server-selection:v1")!).map((server: { id: string }) => server.id),
   );
 const http1 = {
   transports: {
@@ -90,9 +80,7 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   // A selected peer without an idle monitor re-reads its preflight on its own clock, Settings or not.
   const peers = async () => {
     const { preflights } = await network(page);
-    return [amsterdam, helsinki, locked].map(
-      (server) => preflights[server.url],
-    );
+    return [amsterdam, helsinki, locked].map((server) => preflights[server.url]);
   };
   const settled = await peers();
   await closeSettings(page);
@@ -108,14 +96,7 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   await open(page, home.url, { servers: [home, frankfurt], config: http1 });
   // Start waits for the server list; a busy runner may not have it yet.
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          !document
-            .querySelector(".gauge-footer")
-            ?.textContent?.includes("still loading"),
-      ),
-    )
+    .poll(() => page.evaluate(() => !document.querySelector(".gauge-footer")?.textContent?.includes("still loading")))
     .toBe(true);
   await runButton(page, "Start test").click();
   await runButton(page, "Cancel").click();
@@ -129,22 +110,14 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   });
   const { multiServer } = (await run(page)).result;
   expect(multiServer.participants).toEqual(["self"]);
-  expect(multiServer.failures).toMatchObject([
-    { serverId: "server-1", reason: "preparation-failed" },
-  ]);
+  expect(multiServer.failures).toMatchObject([{ serverId: "server-1", reason: "preparation-failed" }]);
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
-  await expect(settings.locator(".server-feedback")).toContainText(
-    /timed out|could not be reached/,
-  );
-  await expect(settings.getByRole("button", { name: /Sign in/ })).toHaveCount(
-    0,
-  );
+  await expect(settings.locator(".server-feedback")).toContainText(/timed out|could not be reached/);
+  await expect(settings.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
   const before = (await network(page)).preflights[frankfurt.url];
   await retry.click();
-  await expect
-    .poll(async () => (await network(page)).preflights[frankfurt.url])
-    .toBeGreaterThan(before);
+  await expect.poll(async () => (await network(page)).preflights[frankfurt.url]).toBeGreaterThan(before);
   expect(await selection(page)).toEqual(["self", "server-1"]);
   await settings.getByRole("checkbox", { name: /^Frankfurt/ }).click();
   await closeSettings(page);
@@ -185,9 +158,7 @@ test("a blocked latency probe fails only its path and Retry stays scoped", async
     name: "Retry Latency path",
   });
   await expect(retryLatency).toBeVisible({ timeout: 10_000 });
-  await expect(
-    settings.getByRole("button", { name: "Retry Throughput path" }),
-  ).toHaveCount(0);
+  await expect(settings.getByRole("button", { name: "Retry Throughput path" })).toHaveCount(0);
   await expect(settings.locator('[data-readiness="failed"]')).toBeVisible();
   await page.blockRequests([]);
   await retryLatency.click();

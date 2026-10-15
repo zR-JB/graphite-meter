@@ -121,15 +121,15 @@ class LegalTests(unittest.TestCase):
             component_legal_files(self.root, "npm", "example", [review])
 
     def test_reviewed_files_resolve_isolated_bun_siblings_and_reject_traversal(self) -> None:
-        self.write("svelte/package.json", "{}")
-        self.write("magic-string/LICENSE", "dependency license")
-        review = Review("npm", "svelte", legalFiles=[LegalFile("node_modules/magic-string/LICENSE")])
-        files = component_legal_files(self.root / "svelte", "npm", "svelte", [review])
-        self.assertEqual(files[0].name, "node_modules/magic-string/LICENSE")
+        self.write("patched-lib/package.json", "{}")
+        self.write("sibling-lib/LICENSE", "dependency license")
+        review = Review("npm", "patched-lib", legalFiles=[LegalFile("node_modules/sibling-lib/LICENSE")])
+        files = component_legal_files(self.root / "patched-lib", "npm", "patched-lib", [review])
+        self.assertEqual(files[0].name, "node_modules/sibling-lib/LICENSE")
         self.assertEqual(files[0].text, "dependency license")
         for name in ("../LICENSE", "/absolute/LICENSE", "."):
             with self.subTest(name=name), self.assertRaisesRegex(LegalError, "inside component"):
-                reviewed_legal_files(self.root, "npm", "svelte", [replace(review, legalFiles=[LegalFile(name)])])
+                reviewed_legal_files(self.root, "npm", "patched-lib", [replace(review, legalFiles=[LegalFile(name)])])
 
     def test_inference_separates_notices_without_approving_a_license(self) -> None:
         for content, expected in (
@@ -189,7 +189,7 @@ class LegalTests(unittest.TestCase):
         module = root / "dist/index.js"
         self.assertEqual(package_root(str(module)), root)
         scan = self.write("scan.json", json.dumps([str(module), str(module), "/app/src/main.ts"]))
-        components = discover_browser([scan], [])
+        components = discover_browser(scan, [])
         self.assertEqual(len(components), 1)
         self.assertEqual((components[0].name, components[0].source),
                          ("@scope/package", "https://example.invalid/package"))
@@ -199,32 +199,31 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(source_for("anything", "explicit"), "explicit")
         self.assertEqual(source_for("charm.land/lipgloss/v2"), "https://github.com/charmbracelet/lipgloss")
 
-    def test_browser_scans_of_both_clients_form_one_scope(self) -> None:
+    def test_a_browser_scan_names_each_bundled_package_once(self) -> None:
         modules = []
-        for name in ("shared", "only-v2"):
+        for name in ("second", "first"):
             metadata = {"name": name, "version": "1", "license": "MIT"}
             self.write(f"node_modules/{name}/package.json", json.dumps(metadata))
             self.write(f"node_modules/{name}/LICENSE", "MIT License\n")
             modules.append(str(self.root / f"node_modules/{name}/index.js"))
-        v1 = self.write("v1.json", json.dumps([modules[0], "/app/client/src/main.ts"]))
-        v2 = self.write("v2.json", json.dumps(modules))
-        self.assertEqual([item.name for item in discover_browser([v1, v2], [])], ["only-v2", "shared"])
+        scan = self.write("scan.json", json.dumps([*modules, modules[0], "/app/client/src/main.ts"]))
+        self.assertEqual([item.name for item in discover_browser(scan, [])], ["first", "second"])
 
     def test_browser_scan_identifies_exact_patched_packages_in_isolated_installs(self) -> None:
         self.write("client/package.json", json.dumps({
-            "patchedDependencies": {"svelte@5.57.1": "patches/svelte.patch"}}))
+            "patchedDependencies": {"patched-lib@5.57.1": "patches/patched-lib.patch"}}))
         modules = []
-        for name, version in (("svelte", "5.57.1"), ("esm-env", "1.2.2")):
+        for name, version in (("patched-lib", "5.57.1"), ("plain-lib", "1.2.2")):
             root = f"client/node_modules/.bun/{name}@{version}/node_modules/{name}"
             self.write(f"{root}/package.json", json.dumps({"name": name, "version": version, "license": "MIT"}))
             self.write(f"{root}/LICENSE", "MIT License\n")
             modules.append(str(self.root / root / "index.js"))
         scan = self.write("scan.json", json.dumps(modules))
-        components = {item.name: item for item in discover_browser([scan], [])}
-        self.assertTrue(components["svelte"].modified)
-        self.assertFalse(components["esm-env"].modified)
-        self.write("client/package.json", json.dumps({"patchedDependencies": {"svelte@5.57.0": "old.patch"}}))
-        self.assertFalse(next(item for item in discover_browser([scan], []) if item.name == "svelte").modified)
+        components = {item.name: item for item in discover_browser(scan, [])}
+        self.assertTrue(components["patched-lib"].modified)
+        self.assertFalse(components["plain-lib"].modified)
+        self.write("client/package.json", json.dumps({"patchedDependencies": {"patched-lib@5.57.0": "old.patch"}}))
+        self.assertFalse(next(item for item in discover_browser(scan, []) if item.name == "patched-lib").modified)
 
     def test_go_targets_and_replacements_preserve_scope(self) -> None:
         targets = go_discovery_targets(ROOT)
@@ -312,12 +311,12 @@ class LegalTests(unittest.TestCase):
         self.write("legal/rust-forks.json", json.dumps([{"fork": fork, "rev": "f" * 40,
                                                          "upstream": "https://github.com/upstream/quic",
                                                          "base": "b" * 40}]))
-        patches = {"svelte@5.0.0": "patches/svelte@5.0.0.patch"}
+        patches = {"patched-lib@5.0.0": "patches/patched-lib@5.0.0.patch"}
         self.write("client/package.json", json.dumps({"patchedDependencies": patches}))
         components = [
             Component("ring", "0.17.14", "cargo", "registry+https://github.com/rust-lang/crates.io-index"),
             Component("quic", "1.3.0", "cargo", f"git+{fork}?rev={'f' * 40}#{'f' * 40}", modified=True),
-            Component("svelte", "5.0.0", "npm", "https://github.com/sveltejs/svelte", modified=True),
+            Component("patched-lib", "5.0.0", "npm", "https://github.com/example/patched-lib", modified=True),
             Component("Go standard library", "go1.27.1", "go-toolchain", "https://go.dev/"),
             Component("local", "1", "npm", "file:vendor/local"),
         ]
@@ -330,8 +329,8 @@ class LegalTests(unittest.TestCase):
                 "quic": [{"label": "Source", "url": f"{fork}/tree/{'f' * 40}"},
                          {"label": "Upstream", "url": f"https://github.com/upstream/quic/tree/{'b' * 40}"},
                          {"label": "Changes", "url": f"{fork}/compare/{'b' * 40}...{'f' * 40}"}],
-                "svelte": [{"label": "Source", "url": "https://github.com/sveltejs/svelte"},
-                           {"label": "Changes", "url": f"{blob}/client/patches/svelte%405.0.0.patch"}],
+                "patched-lib": [{"label": "Source", "url": "https://github.com/example/patched-lib"},
+                           {"label": "Changes", "url": f"{blob}/client/patches/patched-lib%405.0.0.patch"}],
                 "Go standard library": [{"label": "Source", "url": "https://go.dev/"}],
                 "local": [],
             })
