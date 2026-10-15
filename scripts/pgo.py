@@ -25,6 +25,7 @@ from .legal.rust import PGO, PROFILES, pgo_profile, remap_flags
 ROOT = Path(__file__).resolve().parents[1]
 RUST = ROOT / "rust"
 SECONDS = 8
+ATTEMPTS = 3
 # Every listener in both directions; a last HTTP/3 download adds a reply-driven WebTransport bus.
 TRAINING = [(listener, direction) for listener in ("http3", "http2", "http1-tls") for direction in ("download", "upload")]
 
@@ -60,9 +61,15 @@ def transfer(client: Path, server: Server, listener: str, direction: str, *extra
                "--streams", "4", "--throughput-origin", server.origin(listener), "--throughput-protocol", protocol,
                "--throughput-transport", "fetch-stream", "--warmup", "500ms", f"--{direction}-duration",
                f"{SECONDS}s", *extra]
-    run = subprocess.run(command, capture_output=True, text=True, timeout=SECONDS * 30)
-    if run.returncode or not re.search(r"[↓↑] (?:Download|Upload)\s+[\d.]+ \S+/s", run.stdout):
-        sys.exit(f"training {listener} {direction} failed:\n{run.stdout[-2000:]}{run.stderr[-2000:]}")
+    # Training wants the code paths, not a measurement: an emulated TUI and server can miss the client's 1.5 s upload
+    # checkpoint budget on a busy builder, so a failed transfer runs again.
+    for attempt in range(1, ATTEMPTS + 1):
+        run = subprocess.run(command, capture_output=True, text=True, timeout=SECONDS * 30)
+        if not run.returncode and re.search(r"[↓↑] (?:Download|Upload)\s+[\d.]+ \S+/s", run.stdout):
+            return
+        reason = (run.stderr.strip() or run.stdout.strip() or "no output").splitlines()[-1]
+        print(f"training {listener} {direction}, attempt {attempt} of {ATTEMPTS}, failed: {reason}", file=sys.stderr)
+    sys.exit(f"training {listener} {direction} failed:\n{run.stdout[-2000:]}{run.stderr[-2000:]}")
 
 
 def train(target: str, profile: str, runner: list[str]) -> Path:
