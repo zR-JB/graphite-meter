@@ -7,6 +7,7 @@ import subprocess
 import tarfile
 import unittest
 import zlib
+from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -229,11 +230,14 @@ class BuildVerifyTests(Scratch):
                                  "out_dir": str(self.root / "build")}, {"reason": "build-finished", "success": True}]
         result = subprocess.CompletedProcess([], 0, "".join(json.dumps(item) + "\n" for item in messages))
         build = Build("graphite-meter-client", target, "ci", "development", self.out)
-        with patch("scripts.legal.rust.subprocess.run", return_value=result), \
+        with patch("scripts.legal.rust.subprocess.run", return_value=result) as cargo, \
                 patch.object(platform, "link_map", return_value=self.root / "map"), \
                 patch.object(platform, "linked", return_value=set()), patch.object(platform, "imports", return_value=set()), \
                 patch("scripts.legal.rust.checked_platform_notice", return_value="platform"):
-            return build_verify(build, self.state)[0]
+            try:
+                return build_verify(build, self.state)[0]
+            finally:
+                self.cargo_environment = cargo.call_args.kwargs["env"]
 
     def test_a_build_of_the_prepared_crates_with_embedded_notices_passes(self) -> None:
         self.assertEqual(self.run_build(), self.binary)
@@ -245,6 +249,25 @@ class BuildVerifyTests(Scratch):
         self.run_build()
         inventory = json.loads((self.out / "inventory.json").read_bytes())
         self.assertEqual(inventory["browser"], [package.json()])
+
+    def test_a_distributed_build_uses_its_architecture_s_trained_profile(self) -> None:
+        profiles = self.root / "pgo"
+
+        def flags(target: str | None) -> list[str]:
+            # The fake executable carries development notices, which a distributed build refuses after Cargo ran.
+            with suppress(LegalError):
+                self.run_build(target=target)
+            return self.cargo_environment.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
+
+        with patch("scripts.legal.rust.PGO", profiles):
+            self.assertFalse([flag for flag in flags("x86_64-unknown-linux-musl") if "profile-use" in flag])
+            self.write("pgo/x86_64.profdata", b"profile")
+            use = f"-Cprofile-use={profiles / 'x86_64.profdata'}"
+            # The Windows TUI shares amd64's profile; arm64 has none here; a development build takes none.
+            self.assertIn(use, flags("x86_64-unknown-linux-musl"))
+            self.assertIn(use, flags("x86_64-pc-windows-gnu"))
+            self.assertNotIn(use, flags("aarch64-unknown-linux-musl"))
+            self.assertNotIn(use, flags(None))
 
     def test_unprepared_crates_changed_notices_or_other_embedded_notices_are_refused(self) -> None:
         self.state.selected = {"app"}
