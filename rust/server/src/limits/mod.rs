@@ -36,13 +36,13 @@ pub struct Quotas {
 impl Quotas {
     /// `operator` is the principal every password login shares, which bounds no window credit.
     pub fn new(limits: Limits, budget: &Budget, operator: Option<ClientKey>) -> Self {
-        let quic_share = limits.connections_per_client.min(QUIC_PER_CLIENT);
+        let quic_share = limits.connections_per_client.get().min(QUIC_PER_CLIENT);
         Self {
             limits,
-            connections: Quota::new(limits.connections, limits.connections_per_client),
+            connections: Quota::new(limits.connections.get(), limits.connections_per_client.get()),
             quic: Quota::new(usize::MAX, quic_share),
-            operations: Quota::new(limits.operations, limits.operations_per_client),
-            sessions: Quota::new(limits.sessions, limits.sessions_per_client),
+            operations: Quota::new(limits.operations.get(), limits.operations_per_client.get()),
+            sessions: Quota::new(limits.sessions.get(), limits.sessions_per_client.get()),
             credit: Quota::client_windows(budget.clone(), quic_share * CONNECTION_CREDIT, operator),
         }
     }
@@ -63,7 +63,7 @@ impl Quotas {
 
     /// Whether a quarter of the connection capacity is used, so that unvalidated QUIC handshakes need Retry.
     pub fn connections_crowded(&self) -> bool {
-        self.connections.usage().active >= self.limits.connections / 4
+        self.connections.usage().active >= self.limits.connections.get() / 4
     }
 
     /// A measurement handler.
@@ -83,7 +83,7 @@ impl Quotas {
 
     /// Active handlers and their limit, as `/probe` reports load.
     pub fn load(&self) -> (usize, usize) {
-        (self.operations.usage().active, self.limits.operations)
+        (self.operations.usage().active, self.limits.operations.get())
     }
 
     /// The open connections.
@@ -124,16 +124,17 @@ impl Quotas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::Holder;
+    use crate::auth::{Holder, Principal};
 
     fn limits() -> Limits {
+        let count = |count| std::num::NonZero::new(count).unwrap();
         Limits {
-            operations: 3,
-            operations_per_client: 2,
-            sessions: 2,
-            sessions_per_client: 1,
-            connections: 64,
-            connections_per_client: 32,
+            operations: count(3),
+            operations_per_client: count(2),
+            sessions: count(2),
+            sessions_per_client: count(1),
+            connections: count(64),
+            connections_per_client: count(32),
         }
     }
 
@@ -165,13 +166,13 @@ mod tests {
 
     #[test]
     fn window_credit_covers_eight_connection_windows_per_client() {
-        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal("op".into())));
+        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal(Principal::operator())));
         let source = client("2001:db8::1");
         let funded: Vec<_> = (0..8)
             .map(|_| quotas.credit(&source, CONNECTION_CREDIT).unwrap())
             .collect();
         assert!(quotas.credit(&source, 1).is_none());
-        let operator = |id: &str| ClientKeys::Auth(Holder::Login(id.into()), "op".into());
+        let operator = |id: &str| ClientKeys::Auth(Holder::Login(id.into()), Principal::operator());
         let logins: Vec<_> = ["a", "b", "c"]
             .map(|id| quotas.credit(&operator(id), 8 * CONNECTION_CREDIT))
             .into();

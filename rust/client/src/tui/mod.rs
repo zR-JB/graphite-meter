@@ -24,7 +24,7 @@ use crate::{
     model::{Outcome, Stage},
     net::approval,
     report,
-    text::{Line, Profile, Style},
+    text::{self, Line, Profile, Style},
 };
 use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use dialogs::{Chooser, SignIn};
@@ -33,7 +33,10 @@ use keys::{Action, Key};
 use ratatui_core::layout::{Position, Rect};
 use settings::Editor;
 use setup::{Row, Setup};
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 use theme::{Answer, Palette, Taken};
 
 /// How long settings rest before their paths are checked again.
@@ -153,6 +156,8 @@ pub struct App {
     hover: Option<Target>,
     /// The last frame's size.
     area: Rect,
+    /// The dial's ring for the area it was last drawn in.
+    ring: RefCell<Option<dial::Ring>>,
     since: Instant,
     now: Instant,
 }
@@ -185,6 +190,7 @@ impl App {
             hits: Vec::new(),
             hover: None,
             area: Rect::default(),
+            ring: RefCell::default(),
             since: now,
             now,
         };
@@ -294,7 +300,12 @@ impl App {
                     return vec![Effect::Quit];
                 }
             }
-            _ => {}
+            Event::Checking(_)
+            | Event::StageStarted(_)
+            | Event::Measuring(_)
+            | Event::Sample { .. }
+            | Event::Probes { .. }
+            | Event::StageFinished(_) => {}
         }
         Vec::new()
     }
@@ -523,6 +534,11 @@ impl App {
         }
     }
 
+    /// Whether a frame tick has work: something animates, or a check is due.
+    pub fn waiting(&self) -> bool {
+        self.animating() || self.recheck.is_some()
+    }
+
     /// Whether frames change without input: a spinner turns, the needle moves, or a notice waits to lapse.
     pub fn animating(&self) -> bool {
         let busy = self.checking() || self.running() || matches!(self.overlay, Overlay::SignIn(_));
@@ -581,8 +597,8 @@ impl App {
             self.ask_for_server();
             return Vec::new();
         }
-        if let Err(error) = self.config.validate() {
-            let text = format!("{}{}.", error[..1].to_uppercase(), &error[1..]);
+        if let Err(invalid) = self.config.validate() {
+            let text = format!("{}.", text::capitalised(&invalid.to_string()));
             self.notify(Line::styled(text, self.palette.warn));
             return Vec::new();
         }

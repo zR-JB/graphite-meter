@@ -4,6 +4,7 @@ use graphite_meter_proto::{
     upload::{Counters, HEARTBEAT, MAX_COUNTER, Record},
 };
 use serde::Deserialize;
+use std::assert_matches;
 
 #[derive(Deserialize)]
 struct Vector {
@@ -53,7 +54,7 @@ fn refusal_details_reach_the_reader_cleaned() {
     assert_eq!(code, "in valid");
     assert_eq!(message, "m".repeat(255) + "…");
     let line = serde_json::to_vec(&serde_json::json!({"type": "error", "code": "c".repeat(70)})).unwrap();
-    assert!(matches!(Record::decode(&line).unwrap(), Record::Error { code, .. } if code == "c".repeat(63) + "…"));
+    assert_matches!(Record::decode(&line).unwrap(), Record::Error { code, .. } if code == "c".repeat(63) + "…");
 }
 
 #[test]

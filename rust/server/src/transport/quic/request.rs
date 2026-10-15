@@ -71,8 +71,10 @@ impl Requests {
         let (send, recv) = stream.split();
         let bodiless = head.method() == Method::HEAD;
         let request = head.map(|()| Incoming::new(recv, watch.clone(), self.window.clone()));
-        let Outcome::Response(response) = self.app.handle(request, &self.connection, exchange).await else {
-            return;
+        let response = match self.app.handle(request, &self.connection, exchange).await {
+            Outcome::Response(response) => response,
+            // Dropping the stream resets it; upgrades never answer a request that is not CONNECT.
+            Outcome::Abort | Outcome::WebSocket(..) | Outcome::WebTransport(..) => return,
         };
         let large = !bodiless
             && response

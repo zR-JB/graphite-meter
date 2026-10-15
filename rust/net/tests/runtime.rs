@@ -30,3 +30,27 @@ async fn a_current_thread_runtime_is_refused_and_an_inline_pool_serves_on_the_ca
     let caller = std::thread::current().name().map(str::to_owned).unwrap_or_default();
     assert_eq!(thread_of(pool.next()).await, caller);
 }
+
+/// The calling thread's nice value, from Linux's `/proc`.
+#[cfg(target_os = "linux")]
+fn nice() -> i64 {
+    let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap();
+    let fields: Vec<_> = stat.rsplit_once(')').unwrap().1.split_whitespace().collect();
+    fields[16].parse().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pinned_threads_run_below_the_caller_s_and_a_probing_pool_s_latency_runtime() {
+    let pool = Pool::probing(&Handle::current()).unwrap();
+    assert_eq!(pool.runtimes().len(), 2);
+    assert_eq!(thread_of(pool.latency()).await, "gm-latency");
+    #[cfg(target_os = "linux")]
+    {
+        let nice_of = async |runtime: Handle| runtime.spawn(async { nice() }).await.unwrap();
+        let (latency, pinned) = (nice_of(pool.latency()).await, nice_of(pool.next()).await);
+        // Linux caps nice at 19.
+        assert_eq!(pinned, (latency + 5).min(19), "pinned threads run five steps below the latency runtime");
+        let plain = Pool::beside(&Handle::current()).unwrap();
+        assert_eq!(nice_of(plain.next()).await, (nice() + 5).min(19), "and below the caller's");
+    }
+}

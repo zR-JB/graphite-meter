@@ -1,14 +1,11 @@
 //! Who a request comes from: socket or trusted-proxy address, sign-in, and the client keys limits and uploads use.
 
-use crate::auth::{AuthLease, Holder};
+use crate::auth::{AuthLease, Holder, Principal};
 use crate::log::{Level, RateLimited};
 use graphite_meter_proto::discovery::ClientIpSource;
 use http::HeaderMap;
 use ipnet::{IpNet, Ipv6Net};
-use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
-};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
 static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests");
@@ -63,7 +60,7 @@ impl Address {
 /// peer it saw, so a different last hop means the `X-Real-IP` came from further out, such as a client whose own header
 /// the proxy passed on. `Forwarded` is ignored: no common proxy writes it, and some pass a client's on.
 fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
-    let mut real = headers.get_all("x-real-ip").iter();
+    let mut real = headers.get_all(crate::headers::X_REAL_IP).iter();
     let (Some(value), None) = (real.next(), real.next()) else {
         return Err("the proxy must send X-Real-IP once".into());
     };
@@ -73,7 +70,7 @@ fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
         .and_then(|text| text.trim().parse::<IpAddr>().ok())
         .ok_or("X-Real-IP is not one IP address")?
         .to_canonical();
-    if let Some(chain) = headers.get_all("x-forwarded-for").iter().next_back() {
+    if let Some(chain) = headers.get_all(crate::headers::X_FORWARDED_FOR).iter().next_back() {
         let chain = chain.to_str().map_err(|_| "X-Forwarded-For is not text")?;
         let last = chain.rsplit(',').next().unwrap_or_default().trim();
         if !last.is_empty() && hop(last) != Some(client) {
@@ -135,7 +132,7 @@ pub enum ClientKey {
     V4(Ipv4Addr),
     V6(Ipv6Net),
     Holder(Holder),
-    Principal(Arc<str>),
+    Principal(Principal),
 }
 
 /// A client's keys, narrowest first; each holds twice the share of the one before it.
@@ -147,7 +144,7 @@ pub enum ClientKeys {
     /// An IPv6 client: its /64, then the /56 and /48 holding it.
     V6(Ipv6Addr),
     /// A login or grant, then the principal it belongs to.
-    Auth(Holder, Arc<str>),
+    Auth(Holder, Principal),
 }
 
 impl ClientKeys {
@@ -188,7 +185,7 @@ impl ClientKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::Store;
+    use crate::auth::{Identity, Store};
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -247,15 +244,23 @@ mod tests {
         let v4 = keys(ClientKeys::address("::ffff:192.0.2.1".parse().unwrap()));
         assert_eq!(v4, [ClientKey::V4(Ipv4Addr::new(192, 0, 2, 1))]);
         let store = Store::default();
-        let login = store.sign_in("alice", "Alice", "local").unwrap();
-        let lease = store.bearer(&store.grant(login.key, None).unwrap()).unwrap();
+        let identity = Identity {
+            principal: Principal::oidc("alice"),
+            name: "Alice",
+            provider: "local",
+        };
+        let login = store.sign_in(identity).unwrap();
+        let lease = store.bearer(store.grant(login.key, None).unwrap().as_str()).unwrap();
         let ClientKeys::Auth(Holder::Grant(grant), _) = lease.keys() else {
             panic!("a grant's lease")
         };
         let peer = Peer::new(Address::Ambiguous("10.0.0.1".parse().unwrap()));
         assert_eq!(peer.keys(), None, "ambiguous evidence owns nothing");
         let signed_in = keys(peer.with_auth(Some(lease)).keys().unwrap());
-        assert_eq!(signed_in, [ClientKey::Holder(Holder::Grant(grant)), ClientKey::Principal("alice".into())]);
+        assert_eq!(
+            signed_in,
+            [ClientKey::Holder(Holder::Grant(grant)), ClientKey::Principal(Principal::oidc("alice"))]
+        );
         let trusted = ["192.0.2.0/24".parse().unwrap()];
         assert_eq!(ClientKeys::connection("192.0.2.7".parse().unwrap(), &trusted), ClientKeys::Exempt);
         assert_eq!(keys(ClientKeys::Exempt), []);

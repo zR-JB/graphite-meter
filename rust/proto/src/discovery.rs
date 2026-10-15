@@ -1,8 +1,8 @@
 //! Discovery and probe documents (`api/discovery.md`, `preflight.schema.json`, `probe.schema.json`).
 
 use crate::{json, origin::BaseUrl, text};
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
-use std::{ops::RangeInclusive, time::Duration};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+use std::{net::IpAddr, ops::RangeInclusive, time::Duration};
 
 /// Clients read at most this many bytes of a control response.
 pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
@@ -11,9 +11,9 @@ pub const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 pub const MAX_METADATA_BYTES: usize = 256;
 /// The stage limit of a server that advertises none.
-pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_secs(300);
+pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
 /// The stage limits a server may advertise.
-pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_secs(24 * 60 * 60);
+pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_hours(24);
 
 named! {
     pub enum ThroughputTransport {
@@ -191,11 +191,39 @@ fn base_url_of<E: serde::de::Error>(text: &str) -> Result<BaseUrl, E> {
     BaseUrl::parse(text).map_err(E::custom)
 }
 
-/// The client address family the server saw: 4 or 6.
-fn ip_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
-    match u8::deserialize(deserializer)? {
-        version @ (4 | 6) => Ok(version),
-        _ => Err(D::Error::custom("invalid client IP version")),
+/// An address family, which documents spell as its IP version: 4 or 6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IpFamily {
+    V4,
+    V6,
+}
+
+impl IpFamily {
+    pub fn of(address: IpAddr) -> Self {
+        if address.is_ipv4() { Self::V4 } else { Self::V6 }
+    }
+
+    pub fn version(self) -> u8 {
+        match self {
+            Self::V4 => 4,
+            Self::V6 => 6,
+        }
+    }
+}
+
+impl Serialize for IpFamily {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(self.version())
+    }
+}
+
+impl<'de> Deserialize<'de> for IpFamily {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match u8::deserialize(deserializer)? {
+            4 => Ok(Self::V4),
+            6 => Ok(Self::V6),
+            _ => Err(D::Error::custom("invalid client IP version")),
+        }
     }
 }
 
@@ -204,8 +232,7 @@ fn ip_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error
 #[serde(rename_all = "camelCase")]
 pub struct Probe {
     pub client_ip: String,
-    #[serde(deserialize_with = "ip_version")]
-    pub client_ip_version: u8,
+    pub client_ip_version: IpFamily,
     pub client_ip_source: ClientIpSource,
     pub protocol_negotiated: NegotiatedProtocol,
     #[serde(skip_serializing_if = "Option::is_none")]

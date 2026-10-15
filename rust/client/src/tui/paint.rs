@@ -8,6 +8,7 @@ use ratatui_core::{
     layout::Rect,
     style::{Color as Paint, Modifier},
 };
+use std::borrow::Cow;
 
 /// The dot of each row and column within a braille cell.
 const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
@@ -67,7 +68,10 @@ impl<'a> Canvas<'a> {
             if at >= end {
                 break;
             }
-            let text: String = span.text.chars().map(|c| if safe(c) { c } else { ' ' }).collect();
+            let text: Cow<'_, str> = match span.text.chars().all(safe) {
+                true => Cow::Borrowed(&span.text),
+                false => Cow::Owned(span.text.chars().map(|c| if safe(c) { c } else { ' ' }).collect()),
+            };
             let style = self.painted(span.style);
             (at, _) = self.buffer.set_stringn(at, y, text, usize::from(end - at), style);
         }

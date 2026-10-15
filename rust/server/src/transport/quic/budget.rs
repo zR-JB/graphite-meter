@@ -29,8 +29,10 @@ pub(super) const INCOMING_TOTAL_BYTES: u64 = 4 << 20;
 
 /// A connection's request streams: a client's admission shares and control streams, if a QUIC stream count fits.
 pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
-    let streams = limits.operations_per_client.checked_add(limits.sessions_per_client);
-    let streams = streams.and_then(|streams| u32::try_from(streams.checked_add(CONTROL_STREAMS)?).ok());
+    let streams = limits
+        .operations_per_client
+        .checked_add(limits.sessions_per_client.get());
+    let streams = streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
     streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
@@ -63,7 +65,7 @@ pub fn endpoint_bytes(
     segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
-    let queue = if shards > 1 { super::shard::queue_bytes(packet)? } else { 0 };
+    let queue = if shards > 1 { super::shard::forwarding_bytes(packet)? } else { 0 };
     noq::receive_batch_bytes(packet, segments)
         .checked_add(packet.checked_mul(connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?

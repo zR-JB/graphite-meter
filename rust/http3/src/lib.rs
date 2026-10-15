@@ -33,7 +33,7 @@ mod testing {
     }
 
     /// A frame of `kind`; capsules are laid out the same way.
-    pub fn frame(kind: u64, payload: &[u8]) -> Vec<u8> {
+    pub fn frame(kind: impl crate::frame::Kind, payload: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
         crate::frame::put_header(kind, payload.len() as u64, &mut bytes);
         [bytes, payload.to_vec()].concat()

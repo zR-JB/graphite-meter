@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::time::Instant;
 
-const WINDOW: Duration = Duration::from_secs(60);
+const WINDOW: Duration = Duration::from_mins(1);
 /// An address table tracks at most this many keys.
 const MAX_KEYS: usize = 2048;
 
@@ -116,9 +116,7 @@ pub(super) fn share_full(keys: &ClientKeys, limit: usize, held: impl Fn(&ClientK
 }
 
 fn expire(times: &mut VecDeque<Instant>, now: Instant) {
-    while times.front().is_some_and(|&time| now.duration_since(time) >= WINDOW) {
-        times.pop_front();
-    }
+    while times.pop_front_if(|time| now.duration_since(*time) >= WINDOW).is_some() {}
 }
 
 /// Logs that the ceiling `name` engaged, at most once a minute.

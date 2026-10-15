@@ -1,6 +1,10 @@
 //! Which requests pass under authentication: trust in the connection, credentials, origins, preflights and refusals.
 
 use super::{AuthLease, Decision, Store, Via, protect};
+use crate::headers::{
+    GRAPHITE_METER_AUTH, GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN,
+    X_FORWARDED_HOST, X_FORWARDED_PROTO,
+};
 use crate::{
     app::{Endpoint, finalize::Access, finalize::close, query, response},
     config,
@@ -10,19 +14,80 @@ use graphite_meter_proto::{
     origin::{Origin, Scheme},
     route::{Kind, Route},
 };
-use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
 
 /// Fields a request may carry at most once.
-const SINGLE: [&str; 6] = [
-    "authorization",
-    "origin",
-    "sec-fetch-site",
-    "x-csrf-token",
-    "access-control-request-method",
-    "access-control-request-headers",
+const SINGLE: [HeaderName; 6] = [
+    header::AUTHORIZATION,
+    header::ORIGIN,
+    SEC_FETCH_SITE,
+    X_CSRF_TOKEN,
+    header::ACCESS_CONTROL_REQUEST_METHOD,
+    header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
-pub(super) const SESSION_COOKIE: &str = "__Host-gm_session";
-const BROWSER_TOKEN: &str = "/auth/browser/token";
+
+/// When a controller route serves without a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Open {
+    Always,
+    /// While password sign-in is enabled.
+    Password,
+    /// While OIDC sign-in is enabled.
+    Oidc,
+    Never,
+}
+
+graphite_meter_proto::table! {
+    /// The controller's routes: method, path, and when each serves without a session.
+    pub(super) enum AuthRoute {
+        method.0: &'static str,
+        path.1: &'static str,
+        open.2: Open,
+    } {
+        LoginPage => ("GET", "/login", Open::Always),
+        Password => ("POST", "/auth/password", Open::Password),
+        OidcStart => ("POST", "/auth/oidc/start", Open::Oidc),
+        OidcCallback => ("GET", "/auth/oidc/callback", Open::Oidc),
+        Session => ("GET", "/auth/session", Open::Never),
+        CliPage => ("GET", "/auth/cli", Open::Always),
+        BrowserPage => ("GET", "/auth/browser", Open::Always),
+        CliApprove => ("POST", "/auth/cli/approve", Open::Never),
+        BrowserApprove => ("POST", "/auth/browser/approve", Open::Never),
+        CliToken => ("POST", "/auth/cli/token", Open::Always),
+        BrowserToken => ("POST", "/auth/browser/token", Open::Always),
+        Logout => ("POST", "/auth/logout", Open::Never),
+    }
+}
+
+impl AuthRoute {
+    /// The route `method` and `path` name exactly.
+    pub(super) fn find(method: &str, path: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|route| route.method() == method && route.path() == path)
+    }
+}
+
+graphite_meter_proto::table! {
+    /// A cookie the controller sets: host-only and secure, HttpOnly unless scripts read it, strictly same-site unless
+    /// a cross-site redirect must carry it.
+    pub(super) enum Cookie {
+        name.0: &'static str,
+        script.1: bool,
+        same_site.2: &'static str,
+    } {
+        Session => ("__Host-gm_session", false, "Strict"),
+        /// A sign-in form's token.
+        Login => ("__Host-gm_login", false, "Strict"),
+        /// The login's CSRF token, which the app sends back in a header.
+        Csrf => ("__Host-gm_csrf", true, "Strict"),
+        /// A browser's password attempt budget.
+        Device => ("__Host-gm_device", false, "Strict"),
+        /// The OIDC transaction, carried on the provider's cross-site redirect back.
+        Transaction => ("__Host-gm_oidc", false, "Lax"),
+    }
+}
 
 /// How far a request's connection is trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -71,7 +136,7 @@ impl Policy {
         peer: &Peer,
     ) -> Decision {
         let headers = request.headers();
-        if SINGLE.iter().any(|name| headers.get_all(*name).iter().nth(1).is_some()) {
+        if SINGLE.iter().any(|name| headers.get_all(name).iter().nth(1).is_some()) {
             return self.forbidden(false);
         }
         let trust = self.trust(request, endpoint, peer);
@@ -81,7 +146,7 @@ impl Policy {
         if trust == Trust::Foreign {
             return self.required(request, endpoint, false);
         }
-        if method == Method::OPTIONS && (route.is_some() || path == BROWSER_TOKEN) {
+        if method == Method::OPTIONS && (route.is_some() || path == AuthRoute::BrowserToken.path()) {
             return self.preflight(headers, route, trust);
         }
         let controller = path == "/login" || path.starts_with("/auth/");
@@ -123,7 +188,7 @@ impl Policy {
     /// Who may read a signed-in request's answer: a browser grant's origin, or the public origin with its cookie.
     pub(super) fn access(&self, lease: &AuthLease, headers: &HeaderMap) -> Option<Access> {
         if let Some(browser) = lease.browser() {
-            return Some(Access::Bearer(browser.clone()));
+            return Some(Access::Bearer(browser.header().clone()));
         }
         (headers.get(header::ORIGIN) == Some(&self.origin)).then(|| Access::Cookie(self.origin.clone()))
     }
@@ -144,8 +209,8 @@ impl Policy {
         let headers = request.headers();
         let forwarded = !matches!(peer.address(), Address::Socket(_))
             // Traefik names a WebSocket upgrade's TLS "wss".
-            && matches!(single(headers, "x-forwarded-proto"), Some("https" | "wss"))
-            && single(headers, "x-forwarded-host").is_some_and(|host| same_host(host, authority));
+            && matches!(single(headers, &X_FORWARDED_PROTO), Some("https" | "wss"))
+            && single(headers, &X_FORWARDED_HOST).is_some_and(|host| same_host(host, authority));
         if forwarded { Trust::Canonical } else { Trust::Insecure }
     }
 
@@ -180,10 +245,11 @@ impl Policy {
     /// Origin rules: browser grants serve only their origin's measurement routes; unsafe cookie requests prove CSRF.
     fn valid_origin<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>, lease: &AuthLease) -> bool {
         let headers = request.headers();
-        let Some(origin) = text(headers, "origin") else { return false };
+        let Some(origin) = text(headers, &header::ORIGIN) else { return false };
         let public = self.origin.to_str().unwrap_or_default();
         if let Some(browser) = lease.browser() {
-            return origin.as_bytes() == browser.as_bytes() && route.is_some_and(|route| route != Route::Servers);
+            return origin.as_bytes() == browser.header().as_bytes()
+                && route.is_some_and(|route| route != Route::Servers);
         }
         if !origin.is_empty() && origin != public {
             return false;
@@ -192,28 +258,28 @@ impl Policy {
             return true;
         }
         let ours = origin == public;
-        match text(headers, "sec-fetch-site") {
+        match text(headers, &SEC_FETCH_SITE) {
             Some("" | "same-origin" | "none") => {}
             Some("same-site") if ours => {}
             _ => return false,
         }
         let read = matches!(*request.method(), Method::GET | Method::HEAD);
-        let same_origin = text(headers, "sec-fetch-site") == Some("same-origin");
+        let same_origin = text(headers, &SEC_FETCH_SITE) == Some("same-origin");
         if route.is_some() && read && !ours && !same_origin || route == Some(Route::Ping) && !ours {
             return false;
         }
         if read || request.method() == Method::OPTIONS {
             return true;
         }
-        let proof = || text(headers, "x-csrf-token").is_some_and(|proof| store.csrf(lease.login(), proof));
+        let proof = || text(headers, &X_CSRF_TOKEN).is_some_and(|proof| store.csrf(lease.login(), proof));
         ours && (route.is_none() || proof())
     }
 
     /// Preflights: the browser token exchange, a browser grant's measurement routes, else the public origin's.
     fn preflight(&self, headers: &HeaderMap, route: Option<Route>, trust: Trust) -> Decision {
         let secure = trust >= Trust::Secure;
-        let origin = headers.get(header::ORIGIN).filter(|origin| browser_origin(origin));
-        let method = text(headers, "access-control-request-method").unwrap_or_default();
+        let origin = headers.get(header::ORIGIN).and_then(BrowserOrigin::parse);
+        let method = text(headers, &header::ACCESS_CONTROL_REQUEST_METHOD).unwrap_or_default();
         let allowed = route.is_some_and(|route| route.methods().contains(&method));
         let mut answer = response::empty(StatusCode::NO_CONTENT);
         let answered = answer.headers_mut();
@@ -221,17 +287,17 @@ impl Policy {
             (None, Some(origin))
                 if trust == Trust::Canonical && method == "POST" && requested(headers, &[]).is_some() =>
             {
-                Access::Bearer(origin.clone()).apply(answered);
+                Access::Bearer(origin.header().clone()).apply(answered);
                 answered.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
                 answered.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type"));
                 answered.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
             }
-            (Some(route), Some(origin)) if secure && *origin != self.origin && route != Route::Servers => {
+            (Some(route), Some(origin)) if secure && *origin.header() != self.origin && route != Route::Servers => {
                 let names = requested(headers, &["authorization"]);
                 if !allowed || !names.is_some_and(|names| names.contains(&"authorization".into())) {
                     return self.forbidden(secure);
                 }
-                Access::Bearer(origin.clone()).apply_measurement(answered);
+                Access::Bearer(origin.header().clone()).apply_measurement(answered);
             }
             (Some(_), _) if secure && headers.get(header::ORIGIN) == Some(&self.origin) && allowed => {
                 if requested(headers, &["authorization", "x-csrf-token"]).is_none() {
@@ -249,13 +315,15 @@ impl Policy {
     fn public(&self, method: &Method, path: &str) -> bool {
         const SANS: &str = "/fonts/ibm-plex-sans-var-latin1.woff2";
         const MONO: &str = "/fonts/ibm-plex-mono-600-latin1.woff2";
-        match (method.as_str(), path) {
-            ("GET", "/login" | "/auth/cli" | "/auth/browser") | ("POST", "/auth/cli/token" | BROWSER_TOKEN) => true,
-            ("GET" | "HEAD", SANS | MONO) => true,
-            ("POST", "/auth/password") => self.password,
-            ("POST", "/auth/oidc/start") | ("GET", "/auth/oidc/callback") => self.oidc,
-            _ => false,
+        if matches!(*method, Method::GET | Method::HEAD) && matches!(path, SANS | MONO) {
+            return true;
         }
+        AuthRoute::find(method.as_str(), path).is_some_and(|route| match route.open() {
+            Open::Always => true,
+            Open::Password => self.password,
+            Open::Oidc => self.oidc,
+            Open::Never => false,
+        })
     }
 
     fn forbidden(&self, secure: bool) -> Decision {
@@ -276,14 +344,14 @@ impl Policy {
         let origin = request.headers().get(header::ORIGIN);
         if origin == Some(&self.origin) {
             Access::Cookie(self.origin.clone()).apply(headers);
-        } else if let Some(origin) = origin.filter(|origin| browser_origin(origin))
+        } else if let Some(origin) = origin.and_then(BrowserOrigin::parse)
             && Route::from_path(request.uri().path()).is_some()
         {
-            Access::Bearer(origin.clone()).apply(headers);
+            Access::Bearer(origin.header().clone()).apply(headers);
         }
-        headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
-        headers.insert("graphite-meter-browser-auth", HeaderValue::from_static("1"));
-        headers.insert("graphite-meter-auth-url", self.login.clone());
+        headers.insert(GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
+        headers.insert(GRAPHITE_METER_BROWSER_AUTH, HeaderValue::from_static("1"));
+        headers.insert(GRAPHITE_METER_AUTH_URL, self.login.clone());
         close(headers, request.version());
         Err(answer)
     }
@@ -298,12 +366,12 @@ fn request_authority<B>(request: &Request<B>) -> Option<&str> {
 }
 
 /// A field's first value: empty when absent, `None` when it is no text.
-fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+fn text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).map_or(Some(""), |value| value.to_str().ok())
 }
 
 /// A field present once with one comma-free value.
-fn single<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
     (!value.contains(',')).then(|| value.trim())
@@ -316,14 +384,24 @@ fn same_host(first: &str, second: &str) -> bool {
 }
 
 /// An exact canonical HTTPS origin, as a browser grant's audience must be.
-pub(super) fn browser_origin(origin: &HeaderValue) -> bool {
-    let text = origin.to_str().unwrap_or_default();
-    Origin::parse(text).is_ok_and(|parsed| parsed.scheme == Scheme::Https && parsed.to_string() == text)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserOrigin(HeaderValue);
+
+impl BrowserOrigin {
+    pub fn parse(origin: &HeaderValue) -> Option<Self> {
+        let text = origin.to_str().ok()?;
+        let parsed = Origin::parse(text).ok()?;
+        (parsed.scheme == Scheme::Https && parsed.to_string() == text).then(|| Self(origin.clone()))
+    }
+
+    pub fn header(&self) -> &HeaderValue {
+        &self.0
+    }
 }
 
 /// The preflight's requested headers in lower case, when each is `Content-Type` or one of `allowed`.
 fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
-    let names = text(headers, "access-control-request-headers")
+    let names = text(headers, &header::ACCESS_CONTROL_REQUEST_HEADERS)
         .unwrap_or_default()
         .split(',');
     let names = names
@@ -335,11 +413,12 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
 
 /// The lease of the login whose session cookie `headers` carry.
 pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
-    store.cookie(cookie(headers, SESSION_COOKIE)?)
+    store.cookie(cookie(headers, Cookie::Session)?)
 }
 
-/// The cookie `name`: invalid pairs are skipped, and two valid ones are ambiguous.
-pub(super) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+/// The cookie's value: invalid pairs are skipped, and two valid ones are ambiguous.
+pub(super) fn cookie(headers: &HeaderMap, cookie: Cookie) -> Option<&str> {
+    let name = cookie.name();
     let values = headers.get_all(header::COOKIE).iter();
     let pairs: Vec<_> = values
         .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))

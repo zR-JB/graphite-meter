@@ -2,7 +2,10 @@
 //! conforming peer never would. Deadlines run on tokio's paused clock.
 #![allow(dead_code)]
 
-use graphite_meter_http3::{Code, Error, RequestStream, client, server, webtransport::Session};
+use graphite_meter_http3::{
+    Code, Error, RequestStream, client, server,
+    webtransport::{Session, SessionClose},
+};
 use graphite_meter_testkit::Identity;
 use std::{
     future::Future,
@@ -232,7 +235,7 @@ pub async fn accepted(requests: &client::SendRequest) -> Result<Session, TestErr
     Ok(Session::connect(requests, get("/wt")).await?.expect("accepted").0)
 }
 
-pub async fn until_closed(session: Session) -> Result<(u32, String), Error> {
+pub async fn until_closed(session: Session) -> Result<SessionClose, Error> {
     session.closed().await
 }
 

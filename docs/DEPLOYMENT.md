@@ -45,6 +45,10 @@ It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key
 [container user](#container-user). For issuance and renewal, see the
 [TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
 
+Prefer an ECDSA P-256 key, which the TLS Quadlet issues (`certbot --key-type ecdsa`): every TLS and QUIC handshake
+signs with it, and with an RSA-2048 key the Rust server spends about four times the CPU per full TLS handshake
+(1.6 ms against 0.38 ms on an x86 CI runner), which a Raspberry Pi feels.
+
 ### Authentication overlay
 
 [`docker-compose.auth.yml`](../container/docker-compose.auth.yml) shows password sign-in behind an HTTPS proxy on
@@ -110,7 +114,10 @@ adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the conne
 listeners share. It must cover every allowed connection's floor, about 1.5 MiB each with HTTP/3 on, so the default
 `GM_MAX_CONNECTIONS` of 4096 needs about 6 GiB: a small host that lowers the budget lowers the connections with
 it, such as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the
-server at start with the values that fit. Its log lines carry a level, a topic and local time; the image has no zone data, so mount
+server at start with the values that fit. Connections run on one pinned thread per runtime worker, a CPU each by
+default; `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run
+five nice steps lower, so transfers yield to the host's other services and to the server's own probes. Its log lines
+carry a level, a topic and local time; the image has no zone data, so mount
 `/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
 instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
 On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its

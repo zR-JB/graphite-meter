@@ -3,7 +3,7 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, WtCode};
+use graphite_meter_http3::{Code, Error, WtCode, webtransport::SessionClose};
 use std::{sync::Arc, time::Duration};
 use support::*;
 use tokio::sync::{Notify, mpsc};
@@ -147,7 +147,8 @@ async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
             assert_eq!(stopped(&connect).await, Some(Code::H3_EXCESSIVE_LOAD));
         } else {
             connect.write_all(&close_capsule(7, "bye")).await?;
-            assert_eq!(outcomes.recv().await, Some(Ok((7, "bye".into()))), "{} bytes", data.len());
+            let close = SessionClose { code: 7, reason: "bye".into() };
+            assert_eq!(outcomes.recv().await, Some(Ok(close)), "{} bytes", data.len());
         }
     }
     Ok(())

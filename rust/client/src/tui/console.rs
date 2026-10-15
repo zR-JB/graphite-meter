@@ -8,7 +8,8 @@ use super::{
     theme::mix,
 };
 use crate::{
-    events::{Point, Series},
+    config::Invalid,
+    events::{Point, Running, Series},
     measure::{format, latency::Summary, wire},
     model::{Outcome, ServerFailure, Stage, StageResult, StageStatus},
     report::vocabulary::{self as words, MISSING},
@@ -16,7 +17,7 @@ use crate::{
 };
 use graphite_meter_proto::reason::FailureReason;
 use ratatui_core::layout::Rect;
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 /// From this size the dial stands beside the lanes over the cards; below it the console stacks without the ring.
 const WIDE: (u16, u16) = (110, 32);
@@ -73,7 +74,12 @@ pub fn gauge_tick(v: f64) -> String {
 }
 
 pub fn icon(stage: Stage) -> &'static str {
-    ["≈", "↓", "↑", "↕"][stage as usize]
+    match stage {
+        Stage::Latency => "≈",
+        Stage::Download => "↓",
+        Stage::Upload => "↑",
+        Stage::Bidirectional => "↕",
+    }
 }
 
 /// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with 3% headroom, and from
@@ -128,7 +134,7 @@ impl App {
         if area.width >= WIDE.0 && area.height >= WIDE.1 {
             let top = (area.height * 11 / 20).clamp(18, 24);
             let dial = Rect::new(area.x + 1, area.y + 1, (area.width * 3 / 10).clamp(46, 66), top);
-            dial::draw(canvas, dial, &self.palette, &self.dial());
+            dial::draw(canvas, dial, &self.palette, &self.dial(), &self.ring);
             let side = Rect::new(dial.right() + 3, dial.y, area.right().saturating_sub(dial.right() + 5), top);
             let mut controls = side;
             if !lanes.is_empty() {
@@ -213,7 +219,11 @@ impl App {
         match () {
             _ if self.running() => None,
             _ if self.config.url.is_none() => Some("needs a server".into()),
-            _ => self.config.validate().err().map(|_| "turn on a stage".into()),
+            _ => match self.config.validate() {
+                Ok(()) => None,
+                Err(Invalid::NoStages) => Some("turn on a stage".into()),
+                Err(invalid) => Some(invalid.to_string()),
+            },
         }
     }
 
@@ -247,7 +257,8 @@ impl App {
         let planned = match self.running() {
             true => self
                 .plan()
-                .into_iter()
+                .iter()
+                .copied()
                 .find(|(own, _)| *own == stage)
                 .map(|(_, duration)| duration),
             false => on.then(|| self.config.duration(stage)),
@@ -486,10 +497,11 @@ impl App {
         let peak = run.map_or(0.0, |run| run.peak);
         let rate = ceil_step(peak.max(1.0) * 8.0 * 1.03, &CHART_STEPS) / 8.0;
         let series = run.and_then(|run| run.rtt.iter().find(|(id, _)| Some(id) == self.latency_server()));
+        let plan = self.plan();
         let top = |idle: bool| {
-            let windows = self
-                .plan()
-                .into_iter()
+            let windows = plan
+                .iter()
+                .copied()
                 .filter(|(stage, _)| (*stage == Stage::Latency) == idle);
             let spans = windows.filter_map(|(stage, duration)| {
                 let open = self.window(run?, stage)?.0;
@@ -764,10 +776,10 @@ impl App {
             return at_rest(rate_ticks, muted(note));
         };
         if self.running() {
-            let Some((plan, window)) = &run.stage else {
+            let Some(running) = &run.stage else {
                 return at_rest(rate_ticks, muted("Verifying the selected paths"));
             };
-            let stage = plan.stage;
+            let stage = running.plan().stage;
             let track = palette.wash(stage, 0.22, border);
             let ticks = if stage == Stage::Latency { ms_ticks.clone() } else { rate_ticks.clone() };
             let needle = |to| {
@@ -776,7 +788,7 @@ impl App {
                     color: palette.trace(stage),
                 }]
             };
-            if window.is_none() {
+            if let Running::Warmup(_) = running {
                 let warming = at_rest(ticks, muted("Warming up; not counted"));
                 return Dial { track, label: label(stage), arcs: needle(0.0), ..warming };
             }
@@ -861,9 +873,10 @@ impl App {
     /// A lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
     pub(super) fn lanes(&self) -> Vec<Lane> {
         let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency;
-        let lanes = self
-            .plan()
-            .into_iter()
+        let plan = self.plan();
+        let lanes = plan
+            .iter()
+            .copied()
             .filter(|(stage, _)| loaded(*stage))
             .map(|(stage, _)| {
                 let live = self.stage_state(stage) == State::Measuring;
@@ -878,10 +891,10 @@ impl App {
     }
 
     /// The stages shown: the run's plan once it started, else the settings'.
-    pub(super) fn plan(&self) -> Vec<(Stage, Duration)> {
+    pub(super) fn plan(&self) -> Cow<'_, [(Stage, Duration)]> {
         match &self.view.run {
-            Some(run) if !run.plan.is_empty() => run.plan.clone(),
-            _ => self.config.plan(),
+            Some(run) if !run.plan.is_empty() => Cow::Borrowed(&run.plan),
+            _ => Cow::Owned(self.config.plan()),
         }
     }
 }

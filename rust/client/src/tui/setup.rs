@@ -99,7 +99,7 @@ impl App {
         match row {
             Row::Stage(stage) => Some(self.config.stages.contains(&stage)),
             Row::LoadedLatency => Some(self.config.loaded_latency),
-            Row::ForceStreams => Some(self.config.streams.forced > 0),
+            Row::ForceStreams => Some(self.config.streams.forced.is_some()),
             Row::Insecure => Some(self.config.insecure),
             Row::Remember => Some(self.remembering),
             _ => None,
@@ -135,8 +135,7 @@ impl App {
             Row::Warmup => words::setting(config.warmup),
             Row::IdleCadence => words::cadence(config.ping),
             Row::LoadedCadence => words::cadence(config.loaded_ping),
-            Row::Streams if config.streams.forced > 0 => config.streams.forced.to_string(),
-            Row::Streams => config.streams.auto.to_string(),
+            Row::Streams => config.streams.shown().to_string(),
             Row::Reset if self.setup.resetting => return Line::styled("enter again resets", palette.warn),
             Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
         };
@@ -169,7 +168,7 @@ impl App {
                 focus = entries.len();
             }
             let label = match row {
-                Row::Streams if self.config.streams.forced > 0 => "Streams per direction",
+                Row::Streams if self.config.streams.forced.is_some() => "Streams per direction",
                 _ => label,
             };
             let value = match &self.editor {

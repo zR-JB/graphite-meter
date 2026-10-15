@@ -3,7 +3,7 @@
 use super::{
     Http3, Listener,
     budget::{self, INCOMING_BYTES, INCOMING_TOTAL_BYTES, endpoint_bytes},
-    shard::{Router, ShardSocket, cid_generator},
+    shard::{Router, Shard, ShardSocket, cid_generator, route_in_kernel},
 };
 use crate::{
     app::App,
@@ -75,7 +75,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let bytes = udp.bytes(&config, 1, self.limits)?;
         (self.fits)(bytes)?;
         let http3 = self.http3(1)?;
-        let listener = self.endpoint(config, &http3.config, udp.socket, udp.quic, bytes, runtime)?;
+        let listener = self.endpoint(config, &http3.config, (udp.socket, udp.quic), bytes, runtime, None)?;
         Ok(Endpoints { listeners: vec![listener], http3, bytes })
     }
 
@@ -106,27 +106,38 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
             .ok_or(OVERFLOW)?;
         (self.fits)(bytes)?;
         let http3 = self.http3(shards)?;
-        let (router, inboxes) = Router::new(shards, budget::packet_bytes(&config).ok_or(OVERFLOW)?);
+        let refused = sockets.iter().find_map(|udp| udp.routed.as_ref().err());
+        if let Some(error) = refused {
+            log!(
+                Warn,
+                "udp",
+                "QUIC endpoints route by connection ID in user space only ({error}); connections stay \
+                 where they arrive"
+            );
+        }
+        let packet = budget::packet_bytes(&config).ok_or(OVERFLOW)?;
+        let (router, inboxes) = Router::new(shards, packet, refused.is_none());
         let mut listeners = Vec::with_capacity(shards);
         for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(each).zip(inboxes).enumerate() {
             let socket = Box::new(ShardSocket::new(udp.socket, shard, router.clone(), inbox));
             let mut config = config.clone();
             config.cid_generator(cid_generator(u8::try_from(shard).map_err(|error| error.to_string())?));
-            let runtime = runtimes[shard].clone();
-            listeners.push(self.endpoint(config, &http3.config, socket, udp.quic, bytes, runtime)?);
+            let (runtime, place) = (runtimes[shard].clone(), Some(router.shard(shard)));
+            listeners.push(self.endpoint(config, &http3.config, (socket, udp.quic), bytes, runtime, place)?);
         }
         Ok(Some(Endpoints { listeners, http3, bytes }))
     }
 
-    /// An endpoint built on `runtime`, whose socket holds `bytes` of the budget until it and its senders drop.
+    /// An endpoint built on `runtime`, whose socket holds `bytes` of the budget until it and its senders drop; its
+    /// connections hold a share of `shard`'s count.
     fn endpoint(
         &self,
         endpoint: noq::EndpointConfig,
         config: &noq::ServerConfig,
-        socket: Box<dyn AsyncUdpSocket>,
-        quic: Arc<dyn noq::Runtime>,
+        (socket, quic): (Box<dyn AsyncUdpSocket>, Arc<dyn noq::Runtime>),
         bytes: usize,
         runtime: Handle,
+        shard: Option<Shard>,
     ) -> Result<Listener, String> {
         let lease = self.app.budget().reserve(bytes);
         let lease = lease.ok_or("the buffer budget cannot cover the QUIC endpoint buffers")?;
@@ -134,7 +145,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let _entered = runtime.enter();
         let endpoint = noq::Endpoint::new_with_abstract_socket(endpoint, Some(config.clone()), socket, quic);
         let endpoint = endpoint.map_err(|error| error.to_string())?;
-        Ok(Listener { endpoint, app: self.app.clone(), runtime })
+        Ok(Listener { endpoint, app: self.app.clone(), runtime, shard })
     }
 
     /// What a shard's connections share: their part of server-wide incoming limits; handshakes queue per endpoint.
@@ -142,7 +153,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let crypto = QuicServerConfig::try_from(self.certificates.server_config(b"h3"));
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto.map_err(|error| error.to_string())?));
         config
-            .max_incoming(self.limits.connections.div_ceil(shards))
+            .max_incoming(self.limits.connections.get().div_ceil(shards))
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
         let mut transport = budget::transport(self.limits)?;
@@ -158,11 +169,13 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     }
 }
 
-/// One of `sockets` UDP sockets on an address, wrapped for noq on its binding runtime, with its kernel bytes.
+/// One of `sockets` UDP sockets on an address, wrapped for noq on its binding runtime, with its kernel bytes and, in a
+/// set, whether the kernel took the routing program.
 struct Udp {
     socket: Box<dyn AsyncUdpSocket>,
     quic: Arc<dyn noq::Runtime>,
     kernel: usize,
+    routed: io::Result<()>,
 }
 
 impl Udp {
@@ -178,15 +191,16 @@ impl Udp {
             .recv_buffer_size()
             .and_then(|receive| Ok(receive + buffers.send_buffer_size()?));
         let kernel = kernel.map_err(|error| error.to_string())?;
+        let routed = if sockets > 1 { route_in_kernel(&socket) } else { Ok(()) };
         let quic = noq::default_runtime().ok_or("no async runtime for QUIC")?;
         let socket = quic.wrap_udp_socket(socket).map_err(|error| error.to_string())?;
-        Ok(Self { socket, quic, kernel })
+        Ok(Self { socket, quic, kernel, routed })
     }
 
     /// What one of `shards` endpoints on this socket holds of the budget.
     fn bytes(&self, config: &noq::EndpointConfig, shards: usize, limits: &Limits) -> Result<usize, String> {
         let segments = self.socket.max_receive_segments().get();
-        endpoint_bytes(config, shards, limits.connections, self.kernel, segments).ok_or_else(|| OVERFLOW.into())
+        endpoint_bytes(config, shards, limits.connections.get(), self.kernel, segments).ok_or_else(|| OVERFLOW.into())
     }
 }
 

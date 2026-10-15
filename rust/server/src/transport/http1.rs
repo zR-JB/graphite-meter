@@ -1,6 +1,7 @@
 //! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
 
 use super::{
+    Burst, Rehome,
     body::{Aborted, Body, ReplyBound},
     tls, websocket,
 };
@@ -13,7 +14,12 @@ use crate::{
 use bytes::Bytes;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
-use hyper::{body::Incoming, server::conn::http1, service::service_fn, upgrade::OnUpgrade};
+use hyper::{
+    body::Incoming,
+    server::conn::http1,
+    service::service_fn,
+    upgrade::{OnUpgrade, Parts, Upgraded},
+};
 use hyper_util::rt::TokioIo;
 use std::{
     future::Future,
@@ -30,6 +36,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
+    runtime::Handle,
     time::{Instant, Sleep, sleep_until},
 };
 use tokio_rustls::TlsAcceptor;
@@ -47,6 +54,8 @@ pub struct Http1 {
     pub endpoint: Endpoint,
     /// Present on a TLS listener.
     pub tls: Option<TlsAcceptor>,
+    /// The runtime WebSocket buses move to, which runs no bulk transfer.
+    pub buses: Handle,
     pub shutdown: CancellationToken,
 }
 
@@ -79,7 +88,7 @@ impl Http1 {
     /// Serves requests until the connection ends; the first request's exchange began at `start`.
     async fn serve<S>(&self, stream: S, connection: Connection, start: Instant)
     where
-        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
     {
         let shared = Arc::new(Shared::default());
         let io = Io::new(stream, shared.clone(), start + EXCHANGE_BOUND);
@@ -95,19 +104,41 @@ impl Http1 {
                 .serve_connection(TokioIo::new(io), service)
                 .with_upgrades()
         );
+        // A child token: polling it never takes the server-wide token's waiter lock.
+        let shutdown = self.shutdown.child_token();
         tokio::select! {
             biased;
             _ = serving.as_mut() => {}
-            () = self.shutdown.cancelled() => {
+            () = shutdown.cancelled() => {
                 serving.as_mut().graceful_shutdown();
                 let _ = serving.await;
             }
         }
         let upgraded = lock(&bus).take();
         if let Some((upgrade, lane)) = upgraded {
-            websocket::serve(upgrade, lane).await;
+            // This task, holding the connection's admission, waits off the bus's path.
+            let _ = self.buses.spawn(run_bus::<S>(upgrade, lane)).await;
         }
     }
+}
+
+/// Runs a WebSocket bus on the calling runtime, its socket moved there, until `lane` ends or the peer leaves.
+async fn run_bus<S>(upgrade: OnUpgrade, lane: Lane)
+where
+    S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
+{
+    let upgraded = tokio::select! {
+        biased;
+        _ = lane.ended() => return,
+        upgraded = upgrade => upgraded,
+    };
+    let Ok(Ok(Parts { io, read_buf, .. })) = upgraded.map(Upgraded::downcast::<TokioIo<Io<S>>>) else {
+        return;
+    };
+    let mut stream = io.into_inner().inner;
+    // A socket that cannot move still works through its first runtime's driver.
+    let _ = stream.rehome();
+    websocket::serve(stream, read_buf, lane).await;
 }
 
 /// Answers one request; an error closes the connection unanswered.
@@ -202,6 +233,7 @@ struct Io<S> {
     /// The keep-alive or exchange deadline.
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
+    burst: Burst,
 }
 
 enum State {
@@ -219,7 +251,7 @@ impl<S> Io<S> {
     fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
         *lock(&shared.started) = Some(deadline);
         let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
-        Self { inner, state, deadline, shared }
+        Self { inner, state, deadline, shared, burst: Burst::default() }
     }
 
     /// Adopts a posted limit and fails once the connection's deadline passed or its reply must end.
@@ -260,12 +292,16 @@ impl<S> Io<S> {
 
     fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
         match &result {
-            Poll::Ready(Ok(1..)) => {
+            Poll::Ready(Ok(written @ 1..)) => {
+                self.burst.moved(*written);
                 if let State::Reply(bound) = &self.state {
                     bound.progressed();
                 }
             }
-            Poll::Pending => self.blocked(cx)?,
+            Poll::Pending => {
+                self.burst.waited();
+                self.blocked(cx)?;
+            }
             Poll::Ready(_) => {}
         }
         result
@@ -287,10 +323,15 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let filled = buffer.filled().len();
         let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
+        this.burst.moved(buffer.filled().len() - filled);
         match result {
-            Poll::Pending => this.blocked(cx)?,
+            Poll::Pending => {
+                this.burst.waited();
+                this.blocked(cx)?;
+            }
             Poll::Ready(Ok(())) if buffer.filled().len() > filled && matches!(this.state, State::Waiting) => {
                 let deadline = Instant::now() + EXCHANGE_BOUND;
                 this.deadline.as_mut().reset(deadline);
@@ -307,6 +348,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let result = Pin::new(&mut this.inner).poll_write(cx, bytes);
         this.written(cx, result)
     }
@@ -318,6 +360,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
     ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
+        ready!(this.burst.poll_turn(cx));
         let result = Pin::new(&mut this.inner).poll_write_vectored(cx, bytes);
         this.written(cx, result)
     }

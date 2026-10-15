@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "94e4e10bf84f5ffcad04f8c471dc8e98b980298f",
+    "rev": "f6f553ebfbd5ae68c5bf64a3c346abc626e285ff",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "54f43f535a24e7d13a5d4f7ff801859fbe4003d0a7b772ab539157652711fcc2",
+    "diffSha256": "adf73d75af7cc02c8c34e99e72e81f9707fb8b7f030cd707831062368a059948",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -73,7 +73,22 @@
       {"subject": "Autotune the connection receive window", "purpose": "Adds TransportConfig::initial_receive_window: the connection window starts there and doubles up to receive_window while half of it is read within two round trips, as in quic-go.", "origin": "graphite-meter"},
       {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"},
       {"subject": "Wake connection-blocked streams longest waiting first", "purpose": "Wakes streams blocked on connection credit in the order they blocked, so a writer that takes every grant cannot starve the other streams on a slow or lossy path.", "origin": "graphite-meter"},
-      {"subject": "State the wake order the connection credit queue relies on", "purpose": "Documents that the longest-waiting order holds when woken tasks run in wake order, as on a current-thread runtime.", "origin": "graphite-meter"}
+      {"subject": "State the wake order the connection credit queue relies on", "purpose": "Documents that the longest-waiting order holds when woken tasks run in wake order, as on a current-thread runtime.", "origin": "graphite-meter"},
+      {"subject": "fix(noq): Surface non-`WouldBlock` recv errors from `poll_recv` (#823)", "purpose": "Returns receive errors other than WouldBlock from poll_recv instead of spinning on them.", "origin": "n0-computer/noq#823 86e4ce1d57a6b2de1e4f182e6a8ca7b1d841958c"},
+      {"subject": "fix(proto): congestion: saturate CUBIC window increment to avoid overflow (#823)", "purpose": "Saturates the CUBIC window increment so it cannot overflow.", "origin": "n0-computer/noq#823 35ab4e7e6556eb4f1ddec7575376d0a26dc2c375"},
+      {"subject": "fix(proto): Allow the cwnd to be filled exactly (#823)", "purpose": "Lets a sender fill the congestion window exactly instead of stopping short of it.", "origin": "n0-computer/noq#823 0a761b31e78409f9eaa17131c7358fcfea2480b6"},
+      {"subject": "fix(proto): Treat an equal-size delivery as evidence against a preceding loss burst (#823)", "purpose": "Stops MTU black-hole detection from falling to the minimum MTU during bulk transfers.", "origin": "n0-computer/noq#823 28db8f3ef6a8bded150b18f5b00edbc3f0723acc"},
+      {"subject": "fix(proto): match unspecified local IP when sending connection close (#822)", "purpose": "Sends CONNECTION_CLOSE when the local IP is unspecified.", "origin": "n0-computer/noq#822 34ec96917cb21300d929145520aeb40870ddc814"},
+      {"subject": "fix(proto): do not coalesce into a too small datagram tail (#792)", "purpose": "Stops a CONNECTION_CLOSE from coalescing into a datagram tail too small for a packet.", "origin": "n0-computer/noq#792 f916a5c57df07516da1400079acec879072d223a"},
+      {"subject": "fix(noq): wake endpoint waiters when the driver is dropped (#824)", "purpose": "Wakes wait_idle and wait_all_draining callers when the endpoint driver drops.", "origin": "n0-computer/noq#824 cf1bc6686cf1d5c4fde0b7ae8d7b7c95705a86fc"},
+      {"subject": "fix(proto): Check limits when processing already retired CIDs (#823)", "purpose": "Bounds RETIRE_CONNECTION_ID frames queued for already-retired IDs, through queue_retire_cids.", "origin": "n0-computer/noq#823 21791cb99ecd82128e3594bbf2cd5a083a4e7660"},
+      {"subject": "congestion: avoid double-reducing CUBIC ssthresh on persistent congestion", "purpose": "Reduces ssthresh once on persistent congestion, as RFC 9438 requires.", "origin": "quinn-rs/quinn#2903 2a9f45e47899608ba8875260969667144fb9ef6c"},
+      {"subject": "proto: reject Initial tokens that prevent packet construction", "purpose": "Closes the connection when a Retry or cached token leaves an Initial no room for frames, instead of panicking or allocating without bound (GHSA-wppq); TransmitBuf gains truncate.", "origin": "quinn-rs/quinn#2905 74c33ff75281d7751488e410e21e4f030782b655"},
+      {"subject": "proto: reserve close frame space after large Initial headers", "purpose": "Limits a close packet's ACKs so its CONNECTION_CLOSE always fits after a large Initial token.", "origin": "quinn-rs/quinn#2905 a6e78d1c8bf28630f1e92fbcc38f60e0a134b01a"},
+      {"subject": "Keep large received stream frames in their packet's buffer", "purpose": "Keeps a STREAM frame filling at least half its packet in the packet's buffer, charged at the packet's size; smaller frames are still copied into their own charged backing.", "origin": "graphite-meter"},
+      {"subject": "Charge the shared budget in steps above the floor", "purpose": "Charges the shared budget in 64 KiB steps above a budget's floor, keeping at most two unused steps and none at or below the floor.", "origin": "graphite-meter"},
+      {"subject": "proto: take an RTT sample from a Retry", "purpose": "Takes a round-trip sample from a Retry that answers the unrepeated first Initial, so the resent ClientHello is not paced at the 333 ms initial RTT (upstreamable; quic-go does the same).", "origin": "graphite-meter"},
+      {"subject": "proto: follow RFC 9438 for Cubic's Reno-friendly estimate and K", "purpose": "Restarts Cubic's Reno-friendly estimate at the reduced window and grows it per window acknowledged, switching alpha_cubic to 1 at the window before the reduction, and takes K from W_max minus the reduced window, as RFC 9438 Sections 4.2 and 4.3 do (upstreamable; Linux and quic-go's Cubic do the same).", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
@@ -84,12 +99,12 @@
   },
   {
     "fork": "https://github.com/zR-JB/h2",
-    "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "52889f53f5cbbf88c2ae641a25f055436f61092c",
+    "branch": "graphite-meter/h2-v0.4.20",
+    "rev": "7a7c2527475965cfd4da2130ef4bf5fe361f6431",
     "upstream": "https://github.com/hyperium/h2",
-    "baseTag": "v0.4.19",
-    "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "552425fe0e7b7d0ca9d2d4c9f56b02585c3d28006edcbc85773308ee3effb1fa",
+    "baseTag": "v0.4.20",
+    "base": "b0e890842ac16d3c76836fd4fcc06421acb15fa7",
+    "diffSha256": "4432d689dd2f6a1dbfefcb424f169d02c93e79cab5d49c51f75232a6dc6adf5b",
     "modifiedPackages": [
       "h2"
     ],
@@ -101,12 +116,9 @@
       "src/codec/framed_write.rs",
       "src/codec/mod.rs",
       "src/frame/data.rs",
-      "src/frame/go_away.rs",
       "src/frame/headers.rs",
-      "src/frame/mod.rs",
       "src/hpack/decoder.rs",
       "src/hpack/header.rs",
-      "src/hpack/table.rs",
       "src/lib.rs",
       "src/proto/connection.rs",
       "src/proto/streams/buffer.rs",
@@ -117,7 +129,6 @@
       "src/proto/streams/recv.rs",
       "src/proto/streams/send.rs",
       "src/proto/streams/state.rs",
-      "src/proto/streams/store.rs",
       "src/proto/streams/stream.rs",
       "src/proto/streams/streams.rs",
       "src/server.rs",
@@ -126,10 +137,8 @@
       "tests/h2-support/src/util.rs",
       "tests/h2-tests/Cargo.toml",
       "tests/h2-tests/tests/client_request.rs",
-      "tests/h2-tests/tests/codec_read.rs",
       "tests/h2-tests/tests/flow_control.rs",
       "tests/h2-tests/tests/informational_responses.rs",
-      "tests/h2-tests/tests/push_promise.rs",
       "tests/h2-tests/tests/receive_budget_wire.rs",
       "tests/h2-tests/tests/server.rs",
       "tests/h2-tests/tests/stream_states.rs"
@@ -149,14 +158,10 @@
       {"subject": "Exempt empty final DATA from the send allowance", "purpose": "Lets a response finish with an empty END_STREAM frame under allowance pressure.", "origin": "graphite-meter"},
       {"subject": "Restore is_released's doc comment", "purpose": "Moves a misplaced doc comment back to its function.", "origin": "graphite-meter"},
       {"subject": "Gate the Graphite Meter fork on Rust 1.99.0", "purpose": "Runs the fork workflow on Rust 1.99.0 and allows the fetch_update deprecation the older MSRV requires.", "origin": "graphite-meter"},
-      {"subject": "Reject GOAWAY frames with a non-zero stream identifier (#951)", "purpose": "Treats a GOAWAY on a non-zero stream as a connection protocol error, as RFC 9113 requires.", "origin": "hyperium/h2#951 d4a37fcac2c382746b6ff3509d8bd5871235ab37"},
-      {"subject": "fix: rare race during shutdown (#956)", "purpose": "Fixes a rare race between connection shutdown and stream state.", "origin": "hyperium/h2#956 e43124bb5579bae0306d4a8f70dc127a640534c4"},
-      {"subject": "fix(client): reject responses without `:status` (#959)", "purpose": "Refuses a response head that lacks the :status pseudo-header.", "origin": "hyperium/h2#959 3c5f61c9bac3b9ab9b24031a3bb90d8b58eccb9a"},
       {"subject": "Refresh large receive windows once a mebibyte is unclaimed", "purpose": "Caps the WINDOW_UPDATE threshold at 1 MiB so a large receive window stays nearly full over a long path, as Go refreshes after 4 KiB.", "origin": "graphite-meter"},
       {"subject": "Scale the large-window refresh with the window", "purpose": "Refreshes a window once a sixteenth of it, at least 1 MiB, is unclaimed, so a 64 MiB window does not send an update per mebibyte.", "origin": "graphite-meter"},
-      {"subject": "fix: count refused streams on local reset abuse counter (#966)", "purpose": "Counts streams the server refuses toward the locally reset streams limit, so refused streams cannot be opened without bound.", "origin": "hyperium/h2#966 8e9655f8d7fd9fe7bf0ceb7ed61acdcbdf5ab984"},
-      {"subject": "fix: reject duplicate content-lengths that differ (#967)", "purpose": "Treats differing duplicate content-length headers as malformed, as RFC 9110 requires.", "origin": "hyperium/h2#967 d96d34751d79a19f8caa44b4565ceb451c719052"},
-      {"subject": "fix: count reserved push promises against stream concurrency (#968)", "purpose": "Counts reserved pushed streams against the client's concurrency limit.", "origin": "hyperium/h2#968 a26b42746ae5c69fa32bb9411de3b5e7440cd165"}
+      {"subject": "fix: preserve received END_STREAM on connection error and EOF (#977)", "purpose": "Keeps a received END_STREAM when the connection errors, sends GOAWAY or reaches EOF.", "origin": "hyperium/h2#977 e8b92c9273a011bf1093cbf09ab639e121b11057"},
+      {"subject": "Hold v0.4.20's code to the fork's strict lints", "purpose": "Moves recv.rs's impls back before its tests and asserts with assert! in v0.4.20's code.", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"

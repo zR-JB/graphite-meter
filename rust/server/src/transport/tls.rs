@@ -32,11 +32,9 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use tokio_util::sync::CancellationToken;
 
 /// Renewed files are read this often.
-const RENEWAL_CHECK: Duration = Duration::from_secs(60);
+const RENEWAL_CHECK: Duration = Duration::from_mins(1);
 /// A certificate expiring sooner is logged with a warning.
-const EXPIRY_WARNING: Duration = Duration::from_secs(30 * 24 * 3600);
-/// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
-const READ_BYTES: usize = 64 << 10;
+const EXPIRY_WARNING: Duration = Duration::from_hours(30 * 24);
 
 /// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
 type Fits = Box<dyn Fn(usize) -> Result<(), String> + Send + Sync>;
@@ -137,7 +135,8 @@ impl Certificates {
         }
     }
 
-    /// A TLS 1.3 configuration offering `alpn`, serving the current pair and following the client's suite order.
+    /// A TLS 1.3 configuration offering `alpn`, serving the current pair; it follows the client's suite order only
+    /// with AES hardware, and otherwise picks ChaCha20-Poly1305 first, as Go's server does.
     pub fn server_config(self: &Arc<Self>, alpn: &[u8]) -> ServerConfig {
         let mut config = ServerConfig::builder_with_provider(graphite_meter_net::provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -145,6 +144,7 @@ impl Certificates {
             .with_no_client_auth()
             .with_cert_resolver(self.clone());
         config.alpn_protocols = vec![alpn.to_vec()];
+        config.ignore_client_order = !graphite_meter_net::aes_hardware();
         config
     }
 
@@ -164,7 +164,7 @@ pub async fn accept<S>(acceptor: &TlsAcceptor, socket: S, peer: SocketAddr) -> O
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let socket = BufReader::with_capacity(READ_BYTES, socket);
+    let socket = BufReader::with_capacity(graphite_meter_net::TLS_READ_BYTES, socket);
     let error = match timeout(EXCHANGE_BOUND, acceptor.accept(socket)).await {
         Ok(Ok(stream)) => return Some(stream),
         Ok(Err(error)) => error.to_string(),
@@ -223,7 +223,7 @@ fn log_loaded(expires: SystemTime, now: SystemTime) {
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
         // Whole days from two days on, else whole hours.
-        let hours = (remaining + Duration::from_secs(1800)).as_secs() / 3600;
+        let hours = (remaining + Duration::from_mins(30)).as_secs() / 3600;
         let left = if hours >= 48 {
             format!("{} days", (hours + 12) / 24)
         } else {

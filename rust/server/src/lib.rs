@@ -1,6 +1,8 @@
 //! The Graphite Meter server.
-// Refusals are responses, no larger than the outcomes they replace.
-#![allow(clippy::result_large_err)]
+#![expect(
+    clippy::result_large_err,
+    reason = "refusals are responses, no larger than the outcomes they replace"
+)]
 
 pub mod app;
 pub mod assets;
@@ -9,6 +11,7 @@ mod clock;
 pub mod config;
 pub mod engine;
 pub mod exchange;
+mod headers;
 pub mod lane;
 pub mod limits;
 pub mod log;

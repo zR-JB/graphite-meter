@@ -17,6 +17,7 @@ use graphite_meter_testkit::{Identity, Scratch};
 use http::Method;
 use serde_json::Value;
 use std::{
+    assert_matches,
     ffi::OsString,
     net::SocketAddr,
     path::Path,
@@ -146,7 +147,7 @@ async fn all_proxy_is_not_read() {
         Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()))
     };
     let probed = probe(&through(&["ALL_PROXY", "all_proxy"]), Protocol::Http1, &target).await;
-    assert!(matches!(probed, Err(Fault::Connect(ConnectError::Unreachable(_)))), "{probed:?}");
+    assert_matches!(probed, Err(Fault::Connect(ConnectError::Unreachable(_))));
     assert!(heads.try_recv().is_err(), "nothing went through ALL_PROXY");
     probe(&through(&["HTTP_PROXY"]), Protocol::Http1, &target)
         .await
@@ -170,7 +171,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() {
         .await
         .unwrap();
     let refused = probe(&verified, Protocol::Http1, &secure).await.unwrap_err();
-    assert!(matches!(&refused, Fault::Connect(ConnectError::Tls(_))), "{refused:?}");
+    assert_matches!(&refused, Fault::Connect(ConnectError::Tls(_)));
     let text = refused.to_string();
     assert!(
         text.starts_with("Certificate not trusted: certificate signed by unknown authority. "),
@@ -204,7 +205,7 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
         probe(&client, Protocol::Http1, origin).await.unwrap();
     }
     let signed_out = probe(&client, Protocol::Http1, &first).await;
-    assert!(matches!(&signed_out, Err(Fault::SignIn(issuer)) if *issuer == first), "{signed_out:?}");
+    assert_matches!(&signed_out, Err(Fault::SignIn(issuer)) if *issuer == first);
     for origin in [&target, &second] {
         probe(&client, Protocol::Http1, origin).await.unwrap();
     }
@@ -223,7 +224,7 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
     let (first, granted) = (Some("Bearer first-grant".to_owned()), Some("Bearer second-grant".to_owned()));
     assert_eq!(sent, [first.clone(), first.clone(), granted.clone(), granted, first, None]);
     let revoked = client.upload_error(&second, "revoked");
-    assert!(matches!(&revoked, Fault::SignIn(issuer) if *issuer == second), "{revoked:?}");
+    assert_matches!(&revoked, Fault::SignIn(issuer) if *issuer == second);
     probe(&client, Protocol::Http1, &second).await.unwrap();
     let (_, head) = heads[1].recv().await.unwrap();
     assert!(

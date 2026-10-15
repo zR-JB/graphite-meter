@@ -21,7 +21,7 @@ use crate::{
     transport::{
         body::Body,
         websocket,
-        webtransport::{Plan, Upload},
+        webtransport::{Form, Plan, Upload},
     },
 };
 use bytes::Buf;
@@ -31,7 +31,13 @@ use graphite_meter_proto::{
     route::{Kind, Route},
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use std::{future::poll_fn, net::IpAddr, pin::pin, time::Duration};
+use std::{
+    future::poll_fn,
+    net::IpAddr,
+    pin::{Pin, pin},
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -93,7 +99,7 @@ impl App {
             HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
         });
         let password = config.auth.as_ref().and_then(|auth| auth.methods.password());
-        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::OPERATOR.into()));
+        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
         let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, operator),
@@ -207,9 +213,9 @@ impl App {
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping => return self.websocket(&request, peer, connection, exchange),
-            Route::WtDownload | Route::WtUpload | Route::WtPing => {
-                return self.webtransport(&request, route, peer, connection, exchange);
-            }
+            Route::WtPing => return self.webtransport(&request, WtRoute::Ping, peer, connection, exchange),
+            Route::WtDownload => return self.webtransport(&request, WtRoute::Download, peer, connection, exchange),
+            Route::WtUpload => return self.webtransport(&request, WtRoute::Upload, peer, connection, exchange),
             Route::Download => self.download(&request, peer, connection, exchange)?,
             Route::UploadProgress => self.progress(&request, peer, connection, exchange)?,
             Route::Probe => self.probe(peer, connection.endpoint),
@@ -245,26 +251,29 @@ impl App {
     fn webtransport<B>(
         &self,
         request: &Request<B>,
-        route: Route,
+        route: WtRoute,
         peer: &Peer,
         connection: &Connection,
         exchange: Exchange,
     ) -> Admitted {
-        let lane = self.admit(peer, connection, exchange, route != Route::WtPing)?;
+        let lane = self.admit(peer, connection, exchange, route != WtRoute::Ping)?;
         let query = request.uri().query();
         let plan = match route {
-            Route::WtDownload => Plan::Download {
+            WtRoute::Download => Plan::Download {
                 source: self.block.source(query::transfer_bytes(query)),
-                streams: query::streams(query),
-                datagrams: query::datagrams(query),
+                form: if query::datagrams(query) {
+                    Form::Datagrams
+                } else {
+                    Form::Streams(query::streams(query))
+                },
             },
-            Route::WtUpload => Plan::Upload(Upload {
+            WtRoute::Upload => Plan::Upload(Upload {
                 uploads: self.uploads.clone(),
                 id: query::get(query, "id").unwrap_or_default(),
                 owner: peer.keys(),
                 datagrams: query::datagrams(query),
             }),
-            _ => Plan::Ping,
+            WtRoute::Ping => Plan::Ping,
         };
         Ok(Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan))
     }
@@ -272,10 +281,9 @@ impl App {
     /// The WebSocket bus, admitted before its handshake is checked.
     fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Admitted {
         let lane = self.admit(peer, connection, exchange, false)?;
-        let answer = websocket::handshake(request);
-        Ok(match answer.status() == StatusCode::SWITCHING_PROTOCOLS {
-            true => Outcome::WebSocket(answer, lane),
-            false => Outcome::Response(answer),
+        Ok(match websocket::handshake(request) {
+            Ok(accepted) => Outcome::WebSocket(accepted, lane),
+            Err(refused) => Outcome::Response(refused),
         })
     }
 
@@ -316,21 +324,19 @@ impl App {
             Ok(sink) => sink,
             Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
-        let mut body = pin!(request.into_body());
-        let mut ended = pin!(lane.ended());
+        let (mut body, mut ended) = (pin!(request.into_body()), pin!(lane.ended()));
         let ending = loop {
-            let frame = tokio::select! {
+            let batch = tokio::select! {
                 biased;
-                frame = poll_fn(|cx| body.as_mut().poll_frame(cx)) => frame,
+                batch = poll_fn(|cx| poll_batch(body.as_mut(), cx, &lane)) => batch,
                 ending = &mut ended => break ending,
             };
-            match frame {
-                Some(Ok(frame)) => sink.record(frame.data_ref().map_or(0, Buf::remaining)),
-                Some(Err(_)) => return Ok(Outcome::Abort),
-                None => break lane.finish(),
-            }
-            if let Some(ending) = lane.due() {
-                break ending;
+            sink.record(batch.bytes);
+            match batch.end {
+                None => {}
+                Some(End::Finished) => break lane.finish(),
+                Some(End::Failed) => return Ok(Outcome::Abort),
+                Some(End::Lane(ending)) => break ending,
             }
         };
         let answer = match (ending, ending.upload_refusal()) {
@@ -341,6 +347,49 @@ impl App {
         let deadline = Instant::now() + EXCHANGE_BOUND;
         Ok(Outcome::Response(answer.map(|body| body.until(deadline))))
     }
+}
+
+/// The routes a WebTransport session serves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WtRoute {
+    Ping,
+    Download,
+    Upload,
+}
+
+/// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.
+const READ_BATCH: usize = 32;
+
+/// The data bytes of the frames one read took, and how the upload ended after them, if it did.
+struct Batch {
+    bytes: usize,
+    end: Option<End>,
+}
+
+enum End {
+    Finished,
+    Failed,
+    Lane(LaneEnding),
+}
+
+/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check, finer than Go's 64 KiB reads; pending
+/// only while none is.
+fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
+    let mut bytes = 0;
+    for taken in 0..READ_BATCH {
+        let end = match body.as_mut().poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                bytes += frame.data_ref().map_or(0, Buf::remaining);
+                continue;
+            }
+            Poll::Ready(Some(Err(_))) => End::Failed,
+            Poll::Ready(None) => End::Finished,
+            Poll::Pending if taken == 0 => return Poll::Pending,
+            Poll::Pending => break,
+        };
+        return Poll::Ready(Batch { bytes, end: Some(end) });
+    }
+    Poll::Ready(Batch { bytes, end: lane.due().map(End::Lane) })
 }
 
 /// The port of a listen address such as `:7246` or `[::]:7249`.

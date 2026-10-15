@@ -18,18 +18,21 @@ const MAX_KEYS: usize = 64;
 /// A token may name a start this many seconds in the future.
 const SKEW: f64 = 300.0;
 
-/// The signature algorithms tokens may use; each name is its JOSE name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Alg {
-    RS256,
-    RS384,
-    RS512,
-    PS256,
-    PS384,
-    PS512,
-    ES256,
-    ES384,
-    EdDSA,
+graphite_meter_proto::table! {
+    /// The signature algorithms tokens may use, by their JOSE names.
+    pub(super) enum Alg {
+        name.0: &'static str,
+    } {
+        RS256 => ("RS256",),
+        RS384 => ("RS384",),
+        RS512 => ("RS512",),
+        PS256 => ("PS256",),
+        PS384 => ("PS384",),
+        PS512 => ("PS512",),
+        ES256 => ("ES256",),
+        ES384 => ("ES384",),
+        EdDSA => ("EdDSA",),
+    }
 }
 
 /// RSA parameters for keys of 2048 to 8192 bits, else a curve's algorithm.
@@ -37,9 +40,7 @@ type Scheme = Result<&'static RsaParameters, &'static dyn VerificationAlgorithm>
 
 impl Alg {
     fn parse(name: &str) -> Option<Self> {
-        use Alg::*;
-        let all = [RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, EdDSA];
-        all.into_iter().find(|alg| format!("{alg:?}") == name)
+        Self::ALL.iter().copied().find(|alg| alg.name() == name)
     }
 
     /// The advertised algorithms this server verifies; RS256 when a provider advertises none an OIDC client knows.

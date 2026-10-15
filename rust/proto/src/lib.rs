@@ -15,6 +15,11 @@ macro_rules! table {
             /// Every variant, in table order.
             pub const ALL: &[Self] = &[$(Self::$variant),+];
 
+            /// The variant's place in `ALL`: variants are declared in table order without explicit discriminants.
+            pub const fn index(self) -> usize {
+                self as usize
+            }
+
             const fn row(self) -> ($($type,)+) {
                 match self { $(Self::$variant => $value,)+ }
             }

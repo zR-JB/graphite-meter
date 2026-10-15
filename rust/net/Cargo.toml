@@ -20,7 +20,7 @@ webpki.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # rustix 1.1.5 compiles its net module only with time.
-rustix = { workspace = true, features = ["net", "time"] }
+rustix = { workspace = true, features = ["net", "process", "thread", "time"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 rustls-platform-verifier.workspace = true

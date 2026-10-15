@@ -33,11 +33,13 @@ pub async fn interactive(
     terminal.hide_cursor()?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
-    let mut input = pin!(EventStream::new().filter_map(|input| std::future::ready(input.ok())));
+    // A read error ends the input, which quits, instead of polling a broken terminal again.
+    let input = EventStream::new().take_while(|input| std::future::ready(input.is_ok()));
+    let mut input = pin!(input.filter_map(|input| std::future::ready(input.ok())));
     let (mut app, mut shown) = (App::new(config, kept, profile, Instant::now()), None);
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut changed = true;
+    let (mut changed, mut resized) = (true, true);
     loop {
         let (effects, paint) = tokio::select! {
             Some(event) = received.recv() => {
@@ -47,13 +49,15 @@ pub async fn interactive(
             input = input.next() => {
                 // A pointer move repaints only when it reaches another pressable region.
                 let moved = matches!(&input, Some(Input::Mouse(mouse)) if matches!(mouse.kind, MouseEventKind::Moved));
+                resized |= matches!(&input, Some(Input::Resize(..)));
                 let hovered = app.hovered();
                 let effects = input.map_or_else(|| vec![Effect::Quit], |input| app.input(input, Instant::now()));
                 let paint = !moved || app.hovered() != hovered;
                 changed |= paint;
                 (effects, paint)
             }
-            _ = frames.tick() => {
+            // Idle, nothing ticks: the frame clock runs only while there is something to paint or a check is due.
+            _ = frames.tick(), if changed || app.waiting() => {
                 // While anything animates, and once after, so its last state shows.
                 let animated = app.animating();
                 let effects = app.tick(Instant::now());
@@ -84,6 +88,10 @@ pub async fn interactive(
         }
         if paint {
             changed = false;
+            // The terminal's size is asked for only after it reported a resize.
+            if std::mem::take(&mut resized) {
+                terminal.autoresize()?;
+            }
             draw(&mut terminal, &mut app, &mut shown)?;
         }
     }
@@ -94,7 +102,6 @@ type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 /// Draws a frame: the changed cells and chrome in one write, a synchronized update where the terminal holds one. An
 /// unchanged frame writes nothing, so the terminal has nothing to repaint.
 fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome)>) -> io::Result<()> {
-    terminal.autoresize()?;
     let mut frame = terminal.get_frame();
     let cells = frame.buffer_mut();
     let drawn = app.draw(cells, Instant::now());
@@ -104,7 +111,15 @@ fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome
         cells.reset();
         return Ok(());
     }
-    let cells = cells.clone();
+    // The last frame's cells are overwritten in place, so a frame allocates no screen-sized buffer.
+    match shown {
+        Some((last, chrome)) => {
+            last.area = cells.area;
+            last.content.clone_from(&cells.content);
+            *chrome = drawn;
+        }
+        None => *shown = Some((cells.clone(), drawn)),
+    }
     terminal.backend_mut().write_all(b"\x1b[?2026h")?;
     terminal.flush()?;
     terminal.swap_buffers();
@@ -112,7 +127,6 @@ fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome
     out.write_all(&bytes)?;
     out.write_all(b"\x1b[?2026l")?;
     out.flush()?;
-    *shown = Some((cells, drawn));
     Ok(())
 }
 

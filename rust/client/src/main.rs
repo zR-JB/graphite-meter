@@ -73,7 +73,7 @@ fn fail(error: &str) -> ExitCode {
 /// `kept` is the server remembered for later starts, if any.
 fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let pool = Arc::new(Pool::beside(runtime.handle())?);
+    let pool = Arc::new(Pool::probing(runtime.handle())?);
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
         let interactive = terminal && !config.report;
@@ -87,13 +87,13 @@ fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
             return Ok(ExitCode::from(status));
         }
         let columns = columns(terminal);
-        #[cfg(unix)]
-        let named = match columns.is_some() && io::stdin().is_terminal() {
-            true => background(std::time::Duration::from_secs(2)).await,
-            false => None,
+        let named = cfg_select! {
+            unix => match columns.is_some() && io::stdin().is_terminal() {
+                true => background(std::time::Duration::from_secs(2)).await,
+                false => None,
+            },
+            _ => None,
         };
-        #[cfg(not(unix))]
-        let named = None;
         let (view, status) = headless(config, pool, first(signals)).await;
         if let Some(reason) = report::unreported(&view) {
             eprintln!("graphite-meter-client: {reason}");

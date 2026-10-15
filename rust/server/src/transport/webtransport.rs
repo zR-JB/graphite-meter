@@ -30,10 +30,19 @@ const LANE_WRITE_BYTES: usize = 16 << 10;
 pub enum Plan {
     /// The latency bus, one message per datagram.
     Ping,
-    /// `source`'s bytes on `streams` server streams, or repeated in datagrams.
-    Download { source: DownloadSource, streams: usize, datagrams: bool },
+    /// `source`'s bytes in `form`.
+    Download { source: DownloadSource, form: Form },
     /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
     Upload(Upload),
+}
+
+/// How a download sends its bytes.
+#[derive(Clone, Copy)]
+pub enum Form {
+    /// On this many server streams at once.
+    Streams(usize),
+    /// Repeated in datagrams.
+    Datagrams,
 }
 
 /// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
@@ -56,7 +65,7 @@ pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: 
 async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() -> bool) {
     match plan {
         Plan::Ping => ping(session, lane).await,
-        Plan::Download { source, streams, datagrams } => download(session, lane, source, streams, datagrams).await,
+        Plan::Download { source, form } => download(session, lane, source, form).await,
         Plan::Upload(upload) => upload.serve(session, lane, fund).await,
     }
 }
@@ -89,18 +98,19 @@ async fn ping(session: &Session, lane: &Lane) {
 }
 
 /// Streams or a datagram flood; only the peer's datagrams in the datagram form and drained streams are movement.
-async fn download(session: &Session, lane: &Lane, source: DownloadSource, streams: usize, datagrams: bool) {
+async fn download(session: &Session, lane: &Lane, source: DownloadSource, form: Form) {
     let transfer = async {
-        if source.remaining() == 0 {
-            sleep(VERIFY_LINGER).await;
-        } else if datagrams {
-            flood(session, &source).await;
-        } else {
-            let mut lanes: FuturesUnordered<_> =
-                (0..streams).map(|_| download_stream(session, &source, lane)).collect();
-            while lanes.next().await.is_some() {}
+        match form {
+            _ if source.remaining() == 0 => sleep(VERIFY_LINGER).await,
+            Form::Datagrams => flood(session, &source).await,
+            Form::Streams(streams) => {
+                let mut lanes: FuturesUnordered<_> =
+                    (0..streams).map(|_| download_stream(session, &source, lane)).collect();
+                while lanes.next().await.is_some() {}
+            }
         }
     };
+    let datagrams = matches!(form, Form::Datagrams);
     tokio::select! {
         () = transfer => {}
         () = drain(session, |_| if datagrams { lane.moved() }) => {}

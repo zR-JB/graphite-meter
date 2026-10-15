@@ -63,7 +63,22 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+/// Display already names a QUIC failure, so its cause is the failure's own.
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transport(error) => error.source(),
+            Self::Reset(_)
+            | Self::Stopped(_)
+            | Self::Protocol(_)
+            | Self::Connection { .. }
+            | Self::TimedOut
+            | Self::NoWebTransport
+            | Self::GoingAway
+            | Self::Refused => None,
+        }
+    }
+}
 
 impl From<Code> for noq::VarInt {
     fn from(code: Code) -> Self {
@@ -111,7 +126,9 @@ impl From<noq::SendDatagramError> for Error {
     fn from(error: noq::SendDatagramError) -> Self {
         match error {
             noq::SendDatagramError::ConnectionLost(error) => error.into(),
-            _ => Self::Refused,
+            noq::SendDatagramError::UnsupportedByPeer
+            | noq::SendDatagramError::Disabled
+            | noq::SendDatagramError::TooLarge => Self::Refused,
         }
     }
 }

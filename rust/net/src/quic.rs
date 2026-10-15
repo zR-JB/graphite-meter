@@ -48,7 +48,11 @@ pub fn server_transport(requests: u32) -> TransportConfig {
     transport.send_window(MIN_SEND_WINDOW);
     transport.datagram_receive_buffer_size(Some(SERVER_DATAGRAM_BUFFER));
     transport.datagram_send_buffer_size(SERVER_DATAGRAM_BUFFER);
-    let idle = u32::try_from(IDLE_BOUND.as_millis()).expect("the lane bound fits QUIC's idle timeout");
-    transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(idle))));
+    const IDLE_MILLIS: u32 = {
+        let millis = IDLE_BOUND.as_millis();
+        assert!(millis <= u32::MAX as u128, "the lane bound fits QUIC's idle timeout");
+        millis as u32
+    };
+    transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(IDLE_MILLIS))));
     transport
 }

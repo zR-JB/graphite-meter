@@ -115,6 +115,10 @@ A failed stage keeps its measured population, marked incomplete. Every selected 
 is the shown server's when the run starts (the first selected unless the browser was switched to another), or a
 survivor's once it leaves; switching the shown server never retargets probes or changes saved statistics.
 
+The native client probes from a thread of its own, apart from the threads that carry transfers, which run five nice
+steps lower on Linux. On Windows its timers can follow the system timer resolution (15.6 ms by default), so fixed
+cadences send on that grid; RTTs and deadlines are read from the monotonic clock and are unaffected.
+
 ## Paired server timing
 
 Every reply carries the server's handling time in nanoseconds, from just after its receive call to just before reply
@@ -122,8 +126,9 @@ encoding ([wire protocol](../api/wire.md#reflector-handling-time)). The paired p
 replies with a valid handling time. A handling time above that reply's raw RTT, or one the client cannot represent
 exactly, omits the pair but keeps the raw reply; values are never clamped. Malformed replies are ignored.
 
-Handling time is a diagnostic of the server's own share (about 100 ns by design); raw RTT stays primary for latency,
-jitter, deadlines and added latency.
+Handling time is a diagnostic of parsing and handling alone (about 100 ns by design). The server's receive queue, its
+wait for a thread, TLS and the reply's encoding and write fall outside it, so under load the server's share of an RTT
+can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added latency.
 
 ## Client differences
 

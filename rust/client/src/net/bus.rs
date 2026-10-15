@@ -16,7 +16,8 @@ use graphite_meter_proto::{
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use tokio::time::timeout;
+use std::time::Instant;
+use tokio::{runtime::Handle, time::timeout};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
@@ -48,7 +49,9 @@ impl Client {
     pub async fn bus(&self, path: &LatencyPath) -> Result<Bus, Fault> {
         let channel = match path.transport {
             LatencyTransport::WebTransport => {
-                Channel::Datagrams(self.session(None, &path.origin, Route::WtPing, vec![]).await?)
+                // The session's drivers run beside the prober, never on a pinned runtime that also carries lanes.
+                let home = Handle::current();
+                Channel::Datagrams(self.session(Some(&home), &path.origin, Route::WtPing, vec![]).await?)
             }
             LatencyTransport::WebSocket => {
                 let socket = timeout(CONTROL_TIMEOUT, self.websocket(&path.origin)).await;
@@ -120,26 +123,36 @@ impl Bus {
                 let sent = socket.send(Message::text(ping.encode())).await;
                 sent.map_err(|error| Fault::Lost(error.to_string()))
             }
-            Channel::Datagrams(session) => session.send_datagram(ping.encode().as_bytes()).await,
+            Channel::Datagrams(session) => session.send_datagram(ping.write(&mut [0; Ping::MAX_BYTES])).await,
         }
     }
 
-    /// The next reply, skipping any other message; cancelling it loses nothing.
-    pub async fn next(&mut self) -> Result<Pong, Fault> {
+    /// The next reply and the instant its message arrived, before decoding; skips any other message; cancelling it
+    /// loses nothing.
+    pub async fn next(&mut self) -> Result<(Pong, Instant), Fault> {
         loop {
-            let pong = match &mut self.0 {
-                Channel::WebSocket { socket, client, origin } => match socket.next().await {
-                    Some(Ok(Message::Text(text))) => Pong::decode(text.as_bytes()),
-                    Some(Ok(Message::Binary(bytes))) => Pong::decode(&bytes),
-                    Some(Ok(Message::Close(frame))) => return Err(closed(client, origin, frame)),
-                    Some(Ok(_)) => None,
-                    Some(Err(error)) => return Err(Fault::Lost(error.to_string())),
-                    None => return Err(Fault::Lost("latency bus closed".into())),
-                },
-                Channel::Datagrams(session) => Pong::decode(&session.read_datagram().await?),
+            let (pong, arrived) = match &mut self.0 {
+                Channel::WebSocket { socket, client, origin } => {
+                    let message = socket.next().await;
+                    let arrived = Instant::now();
+                    let pong = match message {
+                        Some(Ok(Message::Text(text))) => Pong::decode(text.as_bytes()),
+                        Some(Ok(Message::Binary(bytes))) => Pong::decode(&bytes),
+                        Some(Ok(Message::Close(frame))) => return Err(closed(client, origin, frame)),
+                        Some(Ok(_)) => None,
+                        Some(Err(error)) => return Err(Fault::Lost(error.to_string())),
+                        None => return Err(Fault::Lost("latency bus closed".into())),
+                    };
+                    (pong, arrived)
+                }
+                Channel::Datagrams(session) => {
+                    let datagram = session.read_datagram().await?;
+                    let arrived = Instant::now();
+                    (Pong::decode(&datagram), arrived)
+                }
             };
             if let Some(pong) = pong {
-                return Ok(pong);
+                return Ok((pong, arrived));
             }
         }
     }

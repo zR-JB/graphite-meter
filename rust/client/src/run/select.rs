@@ -177,7 +177,7 @@ mod tests {
         run::prepare::{Paths, Prepared},
     };
     use graphite_meter_net::Pool;
-    use graphite_meter_proto::{catalog::ServerCatalog, reason::FailureReason};
+    use graphite_meter_proto::{catalog::ServerCatalog, discovery::IpFamily, reason::FailureReason};
     use std::{ffi::OsString, sync::Arc, time::Instant};
 
     const CATALOGUE: &str = r#"{"defaultSelection": ["b"], "servers": [
@@ -294,14 +294,14 @@ mod tests {
         let origin = Origin::parse(SERVED).unwrap();
         let (transport, protocol) = (ThroughputTransport::FetchStream, Protocol::Http1);
         let throughput = ThroughputPath { origin: origin.clone(), transport, protocol };
-        let (stage_limit, idle_rtt) = (Duration::from_secs(seconds), Duration::ZERO);
+        let (stage_limit, idle_rtt) = (Duration::from_secs(seconds), None);
         let paths = Paths {
             throughput,
             control: protocol,
             latency: None,
             stage_limit,
             idle_rtt,
-            ip_version: 4,
+            ip_family: IpFamily::V4,
         };
         let (id, name) = (ServerId::parse(name).unwrap(), name.to_uppercase());
         let path = failure.map_or(Ok(paths), Err);

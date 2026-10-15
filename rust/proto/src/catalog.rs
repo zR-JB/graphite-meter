@@ -6,7 +6,7 @@ use crate::{
     origin::{BaseUrl, Origin},
 };
 use serde::{Deserialize, Serialize, de::Error as _};
-use std::{collections::HashSet, fmt};
+use std::{collections::HashSet, fmt, sync::Arc};
 
 /// A catalogue holds at most this many servers, `self` included.
 pub const MAX_SERVERS: usize = 32;
@@ -15,10 +15,15 @@ pub const MAX_SELECTED: usize = 4;
 /// An entry names at most this many additional origins.
 pub const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
-/// A catalogue server ID: 1–64 ASCII letters, digits, `.`, `_` or `-`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-#[serde(transparent)]
-pub struct ServerId(String);
+/// A catalogue server ID: 1–64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ServerId(Arc<str>);
+
+impl Serialize for ServerId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
 
 impl ServerId {
     pub fn parse(text: &str) -> Option<Self> {

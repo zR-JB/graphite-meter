@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
 /// How long an approval waits for the operator.
-const LIFETIME: Duration = Duration::from_secs(120);
+const LIFETIME: Duration = Duration::from_mins(2);
 /// The spacing of token polls.
 const POLL: Duration = Duration::from_secs(1);
 

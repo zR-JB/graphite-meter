@@ -64,7 +64,7 @@ async fn an_upload_whose_data_never_pauses_still_sees_its_lane_end() {
     assert!(matches!(outcome(&app, Endpoint::H1, "192.0.2.1", upload).await, Outcome::Abort));
     assert_eq!(
         checkpoint(&app, &id).await["bytes"],
-        1,
-        "the first chunk counts, then the shutdown ends it"
+        32,
+        "the first batch of 32 ready frames counts, then the shutdown ends it"
     );
 }

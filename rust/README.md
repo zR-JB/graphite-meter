@@ -89,11 +89,22 @@ C and assembly.
 
 **Threading.** The server runs one current-thread runtime per worker and serves each TCP connection and its streams
 on one of them. On Linux HTTP/3 runs one endpoint per two runtime threads, two to sixteen, as many as the budget
-covers, on one port shared through `SO_REUSEPORT`; connection IDs carry their endpoint, which forwards short-header
-packets naming another, so a migrating client keeps its connection. Admission, Retry and limits stay server-wide.
+covers, on one port shared through `SO_REUSEPORT`. Connection IDs carry their endpoint, and a classic BPF program on
+the port has the kernel deliver each datagram to the endpoint its ID names, so a migrating client keeps its connection
+and no endpoint's thread handles another's datagrams. A new connection starts on the endpoint holding the fewest, so
+a client's WebTransport bus and its transfers run on different threads while there are threads to spare. Where the
+kernel refuses the program, connections stay where they arrive and an endpoint forwards what names another.
+Admission, Retry and limits stay server-wide.
+After its upgrade a WebSocket bus moves to the multi-thread runtime, which runs no transfer, its socket re-registered
+with that runtime's driver, so its probes never queue behind a transfer's task; on Linux the per-worker runtimes run
+five nice steps lower. An HTTP/1 or HTTP/2 connection's socket moves at most 256 KiB before its task lets the other
+tasks run and its thread offers the CPU to waiting threads, so the bus's thread does not wait out a transfer's scheduler
+slice. A WebTransport bus stays on its endpoint's runtime. Log lines reach stderr from a thread of their own through a 1024-line queue; while stderr stalls, lines are
+dropped and counted instead of blocking a runtime.
 The client dials and runs each lane group on one pinned runtime: one HTTP/1.1 connection per lane, one HTTP/2
 connection per direction, HTTP/3 downloads on the path's connection with a bidirectional upload on its own, and one
-WebTransport session per group of up to 16 lanes. Upload control requests use the throughput check's protocol, on its
+WebTransport session per group of up to 16 lanes. Its prober and latency bus, WebSocket or WebTransport, run on a
+latency runtime of their own, away from the lanes, whose threads run five nice steps lower on Linux. Upload control requests use the throughput check's protocol, on its
 connection except over HTTP/3.
 
 **Memory.** One budget (`GM_MAX_BUFFER_BYTES`) covers every HTTP/2 and QUIC buffer, charged as it fills; HTTP/1
@@ -110,6 +121,11 @@ resident-memory bound.
 **Measured decisions**, with their evidence:
 
 - Release builds use fat LTO and one codegen unit; the `ci` profile only for local runs and CI checks.
+- Image and TUI builds use a PGO profile per architecture, trained in the builder on loopback transfers over every
+  listener (`scripts/pgo.py`): amd64 natively, arm64 under QEMU's user mode, the Windows TUI with amd64's. Against
+  the same builds without a profile, the image's server spent 10–17 % less CPU per byte on HTTP/3 on amd64 and 2–16 %
+  on arm64, within 2 % on HTTP/2 and HTTP/1.1, and the TUI 9–12 % less on HTTP/3; the amd64 TUI downloaded HTTP/3 4 %
+  slower against a server without a profile (release profile, campaign run 38658016677). Local builds take no profile.
 - Static musl builds link mimalloc (`rustfs-mimalloc` 0.5.6) with transparent huge pages off: with musl's allocator
   the TUI downloaded HTTP/2 at 3.5 instead of 20 Gbit/s (CI runs 37322843663 and 37326242534). Two seconds after the
   last connection closes, once per idle period, the server returns every runtime thread's free pages.
@@ -117,6 +133,9 @@ resident-memory bound.
   two HTTP/3 endpoints on four workers cost less CPU per byte than one or four.
 - QUIC receive windows autotune from 768 KiB to 48 MiB per connection and 32 MiB per stream, sends from 2 to 16 MiB,
   with receive batches of four GRO messages (`mise run rust-delayed-downloads`).
+- noq's Cubic follows RFC 9438's Reno-friendly region and K. Under 0.5 % per-packet loss quic-go stays ahead, 6.4–6.7
+  against 5.0–5.7 Mbit/s, because it runs Reno with a 0.7 backoff, which is less fair to TCP; at 0.1 % the two are
+  within 15 % (campaign run 38663551289).
 - The HTTP/2 server polls its streams before the socket, which keeps an upload's peak RSS at 9.5 MiB instead of
   33–36 MiB (CI run 37265088955); uploads keep large windows nearly full (`server/tests/sockets/http2.rs`).
 - Admitted HTTP/2 uploads open a 24 MiB connection window: on a 200 ms, 1 Gbit/s path 16 MiB carried 640 Mbit/s with
@@ -189,8 +208,8 @@ User-visible behaviour that deliberately differs from Go's server and TUI.
 - HTTP/3 SETTINGS over 8 KiB or with more than 64 identifiers close with `H3_EXCESSIVE_LOAD`.
 - A QUIC handshake has 10 s in all, and a silent client holds it that long; quic-go ends one after 5 s without a
   packet.
-- The server follows the client's TLS 1.3 suite order, so OpenSSL clients get AES-256-GCM (about 3% more CPU per
-  byte); Go prefers AES-128-GCM.
+- With AES hardware the server follows the client's TLS 1.3 suite order, so OpenSSL clients get AES-256-GCM (about
+  3% more CPU per byte); Go prefers AES-128-GCM. Without it both pick ChaCha20-Poly1305.
 - The WebSocket close handshake has 5 s in all; refused upgrades add `Allow: GET` for HEAD and
   `Upgrade: websocket` for HTTP/1.0, with empty bodies.
 - Shutdown drains for 5 s; HTTP/3 then takes up to 1 s more to send its closes.

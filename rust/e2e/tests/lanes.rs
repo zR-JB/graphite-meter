@@ -15,6 +15,7 @@ use graphite_meter_proto::{
 use graphite_meter_testkit::{self as testkit, Link};
 use http::Method;
 use std::{
+    assert_matches,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -108,7 +109,7 @@ async fn a_silent_quic_address_fails_after_3_s_while_a_delayed_answering_one_fin
         (client.json(Protocol::Http3, request, Probe::decode).await, started.elapsed())
     };
     let ((unanswered, silence), (answered, delay)) = tokio::join!(timed(&silent), timed(&delayed));
-    assert!(matches!(unanswered, Err(Fault::Connect(ConnectError::Unreachable(_)))), "{unanswered:?}");
+    assert_matches!(unanswered, Err(Fault::Connect(ConnectError::Unreachable(_))));
     assert!((3.0..4.0).contains(&silence.as_secs_f64()), "{silence:?}");
     answered.unwrap();
     assert!(delay > Duration::from_secs(3), "{delay:?} outlasts the silent address's bound");

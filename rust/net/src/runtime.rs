@@ -8,10 +8,16 @@ use tokio::{
     sync::watch,
 };
 
-/// Pinned current-thread runtimes, each on a thread of its own, or none; their threads end with the pool.
+/// How much lower than the caller's threads a pool runs its pinned ones on Linux, in nice steps.
+const PINNED_NICE: i32 = 5;
+
+/// Pinned current-thread runtimes, each on a thread of its own, or none, and a latency runtime in a probing pool;
+/// their threads end with the pool. On Linux the pinned runtimes, which carry bulk transfers, run niced, so the
+/// caller's threads and the latency runtime preempt them.
 #[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
+    latency: Option<Handle>,
     turn: AtomicUsize,
     _running: watch::Sender<()>,
 }
@@ -19,22 +25,41 @@ pub struct Pool {
 impl Pool {
     /// One pinned runtime per worker of `runtime`, none for one worker; a current-thread runtime is refused.
     pub fn beside(runtime: &Handle) -> io::Result<Self> {
+        Self::spawn(runtime, false)
+    }
+
+    /// `beside`, plus a runtime of its own for latency probes and their channels.
+    pub fn probing(runtime: &Handle) -> io::Result<Self> {
+        Self::spawn(runtime, true)
+    }
+
+    fn spawn(runtime: &Handle, probing: bool) -> io::Result<Self> {
         if runtime.runtime_flavor() == RuntimeFlavor::CurrentThread {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "pinned runtimes need a multi-thread runtime"));
         }
         let workers = runtime.metrics().num_workers();
         let (running, ended) = watch::channel(());
+        let thread = |name: String, niced: bool| -> io::Result<Handle> {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
+            std::thread::Builder::new().name(name).spawn(move || {
+                if niced {
+                    lower_priority();
+                }
+                runtime.block_on(ended.changed())
+            })?;
+            Ok(handle)
+        };
         let runtimes = (0..if workers > 1 { workers } else { 0 })
-            .map(|index| {
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-                let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
-                std::thread::Builder::new()
-                    .name(format!("gm-worker-{index}"))
-                    .spawn(move || runtime.block_on(ended.changed()))?;
-                Ok(handle)
-            })
+            .map(|index| thread(format!("gm-worker-{index}"), true))
             .collect::<io::Result<_>>()?;
-        Ok(Self { runtimes, turn: AtomicUsize::new(0), _running: running })
+        let latency = probing.then(|| thread("gm-latency".into(), false)).transpose()?;
+        Ok(Self {
+            runtimes,
+            latency,
+            turn: AtomicUsize::new(0),
+            _running: running,
+        })
     }
 
     /// No pinned runtimes: work runs on the caller's runtime.
@@ -53,5 +78,22 @@ impl Pool {
 
     pub fn runtimes(&self) -> &[Handle] {
         &self.runtimes
+    }
+
+    /// The latency runtime, or the caller's in a pool without one.
+    pub fn latency(&self) -> Handle {
+        self.latency.clone().unwrap_or_else(Handle::current)
+    }
+}
+
+/// Lowers the calling thread's priority by `PINNED_NICE`; raising nice needs no privilege, and failing leaves it.
+fn lower_priority() {
+    cfg_select! {
+        target_os = "linux" => {
+            let thread = Some(rustix::thread::gettid());
+            let nice = rustix::process::getpriority_process(thread).unwrap_or(0);
+            let _ = rustix::process::setpriority_process(thread, nice.saturating_add(PINNED_NICE));
+        }
+        _ => {}
     }
 }

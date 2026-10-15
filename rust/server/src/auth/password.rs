@@ -25,7 +25,7 @@ const PASSES: u32 = 2;
 const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
-const DEVICE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const DEVICE_LIFETIME: Duration = Duration::from_hours(30 * 24);
 
 /// Unpadded standard base64 that tolerates nonzero trailing bits.
 const RAW_STD: GeneralPurpose = GeneralPurpose::new(
@@ -76,10 +76,10 @@ impl Hash {
     /// Checks a PHC string, with the messages operators see.
     fn parse(encoded: &str) -> Result<Self, String> {
         let fields: Vec<_> = encoded.trim().split('$').collect();
-        if fields.len() != 6 || fields[1] != "argon2id" || fields[2] != "v=19" {
+        let [_, "argon2id", "v=19", params, salt, key] = fields[..] else {
             return Err("password hash must be an Argon2id v=19 PHC string".into());
-        }
-        let params: Vec<_> = fields[3].split(',').collect();
+        };
+        let params: Vec<_> = params.split(',').collect();
         if params.len() != 3 {
             return Err("password hash has invalid Argon2 parameters".into());
         }
@@ -91,18 +91,26 @@ impl Hash {
                 return Err(format!("password hash must use m={MEMORY_KIB},t={PASSES},p={LANES}"));
             }
         }
-        let decode = |text: &str, bytes: usize| RAW_STD.decode(text).ok().filter(|raw| raw.len() == bytes);
-        let salt = decode(fields[4], SALT_BYTES).ok_or("password hash must use a 16-byte salt")?;
-        let key = decode(fields[5], KEY_BYTES).ok_or("password hash must use a 32-byte output")?;
-        Ok(Self {
-            salt: salt.try_into().expect("the salt's length"),
-            key: key.try_into().expect("the key's length"),
-        })
+        fn decode<const N: usize>(text: &str) -> Option<[u8; N]> {
+            RAW_STD.decode(text).ok()?.try_into().ok()
+        }
+        let salt = decode(salt).ok_or("password hash must use a 16-byte salt")?;
+        let key = decode(key).ok_or("password hash must use a 32-byte output")?;
+        Ok(Self { salt, key })
     }
 
     fn verify(&self, password: &[u8]) -> bool {
         validate(password).is_ok() && derive(password, &self.salt).is_ok_and(|key| key.ct_eq(&self.key).into())
     }
+}
+
+/// What a password check found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Verdict {
+    Match,
+    Mismatch,
+    /// Both verifier slots were taken, or the check did not finish.
+    Busy,
 }
 
 /// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
@@ -132,19 +140,24 @@ impl Password {
         keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))
     }
 
-    /// Whether `password` matches, verified on a blocking thread that holds its slot; `None` while both slots are busy.
-    pub async fn verify(&self, password: Zeroizing<String>) -> Option<bool> {
-        let permit = self.slots.clone().try_acquire_owned().ok()?;
+    /// Checks `password` on a blocking thread that holds its slot.
+    pub async fn verify(&self, password: Zeroizing<String>) -> Verdict {
+        let Ok(permit) = self.slots.clone().try_acquire_owned() else {
+            return Verdict::Busy;
+        };
         let hash = self.hash;
         let verify = move || {
             let _permit = permit;
             hash.verify(password.as_bytes())
         };
-        let verified = tokio::task::spawn_blocking(verify).await.ok()?;
-        if !verified {
-            self.wrong.note();
+        match tokio::task::spawn_blocking(verify).await {
+            Ok(true) => Verdict::Match,
+            Ok(false) => {
+                self.wrong.note();
+                Verdict::Mismatch
+            }
+            Err(_) => Verdict::Busy,
         }
-        Some(verified)
     }
 
     /// A device cookie's value, its expiry in seconds and their HMAC, and that expiry.
@@ -161,9 +174,11 @@ impl Password {
         if URL_SAFE_NO_PAD.decode_slice(cookie, &mut raw).ok() != Some(raw.len()) {
             return false;
         }
-        let (expires, tag) = raw.split_at(8);
+        let Some((expires, tag)) = raw.split_first_chunk() else {
+            return false;
+        };
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let expires_at = u64::from_be_bytes(expires.try_into().expect("eight bytes"));
+        let expires_at = u64::from_be_bytes(*expires);
         now.as_secs() < expires_at && self.device.clone().chain_update(expires).verify_slice(tag).is_ok()
     }
 }

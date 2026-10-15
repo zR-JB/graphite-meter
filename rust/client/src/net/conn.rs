@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures_util::FutureExt;
 use graphite_meter_http3::{
     self as http3, Code, client,
-    webtransport::{self, RecvStream, SendStream},
+    webtransport::{self, RecvStream, SendStream, SessionClose},
 };
 use graphite_meter_net::{ConnectError, RequestForm, Verify, bind_udp, client_config, quic::client_transport, resolve};
 use graphite_meter_proto::{
@@ -541,7 +541,7 @@ impl Session {
     /// The fault the session ended with, once it ended.
     pub(super) fn ended(&self) -> Option<Fault> {
         Some(match self.session.closed().now_or_never()? {
-            Ok((code, _)) => match LaneEnding::from_webtransport_code(code) {
+            Ok(SessionClose { code, .. }) => match LaneEnding::from_webtransport_code(code) {
                 Some(ending) => self.client.ending(&self.origin, ending),
                 None => Fault::Lost(format!("WebTransport session closed with code {code}")),
             },

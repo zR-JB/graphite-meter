@@ -4,12 +4,12 @@ use crate::{
     capsule,
     code::Code,
     error::Error,
-    frame::{self, Piece},
+    frame::{self, FrameType, Piece, Reader, StreamType},
     qpack,
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint::{self, Partial},
-    webtransport::{RecvStream, Registry, Sessions, Unrouted},
+    webtransport::{RecvStream, Registry, SessionId, Sessions, Unrouted},
 };
 use bytes::Bytes;
 use std::{
@@ -44,6 +44,16 @@ pub const CONNECTION_BYTES: usize = size_of::<Driver>()
 pub(crate) enum Role {
     Server,
     Client,
+}
+
+impl Role {
+    /// The other end's role.
+    pub(crate) fn peer(self) -> Self {
+        match self {
+            Self::Server => Self::Client,
+            Self::Client => Self::Server,
+        }
+    }
 }
 
 /// What a connection's streams and handles share with its driver.
@@ -187,7 +197,7 @@ impl Driver {
     pub(crate) fn goaway(&mut self) {
         if self.goaway.is_none() && !self.ended {
             self.goaway = Some(self.next_request);
-            frame::put_header(frame::GOAWAY, varint::len(self.next_request) as u64, &mut self.control.pending);
+            frame::put_header(FrameType::GOAWAY, varint::len(self.next_request) as u64, &mut self.control.pending);
             varint::put(self.next_request, &mut self.control.pending);
         }
     }
@@ -303,8 +313,12 @@ impl Driver {
     }
 }
 
-/// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
+/// Hands a peer's session stream to the registry; one naming no possible session is refused at once, and one the
+/// budget cannot hold as unbuffered.
 fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
+    let Some(session) = SessionId::new(session) else {
+        return drop(stream.stop(Code::H3_ID_ERROR.into()));
+    };
     match Charge::new(&shared.budget, size_of::<RecvStream>()) {
         Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
         None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),
@@ -483,7 +497,7 @@ impl PeerStream {
                     }
                 }
                 Kind::Control(reader) => {
-                    reader.read(shared.role == Role::Client, &mut self.input, |event| shared.control(event))?
+                    reader.read(shared.role.peer(), &mut self.input, |event| shared.control(event))?
                 }
                 Kind::Encoder => qpack::encoder_stream(&std::mem::take(&mut self.input))?,
                 Kind::Decoder(decoder) => decoder.read(&std::mem::take(&mut self.input))?,
@@ -501,7 +515,12 @@ impl PeerStream {
 }
 
 /// The kind a stream's type makes it, or `None` for an unknown type, which is stopped.
-fn classify(kind: u64, session: Option<u64>, role: Role, critical: &mut [bool; 3]) -> Result<Option<Kind>, Code> {
+fn classify(
+    kind: StreamType,
+    session: Option<u64>,
+    role: Role,
+    critical: &mut [bool; 3],
+) -> Result<Option<Kind>, Code> {
     if let Some(session) = session {
         // Only a client-initiated bidirectional stream can carry a session.
         return if session.is_multiple_of(4) {
@@ -511,11 +530,11 @@ fn classify(kind: u64, session: Option<u64>, role: Role, critical: &mut [bool; 3
         };
     }
     let (slot, next) = match kind {
-        frame::CONTROL_STREAM => (0, Kind::Control(Box::default())),
-        frame::ENCODER_STREAM => (1, Kind::Encoder),
-        frame::DECODER_STREAM => (2, Kind::Decoder(qpack::DecoderStream::default())),
-        frame::PUSH_STREAM if role == Role::Client => return Err(Code::H3_ID_ERROR),
-        frame::PUSH_STREAM => return Err(Code::H3_STREAM_CREATION_ERROR),
+        StreamType::CONTROL => (0, Kind::Control(Box::default())),
+        StreamType::ENCODER => (1, Kind::Encoder),
+        StreamType::DECODER => (2, Kind::Decoder(qpack::DecoderStream::default())),
+        StreamType::PUSH if role == Role::Client => return Err(Code::H3_ID_ERROR),
+        StreamType::PUSH => return Err(Code::H3_STREAM_CREATION_ERROR),
         _ => return Ok(None),
     };
     if std::mem::replace(&mut critical[slot], true) {
@@ -534,27 +553,27 @@ pub(crate) enum ControlEvent {
 
 #[derive(Default)]
 pub(crate) struct ControlReader {
-    frames: frame::Reader,
+    frames: Reader<FrameType>,
     settings: Option<settings::Reader>,
     started: bool,
-    kind: u64,
+    kind: FrameType,
     /// The one varint a GOAWAY, MAX_PUSH_ID or CANCEL_PUSH frame holds.
     value: Partial,
     goaway: Option<u64>,
 }
 
 impl ControlReader {
-    /// Reads `input`, passing each event on; `server` says the peer is a server. Errors carry the close code.
+    /// Reads `input` from `peer`, passing each event on. Errors carry the close code.
     pub(crate) fn read(
         &mut self,
-        server: bool,
+        peer: Role,
         input: &mut Bytes,
         mut event: impl FnMut(ControlEvent) -> Result<(), Code>,
     ) -> Result<(), Code> {
         while let Some(piece) = self.frames.next(input) {
             match piece {
                 Piece::Header { kind, length } if !self.started => {
-                    if kind != frame::SETTINGS {
+                    if kind != FrameType::SETTINGS {
                         return Err(Code::H3_MISSING_SETTINGS);
                     }
                     self.started = true;
@@ -564,14 +583,14 @@ impl ControlReader {
                         None => self.settings = Some(settings),
                     }
                 }
-                Piece::Header { kind, length } => self.header(kind, length, server)?,
+                Piece::Header { kind, length } => self.header(kind, length, peer)?,
                 Piece::Payload(mut payload) => {
                     if let Some(settings) = &mut self.settings {
                         if let Some(peer) = settings.read(&mut payload)? {
                             self.settings = None;
                             event(ControlEvent::Settings(peer))?;
                         }
-                    } else if let Some(goaway) = self.value(&mut payload, server)? {
+                    } else if let Some(goaway) = self.value(&mut payload, peer)? {
                         event(ControlEvent::Goaway(goaway))?;
                     }
                 }
@@ -580,23 +599,25 @@ impl ControlReader {
         Ok(())
     }
 
-    fn header(&mut self, kind: u64, length: u64, server: bool) -> Result<(), Code> {
+    fn header(&mut self, kind: FrameType, length: u64, peer: Role) -> Result<(), Code> {
         self.kind = kind;
         match kind {
-            frame::MAX_PUSH_ID if server => Err(Code::H3_FRAME_UNEXPECTED),
-            frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH if !(1..=8).contains(&length) => {
+            FrameType::MAX_PUSH_ID if peer == Role::Server => Err(Code::H3_FRAME_UNEXPECTED),
+            FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH if !(1..=8).contains(&length) => {
                 Err(Code::H3_FRAME_ERROR)
             }
-            frame::SETTINGS | frame::DATA | frame::HEADERS | frame::PUSH_PROMISE => Err(Code::H3_FRAME_UNEXPECTED),
-            frame::WEBTRANSPORT_BIDI => Err(Code::H3_FRAME_ERROR),
-            kind if frame::is_http2(kind) => Err(Code::H3_FRAME_UNEXPECTED),
+            FrameType::SETTINGS | FrameType::DATA | FrameType::HEADERS | FrameType::PUSH_PROMISE => {
+                Err(Code::H3_FRAME_UNEXPECTED)
+            }
+            FrameType::WEBTRANSPORT_BIDI => Err(Code::H3_FRAME_ERROR),
+            kind if kind.is_http2() => Err(Code::H3_FRAME_UNEXPECTED),
             _ => Ok(()),
         }
     }
 
     /// Reads a one-varint frame's payload; returns a server's GOAWAY once it is complete.
-    fn value(&mut self, payload: &mut Bytes, server: bool) -> Result<Option<u64>, Code> {
-        if !matches!(self.kind, frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH) {
+    fn value(&mut self, payload: &mut Bytes, peer: Role) -> Result<Option<u64>, Code> {
+        if !matches!(self.kind, FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH) {
             return Ok(None);
         }
         let value = self.value.read(payload);
@@ -605,7 +626,7 @@ impl ControlReader {
             return Err(Code::H3_FRAME_ERROR);
         }
         // A client's GOAWAY names push IDs, and we never push.
-        let Some(id) = value.filter(|_| self.kind == frame::GOAWAY && server) else {
+        let Some(id) = value.filter(|_| self.kind == FrameType::GOAWAY && peer == Role::Server) else {
             return Ok(None);
         };
         if !id.is_multiple_of(4) || self.goaway.is_some_and(|previous| id > previous) {
@@ -622,11 +643,11 @@ mod control_tests {
     use crate::testing::frame;
 
     /// The events of a stream that opens with empty SETTINGS, read one byte at a time.
-    fn events(server: bool, frames: &[Vec<u8>]) -> Result<Vec<ControlEvent>, Code> {
+    fn events(peer: Role, frames: &[Vec<u8>]) -> Result<Vec<ControlEvent>, Code> {
         let mut reader = ControlReader::default();
         let mut events = Vec::new();
-        for byte in [frame(frame::SETTINGS, &[]), frames.concat()].concat() {
-            reader.read(server, &mut Bytes::from(vec![byte]), |event| {
+        for byte in [frame(FrameType::SETTINGS, &[]), frames.concat()].concat() {
+            reader.read(peer, &mut Bytes::from(vec![byte]), |event| {
                 events.push(event);
                 Ok(())
             })?;
@@ -637,30 +658,32 @@ mod control_tests {
     #[test]
     fn settings_come_first_and_goaway_ids_only_fall() {
         let settings = ControlEvent::Settings(Peer::default());
-        let goaway = |id| frame(frame::GOAWAY, &[id]);
+        let goaway = |id| frame(FrameType::GOAWAY, &[id]);
         assert_eq!(
-            events(true, &[goaway(8), goaway(4)]),
+            events(Role::Server, &[goaway(8), goaway(4)]),
             Ok(vec![settings, ControlEvent::Goaway(8), ControlEvent::Goaway(4)])
         );
-        assert_eq!(events(true, &[goaway(4), goaway(8)]), Err(Code::H3_ID_ERROR));
-        assert_eq!(events(true, &[goaway(2)]), Err(Code::H3_ID_ERROR));
-        assert_eq!(events(false, &[goaway(3)]), Ok(vec![settings]), "a client's GOAWAY names push IDs");
+        assert_eq!(events(Role::Server, &[goaway(4), goaway(8)]), Err(Code::H3_ID_ERROR));
+        assert_eq!(events(Role::Server, &[goaway(2)]), Err(Code::H3_ID_ERROR));
+        assert_eq!(events(Role::Client, &[goaway(3)]), Ok(vec![settings]), "a client's GOAWAY names push IDs");
         let mut reader = ControlReader::default();
-        let missing = reader.read(true, &mut Bytes::from(goaway(4)), |_| Ok(()));
+        let missing = reader.read(Role::Server, &mut Bytes::from(goaway(4)), |_| Ok(()));
         assert_eq!(missing, Err(Code::H3_MISSING_SETTINGS));
     }
 
     #[test]
     fn frames_that_never_belong_on_a_control_stream() {
-        for (server, frames, code) in [
-            (true, frame(frame::SETTINGS, &[]), Code::H3_FRAME_UNEXPECTED),
-            (true, frame(frame::DATA, &[]), Code::H3_FRAME_UNEXPECTED),
-            (true, frame(frame::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
-            (true, frame(frame::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
-            (false, frame(frame::GOAWAY, &[]), Code::H3_FRAME_ERROR),
+        for (peer, frames, code) in [
+            (Role::Server, frame(FrameType::SETTINGS, &[]), Code::H3_FRAME_UNEXPECTED),
+            (Role::Server, frame(FrameType::DATA, &[]), Code::H3_FRAME_UNEXPECTED),
+            (Role::Server, frame(FrameType::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
+            (Role::Server, frame(FrameType::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
+            (Role::Client, frame(FrameType::GOAWAY, &[]), Code::H3_FRAME_ERROR),
         ] {
-            assert_eq!(events(server, std::slice::from_ref(&frames)), Err(code), "{frames:x?}");
+            assert_eq!(events(peer, std::slice::from_ref(&frames)), Err(code), "{frames:x?}");
         }
-        assert!(events(false, &[frame(frame::MAX_PUSH_ID, &[0]), frame(0x21, b"grease")]).is_ok());
+        assert!(
+            events(Role::Client, &[frame(FrameType::MAX_PUSH_ID, &[0]), frame(FrameType(0x21), b"grease")]).is_ok()
+        );
     }
 }

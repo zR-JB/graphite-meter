@@ -41,7 +41,7 @@ fn main() -> ExitCode {
             Err(error) => Some(("config", error)),
         },
     };
-    match failure {
+    let status = match failure {
         // A failure's lines log one after another, so a long one never wraps.
         Some((topic, failure)) => {
             for line in failure.lines() {
@@ -50,7 +50,9 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         None => ExitCode::SUCCESS,
-    }
+    };
+    log::flush();
+    status
 }
 
 /// Prints the notices; the status is 141 into a closed pipe on Unix.
@@ -79,14 +81,19 @@ fn serve(config: Config) -> Result<(), String> {
 fn hash_password() -> Result<(), String> {
     let stdin = io::stdin();
     let terminal = stdin.is_terminal();
-    #[cfg(unix)]
-    let _hidden = terminal
-        .then(|| Hidden::new(io::stdin()))
-        .transpose()
-        .map_err(|error| error.to_string())?;
-    #[cfg(not(unix))]
-    if terminal {
-        return Err("hidden terminal input is unsupported on this platform".into());
+    // The unix arm's guard lives to the end of the function: cfg_select! expands an arm's statements in place.
+    cfg_select! {
+        unix => {
+            let _hidden = terminal
+                .then(|| Hidden::new(io::stdin()))
+                .transpose()
+                .map_err(|error| error.to_string())?;
+        }
+        _ => {
+            if terminal {
+                return Err("hidden terminal input is unsupported on this platform".into());
+            }
+        }
     }
     let mut input = stdin.lock();
     let mut entry = |prompt: &str| -> io::Result<Zeroizing<Vec<u8>>> {

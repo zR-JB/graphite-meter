@@ -5,18 +5,17 @@ use graphite_meter_proto::lane::{IDLE_BOUND, LaneEnding};
 use std::{
     future,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-const RUNNING: u8 = u8::MAX;
-
 /// An admitted request, WebSocket bus or WebTransport session; its last clone releases its admission and work.
 #[derive(Debug, Clone)]
+#[must_use = "dropping the last clone releases the admission and work"]
 pub struct Lane(Arc<State>);
 
 #[derive(Debug)]
@@ -25,8 +24,8 @@ struct State {
     deadline: Instant,
     /// Nanoseconds from `start` to the peer's last movement.
     moved: AtomicU64,
-    /// The decided ending, its index in `LaneEnding::ALL`, or `RUNNING`.
-    ending: AtomicU8,
+    /// The decided ending.
+    ending: OnceLock<LaneEnding>,
     decided: CancellationToken,
     shutdown: CancellationToken,
     auth: Option<AuthLease>,
@@ -48,9 +47,10 @@ impl Lane {
             start,
             deadline: start + lifetime,
             moved: AtomicU64::new(0),
-            ending: AtomicU8::new(RUNNING),
+            ending: OnceLock::new(),
             decided: CancellationToken::new(),
-            shutdown: shutdown.clone(),
+            // A child token: polling it never takes the server-wide token's waiter lock.
+            shutdown: shutdown.child_token(),
             auth: auth.cloned(),
             _hold: hold,
             _work: work.start(),
@@ -64,8 +64,7 @@ impl Lane {
     }
 
     pub fn ending(&self) -> Option<LaneEnding> {
-        let index = usize::from(self.0.ending.load(Ordering::Acquire));
-        LaneEnding::ALL.get(index).copied()
+        self.0.ending.get().copied()
     }
 
     /// The lane's first ending, same for every caller: revocation, shutdown, lifetime, `IDLE_BOUND`, `finish`.
@@ -123,14 +122,15 @@ impl Lane {
     }
 
     fn decide(&self, cause: LaneEnding) -> LaneEnding {
-        let ending = &self.0.ending;
-        match ending.compare_exchange(RUNNING, cause as u8, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => {
-                self.0.decided.cancel();
-                cause
-            }
-            Err(decided) => LaneEnding::ALL[usize::from(decided)],
+        let mut won = false;
+        let ending = *self.0.ending.get_or_init(|| {
+            won = true;
+            cause
+        });
+        if won {
+            self.0.decided.cancel();
         }
+        ending
     }
 }
 
@@ -165,6 +165,7 @@ impl Work {
 
 /// One piece of admitted work, ended when dropped.
 #[derive(Debug)]
+#[must_use = "dropping it ends the work"]
 pub struct WorkGuard(Work);
 
 impl Drop for WorkGuard {
@@ -181,7 +182,7 @@ impl Drop for WorkGuard {
 mod tests {
     use super::*;
     use crate::{
-        auth::{NewLogin, Store},
+        auth::{Identity, NewLogin, Principal, Store},
         exchange::Exchange,
         limits::Quota,
         peer::ClientKeys,
@@ -198,7 +199,12 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let store = Store::default();
-            let login = store.sign_in("p", "P", "local").unwrap();
+            let identity = Identity {
+                principal: Principal::oidc("p"),
+                name: "P",
+                provider: "local",
+            };
+            let login = store.sign_in(identity).unwrap();
             Self {
                 quota: Quota::new(10, 10),
                 work: Work::default(),
@@ -210,7 +216,7 @@ mod tests {
 
         fn lane(&self, lifetime: Duration) -> Lane {
             let hold = self.quota.acquire(&ClientKeys::Exempt, 1).unwrap();
-            let auth = self.store.cookie(&self.login.token).unwrap();
+            let auth = self.store.cookie(self.login.token.as_str()).unwrap();
             Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &self.work, &self.shutdown, Some(&auth))
         }
 

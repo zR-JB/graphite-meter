@@ -8,6 +8,7 @@ use rustls::{
     pki_types::ServerName,
 };
 use std::{
+    assert_matches,
     ffi::OsString,
     path::Path,
     pin::pin,
@@ -77,7 +78,7 @@ fn a_trust_load_cut_short_by_its_runtime_s_shutdown_loads_again_on_next_use() {
         config
     };
     let refused = handshake(cut_short, &server, "localhost");
-    assert!(matches!(refused, Err(Error::InvalidCertificate(Other(_)))), "{refused:?}");
+    assert_matches!(refused, Err(Error::InvalidCertificate(Other(_))));
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     // Only the self-signed root in SSL_CERT_FILE trusts this server, as its own chain.
     handshake(runtime.block_on(client_config(&verify, Some(Protocol::Http1))), &server, "localhost").unwrap();

@@ -1016,6 +1016,7 @@ export class Run {
     }
     this.#live.drop(server.id);
     this.#failure(server, "throughput", reason, message);
+    if (reason === "connection-lost" || reason === "timeout") void this.#signedOut(server, stage.activity.stage);
     this.#updateStalled();
     const survivors = this.#participants();
     if (!survivors.length) {
@@ -1032,6 +1033,18 @@ export class Run {
         this.#clock.runMs(),
       );
     if (this.#boundary(stage)) this.#tick();
+  }
+
+  /** A withdrawn login or grant first shows as a broken or silent stream, and checking it can take longer than the
+      silence rule: once the check says it ended, the server's failure in `stage` becomes a sign-in. */
+  async #signedOut(server: Participant, stage: Stage): Promise<void> {
+    if (!(await server.prepared.auth.ended().catch(() => false)) || this.#state !== "running") return;
+    const failure = this.#failures.find(
+      (f) => f.serverId === server.id && f.stage === stage && f.scope === "throughput",
+    );
+    if (failure?.reason !== "connection-lost" && failure?.reason !== "timeout") return;
+    Object.assign(failure, { reason: "sign-in-required", message: `Sign in to ${server.prepared.server.name}` });
+    this.#emit({ type: "failure", failure });
   }
 
   /** With nobody left to measure, the stage ends now and keeps whatever its evidence supports. */

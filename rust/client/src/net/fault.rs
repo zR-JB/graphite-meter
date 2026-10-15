@@ -137,7 +137,7 @@ impl fmt::Display for Fault {
                 formatter.write_str(&text::clean(&unusable.to_string(), 320))
             }
             Self::Status { status, from, .. } => write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from)),
-            Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status()),
+            Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status().as_u16()),
             Self::Ended(ending) => write!(formatter, "the server ended the lane: {}", ending.name()),
             Self::SignIn(_) => formatter.write_str("authentication required"),
             Self::Malformed(detail) => {
@@ -187,6 +187,7 @@ fn untrusted(certificate: &CertificateError) -> String {
 mod tests {
     use super::*;
     use http::HeaderValue;
+    use std::assert_matches;
 
     fn answer(status: u16, headers: &[(&'static str, &'static str)]) -> Option<Fault> {
         let headers = headers
@@ -234,7 +235,7 @@ mod tests {
         let lane = Fault::answer(StatusCode::BAD_GATEWAY, &HeaderMap::new(), Route::Upload, || unreachable!());
         assert_eq!(lane.unwrap().class(), Class::Final, "a lane's server error stands");
         let issuer = answer(403, &AUTH);
-        assert!(matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example"));
+        assert_matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example");
     }
 
     #[test]
