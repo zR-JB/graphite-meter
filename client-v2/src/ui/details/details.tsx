@@ -2,7 +2,8 @@
 // report. Inspecting a server only reads; this browser's address is in the page only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
-import { describeStreams, needsPings, plannedActivities } from "../../engine/net/budget";
+import { describeStreams, needsPings } from "../../engine/net/budget";
+import { activities } from "../../engine/run/schedule";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, onCleanup, signal, untrack } from "../../lib/signal";
@@ -95,7 +96,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
 
   const latencyNeeded = computed(() => {
     const frozen = prepared();
-    return frozen ? frozen.latency !== null : plannedActivities(runConfig()).some(needsPings);
+    return frozen ? frozen.latency !== null : activities(runConfig()).some(needsPings);
   });
   const status = (role: Role): Word =>
     mode() === "running"
@@ -111,7 +112,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       throughput,
       latency: latency && { target: latency.target },
     };
-    return describeStreams(runConfig().transferStreams, plannedActivities(runConfig()), server);
+    return describeStreams(runConfig().transferStreams, activities(runConfig()), server);
   });
   const uploadFeed = () => {
     const shown = target("throughput");

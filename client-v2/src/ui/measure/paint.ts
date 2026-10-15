@@ -18,6 +18,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
   let due = false;
   let moving = false;
   let queued = false;
+  let disposed = false;
   const halt = () => {
     stop?.();
     stop = null;
@@ -41,7 +42,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
     });
   };
   const wake = (resized = false) => {
-    if (away?.peek()) return;
+    if (disposed || away?.peek()) return;
     due = true;
     if (!resized) return start();
     if (queued) return;
@@ -49,10 +50,13 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
     // After the callback or batch that resized the view, so every wake it caused is drawn in one go.
     queueMicrotask(() => {
       queued = false;
-      if (due && !away?.peek() && paint(pageMs())) start();
+      if (!disposed && due && !away?.peek() && paint(pageMs())) start();
     });
   };
-  onCleanup(halt);
+  onCleanup(() => {
+    disposed = true;
+    halt();
+  });
   if (!away) return wake;
   let gone = false;
   effect(() => {

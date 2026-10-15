@@ -420,10 +420,13 @@ export function StageGraph(props: StripProps): HTMLElement {
   let xs = new Float64Array(0);
   let ys = new Float64Array(0);
   let tangents = new Float64Array(0);
+  let starts = new Uint32Array(0);
   const head: Head = { t: 0, values: dirs.map(() => 0) };
-  const prefixes = dirs.map(() => ({ key: "", path: "" }));
+  const prefixes = dirs.map(() => ({ key: "", path: "", area: "" }));
   let written = 0;
+  const closeArea = (i: number, h: number) => `L${fixed(xs[i]!)} ${h}L${fixed(xs[starts[i]!]!)} ${h}Z`;
   const segment = (i: number) => {
+    if (starts[i] !== starts[i + 1]) return `M${fixed(xs[i + 1]!)} ${fixed(ys[i + 1]!)}`;
     const third = (xs[i + 1]! - xs[i]!) / 3;
     return `C${fixed(xs[i]! + third)} ${fixed(ys[i]! + tangents[i]! * third)} ${fixed(xs[i + 1]! - third)} ${fixed(
       ys[i + 1]! - tangents[i + 1]! * third,
@@ -455,17 +458,20 @@ export function StageGraph(props: StripProps): HTMLElement {
         xs = new Float64Array(lane.n + 1);
         ys = new Float64Array(lane.n + 1);
         tangents = new Float64Array(lane.n + 1);
+        starts = new Uint32Array(lane.n + 1);
       }
       // A live lane ends exactly at its head; bins at or past it wait for it.
       let n = 0;
       while (n < lane.n && px(lane.t[n]!) < tip) {
         xs[n] = px(lane.t[n]!);
         ys[n] = py(lane.v[n]!);
+        starts[n] = n === 0 || lane.line[n] !== lane.line[n - 1] ? n : starts[n - 1]!;
         n++;
       }
       const bins = n;
       if (leading && n) {
         xs[n] = tip;
+        starts[n] = starts[n - 1]!;
         ys[n++] = py(head.values[index]!);
       }
       const dot = heads[index]!;
@@ -479,7 +485,7 @@ export function StageGraph(props: StripProps): HTMLElement {
         if (index === 0) setAttr(area, "d", "");
         return;
       }
-      monotoneTangents(xs, ys, n, tangents);
+      monotoneTangents(xs, ys, n, tangents, starts);
       // The newest two segments depend on the moving head; the rest stays as it was drawn.
       const tail = Math.min(2, n - 1);
       const prefix = prefixes[index]!;
@@ -487,12 +493,22 @@ export function StageGraph(props: StripProps): HTMLElement {
       if (prefix.key !== key) {
         prefix.key = key;
         prefix.path = `M${fixed(xs[0]!)} ${fixed(ys[0]!)}`;
-        for (let i = 0; i < n - 1 - tail; i++) prefix.path += segment(i);
+        prefix.area = prefix.path;
+        for (let i = 0; i < n - 1 - tail; i++) {
+          const part = segment(i);
+          prefix.path += part;
+          if (index === 0) prefix.area += (starts[i] !== starts[i + 1] ? closeArea(i, h) : "") + part;
+        }
       }
       let path = prefix.path;
-      for (let i = n - 1 - tail; i < n - 1; i++) path += segment(i);
+      let wash = prefix.area;
+      for (let i = n - 1 - tail; i < n - 1; i++) {
+        const part = segment(i);
+        path += part;
+        if (index === 0) wash += (starts[i] !== starts[i + 1] ? closeArea(i, h) : "") + part;
+      }
       setAttr(lines[index]!, "d", path);
-      if (index === 0) setAttr(area, "d", `${path}L${fixed(xs[n - 1]!)} ${h}L${fixed(xs[0]!)} ${h}Z`);
+      if (index === 0) setAttr(area, "d", wash + closeArea(n - 1, h));
     });
     return leading && props.active(now);
   }
