@@ -177,6 +177,24 @@ test("the needle rises, follows, glides across a rescale, drains, and leaves the
   const before = rising.angle(272, 200);
   rising.update(shown("b"), 272);
   expect(rising.angle(288, 100) - before).toBeGreaterThan(5);
+  // A stage whose value arrives while the last stage's still drains turns the needle round: it never jumps.
+  const handing = new Needle();
+  handing.update(shown("a"), 0);
+  handing.angle(RISE_MS, 60);
+  handing.update({ visible: false, hold: false, motion: true, course: "a" }, 1_000);
+  for (let now = 1_000; now <= 1_096; now += 16) handing.angle(now, null);
+  const draining = handing.angle(1_112, null);
+  handing.update(shown("b"), 1_112);
+  const steps: number[] = [];
+  let last = draining;
+  for (let now = 1_128; now <= 1_112 + RISE_MS; now += 16) {
+    const angle = handing.angle(now, 240);
+    steps.push(angle - last);
+    last = angle;
+  }
+  expect(steps[0]).toBeLessThan(0);
+  expect(Math.max(...steps.map(Math.abs))).toBeLessThan(15);
+  expect(last).toBeCloseTo(240, 0);
   // Unseen or reduced, every change snaps and a result sweeps from zero.
   const still = new Needle();
   still.update(shown("a", false), 0);

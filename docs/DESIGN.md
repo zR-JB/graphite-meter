@@ -194,9 +194,11 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   dial's drain is the start's only motion. A stage the new run leaves out gives up its card and lane as the run
   starts, and the rest close over its place (`flip()`). A stage has a card while the next run includes it or the
   shown run ran it. Each stage: during its warmup the ring's track takes a faint tint of
-  its hue and the console's light from above (`--ambient`) shifts to it; when it starts measuring, the needle rises
-  from zero (520 ms, eased out); when it ends, the needle drains back to zero (300 ms) and blends into the next
-  stage's hue on the way down. End: the last needle holds, and the result takes the ring over where it stands.
+  its hue and the console's light from above (`--ambient`) shifts to it, and the needle rises to the warmup's ramp
+  (520 ms) in its hue faded toward the page, from zero or, while the last stage still drains, turning round where
+  it stands, never jumping; when the stage starts measuring, the needle comes up to its hue; when it ends, the
+  needle drains back to zero (300 ms) and blends into the next stage's hue on the way down. End: the last needle
+  holds, and the result takes the ring over where it stands.
 - A stage starting is one wave from the chips down: the chip's edge and bar first, the dial's figure and the
   stage's name hand off together, the population's row in the lanes washes in its hue a beat later on its own layer,
   and two beats after the chip the card's edge eases in and its glow arrives in one step (a blurred shadow is

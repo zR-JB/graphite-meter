@@ -213,12 +213,13 @@
     & circle {
       fill: var(--accent, var(--text-soft));
     }
-    /* A warmup's reading is shown, not counted: muted until the window opens and the needle comes up to its hue. */
+    /* A warmup's reading is shown, not counted: its hue faded toward the page, clear enough to see the needle rise,
+       until the window opens and it comes up to its hue. Opaque, so the arc's overlapping pieces paint as one. */
     &.warming path {
-      stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
+      stroke: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
     &.warming circle {
-      fill: color-mix(in oklab, var(--accent, var(--text-soft)) 45%, var(--border-strong));
+      fill: color-mix(in oklab, var(--accent, var(--text-soft)) 62%, var(--canvas));
     }
     & .ripple {
       position: absolute;
