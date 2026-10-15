@@ -65,8 +65,14 @@ if (profile === "laptop") {
   await panel(s, "Details");
   await metrics(s, 1600, 1000);
   await still(s, 800);
-  // Two more runs for History, the last with the two-way stage.
-  await run(s);
+  // Two more runs for History, the last with the two-way stage. The first is the hero's desktop, in its upload stage.
+  await s.click(".run-button");
+  await s.waitPhase("upload", 60_000);
+  await s.mouse("mouseMoved", s.width - 4, s.height / 2, { button: "none" });
+  await sleep(4600);
+  await s.shot("hero-desktop");
+  if (!(await s.waitPhase("complete", 60_000))) throw new Error(`hero run ended ${await s.phase()}`);
+  await still(s, 1500);
   await panel(s, "Settings");
   await s.evaluate(
     `[...document.querySelectorAll("label")].find(l => /Bidirectional/.test(l.textContent))?.querySelector("input")?.click()`,
@@ -103,19 +109,6 @@ if (profile === "multi") {
   await still(s, 3500);
   await s.shot("partial");
   console.log("multi", s.errors);
-}
-
-if (profile === "workstation") {
-  // The hero's desktop: a 10 GbE run in its upload stage.
-  const s = await open(home, 1600, 1000, { config }, 2);
-  await sleep(2500);
-  await s.click(".run-button");
-  await s.waitPhase("upload", 60_000);
-  await s.mouse("mouseMoved", s.width - 4, s.height / 2, { button: "none" });
-  await sleep(4600);
-  await s.shot("hero-desktop");
-  await s.waitPhase("complete", 60_000);
-  console.log("workstation", s.errors);
 }
 
 if (profile === "phone") {

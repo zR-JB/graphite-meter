@@ -29,7 +29,6 @@ path() { # n down-gbit up-gbit one-way-delay-ms
 }
 case $profile in
   laptop) path 1 3.4 1.9 1 ;;
-  workstation) path 1 9.4 9.4 0 ;;
   phone) path 1 1.65 0.86 1.5 ;;
   multi) path 1 1.3 0.75 1; path 2 1.1 0.6 1.5; path 3 1.0 0.55 2 ;;
   signin) ;;

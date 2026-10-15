@@ -10,7 +10,7 @@ cp go/graphite-meter "$here/work/graphite-meter"
 openssl req -x509 -newkey rsa:2048 -nodes -days 7 -keyout "$here/work/key.pem" -out "$here/work/cert.pem" \
   -subj /CN=graphite-meter -addext "subjectAltName=IP:10.77.1.1,IP:10.77.2.1,IP:10.77.3.1,IP:127.0.0.1" 2>/dev/null
 bun="$(command -v bun)"
-for profile in laptop multi workstation phone signin; do
+for profile in laptop multi phone signin; do
   "$here/lab.sh" "$profile" "$bun" "$here/capture.ts"
 done
 "$bun" "$here/render.ts"
