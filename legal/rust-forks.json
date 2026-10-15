@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "a459ad8525063ddae3bc9fa1385826d6848a0ce3",
+    "rev": "f6f553ebfbd5ae68c5bf64a3c346abc626e285ff",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "59104e28d86dac48af1bb0ab88a1b44bda12115b6c3874d53e9522e368bc41f8",
+    "diffSha256": "adf73d75af7cc02c8c34e99e72e81f9707fb8b7f030cd707831062368a059948",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -87,7 +87,8 @@
       {"subject": "proto: reserve close frame space after large Initial headers", "purpose": "Limits a close packet's ACKs so its CONNECTION_CLOSE always fits after a large Initial token.", "origin": "quinn-rs/quinn#2905 a6e78d1c8bf28630f1e92fbcc38f60e0a134b01a"},
       {"subject": "Keep large received stream frames in their packet's buffer", "purpose": "Keeps a STREAM frame filling at least half its packet in the packet's buffer, charged at the packet's size; smaller frames are still copied into their own charged backing.", "origin": "graphite-meter"},
       {"subject": "Charge the shared budget in steps above the floor", "purpose": "Charges the shared budget in 64 KiB steps above a budget's floor, keeping at most two unused steps and none at or below the floor.", "origin": "graphite-meter"},
-      {"subject": "proto: take an RTT sample from a Retry", "purpose": "Takes a round-trip sample from a Retry that answers the unrepeated first Initial, so the resent ClientHello is not paced at the 333 ms initial RTT (upstreamable; quic-go does the same).", "origin": "graphite-meter"}
+      {"subject": "proto: take an RTT sample from a Retry", "purpose": "Takes a round-trip sample from a Retry that answers the unrepeated first Initial, so the resent ClientHello is not paced at the 333 ms initial RTT (upstreamable; quic-go does the same).", "origin": "graphite-meter"},
+      {"subject": "proto: follow RFC 9438 for Cubic's Reno-friendly estimate and K", "purpose": "Restarts Cubic's Reno-friendly estimate at the reduced window and grows it per window acknowledged, switching alpha_cubic to 1 at the window before the reduction, and takes K from W_max minus the reduced window, as RFC 9438 Sections 4.2 and 4.3 do (upstreamable; Linux and quic-go's Cubic do the same).", "origin": "graphite-meter"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
