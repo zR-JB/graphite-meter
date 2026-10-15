@@ -504,13 +504,52 @@ jobs:
         working-directory: rust
         run: cargo check --locked -p graphite-meter-server
 
+  gallery:
+    name: Temporary gallery capture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: pins
+        name: Read the pinned browser
+        run: printf 'chrome=%s\n' "$(python3 scripts/ci/toolchains.py get browser.chrome)" >> "$GITHUB_OUTPUT"
+      - parallel:
+          - name: Set up the gallery toolchain
+            uses: ./.github/actions/setup-project
+            with: {go: 'true', bun: 'true', client-deps: 'true'}
+          - id: chrome
+            name: Install pinned Chrome for Testing
+            uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+            with:
+              chrome-version: ${{ steps.pins.outputs.chrome }}
+              install-dependencies: true
+      - name: Capture every scene over its shaped path
+        env:
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: GM_CLIENT_REVISION="${HEAD_SHA::8}" scripts/ci/gallery/run.sh
+      - name: Upload the captures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gallery
+          path: |
+            scripts/ci/gallery/out
+            scripts/ci/gallery/work/*.log
+          if-no-files-found: error
+          retention-days: 7
+
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, e2e, rust, rust-interop, rust-image,
-      rust-e2e, rust-tui, rust-release, rust-windows]
+      rust-e2e, rust-tui, rust-release, rust-windows, gallery]
     steps:
       - name: Require every selected job
         env:
