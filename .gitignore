@@ -1,17 +1,8 @@
-# --- Client (Svelte/Vite, bun) ---
+# --- Browser client (bun) ---
 client/node_modules
 client/dist
 client/.e2e-dist
-client/.vite
-client/.svelte-check
 client/test-results
-# raw benchmark rows; findings live in docs/BENCHMARKS.md, rows are not committed
-client/bench/results/
-
-# --- Browser client v2 (client-v2/, bun) ---
-client-v2/node_modules
-client-v2/dist
-client-v2/test-results
 
 # --- Go module (server + native client) ---
 go/graphite-meter

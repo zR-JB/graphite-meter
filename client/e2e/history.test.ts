@@ -1,9 +1,7 @@
-import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import { countSaves, home, open, ready, run, runButton } from "./fleet";
+import { countSaves, home, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
-const id = (index: number) =>
-  `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
 const base = Date.UTC(2026, 7, 28, 12);
 
 function record(index: number, completedAt = base - index * 60_000) {
@@ -99,8 +97,7 @@ function seed(page: Page, archive: Archive) {
           const database = opening.result;
           const stores = [...database.objectStoreNames];
           const tx = database.transaction(stores, "readwrite");
-          for (const value of records)
-            tx.objectStore(db.resultsStore).put(value);
+          for (const value of records) tx.objectStore(db.resultsStore).put(value);
           if (clears !== undefined)
             tx.objectStore(db.metadataStore).put({
               key: db.clearsKey,
@@ -110,8 +107,7 @@ function seed(page: Page, archive: Archive) {
             database.close();
             resolve();
           };
-          tx.onerror = tx.onabort = () =>
-            reject(tx.error ?? new Error("seed aborted"));
+          tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("seed aborted"));
         };
       }),
     { db: HISTORY_DB, ...archive },
@@ -139,12 +135,9 @@ function stored(page: Page) {
             database.close();
             return reject(error);
           }
-          tx.onerror = tx.onabort = () =>
-            reject(tx.error ?? new Error("read aborted"));
+          tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("read aborted"));
           const rows = tx.objectStore(db.resultsStore).getAll();
-          const meta = stores.includes(db.metadataStore)
-            ? tx.objectStore(db.metadataStore).get(db.clearsKey)
-            : null;
+          const meta = stores.includes(db.metadataStore) ? tx.objectStore(db.metadataStore).get(db.clearsKey) : null;
           tx.oncomplete = () => {
             database.close();
             resolve({
@@ -186,9 +179,7 @@ test("closing History stops an unfinished archive scan and preserves its records
         // Interrupt the actual scan, without slowing cursor deliveries or
         // relying on the test driver to catch a brief intermediate state.
         if (stats.deliveries === 20) {
-          const close = document.querySelector<HTMLButtonElement>(
-            'button[aria-label="Close History"]',
-          );
+          const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close History"]');
           if (!close) throw new Error("History scan has no dismiss control");
           stats.dismissed = true;
           close.click();
@@ -209,9 +200,7 @@ test("closing History stops an unfinished archive scan and preserves its records
   expect(stopped.deliveries).toBeGreaterThanOrEqual(20);
   expect(stopped.deliveries).toBeLessThan(250);
   await Bun.sleep(200);
-  expect(
-    await page.evaluate(() => (window as any).archiveScan.deliveries),
-  ).toBe(stopped.deliveries);
+  expect(await page.evaluate(() => (window as any).archiveScan.deliveries)).toBe(stopped.deliveries);
   await page.evaluate(() => {
     IDBCursor.prototype.continue = (window as any).originalCursorContinue;
   });
@@ -232,19 +221,13 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   await expect(heading).toHaveText("2000");
   await page.locator('.column-head button:has([data-tone="download"])').click();
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        document.querySelector(".result-row")?.getAttribute("data-history-id"),
-      ),
-    )
+    .poll(() => page.evaluate(() => document.querySelector(".result-row")?.getAttribute("data-history-id")))
     .toBe(id(1_999));
   await expect(rows).toHaveCount(50);
 
   await history(page, id(2_000));
   await expect(page.locator(".result-detail")).toBeVisible({ timeout: 15_000 });
-  expect(await page.locator(".result-detail").textContent()).not.toContain(
-    "Grade",
-  );
+  expect(await page.locator(".result-detail").textContent()).not.toContain("Grade");
   await expect(heading).toHaveText("2000");
 });
 
@@ -254,13 +237,70 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await page.setViewportSize({ width: 390, height: 844 });
   await history(page);
   const options = page.getByRole("dialog", { name: "History view options" });
-  await page
-    .getByRole("button", { name: "Choose columns and sort order" })
-    .click();
+  await page.getByRole("button", { name: "Choose columns and sort order" }).click();
   await expect(options).toBeVisible();
   await page.press("Escape");
   await page.locator(".result-row").click();
   await expect(page.locator(".result-detail")).toBeVisible();
+});
+
+test("Sort by is one tab stop whose arrows, Home and End choose the order", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await history(page);
+  await page.getByRole("button", { name: "Choose columns and sort order" }).click();
+  await expect(page.getByRole("dialog", { name: "History view options" })).toBeVisible();
+  // Each order: whether it is chosen, a tab stop and focused.
+  const orders = () =>
+    page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>('[role="radiogroup"][aria-label="Sort by"] [role="radio"]'),
+        (radio) =>
+          [radio.getAttribute("aria-checked") === "true", radio.tabIndex === 0, radio === document.activeElement]
+            .map(Number)
+            .join(""),
+      ),
+    );
+  const count = (await orders()).length;
+  expect(count).toBeGreaterThan(2);
+  const only = (at: number, state: string) =>
+    Array.from({ length: count }, (_, index) => (index === at ? state : "000"));
+  expect(await orders()).toEqual(only(0, "110"));
+  // The popover gives focus to its first column; Tab passes the columns and the heading's term to the chosen order
+  // alone, and leaves the group again.
+  const role = () => page.evaluate(() => document.activeElement?.getAttribute("role"));
+  await expect.poll(role).toBe("checkbox");
+  for (let stop = 0; stop < 10 && (await role()) !== "radio"; stop++) await page.press("Tab");
+  expect(await orders()).toEqual(only(0, "111"));
+  for (const [key, at] of [
+    ["ArrowDown", 1],
+    ["ArrowRight", 2],
+    ["End", count - 1],
+    ["ArrowDown", 0],
+    ["ArrowUp", count - 1],
+    ["Home", 0],
+  ] as const) {
+    await page.press(key);
+    expect(await orders()).toEqual(only(at, "111"));
+  }
+  await page.press("Tab");
+  expect(await role()).not.toBe("radio");
+});
+
+test("a page shown again after a night away dates its results at once", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1, Date.now() - 60_000)] });
+  await history(page);
+  const heading = page.locator(".history-list h3");
+  await expect(heading).toHaveText("Today");
+  // The night passes in the background; the minute clock has not ticked since.
+  await page.evaluate(() => {
+    const real = Date.now;
+    Date.now = () => real() + 86_400_000;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(heading).toHaveText("Yesterday");
 });
 
 test("the keyboard moves the list's split within both panes' limits, and it survives a reload", async (page) => {
@@ -268,9 +308,8 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
   await seed(page, { records: [record(1)] });
   await page.setViewportSize({ width: 1280, height: 800 });
   await history(page, id(1));
-  const handle = page.getByRole("slider", { name: /^Resize results list/ });
-  const list = () =>
-    page.locator(".history-list").evaluate((el: HTMLElement) => el.offsetWidth);
+  const handle = page.getByRole("separator", { name: /^Resize results list/ });
+  const list = () => page.locator(".history-list").evaluate((el: HTMLElement) => el.offsetWidth);
   await expect(handle).toHaveAttribute("aria-valuenow", "538");
   await handle.evaluate((el: HTMLElement) => el.focus());
   // The list never narrows past 360 px, nor leaves the detail under 460 px.
@@ -286,12 +325,7 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
   }
   await expect(handle).toHaveAttribute("aria-valuenow", "522");
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit,
-      ),
-    )
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit))
     .toBe(522 / 1280);
   await page.reload();
   await expect.poll(list).toBe(522);
@@ -305,24 +339,18 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
 test("unsupported and malformed rows are skipped, kept and clearable", async (page) => {
   await fixturePage(page);
   const current = record(1);
-  const old = [
-    { ...record(2), schemaVersion: 1 },
-    { ...record(3), schemaVersion: 2 },
-    record(4, 1e20),
-  ];
+  const old = [{ ...record(2), schemaVersion: 1 }, { ...record(3), schemaVersion: 2 }, record(4, 1e20)];
   const broken = record(5);
   Object.assign(broken.stages.latency.result, { reportedMs: "fast" });
   await seed(page, { records: [current, broken, ...old] });
   const before = await stored(page);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(1);
-  await expect(page.locator(".history-workspace")).toContainText(
-    "4 unsupported or malformed records were ignored.",
-  );
+  await expect(page.locator(".history-workspace")).toContainText("4 unsupported or malformed records were ignored.");
   const unreadable = page.getByRole("heading", {
     name: "Unreadable saved result",
   });
-  for (const id of [broken.id, old[0].id]) {
+  for (const id of [broken.id, old[0]!.id]) {
     await history(page, id);
     await expect(unreadable).toBeVisible();
   }
@@ -337,9 +365,7 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
     .getByRole("alertdialog", { name: "Clear history?" })
     .getByRole("button", { name: "Clear history" })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "No saved results" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No saved results" })).toBeVisible();
   expect((await stored(page)).records).toEqual([]);
 });
 
@@ -367,14 +393,10 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
   });
   await ready(page);
   await runButton(page, /^(Start test|Run again)$/).click();
-  await expect
-    .poll(async () => (await stored(page)).records.length, { timeout: 20_000 })
-    .toBe(4);
+  await expect.poll(async () => (await stored(page)).records.length, { timeout: 20_000 }).toBe(4);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(3);
-  await expect(page.locator(".history-workspace")).toContainText(
-    "1 unsupported or malformed record was ignored.",
-  );
+  await expect(page.locator(".history-workspace")).toContainText("1 unsupported or malformed record was ignored.");
 });
 
 test("History never waits on another version's connection and never changes its database", async (page) => {
@@ -398,9 +420,7 @@ test("History never waits on another version's connection and never changes its 
     HISTORY_DB,
   );
   expect(upgrade).toBe("upgraded");
-  await page.evaluate(() =>
-    new BroadcastChannel("graphite-meter-history").postMessage(""),
-  );
+  await page.evaluate(() => new BroadcastChannel("graphite-meter-history").postMessage(""));
   await expect(refusal).toBeVisible(OPEN_BOUND);
 
   // An older build that keeps its connection open is refused within a moment, and never upgraded.
@@ -431,9 +451,7 @@ test("History never waits on another version's connection and never changes its 
       async () => {
         const { databases, opens } = await page.storage();
         const settled = /^(success|error)/;
-        const pending = opens.filter(
-          ({ events }) => !events.some((event) => settled.test(event)),
-        );
+        const pending = opens.filter(({ events }) => !events.some((event) => settled.test(event)));
         return { databases, pending };
       },
       { timeout: 10_000 },
@@ -462,13 +480,202 @@ test("History refuses other database versions without changing them", async (pag
       .poll(async () => {
         const { opens } = await page.storage();
         const history = opens.filter((o) => o.version === HISTORY_DB.version);
-        const settled = history.filter(({ events }) =>
-          events.some((event) => /^(success|error)/.test(event)),
-        );
+        const settled = history.filter(({ events }) => events.some((event) => /^(success|error)/.test(event)));
         return { opened: history.length, settled: settled.length };
       }, OPEN_BOUND)
       .toEqual({ opened: 2, settled: 2 });
     await expect(refusal).toBeVisible(OPEN_BOUND);
     expect(await stored(page)).toEqual(before);
+  }
+});
+
+test("a result History refused to save says so, and starting over, a new run or leaving asks first", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [], version: HISTORY_DB.version + 1 });
+  await page.goto(home.url);
+  await ready(page);
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "complete")).toHaveCount(1, { timeout: 20_000 });
+  // The warning stays beside the result, past any toast's reading time.
+  const notice = page.locator(".phase-toast.visible");
+  await expect(notice).toContainText("Not saved", { timeout: 8_000 });
+  const ask = page.getByRole("alertdialog", { name: "Clear this result?" });
+  await page.getByRole("button", { name: /start over$/ }).click();
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Keep result" }).click();
+  const replace = page.getByRole("alertdialog", { name: "Replace this result?" });
+  await runButton(page, "Run again").click();
+  await expect(replace).toBeVisible();
+  await replace.getByRole("button", { name: "Keep result" }).click();
+  await expect(runButton(page, "Run again")).toBeVisible();
+  const leaving = () =>
+    page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+  expect(await leaving()).toBe(true);
+  await runButton(page, "Run again").click();
+  await replace.getByRole("button", { name: "Run again" }).click();
+  await expect(phase(page, "complete")).toHaveCount(0);
+});
+
+/** Holds History's read of each result listed in `window.hold` until `release`, once the read is under way. */
+const holdReads = (page: Page) =>
+  page.addInitScript(() => {
+    const w = window as any;
+    w.hold = new Set<string>();
+    const held: (() => void)[] = [];
+    w.waiting = () => held.length;
+    w.release = () => {
+      w.hold.clear();
+      for (const deliver of held.splice(0)) deliver();
+    };
+    const get = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      const real = get.call(this, key);
+      if (!w.hold.has(key)) return real;
+      const late: any = { result: undefined, error: null, onsuccess: null, onerror: null };
+      real.onsuccess = () => {
+        late.result = real.result;
+        held.push(() => late.onsuccess?.());
+      };
+      real.onerror = () => {
+        late.error = real.error;
+        held.push(() => late.onerror?.());
+      };
+      return late;
+    };
+  });
+
+async function release(page: Page) {
+  await expect.poll(() => page.evaluate(() => (window as any).waiting())).toBe(1);
+  await page.evaluate(() => (window as any).release());
+}
+
+test("a result kept on show while another is read takes no action, and Delete names its result", async (page) => {
+  await holdReads(page);
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2)] });
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  await page.evaluate((held) => (window as any).hold.add(held), id(2));
+  await page.locator(`a[data-history-id="${id(2)}"]`).click();
+  // The first result stays on show while the second is read, and its Delete belongs to it alone.
+  await expect(page.locator(".detail-pane[inert] .result-detail")).toHaveCount(1);
+  await page
+    .locator('.detail-pane button[aria-label="Delete this result"]')
+    .evaluate((button: HTMLElement) => button.click());
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await release(page);
+  await expect(page.locator(".detail-pane:not([inert]) .result-detail")).toHaveCount(1);
+  await page.getByRole("button", { name: "Delete this result" }).click();
+  const prompt = page.getByRole("alertdialog", { name: "Delete this result?" });
+  const when = await page.evaluate(
+    (at) =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(at),
+    base - 2 * 60_000,
+  );
+  await expect(prompt).toContainText(when);
+  await prompt.getByRole("button", { name: "Delete result" }).click();
+  await expect.poll(async () => (await stored(page)).records.map((row: any) => row.id)).toEqual([id(1)]);
+});
+
+test("a result read late takes focus only while focus stays where it was chosen", async (page) => {
+  await holdReads(page);
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2), record(3)] });
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  for (const [result, away] of [
+    [id(2), false],
+    [id(3), true],
+  ] as const) {
+    await page.evaluate((held) => (window as any).hold.add(held), result);
+    await page.locator(`a[data-history-id="${result}"]`).click();
+    // Focus moves to a control outside History before the read lands.
+    if (away)
+      await page.getByRole("button", { name: "Settings", exact: true }).evaluate((key: HTMLElement) => key.focus());
+    await release(page);
+    await expect(page.locator(".detail-pane:not([inert]) .result-detail")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.className),
+      )
+      .toBe(away ? "Settings" : "result-detail");
+  }
+});
+
+test("Up and Down open the results beside the open one on its history entry, past the first page", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: Array.from({ length: 52 }, (_, index) => record(index + 1)) });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await history(page, id(50));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  const entries = await page.evaluate(() => history.length);
+  const open = () => page.evaluate(() => decodeURIComponent(location.hash.replace("#/history/", "")));
+  for (const [key, expected] of [
+    ["ArrowDown", id(51)],
+    ["ArrowUp", id(50)],
+    ["ArrowUp", id(49)],
+  ] as const) {
+    await page.press(key);
+    await expect.poll(open).toBe(expected);
+    await expect(page.locator(`.detail-pane:not([inert]) .result-detail`)).toHaveCount(1);
+  }
+  // The row past the first page was built, and the open row stays in the list's view.
+  const row = page.locator(`a[data-history-id="${id(49)}"]`);
+  await expect(row).toHaveAttribute("aria-current", "true");
+  await expect
+    .poll(() =>
+      row.evaluate((link: HTMLElement) => {
+        const box = link.getBoundingClientRect();
+        const list = link.closest(".history-list")!.getBoundingClientRect();
+        return box.top >= list.top && box.bottom <= list.bottom;
+      }),
+    )
+    .toBe(true);
+  await expect(page.locator(`a[data-history-id="${id(51)}"]`)).toHaveCount(1);
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+  // Closing steps back to the list, as from the result first opened.
+  await page.press("Escape");
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/history");
+  await expect(row).toBeFocused();
+  // Past the newest result Up does nothing.
+  await history(page, id(1));
+  await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  await page.press("ArrowUp");
+  await Bun.sleep(200);
+  expect(await open()).toBe(id(1));
+});
+
+test("closing a linked result far down the list returns to its row", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });
+  // Beside the list, and over it.
+  for (const [width, close] of [
+    [1280, "Close result"],
+    [700, "Back to results"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await history(page, id(60));
+    await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+    await page.getByRole("button", { name: close }).click();
+    const row = page.locator(`a[data-history-id="${id(60)}"]`);
+    await expect(row).toBeFocused();
+    expect(
+      await row.evaluate((link: HTMLElement) => {
+        const box = link.getBoundingClientRect();
+        const list = link.closest(".history-list")!.getBoundingClientRect();
+        return box.top >= list.top && box.bottom <= list.bottom;
+      }),
+    ).toBe(true);
   }
 });

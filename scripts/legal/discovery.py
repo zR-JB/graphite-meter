@@ -207,7 +207,7 @@ def npm_component(root: Path, reviews: list[Review]) -> Component:
     return component
 
 
-def discover_browser(scans: list[Path], reviews: list[Review]) -> list[Component]:
-    ids = {string(item) for scan in scans for item in array(read_json(scan))}
+def discover_browser(scan: Path, reviews: list[Review]) -> list[Component]:
+    ids = {string(item) for item in array(read_json(scan))}
     roots = {package_root(module_id) for module_id in ids if "/node_modules/" in module_id.replace(os.sep, "/")}
     return sort_components([npm_component(root, reviews) for root in sorted(roots)])

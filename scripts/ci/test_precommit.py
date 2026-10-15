@@ -9,11 +9,10 @@ from precommit import plan_checks, staged_paths
 
 
 class PlanTests(unittest.TestCase):
-    def test_each_browser_client_selects_its_own_gate(self) -> None:
+    def test_the_browser_client_and_its_generated_assets_select_its_gate(self) -> None:
         for paths, checks in (
-            (("client/src/app.ts",), ("client-v1-ci", "legal-check")),
-            (("client-v2/src/main.tsx",), ("client-ci", "legal-check")),
-            (("client/e2e/webview.ts",), ("client-v1-ci", "client-ci", "legal-check")),
+            (("client/src/main.tsx",), ("client-ci", "legal-check")),
+            (("client/e2e/webview.ts",), ("client-ci", "legal-check")),
             (("go/internal/auth/assets/login.tmpl",), ("server-check", "server-test", "client-ci", "legal-check")),
         ):
             with self.subTest(paths=paths):

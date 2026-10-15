@@ -9,8 +9,9 @@ import {
   runButton,
   savedResult,
   spawnPeer,
+  plansOf,
 } from "./fleet";
-import { incoherence } from "../src/lib/history/types";
+import { incoherence } from "../src/engine/run/result";
 import { launch } from "./servers";
 import { browser, expect, test, type Page } from "./webview";
 
@@ -56,12 +57,8 @@ const faults: Fault[] = [
       victim.kill("SIGKILL");
       await victim.exited;
       const started = Date.now();
-      const relaunched = await launch(
-        JSON.parse(process.env.GM_E2E_LAUNCH!),
-        victim.server,
-      );
-      if (Date.now() - started > 1_000)
-        throw new Error("the peer took over a second to relaunch");
+      const relaunched = await launch(JSON.parse(process.env.GM_E2E_LAUNCH!), victim.server);
+      if (Date.now() - started > 1_000) throw new Error("the peer took over a second to relaunch");
       return relaunched;
     },
     outcome: "complete",
@@ -94,20 +91,51 @@ const faults: Fault[] = [
   },
 ];
 
+test.chrome("a download graph leaves separate curves and fills across a page-clock gap", async (page) => {
+  await open(page, undefined, {
+    config: {
+      stages: { latency: false, download: true, upload: false, bidirectional: false },
+      duration: { ...baseConfig.duration, downloadMs: 8_000 },
+    },
+  });
+  await ready(page);
+  const startedAt = Date.now();
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "download")).toHaveCount(1);
+  await Bun.sleep(1_200);
+  // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
+  await page.evaluate(() => {
+    const until = performance.now() + 2_000;
+    while (performance.now() < until) {}
+  });
+  await savedResult(page, startedAt, 20_000);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (document.querySelector(".graph .plot path.line")?.getAttribute("d")?.match(/M/g) ?? []).length >= 2,
+      ),
+    )
+    .toBe(true);
+  const [line, area] = await page.evaluate(() =>
+    [".graph .plot path.line", ".graph .plot path.area"].map(
+      (selector) => document.querySelector(selector)?.getAttribute("d") ?? "",
+    ),
+  );
+  expect((line!.match(/M/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  expect((area!.match(/M/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+  expect((area!.match(/Z/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+});
+
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
-    const input = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Download stage time"]',
-    )!;
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Download stage time"]')!;
     input.value = String(value / 1000);
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }, value);
 }
 
 // Freezing a page is Chrome's lifecycle control; no other browser offers it.
-for (const fault of faults.filter(
-  (fault) => browser === "chrome" || !fault.name.includes("frozen"),
-))
+for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name.includes("frozen")))
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");
     const peers = [frankfurt, victim.server];
@@ -129,15 +157,11 @@ for (const fault of faults.filter(
       await ready(page);
       const startedAt = Date.now();
       await runButton(page, "Start test").click();
-      if (fault.editDownloadMs)
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+      if (fault.editDownloadMs) await page.getByRole("button", { name: "Settings", exact: true }).click();
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
-      const left = page.locator(".remaining:not(.handoff-out)");
-      await expect(left).toHaveCount(1, { timeout: 15_000 });
+      await expect(page.locator(".remaining:not(.handoff-out)")).toHaveCount(1, { timeout: 15_000 });
       await Bun.sleep(300);
       const replacement = await fault.act?.(page, victim);
       if (replacement) relaunched.push(replacement);
@@ -147,22 +171,24 @@ for (const fault of faults.filter(
         config.duration.downloadMs = fault.editDownloadMs;
       }
       const saved = await savedResult(page, startedAt, 30_000);
-      expect(incoherence(saved.result, { ...config, adaptive: false })).toEqual(
-        [],
-      );
+      expect(incoherence(saved.result, plansOf({ ...config, adaptive: false }))).toEqual([]);
       const { failures } = saved.result.multiServer;
       if (fault.failure)
         expect(
           failures
             .filter((failure) => failure.scope === "throughput")
-            .map(({ serverId, stage, reason }) => ({
-              serverId,
-              stage,
-              reason,
-            })),
+            .map(({ serverId, stage, reason }) => ({ serverId, stage, reason })),
         ).toContainEqual(fault.failure);
       else expect(failures).toEqual([]);
       expect(saved.result.outcome).toBe(fault.outcome);
+      // Short of complete, the dial says so and names the stage it lacks, for as long as the result shows.
+      if (fault.failure) {
+        const stage = fault.failure.stage[0]!.toUpperCase() + fault.failure.stage.slice(1);
+        await expect(page.locator(".gauge-status.warn")).toHaveText(
+          fault.outcome === "partial" ? "Partial" : "Incomplete",
+        );
+        await expect(page.locator(".gauge-hint")).toContainText(stage);
+      }
       if (fault.interval)
         expect(
           saved.result.multiServer.intervals.map(({ stage, reason }) => ({
@@ -195,12 +221,9 @@ test("a peer at capacity while its upload prepares leaves as busy", async (page)
     });
     await ready(page);
     for (let i = 0; i < 2; i++) {
-      const hold = await fetch(
-        `${busy.server.http}/download?bytes=${2 ** 40}`,
-        {
-          signal: held.signal,
-        },
-      );
+      const hold = await fetch(`${busy.server.http}/download?bytes=${2 ** 40}`, {
+        signal: held.signal,
+      });
       expect(hold.status).toBe(200);
       const reader = hold.body!.getReader();
       void (async () => {

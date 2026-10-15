@@ -22,9 +22,8 @@ interface ElementState {
 const artifacts = resolve("test-results/webview");
 // JSON is already a valid JavaScript expression for CDP evaluation.
 const encode = (value: unknown) =>
-  JSON.stringify(value, (_key, item) =>
-    item instanceof RegExp ? { source: item.source, flags: item.flags } : item,
-  ) ?? "undefined";
+  JSON.stringify(value, (_key, item) => (item instanceof RegExp ? { source: item.source, flags: item.flags } : item)) ??
+  "undefined";
 
 // Serialized into the page; names follow accname closely enough to skip aria-hidden text.
 function resolveSteps(steps: Step[]): Element[] {
@@ -38,12 +37,10 @@ function resolveSteps(steps: Step[]): Element[] {
         ? norm(actual) === wanted
         : norm(actual).includes(wanted)
       : new RegExp(wanted.source, wanted.flags).test(norm(actual));
-  const hidden = (el: Element) =>
-    !el.checkVisibility() || !!el.closest('[aria-hidden="true"]');
+  const hidden = (el: Element) => !el.checkVisibility() || !!el.closest('[aria-hidden="true"]');
   const text = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) return (node as Text).data;
-    if (!(node instanceof Element) || /^(SCRIPT|STYLE)$/.test(node.tagName))
-      return "";
+    if (!(node instanceof Element) || /^(SCRIPT|STYLE)$/.test(node.tagName)) return "";
     const style = getComputedStyle(node);
     if (node.ariaHidden === "true" || style.display === "none") return "";
     const own = node.ariaLabel || [...node.childNodes].map(text).join("");
@@ -72,8 +69,7 @@ function resolveSteps(steps: Step[]): Element[] {
     if (el.tagName === "SECTION") return el.ariaLabel ? "region" : "";
     return implicit[el.tagName] ?? "";
   };
-  const fromContent =
-    /^(button|cell|checkbox|heading|link|menuitem|option|radio|switch|tab|tooltip)$/;
+  const fromContent = /^(button|cell|checkbox|heading|link|menuitem|option|radio|switch|tab|tooltip)$/;
   const name = (el: Element) => {
     const ids = el.getAttribute("aria-labelledby")?.split(/\s+/);
     if (ids)
@@ -90,23 +86,17 @@ function resolveSteps(steps: Step[]): Element[] {
     return el.getAttribute("title") ?? "";
   };
   const within = (roots: Element[], keep: (el: Element) => boolean) =>
-    roots.flatMap((root) =>
-      [...root.querySelectorAll("*")].filter((el) => keep(el) && !hidden(el)),
-    );
+    roots.flatMap((root) => [...root.querySelectorAll("*")].filter((el) => keep(el) && !hidden(el)));
   let nodes: Element[] = [document.documentElement];
   for (const step of steps) {
     if (step.kind === "css")
       nodes = nodes
         .flatMap((root) => [...root.querySelectorAll(step.value)])
-        .filter(
-          (el) => step.text === undefined || match(el.textContent, step.text),
-        );
+        .filter((el) => step.text === undefined || match(el.textContent, step.text));
     else if (step.kind === "role")
       nodes = within(
         nodes,
-        (el) =>
-          role(el) === step.role &&
-          (step.name === undefined || match(name(el), step.name, step.exact)),
+        (el) => role(el) === step.role && (step.name === undefined || match(name(el), step.name, step.exact)),
       );
     else nodes = nodes.slice(step.index, step.index + 1);
   }
@@ -115,9 +105,7 @@ function resolveSteps(steps: Step[]): Element[] {
 
 function reportPolicyViolations() {
   document.addEventListener("securitypolicyviolation", (event) =>
-    console.error(
-      `CSP violation: ${event.effectiveDirective} ${event.blockedURI}`,
-    ),
+    console.error(`CSP violation: ${event.effectiveDirective} ${event.blockedURI}`),
   );
 }
 
@@ -128,9 +116,7 @@ function recordClicks() {
   const pointer = { x: -1, y: -1, over: "" };
   Object.assign(window, { clicks, pointer });
   const describe = (el: Element | null) =>
-    el
-      ? `${el.tagName}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}`
-      : "nothing";
+    el ? `${el.tagName}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}` : "nothing";
   document.addEventListener(
     "pointermove",
     (event) => {
@@ -147,9 +133,7 @@ function recordClicks() {
     (event) => {
       const target = event.target as Element | null;
       const name = target?.closest("button")?.textContent?.trim().slice(0, 40);
-      clicks.push(
-        `${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`,
-      );
+      clicks.push(`${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`);
       clicks.splice(0, clicks.length - 5);
     },
     true,
@@ -182,9 +166,7 @@ function watchDisplay() {
     const bad = /\b(NaN|Infinity)\b/.exec(markup);
     if (bad) {
       const at = bad.index;
-      report(
-        `page shows ${bad[0]}: ${markup.slice(Math.max(0, at - 120), at + 40)}`,
-      );
+      report(`page shows ${bad[0]}: ${markup.slice(Math.max(0, at - 120), at + 40)}`);
     }
     const next = app.getAttribute("data-phase") ?? "";
     if (next !== phase) {
@@ -221,16 +203,8 @@ function recordStorage() {
       });
     return request;
   };
-  for (const type of [
-    "visibilitychange",
-    "freeze",
-    "resume",
-    "pagehide",
-    "pageshow",
-  ])
-    document.addEventListener(type, () =>
-      lifecycle.push(`${type} ${document.visibilityState} at ${at()}`),
-    );
+  for (const type of ["visibilitychange", "freeze", "resume", "pagehide", "pageshow"])
+    document.addEventListener(type, () => lifecycle.push(`${type} ${document.visibilityState} at ${at()}`));
   Object.assign(window, { __gmStorage: { opens, lifecycle } });
 }
 
@@ -276,15 +250,11 @@ export class Locator {
     return this.with({ kind: "nth", index });
   }
   all<T>(fn: string | ((elements: any[], arg?: any) => T), arg?: unknown) {
-    return this.page.evaluate<T>(
-      `(${fn})((${resolveSteps})(${encode(this.steps)}), ${encode(arg)})`,
-    );
+    return this.page.evaluate<T>(`(${fn})((${resolveSteps})(${encode(this.steps)}), ${encode(arg)})`);
   }
   evaluate<T>(fn: (element: any, arg?: any) => T, arg?: unknown): Promise<T> {
     const elements = `(${resolveSteps})(${encode(this.steps)})`;
-    return this.page.evaluate<T>(
-      `(${fn})((${firstElement})(${elements}), ${encode(arg)})`,
-    );
+    return this.page.evaluate<T>(`(${fn})((${firstElement})(${elements}), ${encode(arg)})`);
   }
   state(): Promise<ElementState[]> {
     return this.all((elements: HTMLInputElement[]) =>
@@ -294,9 +264,7 @@ export class Locator {
         disabled: el.disabled || el.ariaDisabled === "true",
         focused: document.activeElement === el,
         visible: el.checkVisibility() && el.getClientRects().length > 0,
-        attrs: Object.fromEntries(
-          [...el.attributes].map((attr) => [attr.name, attr.value]),
-        ),
+        attrs: Object.fromEntries([...el.attributes].map((attr) => [attr.name, attr.value])),
       })),
     );
   }
@@ -348,12 +316,7 @@ export class Locator {
 }
 
 /** Browser work that never answers fails with its name and the page state, before the test timeout hides both. */
-export function within<T>(
-  label: string,
-  work: Promise<T>,
-  ms = 30_000,
-  explain?: () => Promise<unknown>,
-) {
+export function within<T>(label: string, work: Promise<T>, ms = 30_000, explain?: () => Promise<unknown>) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(async () => {
@@ -363,9 +326,7 @@ export function within<T>(
             (error) => `; page state unknown: ${error.message}`,
           )
         : "";
-      reject(
-        new Error(`${label} did not answer within ${ms / 1000} s${state}`),
-      );
+      reject(new Error(`${label} did not answer within ${ms / 1000} s${state}`));
     }, ms);
   });
   // Work that fails after the bound, say when the page closes, is already reported.
@@ -454,11 +415,8 @@ export class Page {
   async evaluate<T>(fn: ((arg: any) => T) | string, arg?: unknown): Promise<T> {
     const driver = await this.init();
     const source = typeof fn === "string" ? fn : `(${fn})(${encode(arg)})`;
-    return within(
-      `evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`,
-      driver.evaluate<T>(source),
-      undefined,
-      () => this.storage(),
+    return within(`evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`, driver.evaluate<T>(source), undefined, () =>
+      this.storage(),
     );
   }
   // Chrome's view runs one evaluate at a time, so these go through CDP to report why another hangs.
@@ -500,8 +458,7 @@ export class Page {
   /** The run's visible state, for a failure message: phase, run control, blocker, gauge status and notices. */
   async summary() {
     const state = await this.evaluate(() => {
-      const text = (el: Element | null) =>
-        el?.textContent?.replace(/\s+/g, " ").trim();
+      const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim();
       const run = document.querySelector(".run-button");
       return {
         phase: document.querySelector("#console")?.getAttribute("data-phase"),
@@ -523,9 +480,7 @@ export class Page {
             hover: matchMedia("(hover: hover)").matches,
           };
         })(),
-        notices: [
-          ...document.querySelectorAll('[role="alert"], [role="status"]'),
-        ]
+        notices: [...document.querySelectorAll('[role="alert"], [role="status"]')]
           .filter((el) => el.checkVisibility())
           .map(text)
           .filter(Boolean)
@@ -546,14 +501,9 @@ export class Page {
     ).catch(() => undefined);
     if (shot) await Bun.write(`${stem}.png`, shot);
     const storage = await this.storage().then(JSON.stringify, String);
-    const dom = await this.inspect("document.documentElement.outerHTML").catch(
-      String,
-    );
+    const dom = await this.inspect("document.documentElement.outerHTML").catch(String);
     const log = [...this.errors, ...this.console].join("\n");
-    await Bun.write(
-      `${stem}.txt`,
-      `${await driver.url().catch(String)}\n\n${storage}\n\n${log}\n\n${dom}`,
-    );
+    await Bun.write(`${stem}.txt`, `${await driver.url().catch(String)}\n\n${storage}\n\n${log}\n\n${dom}`);
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
@@ -570,9 +520,7 @@ function locatorExpect(locator: Locator) {
       retry(async () => {
         const state = await locator.state();
         if (!ok(state))
-          throw new Error(
-            `${message}: ${JSON.stringify(locator.steps)} ${JSON.stringify(state).slice(0, 800)}`,
-          );
+          throw new Error(`${message}: ${JSON.stringify(locator.steps)} ${JSON.stringify(state).slice(0, 800)}`);
       }, options.timeout);
   const text = (state: ElementState[]) =>
     state
@@ -581,11 +529,7 @@ function locatorExpect(locator: Locator) {
       .replace(/\s+/g, " ")
       .trim();
   const same = (actual: string | undefined, wanted: Name, exact = true) =>
-    typeof wanted === "string"
-      ? exact
-        ? actual === wanted
-        : !!actual?.includes(wanted)
-      : wanted.test(actual ?? "");
+    typeof wanted === "string" ? (exact ? actual === wanted : !!actual?.includes(wanted)) : wanted.test(actual ?? "");
   return {
     toHaveCount: (count: number, options?: { timeout?: number }) =>
       assert((s) => s.length === count, `count ${count}`)(options),
@@ -594,12 +538,9 @@ function locatorExpect(locator: Locator) {
     toBeFocused: assert((s) => !!s[0]?.focused, "focused"),
     toHaveAttribute: (name: string, value: Name) =>
       assert((s) => same(s[0]?.attrs[name], value), `attribute ${name}`)(),
-    toHaveText: (value: Name, options?: { timeout?: number }) =>
-      assert((s) => same(text(s), value), "text")(options),
-    toContainText: (value: Name) =>
-      assert((s) => same(text(s), value, false), "contains")(),
-    toHaveValue: (value: string) =>
-      assert((s) => s[0]?.value === value, `value ${value}`)(),
+    toHaveText: (value: Name, options?: { timeout?: number }) => assert((s) => same(text(s), value), "text")(options),
+    toContainText: (value: Name) => assert((s) => same(text(s), value, false), "contains")(),
+    toHaveValue: (value: string) => assert((s) => s[0]?.value === value, `value ${value}`)(),
   };
 }
 
@@ -614,8 +555,7 @@ const poll = (fn: () => unknown, options: { timeout?: number } = {}) =>
   });
 
 export const expect: any = Object.assign(
-  (actual: unknown) =>
-    actual instanceof Locator ? locatorExpect(actual) : bunExpect(actual),
+  (actual: unknown) => (actual instanceof Locator ? locatorExpect(actual) : bunExpect(actual)),
   { poll },
 );
 
@@ -626,28 +566,18 @@ type TestOptions = {
   /** Needs the DevTools Protocol; other browsers skip it. */
   chrome?: boolean;
 };
-function pageTest(
-  name: string,
-  fn: (page: Page) => Promise<unknown>,
-  options: TestOptions = {},
-) {
+function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
   bunTest.skipIf(!!options.chrome && browser !== "chrome")(
     name,
     async () => {
       const page = new Page(options);
       try {
         await fn(page);
-        await page
-          .evaluate("window.__gmCheckDisplay?.()")
-          .catch(() => undefined);
+        await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
         if (page.errors.length) throw new Error(page.errors.join("\n"));
       } catch (error) {
         // Parallel runs drop a test's own output, so its failure carries the page state.
-        const summary = await within(
-          "summarising the page",
-          page.summary(),
-          5_000,
-        ).catch(String);
+        const summary = await within("summarising the page", page.summary(), 5_000).catch(String);
         if (error instanceof Error) error.message += `\n${summary}`;
         await page.artifact(name).catch(() => {});
         throw error;
@@ -660,11 +590,8 @@ function pageTest(
 }
 
 export const test = Object.assign(pageTest, {
-  chrome: (
-    name: string,
-    fn: (page: Page) => Promise<unknown>,
-    options: TestOptions = {},
-  ) => pageTest(name, fn, { ...options, chrome: true }),
+  chrome: (name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) =>
+    pageTest(name, fn, { ...options, chrome: true }),
 });
 
 const axeSource = resolve("node_modules/axe-core/axe.min.js");
@@ -672,11 +599,7 @@ const axeSource = resolve("node_modules/axe-core/axe.min.js");
 export function settled() {
   const finite = document
     .getAnimations()
-    .filter(
-      (a) =>
-        a.timeline === document.timeline &&
-        a.effect?.getComputedTiming().iterations !== Infinity,
-    );
+    .filter((a) => a.timeline === document.timeline && a.effect?.getComputedTiming().iterations !== Infinity);
   return Promise.allSettled(finite.map((animation) => animation.finished));
 }
 
@@ -688,7 +611,5 @@ export async function seriousViolations(page: Page, selector = "document") {
   const result = await page.evaluate<{ violations: { impact: string }[] }>(
     `axe.run(${context}, { resultTypes: ["violations"] })`,
   );
-  return result.violations.filter(({ impact }) =>
-    ["critical", "serious"].includes(impact),
-  );
+  return result.violations.filter(({ impact }) => ["critical", "serious"].includes(impact));
 }

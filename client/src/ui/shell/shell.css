@@ -1,0 +1,540 @@
+/* The console's frame: the grid, the top bar, the workspaces, the side sheets and the status strip. The layout
+   owner stamps <html data-layout="docked2|docked1|flyout"> and data-bottom-sheet, so breakpoints live in one place. */
+@layer components {
+  /* Dock columns are written inline from the resolved widths; they restyle the grid alone. */
+  #console {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    grid-template-rows: var(--topbar-h) minmax(0, 1fr) calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    grid-template-areas:
+      "topbar   topbar  topbar"
+      "leftdock stage   rightdock"
+      "status   status  status";
+    height: 100dvh;
+    background: var(--canvas);
+    color: var(--text);
+  }
+
+  /* The last icon's own padding completes the right inset, so the bar's ink sits on the gutter at both ends. */
+  .topbar {
+    grid-area: topbar;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: var(--gutter);
+    border-bottom: var(--hairline) solid var(--border);
+    container: topbar / inline-size;
+    & > * {
+      flex-shrink: 0;
+    }
+    /* The bar's keys are square glyph plates with a hairline; a dialog opened from the bar keeps its own. */
+    & .btn:not(dialog *) {
+      background-color: var(--surface-1);
+    }
+  }
+  .topbar-spacer {
+    flex: 1;
+    min-width: 0;
+  }
+  .brand-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: var(--control-h);
+    padding: 0 6px;
+    margin-left: -6px;
+    margin-right: 2px;
+    border-radius: var(--r-chrome);
+    font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
+    letter-spacing: -0.01em;
+    transition: var(--transition-control);
+    &:active {
+      opacity: 0.7;
+    }
+    @media (hover: hover) {
+      &:hover .brand-label {
+        color: var(--text-soft);
+      }
+    }
+  }
+  /* Hexagon in the latency hue, needle in the text colour (favicon.svg). */
+  .brand-glyph {
+    width: 20px;
+    height: 20px;
+  }
+  .brand-hex {
+    fill: none;
+    stroke: var(--phase-latency);
+    stroke-width: 2;
+    stroke-linejoin: round;
+  }
+  .brand-needle {
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+  }
+  /* A new theme's glyph turns into place on the spring. */
+  .theme-glyph {
+    display: grid;
+    @media (prefers-reduced-motion: no-preference) {
+      animation: glyph-turn 480ms var(--ease-spring) backwards;
+    }
+  }
+  .connectivity {
+    display: grid;
+    place-items: center;
+  }
+  .return-live {
+    --btn-line: var(--tone-line);
+    padding-inline: var(--space-2) var(--space-3);
+    @media (hover: hover) {
+      &:hover {
+        --btn-line: var(--tone);
+      }
+    }
+  }
+  .run-icon {
+    display: grid;
+    color: var(--tone);
+  }
+  .live-copy {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    /* Small text in a hue takes its ink, so it clears 4.5:1 in every stage. */
+    & strong {
+      color: var(--tone-ink);
+      font-weight: var(--w-strong);
+    }
+  }
+  /* A row of N 44 px keys with their 4 px gaps needs 48 N + 46 px. History and Details fold into More where the
+     row they leave fits, and Theme too where it does not; the way back to a live run is one key more. */
+  .topbar-more,
+  .topbar [data-more] {
+    display: none;
+  }
+  @container topbar (max-width: 333px) {
+    .topbar.saving:not(:has(.return-live)) {
+      & :is(.direct-history, .direct-details) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      /* The Details item is named by its route, `endpoint`. */
+      & :is([data-more="history"], [data-more="endpoint"]) {
+        display: grid;
+      }
+    }
+  }
+  @container topbar (max-width: 381px) {
+    .topbar.saving:has(.return-live) {
+      & :is(.direct-history, .direct-details) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & :is([data-more="history"], [data-more="endpoint"]) {
+        display: grid;
+      }
+    }
+  }
+  @container topbar (max-width: 285px) {
+    .topbar {
+      & :is(.direct-history, .direct-details, .direct-theme) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & [data-more] {
+        display: grid;
+      }
+    }
+  }
+  /* Narrower still, the way back to the live run, which names its stage and any recovery, stands for the dot. */
+  @container topbar (max-width: 285px) {
+    .topbar:has(.return-live) .connectivity {
+      display: none;
+    }
+  }
+  @container topbar (max-width: 333px) {
+    .topbar:has(.return-live) {
+      & :is(.direct-history, .direct-details, .direct-theme) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & [data-more] {
+        display: grid;
+      }
+    }
+  }
+
+  /* The stage is the anchor the phase toast keeps to, clear of docked sheets; its layout moves shift it by offsets. */
+  .stage {
+    position: relative;
+    anchor-name: --stage;
+    grid-area: stage;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4) var(--gutter) var(--space-5);
+    /* A panel gliding to its place may pass the edge; it never scrolls the stage sideways. */
+    overflow: clip auto;
+    overscroll-behavior: contain;
+    /* A workspace appears in one quick fade, never piece by piece. */
+    @media (prefers-reduced-motion: no-preference) {
+      animation: appear var(--dur-slide) var(--ease-out) backwards;
+    }
+    & > .gauge-panel {
+      flex: 1 1 0;
+      width: 100%;
+      max-width: 1920px;
+      min-height: min-content;
+      align-self: center;
+    }
+  }
+  /* While a run is under way the console is lit from above in the running stage's hue. One gradient, repainted
+     only while the hue moves. */
+  .measurement-stage {
+    isolation: isolate;
+    &::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0 0 auto;
+      height: 70%;
+      background: radial-gradient(
+        70% 80% at 30% 0%,
+        color-mix(in oklab, var(--ambient) 11%, transparent),
+        transparent 75%
+      );
+      opacity: 0;
+      transition:
+        opacity 488ms var(--ease-out-head),
+        --ambient 488ms var(--ease-out-head);
+      pointer-events: none;
+    }
+    &[data-stage]::before {
+      opacity: 1;
+    }
+    &[data-stage="latency"] {
+      --ambient: var(--phase-latency);
+    }
+    &[data-stage="download"] {
+      --ambient: var(--phase-download);
+    }
+    &[data-stage="upload"] {
+      --ambient: var(--phase-upload);
+    }
+    &[data-stage="bidirectional"] {
+      --ambient: var(--phase-bidirectional);
+    }
+    /* Under History the console keeps its layout and skips its rendering; it fades back in on return. Skipped
+       content never advances a transition, so none starts there. */
+    &.away {
+      content-visibility: hidden;
+      animation: none;
+      & * {
+        transition: none !important;
+      }
+    }
+    @media (max-height: 800px) {
+      gap: var(--space-3);
+      padding-block: var(--space-3);
+    }
+  }
+  .history-stage {
+    z-index: 1;
+    padding: 0;
+    overflow: hidden;
+    background: var(--canvas);
+  }
+  /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
+  .measurement-stage :is(.gauge-face, .results),
+  footer.status :is(.elapsed, .transferred) {
+    transition: filter var(--dur-slide) var(--ease-out);
+  }
+  .measurement-stage.previous :is(.gauge-face, .results),
+  .measurement-stage.previous ~ footer.status :is(.elapsed, .transferred) {
+    filter: opacity(0.45);
+  }
+
+  footer.status {
+    grid-area: status;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 var(--gutter) env(safe-area-inset-bottom, 0px);
+    border-top: var(--hairline) solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    container: status / inline-size;
+  }
+  /* Space and R act on the measurement only, so History drops their hint. */
+  .history-stage ~ footer.status .command-hints > :first-child {
+    display: none;
+  }
+  .command-hints {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
+    & > span {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+    }
+    /* Every run word shares one cell, so a change never moves the strip. */
+    & .run-word {
+      display: inline-grid;
+      & > * {
+        grid-area: 1 / 1;
+      }
+      & > [aria-hidden="true"] {
+        visibility: hidden;
+      }
+    }
+  }
+  @container status (max-width: 1100px) {
+    .command-hints {
+      display: none;
+    }
+  }
+
+  /* A phone's chips, key and cards already say what the strip would. */
+  @media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {
+    #console {
+      grid-template-rows: var(--topbar-h) minmax(0, 1fr) env(safe-area-inset-bottom, 0px);
+    }
+    footer.status {
+      display: none;
+    }
+  }
+  @media (max-width: 1023px) {
+    .stage:not(.history-stage) {
+      padding: var(--space-3) var(--gutter) var(--space-4);
+    }
+  }
+  @media (max-width: 759px) {
+    /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
+    .topbar {
+      gap: var(--space-1);
+      padding-inline: calc(var(--gutter) - (var(--hit) - var(--icon)) / 2);
+      & .key {
+        width: var(--hit);
+      }
+      & .more-menu {
+        margin-inline-end: calc((var(--hit) - var(--icon)) / 2);
+      }
+    }
+    .brand-label,
+    .live-copy {
+      display: none;
+    }
+    .brand-btn {
+      justify-content: center;
+      min-width: var(--hit);
+      min-height: var(--hit);
+      margin: 0;
+      padding: 0;
+    }
+    .return-live {
+      width: calc(var(--control-h) + 2 * var(--hit-pad));
+      padding: 0;
+    }
+    .connectivity {
+      width: var(--hit);
+    }
+  }
+
+  /* A side sheet is one element in every layout: a column beside the stage while docked, a flyout over it below
+     1,200 px, a bottom sheet on an upright phone. Closed, it is inert and stays displayed past its edge, so every
+     engine slides it the same way; once the slide is over its content rests skipped (data-rest), so nothing in it
+     restyles, transitions or answers a role query, while the style and layout it had are kept for its next opening.
+     Its width is its own --sheet-w, which nothing inside inherits. */
+  .sheet-layer {
+    display: contents;
+  }
+  .side-sheet {
+    display: flex;
+    flex-direction: column;
+    max-width: none;
+    max-height: none;
+    height: auto;
+    margin: 0;
+    overflow: hidden;
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
+    background: var(--sheet);
+    box-shadow: var(--elev-float);
+    color: var(--text);
+    &[data-rest] {
+      content-visibility: hidden;
+    }
+    /* Skipped content never advances a transition, so none starts there: a style read forced at rest (an audit
+       after a theme change) applies at once. */
+    &[data-rest] *,
+    &[data-rest] *::before,
+    &[data-rest] *::after {
+      transition: none !important;
+    }
+  }
+  /* Docked, the sheet is its column, flush with the bars and cut from the stage by one hairline; the column's move
+     is its slide. Closed, its column is 0 wide and it hangs past the viewport's edge. */
+  :root:not([data-layout="flyout"]) .side-sheet {
+    grid-area: rightdock;
+    justify-self: start;
+    position: relative;
+    inset: auto;
+    width: var(--sheet-w);
+    border-width: 0 0 0 var(--hairline);
+    border-radius: 0;
+    box-shadow: none;
+    /* Nothing clips the resize handle that straddles the edge. */
+    overflow: visible;
+    &.left {
+      grid-area: leftdock;
+      justify-self: end;
+      border-width: 0 var(--hairline) 0 0;
+    }
+    /* The sheet's ground runs on past the viewport's edge, so its bob as it docks never opens a gap there. */
+    &::after {
+      content: "";
+      position: absolute;
+      inset-block: 0;
+      left: 100%;
+      width: var(--space-6);
+      background: inherit;
+      pointer-events: none;
+    }
+    &.left::after {
+      right: 100%;
+      left: auto;
+    }
+  }
+  :root[data-layout="flyout"] .side-sheet {
+    --closed: translateX(calc(100% + var(--space-4)));
+    position: fixed;
+    z-index: var(--z-panel);
+    inset: var(--topbar-h) var(--space-2) var(--space-2) auto;
+    width: min(var(--sheet-w), 100vw - var(--space-6));
+    transform: var(--closed);
+    transition: transform var(--dur-sheet) var(--ease-out);
+    &.left {
+      --closed: translateX(calc(-100% - var(--space-4)));
+      inset: var(--topbar-h) auto var(--space-2) var(--space-2);
+    }
+    &[open] {
+      transform: none;
+    }
+    /* From rest it slides in from its closed place. */
+    @starting-style {
+      &[open] {
+        transform: var(--closed);
+      }
+    }
+    /* A floating sheet's grip and head always drag it, never scroll the page behind. */
+    & :is(.sheet-handle, .sheet-head) {
+      touch-action: none;
+    }
+  }
+  :root[data-layout="flyout"][data-bottom-sheet] .side-sheet {
+    --closed: translateY(100%);
+    inset: auto 0 0;
+    width: 100%;
+    height: 88dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-width: var(--hairline) 0 0;
+    border-radius: var(--r-surface) var(--r-surface) 0 0;
+    & .sheet-handle {
+      display: flex;
+    }
+  }
+  /* Short viewports (and 400 % zoom) give the flyout the full height; the whole sheet scrolls. */
+  @media (max-height: 480px) {
+    :root[data-layout="flyout"] .side-sheet {
+      top: var(--space-2);
+      bottom: var(--space-2);
+      overflow-y: auto;
+      & .sheet-head {
+        position: sticky;
+        z-index: 1;
+        top: 0;
+        background: var(--sheet);
+      }
+      & .panel-body {
+        flex: none;
+        overflow: visible;
+      }
+    }
+  }
+  /* The scrim comes and goes with the flyout it shades, on the sheet's own clock, and fades as a finger drags. */
+  .scrim {
+    --sheet-drag: inherit;
+    position: fixed;
+    z-index: var(--z-scrim);
+    inset: var(--topbar-h) 0 0;
+    background: var(--scrim);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity var(--dur-sheet) var(--ease-out),
+      visibility var(--dur-sheet);
+    &.open {
+      opacity: calc(1 - var(--sheet-drag, 0));
+      visibility: visible;
+      pointer-events: auto;
+    }
+  }
+  :root:not([data-layout="flyout"]) .scrim {
+    display: none;
+  }
+  .side-sheet.left > .resize-handle {
+    right: -6px;
+  }
+  .side-sheet.right > .resize-handle {
+    left: -6px;
+  }
+  .sheet-handle {
+    display: none;
+    flex: none;
+    justify-content: center;
+    padding-block: 8px 2px;
+  }
+  .sheet-grip {
+    width: 36px;
+    height: 4px;
+    border-radius: var(--r-full);
+    background: var(--border-strong);
+  }
+  .panel-body {
+    flex: 1 1 auto;
+    touch-action: pan-y pinch-zoom;
+  }
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes glyph-turn {
+  from {
+    opacity: 0;
+    rotate: -120deg;
+    scale: 0.3;
+  }
+}

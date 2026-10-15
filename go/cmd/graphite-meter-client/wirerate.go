@@ -8,7 +8,8 @@ import (
 )
 
 // wireMultiplier is the wire bytes each payload byte takes over target on IP version ipVersion: every layer's
-// headers at a 1,500 B MTU, as the browser estimates them (client/src/lib/compensation.ts, its central estimate).
+// headers at a 1,500 B MTU, as the browser estimates them (client/src/engine/measure/overhead.ts, its central
+// estimate).
 func wireMultiplier(target wire.ThroughputTarget, ipVersion int) float64 {
 	const mtu, ethernet, record = 1500.0, 38.0, 16384.0
 	quic := target.Transport != wire.TransportFetchStream || target.Protocol == "http3"

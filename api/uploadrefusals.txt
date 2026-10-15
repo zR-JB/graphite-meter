@@ -21,8 +21,8 @@
 #        writeUploadAccessError, i.e. both the text and the status); the lane
 #        endings idle and revoked through the server's real answers in
 #        go/internal/server/lanes_test.go and revocation_test.go
-#   TS — client/src/lib/runner/workers/progressFeed.test.ts (the fatal records
-#        the progress feed surfaces)
+#   TS — client/src/engine/lanes/endings.test.ts (the fatal records the
+#        progress feed surfaces)
 #
 # The failure reason each refusal ends a stage with is pinned in uploadrefusalreasons.txt.
 #

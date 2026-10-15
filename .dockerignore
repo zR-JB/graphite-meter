@@ -3,14 +3,11 @@
 **/node_modules
 client/dist
 client/.e2e-dist
-client/.vite
 client/test-results
-client/bench/results
-client-v2/dist
-client-v2/test-results
-# The image's v2 check covers what it builds; the E2E tests and benchmarks import v1's harness, which the image lacks.
-client-v2/e2e
-client-v2/bench
+# The image's check covers what it builds, not the browser suite, its launcher or the benchmarks.
+client/e2e
+client/scripts
+client/bench
 go/graphite-meter
 go/graphite-meter-client
 go/graphite-meter-client.exe

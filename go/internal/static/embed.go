@@ -1,4 +1,4 @@
-// Package static embeds and serves the built Svelte client.
+// Package static embeds and serves the built browser client.
 package static
 
 import (
@@ -21,7 +21,7 @@ import (
 var distFS embed.FS
 
 // The CSP digests of index.html's inline pre-paint <script> and <style>, and the Trusted Types policy its marker
-// names (client v1 names none); all are empty without a build.
+// names; all are empty without a build.
 var inlineScript, inlineStyle, trustedTypes = inlineHash("script"), inlineHash("style"), trustedTypesPolicy(shell())
 
 func shell() []byte {

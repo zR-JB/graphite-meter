@@ -23,15 +23,11 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
     await ready(page);
     oslo.kill("SIGKILL");
     const settings = await openSettings(page);
-    await expect(
-      settings.locator(`.server-status[data-state="failed"]`),
-    ).toHaveCount(1, { timeout: 10_000 });
+    await expect(settings.locator(`.server-status[data-state="failed"]`)).toHaveCount(1, { timeout: 10_000 });
     await closeSettings(page);
     const { multiServer } = (await run(page)).result;
     expect(multiServer.participants).toEqual(["self"]);
-    expect(multiServer.failures).toMatchObject([
-      { serverId: "oslo", reason: "preparation-failed" },
-    ]);
+    expect(multiServer.failures).toMatchObject([{ serverId: "oslo", reason: "preparation-failed" }]);
   } finally {
     oslo.kill();
     bergen.kill();
@@ -54,9 +50,7 @@ test("a forced stream count beyond the browser's connections is kept exactly and
   });
   await closeSettings(page);
   await page.getByRole("button", { name: "Details" }).click();
-  await expect(page.locator(".infra")).toContainText(
-    /Forced\s*12 per direction/,
-  );
+  await expect(page.locator(".infra")).toContainText(/Forced\s*12 per direction/);
   await page.press("Escape");
   // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
   const saved = await run(page);
@@ -69,8 +63,7 @@ test("without idle latency the page settles Connected and never shows a blocker 
     const seen: string[] = ((window as any).__labels = []);
     new MutationObserver(() => {
       const label = document.querySelector("footer.status .label");
-      if (label?.textContent && seen.at(-1) !== label.textContent)
-        seen.push(label.textContent);
+      if (label?.textContent && seen.at(-1) !== label.textContent) seen.push(label.textContent);
     }).observe(document, { subtree: true, childList: true });
   });
   await open(page, home.url, {
@@ -79,9 +72,7 @@ test("without idle latency the page settles Connected and never shows a blocker 
   await expect(page.locator('.pulse .status-dot[data-tone="ok"]')).toBeVisible({
     timeout: 15_000,
   });
-  expect(await page.evaluate(() => (window as any).__labels)).toEqual([
-    "Not started",
-  ]);
+  expect(await page.evaluate(() => (window as any).__labels)).toEqual(["Not started"]);
 });
 
 test("cancelling a new start keeps the previous result", async (page) => {
@@ -89,10 +80,7 @@ test("cancelling a new start keeps the previous result", async (page) => {
     const original = window.fetch.bind(window);
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const held = (window as { holdPreflight?: boolean }).holdPreflight;
-      if (
-        held &&
-        new URL(String(input), location.href).pathname === "/preflight"
-      )
+      if (held && new URL(String(input), location.href).pathname === "/preflight")
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       return original(input, init);
     }) as typeof fetch;
@@ -100,9 +88,7 @@ test("cancelling a new start keeps the previous result", async (page) => {
   await open(page);
   await ready(page);
   await run(page);
-  await page.evaluate(
-    () => void Object.assign(window, { holdPreflight: true }),
-  );
+  await page.evaluate(() => void Object.assign(window, { holdPreflight: true }));
   await runButton(page, "Run again").click();
   await runButton(page, "Cancel").click();
   await expect(phase(page, "complete")).toHaveCount(1);

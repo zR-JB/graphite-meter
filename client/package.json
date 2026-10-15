@@ -1,33 +1,25 @@
 {
-  "name": "graphite-meter",
+  "name": "graphite-meter-client",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "license": "AGPL-3.0-or-later",
-  "scripts": {
-    "dev": "vite",
-    "build": "bun run check && bun run build:bundle",
-    "build:bundle": "vite build",
-    "check": "rm -rf .svelte-check && svelte-check --tsconfig ./tsconfig.check.json --tsgo",
-    "build:e2e-harness": "vite build -c vite.e2e.config.ts",
-    "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
-    "e2e": "bun run build:e2e-harness && bun run scripts/e2e.ts",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+  "imports": {
+    "#jsx/jsx-runtime": "./src/lib/jsx-runtime.ts",
+    "#jsx/jsx-dev-runtime": "./src/lib/jsx-runtime.ts"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@types/bun": "npm:bun-types@^1.4.3",
-    "@typescript/native": "npm:typescript@7.0.2",
-    "axe-core": "^4.14.0",
-    "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^4.1.1",
-    "svelte": "5.57.2",
-    "svelte-check": "^4.7.6",
-    "typescript": "^6.0.3",
-    "vite": "^8.3.4"
+    "@types/bun": "npm:bun-types@1.4.3",
+    "axe-core": "4.14.0"
   },
-  "patchedDependencies": {
-    "svelte@5.57.2": "patches/svelte@5.57.2.patch"
+  "scripts": {
+    "build:bundle": "bun build.ts",
+    "build:auth": "bun auth/build.ts",
+    "build": "bun run check && bun run build:bundle",
+    "check": "bun check && bun test ./auth",
+    "format": "biome format --write .",
+    "format:check": "biome format . && bun auth/build.ts --check",
+    "test": "bun test src ./auth --parallel",
+    "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
+    "e2e": "bun run scripts/e2e.ts"
   }
 }

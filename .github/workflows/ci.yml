@@ -168,8 +168,8 @@ jobs:
         with:
           name: e2e-failures-${{ matrix.browser }}
           path: |
-            client-v2/test-results/webview
-            client-v2/test-results/servers
+            client/test-results/webview
+            client/test-results/servers
           if-no-files-found: ignore
 
   rust:
@@ -389,8 +389,8 @@ jobs:
           name: rust-e2e-failures-${{ matrix.group }}
           retention-days: 7
           path: |
-            client-v2/test-results/webview
-            client-v2/test-results/servers
+            client/test-results/webview
+            client/test-results/servers
             ${{ runner.temp }}/browser-*/*.log
             ${{ runner.temp }}/browser-*/*.json
           if-no-files-found: ignore

@@ -1,17 +1,29 @@
-import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import { incoherence, type HistoryRecord } from "../src/lib/history/types";
-import type { RunnerConfig } from "../src/lib/runner/contract";
-import { STAGES } from "../src/lib/runner/schedule";
-import { STAGE } from "../src/lib/presentation/vocabulary";
+import type { HistoryRecord } from "../src/app/history/records";
+import { incoherence, type StagePlans } from "../src/engine/run/result";
+import type { TestConfig as RunnerConfig } from "../src/engine/types";
+import { planned, STAGES } from "../src/engine/run/schedule";
+import { STAGE } from "../src/view/words";
 import { describe, launch, type Server } from "./servers";
 import { expect, settled, type Page } from "./webview";
 
+/** The History database: the contract this suite holds the client to, written out on its own. */
+export const HISTORY_DB = {
+  name: "graphite-meter",
+  version: 2,
+  resultsStore: "results",
+  resultKeyPath: "id",
+  completedAtIndex: "completedAt",
+  metadataStore: "meta",
+  metadataKeyPath: "key",
+  clearsKey: "clears",
+} as const;
+
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
-export const [home, frankfurt, amsterdam, helsinki, locked] = fleet;
+// The runner always launches these five.
+export const [home, frankfurt, amsterdam, helsinki, locked] = fleet as [Server, Server, Server, Server, Server];
 export const password: string = env.password;
 export const passwordHash: string = env.passwordHash;
-export const harness: string = env.harness;
 
 export const catalog = (...servers: Server[]) => ({
   GM_SERVER_CATALOG: JSON.stringify({
@@ -22,8 +34,7 @@ export const catalog = (...servers: Server[]) => ({
 /** A server of its own; `env` may depend on it, such as a public URL for sign-in. */
 export async function spawnPeer(
   name: string,
-  env:
-    Record<string, string> | ((server: Server) => Record<string, string>) = {},
+  env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
 ) {
   const server = await describe(name.toLowerCase(), name);
   const child = await launch(
@@ -55,20 +66,22 @@ export interface Seed {
   config?: Partial<Record<keyof RunnerConfig, unknown>>;
 }
 
+/** The plan each stage ran under, as far as saved settings tell: an adaptive run may have finished any stage early. */
+export const plansOf = (config: Pick<RunnerConfig, "stages" | "duration" | "adaptive">): StagePlans =>
+  Object.fromEntries(
+    STAGES.map((stage) => [
+      stage,
+      { planned: planned(config, stage), durationMs: config.duration[`${stage}Ms`], early: config.adaptive },
+    ]),
+  ) as StagePlans;
+
 export async function open(page: Page, origin = home.url, seed: Seed = {}) {
   await page.clearStorage(fleet.flatMap((server) => [server.http, server.url]));
   await page.addInitScript(
     ({ servers, config }) => {
       if (localStorage.getItem("graphite-meter:v1")) return;
-      if (servers)
-        localStorage.setItem(
-          "graphite-meter:server-selection:v1",
-          JSON.stringify(servers),
-        );
-      localStorage.setItem(
-        "graphite-meter:v1",
-        JSON.stringify({ config, resultHistoryPreference: "enabled" }),
-      );
+      if (servers) localStorage.setItem("graphite-meter:server-selection:v1", JSON.stringify(servers));
+      localStorage.setItem("graphite-meter:v1", JSON.stringify({ config, resultHistoryPreference: "enabled" }));
     },
     {
       servers: seed.servers?.map(({ id, url }) => ({ id, url })),
@@ -82,9 +95,7 @@ export async function openSettings(page: Page) {
   const panel = page.locator('dialog[aria-label="Settings"]');
   if (await panel.all((els) => els.every((el) => el.inert)))
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect
-    .poll(() => panel.all((els) => els.some((el) => !el.inert)))
-    .toBe(true);
+  await expect.poll(() => panel.all((els) => els.some((el) => !el.inert))).toBe(true);
   // The sheet slides in with its column; a pointer aimed mid-slide misses its row.
   await page.evaluate(settled);
   return panel;
@@ -94,9 +105,7 @@ export async function closeSettings(page: Page) {
   const panel = page.locator('dialog[aria-label="Settings"]');
   await panel.getByRole("button", { name: "Close Settings" }).click();
   // The close transition must finish, or a reopen sees a panel that is still open.
-  await expect
-    .poll(() => panel.all((els) => els.every((el) => el.inert)))
-    .toBe(true);
+  await expect.poll(() => panel.all((els) => els.every((el) => el.inert))).toBe(true);
   // The stage slides back with the column; a pointer aimed mid-slide misses its control.
   await page.evaluate(settled);
 }
@@ -113,17 +122,14 @@ export async function ready(page: Page) {
 export async function countSaves(page: Page) {
   await page.evaluate(() => {
     Object.assign(window, { saves: 0 });
-    new BroadcastChannel("graphite-meter-history").onmessage = () =>
-      (window as any).saves++;
+    new BroadcastChannel("graphite-meter-history").onmessage = () => (window as any).saves++;
   });
   return () => page.evaluate<number>(() => (window as any).saves);
 }
 
-export const runButton = (page: Page, name: string | RegExp) =>
-  page.getByRole("button", { name, exact: true });
+export const runButton = (page: Page, name: string | RegExp) => page.getByRole("button", { name, exact: true });
 
-export const phase = (page: Page, name: string) =>
-  page.locator(`#console[data-phase="${name}"]`);
+export const phase = (page: Page, name: string) => page.locator(`#console[data-phase="${name}"]`);
 
 export async function run(page: Page, timeout = 20_000) {
   const startedAt = Date.now();
@@ -144,20 +150,15 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
       { timeout },
     )
     .toBe(true);
-  const config = await page.evaluate(
-    () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config,
-  );
-  expect(incoherence(record!.result, config)).toEqual([]);
+  const config = await page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config);
+  expect(incoherence(record!.result, plansOf(config))).toEqual([]);
   // History views have no stage track; the live view must show what was saved.
   for (const stage of STAGES) {
     const status = record!.result.stages[stage];
     const name = new RegExp(`^${STAGE[stage].short} stage`);
     const track = page.getByRole("switch", { name });
     if (status !== "not-run" && (await track.state()).length)
-      await expect(track).toHaveAttribute(
-        "class",
-        new RegExp(`\\bchip--${status}\\b`),
-      );
+      await expect(track).toHaveAttribute("class", new RegExp(`\\bchip--${status}\\b`));
   }
   return record!;
 }
@@ -170,10 +171,7 @@ async function readLatest(schema: typeof HISTORY_DB) {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;
-      const all = db
-        .transaction(schema.resultsStore)
-        .objectStore(schema.resultsStore)
-        .getAll();
+      const all = db.transaction(schema.resultsStore).objectStore(schema.resultsStore).getAll();
       all.onsuccess = () => {
         db.close();
         resolve(all.result.sort((a, b) => b.completedAt - a.completedAt)[0]);

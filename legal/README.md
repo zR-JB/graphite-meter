@@ -20,8 +20,7 @@ or running a Go generator.
 Dependency discovery remains tied to the actual build inputs: Python invokes
 `go list -deps -json` for the supported server and TUI targets and `go env
 GOVERSION` to verify the pinned toolchain. A temporary build of the shipped
-browser client, v2, reports the modules that reach its bundle; client v1
-builds (`GM_CLIENT=v1`) are for local comparison and are not covered.
+browser client reports the modules that reach its bundle.
 Changing a product language therefore requires changing its
 dependency discovery adapter, while the review and artifact logic stays in
 Python. The Go runtime package only embeds the generated TUI legal report.

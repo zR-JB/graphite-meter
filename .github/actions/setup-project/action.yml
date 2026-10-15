@@ -38,7 +38,7 @@ inputs:
     required: false
     default: 'false'
   biome:
-    description: Include pinned Biome, client v2's formatter
+    description: Include pinned Biome, the browser client's formatter
     required: false
     default: 'false'
   cargo-deny:
@@ -143,7 +143,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock', 'client-v2/bun.lock') }}
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
 
     - name: Install client dependencies
       if: inputs.client-deps == 'true'

@@ -1,17 +1,10 @@
 // The browsers the suite drives: Chrome for Testing through Bun's WebView (CDP), and Firefox through WebDriver
 // BiDi. GM_E2E_BROWSER picks one; a page sees only the Driver both share.
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const browser: "chrome" | "firefox" =
-  process.env.GM_E2E_BROWSER === "firefox" ? "firefox" : "chrome";
+export const browser: "chrome" | "firefox" = process.env.GM_E2E_BROWSER === "firefox" ? "firefox" : "chrome";
 
 export interface Driver {
   /** Evaluates an expression, awaiting a promise; the value comes back as JSON. */
@@ -55,22 +48,17 @@ function removeProfiles() {
   const profiles: string[] = [];
   try {
     for (const task of readdirSync(tasks))
-      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8")
-        .split(" ")
-        .filter(Boolean)) {
+      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8").split(" ").filter(Boolean)) {
         const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
         // Chrome rewrites its argv into one space-separated title.
-        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(
-          cmdline,
-        );
+        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(cmdline);
         if (dir?.[1]) profiles.push(dir[1]);
       }
   } catch {}
   Bun.WebView.closeAll();
   for (const dir of profiles)
     try {
-      if (dirname(dir) === tmpdir())
-        rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      if (dirname(dir) === tmpdir()) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
     } catch {}
 }
 // Chrome is shared across files in this process. File-scoped afterAll cleanup
@@ -85,20 +73,12 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
       type: "chrome",
       url: false,
       path: process.env.BUN_CHROME_PATH,
-      argv: [
-        "--hide-scrollbars",
-        ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean),
-      ],
+      argv: ["--hide-scrollbars", ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean)],
       stderr: process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
     },
     dataStore: "ephemeral",
     console: (type, ...args) =>
-      events.console(
-        type,
-        args
-          .map((arg) => (arg as { description?: string })?.description ?? arg)
-          .join(" "),
-      ),
+      events.console(type, args.map((arg) => (arg as { description?: string })?.description ?? arg).join(" ")),
   });
   await view.navigate("about:blank");
   await view.cdp("Runtime.enable");
@@ -112,8 +92,7 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
     reload: () => view.reload(),
     url: async () => view.url,
     click: (x, y) => view.click(x, y),
-    hover: (x, y) =>
-      view.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
+    hover: (x, y) => view.cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
     press: (key) => view.press(key),
     touch: (phase, x, y) =>
       view.cdp("Input.dispatchTouchEvent", {
@@ -121,8 +100,7 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
         touchPoints: phase === "end" ? [] : [{ x, y }],
       }),
     resize: (width, height) => view.resize(width, height),
-    addInitScript: (source) =>
-      view.cdp("Page.addScriptToEvaluateOnNewDocument", { source }),
+    addInitScript: (source) => view.cdp("Page.addScriptToEvaluateOnNewDocument", { source }),
     async clearStorage(origins) {
       await view.cdp("Network.clearBrowserCookies");
       for (const origin of origins)
@@ -135,11 +113,7 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
       await view.cdp("Network.enable");
       await view.cdp("Network.setBlockedURLs", { urls });
     },
-    screenshot: async () =>
-      Buffer.from(
-        (await view.cdp<{ data: string }>("Page.captureScreenshot")).data,
-        "base64",
-      ),
+    screenshot: async () => Buffer.from((await view.cdp<{ data: string }>("Page.captureScreenshot")).data, "base64"),
     async close() {
       await view.navigate("about:blank");
       view.close();
@@ -231,12 +205,9 @@ function launchFirefox(): Promise<Bidi> {
       const call = pending.get(message.id);
       if (call) {
         pending.delete(message.id);
-        if (message.type === "error")
-          call.reject(new Error(`${message.error}: ${message.message}`));
+        if (message.type === "error") call.reject(new Error(`${message.error}: ${message.message}`));
         else call.resolve(message.result);
-      } else if (message.method)
-        for (const listener of listeners)
-          listener(message.method, message.params);
+      } else if (message.method) for (const listener of listeners) listener(message.method, message.params);
     };
     const bidi: Bidi = {
       send(method, params = {}) {
@@ -282,8 +253,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
     await bidi.send("browsingContext.setViewport", { context, viewport });
     for (const source of scripts) await preload(source);
     await intercept(blocked.length > 0);
-    if (previous)
-      await bidi.send("browser.removeUserContext", { userContext: previous });
+    if (previous) await bidi.send("browser.removeUserContext", { userContext: previous });
   }
   let blocked: RegExp[] = [];
   // Network events tee every response through Firefox's network observer, which can wedge HTTP/2 downloads.
@@ -316,32 +286,20 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
   }
   await begin();
   const off = bidi.on((method, params) => {
-    if (
-      method === "log.entryAdded" &&
-      params.source?.context === context &&
-      !NETWORK_REPORT.test(params.text)
-    ) {
+    if (method === "log.entryAdded" && params.source?.context === context && !NETWORK_REPORT.test(params.text)) {
       if (params.type === "javascript")
         events.exception(
           [
             params.text,
             ...(params.stackTrace?.callFrames ?? []).map(
-              (frame: {
-                functionName: string;
-                url: string;
-                lineNumber: number;
-              }) =>
+              (frame: { functionName: string; url: string; lineNumber: number }) =>
                 `    at ${frame.functionName || "<anonymous>"} (${frame.url}:${frame.lineNumber + 1})`,
             ),
           ].join("\n"),
         );
       else events.console(params.method ?? params.level, params.text);
     }
-    if (
-      method === "network.beforeRequestSent" &&
-      params.context === context &&
-      params.isBlocked
-    ) {
+    if (method === "network.beforeRequestSent" && params.context === context && params.isBlocked) {
       const { request } = params.request;
       void bidi
         .send(
@@ -360,10 +318,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       awaitPromise: true,
     });
     if (result.type === "exception")
-      throw new Error(
-        result.exceptionDetails.exception?.value?.message ??
-          result.exceptionDetails.text,
-      );
+      throw new Error(result.exceptionDetails.exception?.value?.message ?? result.exceptionDetails.text);
     const value = result.result.value;
     return value === undefined ? (undefined as T) : JSON.parse(value);
   };
@@ -400,9 +355,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       ]);
     },
     async hover(x, y) {
-      await pointer([
-        { type: "pointerMove", x: Math.round(x), y: Math.round(y) },
-      ]);
+      await pointer([{ type: "pointerMove", x: Math.round(x), y: Math.round(y) }]);
     },
     async press(key) {
       const value = KEYS[key] ?? key;
@@ -453,11 +406,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       if (!blocked.length || !interception) await intercept(blocked.length > 0);
     },
     screenshot: async () =>
-      Buffer.from(
-        (await bidi.send("browsingContext.captureScreenshot", { context }))
-          .data,
-        "base64",
-      ),
+      Buffer.from((await bidi.send("browsingContext.captureScreenshot", { context })).data, "base64"),
     async close() {
       off();
       await intercept(false);

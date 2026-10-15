@@ -1,4 +1,4 @@
-//! The live rate the browser presents (`client/src/lib/runner/liveRates.ts`, `api/liverate.testvectors.json`): a
+//! The live rate the browser presents (`client/src/engine/measure/live.ts`, `api/liverate.testvectors.json`): a
 //! growing average that restarts on a confirmed shift.
 
 const MIN_WINDOW_MS: f64 = 800.0;

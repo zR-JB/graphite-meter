@@ -21,7 +21,7 @@ var wideConsole = [2]int{110, 32}
 // controlsWidth is the run key's and the chips' widest.
 const controlsWidth = 64
 
-// gaugeKnots is the browser's dial transfer curve (client/src/lib/components/gaugeScale.ts): equal sweeps for each.
+// gaugeKnots is the browser's dial transfer curve (client/src/ui/measure/dial-model.ts): equal sweeps for each.
 var gaugeKnots = [...]float64{0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1}
 
 // gaugeFraction is where value sits on a dial reaching scale, from 0 to 1.
@@ -45,7 +45,7 @@ func gaugeValue(fraction, scale float64) float64 {
 	return scale * (gaugeKnots[i] + (at-float64(i))*(gaugeKnots[i+1]-gaugeKnots[i]))
 }
 
-// ceilStep is the browser's axis ceiling (client/src/lib/presentation/scales.ts): the first step at or above v.
+// ceilStep is the browser's axis ceiling (client/src/view/scales.ts): the first step at or above v.
 func ceilStep(v float64, steps ...float64) float64 {
 	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
 		return steps[0]

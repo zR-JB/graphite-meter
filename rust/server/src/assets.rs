@@ -51,7 +51,7 @@ pub struct Assets {
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
-    /// The policy's Trusted Types directives, when the index names its policy; client v1's names none.
+    /// The policy's Trusted Types directives, when the index names its policy.
     trusted_types: Option<String>,
 }
 

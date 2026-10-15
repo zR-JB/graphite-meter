@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER")
+KEYS = ("VERSION", "GM_CLIENT_REVISION")
 # Records each tool's argv, directory and the task environment variables the test inspects; the last call wins.
 SPY = """import json, os, sys
 with open(os.environ["GM_TASK_TRACE"], "a") as output:
@@ -33,17 +33,16 @@ class MiseTaskTests(unittest.TestCase):
             source = (ROOT / "mise.toml").read_text()
             source = re.sub(r"(?ms)^\[(?:tools|tool_config)\]\n.*?(?=^\[|\Z)", "", source)
             (root / "mise.toml").write_text(source)
-            for name in ("client/dist", "client-v2/dist", "go/internal/static", "bin", "config", "state", "data",
-                         "cache", "scripts", "rust"):
+            for name in ("client/dist", "go/internal/static", "bin", "config", "state", "data", "cache", "scripts",
+                         "rust"):
                 (root / name).mkdir(parents=True)
-            for name in ("build-version.sh", "client-dir.sh"):
-                shutil.copy2(ROOT / "scripts" / name, root / "scripts")
+            shutil.copy2(ROOT / "scripts" / "build-version.sh", root / "scripts")
             for name in ("bun", "go", "python3"):
                 (root / "bin" / name).write_text(f"#!{sys.executable}\n{SPY % (KEYS,)}")
                 (root / "bin" / name).chmod(0o755)
             trace, canary = root / "trace.jsonl", root / "injected"
             env = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("MISE_", "usage_", "GM_CLIENT", "GM_IMPLEMENTATION")) and key != "VERSION"}
+                   if not key.startswith(("MISE_", "usage_", "GM_CLIENT_", "GM_IMPLEMENTATION")) and key != "VERSION"}
             env |= {
                 "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
                 "MISE_CONFIG_DIR": str(root / "config"), "MISE_STATE_DIR": str(root / "state"),
@@ -62,15 +61,9 @@ class MiseTaskTests(unittest.TestCase):
             payload = f"quoted'\"; $(touch {canary}); `touch {canary}`"
             self.assertEqual(run("auth-preview", payload, "false")["args"][-2:],
                              [payload, "--oidc-ready=false"])
-            self.assertEqual(run("bench-throughput", payload)["env"], {"GM_BENCH_FILTER": payload})
             built = run("client-build-prod", VERSION=payload, GM_CLIENT_REVISION=payload)
             self.assertEqual((built["env"], Path(built["cwd"])),
-                             ({"VERSION": payload, "GM_CLIENT_REVISION": payload}, root.resolve() / "client-v2"))
-            # GM_CLIENT picks the browser client's folder; any other value stops a task before a tool runs.
-            built = run("client-build-prod", GM_CLIENT="v1", VERSION=payload, GM_CLIENT_REVISION=payload)
-            self.assertEqual(Path(built["cwd"]), root.resolve() / "client")
-            for task in ("dev", "prod", "client-build-prod", "e2e", "container-build"):
-                self.assertEqual(run(task, GM_CLIENT=payload, status=2), {})
+                             ({"VERSION": payload, "GM_CLIENT_REVISION": payload}, root.resolve() / "client"))
             run("goclient-build", VERSION=payload, status=2)
             # GM_IMPLEMENTATION picks Go or Rust; a Rust build gets the checked version as one argument.
             for task in ("dev", "prod", "tui"):

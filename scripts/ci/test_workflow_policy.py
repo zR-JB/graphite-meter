@@ -150,21 +150,19 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RUST, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
     (RUST, "/20260927T180000Z", "", "snapshot.debian.org"),
     # A change to any input of the Rust image selects the jobs that build it.
-    (".github/ci-paths.yml", "  - 'client-v2/**'\n  - 'client/public/**'\n  - 'client/e2e/browsers.ts'\n  - 'client/e2e/servers.ts'\n  - 'client/e2e/webview.ts'\n  - 'client/scripts/e2e.ts'\n  - 'go/internal/auth",
-     "  - 'client/public/**'\n  - 'client/e2e/browsers.ts'\n  - 'client/e2e/servers.ts'\n  - 'client/e2e/webview.ts'\n  - 'client/scripts/e2e.ts'\n  - 'go/internal/auth",
-     r"rust-image misses \['client-v2/package.json'"),
+    (".github/ci-paths.yml", "  - 'client/**'\n  - 'go/internal/auth", "  - 'go/internal/auth",
+     r"rust-image misses \['client/package.json'"),
     (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n", "",
      r"rust-image misses \['container/Dockerfile.rust'\]"),
-    (RUST, "COPY client/public/ /src/client/public/\n", "COPY client/public/ docs/ /src/client/public/\n",
-     r"rust-image misses \['docs/x'\]"),
+    (RUST, "COPY client/ ./\n", "COPY client/ docs/ ./\n", r"rust-image misses \['docs/x'\]"),
     # A source-only Rust change selects the TUI exports.
     (".github/ci-paths.yml", "rust-release:\n  - *workflow\n  - 'rust/**'\n", "rust-release:\n  - *workflow\n",
      r"rust-release misses \['rust/rust-toolchain.toml'"),
-    (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client-v2/ ./\n",
-     r"rust-release misses \['client-v2/x'\]"),
+    (RUST, "COPY LICENSE COPYRIGHT mise.toml ./\n", "COPY LICENSE COPYRIGHT mise.toml client/ ./\n",
+     r"rust-release misses \['client/x'\]"),
     # A client lockfile change selects the staging check of the server's source offers.
-    (".github/ci-paths.yml", "  - 'client-v2/bun.lock'\n  - 'client-v2/bunfig.toml'\n  - 'container/Dockerfile.rust'\n",
-     "  - 'client-v2/bunfig.toml'\n  - 'container/Dockerfile.rust'\n", r"rust-release misses \['client-v2/bun.lock'\]"),
+    (".github/ci-paths.yml", "  - 'client/bun.lock'\n  - 'client/bunfig.toml'\n  - 'container/Dockerfile.rust'\n",
+     "  - 'client/bunfig.toml'\n  - 'container/Dockerfile.rust'\n", r"rust-release misses \['client/bun.lock'\]"),
     # The release request builds Rust only for a validated request, its TUI archives only for a stable one, from
     # the source the build job resolved, empty, with provenance, without a token, and stages exactly its files; the
     # approved job publishes exactly what the verify job verified.

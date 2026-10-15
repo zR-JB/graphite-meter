@@ -162,7 +162,7 @@ func TestSecureSources(t *testing.T) {
 	}
 }
 
-// Client v2's shell names its Trusted Types policy and the page then requires it; client v1's names none.
+// A shell that names its Trusted Types policy makes the page require it; one that names none does not.
 func TestTrustedTypes(t *testing.T) {
 	for html, want := range map[string]string{
 		`<head><meta name="graphite-meter-trusted-types" content="graphite-meter" /></head>`: "graphite-meter",

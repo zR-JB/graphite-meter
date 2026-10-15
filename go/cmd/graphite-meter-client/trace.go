@@ -116,5 +116,5 @@ type mark struct {
 	stage goclient.Stage
 }
 
-// niceCeil is the browser's chart step (client/src/lib/presentation/scales.ts) at or above v.
+// niceCeil is the browser's chart step (client/src/view/scales.ts) at or above v.
 func niceCeil(v float64) float64 { return ceilStep(v, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8) }

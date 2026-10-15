@@ -1,6 +1,0 @@
-dist/
-.e2e-dist/
-node_modules/
-test-results/
-.svelte-check/
-bun.lock

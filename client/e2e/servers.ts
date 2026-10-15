@@ -36,12 +36,7 @@ async function freePort(): Promise<number> {
 }
 
 export async function describe(id: string, name: string): Promise<Server> {
-  const [h1, tls, h2, h3] = [
-    await freePort(),
-    await freePort(),
-    await freePort(),
-    await freePort(),
-  ];
+  const [h1, tls, h2, h3] = [await freePort(), await freePort(), await freePort(), await freePort()];
   return {
     id,
     name,
@@ -54,17 +49,10 @@ export async function describe(id: string, name: string): Promise<Server> {
 
 const inherited = () =>
   Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) =>
-        !key.startsWith("GM_AUTH_") && !key.startsWith("GM_SERVER_CATALOG"),
-    ),
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GM_AUTH_") && !key.startsWith("GM_SERVER_CATALOG")),
   );
 
-export async function launch(
-  { bin, cert, key }: Launch,
-  server: Server,
-  env: Record<string, string> = {},
-) {
+export async function launch({ bin, cert, key }: Launch, server: Server, env: Record<string, string> = {}) {
   await mkdir(logs, { recursive: true });
   const child = Bun.spawn([bin], {
     env: {
@@ -91,8 +79,7 @@ export async function launch(
   });
   const deadline = Date.now() + 15_000;
   while (true) {
-    if (child.exitCode !== null)
-      throw new Error(`${server.name} exited with ${child.exitCode}`);
+    if (child.exitCode !== null) throw new Error(`${server.name} exited with ${child.exitCode}`);
     const status = await fetch(`${server.http}/preflight`, {
       redirect: "manual",
       signal: AbortSignal.timeout(500),
