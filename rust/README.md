@@ -128,6 +128,9 @@ resident-memory bound.
   two HTTP/3 endpoints on four workers cost less CPU per byte than one or four.
 - QUIC receive windows autotune from 768 KiB to 48 MiB per connection and 32 MiB per stream, sends from 2 to 16 MiB,
   with receive batches of four GRO messages (`mise run rust-delayed-downloads`).
+- noq's Cubic follows RFC 9438's Reno-friendly region and K. Under 0.5 % per-packet loss quic-go stays ahead, 6.4–6.7
+  against 5.0–5.7 Mbit/s, because it runs Reno with a 0.7 backoff, which is less fair to TCP; at 0.1 % the two are
+  within 15 % (campaign run 38663551289).
 - The HTTP/2 server polls its streams before the socket, which keeps an upload's peak RSS at 9.5 MiB instead of
   33–36 MiB (CI run 37265088955); uploads keep large windows nearly full (`server/tests/sockets/http2.rs`).
 - Admitted HTTP/2 uploads open a 24 MiB connection window: on a 200 ms, 1 Gbit/s path 16 MiB carried 640 Mbit/s with
