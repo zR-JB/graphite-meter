@@ -64,5 +64,3 @@ rust/target
 # Platform notices fetched from the pinned sources in legal/rust-notice-sources.json and checked by SHA-256.
 legal/manual/llvm/
 legal/manual/musl/
-scripts/ci/gallery/work/
-scripts/ci/gallery/out/
