@@ -1,0 +1,113 @@
+diff --git a/noq-proto/src/congestion/cubic.rs b/noq-proto/src/congestion/cubic.rs
+index c105d1e96..33506eeca 100644
+--- a/noq-proto/src/congestion/cubic.rs
++++ b/noq-proto/src/congestion/cubic.rs
+@@ -10,6 +10,8 @@ use crate::{Duration, Instant};
+ ///
+ /// These are recommended value in RFC8312.
+ const BETA_CUBIC: f64 = 0.7;
++/// The Reno-friendly estimate's growth in segments per window acknowledged while below W_max (RFC 9438, Section 4.3).
++const ALPHA_CUBIC: f64 = 3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC);
+
+ const C: f64 = 0.4;
+
+@@ -25,6 +27,9 @@ pub(super) struct State {
+     /// Congestion window size when the last congestion event occurred.
+     w_max: f64,
+
++    /// The Reno-friendly window estimate in bytes, which keeps CUBIC at least as fast as Reno.
++    w_est: f64,
++
+     /// Congestion window increment stored during congestion avoidance.
+     cwnd_inc: u64,
+
+@@ -61,13 +66,11 @@ impl State {
+         (C * (t.as_secs_f64() - self.k).powi(3) + w_max) * max_datagram_size as f64
+     }
+
+-    // W_est(t) = w_max * beta_cubic + 3 * (1 - beta_cubic) / (1 + beta_cubic) *
+-    // (t / RTT) (Eq. 4)
+-    fn w_est(&self, t: Duration, rtt: Duration, max_datagram_size: u64) -> f64 {
+-        let w_max = self.w_max / max_datagram_size as f64;
+-        (w_max * BETA_CUBIC
+-            + 3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC) * t.as_secs_f64() / rtt.as_secs_f64())
+-            * max_datagram_size as f64
++    // W_est grows by alpha_cubic segments per window acknowledged, by one once it reaches W_max
++    // (RFC 9438, Section 4.3).
++    fn grow_w_est(&mut self, bytes: u64, max_datagram_size: u64) {
++        let alpha = if self.w_est < self.w_max { ALPHA_CUBIC } else { 1.0 };
++        self.w_est += alpha * bytes as f64 * max_datagram_size as f64 / self.window as f64;
+     }
+ }
+
+@@ -138,6 +141,7 @@ impl Controller for Cubic {
+
+                     self.state.w_max = self.state.window as f64;
+                     self.state.k = 0.0;
++                    self.state.w_est = self.state.window as f64;
+                 }
+             }
+
+@@ -146,8 +150,8 @@ impl Controller for Cubic {
+             // w_cubic(t + rtt)
+             let w_cubic = self.state.w_cubic(t + rtt.get(), self.current_mtu);
+
+-            // w_est(t)
+-            let w_est = self.state.w_est(t, rtt.get(), self.current_mtu);
++            self.state.grow_w_est(bytes, self.current_mtu);
++            let w_est = self.state.w_est;
+
+             let mut cubic_cwnd = self.state.window;
+
+@@ -222,6 +226,9 @@ impl Controller for Cubic {
+         self.state.ssthresh = cmp::max((window * BETA_CUBIC) as u64, self.minimum_window());
+         self.state.window = self.state.ssthresh;
+         self.state.k = self.state.cubic_k(self.current_mtu);
++        // The Reno-friendly estimate restarts at the reduced window, not at beta_cubic * W_max, which fast
++        // convergence leaves below it (RFC 9438, Section 4.3).
++        self.state.w_est = self.state.window as f64;
+
+         self.state.cwnd_inc = (self.state.cwnd_inc as f64 * BETA_CUBIC) as u64;
+
+@@ -235,6 +242,7 @@ impl Controller for Cubic {
+             self.state.cwnd_inc = 0;
+
+             self.state.window = self.minimum_window();
++            self.state.w_est = self.state.window as f64;
+         }
+     }
+
+@@ -328,6 +336,33 @@ mod tests {
+         assert_eq!(cubic.state.window, cubic.state.ssthresh);
+     }
+
++    #[test]
++    fn the_reno_friendly_estimate_restarts_at_the_reduced_window() {
++        let now = Instant::now();
++        let rtt = RttEstimator::new(Duration::from_millis(100));
++        let mut cubic = Cubic::new(Arc::new(CubicConfig::default()), now, BASE_DATAGRAM_SIZE as u16);
++        let window = 20 * BASE_DATAGRAM_SIZE;
++        cubic.state.window = window;
++        cubic.state.ssthresh = window;
++        // Below the last W_max, so fast convergence lowers W_max to 0.85 of the window.
++        cubic.state.w_max = 30.0 * BASE_DATAGRAM_SIZE as f64;
++
++        cubic.on_congestion_event(now, now, false, false, 0, 0);
++        let reduced = cubic.state.window;
++        assert_eq!(cubic.state.w_est, reduced as f64);
++        // RFC 8312's estimate began at beta_cubic * W_max, below the window CUBIC had just cut to.
++        assert!(BETA_CUBIC * cubic.state.w_max < reduced as f64);
++
++        // A window of packets sent after the event, acknowledged: W_est gains about alpha_cubic segments.
++        let later = now + Duration::from_millis(50);
++        for _ in 0..reduced / BASE_DATAGRAM_SIZE {
++            cubic.on_ack(later, later, BASE_DATAGRAM_SIZE, 0, false, &rtt);
++        }
++        let gained = (cubic.state.w_est - reduced as f64) / BASE_DATAGRAM_SIZE as f64;
++        assert!((gained - ALPHA_CUBIC).abs() < 0.05, "{gained}");
++        assert!(cubic.state.window as f64 >= cubic.state.w_est.floor());
++    }
++
+     #[test]
+     fn persistent_congestion_does_not_double_reduce_ssthresh() {
+         let now = Instant::now();

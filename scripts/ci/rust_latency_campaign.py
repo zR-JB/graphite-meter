@@ -1,9 +1,9 @@
-"""Temporary campaign for the Rust review pull request, eighth run: where noq's HTTP/3 loses under per-packet loss.
+"""Temporary campaign for the Rust review pull request, ninth run: RFC 9438's Reno-friendly estimate in noq.
 
 build-loss: ci-profile musl binaries whose noq sends one datagram per system call and whose server logs each QUIC
-    connection's path statistics as it closes, and Go's server and TUI.
-measure loss05|loss01: HTTP/3 over loopback at MTU 1500 with offloads off, so netem drops single packets (40 ms;
-    0.5% at 50 Mbit/s, 0.1% at 100 Mbit/s): Rust and Go servers and TUIs crossed, against HTTP/2 over Linux TCP.
+    connection's path statistics as it closes, with noq as pinned and with noq-west.patch, and Go's server and TUI.
+measure loss05|loss01|clean: HTTP/3 over loopback at MTU 1500 with offloads off, so netem drops single packets (40 ms;
+    0.5% at 50 Mbit/s, 0.1% at 100 Mbit/s; none at 1 Gbit/s and 20 ms), against Go's HTTP/3 and HTTP/2 over Linux TCP.
 """
 from __future__ import annotations
 
@@ -41,18 +41,19 @@ STATS = (
     "            if let Err(error) = served\n",
     1,
 )
-LOSS_BUILDS: dict[str, list[Edit]] = {"head": [STATS]}
+LOSS_BUILDS: dict[str, list[Edit]] = {"head": [STATS], "west": [STATS]}
+WEST = ROOT / "scripts/ci/noq-west.patch"
 # netem applies to loopback in both directions: each delay counts twice in a round trip.
 SHAPES = {
     "loss05": ["delay", "20ms", "loss", "0.5%", "rate", "50mbit", "limit", "20000"],
     "loss01": ["delay", "20ms", "loss", "0.1%", "rate", "100mbit", "limit", "20000"],
+    "clean": ["delay", "10ms", "rate", "1gbit", "limit", "20000"],
 }
 # Each loss variant: server build, client build, listener, extra environment.
 GO_ONE_DATAGRAM = {"QUIC_GO_DISABLE_GSO": "true"}
 LOSS_VARIANTS: dict[str, tuple[str, str, str, dict[str, str]]] = {
-    "rust": ("head", "head", "http3", {}), "rust-go": ("head", "go", "http3", GO_ONE_DATAGRAM),
-    "go-rust": ("go", "head", "http3", GO_ONE_DATAGRAM), "go": ("go", "go", "http3", GO_ONE_DATAGRAM),
-    "http2": ("head", "head", "http2", {}),
+    "rust": ("head", "head", "http3", {}), "west": ("west", "west", "http3", {}),
+    "go": ("go", "go", "http3", GO_ONE_DATAGRAM), "http2": ("head", "head", "http2", {}),
 }
 
 
@@ -116,8 +117,13 @@ def build_loss() -> None:
     if text.count(old) != 1:
         sys.exit("noq: the transmit segment bound is not in connection.rs once")
     connection.write_text(text.replace(old, old.replace("new(32)", "new(1)")))
-    pin = ("rust/Cargo.toml", NOQ_PIN, f'noq = {{ path = "{checkout / "noq"}" }}', 1)
+    west = OUT / "noq-west"
+    shutil.copytree(checkout, west, dirs_exist_ok=True)
+    # Outside a repository, git apply patches the files under its working directory.
+    subprocess.run(["git", "apply", "-p1", str(WEST)], cwd=west, check=True)
     for label, edits in LOSS_BUILDS.items():
+        copy = west if label == "west" else checkout
+        pin = ("rust/Cargo.toml", NOQ_PIN, f'noq = {{ path = "{copy / "noq"}" }}', 1)
         # The path pin moves noq's lock entries, so Cargo relocks each copy.
         compile_tree(label, tree_for(label, [*edits, pin]), "ci", {}, locked=False)
     fixture = Fixture("campaign-go-")
