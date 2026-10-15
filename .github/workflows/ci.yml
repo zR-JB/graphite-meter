@@ -523,7 +523,7 @@ jobs:
         with: {rust: 'true', go: 'true', cache: 'false'}
       - name: Install musl headers and compiler, and ethtool
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools ethtool
-      - name: Build noq without GSO with and without RFC 9438's estimate, and Go's peers
+      - name: Build noq without GSO as pinned and following RFC 9438, and Go's peers
         run: python3 -m scripts.ci.rust_latency_campaign build-loss
       - name: Measure per-packet loss of 0.5%
         run: python3 -m scripts.ci.rust_latency_campaign measure loss05
