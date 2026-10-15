@@ -366,7 +366,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   one to a row, never two and an orphan) and the latency lanes on the same 12 px text edge as its head, then each
   server's facts. From 821 px it sits beside the list, and the hairline between them is a handle like a docked
   sheet's edge: the list keeps its share of the width (42 % by default, so a result's three cards stand three
-  across from a 1366 px window), never under 360 px, and the detail never under 460 px.
+  across from a 1366 px window), never under 360 px, and the detail never under 460 px. Beside the list the
+  result's head leads with a fold mark (») on the pane's edge that closes the result, far from History's own ✕ and
+  unlike it; over the list it leads with ← Results. Up and Down open the result above or below in the list in its
+  place, on the same history entry, its row kept in view.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
   A private value (Details' "Your address") is a mask until the eye key at its row's end is pressed, its glyph on the
   row's text edge; no hover or focus reveals it, and the page holds the value only while it shows.

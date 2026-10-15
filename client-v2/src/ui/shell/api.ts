@@ -14,6 +14,8 @@ export interface Shell {
   close(panel: Panel): void;
   /** The History workspace: the list, or one result in it; `null` from an open result steps back to the list. */
   history(id: string | null, invoker?: HTMLElement | null): void;
+  /** Another result in the open one's place, on the same history entry. */
+  swapResult(id: string): void;
   /** Back to the measurement; focus returns to whatever opened History. */
   closeHistory(): void;
   legal(invoker?: HTMLElement | null): void;

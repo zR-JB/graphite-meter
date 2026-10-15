@@ -10,7 +10,7 @@ import { Show } from "../../lib/dom";
 import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read } from "../../lib/signal";
 import { announce } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
-import { activeModal, canFocus, hasFocus } from "../kit/focus";
+import { activeModal, canFocus, hasFocus, isEditable } from "../kit/focus";
 import { Icon } from "../kit/icon";
 import { MoreMenu } from "../kit/menu";
 import { Splitter } from "../kit/splitter";
@@ -22,6 +22,9 @@ import { span } from "./model";
 import { ViewControl } from "./view";
 
 const MINUTE_MS = 60_000;
+/** Controls that take the arrow keys themselves. */
+const OWNS_ARROWS =
+  "[role=slider], [role=separator], [role=radiogroup], [role=radio], [role=tab], [role=menu], [role=menuitem]";
 const MIN_LIST_PX = 360;
 const MIN_DETAIL_PX = 460;
 /** From this width a result opens beside the list (history.css). */
@@ -60,6 +63,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const sort = signal<Sort>({ by: "date", descending: true });
   const pages = signal(1);
   let list: HTMLElement | null = null;
+  let neighbour: ((id: string, by: 1 | -1) => string | null) | null = null;
   const setSort = (by: HistorySort, descending: boolean) => {
     batch(() => {
       sort.set({ by, descending });
@@ -189,6 +193,22 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     document.removeEventListener("pointerdown", elsewhere, true);
     document.removeEventListener("focusin", elsewhere);
   });
+  // With a result open, Up and Down open the one above or below it in the list, from anywhere in History that leaves
+  // arrows alone; past either end they do nothing.
+  const step = (event: KeyboardEvent) => {
+    const by = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    const id = props.selectedId.peek();
+    if (!by || id === null || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target as Element;
+    if (target !== document.body && !workspace.contains(target)) return;
+    if (event.shiftKey || isEditable(target) || target.closest(OWNS_ARROWS)) return;
+    if (activeModal() || document.querySelector(":popover-open:not(.tooltip)")) return;
+    event.preventDefault();
+    const next = neighbour?.(id, by);
+    if (next) shell.swapResult(next);
+  };
+  window.addEventListener("keydown", step);
+  onCleanup(() => window.removeEventListener("keydown", step));
   /** A result whose views threw: it reads as unreadable for the rest of the visit. */
   const broken = signal<string | null>(null);
   function DetailPane(selected: Selected): Node | null {
@@ -262,8 +282,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       now,
     });
     list = results.element;
+    neighbour = results.neighbour;
     onCleanup(() => {
       list = null;
+      neighbour = null;
     });
     const body = (
       <div class="workspace-body">
