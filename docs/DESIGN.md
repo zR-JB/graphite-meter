@@ -329,11 +329,13 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
   or unaccounted replies brighten its timeouts figure under a dotted mark whose tip gives every probe outcome, and
   only a twentieth or more of the probes turns it to `--warn`; a failed population tints its name. The rows share one ms axis on the gauge's ladder over their P90s, so
   the boxes fill it; a whisker past it runs on to the edge, ends in an arrowhead and names its value. The axis
-  sits under the last row and its ticks run up through the rows as gridlines behind the plots; the idle median
-  is one line from its tick through the loaded rows, and each loaded row's added-latency span starts from it. A
-  pointer anywhere on a row's plot reads the marker nearest it and follows the pointer from marker to marker; the
-  reading (the marker's name and value) stands centred on the marker, above the box's band. A narrow panel drops jitter, never timeouts; a phone gives each population its figures, then its plot. A failed
-  stage names its reason under the headline.
+  sits under the last row and its ticks run up through the rows as gridlines behind the plots. Under a loaded
+  row's box, clear of its whisker, a bracket runs from the idle median, where it rises in the idle hue, to the
+  row's median tick: what the load added. A pointer anywhere on a row's plot reads the marker nearest it and
+  follows the pointer from marker to marker; the reading (the marker's name in the row's ink, and its value) stands
+  over the marker, as far along its own width as the marker lies along the axis, so it never leaves the plot. It
+  fades in where it reads and glides from marker to marker in 100 ms. A narrow panel drops jitter, never timeouts;
+  a phone gives each population its figures, then its plot. A failed stage names its reason under the headline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable, cut with an
   ellipsis; the ring or check alone marks the choice. Unavailable choices fold into one row. While a run locks a list,
@@ -431,8 +433,9 @@ share its layout, words and keys.
   the cards, and the lanes when rows are left.
 - **Latency lanes** take a row each, two on a tall console: the median, jitter and timeouts, then a box plot from the
   10th to the 90th percentile with whiskers to the fastest and slowest reply, the median a heavy tick, the latest
-  reply a mark in the second row, the idle median dotted down every loaded lane, and an arrow with its value where a
-  reply passes the axis. The axis steps 1-2-4 over the 90th percentiles with a quarter's room; `Added` ends each row.
+  reply a mark in the second row, a bracket under each loaded box from the idle median to its own, and an arrow
+  with its value where a reply passes the axis. The axis steps 1-2-4 over the 90th percentiles with a quarter's
+  room; `Added` ends each row.
 - **The key** is the console's one plate, three rows: `Start test`, `■ Stop test` while a run goes, `Run again` after,
   with the plan's time and its cap; a key that cannot start says why on it. Under it a chip per stage fills a heavy
   rule in the stage's hue as it runs, half a cell at a time, and sweeps through its warmup; it ends in the planned

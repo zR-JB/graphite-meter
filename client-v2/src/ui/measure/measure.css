@@ -681,8 +681,8 @@
       cursor: default;
     }
   }
-  /* A row's box plot, drawn in its hue: whisker, box, the idle median, the added span, the median and the latest,
-     each placed by percentages of the axis within the marks' margin; layout keeps their edges on whole pixels. */
+  /* A row's box plot, drawn in its hue: whisker, box, the added bracket, the median and the latest, each placed by
+     percentages of the axis within the marks' margin; layout keeps their edges on whole pixels. */
   .lane-art {
     position: absolute;
     inset: 0 var(--edge);
@@ -744,17 +744,15 @@
       background: color-mix(in oklab, var(--tone) 22%, var(--canvas));
       box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tone) 34%, transparent);
     }
-    /* The idle median drops from its own row's middle through every loaded row. */
-    & .baseline {
-      inset-block: 0;
-      width: var(--hairline);
-      margin-left: calc(var(--hairline) / -2);
-      background: color-mix(in oklab, var(--phase-latency) 60%, transparent);
-    }
+    /* What the load added: a bracket under the box, rising in the idle hue at the idle median and into the median
+       tick at its own; nothing of it lies on the whisker's line. */
     & .added-span {
-      top: calc(50% - 1px);
-      height: 2px;
-      background: color-mix(in oklab, var(--tone) 50%, transparent);
+      top: calc(50% + 5px);
+      height: 7px;
+      margin-left: -0.75px;
+      border: 0 solid color-mix(in oklab, var(--tone) 60%, transparent);
+      border-width: 0 0 1.5px 1.5px;
+      border-left-color: var(--phase-latency);
     }
     & .center-marker {
       top: calc(50% - 10px);
@@ -773,9 +771,6 @@
       background: var(--tone);
     }
   }
-  .lane[data-tone="latency"] .lane-art .baseline {
-    top: 50%;
-  }
   /* A measured span grows from its middle the first time it is drawn. */
   @media (prefers-reduced-motion: no-preference) {
     .lane-art :is(.band, .range) {
@@ -791,16 +786,25 @@
     margin-left: -0.5px;
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
-    transition: translate var(--dur-slide) var(--ease-out);
   }
-  /* A row's readout: the mark read, over it. */
+  /* A row's readout: the mark read, over it, named in the row's ink. It and its guide fade in where they read and
+     glide quickly from mark to mark. */
   .hover-card {
     z-index: 10;
     bottom: calc(50% + 8px);
     left: 0;
-    transition: translate var(--dur-slide) var(--ease-out);
-    &.unmeasured {
-      visibility: hidden;
+    & small {
+      color: var(--tone-ink);
+    }
+  }
+  :is(.lanes .guide, .hover-card) {
+    transition:
+      translate var(--dur-hover) var(--ease-out),
+      opacity var(--dur-hover) var(--ease-out);
+  }
+  @starting-style {
+    :is(.lanes .guide, .hover-card) {
+      opacity: 0;
     }
   }
   .lanes .ticks {
