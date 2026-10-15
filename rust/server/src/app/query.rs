@@ -68,8 +68,11 @@ fn decode(text: &str) -> Option<String> {
 
 /// `bytes=`: missing, non-numeric or negative reads as 25 MiB, and above 64 GiB as 64 GiB.
 pub fn transfer_bytes(query: Option<&str>) -> u64 {
-    match get(query, "bytes").and_then(|value| value.parse::<i64>().ok()) {
-        Some(bytes) if bytes >= 0 => (bytes as u64).min(MAX_TRANSFER_BYTES),
+    match get(query, "bytes")
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(u64::try_from)
+    {
+        Some(Ok(bytes)) => bytes.min(MAX_TRANSFER_BYTES),
         _ => DEFAULT_TRANSFER_BYTES,
     }
 }

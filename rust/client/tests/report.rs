@@ -1,5 +1,6 @@
 //! The printed report of a reduced view: its lines, plain and in the 16-colour profile, and its width.
 use graphite_meter_client::{
+    controller::Kind,
     events::{Event, View},
     measure::{
         aggregate::{Aggregate, Boundary, Rate, Reading},
@@ -8,7 +9,7 @@ use graphite_meter_client::{
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
     report::{WIDTH, details, report},
     run::prepare::ServerPath,
-    text::{Line, Profile, write},
+    text::{Line, Profile, capitalised, write},
     tui::theme::Palette,
 };
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
@@ -61,7 +62,7 @@ fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>,
         path: Err(unchecked.clone()),
     });
     let mut events = vec![
-        Event::Checking { run: true },
+        Event::Checking(Kind::Run),
         Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
         Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at },
     ];
@@ -290,4 +291,11 @@ fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
     let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
     let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
     assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
+}
+
+#[test]
+fn capitalising_takes_the_first_character_whatever_its_width() {
+    assert_eq!(capitalised("élan to spare"), "Élan to spare");
+    assert_eq!(capitalised("warmup must be from 0s to 4s"), "Warmup must be from 0s to 4s");
+    assert_eq!(capitalised(""), "");
 }

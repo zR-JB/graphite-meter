@@ -10,11 +10,11 @@ use super::{
 };
 use crate::{
     VERSION,
-    events::Check,
+    events::{Check, Running},
     measure::format,
     model::Stage,
     report::vocabulary as words,
-    text::{Line, Style, fill},
+    text::{self, Line, Style, fill},
 };
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::time::Instant;
@@ -245,8 +245,10 @@ impl App {
             _ if self.view.starting => ("Checking paths", palette.muted),
             Some((Some(outcome), _)) => (words::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
-            Some((None, Some((plan, Some(_))))) => (words::label(plan.stage), palette.stage(plan.stage)),
-            Some((None, Some((_, None)))) => ("Warmup", palette.muted),
+            Some((None, Some(Running::Measuring { plan, .. }))) => {
+                (words::label(plan.stage), palette.stage(plan.stage))
+            }
+            Some((None, Some(Running::Warmup(_)))) => ("Warmup", palette.muted),
             Some((None, None)) => ("Checking paths", palette.muted),
             None if self.config.url.is_none() => ("Not started", palette.muted),
             None => match &self.overlay {
@@ -490,7 +492,7 @@ impl App {
             entries.push(Entry::Heading(title.into()));
             for binding in table.iter().filter(|binding| binding.help.is_some()) {
                 let (key, does) = binding.help.unwrap_or_default();
-                let label = Line::styled(does[..1].to_uppercase() + &does[1..], self.palette.text);
+                let label = Line::styled(text::capitalised(does), self.palette.text);
                 entries.push(Entry::Item {
                     label,
                     value: Line::styled(key, self.palette.value),
@@ -540,10 +542,10 @@ impl App {
                         .as_ref()
                         .map_or(words::MISSING.into(), words::latency_path);
                     entries.push(item("Latency path", latency));
-                    if !paths.idle_rtt.is_zero() {
-                        entries.push(item("Pre-test latency", words::ms(paths.idle_rtt)));
+                    if let Some(rtt) = paths.idle_rtt {
+                        entries.push(item("Pre-test latency", words::ms(rtt)));
                     }
-                    entries.push(item("IP family", format!("IPv{}", paths.ip_version)));
+                    entries.push(item("IP family", format!("IPv{}", paths.ip_family.version())));
                 }
                 Err(failure) => entries.push(Entry::Text(Line::styled(&failure.text, palette.warn))),
             }

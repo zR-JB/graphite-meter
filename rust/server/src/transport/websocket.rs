@@ -2,12 +2,12 @@
 
 use super::body::Body;
 use crate::{engine::reflect, lane::Lane};
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_proto::lane::LaneEnding;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
-use hyper::upgrade::{OnUpgrade, Upgraded};
-use hyper_util::rt::TokioIo;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
@@ -23,8 +23,8 @@ const MAX_MESSAGE_BYTES: usize = 2048;
 /// The close handshake, so that an unresponsive peer cannot hold its admission.
 const CLOSE_BOUND: Duration = Duration::from_secs(5);
 
-/// The `101` accepting an upgrade or its refusal, in Go's order; HEAD gets `Allow: GET`, HTTP/1.0 `Upgrade: websocket`.
-pub fn handshake<B>(request: &Request<B>) -> Response<Body> {
+/// The `101` accepting an upgrade, or its refusal in Go's order; HEAD gets `Allow: GET`, HTTP/1.0 `Upgrade: websocket`.
+pub fn handshake<B>(request: &Request<B>) -> Result<Response<Body>, Response<Body>> {
     // Token lists may spread over repeated headers, which tungstenite expects as one value each.
     let mut normalized = Request::new(());
     *normalized.version_mut() = request.version();
@@ -43,21 +43,22 @@ pub fn handshake<B>(request: &Request<B>) -> Response<Body> {
             ProtocolError::WrongHttpVersion
             | ProtocolError::MissingConnectionUpgradeHeader
             | ProtocolError::MissingUpgradeWebSocketHeader,
-        )) => refusal(
+        )) => Err(refusal(
             StatusCode::UPGRADE_REQUIRED,
             &[(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")],
-        ),
-        _ if request.method() != Method::GET => refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")]),
+        )),
+        _ if request.method() != Method::GET => Err(refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")])),
         Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => {
-            refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")])
+            Err(refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")]))
         }
         _ if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 => {
-            refusal(StatusCode::BAD_REQUEST, &[])
+            Err(refusal(StatusCode::BAD_REQUEST, &[]))
         }
-        Ok(accepted) => accepted,
-        Err(_) => refusal(StatusCode::BAD_REQUEST, &[]),
+        Ok(accepted) => Ok(accepted),
+        Err(_) => Err(refusal(StatusCode::BAD_REQUEST, &[])),
     };
-    answer.map(|()| Body::empty())
+    let empty = |answer: Response<()>| answer.map(|()| Body::empty());
+    answer.map(empty).map_err(empty)
 }
 
 fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -> Response<()> {
@@ -69,23 +70,16 @@ fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -
     response
 }
 
-/// Runs the bus over the upgraded connection until `lane` ends or the peer leaves.
-pub async fn serve(upgrade: OnUpgrade, lane: Lane) {
-    let upgraded = tokio::select! {
-        biased;
-        _ = lane.ended() => return,
-        upgraded = upgrade => match upgraded {
-            Ok(upgraded) => upgraded,
-            Err(_) => return,
-        },
-    };
+/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head, until `lane` ends or
+/// the peer leaves.
+pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, lane: Lane) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(8192)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let mut socket = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config)).await;
+    let mut socket = WebSocketStream::from_partially_read(stream, read.into(), Role::Server, Some(config)).await;
     let (code, reason) = tokio::select! {
         biased;
         ending = lane.ended() => close(ending),
@@ -112,7 +106,10 @@ fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
 }
 
 /// Answers each PING, text or binary, until the peer closes.
-async fn exchange(socket: &mut WebSocketStream<TokioIo<Upgraded>>, lane: &Lane) -> Result<(), Error> {
+async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
+    lane: &Lane,
+) -> Result<(), Error> {
     while let Some(message) = socket.next().await {
         let received = std::time::Instant::now();
         match message? {

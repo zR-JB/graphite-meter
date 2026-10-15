@@ -81,8 +81,12 @@ impl Report<'_> {
 
     /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        self.status(stage)
-            .map_or("Skipped", |status| [MISSING, PARTIAL, "Failed", "Stopped"][status as usize])
+        self.status(stage).map_or("Skipped", |status| match status {
+            StageStatus::Complete => MISSING,
+            StageStatus::Partial => PARTIAL,
+            StageStatus::Failed => "Failed",
+            StageStatus::Stopped => "Stopped",
+        })
     }
 
     /// The latency server's population in `stage`.
@@ -256,12 +260,13 @@ impl Report<'_> {
         notes
     }
 
-    /// The label and its facts, wrapped under the label when the first does not fit beside it.
+    /// The label and its facts, wrapped under the label when the first does not fit beside it; none without facts.
     fn note(&self, label: &str, facts: &[String]) -> Vec<Line> {
         let room = self.width.saturating_sub(2);
-        let first = format!("{label}: {}", facts[0]);
+        let Some((head, rest)) = facts.split_first() else { return Vec::new() };
+        let first = format!("{label}: {head}");
         let (mut lines, facts) = match crate::text::width(&first) <= room {
-            true => (Vec::new(), [vec![first], facts[1..].to_vec()].concat()),
+            true => (Vec::new(), [vec![first], rest.to_vec()].concat()),
             false => (vec![format!("{label}:")], facts.to_vec()),
         };
         for line in wrap(&facts, room) {

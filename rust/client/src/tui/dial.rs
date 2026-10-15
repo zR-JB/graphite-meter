@@ -6,6 +6,7 @@ use super::{
 };
 use crate::text::{Color, Line};
 use ratatui_core::layout::Rect;
+use std::cell::RefCell;
 
 /// A cell's width and height in pixels, as most monospace fonts draw them; the ring is round at this aspect.
 const CELL: (f64, f64) = (9.0, 20.0);
@@ -41,73 +42,124 @@ pub struct Dial {
 /// The smallest area a ring is drawn in; a smaller dial shows only its readout.
 pub const SMALLEST: (u16, u16) = (40, 14);
 
-/// Draws `dial` across `area`: the ring when it fits, else the readout alone.
-pub fn draw(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
+/// The ring's geometry in one area, which only a resize changes: its centre, sizes and the dots within its reach.
+pub struct Ring {
+    area: Rect,
+    cx: f64,
+    cy: f64,
+    radius: f64,
+    band: f64,
+    bead: f64,
+    dots: Vec<RingDot>,
+}
+
+/// A dot within the ring's reach, in drawing order: where it is, its share of the sweep and what it may show.
+struct RingDot {
+    x: isize,
+    y: isize,
+    px: f64,
+    py: f64,
+    fraction: f64,
+    in_band: bool,
+    on_track: bool,
+    tick: Option<usize>,
+}
+
+impl Ring {
+    fn new(area: Rect) -> Self {
+        let (w, h) = (f64::from(area.width - 2 * MARGIN) * CELL.0, f64::from(area.height - 3) * CELL.1);
+        let radius = (w / 2.0 - 8.0).min((h - 12.0) / (1.0 + std::f64::consts::FRAC_1_SQRT_2));
+        // The label over the crown, the ring, and the note two rows under its ends stand centred in the area.
+        let tall = CELL.1 + radius * (1.0 + std::f64::consts::FRAC_1_SQRT_2) + 16.0 + 2.0 * CELL.1;
+        let top = ((f64::from(area.height) * CELL.1 - tall) / 2.0 / CELL.1)
+            .floor()
+            .max(0.0)
+            * CELL.1;
+        let (cx, cy) = (f64::from(area.width) * CELL.0 / 2.0, top + CELL.1 + radius + 8.0);
+        let (band, track, bead) = ((radius * BAND).max(9.0), (radius * TRACK).max(4.5), (radius * BEAD).max(14.0));
+        let ticks: Vec<_> = (0..9)
+            .map(|tick| (START - f64::from(tick) / 8.0 * TURN).to_radians().sin_cos())
+            .collect();
+        let (across, down) = Dots::new(area).size();
+        let mut dots = Vec::new();
+        for y in 0..down {
+            for x in 0..across {
+                let (px, py) = ((x as f64 + 0.5) * CELL.0 / 2.0, (y as f64 + 0.5) * CELL.1 / 4.0);
+                let (dx, dy) = (px - cx, cy - py);
+                let distance = dx.hypot(dy) - radius;
+                if distance.abs() > bead.max(radius * 0.2) {
+                    continue;
+                }
+                let fraction = (START - dy.atan2(dx).to_degrees()).rem_euclid(360.0) / TURN;
+                let tick = ticks.iter().position(|&(sin, cos)| {
+                    let (along, across) = (dx * cos + dy * sin, (dy * cos - dx * sin).abs());
+                    let from = radius + band / 2.0 + 4.0;
+                    (from..=from + radius * 0.07).contains(&along) && across <= 2.4
+                });
+                dots.push(RingDot {
+                    x: x as isize,
+                    y: y as isize,
+                    px,
+                    py,
+                    fraction,
+                    in_band: distance.abs() <= band / 2.0,
+                    on_track: fraction <= 1.0 && distance.abs() <= track / 2.0,
+                    tick,
+                });
+            }
+        }
+        Self { area, cx, cy, radius, band, bead, dots }
+    }
+
+    /// The point `reach` from the centre at `fraction` of the sweep.
+    fn point(&self, fraction: f64, reach: f64) -> (f64, f64) {
+        let angle = (START - fraction * TURN).to_radians();
+        (self.cx + reach * angle.cos(), self.cy - reach * angle.sin())
+    }
+}
+
+/// Draws `dial` across `area`: the ring when it fits, else the readout alone; `ring` keeps the area's geometry.
+pub fn draw(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial, ring: &RefCell<Option<Ring>>) {
     if area.width < SMALLEST.0 || area.height < SMALLEST.1 {
         return readout(canvas, area, palette, dial);
     }
-    let (w, h) = (f64::from(area.width - 2 * MARGIN) * CELL.0, f64::from(area.height - 3) * CELL.1);
-    let radius = (w / 2.0 - 8.0).min((h - 12.0) / (1.0 + std::f64::consts::FRAC_1_SQRT_2));
-    // The label over the crown, the ring, and the note two rows under its ends stand centred in the area.
-    let tall = CELL.1 + radius * (1.0 + std::f64::consts::FRAC_1_SQRT_2) + 16.0 + 2.0 * CELL.1;
-    let top = ((f64::from(area.height) * CELL.1 - tall) / 2.0 / CELL.1)
-        .floor()
-        .max(0.0)
-        * CELL.1;
-    let (cx, cy) = (f64::from(area.width) * CELL.0 / 2.0, top + CELL.1 + radius + 8.0);
-    let point = |fraction: f64, reach: f64| {
-        let angle = (START - fraction * TURN).to_radians();
-        (cx + reach * angle.cos(), cy - reach * angle.sin())
-    };
-    let (band, track, bead) = ((radius * BAND).max(9.0), (radius * TRACK).max(4.5), (radius * BEAD).max(14.0));
+    let mut kept = ring.borrow_mut();
+    kept.take_if(|ring| ring.area != area);
+    let ring = kept.get_or_insert_with(|| Ring::new(area));
+    let (cx, cy, radius, band) = (ring.cx, ring.cy, ring.radius, ring.band);
     let mut arcs: Vec<_> = dial
         .arcs
         .iter()
         .map(|arc| (arc.to.clamp(0.0, 1.0), arc.color))
         .collect();
     arcs.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let heads: Vec<_> = arcs.iter().map(|&(to, color)| (point(to, radius), color)).collect();
-    let ticks: Vec<_> = (0..9)
-        .map(|tick| (START - f64::from(tick) / 8.0 * TURN).to_radians().sin_cos())
+    let heads: Vec<_> = arcs
+        .iter()
+        .map(|&(to, color)| (ring.point(to, radius), color))
         .collect();
+    let reach = ring.bead / 2.0;
     let mut dots = Dots::new(area);
-    let (across, down) = dots.size();
-    for y in 0..down {
-        for x in 0..across {
-            let (px, py) = ((x as f64 + 0.5) * CELL.0 / 2.0, (y as f64 + 0.5) * CELL.1 / 4.0);
-            let (dx, dy) = (px - cx, cy - py);
-            let distance = dx.hypot(dy) - radius;
-            if distance.abs() > bead.max(radius * 0.2) {
-                continue;
+    for dot in &ring.dots {
+        let head = heads.iter().find(|((hx, hy), _)| {
+            (dot.px - hx).abs() <= reach && (dot.py - hy).abs() <= reach && (dot.px - hx).hypot(dot.py - hy) <= reach
+        });
+        let arc = arcs.iter().find(|&&(to, _)| dot.fraction <= to && dot.in_band);
+        let lit = match (head, arc, dot.tick) {
+            (Some(&(_, color)), ..) => Some((color, 4)),
+            (_, Some(&(_, color)), _) => Some((color, 3)),
+            _ if dot.on_track => Some((dial.track, 1)),
+            (.., Some(tick)) => {
+                let style = if tick % 2 == 0 { palette.muted } else { palette.border };
+                style.fg.map(|color| (color, 2))
             }
-            let fraction = (START - dy.atan2(dx).to_degrees()).rem_euclid(360.0) / TURN;
-            let head = heads
-                .iter()
-                .find(|((hx, hy), _)| (px - hx).hypot(py - hy) <= bead / 2.0);
-            let arc = arcs
-                .iter()
-                .find(|&&(to, _)| fraction <= to && distance.abs() <= band / 2.0);
-            let tick = ticks.iter().position(|&(sin, cos)| {
-                let (along, across) = (dx * cos + dy * sin, (dy * cos - dx * sin).abs());
-                let from = radius + band / 2.0 + 4.0;
-                (from..=from + radius * 0.07).contains(&along) && across <= 2.4
-            });
-            let lit = match (head, arc, tick) {
-                (Some(&(_, color)), ..) => Some((color, 4)),
-                (_, Some(&(_, color)), _) => Some((color, 3)),
-                _ if fraction <= 1.0 && distance.abs() <= track / 2.0 => Some((dial.track, 1)),
-                (.., Some(tick)) => {
-                    let style = if tick % 2 == 0 { palette.muted } else { palette.border };
-                    style.fg.map(|color| (color, 2))
-                }
-                _ => None,
-            };
-            if let Some((color, rank)) = lit {
-                dots.set(x as isize, y as isize, color, rank);
-            }
+            _ => None,
+        };
+        if let Some((color, rank)) = lit {
+            dots.set(dot.x, dot.y, color, rank);
         }
     }
     canvas.dots(&dots);
+    let point = |fraction, reach| ring.point(fraction, reach);
     // The labels sit beyond the ticks: the half's over the crown, the others beside their ticks.
     for (index, tick) in dial.ticks.iter().enumerate() {
         let (lx, ly) = point(index as f64 / 4.0, radius + band / 2.0 + radius * 0.17 + 4.0);

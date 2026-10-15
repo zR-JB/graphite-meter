@@ -6,7 +6,7 @@ use crate::{
     run::prepare::ServerPath,
 };
 use graphite_meter_proto::{
-    discovery::{Protocol, ThroughputTransport},
+    discovery::{IpFamily, Protocol, ThroughputTransport},
     origin::Scheme,
 };
 
@@ -16,8 +16,8 @@ const ETHERNET: f64 = 38.0;
 /// TLS records, HTTP/2 and HTTP/3 DATA frames all carry up to 16 KiB.
 const RECORD: f64 = 16_384.0;
 
-/// The wire bytes each payload byte takes over `path` on IP version `ip_version`.
-pub fn multiplier(path: &ThroughputPath, ip_version: u8) -> f64 {
+/// The wire bytes each payload byte takes over `path` in address family `family`.
+pub fn multiplier(path: &ThroughputPath, family: IpFamily) -> f64 {
     let quic = path.transport != ThroughputTransport::FetchStream || path.protocol == Protocol::Http3;
     let http2 = !quic && path.protocol == Protocol::Http2;
     let tls = !quic && (http2 || path.origin.scheme == Scheme::Https);
@@ -27,7 +27,10 @@ pub fn multiplier(path: &ThroughputPath, ip_version: u8) -> f64 {
         _ => 0.0,
     };
     let application = (1.0 + framing / RECORD) * if tls { 1.0 + 22.0 / RECORD } else { 1.0 };
-    let ip = if ip_version == 6 { 40.0 } else { 20.0 };
+    let ip = match family {
+        IpFamily::V4 => 20.0,
+        IpFamily::V6 => 40.0,
+    };
     // UDP with a QUIC short header (8 B connection ID, 2 B packet number) and AEAD tag, or TCP with timestamps.
     let transport = if quic { 8.0 + 1.0 + 8.0 + 2.0 + 16.0 } else { 20.0 + 12.0 };
     application * (MTU + ETHERNET) / (MTU - ip - transport)
@@ -45,7 +48,7 @@ pub fn wire_rate(result: &StageResult, servers: &[ServerPath]) -> Option<f64> {
         if rate > 0.0 {
             let prepared = servers.iter().find(|prepared| prepared.id == server.server)?;
             let paths = prepared.path.as_ref().ok()?;
-            wire += rate * multiplier(&paths.throughput, paths.ip_version);
+            wire += rate * multiplier(&paths.throughput, paths.ip_family);
         }
     }
     (wire > 0.0).then_some(wire)

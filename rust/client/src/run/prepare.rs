@@ -10,7 +10,7 @@ use futures_util::future::join_all;
 use graphite_meter_proto::{
     bus::Ping,
     catalog::{ServerCatalog, ServerEntry, ServerId},
-    discovery::{Capabilities, LatencyTransport, Preflight, Protocol, ThroughputTransport},
+    discovery::{Capabilities, IpFamily, LatencyTransport, Preflight, Protocol, ThroughputTransport},
     origin::Origin,
     reason::FailureReason,
     route::Route,
@@ -64,10 +64,10 @@ pub struct Paths {
     /// When a stage probes latency.
     pub latency: Option<LatencyPath>,
     pub stage_limit: Duration,
-    /// The latency check's round trip; zero without one.
-    pub idle_rtt: Duration,
-    /// The address family, 4 or 6, the server saw the throughput check arrive from.
-    pub ip_version: u8,
+    /// The latency check's round trip.
+    pub idle_rtt: Option<Duration>,
+    /// The address family the server saw the throughput check arrive from.
+    pub ip_family: IpFamily,
 }
 
 impl Prepared {
@@ -150,15 +150,15 @@ async fn check(
     let checked = |path: ThroughputPath| async move { Ok((path.protocol, check_throughput(client, &path).await?)) };
     let throughput = first(&candidates.throughput, checked);
     let joined = tokio::try_join!(throughput, latency).map_err(|fault| fault.failure())?;
-    let ((control, (throughput, ip_version)), latency) = joined;
+    let ((control, (throughput, ip_family)), latency) = joined;
     let (latency, idle_rtt) = latency.unzip();
     Ok(Paths {
         throughput,
         control,
         latency,
-        idle_rtt: idle_rtt.unwrap_or_default(),
+        idle_rtt,
         stage_limit: preflight.capabilities.stage_limit(),
-        ip_version,
+        ip_family,
     })
 }
 
@@ -179,14 +179,14 @@ where
 
 /// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol and
 /// names the address family it arrived from.
-async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(ThroughputPath, u8), Fault> {
+async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(ThroughputPath, IpFamily), Fault> {
     if path.transport == ThroughputTransport::WebTransport {
         let session = client.session(None, &path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
         let opened = timeout(VERIFY, session).await;
         opened.unwrap_or(Err(Fault::TimedOut("WebTransport session")))?;
     }
-    let (protocol, ip_version) = client.probe(&path.origin, path.protocol).await?;
-    Ok((ThroughputPath { protocol, ..path.clone() }, ip_version))
+    let (protocol, ip_family) = client.probe(&path.origin, path.protocol).await?;
+    Ok((ThroughputPath { protocol, ..path.clone() }, ip_family))
 }
 
 /// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats after 750 ms.
@@ -202,8 +202,12 @@ async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, 
             let sent = Instant::now();
             bus.send(ping).await?;
             let reply = async {
-                while bus.next().await?.id != ping.id {}
-                Ok(sent.elapsed())
+                loop {
+                    let (pong, arrived) = bus.next().await?;
+                    if pong.id == ping.id {
+                        return Ok(arrived.duration_since(sent));
+                    }
+                }
             };
             if let Ok(rtt) = timeout(wait, reply).await {
                 return rtt;

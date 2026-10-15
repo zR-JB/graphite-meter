@@ -46,6 +46,7 @@ hyper = "1.11.1"
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 ipnet = "2.12.2"
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+nix = { version = "0.30.1", default-features = false, features = ["socket"] }
 noq = { version = "1.3.0", default-features = false }
 percent-encoding = "2.3.2"
 ratatui-core = { version = "0.1.2", features = ["std"] }
@@ -88,5 +89,5 @@ lto = false
 codegen-units = 16
 
 [patch.crates-io]
-h2 = { git = "https://github.com/zR-JB/h2", rev = "52889f53f5cbbf88c2ae641a25f055436f61092c" }
-noq = { git = "https://github.com/zR-JB/noq", rev = "94e4e10bf84f5ffcad04f8c471dc8e98b980298f" }
+h2 = { git = "https://github.com/zR-JB/h2", rev = "7a7c2527475965cfd4da2130ef4bf5fe361f6431" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "f6f553ebfbd5ae68c5bf64a3c346abc626e285ff" }

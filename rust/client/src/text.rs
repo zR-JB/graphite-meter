@@ -135,6 +135,14 @@ impl Line {
     }
 }
 
+/// `text` with its first character in upper case.
+pub fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
 /// The cells `text` takes.
 pub fn width(text: &str) -> usize {
     text.width()

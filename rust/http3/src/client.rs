@@ -2,7 +2,8 @@
 use crate::{
     driver::{Driver, Role, Shared},
     error::Error,
-    fields, frame,
+    fields,
+    frame::FrameType,
     stream::{self, RequestStream},
 };
 use std::sync::Arc;
@@ -51,7 +52,7 @@ impl SendRequest {
         let (send, recv) = self.0.quic.open_bi().await?;
         let mut stream = RequestStream::new(&self.0, send, recv, charges);
         stream.recv.method = parts.method;
-        stream.send.frame(frame::HEADERS, head.into()).await?;
+        stream.send.frame(FrameType::HEADERS, head.into()).await?;
         Ok(stream)
     }
 }

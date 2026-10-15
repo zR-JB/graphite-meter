@@ -95,7 +95,7 @@ fn an_upload_ending_idle_or_revoked_is_refused_with_the_same_name_and_text() {
 #[test]
 fn upload_refusals_equal_their_list() {
     let refusals = table(UploadRefusal::ALL, |refusal| {
-        vec![refusal.name().into(), refusal.message().into(), refusal.status().to_string()]
+        vec![refusal.name().into(), refusal.message().into(), refusal.status().as_u16().to_string()]
     });
     assert_eq!(refusals, rows(include_str!("../../../api/uploadrefusals.txt")));
     assert_eq!(UploadRefusal::from_name("uploadAccessOK"), None, "not a refusal");

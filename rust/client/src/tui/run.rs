@@ -2,7 +2,7 @@
 //! populations and probes, and the share of the plan done.
 use super::{App, chrome::Progress, console::ceil_step};
 use crate::{
-    events::{Event, Run},
+    events::{Event, Run, Running},
     measure::latency::Summary,
     model::{Dir, Direction, Stage, StageStatus},
     text::Line,
@@ -71,35 +71,43 @@ impl Live {
             Event::Sample { rates, .. } => {
                 let Some(run) = run else { return };
                 for direction in Direction::BOTH {
-                    let presented = run.live[direction].presented();
-                    self.shown[direction] = match rates[direction] {
-                        None => Glide::default(),
-                        Some(_) if presented > 0.0 => self.shown[direction].toward(presented, now),
-                        Some(_) => self.shown[direction],
+                    self.shown[direction] = match (rates[direction], run.live[direction].presented()) {
+                        (None, _) => Glide::default(),
+                        (Some(_), Some(presented)) => self.shown[direction].toward(presented, now),
+                        (Some(_), None) => self.shown[direction],
                     };
                 }
             }
-            Event::Probe { server, rtt, .. } => {
+            Event::Probes { server, probes } => {
                 let at = self.probes.iter().position(|(probed, ..)| probed == server);
                 let at = at.unwrap_or_else(|| {
                     self.probes.push((server.clone(), None, 0));
                     self.probes.len() - 1
                 });
                 let (_, latest, streak) = &mut self.probes[at];
-                (*latest, *streak) = match rtt {
-                    Some(rtt) => (Some(*rtt), 0),
-                    None => (*latest, *streak + 1),
-                };
+                for probe in probes {
+                    (*latest, *streak) = match probe.rtt {
+                        Some(rtt) => (Some(rtt), 0),
+                        None => (*latest, *streak + 1),
+                    };
+                }
                 let idle = run
                     .and_then(|run| run.stage.as_ref())
-                    .is_some_and(|(plan, _)| plan.stage == Stage::Latency);
-                if let Some(rtt) = rtt.filter(|_| idle && Some(server) == shown) {
+                    .is_some_and(|running| running.plan().stage == Stage::Latency);
+                let slowest = probes.iter().filter_map(|probe| probe.rtt).max();
+                if let Some(rtt) = slowest.filter(|_| idle && Some(server) == shown) {
                     let ceiling = ceil_step(rtt.as_secs_f64() * 1e3 * 1.25, &[1.0, 2.0, 4.0]);
                     self.rtt_scale = self.rtt_scale.max(ceiling);
                 }
             }
             Event::RunFinished { .. } => self.sweep = Some((now, self.needle.get().0)),
-            _ => {}
+            Event::Checking(_)
+            | Event::Prepared { .. }
+            | Event::CheckFailed(_)
+            | Event::SignIn(_)
+            | Event::SignInEnded(_)
+            | Event::ServerFailed(_)
+            | Event::StageFinished(_) => {}
         }
     }
 
@@ -153,10 +161,10 @@ impl App {
         let current = run
             .stage
             .as_ref()
-            .filter(|(plan, _)| plan.stage == stage && run.outcome.is_none());
+            .filter(|running| running.plan().stage == stage && run.outcome.is_none());
         match (current, run.results.iter().rfind(|result| result.stage == stage)) {
-            (Some((_, Some(_))), _) => State::Measuring,
-            (Some((_, None)), _) => State::Warmup,
+            (Some(Running::Measuring { .. }), _) => State::Measuring,
+            (Some(Running::Warmup(_)), _) => State::Warmup,
             (None, Some(result)) => State::Ended(result.status(run.focus.as_ref())),
             (None, None) => State::Pending,
         }
@@ -171,8 +179,9 @@ impl App {
     /// The latency server shown: the one `l` picked while it remains, else the run's.
     pub(super) fn latency_server(&self) -> Option<&ServerId> {
         let focus = self.view.run.as_ref()?.focus.as_ref();
-        let pick = self.live.pick.as_ref();
-        pick.filter(|pick| self.participants().contains(pick)).or(focus)
+        let remains =
+            |pick: &&ServerId| self.view.servers.iter().any(|server| server.id == **pick) && self.view.remains(pick);
+        self.live.pick.as_ref().filter(remains).or(focus)
     }
 
     /// Steps the latency server to the next one remaining.
@@ -248,7 +257,7 @@ impl App {
     pub(super) fn window(&self, run: &Run, stage: Stage) -> Option<(f64, f64)> {
         let at = run.plan.iter().position(|(planned, _)| *planned == stage)?;
         let offset: Duration = run.plan[..at].iter().map(|(_, duration)| *duration).sum();
-        let open = matches!(&run.stage, Some((plan, Some(_))) if plan.stage == stage);
+        let open = matches!(&run.stage, Some(Running::Measuring { plan, .. }) if plan.stage == stage);
         let result = run.results.iter().rfind(|result| result.stage == stage);
         let opened = open || result.is_some_and(|result| !result.measured.is_zero());
         opened.then(|| (offset.as_secs_f64(), (offset + run.plan[at].1).as_secs_f64()))
@@ -274,7 +283,9 @@ impl App {
     /// The time left in the stage's measured window, for the status bar.
     pub(super) fn left(&self) -> Option<Duration> {
         let run = self.view.run.as_ref().filter(|_| self.running())?;
-        let (plan, window) = run.stage.as_ref()?;
-        window.map(|_| plan.duration.saturating_sub(self.elapsed()))
+        match run.stage.as_ref()? {
+            Running::Measuring { plan, .. } => Some(plan.duration.saturating_sub(self.elapsed())),
+            Running::Warmup(_) => None,
+        }
     }
 }

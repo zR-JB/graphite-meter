@@ -1,18 +1,25 @@
 //! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
+    controller::INTERNAL,
     measure::latency::{Deadline, ProbeOutcome},
-    model::{Cadence, Stage},
+    model::{Cadence, Failure, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
     run::engine::Probe,
 };
-use graphite_meter_proto::bus::{Ping, Pong};
+use futures_util::FutureExt;
+use graphite_meter_proto::{
+    bus::{Ping, Pong},
+    reason::FailureReason,
+};
 use std::{
     collections::BTreeMap,
+    panic::AssertUnwindSafe,
+    pin::pin,
     time::{Duration, Instant},
 };
 use tokio::{
     sync::{mpsc, watch},
-    time::{sleep_until, timeout, timeout_at},
+    time::{self, sleep_until, timeout, timeout_at},
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 
@@ -180,13 +187,21 @@ enum Window {
 }
 
 impl Prober {
-    /// Probes `path` at `cadence` for `stage` until `token` is cancelled.
+    /// Probes `path` at `cadence` for `stage` on the latency runtime, where its bus also runs, until `token` is
+    /// cancelled; a panic ends the population as down.
     pub fn spawn(client: Client, path: LatencyPath, stage: Stage, cadence: Cadence, token: CancellationToken) -> Self {
         let (window, windows) = watch::channel(Window::Waiting);
         let (sender, probes) = mpsc::unbounded_channel();
         let schedule = Schedule::new(cadence, self::window(stage, cadence), Instant::now());
-        let probing = probe(client, path, schedule, windows, sender);
-        tokio::spawn(token.clone().run_until_cancelled_owned(probing));
+        let runtime = client.latency_runtime();
+        let probing = AssertUnwindSafe(probe(client, path, schedule, windows, sender.clone())).catch_unwind();
+        let running = token.clone();
+        runtime.spawn(async move {
+            if let Some(Err(_)) = running.run_until_cancelled_owned(probing).await {
+                let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
+                drop(sender.send(Probe::Down { at: Instant::now(), failure }));
+            }
+        });
         Self { window, probes, _ends: token.drop_guard() }
     }
 
@@ -200,7 +215,7 @@ impl Prober {
         self.window.send_replace(Window::Closed);
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = Probe> + '_ {
+    pub fn drain(&mut self) -> impl Iterator<Item = Probe> {
         std::iter::from_fn(|| self.probes.try_recv().ok())
     }
 }
@@ -246,16 +261,24 @@ async fn serve(
     window: &mut watch::Receiver<Window>,
     emit: &impl Fn(Probe),
 ) -> Result<(), Fault> {
+    let mut timer = pin!(sleep_until(time::Instant::now()));
     loop {
         if *window.borrow_and_update() == Window::Closed {
             schedule.stop();
         }
         let Some(wake) = schedule.wake() else { return Ok(()) };
+        if timer.deadline() != wake.into() {
+            timer.as_mut().reset(wake.into());
+        }
+        // A reply that already arrived resolves before a deadline due at the same poll can expire it.
         tokio::select! {
             biased;
+            reply = bus.next() => {
+                let (pong, arrived) = reply?;
+                schedule.reply(pong, arrived).into_iter().for_each(emit);
+            }
             Ok(()) = window.changed() => continue,
-            () = sleep_until(wake.into()) => {}
-            pong = bus.next() => schedule.reply(pong?, Instant::now()).into_iter().for_each(emit),
+            () = &mut timer => {}
         }
         let now = Instant::now();
         schedule.expire(now).into_iter().for_each(emit);

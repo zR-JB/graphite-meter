@@ -1,5 +1,9 @@
 use super::*;
-use crate::{auth::Holder, exchange::Exchange, lane::Work};
+use crate::{
+    auth::{Holder, Principal},
+    exchange::Exchange,
+    lane::Work,
+};
 use tokio::time::advance;
 use tokio_util::sync::CancellationToken;
 
@@ -76,8 +80,8 @@ async fn an_owner_is_its_narrowest_key_and_an_ambiguous_peer_owns_nothing() {
     ];
     assert_eq!(refusals, [Some(UploadRefusal::OwnerMismatch); 4]);
 
-    let grant = ClientKeys::Auth(Holder::Grant("g".into()), "alice".into());
-    let login = ClientKeys::Auth(Holder::Login("s".into()), "alice".into());
+    let grant = ClientKeys::Auth(Holder::Grant("g".into()), Principal::oidc("alice"));
+    let login = ClientKeys::Auth(Holder::Login("s".into()), Principal::oidc("alice"));
     let delegated = uploads.mint();
     drop(uploads.subscribe(&delegated, Some(&grant)).unwrap());
     assert_eq!(uploads.checkpoint(&delegated, Some(&login)).err(), Some(UploadRefusal::OwnerMismatch));

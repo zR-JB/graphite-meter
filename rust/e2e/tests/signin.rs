@@ -8,6 +8,7 @@ use graphite_meter_client::{
 };
 use graphite_meter_e2e::{self as e2e, Server, until};
 use graphite_meter_net::{Pool, Proxy, Trust, Verify};
+use graphite_meter_server::auth;
 use graphite_meter_testkit::{Identity, Scratch};
 use std::{ffi::OsString, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
@@ -93,15 +94,19 @@ async fn approve(server: &Server, identity: &Identity, address: SocketAddr, prom
         .auth()
         .store()
         .unwrap()
-        .sign_in("operator", "Operator", "local")
+        .sign_in(auth::Identity {
+            principal: auth::Principal::operator(),
+            name: "Operator",
+            provider: "local",
+        })
         .unwrap();
     let page = prompt.url.strip_prefix(&format!("https://{address}")).unwrap();
-    let cookie = format!("__Host-gm_session={}", login.token);
+    let cookie = format!("__Host-gm_session={}", login.token.as_str());
     let head = format!("host: {address}\r\ncookie: {cookie}\r\nconnection: close\r\n");
     let shown = exchange(identity, address, &format!("GET {page} HTTP/1.1\r\n{head}\r\n")).await;
     assert!(shown.starts_with("HTTP/1.1 200") && shown.contains(&prompt.code), "{shown}");
     let challenge = page.split_once("challenge=").unwrap().1;
-    let form = format!("csrf={}&challenge={challenge}", login.csrf);
+    let form = format!("csrf={}&challenge={challenge}", login.csrf.as_str());
     let post = format!(
         "POST /auth/cli/approve HTTP/1.1\r\n{head}origin: https://{address}\r\ncontent-type: \
          application/x-www-form-urlencoded\r\ncontent-length: {}\r\n\r\n{form}",

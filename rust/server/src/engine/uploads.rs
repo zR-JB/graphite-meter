@@ -13,8 +13,9 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::{
     collections::HashMap,
+    fmt,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -26,7 +27,8 @@ pub const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
 pub const MAX_PER_CLIENT: usize = 32;
 /// An ID creates state for this long after it was minted.
-pub const ID_LIFETIME: Duration = Duration::from_secs(120);
+pub const ID_LIFETIME: Duration = Duration::from_mins(2);
+const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_secs() * 1_000_000_000;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
 pub const RETENTION: Duration = ID_LIFETIME;
 /// Retention is swept at most this often.
@@ -53,9 +55,28 @@ struct Store {
 }
 
 struct Entries {
-    live: HashMap<Box<str>, Entry>,
+    live: HashMap<UploadId, Entry>,
     /// Displaced IDs, refused until they would have expired.
-    tombstones: HashMap<Box<str>, Instant>,
+    tombstones: HashMap<UploadId, Instant>,
+}
+
+/// An upload ID decoded from its text: issue time and nonce, then their HMAC tag.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct UploadId([u8; ID_BYTES]);
+
+impl UploadId {
+    fn parse(text: &str) -> Option<Self> {
+        let encoded = text.strip_prefix(ID_PREFIX)?;
+        let mut raw = [0; ID_BYTES];
+        let exact = encoded.len() == (ID_BYTES * 4).div_ceil(3);
+        (exact && URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES)).then_some(Self(raw))
+    }
+}
+
+impl fmt::Display for UploadId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(self.0))
+    }
 }
 
 struct Entry {
@@ -63,15 +84,13 @@ struct Entry {
     _capacity: Hold,
 }
 
-/// The store's monotonic clock in nanoseconds, starting at one so that zero means unset.
+/// The store's monotonic clock in nanoseconds.
 #[derive(Clone, Copy)]
 struct Clock(Instant);
 
 impl Clock {
     fn now(self) -> u64 {
-        u64::try_from(self.0.elapsed().as_nanos())
-            .unwrap_or(u64::MAX - 1)
-            .saturating_add(1)
+        u64::try_from(self.0.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
 }
 
@@ -80,8 +99,8 @@ pub(super) struct Aggregate {
     owner: ClientKey,
     clock: Clock,
     bytes: AtomicU64,
-    /// The clock at the first accepted chunk; zero before it.
-    first: AtomicU64,
+    /// The clock at the first accepted chunk.
+    first: OnceLock<u64>,
     life: Mutex<Life>,
     /// Woken when a lane leaves, the upload finishes or expires, or a reader replaces another.
     pub(super) changed: Notify,
@@ -90,10 +109,17 @@ pub(super) struct Aggregate {
 pub(super) struct Life {
     pub(super) lanes: usize,
     touched: Instant,
-    pub(super) finished: bool,
-    pub(super) expired: bool,
+    pub(super) phase: Phase,
     /// The number of the reader whose feed is current.
     pub(super) reader: u64,
+}
+
+/// Where an upload is: taking lanes, finalized, or expired, which ends a finalized one too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Phase {
+    Open,
+    Finished,
+    Expired,
 }
 
 impl Aggregate {
@@ -102,27 +128,22 @@ impl Aggregate {
     }
 
     pub(super) fn record(&self, bytes: u64) {
-        if self.first.load(Ordering::Relaxed) == 0 {
-            let _ = self
-                .first
-                .compare_exchange(0, self.clock.now(), Ordering::Relaxed, Ordering::Relaxed);
-        }
+        self.first.get_or_init(|| self.clock.now());
         self.bytes.fetch_add(bytes, Ordering::Release);
     }
 
     pub(super) fn counters(&self) -> Counters {
         let bytes = self.bytes.load(Ordering::Acquire);
-        let nanos = match self.first.load(Ordering::Relaxed) {
-            0 => 0,
-            first => self.clock.now().saturating_sub(first),
-        };
+        let nanos = self
+            .first
+            .get()
+            .map_or(0, |first| self.clock.now().saturating_sub(*first));
         Counters::new(bytes, nanos)
     }
 
     /// Finalized or expired: no lane joins any more.
     pub(super) fn ended(&self) -> bool {
-        let life = self.life();
-        life.finished || life.expired
+        self.life().phase != Phase::Open
     }
 
     /// A lane left: retention starts again from now.
@@ -136,7 +157,7 @@ impl Aggregate {
 
     fn join(&self) -> Result<(), UploadRefusal> {
         let mut life = self.life();
-        if life.finished {
+        if life.phase != Phase::Open {
             return Err(UploadRefusal::Invalid);
         }
         life.lanes += 1;
@@ -145,7 +166,7 @@ impl Aggregate {
     }
 
     fn expire(&self) {
-        self.life().expired = true;
+        self.life().phase = Phase::Expired;
         self.changed.notify_waiters();
     }
 }
@@ -174,11 +195,12 @@ impl Entries {
             .iter()
             .filter_map(|(id, entry)| {
                 let life = entry.aggregate.life();
-                let empty = life.lanes == 0 && !life.finished && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
+                let empty =
+                    life.lanes == 0 && life.phase == Phase::Open && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
                 empty.then_some((life.touched, id))
             })
             .min_by_key(|(touched, _)| *touched)
-            .map(|(_, id)| id.clone());
+            .map(|(_, id)| *id);
         let Some(id) = victim else { return false };
         if let Some(entry) = self.live.remove(&id) {
             entry.aggregate.expire();
@@ -220,7 +242,7 @@ impl Uploads {
         id[8..SIGNED_BYTES].copy_from_slice(&crate::random::<16>());
         let tag = self.mac(&id[..SIGNED_BYTES]).finalize().into_bytes();
         id[SIGNED_BYTES..].copy_from_slice(&tag);
-        format!("{ID_PREFIX}{}", URL_SAFE_NO_PAD.encode(id))
+        UploadId(id).to_string()
     }
 
     /// Joins `id`'s aggregate as a data lane that `lane` bounds, its bytes counted in `transfer`.
@@ -259,7 +281,11 @@ impl Uploads {
     /// Finalizes an aggregate: it takes no new lane, and its feed completes once its lanes drain.
     pub fn finish(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
         let aggregate = self.access(id, owner, Access::Read)?;
-        aggregate.life().finished = true;
+        let mut life = aggregate.life();
+        if life.phase == Phase::Open {
+            life.phase = Phase::Finished;
+        }
+        drop(life);
         aggregate.changed.notify_waiters();
         Ok(())
     }
@@ -276,8 +302,9 @@ impl Uploads {
         if access != Access::Read && narrowest.is_none() {
             return Err(UploadRefusal::OwnerMismatch);
         }
+        let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
         let mut entries = self.entries();
-        if let Some(entry) = entries.live.get(id) {
+        if let Some(entry) = entries.live.get(&id) {
             if narrowest.as_ref() != Some(&entry.aggregate.owner) {
                 return Err(UploadRefusal::OwnerMismatch);
             }
@@ -289,7 +316,7 @@ impl Uploads {
         let (Some(keys), Some(owner)) = (owner, narrowest) else {
             return Err(UploadRefusal::Invalid);
         };
-        if access == Access::Read || entries.tombstones.contains_key(id) || !self.valid(id) {
+        if access == Access::Read || entries.tombstones.contains_key(&id) || !self.valid(&id) {
             return Err(UploadRefusal::Invalid);
         }
         let capacity = self.capacity(&mut entries, keys)?;
@@ -297,18 +324,17 @@ impl Uploads {
             owner,
             clock: self.0.clock,
             bytes: AtomicU64::new(0),
-            first: AtomicU64::new(0),
+            first: OnceLock::new(),
             life: Mutex::new(Life {
                 lanes: usize::from(access == Access::Join),
                 touched: Instant::now(),
-                finished: false,
-                expired: false,
+                phase: Phase::Open,
                 reader: 0,
             }),
             changed: Notify::new(),
         });
         let entry = Entry { aggregate: aggregate.clone(), _capacity: capacity };
-        entries.live.insert(id.into(), entry);
+        entries.live.insert(id, entry);
         Ok(aggregate)
     }
 
@@ -337,20 +363,14 @@ impl Uploads {
     }
 
     /// Whether this store minted `id` within its lifetime.
-    fn valid(&self, id: &str) -> bool {
-        let mut raw = [0; ID_BYTES];
-        let decoded = id
-            .strip_prefix(ID_PREFIX)
-            .filter(|encoded| encoded.len() == (ID_BYTES * 4).div_ceil(3))
-            .is_some_and(|encoded| URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES));
+    fn valid(&self, UploadId(raw): &UploadId) -> bool {
         let (signed, tag) = raw.split_at(SIGNED_BYTES);
-        if !decoded || self.mac(signed).verify_slice(tag).is_err() {
+        if self.mac(signed).verify_slice(tag).is_err() {
             return false;
         }
-        let issued = u64::from_be_bytes(raw[..8].try_into().expect("eight bytes"));
-        let lifetime = u64::try_from(ID_LIFETIME.as_nanos()).expect("two minutes in nanoseconds");
-        let age = self.0.clock.now().checked_sub(issued);
-        age.is_some_and(|age| age <= lifetime)
+        let issued = raw.first_chunk().map(|issued| u64::from_be_bytes(*issued));
+        let age = issued.and_then(|issued| self.0.clock.now().checked_sub(issued));
+        age.is_some_and(|age| age <= ID_LIFETIME_NANOS)
     }
 
     fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {

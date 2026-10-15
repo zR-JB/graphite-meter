@@ -1,5 +1,6 @@
 //! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
+    controller::Kind,
     measure::{
         latency::{Latency, ProbeOutcome},
         live::LiveRate,
@@ -17,9 +18,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// A path check began, or a run's preparation.
-    Checking {
-        run: bool,
-    },
+    Checking(Kind),
     /// The catalogue and the selected servers with their paths, in catalogue order.
     Prepared {
         servers: Arc<[ServerPath]>,
@@ -44,11 +43,10 @@ pub enum Event {
         at: Duration,
         rates: Dir<Option<f64>>,
     },
-    /// A probe sent `at` into the window: its round trip, or none for a timeout.
-    Probe {
+    /// A server's probes resolved since the last tick that it sent within the window, in resolution order.
+    Probes {
         server: ServerId,
-        at: Duration,
-        rtt: Option<Duration>,
+        probes: Box<[Probed]>,
     },
     /// A failure as it happens.
     ServerFailed(ServerFailure),
@@ -107,6 +105,13 @@ pub struct Series {
     pub points: Vec<Point>,
     step: Duration,
     pub span: Duration,
+}
+
+/// A probe sent `at` into the window: its round trip, or none for a timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probed {
+    pub at: Duration,
+    pub rtt: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -193,6 +198,27 @@ pub enum Check {
     SignIn,
 }
 
+/// A stage in progress: warming up, or measuring from its window's offset into the plan.
+#[derive(Debug, Clone)]
+pub enum Running {
+    Warmup(StagePlan),
+    Measuring { plan: StagePlan, offset: Duration },
+}
+
+impl Running {
+    pub fn plan(&self) -> &StagePlan {
+        match self {
+            Self::Warmup(plan) | Self::Measuring { plan, .. } => plan,
+        }
+    }
+
+    fn into_plan(self) -> StagePlan {
+        match self {
+            Self::Warmup(plan) | Self::Measuring { plan, .. } => plan,
+        }
+    }
+}
+
 /// A run from its preparation on.
 #[derive(Debug, Clone, Default)]
 pub struct Run {
@@ -201,8 +227,8 @@ pub struct Run {
     pub at: Option<Instant>,
     /// The latency server: the first selected one, or a survivor that measured latency once it left.
     pub focus: Option<ServerId>,
-    /// The stage in progress, and its window's offset into the plan once open.
-    pub stage: Option<(StagePlan, Option<Duration>)>,
+    /// The stage in progress.
+    pub stage: Option<Running>,
     /// Each direction's presented rate, as the browser estimates it from the samples.
     pub live: Dir<LiveRate>,
     /// The latest sample's offset into the window.
@@ -244,8 +270,8 @@ impl View {
 
     pub fn apply(&mut self, event: &Event) {
         match event {
-            Event::Checking { run: true } => (self.starting, self.refused) = (true, None),
-            Event::Checking { run: false } => self.check = Check::Checking,
+            Event::Checking(Kind::Run) => (self.starting, self.refused) = (true, None),
+            Event::Checking(Kind::Check) => self.check = Check::Checking,
             Event::Prepared { servers, catalogue } => {
                 (self.servers, self.catalogue, self.check) = (servers.clone(), catalogue.clone(), Check::Ready);
             }
@@ -293,7 +319,7 @@ impl Run {
     fn apply(&mut self, event: &Event) {
         match event {
             Event::StageStarted(plan) => {
-                self.stage = Some((plan.clone(), None));
+                self.stage = Some(Running::Warmup(plan.clone()));
                 self.live = Dir::default();
             }
             Event::Measuring(stage) => self.measuring(*stage),
@@ -312,21 +338,19 @@ impl Run {
                     };
                     self.live[direction].observe(rate * ms / 1e3, ms);
                     self.moved += rate * ms / 1e3;
-                    let presented = self.live[direction].presented();
-                    if presented > 0.0 {
+                    if let Some(presented) = self.live[direction].presented() {
                         self.throughput[direction].push(offset + *at, Some(presented));
                     }
                 }
-                self.peak = self.peak.max(self.live.down.presented() + self.live.up.presented());
+                let presented = Direction::BOTH.map(|direction| self.live[direction].presented().unwrap_or_default());
+                self.peak = self.peak.max(presented.iter().sum());
             }
-            Event::Probe { server, at, rtt } => {
+            Event::Probes { server, probes } => {
                 let Some((stage, offset)) = self.window() else { return };
-                self.series(server)
-                    .push(offset + *at, rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
-                let outcome = match rtt {
-                    Some(rtt) => ProbeOutcome::Reply { rtt: *rtt, handling: Duration::ZERO },
-                    None => ProbeOutcome::Timeout,
-                };
+                let series = self.series(server);
+                for probe in probes {
+                    series.push(offset + probe.at, probe.rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
+                }
                 let at = self
                     .replies
                     .iter()
@@ -335,17 +359,28 @@ impl Run {
                     self.replies.push((stage, server.clone(), Latency::default()));
                     self.replies.len() - 1
                 });
-                self.replies[at].2.record(outcome);
+                for probe in probes {
+                    self.replies[at].2.record(match probe.rtt {
+                        Some(rtt) => ProbeOutcome::Reply { rtt, handling: Duration::ZERO },
+                        None => ProbeOutcome::Timeout,
+                    });
+                }
             }
             Event::ServerFailed(failure) => {
-                let stage = self.stage.as_ref().map(|(plan, _)| plan.stage);
+                let stage = self.stage.as_ref().map(|running| running.plan().stage);
                 let Some(stage) = stage.or(self.plan.first().map(|(stage, _)| *stage)) else {
                     return;
                 };
                 self.issues.push((stage, failure.clone()));
             }
             Event::StageFinished(result) => self.finished(result),
-            _ => {}
+            Event::Checking(_)
+            | Event::Prepared { .. }
+            | Event::CheckFailed(_)
+            | Event::SignIn(_)
+            | Event::SignInEnded(_)
+            | Event::RunStarted { .. }
+            | Event::RunFinished { .. } => {}
         }
     }
 
@@ -353,9 +388,10 @@ impl Run {
     fn measuring(&mut self, stage: Stage) {
         let before = self.plan.iter().take_while(|(planned, _)| *planned != stage);
         let offset = before.map(|(_, duration)| *duration).sum();
-        if let Some((_, window)) = &mut self.stage {
-            *window = Some(offset);
-        }
+        self.stage = self
+            .stage
+            .take()
+            .map(|running| Running::Measuring { plan: running.into_plan(), offset });
         self.sampled = Duration::ZERO;
         for direction in Direction::BOTH {
             self.throughput[direction].push(offset, None);
@@ -366,8 +402,10 @@ impl Run {
     }
 
     fn window(&self) -> Option<(Stage, Duration)> {
-        let (plan, window) = self.stage.as_ref()?;
-        Some((plan.stage, (*window)?))
+        match self.stage.as_ref()? {
+            Running::Measuring { plan, offset } => Some((plan.stage, *offset)),
+            Running::Warmup(_) => None,
+        }
     }
 
     fn series(&mut self, server: &ServerId) -> &mut Series {

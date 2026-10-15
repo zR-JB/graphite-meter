@@ -1,7 +1,8 @@
 //! Cross-field validation into a `Config`, in Go's order: catalogue, authentication, limits, listeners, origins.
 
 use super::{
-    Auth, Config, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret, TlsFiles,
+    Auth, Config, Groups, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret,
+    TlsFiles,
     settings::{Advertised, Settings},
 };
 use graphite_meter_proto::{
@@ -9,7 +10,8 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin, Scheme},
     text::{quote, safe},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZero};
+use zeroize::Zeroizing;
 
 pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, String> {
     let mut catalog = settings.catalog.clone();
@@ -52,10 +54,16 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     let client_sessions = ("GM_MAX_SESSIONS_PER_CLIENT", settings.max_sessions_per_client);
     let connections = ("GM_MAX_CONNECTIONS", settings.max_connections);
     let client_connections = ("GM_MAX_CONNECTIONS_PER_CLIENT", settings.max_connections_per_client);
-    let all = [operations, client_operations, sessions, client_sessions, connections, client_connections];
-    if let Some((name, _)) = all.into_iter().find(|&(_, value)| value == 0) {
-        return Err(format!("{name} must be greater than zero"));
-    }
+    let positive =
+        |(name, value): (&str, usize)| NonZero::new(value).ok_or_else(|| format!("{name} must be greater than zero"));
+    let limits = Limits {
+        operations: positive(operations)?,
+        operations_per_client: positive(client_operations)?,
+        sessions: positive(sessions)?,
+        sessions_per_client: positive(client_sessions)?,
+        connections: positive(connections)?,
+        connections_per_client: positive(client_connections)?,
+    };
     for ((name, value), (outer, limit)) in [
         (client_operations, operations),
         (sessions, operations),
@@ -81,14 +89,6 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     if !STAGE_LIMITS.contains(&lifetimes.stage) {
         return Err("GM_MAX_STAGE_DURATION must be from 1s to 24h".into());
     }
-    let limits = Limits {
-        operations: operations.1,
-        operations_per_client: client_operations.1,
-        sessions: sessions.1,
-        sessions_per_client: client_sessions.1,
-        connections: connections.1,
-        connections_per_client: client_connections.1,
-    };
     Ok((limits, lifetimes))
 }
 
@@ -137,7 +137,11 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
         }
     }
     if let Advertised::Only(kinds) = &settings.advertised
-        && let Some(kind) = kinds.iter().find(|kind| natives[**kind as usize].1.is_empty())
+        && let Some(kind) = kinds.iter().find(|&&kind| {
+            natives
+                .iter()
+                .any(|&(native, address, _)| native == kind && address.is_empty())
+        })
     {
         return Err(format!("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}", kind.name()));
     }
@@ -214,15 +218,25 @@ fn public_lists(settings: &Settings) -> [(&'static str, &Vec<String>); 3] {
     ]
 }
 
+/// An enabled GM_AUTH_MODE.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthMode {
+    Password,
+    Oidc,
+    Hybrid,
+}
+
 fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
-    match settings.auth_mode.as_str() {
+    let mode = match settings.auth_mode.as_str() {
         "off" if settings.auth_given() => {
             return Err("authentication settings require GM_AUTH_MODE to be enabled".into());
         }
         "off" => return Ok(None),
-        "password" | "oidc" | "hybrid" => {}
+        "password" => AuthMode::Password,
+        "oidc" => AuthMode::Oidc,
+        "hybrid" => AuthMode::Hybrid,
         _ => return Err("GM_AUTH_MODE must be off, password, oidc, or hybrid".into()),
-    }
+    };
     let public = &settings.auth_public_url;
     let public_origin = Origin::parse(public)
         .ok()
@@ -231,17 +245,17 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
     if public.rsplit_once(':').is_some_and(|(_, port)| port == "443") {
         return Err("GM_AUTH_PUBLIC_URL must omit the default HTTPS port".into());
     }
-    let methods = methods(settings)?;
+    let methods = methods(settings, mode)?;
     advertised_auth_origins(settings, &public_origin)?;
     let provider = settings.auth_oidc_provider_name.clone();
     Ok(Some(Auth { public_origin, methods, provider }))
 }
 
 /// Go's secret checks, in its order: both exclusions, each method's sources, then the provider's settings.
-fn methods(settings: &Settings) -> Result<Methods, String> {
+fn methods(settings: &Settings, mode: AuthMode) -> Result<Methods, String> {
     let password = secret(&settings.auth_password_hash, &settings.auth_password_hash_file);
     let client_secret = secret(&settings.auth_oidc_client_secret, &settings.auth_oidc_client_secret_file);
-    let (wants_password, wants_oidc) = (settings.auth_mode != "oidc", settings.auth_mode != "password");
+    let (wants_password, wants_oidc) = (mode != AuthMode::Oidc, mode != AuthMode::Password);
     let (issuer, client_id) = (&settings.auth_oidc_issuer, &settings.auth_oidc_client_id);
     let groups = &settings.auth_oidc_allowed_groups;
     let oidc_given = !issuer.is_empty() || !client_id.is_empty() || client_secret.is_some() || !groups.is_empty();
@@ -266,18 +280,23 @@ fn methods(settings: &Settings) -> Result<Methods, String> {
     } else if name.len() > 64 || !name.chars().all(safe) {
         "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
     } else {
-        let oidc = client_secret.map(|secret| Oidc {
-            issuer: issuer.clone(),
-            client_id: client_id.clone(),
-            secret,
-            allowed_groups: groups.clone(),
-        });
-        return Ok(match (password, oidc) {
-            (Some(password), Some(oidc)) => Methods::Hybrid(password, oidc),
-            (Some(password), _) => Methods::Password(password),
-            (None, Some(oidc)) => Methods::Oidc(oidc),
-            (None, None) => unreachable!("an enabled mode has a method"),
-        });
+        let oidc = client_secret
+            .zip(Groups::new(groups.clone()))
+            .map(|(secret, allowed_groups)| Oidc {
+                issuer: issuer.clone(),
+                client_id: client_id.clone(),
+                secret,
+                allowed_groups,
+            });
+        // The checks above leave each mode exactly its methods' secrets.
+        let methods = match mode {
+            AuthMode::Password => password.map(Methods::Password),
+            AuthMode::Oidc => oidc.map(Methods::Oidc),
+            AuthMode::Hybrid => password
+                .zip(oidc)
+                .map(|(password, oidc)| Methods::Hybrid(password, oidc)),
+        };
+        return methods.ok_or_else(|| "GM_AUTH_MODE has no configured method".into());
     };
     Err(failure.into())
 }
@@ -286,7 +305,7 @@ fn secret(inline: &str, file: &str) -> Option<Secret> {
     match (inline, file) {
         ("", "") => None,
         ("", file) => Some(Secret::File(file.into())),
-        (inline, _) => Some(Secret::Inline(inline.into())),
+        (inline, _) => Some(Secret::Inline(Zeroizing::new(inline.into()))),
     }
 }
 

@@ -89,10 +89,15 @@ where
         let Some(held) = hold(peer) else {
             continue;
         };
-        let serving = AssertUnwindSafe(serve(connection, peer)).catch_unwind();
+        // `serve`'s synchronous setup runs on the listener's task, so a panic there must not end the listener.
+        let serving = std::panic::catch_unwind(AssertUnwindSafe(|| serve(connection, peer)));
         let task = async move {
             let _held = held;
-            if let Err(panic) = serving.await {
+            let panicked = match serving {
+                Ok(serving) => AssertUnwindSafe(serving).catch_unwind().await.err(),
+                Err(panic) => Some(panic),
+            };
+            if let Some(panic) = panicked {
                 let text = panic.downcast_ref::<&str>().copied();
                 let text = text.or_else(|| panic.downcast_ref::<String>().map(String::as_str));
                 log!(

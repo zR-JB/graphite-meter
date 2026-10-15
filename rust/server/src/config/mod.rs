@@ -16,6 +16,7 @@ use std::{
     fmt,
     fs::File,
     io::{Read, Write},
+    num::NonZero,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -153,12 +154,12 @@ pub struct PublicOrigins {
 /// Concurrency limits, each positive and per-client ones within their totals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    pub operations: usize,
-    pub operations_per_client: usize,
-    pub sessions: usize,
-    pub sessions_per_client: usize,
-    pub connections: usize,
-    pub connections_per_client: usize,
+    pub operations: NonZero<usize>,
+    pub operations_per_client: NonZero<usize>,
+    pub sessions: NonZero<usize>,
+    pub sessions_per_client: NonZero<usize>,
+    pub connections: NonZero<usize>,
+    pub connections_per_client: NonZero<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,13 +211,31 @@ pub struct Oidc {
     pub issuer: String,
     pub client_id: String,
     pub secret: Secret,
-    pub allowed_groups: Vec<String>,
+    pub allowed_groups: Groups,
+}
+
+/// The OIDC groups allowed to sign in, never none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Groups(Vec<String>);
+
+impl Groups {
+    pub fn new(groups: Vec<String>) -> Option<Self> {
+        (!groups.is_empty()).then_some(Self(groups))
+    }
+
+    pub fn contains(&self, group: &str) -> bool {
+        self.0.iter().any(|allowed| allowed == group)
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
 }
 
 /// A secret given inline in the environment or as a file to read.
 #[derive(Clone)]
 pub enum Secret {
-    Inline(String),
+    Inline(Zeroizing<String>),
     File(PathBuf),
 }
 

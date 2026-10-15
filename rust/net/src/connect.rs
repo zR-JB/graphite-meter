@@ -10,7 +10,7 @@ use graphite_meter_proto::{
 use rustls::pki_types::ServerName;
 use std::{fmt, io, net::IpAddr, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 use tokio_rustls::TlsConnector;
@@ -18,7 +18,10 @@ use tokio_rustls::TlsConnector;
 /// The longest CONNECT response head a proxy may send.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// The longest a proxy may take past the TCP connect: Go's bound for CONNECT.
-const PROXY_TIMEOUT: Duration = Duration::from_secs(60);
+const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
+
+/// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
+pub const TLS_READ_BYTES: usize = 64 << 10;
 
 pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
@@ -76,7 +79,16 @@ impl fmt::Display for ConnectError {
     }
 }
 
-impl std::error::Error for ConnectError {}
+/// Display already shows the wrapped error, so its cause is the wrapped error's own.
+impl std::error::Error for ConnectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unreachable(error) | Self::Io(error) => error.source(),
+            Self::Tls(error) => error.source(),
+            Self::Proxy(_) | Self::Refused(_) => None,
+        }
+    }
+}
 
 impl From<io::Error> for ConnectError {
     fn from(error: io::Error) -> Self {
@@ -122,6 +134,7 @@ impl Connector {
             return Ok(Connection { stream, alpn: None, form });
         }
         let config = client_config(&self.verify, alpn).await;
+        let stream = BufReader::with_capacity(TLS_READ_BYTES, stream);
         let stream = secure(&TlsConnector::from(config), &target.host, stream).await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
         Ok(Connection { stream: Box::new(stream), alpn, form })

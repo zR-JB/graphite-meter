@@ -59,7 +59,7 @@ pub fn parse(text: &str) -> Result<i64, String> {
         total = sum.ok_or_else(invalid)?;
     }
     match negative {
-        true => Ok((total as i64).wrapping_neg()),
+        true => Ok(total.cast_signed().wrapping_neg()),
         false => i64::try_from(total).map_err(|_| invalid()),
     }
 }

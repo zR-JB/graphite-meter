@@ -161,7 +161,13 @@ impl Server {
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
-                    let http1 = Http1 { app: app.clone(), endpoint, tls, shutdown };
+                    let http1 = Http1 {
+                        app: app.clone(),
+                        endpoint,
+                        tls,
+                        buses: Handle::current(),
+                        shutdown,
+                    };
                     let serve = move |socket, peer| http1.connection(socket, peer);
                     services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"
@@ -260,21 +266,21 @@ fn until_stopped<'a>(stopping: &'a CancellationToken, work: impl Future<Output =
 
 /// Completes at SIGINT or SIGTERM, listening from its call, so a signal during startup stops the server once it serves.
 pub fn stop_signal() -> io::Result<impl Future<Output = ()>> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let (mut interrupt, mut terminate) = (signal(SignalKind::interrupt())?, signal(SignalKind::terminate())?);
-        Ok(async move {
-            tokio::select! {
-                _ = interrupt.recv() => {}
-                _ = terminate.recv() => {}
-            }
-        })
+    cfg_select! {
+        unix => {
+            use tokio::signal::unix::{SignalKind, signal};
+            let (mut interrupt, mut terminate) = (signal(SignalKind::interrupt())?, signal(SignalKind::terminate())?);
+            Ok(async move {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+            })
+        }
+        _ => Ok(async {
+            let _ = tokio::signal::ctrl_c().await;
+        }),
     }
-    #[cfg(not(unix))]
-    Ok(async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
 }
 
 /// The server returns freed memory once it has had no connection for this long.
@@ -283,7 +289,7 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
 /// The security log reports sign-in outcomes every minute.
-const SECURITY_LOG: Duration = Duration::from_secs(60);
+const SECURITY_LOG: Duration = Duration::from_mins(1);
 
 /// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
 async fn release_when_idle(app: &App, release: impl Fn()) {
@@ -367,9 +373,10 @@ async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>)
         if let Ok(local) = socket.local_addr() {
             *configured = bound(configured, local.port());
         }
-        let socket = match (endpoint, tls) {
-            (Endpoint::H2, Some(tls)) => Socket::Http2(socket, tls),
-            (_, tls) => Socket::Http1(socket, tls),
+        let socket = match (listener.kind, tls) {
+            (ListenerKind::H2, Some(tls)) => Socket::Http2(socket, tls),
+            (ListenerKind::H2, None) => return Err("TLS listeners need a certificate".into()),
+            (ListenerKind::H1 | ListenerKind::H1Tls | ListenerKind::H3, tls) => Socket::Http1(socket, tls),
         };
         listeners.push(Listening { endpoint, address, socket });
     }
@@ -423,7 +430,7 @@ pub fn check_budget(config: &Config) -> Result<(), String> {
 /// The QUIC endpoint's buffers without its socket's, or none without HTTP/3.
 fn configured_endpoint(config: &Config) -> Result<usize, String> {
     match config.listener(ListenerKind::H3) {
-        Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections, 0, 1)
+        Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections.get(), 0, 1)
             .ok_or_else(|| "QUIC endpoint buffer size overflow".into()),
         None => Ok(0),
     }
@@ -444,7 +451,7 @@ impl Terms {
         let h3 = config.listener(ListenerKind::H3);
         Ok(Self {
             limit: config.max_buffer_bytes,
-            connections: config.limits.connections,
+            connections: config.limits.connections.get(),
             h2: config.listener(ListenerKind::H2).is_some(),
             quic: h3.map(|_| quic::noq_floor(&config.limits)).transpose()?,
         })

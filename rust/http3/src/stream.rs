@@ -5,12 +5,13 @@ use crate::{
     driver::{Role, Shared},
     error::Error,
     fields,
-    frame::{self, Header},
+    frame::{self, FrameType, Header},
     message::{Event, Message},
 };
 use bytes::Bytes;
 use std::{
     future::{Future, poll_fn},
+    ops::Range,
     pin::pin,
     sync::Arc,
     task::{Context, Poll, Waker, ready},
@@ -21,6 +22,9 @@ pub struct RequestStream {
     pub(crate) send: SendHalf,
     pub(crate) recv: RecvHalf,
 }
+
+/// Chunks one read takes from noq under a single lock of the connection.
+const READ_CHUNKS: usize = 16;
 
 /// Charges for a request stream's two halves, so each can drop on its own.
 pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
@@ -48,7 +52,7 @@ impl RequestStream {
         (send_charge, recv_charge): (Charge, Charge),
     ) -> Self {
         shared.hold(2);
-        let message = Message::new(shared.field_limit(), shared.role == Role::Client);
+        let message = Message::new(shared.field_limit(), shared.role.peer());
         Self {
             send: SendHalf {
                 stream: send,
@@ -62,6 +66,8 @@ impl RequestStream {
                 stream: recv,
                 message,
                 input: Bytes::new(),
+                chunks: Default::default(),
+                read: 0..0,
                 shared: shared.clone(),
                 charge: recv_charge,
                 method: http::Method::default(),
@@ -96,6 +102,9 @@ pub struct RecvHalf {
     stream: noq::RecvStream,
     pub(crate) message: Message,
     input: Bytes,
+    /// Chunks read past `input`, the unparsed ones at `read`; noq charges them until they drop.
+    chunks: [Bytes; READ_CHUNKS],
+    read: Range<usize>,
     shared: Arc<Shared>,
     charge: Charge,
     /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
@@ -168,9 +177,13 @@ impl RecvHalf {
                 Ok(Some(event)) => return Poll::Ready(Ok(Some(event))),
                 Ok(None) => {}
             }
-            let chunk = ready!(pin!(self.stream.read_chunk(usize::MAX)).poll(cx));
-            match chunk {
-                Ok(Some(chunk)) => self.input = chunk,
+            if let Some(next) = self.read.next() {
+                self.input = std::mem::take(&mut self.chunks[next]);
+                continue;
+            }
+            let read = ready!(pin!(self.stream.read_many_chunks(&mut self.chunks)).poll(cx));
+            match read {
+                Ok(Some(count)) => self.read = 0..count,
                 Ok(None) => {
                     self.done = true;
                     return Poll::Ready(self.message.finish().map(|()| None).map_err(|code| self.abort(code)));
@@ -198,7 +211,7 @@ impl RecvHalf {
     /// Whether FIN already arrived unread, after a complete message.
     fn finished_unread(&mut self) -> bool {
         let mut cx = Context::from_waker(Waker::noop());
-        let complete = self.input.is_empty() && self.message.finish().is_ok();
+        let complete = self.input.is_empty() && self.read.is_empty() && self.message.finish().is_ok();
         complete && matches!(pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx), Poll::Ready(Ok(None)))
     }
 }
@@ -241,33 +254,33 @@ impl SendHalf {
     }
 
     /// Queues a frame; the previous one must be written.
-    pub(crate) fn queue(&mut self, kind: u64, payload: Bytes) {
+    pub(crate) fn queue(&mut self, kind: FrameType, payload: Bytes) {
         (self.header, self.payload) = (Header::new(kind, payload.len() as u64), payload);
     }
 
     /// Queues a frame after the pending one, which may be partly written.
-    pub(crate) fn queue_after(&mut self, kind: u64, payload: &[u8]) {
+    pub(crate) fn queue_after(&mut self, kind: FrameType, payload: &[u8]) {
         let mut frames = Vec::from(&self.payload[..]);
         frame::put_header(kind, payload.len() as u64, &mut frames);
         frames.extend_from_slice(payload);
         self.payload = frames.into();
     }
 
-    pub(crate) async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
+    pub(crate) async fn frame(&mut self, kind: FrameType, payload: Bytes) -> Result<(), Error> {
         poll_fn(|cx| self.poll_ready(cx)).await?;
         self.queue(kind, payload);
         poll_fn(|cx| self.poll_ready(cx)).await
     }
 
     pub async fn send_data(&mut self, data: Bytes) -> Result<(), Error> {
-        self.frame(frame::DATA, data).await
+        self.frame(FrameType::DATA, data).await
     }
 
     /// Queues a response head within the peer's field section limit.
     pub(crate) fn queue_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
         let (parts, ()) = response.into_parts();
         let section = fields::encode_response(&parts, self.shared.peer_field_limit()).map_err(|_| Error::Refused)?;
-        self.queue(frame::HEADERS, section.into());
+        self.queue(FrameType::HEADERS, section.into());
         Ok(())
     }
 

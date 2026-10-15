@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use graphite_meter_proto::approval::challenge;
-use graphite_meter_server::auth::NewLogin;
+use graphite_meter_server::auth::{BrowserOrigin, NewLogin, Principal};
 use http::{HeaderValue, StatusCode};
 use http_body_util::Full;
 use std::time::Duration;
@@ -28,7 +28,7 @@ async fn page(app: &App, path: &str, login: Option<&NewLogin>) -> Response<Body>
 async fn approve(app: &App, path: &str, login: &NewLogin, challenge: &str) -> Response<Body> {
     let request = signed("POST", path, login)
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(Full::new(Bytes::from(format!("csrf={}&challenge={challenge}", login.csrf))))
+        .body(Full::new(Bytes::from(format!("csrf={}&challenge={challenge}", login.csrf.as_str()))))
         .unwrap();
     tls(app, request).await
 }
@@ -53,7 +53,7 @@ async fn pending(response: Response<Body>) -> bool {
 #[tokio::test]
 async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     let app = auth_app(&[]);
-    let operator = login(&app, "operator");
+    let operator = login(&app, Principal::operator());
     let approval = challenge(VERIFIER);
     let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
     assert_eq!(location(&page(&app, &path, None).await), format!("/login?challenge={approval}"));
@@ -115,7 +115,7 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     assert!(issued["remainingMs"].as_u64().unwrap() > 28_700_000);
     assert_eq!(issued["maximumLifetimeMs"], 28_800_000);
     let grant = store(&app).bearer(issued["token"].as_str().unwrap()).unwrap();
-    assert_eq!(grant.browser(), Some(&HeaderValue::from_static(BROWSER)));
+    assert_eq!(grant.browser().map(BrowserOrigin::header), Some(&HeaderValue::from_static(BROWSER)));
 }
 
 /// An exchange whose answer was lost is asked again: the same verifier and origin get the same grant for 30 s, which
@@ -123,7 +123,7 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
 #[tokio::test]
 async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     let app = auth_app(&[]);
-    let operator = login(&app, "operator");
+    let operator = login(&app, Principal::operator());
     let approval = challenge(VERIFIER);
     let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
     assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::OK);
@@ -150,7 +150,7 @@ async fn a_repeated_exchange_returns_the_same_grant_briefly() {
             .status(),
         StatusCode::FORBIDDEN
     );
-    let browser = Some(HeaderValue::from_static(BROWSER));
+    let browser = BrowserOrigin::parse(&HeaderValue::from_static(BROWSER));
     for _ in 1..8 {
         store(&app).grant(operator.key, browser.clone()).unwrap();
     }

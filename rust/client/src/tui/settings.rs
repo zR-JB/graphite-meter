@@ -17,7 +17,7 @@ use graphite_meter_proto::{
     duration,
     text::safe,
 };
-use std::{ops::RangeInclusive, time::Duration};
+use std::{num::NonZero, ops::RangeInclusive, time::Duration};
 use unicode_width::UnicodeWidthChar;
 
 /// The most characters the editor holds.
@@ -72,7 +72,7 @@ impl App {
                 self.config.stages.sort_unstable();
             }
             Row::LoadedLatency => self.config.loaded_latency = on,
-            Row::ForceStreams => self.config.streams.forced = if on { self.config.streams.auto } else { 0 },
+            Row::ForceStreams => self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on),
             Row::Insecure => self.config.insecure = on,
             _ => {}
         }
@@ -97,7 +97,7 @@ impl App {
             }
             Row::Catalogue => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
             Row::Streams => {
-                let count = stream_count(&mut self.config).to_string();
+                let count = self.config.streams.shown().to_string();
                 self.edit(row, &count);
             }
             _ => match self.flag(row) {
@@ -117,8 +117,8 @@ impl App {
                 _ if row == Row::Warmup => Duration::from_millis(100),
                 0..60 => Duration::from_secs(1),
                 60..600 => Duration::from_secs(10),
-                600..3600 => Duration::from_secs(60),
-                _ => Duration::from_secs(300),
+                600..3600 => Duration::from_mins(1),
+                _ => Duration::from_mins(5),
             };
             let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
             *value = moved.clamp(*bounds.start(), *bounds.end());
@@ -158,8 +158,9 @@ impl App {
                 *cadence = CADENCES[next(at, CADENCES.len())].0;
             }
             Row::Streams => {
-                let count = stream_count(&mut self.config);
-                *count = count.saturating_add_signed(step).clamp(1, MAX_STREAMS);
+                let streams = &mut self.config.streams;
+                let count = NonZero::new(streams.shown().saturating_add_signed(step).min(MAX_STREAMS));
+                streams.show(count.unwrap_or(NonZero::<usize>::MIN));
             }
             _ => {}
         }
@@ -216,8 +217,13 @@ impl App {
             return Ok(());
         }
         if row == Row::Streams {
-            let count = raw.parse().ok().filter(|count| (1..=MAX_STREAMS).contains(count));
-            *stream_count(config) = count.ok_or(format!("Streams must be a whole number from 1 to {MAX_STREAMS}."))?;
+            let count = raw
+                .parse::<NonZero<usize>>()
+                .ok()
+                .filter(|count| count.get() <= MAX_STREAMS);
+            config
+                .streams
+                .show(count.ok_or(format!("Streams must be a whole number from 1 to {MAX_STREAMS}."))?);
             return Ok(());
         }
         let Some((value, bounds, range)) = span(config, row) else { return Ok(()) };
@@ -236,17 +242,9 @@ impl App {
 /// The duration `row` sets, the range it keeps to and that range in words.
 fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>, &'static str)> {
     match row {
-        Row::Stage(stage) => Some((&mut config.durations[stage as usize], STAGE_LIMITS, "1 s to 24 h")),
+        Row::Stage(stage) => Some((&mut config.durations[stage.index()], STAGE_LIMITS, "1 s to 24 h")),
         Row::Warmup => Some((&mut config.warmup, WARMUP, "0 s to 4 s")),
         _ => None,
-    }
-}
-
-/// The forced stream count, or the automatic maximum.
-fn stream_count(config: &mut Config) -> &mut usize {
-    match config.streams.forced {
-        0 => &mut config.streams.auto,
-        _ => &mut config.streams.forced,
     }
 }
 

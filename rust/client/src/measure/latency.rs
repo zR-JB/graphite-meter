@@ -102,43 +102,40 @@ impl Latency {
 
     pub fn summary(&self) -> Summary {
         let (replies, pairs) = (self.counts.replies, self.counts.jitter_pairs);
-        let rank = |rank| self.nth(rank);
-        let p50 = (replies > 0).then(|| {
-            let lower = rank(replies.div_ceil(2));
-            match replies % 2 {
-                0 => lower + (rank(replies / 2 + 1) - lower) / 2,
-                _ => lower,
-            }
-        });
-        let percentile = |share: usize| rank((share * replies).div_ceil(100).max(1));
+        let percentile = |share: usize| (share * replies).div_ceil(100).max(1);
+        // The two middle replies of an even count, the one middle reply twice of an odd one.
+        let middle = (replies.div_ceil(2), replies / 2 + 1);
+        let ranks = [1, percentile(10), middle.0, middle.1, percentile(90), percentile(95), replies];
+        let ranked = (replies > 0).then(|| self.ranked(ranks));
         Summary {
-            p50,
-            p95: (replies > 0).then(|| percentile(95)),
+            p50: ranked.map(|[_, _, lower, upper, ..]| lower + (upper - lower) / 2),
+            p95: ranked.map(|[.., p95, _]| p95),
             jitter: (pairs > 0).then(|| mean(self.variation, pairs)),
             timing: (self.timed > 0).then(|| Timing {
                 pairs: self.timed,
                 rtt: mean(self.timed_rtt, self.timed),
                 handling: mean(self.handling, self.timed),
             }),
-            spread: (replies > 0).then(|| Spread {
-                min: rank(1),
-                p10: percentile(10),
-                p90: percentile(90),
-                max: rank(replies),
-            }),
+            spread: ranked.map(|[min, p10, _, _, p90, _, max]| Spread { min, p10, p90, max }),
             ..self.counts
         }
     }
 
-    /// The reply of 1-based `rank` in round-trip order.
-    fn nth(&self, mut rank: usize) -> Duration {
+    /// The replies of the 1-based `ranks`, which ascend, in round-trip order: one walk over the histogram.
+    fn ranked<const N: usize>(&self, ranks: [usize; N]) -> [Duration; N] {
+        debug_assert!(ranks.is_sorted(), "{ranks:?}");
+        let (mut found, mut next, mut seen) = ([Duration::ZERO; N], 0, 0);
         for (&rtt, &count) in &self.rtts {
-            if rank <= count {
-                return rtt;
+            seen += count;
+            while next < N && ranks[next] <= seen {
+                found[next] = rtt;
+                next += 1;
             }
-            rank -= count;
+            if next == N {
+                break;
+            }
         }
-        unreachable!("ranks stay within the replies")
+        found
     }
 }
 
@@ -209,6 +206,33 @@ mod tests {
 
     const fn ms(ms: u64) -> Duration {
         Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn one_walk_finds_every_rank_a_sorted_list_does() {
+        for count in 1..=40_u64 {
+            let mut latency = Latency::default();
+            // Repeated round trips in scrambled order.
+            let mut rtts: Vec<_> = (0..count).map(|index| ms(1 + (index * 7919) % 13)).collect();
+            for &rtt in &rtts {
+                latency.record(ProbeOutcome::Reply { rtt, handling: Duration::ZERO });
+            }
+            rtts.sort();
+            let n = rtts.len();
+            let rank = |rank: usize| rtts[rank - 1];
+            let percentile = |share: usize| rank((share * n).div_ceil(100).max(1));
+            let lower = rank(n.div_ceil(2));
+            let p50 = if n % 2 == 0 { lower + (rank(n / 2 + 1) - lower) / 2 } else { lower };
+            let spread = Spread {
+                min: rtts[0],
+                p10: percentile(10),
+                p90: percentile(90),
+                max: rtts[n - 1],
+            };
+            let summary = latency.summary();
+            assert_eq!((summary.p50, summary.p95), (Some(p50), Some(percentile(95))), "{count} replies");
+            assert_eq!(summary.spread, Some(spread), "{count} replies");
+        }
     }
 
     #[test]
