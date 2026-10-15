@@ -215,8 +215,10 @@ of keyframes in `app.css` (`row-in`, `pop`, `grow-x`), each with one meaning.
 - A change that reshapes the console, a stage switched on or off, applies in the frame of the click that asked
   for it, and then moves (`flip()`): every element marked `data-flip` (the dial, the lanes, the controls, each card
   and each lane row) springs from where it is seen to its new place on the compositor, a card or the stage
-  changing width with it, and any other wider one opens from its old width. The spring sets off from rest, or at
-  the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
+  changing width with it, and any other wider one opens from its old width. What changes width, and the docked
+  sheets that move with the stage, move by offsets in layout instead, so a width and its neighbours are drawn in
+  the same frame (Firefox would draw a translate on its compositor apart from them). The spring sets off from rest,
+  or at the speed of the move it interrupts, overshoots once by about 1% and settles within 1% in 0.26 s: everything in
   one move shares it, so edges that meet stay together through the bob, and nothing starts or stops at once. Two things never share a place: a leaving one goes at once and its neighbours close over its place, and an
   arriving one waits while its neighbours make room (140 ms) before it rises in, and rises in at once when none
   moves. Nothing waits for a snapshot of the old page, so the click is answered at once. Opening or closing a result

@@ -174,8 +174,9 @@
     }
   }
 
-  /* The stage is the anchor the phase toast keeps to, clear of docked sheets. */
+  /* The stage is the anchor the phase toast keeps to, clear of docked sheets; its layout moves shift it by offsets. */
   .stage {
+    position: relative;
     anchor-name: --stage;
     grid-area: stage;
     display: flex;
@@ -201,7 +202,6 @@
   /* While a run is under way the console is lit from above in the running stage's hue. One gradient, repainted
      only while the hue moves. */
   .measurement-stage {
-    position: relative;
     isolation: isolate;
     &::before {
       content: "";
