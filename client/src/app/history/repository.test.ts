@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
-import type { HistoryRecord } from "./records";
-import { clearedSince, HistoryRefusal, HistoryRepository, pastLimit } from "./repository";
+import { IDBFactory } from "fake-indexeddb";
+import { HISTORY_LIMIT, type HistoryRecord } from "./records";
+import { HistoryRefusal, HistoryRepository } from "./repository";
 
 const notRun = { latency: null, download: null, upload: null, bidirectional: null };
 const record = (id: string) =>
@@ -30,27 +31,93 @@ const record = (id: string) =>
     },
   }) satisfies HistoryRecord;
 
-test("past the limit the oldest readable rows go, a new one among them when its clock is behind", () => {
-  const newest = (from: number) => Array.from({ length: 1_000 }, (_, i) => record(`r${from + i}`));
-  // Rows newest first; unreadable ones are never counted or removed.
-  const rows = [{ schemaVersion: 6 }, ...newest(0), "junk", ...newest(1_000), record("older"), null, record("new")];
-  const past = pastLimit();
-  expect(rows.map((row) => past(row)).filter((id) => id !== null)).toEqual(["older", "new"]);
+/** Real IndexedDB semantics in memory, holding `rows` at `version` as an earlier build left them. */
+async function storage(version?: number, rows: unknown[] = []) {
+  jest.useRealTimers();
+  const factory = new IDBFactory();
+  Object.assign(globalThis, { indexedDB: factory });
+  if (version !== undefined)
+    await new Promise<void>((resolve, reject) => {
+      const opening = factory.open("graphite-meter", version);
+      opening.onupgradeneeded = () => {
+        const db = opening.result;
+        db.createObjectStore("results", { keyPath: "id" }).createIndex("completedAt", "completedAt");
+        db.createObjectStore("meta", { keyPath: "key" });
+        for (const row of rows) opening.transaction!.objectStore("results").put(row);
+      };
+      opening.onsuccess = () => {
+        opening.result.close();
+        resolve();
+      };
+      opening.onerror = () => reject(opening.error);
+    });
+  /** The database's version and its rows as stored, by id. */
+  return () =>
+    new Promise<{ version: number; rows: unknown[] }>((resolve, reject) => {
+      const opening = factory.open("graphite-meter");
+      opening.onsuccess = () => {
+        const db = opening.result;
+        const all = db.transaction("results").objectStore("results").getAll();
+        all.onsuccess = () => {
+          db.close();
+          resolve({ version: db.version, rows: all.result });
+        };
+      };
+      opening.onerror = () => reject(opening.error);
+    });
+}
+
+test("a write lands under the clear count it was queued with; past the limit the oldest readable rows go", async () => {
+  const unreadable = { id: "junk", completedAt: -1 };
+  const rows = [
+    unreadable,
+    ...Array.from({ length: HISTORY_LIMIT }, (_, i) => ({ ...record(`r${i}`), completedAt: i })),
+  ];
+  const stored = await storage(3, rows);
+  const history = new HistoryRepository();
+  const changes: unknown[] = [];
+  history.onChange((change) => changes.push(change));
+  expect(await history.clears()).toBe(0);
+  expect(await history.put({ ...record("new"), completedAt: HISTORY_LIMIT }, 0)).toBe(true);
+  // A clear in any tab drops a write queued before it.
+  await history.clear();
+  expect(await history.put(record("late"), 0)).toBe(false);
+  expect(await history.put({ ...record("after"), completedAt: 5 }, 1)).toBe(true);
+  expect(changes).toEqual([
+    { type: "deleted", ids: ["r0"] },
+    { type: "saved", record: { ...record("new"), completedAt: HISTORY_LIMIT } },
+    { type: "cleared" },
+    { type: "saved", record: { ...record("after"), completedAt: 5 } },
+  ]);
+  expect((await stored()).rows.map((row) => (row as HistoryRecord).id)).toEqual(["after"]);
+  history.close();
 });
 
-test("a write is dropped only when History was cleared since its count was read; a corrupt count reads as none", () => {
-  const cases: [unknown, number, boolean][] = [
-    [undefined, 0, false],
-    [{ key: "clears", value: 2 }, 2, false],
-    [{ key: "clears", value: 3 }, 2, true],
-    [{ key: "clears", value: 1 }, 2, false],
-    [{ key: "clears", value: -1 }, 0, false],
-    [{ key: "clears", value: 1.5 }, 0, false],
-    [{ key: "clears", value: "3" }, 0, false],
-    [{ key: "clears", value: 2 ** 53 }, 0, false],
-    [{ key: "clears" }, 0, false],
-  ];
-  for (const [row, clears, dropped] of cases) expect(clearedSince(row, clears), JSON.stringify(row)).toBe(dropped);
+test("version 2 rows are upgraded once, in place; unreadable ones stay as stored and other versions are refused", async () => {
+  const older = {
+    ...record("older"),
+    result: { ...record("older").result, latency: { reportedMs: 9, jitterMs: null } },
+  };
+  const unreadable = { id: "junk", schemaVersion: 6 };
+  const stored = await storage(2, [older, unreadable]);
+  const history = new HistoryRepository();
+  const listed = await history.list(new AbortController().signal, (each) => each);
+  expect(listed).toEqual({
+    records: [
+      { ...older, result: { ...older.result, latency: { reportedMs: 9, jitterMs: null, stabilityPct: null } } },
+    ],
+    malformedCount: 1,
+  });
+  history.close();
+  expect(await stored()).toEqual({ version: 3, rows: [unreadable, listed.records[0]] });
+
+  const refused = await storage(1, [unreadable]);
+  const other = new HistoryRepository();
+  await expect(other.clears()).rejects.toThrow(
+    "Unsupported history database version. Saved data has not been changed.",
+  );
+  other.close();
+  expect(await refused()).toEqual({ version: 1, rows: [unreadable] });
 });
 
 /** `indexedDB.open` as the browser answers it, one request at a time, driven by the test. */

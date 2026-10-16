@@ -4,7 +4,7 @@ import type { HistoryRecord } from "./records";
 import { HistoryRefusal, HistoryRepository, type HistoryChange } from "./repository";
 import { createHistorySaving } from "./saving";
 
-const RETRYING = "Unable to save this result locally. Future writes will be retried.";
+const RETRYING = "Could not save this result locally. Future writes will be retried.";
 const record = (id: string) => ({ id }) as HistoryRecord;
 /** Lets every promise already settled run on. */
 const turns = async () => {
@@ -270,8 +270,24 @@ test("while storage keeps failing, results wait in a bounded queue and the oldes
   expect([saver.pending(), saver.unsaved()]).toEqual([false, false]);
 });
 
+test("a first write whose clear count could not be read is saved once storage answers, unless History changed", async () => {
+  const history = memoryHistory();
+  history.failing.clears = true;
+  const saver = createHistorySaving(history.repository, signal(true), windowEvents());
+  saver.offer(record("a"));
+  await turns();
+  expect([saver.pending(), saver.warning()]).toEqual([true, RETRYING]);
+  history.failing.clears = false;
+  jest.advanceTimersByTime(15_000);
+  await turns();
+  history.writes[0]!.answer();
+  await turns();
+  expect([...history.rows.keys()]).toEqual(["a"]);
+  expect([saver.pending(), saver.unsaved(), saver.warning()]).toEqual([false, false, ""]);
+});
+
 test("a write whose clear count could not be read never comes back after a clear", async () => {
-  // Nothing in this tab has read the count yet: the write has no count it can trust.
+  // Nothing in this tab has read the count yet: the write has no count it can trust once History changed.
   const history = memoryHistory();
   history.failing.clears = true;
   const saver = createHistorySaving(history.repository, signal(true), windowEvents());
@@ -279,6 +295,7 @@ test("a write whose clear count could not be read never comes back after a clear
   await turns();
   history.clear();
   history.failing.clears = false;
+  jest.advanceTimersByTime(15_000);
   await turns();
   expect(history.writes).toEqual([]);
   expect([...history.rows.keys()]).toEqual([]);

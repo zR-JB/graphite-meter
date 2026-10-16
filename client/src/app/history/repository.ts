@@ -1,19 +1,9 @@
-// Saved History: IndexedDB "graphite-meter" at schema version 2, and notice of each change to it.
-//
-// The page wires one of each:
-// - `const history = new HistoryRepository()` and `const saver = createHistorySaving(history, saving, window)`;
-// - a finished run: `saver.offer(historyRecord(run))`; a new Start or Start over: `saver.withdraw()`;
-// - signing out waits, and unload can warn, while `saver.pending`; Start over asks first while `saver.unsaved`;
-//   while `saver.failed`, a new run asks first, unload warns and the measurement shows `saver.warning`, which says
-//   why a write failed;
-// - the History view lists entries with `list(signal, historyEntry)`, reads a result whole with `inspect(id)` as it
-//   opens, changes rows with `delete`, `clear` and `removeMalformed`, and follows `onChange`: this tab's changes as
-//   they land, any other tab's (of either client) as `elsewhere`, which means reading the list again; `sortHistory`
-//   and `recentCompletion` present rows.
-import { HISTORY_LIMIT, readHistoryRecord, type HistoryRecord } from "./records";
+// Saved History: IndexedDB "graphite-meter", and notice of each change to it in this tab and others.
+import { HISTORY_LIMIT, readHistoryRecord, upgradeRecord, type HistoryRecord } from "./records";
 
 const DATABASE = "graphite-meter";
-const VERSION = 2;
+/** Version 2 held rows of any schema; version 3 holds them upgraded once, in this build's form. */
+const VERSION = 3;
 const RESULTS = "results";
 const META = "meta";
 const COMPLETED_AT = "completedAt";
@@ -58,10 +48,10 @@ const clearCount = (row: unknown): number => {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
 };
 
-export const clearedSince = (row: unknown, clears: number): boolean => clearCount(row) > clears;
+const clearedSince = (row: unknown, clears: number): boolean => clearCount(row) > clears;
 
 /** Walking rows newest first, the id of each readable row past the limit; unreadable rows are never counted. */
-export function pastLimit(): (row: unknown) => string | null {
+function pastLimit(): (row: unknown) => string | null {
   let kept = 0;
   return (row) => {
     const record = readHistoryRecord(row);
@@ -74,16 +64,29 @@ interface OpenRequest {
   waiter: { opened(db: IDBDatabase): void; failed(error: unknown): void; blocked(): void } | null;
 }
 
-/** Creates the database only from nothing: any other version is refused untouched; an unawaited answer is closed. */
+/** Creates the database from nothing, or upgrades version 2's readable rows in place, unreadable ones left as they
+    are; any other version is refused untouched. An unawaited answer is closed. */
 function openRequest(answered: () => void): OpenRequest {
   const opening = indexedDB.open(DATABASE, VERSION);
   const pending: OpenRequest = { blocked: false, waiter: null };
   // Refused on the abort's error, once the upgrade has unwound: Chromium can hang a page that opens behind it.
   let refusal: Error | undefined;
   opening.onupgradeneeded = ({ oldVersion }) => {
+    const upgrade = opening.transaction!;
+    if (oldVersion === 2) {
+      const scan = upgrade.objectStore(RESULTS).openCursor();
+      scan.onsuccess = () => {
+        const cursor = scan.result;
+        if (!cursor) return;
+        const record = upgradeRecord(cursor.value);
+        if (record) cursor.update(record);
+        cursor.continue();
+      };
+      return;
+    }
     if (oldVersion !== 0) {
       refusal = new HistoryRefusal(UNSUPPORTED);
-      return opening.transaction!.abort();
+      return upgrade.abort();
     }
     const db = opening.result;
     db.createObjectStore(RESULTS, { keyPath: "id" }).createIndex(COMPLETED_AT, COMPLETED_AT, { unique: false });
@@ -347,7 +350,7 @@ export class HistoryRepository {
 
   #changed(...changes: HistoryChange[]): void {
     if (!changes.length) return;
-    // Any message has History in other tabs, of either client, read its list again; a channel never hears itself.
+    // Any message has History in other tabs read its list again; a channel never hears itself.
     if (typeof BroadcastChannel === "function") {
       const channel = this.#channel ?? new BroadcastChannel(CHANNEL);
       channel.postMessage("");
