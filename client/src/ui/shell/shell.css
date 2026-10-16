@@ -28,37 +28,20 @@
     & > * {
       flex-shrink: 0;
     }
-    /* The bar's keys are square glyph plates with a hairline; a dialog opened from the bar keeps its own. */
-    & .btn:not(dialog *) {
-      background-color: var(--surface-1);
-    }
   }
   .topbar-spacer {
     flex: 1;
     min-width: 0;
   }
   .brand-btn {
-    display: inline-flex;
-    align-items: center;
     gap: 7px;
-    min-height: var(--control-h);
+    margin-inline: -6px 2px;
     padding: 0 6px;
-    margin-left: -6px;
-    margin-right: 2px;
-    border-radius: var(--r-chrome);
+    color: var(--text);
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
-    transition: var(--transition-control);
-    &:active {
-      opacity: 0.7;
-    }
-    @media (hover: hover) {
-      &:hover .brand-label {
-        color: var(--text-soft);
-      }
-    }
   }
-  /* Hexagon in the latency hue, needle in the text colour (favicon.svg). */
+  /* Hexagon in the latency hue, needle in the text color (favicon.svg). */
   .brand-glyph {
     width: 20px;
     height: 20px;
@@ -78,7 +61,7 @@
   .theme-glyph {
     display: grid;
     @media (prefers-reduced-motion: no-preference) {
-      animation: glyph-turn 480ms var(--ease-spring) backwards;
+      animation: glyph-turn calc(2 * var(--dur-graph)) var(--ease-spring) backwards;
     }
   }
   .connectivity {
@@ -114,20 +97,6 @@
   .topbar [data-more] {
     display: none;
   }
-  @container topbar (max-width: 333px) {
-    .topbar.saving:not(:has(.return-live)) {
-      & :is(.direct-history, .direct-details) {
-        display: none;
-      }
-      & .topbar-more {
-        display: block;
-      }
-      /* The Details item is named by its route, `endpoint`. */
-      & :is([data-more="history"], [data-more="endpoint"]) {
-        display: grid;
-      }
-    }
-  }
   @container topbar (max-width: 381px) {
     .topbar.saving:has(.return-live) {
       & :is(.direct-history, .direct-details) {
@@ -136,7 +105,31 @@
       & .topbar-more {
         display: block;
       }
-      & :is([data-more="history"], [data-more="endpoint"]) {
+      & :is([data-more="history"], [data-more="details"]) {
+        display: grid;
+      }
+    }
+  }
+  @container topbar (max-width: 333px) {
+    .topbar.saving:not(:has(.return-live)) {
+      & :is(.direct-history, .direct-details) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & :is([data-more="history"], [data-more="details"]) {
+        display: grid;
+      }
+    }
+    .topbar:has(.return-live) {
+      & :is(.direct-history, .direct-details, .direct-theme) {
+        display: none;
+      }
+      & .topbar-more {
+        display: block;
+      }
+      & [data-more] {
         display: grid;
       }
     }
@@ -153,24 +146,9 @@
         display: grid;
       }
     }
-  }
-  /* Narrower still, the way back to the live run, which names its stage and any recovery, stands for the dot. */
-  @container topbar (max-width: 285px) {
+    /* The way back to the live run, which names its stage and any recovery, stands for the dot. */
     .topbar:has(.return-live) .connectivity {
       display: none;
-    }
-  }
-  @container topbar (max-width: 333px) {
-    .topbar:has(.return-live) {
-      & :is(.direct-history, .direct-details, .direct-theme) {
-        display: none;
-      }
-      & .topbar-more {
-        display: block;
-      }
-      & [data-more] {
-        display: grid;
-      }
     }
   }
 
@@ -216,8 +194,8 @@
       );
       opacity: 0;
       transition:
-        opacity 488ms var(--ease-out-head),
-        --ambient 488ms var(--ease-out-head);
+        opacity var(--dur-stage) var(--ease-out-head),
+        --ambient var(--dur-stage) var(--ease-out-head);
       pointer-events: none;
     }
     &[data-stage]::before {
@@ -245,7 +223,6 @@
       }
     }
     @media (max-height: 800px) {
-      gap: var(--space-3);
       padding-block: var(--space-3);
     }
   }
@@ -351,7 +328,6 @@
       padding: 0;
     }
     .return-live {
-      width: calc(var(--control-h) + 2 * var(--hit-pad));
       padding: 0;
     }
     .connectivity {

@@ -1,6 +1,4 @@
-// The result cards: one per stage in stage order, each the same fixed facts from Start to the result. The live console's
-// cards carry strips and follow the running stage on the frame clock; History's show a saved result as it settled.
-// Every binding reads the one string it shows, so a new sample rewrites only what it changed.
+// The result cards: the live console's carry strips and follow the frame clock; History's show a saved result.
 import type { App } from "../../app/app";
 import type { RunResult } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
@@ -38,8 +36,7 @@ interface Figures {
   num: Figure;
   down: Figure;
   up: Figure;
-  /** The Down + up fact. */
-  combined: Figure;
+  combined: Figure | null;
 }
 
 /** One stage's card. The headline is re-made, rising in, when the lens shows another server. */
@@ -53,7 +50,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
     num: new Figure("headline-figure"),
     down: new Figure("headline-figure"),
     up: new Figure("headline-figure"),
-    combined: new Figure("fact-figure"),
+    combined: null,
   };
   const texts = {
     num: document.createTextNode(""),
@@ -103,12 +100,12 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
     </span>
   );
   const word = computed(() => card().word);
-  // Every fact is a figure laid out alone; a running bidirectional stage's Down + up is painted on the frame clock.
+  // Every fact is a figure laid out alone; a running bidirectional stage's combined rate is painted on the frame clock.
   const facts = card.peek().facts.map((fact, index) => {
     const value = computed(() => card().facts[index]?.value ?? MISSING);
-    const combined = computed(() => fact.label === CARDS.downUp && live() === "pair");
+    const combined = computed(() => fact.key === "combined" && live() === "pair");
     const shown = new Figure("fact-figure");
-    if (fact.label === CARDS.downUp) figures.combined = shown;
+    if (fact.key === "combined") figures.combined = shown;
     effect(() => {
       if (!combined()) shown.set(value());
     });
@@ -128,10 +125,10 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
   const jitter = computed(() => (quiet() ? "" : (card().jitter ?? "")));
   const noData = computed(() => (quiet() ? "" : (card().noData ?? "")));
   const line = computed(() => (reason() ? "reason" : wire() ? "wire" : jitter() ? "jitter" : null));
-  const strip = props.strip;
+  const strip = computed(() => props.strip?.() ?? null);
   const element = (
     <article
-      class={() => `card ${status()}${strip ? " with-strip" : ""}`}
+      class={() => `card panel ${status()}${strip() ? " with-strip" : ""}`}
       data-tone={stage}
       data-flip={`card-${stage}`}
       data-flip-resize=""
@@ -199,7 +196,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
           )}
         </Show>
       </span>
-      {strip && (() => strip() && <div class="strip">{strip()}</div>)}
+      {() => strip() && <div class="strip">{strip()}</div>}
       <dl class={() => (unknown() ? "facts unknown" : "facts")}>{facts}</dl>
       <span class="sr-only">
         <span class="spoken">{spoken}</span>
@@ -212,7 +209,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
 /** The cards in a grid of up to four across, pairing up and then stacking as the console narrows. */
 function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) => HTMLElement; issues?: Node }): Node {
   const grid = (
-    <div class="result-cards" data-tip-group="" ref={tipGroup}>
+    <div class="result-cards" ref={tipGroup}>
       <For each={props.stages} by={(stage) => stage}>
         {(stage) => props.card(stage())}
       </For>
@@ -268,7 +265,7 @@ export function ResultSummary(props: {
       issues={
         <Show when={() => listed().length > 0}>
           {() => (
-            <dl class={() => (attributed() ? "issues enter attributed" : "issues enter")} aria-label={CARDS.issues}>
+            <dl class={() => (attributed() ? "issues enter attributed" : "issues enter")}>
               {() =>
                 listed().map((issue: Issue) => [
                   attributed() ? [<dt>{issue.server}</dt>, <dd>{issue.stages}</dd>] : <dt>{issue.stages}</dt>,
@@ -474,7 +471,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
         else {
           figures.down.set(fmtSpeed(down));
           figures.up.set(fmtSpeed(up));
-          figures.combined.set(`${fmtSpeed(down + up)} ${rateUnit(page, tier)}`);
+          figures.combined?.set(`${fmtSpeed(down + up)} ${rateUnit(page, tier)}`);
         }
       }
       return live.active(now);

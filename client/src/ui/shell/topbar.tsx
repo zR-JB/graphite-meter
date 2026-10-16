@@ -51,9 +51,9 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
   return (
     <header class={() => (app.saving() ? "topbar saving" : "topbar")}>
       <button
-        class="brand-btn"
+        class="btn btn-quiet brand-btn"
         type="button"
-        aria-label={() => `Graphite Meter — ${measuring() ? "start over" : "return to measurement"}`}
+        aria-label={() => `Graphite Meter, ${measuring() ? "start over" : "return to measurement"}`}
         ref={tip(() => (measuring() ? "Start over" : "Return to measurement"))}
         onclick={() => shell.startOver()}
       >
@@ -82,11 +82,11 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
       <Show when={live}>
         {(chip) => (
           <button
-            class="btn return-live"
+            class="btn key return-live"
             type="button"
             data-tone={() => chip().tone}
-            aria-label={() => `Live ${chip().label}. Return to measurement.`}
-            ref={tip(() => `${chip().label} — return to measurement`)}
+            aria-label={() => `Live ${chip().label}, return to measurement`}
+            ref={tip(() => `${chip().label}\nReturn to measurement`)}
             onclick={() => ctl.returnToLive()}
           >
             <span class="run-icon">{() => <Icon name={chip().icon} />}</span>
@@ -104,7 +104,6 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
             class="btn btn-icon key direct-history"
             type="button"
             aria-label="History"
-            aria-current={() => (ctl.historyOpen() ? "page" : undefined)}
             aria-pressed={() => String(ctl.historyOpen())}
             ref={named(BINDINGS.history, () => "History")}
             onclick={(event) => ctl.toggleHistory(event.currentTarget)}
@@ -150,16 +149,15 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
               icon: "history",
               name: "history",
               hidden: computed(() => !app.saving()),
-              current: computed(() => (ctl.historyOpen() ? "page" : false)),
+              checked: ctl.historyOpen,
               run: (trigger) => ctl.toggleHistory(trigger),
             },
             {
               title: "Details",
               detail: "Server and connection",
               icon: "info",
-              // The Details panel's route name, which saved links use.
-              name: "endpoint",
-              current: computed(() => (shell.shown("details") ? "true" : false)),
+              name: "details",
+              checked: computed(() => shell.shown("details")),
               run: (trigger) => shell.toggle("details", trigger),
             },
             {

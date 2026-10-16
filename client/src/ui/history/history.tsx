@@ -8,7 +8,7 @@ import type { HistoryRepository } from "../../app/history/repository";
 import { epochMs } from "../../engine/run/clock";
 import { Show } from "../../lib/dom";
 import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read } from "../../lib/signal";
-import { announce } from "../kit/announce";
+import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { activeModal, canFocus, hasFocus, isEditable } from "../kit/focus";
 import { Icon } from "../kit/icon";
@@ -27,7 +27,7 @@ const OWNS_ARROWS =
   "[role=slider], [role=separator], [role=radiogroup], [role=radio], [role=tab], [role=menu], [role=menuitem]";
 const MIN_LIST_PX = 360;
 const MIN_DETAIL_PX = 460;
-/** From this width a result opens beside the list (history.css). */
+/** From this width a result opens beside the list (`data-beside`). */
 const BESIDE_PX = 821;
 
 /** Unreadable rows dismissed, per archive, for the page's life: the notice returns when their count changes. */
@@ -41,10 +41,10 @@ const CONFIRM = {
     confirm: "Delete result",
   },
   clear: {
-    title: "Clear history?",
+    title: "Clear History?",
     description: "All saved results are permanently removed from this browser.",
-    cancel: "Keep history",
-    confirm: "Clear history",
+    cancel: "Keep History",
+    confirm: "Clear History",
   },
 };
 type Action = { kind: "delete"; id: string; when: number } | { kind: "clear" };
@@ -91,6 +91,13 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const actionError = archive.error;
   const dismissed = signal(dismissals.get(app.history) ?? 0);
   const unreadable = computed(() => (archive.malformed() !== dismissed() ? archive.malformed() : 0));
+  const unreadableText = computed(() => {
+    const count = unreadable();
+    return count ? `${count} unreadable ${count === 1 ? "result was" : "results were"} skipped.` : "";
+  });
+  announceChanges(app.saver.warning);
+  announceChanges(actionError);
+  announceChanges(unreadableText);
   const paused = computed(() => hasRecords() && !app.saving());
   const resume = () => app.preferences.set({ resultHistoryPreference: "enabled" });
 
@@ -134,11 +141,11 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     try {
       const removed = await app.history.removeMalformed();
       if (disposed) return;
-      announce(`${removed} malformed ${removed === 1 ? "record" : "records"} removed.`);
+      announce(`${removed} unreadable ${removed === 1 ? "result" : "results"} removed.`);
       // None left to remove means another tab took them first: the count is stale.
       if (!removed) archive.load(true);
     } catch {
-      if (!disposed) actionError.set("Unable to remove the malformed records.");
+      if (!disposed) actionError.set("Could not remove the unreadable results.");
     }
     if (!disposed) workspace.focus({ preventScroll: true });
   }
@@ -148,32 +155,39 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     workspace.focus({ preventScroll: true });
   }
 
-  const Unavailable = (malformed: boolean) => (
-    <div class="detail-pane empty-state" role="status">
-      <span class="empty-icon">!</span>
-      <h2>{malformed ? "Unreadable saved result" : "Result not found"}</h2>
-      <p>
-        {malformed ? "This record uses an unsupported format or failed validation." : "This result is not in History."}
-      </p>
-      <button class="btn" type="button" onclick={() => shell.history(null)}>
-        Back to results
-      </button>
-    </div>
-  );
+  const Unavailable = (malformed: boolean) => {
+    const title = malformed ? "Unreadable saved result" : "Result not found";
+    announce(`${title}.`);
+    return (
+      <div class="detail-pane empty-state">
+        <span class="empty-icon">!</span>
+        <h2>{title}</h2>
+        <p>
+          {malformed ? "This saved result is in a format this version cannot read." : "This result is not in History."}
+        </p>
+        <button class="btn" type="button" onclick={() => shell.history(null)}>
+          Back to results
+        </button>
+      </div>
+    );
+  };
 
-  const Unread = () => (
-    <div class="detail-pane empty-state" role="status">
-      <span class="empty-icon">!</span>
-      <h2>Result could not be read</h2>
-      <p>History could not read this result just now.</p>
-      <button class="btn" type="button" onclick={() => archive.reread()}>
-        Retry
-      </button>
-      <button class="btn" type="button" onclick={() => shell.history(null)}>
-        Back to results
-      </button>
-    </div>
-  );
+  const Unread = () => {
+    announce("Result could not be read.");
+    return (
+      <div class="detail-pane empty-state">
+        <span class="empty-icon">!</span>
+        <h2>Result could not be read</h2>
+        <p>History could not read this result just now.</p>
+        <button class="btn" type="button" onclick={() => archive.reread()}>
+          Retry
+        </button>
+        <button class="btn" type="button" onclick={() => shell.history(null)}>
+          Back to results
+        </button>
+      </div>
+    );
+  };
 
   // The result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
@@ -193,14 +207,15 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     document.removeEventListener("pointerdown", elsewhere, true);
     document.removeEventListener("focusin", elsewhere);
   });
-  // With a result open, Up and Down open the one above or below it in the list, from anywhere in History that leaves
-  // arrows alone; past either end they do nothing.
+  // With a result open, Up and Down open the one above or below it in the list from anywhere in History that leaves
+  // arrows alone, except from within the result's body, which they scroll; past either end they do nothing.
   const step = (event: KeyboardEvent) => {
     const by = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
     const id = props.selectedId.peek();
     if (!by || id === null || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     const target = event.target as Element;
     if (target !== document.body && !workspace.contains(target)) return;
+    if (target.closest(".detail-body")) return;
     if (event.shiftKey || isEditable(target) || target.closest(OWNS_ARROWS)) return;
     if (activeModal() || document.querySelector(":popover-open:not(.tooltip)")) return;
     event.preventDefault();
@@ -268,6 +283,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   function Body(): Node {
     const open = computed(() => props.selectedId() !== null);
     const width = signal(0);
+    const beside = computed(() => width() >= BESIDE_PX);
     const listPx = computed(() =>
       Math.round(Math.max(MIN_LIST_PX, Math.min(width() - MIN_DETAIL_PX, app.preferences.historySplit() * width()))),
     );
@@ -292,7 +308,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         {list}
         <Splitter
           edge="right"
-          label="Resize results list (arrow keys; Enter to reset)"
+          label="Resize results list"
           value={listPx}
           min={computed(() => MIN_LIST_PX)}
           max={computed(() => width() - MIN_DETAIL_PX)}
@@ -303,9 +319,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         />
       </div>
     ) as HTMLElement;
-    // In this order, so the page lays out once: the pane that leaves goes before anything changes the list's width
-    // (removing a focused result from a stale layout lays out every row just to move focus), then the list takes
-    // its new width and fold together, then the pane that arrives.
+    // In this order, so the page lays out once: the leaving pane, the list's width and fold, the arriving pane.
     let pane: { key: string; node: Node | null; dispose: () => void } | null = null;
     effect(() => {
       const key = shownKey();
@@ -317,7 +331,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
           pane = null;
         }
         body.classList.toggle("has-detail", opened);
-        results.fitTo(opened && width.peek() >= BESIDE_PX ? listPx.peek() : width.peek());
+        results.fitTo(opened && beside.peek() ? listPx.peek() : width.peek());
         if (pane) return;
         const [node, dispose] = scope(() => DetailPane(archive.selected()));
         if (node) body.append(node);
@@ -325,8 +339,8 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       });
     });
     onCleanup(() => pane?.dispose());
-    // The list keeps its share of the width as the window changes; CSS applies it, the handle reports it.
-    effect(() => body.style.setProperty("--split", String(app.preferences.historySplit())));
+    effect(() => body.toggleAttribute("data-beside", beside()));
+    effect(() => body.style.setProperty("--list", `${listPx()}px`));
     const resized = new ResizeObserver(() => width.set(body.clientWidth));
     resized.observe(body);
     onCleanup(() => resized.disconnect());
@@ -341,7 +355,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     if (shown === "records") return <Body />;
     if (shown === "loading")
       return (
-        <div class="empty-state" role="status">
+        <div class="empty-state">
           <span class="empty-icon">
             <Icon name="history" />
           </span>
@@ -415,7 +429,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
               <MoreMenu
                 label="History actions"
                 danger
-                items={[{ title: "Clear history", icon: "trash", run: (trigger) => ask({ kind: "clear" }, trigger) }]}
+                items={[{ title: "Clear History", icon: "trash", run: (trigger) => ask({ kind: "clear" }, trigger) }]}
               />
             )}
           </Show>
@@ -429,7 +443,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
           </button>
         </div>
       </header>
-      <Show when={() => paused() || !!app.saver.warning() || !!actionError() || unreadable() > 0}>
+      <Show when={() => paused() || !!app.saver.warning() || !!actionError() || !!unreadableText()}>
         {() => (
           <div class="notices">
             <Show when={paused}>
@@ -446,28 +460,22 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
             </Show>
             <Show when={app.saver.warning}>
               {(text) => (
-                <p class="notice" data-tone="warn" role="status">
+                <p class="notice" data-tone="warn">
                   {text}
                 </p>
               )}
             </Show>
             <Show when={actionError}>
               {(text) => (
-                <p class="notice" data-tone="warn" role="status">
+                <p class="notice" data-tone="warn">
                   {text}
                 </p>
               )}
             </Show>
-            <Show when={unreadable}>
-              {(count) => (
-                <p class="notice" data-tone="warn" role="status">
-                  <span>
-                    {() =>
-                      count() === 1
-                        ? "1 unsupported or malformed record was ignored."
-                        : `${count()} unsupported or malformed records were ignored.`
-                    }
-                  </span>
+            <Show when={unreadableText}>
+              {(text) => (
+                <p class="notice" data-tone="warn">
+                  <span>{text}</span>
                   <span class="notice-actions">
                     <button class="btn" type="button" onclick={() => void removeUnreadable()}>
                       Remove them

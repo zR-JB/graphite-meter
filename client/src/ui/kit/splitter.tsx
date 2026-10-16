@@ -2,6 +2,8 @@
 // (16 px, 48 px with Shift), Home and End for the limits, Enter or a double-click to reset.
 import { onCleanup, type Read } from "../../lib/signal";
 
+let ids = 0;
+
 /** Where a key takes the panel's width, within its limits; "reset" for Enter or Space; null for a key it leaves. */
 export function keyed(
   key: string,
@@ -43,54 +45,62 @@ export function Splitter(props: {
   };
   let drag: { start: number; width: number; release: () => void } | null = null;
   onCleanup(() => drag?.release());
+  const help = `splitter-${++ids}-help`;
   return (
-    <div
-      class="resize-handle"
-      data-edge={props.edge}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={props.label}
-      aria-valuemin={() => String(props.min())}
-      aria-valuemax={() => String(props.max())}
-      aria-valuenow={() => String(props.value())}
-      aria-valuetext={() => `${props.value()} pixels wide`}
-      tabindex="0"
-      onpointerdown={(event) => {
-        if (!event.isPrimary || event.button !== 0) return;
-        drag?.release();
-        event.preventDefault();
-        const handle = event.currentTarget;
-        handle.setPointerCapture(event.pointerId);
-        const body = document.body.style;
-        const [select, cursor] = [body.userSelect, body.cursor];
-        body.userSelect = "none";
-        body.cursor = "col-resize";
-        const move = (moved: PointerEvent) => {
-          if (drag) change(clamp(drag.width + grows * (moved.clientX - drag.start)));
-        };
-        const release = () => {
-          handle.removeEventListener("pointermove", move);
+    <>
+      <div
+        class="resize-handle"
+        data-edge={props.edge}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={props.label}
+        aria-describedby={help}
+        aria-valuemin={() => String(props.min())}
+        aria-valuemax={() => String(props.max())}
+        aria-valuenow={() => String(props.value())}
+        aria-valuetext={() => `${props.value()} pixels wide`}
+        tabindex="0"
+        onpointerdown={(event) => {
+          if (!event.isPrimary || event.button !== 0) return;
+          drag?.release();
+          event.preventDefault();
+          const handle = event.currentTarget;
+          handle.setPointerCapture(event.pointerId);
+          const body = document.body.style;
+          const [select, cursor] = [body.userSelect, body.cursor];
+          body.userSelect = "none";
+          body.cursor = "col-resize";
+          const move = (moved: PointerEvent) => {
+            if (drag) change(clamp(drag.width + grows * (moved.clientX - drag.start)));
+          };
+          const release = () => {
+            handle.removeEventListener("pointermove", move);
+            for (const type of ["pointerup", "pointercancel", "lostpointercapture"])
+              handle.removeEventListener(type, release);
+            [body.userSelect, body.cursor] = [select, cursor];
+            drag = null;
+          };
+          drag = { start: event.clientX, width: props.value.peek(), release };
+          handle.addEventListener("pointermove", move);
           for (const type of ["pointerup", "pointercancel", "lostpointercapture"])
-            handle.removeEventListener(type, release);
-          [body.userSelect, body.cursor] = [select, cursor];
-          drag = null;
-        };
-        drag = { start: event.clientX, width: props.value.peek(), release };
-        handle.addEventListener("pointermove", move);
-        for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) handle.addEventListener(type, release);
-      }}
-      onkeydown={(event) => {
-        const next = keyed(event.key, event.shiftKey, props.edge, [
-          props.value.peek(),
-          props.min.peek(),
-          props.max.peek(),
-        ]);
-        if (next === null) return;
-        if (next === "reset") props.onReset();
-        else change(next);
-        event.preventDefault();
-      }}
-      ondblclick={() => props.onReset()}
-    />
+            handle.addEventListener(type, release);
+        }}
+        onkeydown={(event) => {
+          const next = keyed(event.key, event.shiftKey, props.edge, [
+            props.value.peek(),
+            props.min.peek(),
+            props.max.peek(),
+          ]);
+          if (next === null) return;
+          if (next === "reset") props.onReset();
+          else change(next);
+          event.preventDefault();
+        }}
+        ondblclick={() => props.onReset()}
+      />
+      <span hidden id={help}>
+        Arrow keys resize, Enter or a double-click resets.
+      </span>
+    </>
   );
 }

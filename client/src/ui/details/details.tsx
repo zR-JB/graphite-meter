@@ -209,7 +209,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     }
     copied.set(done ? "copied" : "failed");
     copiedTimer = setTimeout(() => copied.set(""), COPIED_MS);
-    announce(done ? "Diagnostic report copied" : "Unable to copy diagnostic report");
+    announce(done ? "Diagnostic report copied." : "Could not copy the diagnostic report.");
   }
 
   const fact = (label: string, value: () => string, explain?: () => string, aside?: () => string) => (
@@ -231,8 +231,8 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   return (
     <section class="infra">
       <div class="group server-card">
-        <h3>{() => (mode() === "live" ? "Selected server" : "Tested server")}</h3>
-        <dl class="kv" data-tip-group ref={tipGroup}>
+        <h3>Test server</h3>
+        <dl class="kv" ref={tipGroup}>
           <Show when={() => listed().length > 1}>
             {() => (
               <div>
@@ -267,7 +267,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             </p>
           )}
         </For>
-        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Server could not be reached") : "")}>
+        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server.") : "")}>
           {(text) => (
             <p class="notice" data-tone="err">
               {text}
@@ -278,7 +278,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
 
       <div class="group">
         <h3>Connection</h3>
-        <dl class="kv" data-tip-group ref={tipGroup}>
+        <dl class="kv" ref={tipGroup}>
           {ROLES.map((role) => {
             const measured = () => role === "throughput" || latencyNeeded();
             return (
@@ -326,12 +326,12 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           <Show when={latencyNeeded}>
             {() =>
               fact(
-                "Pre-test latency",
+                "Check round trip",
                 () => {
                   const rttMs = facts().latency?.rttMs;
                   return rttMs == null ? unknown() : fmtLatency(rttMs);
                 },
-                () => TIP.pretestLatency,
+                () => TIP.checkRoundTrip,
               )
             }
           </Show>
@@ -372,7 +372,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
 
       <div class="group">
         <h3>Server supports</h3>
-        <dl class="kv" data-tip-group ref={tipGroup}>
+        <dl class="kv" ref={tipGroup}>
           {list("HTTP", () => supports(httpPaths(discovery())))}
           {list("Throughput", () => supports(capabilities(discovery(), "throughput")))}
           {list("Latency", () => supports(capabilities(discovery(), "latency")))}
@@ -381,7 +381,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
 
       <div class="group">
         <h3>Build</h3>
-        <dl class="kv" data-tip-group ref={tipGroup}>
+        <dl class="kv" ref={tipGroup}>
           {fact(
             "Client",
             () => (BUILD.version ? `v${BUILD.version}` : REVISION),

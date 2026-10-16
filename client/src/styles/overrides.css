@@ -36,14 +36,14 @@
       text-decoration-color: currentColor;
     }
   }
-  /* Forced colours drop the selected wash; the system's selection colours mark a pressed segment. */
+  /* Forced colors drop the selected wash; the system's selection colors mark a pressed segment. */
   @media (forced-colors: active) {
     .segmented > button[aria-pressed="true"] {
       forced-color-adjust: none;
       background-color: SelectedItem;
       color: SelectedItemText;
     }
-    /* A finger's transparent hit border would otherwise be forced to a thick text-coloured frame. */
+    /* A finger's transparent hit border would otherwise be forced to a thick text-colored frame. */
     .btn {
       border-color: Canvas;
     }
@@ -82,7 +82,7 @@
   mix-blend-mode: normal;
 }
 :root:active-view-transition-type(theme)::view-transition-new(root) {
-  animation: theme-fade 200ms var(--ease-out);
+  animation: theme-fade var(--dur-graph) var(--ease-out);
 }
 @keyframes theme-fade {
   from {

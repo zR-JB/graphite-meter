@@ -1,5 +1,4 @@
-// The result cards' one model, for a settled stage and a running one alike: the status word, the headline, the quiet
-// line and the same fixed facts in every state, "—" until known, so a value arriving never moves the instrument.
+// The result cards' one model, settled or running: the same fixed facts in every state, so a value never moves a card.
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";
@@ -23,20 +22,13 @@ import {
   type RateUnits,
 } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP, type StageState, type Word } from "../../view/words";
-import { CARDS } from "./copy";
+import { CARDS, FACT, type FactKey } from "./copy";
 
 /** The card's look: its edge, glow and quiet dash. */
-export type CardStatus =
-  | "pending"
-  | "not-run"
-  | "active"
-  | "recovering"
-  | "stopped"
-  | "complete"
-  | "partial"
-  | "failed";
+type CardStatus = "pending" | "not-run" | "active" | "recovering" | "stopped" | "complete" | "partial" | "failed";
 
-export interface Fact {
+interface Fact {
+  key: FactKey;
   label: string;
   value: string;
   tip: string;
@@ -140,38 +132,32 @@ function wordOf(state: StageState): Word | null {
   return state === "warmup" ? STAGE_STATE.running : state === "unreached" ? STAGE_STATE.skipped : STAGE_STATE[state];
 }
 
-const TRANSFER_FACTS = ["Peak", "Stability", "Transferred"] as const;
-const LABELS: Record<Stage, readonly string[]> = {
-  latency: ["Stability", "Range", "Replies", "Timeouts"],
+const TRANSFER_FACTS: readonly FactKey[] = ["peak", "stability", "transferred"];
+const FACTS: Record<Stage, readonly FactKey[]> = {
+  latency: ["stability", "range", "replies", "timeouts"],
   download: TRANSFER_FACTS,
   upload: TRANSFER_FACTS,
-  bidirectional: ["Stability", CARDS.downUp, "Transferred"],
+  bidirectional: ["stability", "combined", "transferred"],
 };
-const TIPS: Record<string, string> = {
-  Peak: TIP.peak,
-  Stability: TIP.rateStability,
-  Range: TIP.latencyRange,
-  Replies: TIP.replies,
-  Timeouts: TIP.timeouts,
-  Transferred: TIP.transferred,
-};
+type Known = Partial<Record<FactKey, string>>;
 
 /** The stage's fixed facts, filled from `known`. */
-function facts(stage: Stage, known: Partial<Record<string, string>>): Fact[] {
-  return LABELS[stage].map((label) => ({
-    label,
-    value: known[label] ?? MISSING,
-    tip: stage === "latency" && label === "Stability" ? TIP.latencyStability : (TIPS[label] ?? ""),
+function facts(stage: Stage, known: Known): Fact[] {
+  return FACTS[stage].map((key) => ({
+    key,
+    label: FACT[key].label,
+    value: known[key] ?? MISSING,
+    tip: stage === "latency" && key === "stability" ? TIP.latencyStability : FACT[key].tip,
   }));
 }
 
-const percent = (pct: number | null | undefined) => (pct == null ? undefined : `${Math.round(pct)}%`);
+const percent = (pct: number | null | undefined) => (pct == null ? undefined : fmtPercent(pct));
 
 /** The idle replies' spread, count and unanswered share. */
-const idleFacts = (idle: LatencySummary | null) => ({
-  Range: idle ? fmtLatencyRange(idle.minMs, idle.maxMs) : undefined,
-  Replies: idle ? String(idle.probeCount - idle.timeoutCount) : undefined,
-  Timeouts: idle?.probeCount ? fmtPercent((100 * idle.timeoutCount) / idle.probeCount) : undefined,
+const idleFacts = (idle: LatencySummary | null): Known => ({
+  range: idle ? fmtLatencyRange(idle.minMs, idle.maxMs) : undefined,
+  replies: idle ? String(idle.probeCount - idle.timeoutCount) : undefined,
+  timeouts: idle?.probeCount ? fmtPercent((100 * idle.timeoutCount) / idle.probeCount) : undefined,
 });
 
 /** Time without data shows from half a second. */
@@ -189,10 +175,10 @@ function wire(model: WireModel | null | undefined, bytesPerSec: number, units: R
   const extra = (model.totalMultiplier - 1) * 100;
   return {
     value: fmtRate(bytesPerSec * model.totalMultiplier, units),
-    overhead: `+${extra.toFixed(1)}%`,
+    overhead: `+${fmtPercent(extra)}`,
     tip: [
-      `Wire rate +${extra.toFixed(2)}% over payload`,
-      ...shown.map((factor) => `${factor.label}\t+${factor.contributionPct.toFixed(2)}%`),
+      `${CARDS.wire} +${fmtPercent(extra)} over payload`,
+      ...shown.map((factor) => `${factor.label}\t+${fmtPercent(factor.contributionPct)}`),
       ...(split ? ["Each server's headers, weighted by its bytes"] : []),
       `Estimated at a ${fmtCount(model.mtuBytes)} B MTU`,
     ].join("\n"),
@@ -247,7 +233,7 @@ export function settledCard(
       figure: fmtMs(latency.reportedMs),
       unit: "ms",
       jitter: latency.jitterMs === null ? null : `${fmtMs(latency.jitterMs)} ms`,
-      facts: facts(stage, { Stability: percent(latency.stabilityPct), ...idle }),
+      facts: facts(stage, { stability: percent(latency.stabilityPct), ...idle }),
     };
   }
   if (stage === "bidirectional") {
@@ -267,12 +253,12 @@ export function settledCard(
       wire: showWire && complete && combined !== null ? wire(lanes?.wire, combined, units) : null,
       noData: noData(Math.max(lanes?.down?.quietMs ?? 0, lanes?.up?.quietMs ?? 0)),
       facts: facts(stage, {
-        Stability:
+        stability:
           complete && lanes?.down && lanes.up
             ? percent(Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct))
             : undefined,
-        [CARDS.downUp]: combined === null ? undefined : fmtRate(combined, units),
-        Transferred: moved ? fmtBytes(moved, units.base) : undefined,
+        combined: combined === null ? undefined : fmtRate(combined, units),
+        transferred: moved ? fmtBytes(moved, units.base) : undefined,
       }),
     };
   }
@@ -286,9 +272,9 @@ export function settledCard(
     wire: showWire && complete ? wire(result.wire, result.reportedBytesPerSec, units) : null,
     noData: noData(result.quietMs),
     facts: facts(stage, {
-      Peak: fmtRate(result.peakBytesPerSec, units),
-      Stability: complete ? percent(result.stabilityPct) : undefined,
-      Transferred: fmtBytes(result.totalBytes, units.base),
+      peak: fmtRate(result.peakBytesPerSec, units),
+      stability: complete ? percent(result.stabilityPct) : undefined,
+      transferred: fmtBytes(result.totalBytes, units.base),
     }),
   };
 }
@@ -339,12 +325,12 @@ export function liveCard(stage: Stage, state: StageState, live: LiveEvidence, un
       spoken,
     };
   }
-  const known: Partial<Record<string, string>> = {
+  const known: Known = {
     // A warmup moves bytes nothing counts: the fact waits for the window.
-    Transferred: card.warming ? undefined : fmtBytes(live.bytes, units.base),
-    Stability: live.shape?.stability == null ? undefined : percent(live.shape.stability),
+    transferred: card.warming ? undefined : fmtBytes(live.bytes, units.base),
+    stability: percent(live.shape?.stability),
   };
-  if (stage !== "bidirectional") known.Peak = live.shape ? fmtRate(live.shape.peak, units) : undefined;
+  if (stage !== "bidirectional") known.peak = live.shape ? fmtRate(live.shape.peak, units) : undefined;
   const held = stopped ? reading(live.held) : { figure: MISSING, unit: rateUnit(units, units.tier ?? 0) };
   return {
     ...card,
@@ -383,14 +369,15 @@ export function shapeSoFar(
   return { peak: Math.max(...rates), stability: rates.length >= 2 ? stabilityPct(rates) : null };
 }
 
-/** Failed server stages, one line per server and reason: who, which stages, why. A transfer's lost probes are named as
-    the lanes name them; only throughput failures mark a card. `scope` narrows to one server. */
 export interface Issue {
   server: string;
   stages: string;
   reason: string;
   throughput: Stage[];
 }
+
+/** Failed server stages, one line per server and reason: who, which stages, why. A transfer's lost probes are named as
+    the lanes name them; only throughput failures mark a card. `scope` narrows to one server. */
 export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
   const lines = new Map<string, { server: string; stages: string[]; reason: string; throughput: Stage[] }>();
   for (const failure of details.failures) {
@@ -427,7 +414,7 @@ export function resultSentence(cards: readonly CardModel[]): string {
         ? `${STAGE.download.short} ${card.pair.down}, ${STAGE.upload.short} ${card.pair.up} ${card.unit}`
         : `${card.figure} ${card.unit}`.trim();
       const status = card.word ? `, ${card.word.label.toLowerCase()}` : "";
-      const jitter = card.jitter ? `, Jitter ${card.jitter}` : "";
+      const jitter = card.jitter ? `, jitter ${card.jitter}` : "";
       return `${STAGE[card.stage].label} ${headline}${status}${jitter}`;
     })
     .join("; ");

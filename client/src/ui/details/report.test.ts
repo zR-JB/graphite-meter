@@ -46,7 +46,7 @@ test("the report keeps every field but names no server, address or secret", () =
   expect(fra.throughput).toEqual({ "https://server-2:8443": { blocked: null } });
   expect(fra.paths).toEqual({ probe: { clientIpVersion: 6 } });
   expect(fra.message).toBe("Sign in to Server 2 at https://server-2:8443/");
-  // A catalogue ID is replaced as a word, never inside another one.
+  // A catalog ID is replaced as a word, never inside another one.
   expect(parsed.selection).toEqual(["self", "server-2", "france"]);
   expect(parsed.error).toBe("client-address refused by server-1");
 });

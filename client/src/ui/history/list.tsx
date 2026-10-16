@@ -37,7 +37,7 @@ export interface Sort {
 }
 
 const HOUR_MS = 3_600_000;
-/** From this list width the bars show, and the content needs a different width. */
+/** From this list width the bars show (`data-bars`), and the content needs a different width. */
 const BARS_PX = 901;
 /** One side of BARS_PX: the narrowest list the unfolded content was seen to fit, and the width it was measured to
     need, exact until rows are added. */
@@ -335,7 +335,7 @@ export function ResultsList(props: {
   ]);
 
   // Rows fold once the table's columns no longer fit their content, judged on width alone. The content's own width
-  // differs on either side of the 901 px where bars show, so each side keeps what it learnt until the rows change.
+  // differs on either side of BARS_PX, so each side keeps what it learnt until the rows change.
   let folded = false;
   let sides = [unknown(), unknown()];
   /** The list's scrollbar gutter, which its expected width includes. */
@@ -344,6 +344,7 @@ export function ResultsList(props: {
     folded = on;
     list.classList.toggle("compact", on);
   };
+  const bars = (width: number) => list.toggleAttribute("data-bars", width >= BARS_PX);
   /** Whether the unfolded content fits a list this wide, or null when only measuring it can tell. */
   const judge = (width: number): boolean | null => {
     const side = sides[width >= BARS_PX ? 1 : 0]!;
@@ -362,6 +363,7 @@ export function ResultsList(props: {
   const fit = () => {
     const width = list.clientWidth;
     gutter = list.offsetWidth - width;
+    bars(width);
     const fits = folded ? judge(width) : null;
     if (fits !== null) return fold(!fits);
     // Unfolded, or folded with nothing known for this width: measure, unfolding first (one more layout).
@@ -406,6 +408,7 @@ export function ResultsList(props: {
     /** The list is about to be `width` px wide (a result opening or closing): a fold decided now lands in the layout
         that width takes rather than one more. */
     fitTo(width) {
+      bars(width - gutter);
       const fits = judge(width - gutter);
       if (fits !== null) fold(!fits);
     },

@@ -1,19 +1,11 @@
-// Layout moves. A change that reshapes the console applies at once, in the frame of the input that asked for it;
-// then every element marked `data-flip` that stayed springs from where it is seen to its new place on the
-// compositor. One also marked `data-flip-resize` changes width on the same spring (a layout per frame within it); it,
-// and one marked `data-flip-layout`, moves by relative offsets in layout, so a width and every surface that moves with
-// it are drawn in the same frame: Firefox runs a translate on its compositor apart from those frames, and would draw
-// a move that replaces another a frame off its place. Any other element that got wider opens from its old width. An
-// arriving element waits for its neighbours to make room, then rises in; a leaving one goes at once. A move that
-// interrupts another keeps its speed. A docked panel stays displayed beside its closed column, so its slide is an
-// ordinary move in every engine.
+// Layout moves: a change applies at once, then every `data-flip` element that stayed springs to its new place.
+// `data-flip-resize` also springs its width; it and `data-flip-layout` move by offsets in layout, since Firefox draws a
+// compositor translate a frame apart from a width that moves with it.
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];
 type Axes = { x: Axis; y: Axis; w: Axis };
 
-const ARRIVAL_MS = 380;
-const ARRIVAL_EASE = "cubic-bezier(0.22, 1.2, 0.36, 1)";
 /** Neighbours have moved most of the way by then, so an arriving element appears into room already made. */
 const ROOM_MS = 140;
 const STEPS = 30;
@@ -30,7 +22,7 @@ const velocity = (el: Element): Axes => {
   return { x: v("x"), y: v("y"), w: v("w") };
 };
 
-/** Springs `el` from the given offsets to rest, drawn as 31 keyframes over 420 ms. */
+/** Springs `el` from the given offsets to rest, drawn as keyframes over SPRING_MS. */
 function settle(el: Element, axes: Axes, frame: (x: number, y: number, w: number) => Keyframe): void {
   const frames = Array.from({ length: STEPS + 1 }, (_, i) => {
     const t = (i / STEPS) * SPRING_MS;
@@ -93,12 +85,18 @@ export function flip(update: () => void, only?: readonly string[]): void {
       ...(opened && { clipPath: `inset(0 ${-w}px 0 0 round var(--r-surface))` }),
     }));
   }
+  if (!arriving.length) return;
+  // An arrival rises in on the stage's beat and curve.
+  const tokens = getComputedStyle(document.documentElement);
+  const arrivalMs = Number.parseFloat(tokens.getPropertyValue("--dur-stage"));
+  const easing = tokens.getPropertyValue("--ease-settle").trim();
+  if (!(arrivalMs > ROOM_MS) || !easing) return;
   for (const el of arriving)
     el.animate(
       [
         { opacity: 0, translate: "0 8px" },
         { opacity: 1, translate: "0 0" },
       ],
-      { duration: ARRIVAL_MS - ROOM_MS, delay: moved ? ROOM_MS : 0, easing: ARRIVAL_EASE, fill: "backwards" },
+      { duration: arrivalMs - ROOM_MS, delay: moved ? ROOM_MS : 0, easing, fill: "backwards" },
     );
 }

@@ -1,11 +1,11 @@
 // Every number as text: rates in the page's unit, latency, bytes, durations and typed times, counts, shares, ranges,
-// progress and dial ticks. A value that is missing or not finite reads "—" with no unit, never NaN or Infinity.
+// progress and dial ticks. A value that is missing or not finite reads MISSING with no unit, never NaN or Infinity.
 import type { Preferences } from "../app/preferences";
 
-export const MISSING = "—";
+export const MISSING = "–";
 
-export type UnitBase = Preferences["unitBase"];
-export type UnitKind = Preferences["unitKind"];
+type UnitBase = Preferences["unitBase"];
+type UnitKind = Preferences["unitKind"];
 export interface Units {
   base: UnitBase;
   kind: UnitKind;
@@ -39,7 +39,7 @@ function fixed(value: number, digits: number): string {
   return text.startsWith("-") && Number(text) === 0 ? text.slice(1) : text;
 }
 
-/** A figure and its unit as one text; a missing figure stays a bare "—". */
+/** A figure and its unit as one text; a missing figure stays a bare MISSING. */
 export const withUnit = (figure: string, unit: string) => (figure === MISSING ? MISSING : `${figure} ${unit}`);
 
 /** A rate's figure: two decimals below 100, one below 1000, none above, decided after rounding (99.996 → 100.0). */

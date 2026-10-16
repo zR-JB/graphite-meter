@@ -34,11 +34,11 @@ export function ViewControl(props: {
       <button
         class="btn view-trigger"
         type="button"
-        aria-label="Choose columns and sort order"
         aria-haspopup="dialog"
         aria-expanded={() => String(open())}
         popovertarget={ID}
         style={`anchor-name: --${ID}`}
+        ref={tip(() => "Columns and sort order")}
       >
         <span class="layout-icon">
           <Icon name="columns" />

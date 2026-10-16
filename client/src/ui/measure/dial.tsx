@@ -1,6 +1,5 @@
-// The dial: its ring and labels in the measured face, the needle that follows the running stage, the result that
-// takes the ring over at the end, the readout at its centre and the note under it. Every per-frame move is the
-// painter's: three transforms, a text node, and a class when the needle lights or goes out.
+// The dial: the ring, the needle that follows the running stage, the result that takes the ring over, the readout and
+// the note. Per frame the painter writes three transforms, a text node and a class.
 import type { App } from "../../app/app";
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
@@ -9,7 +8,7 @@ import { HANDOFF_OUT_MS, handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, type Read } from "../../lib/signal";
 import { fmtDuration, fmtMs, fmtSpeed, fmtTick, MISSING, rateUnit, toRateUnit, withUnit } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
-import { OUTCOME, PHASE, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
+import { OUTCOME, PHASE, POPULATION, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
@@ -27,6 +26,7 @@ import {
   headlineArc,
   Needle,
   reachMs,
+  RESCALE_MS,
   resultArcs,
   resultSweepMs,
   SWEEP_DEG,
@@ -36,7 +36,7 @@ import {
 import type { Live } from "./live";
 import { Figure, inView, measure, painter } from "./paint";
 
-/** A result leaves as its arcs drain back to zero (the stylesheet's result-drain), so the next run starts empty. */
+/** A result leaves as its arcs drain back to zero, so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
 const TRANSFER: readonly string[] = ["download", "upload", "bidirectional"];
 const LABELLED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
@@ -189,10 +189,16 @@ export function Dial(props: {
     if (phase() === "complete" && result && result.outcome !== "complete") {
       const named = (status: string) =>
         STAGES.filter((stage) => result.stages[stage] === status).map((stage) => STAGE[stage].label);
+      // Loaded latency that failed leaves its transfer stage complete but the run partial.
+      const loaded = STAGES.filter(
+        (stage) =>
+          stage !== "latency" &&
+          result.multiServer.failures.some((each) => each.scope === "latency" && each.stage === stage),
+      ).map((stage) => POPULATION[stage]);
       return {
         status: OUTCOME[result.outcome].label,
         tone: "warn",
-        hint: DIAL.unfinished(named("failed"), named("partial")),
+        hint: DIAL.unfinished(named("failed"), [...named("partial"), ...loaded]),
       };
     }
     if (phase() !== "error") return null;
@@ -220,8 +226,8 @@ export function Dial(props: {
   announceChanges(() => {
     const refused = refusal();
     const ended = ending();
-    if (refused) return `${refused.status} — ${refused.detail}`;
-    if (ended) return `${ended.status} — ${ended.hint}`;
+    if (refused) return [refused.status, refused.detail].filter(Boolean).join(": ");
+    if (ended) return [ended.status, ended.hint].filter(Boolean).join(": ");
     const now = phase();
     if (run.preparing() || now === "idle" || now === "connecting" || now === "complete") return "";
     return now === "warmup" ? PHASE.warmup : STAGE[now as Stage].label;
@@ -243,6 +249,8 @@ export function Dial(props: {
   effect(() => footer.classList.toggle("handoff-out", note.out()));
 
   const dial = (<div class="gauge-dial" />) as HTMLElement;
+  dial.style.setProperty("--drain", `${RESULT_DRAIN_MS}ms`);
+  dial.style.setProperty("--rescale", `${RESCALE_MS}ms`);
   const seen = inView(dial, true);
   // An unseen dial snaps, and runs no transitions.
   const motion = computed(() => seen() && !reducedMotion());
@@ -549,7 +557,7 @@ export function Dial(props: {
               <Show when={() => shown().arc.dashed}>
                 {() => (
                   <span class="terminal-partial" data-tone="warn">
-                    {DIAL.oneDirection}
+                    {() => arcLabel(shown().arc)}
                   </span>
                 )}
               </Show>

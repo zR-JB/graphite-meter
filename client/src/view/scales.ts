@@ -39,7 +39,7 @@ function rateStep(bytesPerSec: number, units: Units, tier: number, steps: readon
 }
 
 /** The fastest rates the shown run's live ticks drew, in bytes/s, kept as running maxima as the ticks arrive. */
-export interface LivePeaks {
+interface LivePeaks {
   /** One lane alone, as the chart draws it. */
   lane: number;
   /** One tick's lanes together, as the dial shows them. */
@@ -48,7 +48,7 @@ export interface LivePeaks {
   running: boolean;
 }
 
-export interface ThroughputScales {
+interface ThroughputScales {
   chartBytesPerSec: number;
   gaugeBytesPerSec: number;
   /** The page's one rate tier: every rate on it reads in this prefix. */

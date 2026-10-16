@@ -1,6 +1,6 @@
 # Browser client
 
-The Graphite Meter's browser client, in plain TypeScript: every task, both images and CI build and embed it. One owner
+Graphite Meter's browser client, in plain TypeScript: every task, both images and CI build and embed it. One owner
 per piece of state, no runtime dependencies, and per-frame work kept to what moves.
 
 ## Layers
@@ -13,7 +13,7 @@ Each layer imports only from the layers above it in this table; the composition 
 | `auth` | Sources of the sign-in pages' assets; `bun run build:auth` writes `rust/server/src/auth/assets`, which the server embeds. |
 | `src/lib` | Signals (push-pull, owners, batched effects), a JSX runtime that builds real DOM, keyed lists, the one frame clock, motion (glides, hand-offs, springs), decoders. |
 | `src/protocol` | Server documents and their decoders, routes, wire and progress records, failure reasons, worker messages. |
-| `src/engine` | Measurement without a DOM: `net` (catalogue, selection, credentials, connection checks, readiness, sign-in), `lanes` + `workers` (fetch and WebTransport lanes, the probe channel, the upload receiver), `measure` (aggregation, latency, live rates, stability), `run` (schedule, clocks, the coordinator, results). |
+| `src/engine` | Measurement without a DOM: `net` (catalog, selection, credentials, connection checks, readiness, sign-in), `lanes` + `workers` (fetch and WebTransport lanes, the probe channel, the upload receiver), `measure` (aggregation, latency, live rates, stability), `run` (schedule, clocks, the coordinator, results). |
 | `src/app` | The application: preferences in the shared storage key, the run model views read, History storage and saving, the composition root (`app.ts`). |
 | `src/view` | Pure presentation rules: every figure, unit, scale and word the views show. |
 | `src/ui` | Views: `shell` (console frame, sheets, routes, keys, focus), `measure` (the instrument), `settings`, `details`, `history`, `legal`, `account`, and the `kit` they share. |
@@ -34,5 +34,4 @@ policy `src/lib/trusted.ts` creates (the servers then require Trusted Types), `<
 `bun build.ts` (`build:bundle`) bundles the workers, then the app with their hashed URLs, minifies the shell's inline
 blocks, copies `public` and writes compressed siblings. `bun check` type-checks with the TypeScript 7 port Bun ships;
 Biome formats. Unit tests (`bun test src`) cover pure logic and the engine against fake clocks and fakes. The browser
-suite in `e2e/` runs real Chrome and Firefox against a local server fleet;
-`scripts/e2e.ts` starts the server fleet, and `e2e/webview.ts` and `e2e/browsers.ts` drive the browsers.
+suite in `e2e/` runs real Chrome and Firefox against local servers; `scripts/e2e.ts` starts the server fleet, and `e2e/webview.ts` and `e2e/browsers.ts` drive the browsers.

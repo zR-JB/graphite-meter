@@ -83,7 +83,10 @@ export class Glide {
   }
 }
 
-export const HANDOFF_OUT_MS = 90;
+/** A hand-off's fade-out; the stylesheet's .handoff-out reads it as --dur-handoff-out. */
+export const HANDOFF_OUT_MS = 70;
+if (typeof document !== "undefined")
+  document.documentElement.style.setProperty("--dur-handoff-out", `${HANDOFF_OUT_MS}ms`);
 
 /** A keyed view: a new key fades the shown view out (`out`) and swaps it in once the fade-out ran; a key held
     shorter than that never shows; the same key updates in place; a view with nothing to fade out (`outMs` 0) swaps

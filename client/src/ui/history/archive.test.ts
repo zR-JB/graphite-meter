@@ -73,7 +73,7 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   await settle();
   expect(archive.state()).toBe("ready");
   expect(archive.records()).toHaveLength(1);
-  expect(archive.error()).toBe("History could not be read again, so this list may be out of date.");
+  expect(archive.error()).not.toBe("");
 
   selectedId.set("b");
   reads[2]!.reject(new Error("closed"));

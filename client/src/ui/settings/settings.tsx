@@ -34,15 +34,16 @@ export interface Edits {
   notice(group: Group): Node;
 }
 
-const REFUSED = "This change cannot apply to the current run.";
+const REFUSED = "This change cannot apply to the running test.";
 /** The maximum keeps one prefix, so a typed number never changes meaning. */
 const MAXIMUM_TIER = 2;
-/** Requests a browser runs at once per HTTP/1.1 server; more wait for a free connection. */
 const CADENCES = Object.keys(CADENCE) as PingCadence[];
 const CADENCE_ROWS = [
-  ["pingCadence", "Idle latency cadence", TIP.idleCadence],
-  ["loadedPingCadence", "Loaded latency cadence", TIP.loadedCadence],
+  ["pingCadence", "Idle probe interval", TIP.idleCadence],
+  ["loadedPingCadence", "Loaded probe interval", TIP.loadedCadence],
 ] as const;
+const DATAGRAM_NOTE = "Datagram delivery, not packet loss.";
+const DATAGRAM_DETAIL = "Datagrams are never resent; expect lower rates than streams, mostly for uploads.";
 const DISPLAY_DEFAULTS = readPreferences(null);
 
 export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node {
@@ -112,6 +113,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     configure("display", { visualization: { throughputMaxBytesPerSec } });
 
   const forced = computed(() => config().transferStreams.mode === "forced");
+  const streamLabel = computed(() => (forced() ? "Streams per direction" : "HTTP/1.1 stream limit"));
   const streams = (patch: Partial<TestConfig["transferStreams"]>) =>
     configure("transfers", { transferStreams: { ...config.peek().transferStreams, ...patch } });
   const queued = computed(
@@ -131,6 +133,8 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       (selection.kind === "origin" && selection.mechanism === "::wtdg")
     );
   });
+  announceChanges(servers.streamPlanError);
+  announceChanges(() => (datagrams() ? `${DATAGRAM_NOTE} ${DATAGRAM_DETAIL}` : ""));
 
   let resetKey: HTMLButtonElement;
   const reset = () => {
@@ -291,7 +295,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           <h3>Latency probes</h3>
           <div class="kv">
             {CADENCE_ROWS.map(([key, label, explained]) => (
-              <div class="cadence stacked">
+              <div class="stacked">
                 <span ref={tip(() => explained)}>{label}</span>
                 <Segments
                   label={label}
@@ -323,19 +327,16 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           <h3>Transfers</h3>
           <div class="kv">
             <Switch
-              label="Force exact stream count"
+              label="Exact stream count"
               tip={() => TIP.forcedStreams}
               checked={forced}
               disabled={locked}
               onToggle={(on) => streams({ mode: on ? "forced" : "auto" })}
             />
             <div class="units">
-              <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>
-                {() => (forced() ? "Streams per server and direction" : "HTTP/1.1 stream limit per direction")}
-              </span>
+              <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>{streamLabel}</span>
               <Stepper
-                label={() => (forced() ? "streams" : "stream limit")}
-                verbs={["Fewer", "More"]}
+                label={streamLabel}
                 value={() => config().transferStreams.count}
                 min={1}
                 max={() => MAX_STREAMS}
@@ -359,24 +360,23 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           <Show when={queued}>
             {() => (
               <p class="hint">
-                Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past that wait for a free
-                connection.
+                Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past that wait for one to
+                finish.
               </p>
             )}
           </Show>
           <Show when={servers.streamPlanError}>
             {(text) => (
-              <p class="notice" data-tone="warn" role="status">
+              <p class="notice" data-tone="warn">
                 {text}
               </p>
             )}
           </Show>
           <Show when={datagrams}>
             {() => (
-              <p class="notice" data-tone="warn" role="status">
+              <p class="notice" data-tone="warn">
                 <span>
-                  <strong>Datagram delivery, not packet loss.</strong> Datagrams are never resent; expect lower rates
-                  than streams, mostly for uploads.
+                  <strong>{DATAGRAM_NOTE}</strong> {DATAGRAM_DETAIL}
                 </span>
               </p>
             )}

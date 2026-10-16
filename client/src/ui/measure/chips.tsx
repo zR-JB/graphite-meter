@@ -1,5 +1,4 @@
-// The run key over the stage chips, as wide as their row. A chip switches its stage for the next run and shows how it
-// fares in the shown one: a bar along its top, and at its end its time into the stage, its length, a check or a word.
+// The run key over the stage chips: a chip switches its stage for the next run and shows how it fares in the shown one.
 import type { App } from "../../app/app";
 import type { Shell } from "../shell/api";
 import { planned, STAGES, type Stage } from "../../engine/run/schedule";
@@ -28,7 +27,7 @@ import type { Live } from "./live";
 import { Figure, painter } from "./paint";
 
 /** How a chip looks: off, waiting, or the stage's state in the shown run. */
-type Look = "disabled" | "pending" | "warmup" | "active" | "recovering" | "complete" | "partial" | "failed";
+type Look = "off" | "pending" | "warmup" | "active" | "recovering" | "complete" | "partial" | "failed";
 const LOOK: Record<StageState, Look> = {
   skipped: "pending",
   upcoming: "pending",
@@ -86,7 +85,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   const state = computed(() => live.states()[stage]);
   // A stage the next run includes but the shown run did not run waits for the next run.
   const nextRun = computed(() => selected() && state() === "skipped" && run.plan() !== null);
-  const look = computed<Look>(() => (selected() ? LOOK[state()] : "disabled"));
+  const look = computed<Look>(() => (selected() ? LOOK[state()] : "off"));
   const tag = computed(() => {
     if (!selected()) return STAGE_STATE.skipped.label;
     if (nextRun()) return NEXT_RUN.label;
@@ -155,8 +154,8 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     fill.dataset.tone = now === "recovering" ? "warn" : stage;
     fill.className = [
       "chip-fill",
-      now === "warmup" && "chip-fill--warmup",
-      now === "failed" && "chip-fill--failed",
+      now === "warmup" && "is-warmup",
+      now === "failed" && "is-failed",
       now === "partial" && "is-partial",
       now === "recovering" && "is-stalled",
       timed() && "is-live",
@@ -203,21 +202,20 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     wake();
   });
 
-  const label = STAGE[stage].short;
   return (
     <button
       type="button"
-      class={() => `chip chip--${look()}${selected() ? " on" : ""}`}
+      class={() => `chip chip--${look()}`}
       data-tone={stage}
       role="switch"
       aria-checked={() => (selected() ? "true" : "false")}
       aria-label={() => {
-        const why = reason();
-        return `${label} stage${why ? ` (${why})` : look() === "complete" ? ` (${STAGE_STATE.complete.label})` : ""}`;
+        const why = reason() ?? (look() === "complete" ? STAGE_STATE.complete.label : null);
+        return `${STAGE[stage].label} stage${why ? ` (${why})` : ""}`;
       }}
-      disabled={locked}
+      aria-disabled={() => (locked() ? "true" : "false")}
       ref={tip(tipText)}
-      onclick={() => flip(() => run.toggleStage(stage))}
+      onclick={() => locked() || flip(() => run.toggleStage(stage))}
     >
       <span class="chip-bar" aria-hidden="true">
         {fill}
@@ -227,7 +225,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
           <Icon name={STAGE[stage].icon} />
         </span>
         <span class="chip-label" ref={clip()}>
-          {label}
+          {STAGE[stage].short}
         </span>
         <Show
           when={() => end.shown().check}
@@ -235,7 +233,9 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
             <Show when={() => end.shown().text || end.shown().key.endsWith(":live")}>
               {() => (
                 <span
-                  class={() => `chip-tag handoff${end.shown().time ? " time" : ""}${end.out() ? " handoff-out" : ""}`}
+                  class={() =>
+                    `chip-tag handoff${end.shown().time ? " time" : " caps"}${end.out() ? " handoff-out" : ""}`
+                  }
                   data-tone={() => end.shown().tone ?? undefined}
                 >
                   {() => {
@@ -263,8 +263,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
 /** How long a start may prepare before its key says Cancel rather than Stop. */
 const CANCEL_AFTER_MS = 250;
 
-/** Start, Stop or Cancel. Never disabled: a blocked start stays focusable, aria-disabled, and says why in its
-    description, its tip and the dial's note. */
+/** Start, Stop or Cancel; a blocked start stays focusable and says why in its description, its tip and the dial's note. */
 export function RunButton(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run, servers } = app;

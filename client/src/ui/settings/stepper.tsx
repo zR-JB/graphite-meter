@@ -15,12 +15,8 @@ const KEYS: Record<string, [Direction, number]> = {
 };
 
 export function Stepper(props: {
-  /** What the value belongs to, as it reads mid-sentence: "Latency stage", "warmup", "stream limit". */
+  /** The field's name, which its keys' names start with: "Warmup time". */
   label: () => string;
-  /** What the field holds, after the label in its name: "Warmup time". */
-  noun?: string;
-  /** The keys' verbs: "Shorten warmup", "Lengthen warmup". */
-  verbs: readonly [string, string];
   value: () => number;
   min: number;
   max: () => number;
@@ -80,7 +76,7 @@ export function Stepper(props: {
       type="button"
       class="btn btn-icon btn-quiet"
       tabindex="-1"
-      aria-label={() => `${props.verbs[direction > 0 ? 1 : 0]} ${props.label()}`}
+      aria-label={() => `${props.label()}, ${direction > 0 ? "increase" : "decrease"}`}
       aria-disabled={() => String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)}
       disabled={props.disabled}
       onpointerdown={(event) => {
@@ -127,10 +123,7 @@ export function Stepper(props: {
           ref={(node) => {
             field = node;
           }}
-          aria-label={() => {
-            const label = props.label();
-            return `${label[0]?.toUpperCase()}${label.slice(1)}${props.noun ? ` ${props.noun}` : ""}`;
-          }}
+          aria-label={props.label}
           aria-valuemin={props.min / unit}
           aria-valuemax={() => props.max() / unit}
           aria-valuenow={() => props.value() / unit}

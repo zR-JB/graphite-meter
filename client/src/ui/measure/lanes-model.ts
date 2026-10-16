@@ -1,5 +1,4 @@
-// The latency lanes' pure rules: the axis over the rows, the metrics a row can be read at, the reading nearest a
-// pointer, and the words that describe a row and its probe outcomes.
+// The latency lanes' pure rules: the axis, the metrics a row is read at, and the words that describe a row.
 import type { LatencySummary } from "../../engine/measure/latency";
 import { fmtAddedMs, fmtCount, fmtMs, fmtPercent, MISSING } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
@@ -9,13 +8,13 @@ export type Metric = "min" | "p10" | "center" | "p90" | "p95" | "max" | "current
 const METRICS: readonly Metric[] = ["min", "p10", "center", "p90", "p95", "max", "current"];
 
 const NAMES: Record<Metric, { label: string; meaning: string }> = {
-  min: { label: "Min", meaning: "Fastest reply" },
+  min: { label: "Min", meaning: "fastest reply" },
   p10: { label: "P10", meaning: "10% of replies at or below" },
-  center: { label: "Median", meaning: "Half of the replies were faster" },
+  center: { label: "Median", meaning: "half of the replies were faster" },
   p90: { label: "P90", meaning: "90% of replies at or below" },
   p95: { label: "P95", meaning: "95% of replies at or below" },
-  max: { label: "Max", meaning: "Slowest reply" },
-  current: { label: "Latest", meaning: "Median of the latest replies" },
+  max: { label: "Max", meaning: "slowest reply" },
+  current: { label: "Latest", meaning: "median of the latest replies" },
 };
 export const metricLabel = (metric: Metric) => NAMES[metric].label;
 export const metricMeaning = (metric: Metric) => NAMES[metric].meaning;
@@ -50,31 +49,33 @@ export function nearestMetric(row: Values, ms: number): Metric | null {
   return best;
 }
 
-/** Keyboard steps through the present metrics; from no reading, a left step takes the last. */
+/** A slider key's step through the present metrics, null for any other key; from no reading, a step down takes the
+    last. */
 export function stepMetric(row: Values, from: Metric | null, key: string): Metric | null {
   const metrics = present(row);
-  if (!metrics.length) return null;
   const index = from === null ? -1 : metrics.indexOf(from);
   const last = metrics.length - 1;
+  const up = key === "ArrowRight" || key === "ArrowUp";
+  const down = key === "ArrowLeft" || key === "ArrowDown";
   const next =
     key === "Home"
       ? 0
       : key === "End"
         ? last
-        : key === "ArrowRight"
+        : up
           ? Math.min(last, index + 1)
-          : key === "ArrowLeft"
+          : down
             ? index < 0
               ? last
               : Math.max(0, index - 1)
-            : null;
-  return next === null ? from : metrics[next]!;
+            : -1;
+  return metrics[next] ?? null;
 }
 
 /** A twentieth of the probes timing out is worth a look. */
 export const TIMEOUTS_WARN = 0.05;
 
-/** The share of resolved probes that timed out; "—" before any resolved. */
+/** The share of resolved probes that timed out; null before any resolved. */
 export const timeoutShare = (summary: LatencySummary | null) =>
   summary?.probeCount ? summary.timeoutCount / summary.probeCount : null;
 
@@ -114,18 +115,17 @@ export const serverHandling = (timing: NonNullable<LatencySummary["reflectorTimi
 
 /** A row as a screen reader hears it: every figure it has, or that it waits. */
 export function laneDescription(label: string, row: Values, summary: LatencySummary | null, added: number | null) {
-  const ms = (value: number) => `${fmtMs(value)} milliseconds`;
+  const ms = (value: number) => `${fmtMs(value)} ms`;
   const ratio = timeoutShare(summary);
-  const parts = [
-    row.center === null ? null : `Median ${ms(row.center)}`,
+  const figures = [
+    row.center === null ? null : `median ${ms(row.center)}`,
     row.min === null || row.max === null ? null : `range ${fmtMs(row.min)} to ${ms(row.max)}`,
     row.p10 === null || row.p90 === null ? null : `P10 to P90 ${fmtMs(row.p10)} to ${ms(row.p90)}`,
     row.p95 === null ? null : `P95 ${ms(row.p95)}`,
     summary?.jitterMs == null ? null : `jitter ${ms(summary.jitterMs)}`,
-    added === null ? null : `added over idle ${fmtAddedMs(added)} milliseconds`,
+    added === null ? null : `added over idle ${fmtAddedMs(added)} ms`,
     ratio === null ? null : `${fmtTimeouts(ratio)} probe timeouts`,
-    summary && !summary.accountingComplete ? "Partial accounting" : null,
-    summary ? accounting(summary) : null,
   ].filter((part) => part !== null);
-  return `${label} latency profile. ${parts.length ? parts.join(". ") : "Waiting for measurements"}`;
+  if (!figures.length) return `${label} latency profile: waiting for measurements`;
+  return `${label} latency profile: ${figures.join(", ")}${summary ? `. ${accounting(summary)}` : ""}`;
 }

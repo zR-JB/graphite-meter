@@ -22,7 +22,7 @@ test("Escape closes the topmost surface it reaches and never stops a run", () =>
       { kind: "close", panel: "settings" },
     ],
     [{ panels: ["settings", "details"] }, { kind: "close", panel: "details" }],
-    // A flyout closes even from a text field; a docked panel waits for focus to leave the field.
+    // A flyout closes even from a text field; a docked panel only from a field inside it.
     [
       { panels: ["settings"], flyout: true, editable: true },
       { kind: "close", panel: "settings" },
