@@ -26,13 +26,10 @@ pub fn embed(browser: bool) -> Result<Option<PathBuf>, String> {
     embed_with(&|name| env::var_os(name), &checkout()?, &out_dir()?, browser)
 }
 
-/// Cargo's `OUT_DIR`; one that climbs with `..` is refused, so build outputs stay where Cargo put them.
 pub fn out_dir() -> Result<PathBuf, String> {
-    let output = env::var("OUT_DIR").map_err(|_| "OUT_DIR is missing or not UTF-8")?;
-    if output.contains("..") {
-        return Err(format!("OUT_DIR {output} must not contain .."));
-    }
-    Ok(PathBuf::from(output))
+    env::var_os("OUT_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| "missing OUT_DIR".into())
 }
 
 /// The repository checkout, two levels above the building package; build inputs never lie outside it.

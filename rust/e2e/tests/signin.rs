@@ -31,20 +31,29 @@ fn trusting(ca: &Path, directory: &Path) -> Verify {
     })))
 }
 
-/// A password-mode server whose public origin is its HTTPS HTTP/1.1 listener.
+/// A password-mode server whose public origin is its HTTPS HTTP/1.1 listener, on a port found free; another
+/// process may take that port before the server binds it, so a few ports are tried.
 async fn protected(identity: &Identity) -> (Server, SocketAddr) {
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = free.local_addr().unwrap();
-    drop(free);
-    let (listener, public) = (address.to_string(), format!("https://{address}"));
-    let settings = [
-        ("GM_H1_TLS_ADDR", listener.as_str()),
-        ("GM_AUTH_MODE", "password"),
-        ("GM_AUTH_PUBLIC_URL", &public),
-        ("GM_AUTH_PASSWORD_HASH", HASH),
-        ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-tls"),
-    ];
-    (Server::serve(&settings, identity).await, address)
+    let mut failures = Vec::new();
+    for _ in 0..8 {
+        let address = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let (listener, public) = (address.to_string(), format!("https://{address}"));
+        let settings = [
+            ("GM_H1_TLS_ADDR", listener.as_str()),
+            ("GM_AUTH_MODE", "password"),
+            ("GM_AUTH_PUBLIC_URL", &public),
+            ("GM_AUTH_PASSWORD_HASH", HASH),
+            ("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-tls"),
+        ];
+        match Server::try_serve(&settings, identity).await {
+            Ok(server) => return (server, address),
+            Err(failure) => failures.push(failure),
+        }
+    }
+    panic!("no free port held: {failures:?}");
 }
 
 /// A check of a latency and download run at `address` over verified TLS.

@@ -10,7 +10,7 @@ use graphite_meter_client::{
 use graphite_meter_e2e::{self as e2e, Server};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
-use graphite_meter_testkit::{Fault, Link};
+use graphite_meter_testkit::Link;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
@@ -147,7 +147,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
     let stall = async |event: &Event| {
         if matches!(event, Event::Measuring(_)) {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            link.inject(Fault::Stall);
+            link.stall();
         }
     };
     let (outcome, events) = run(&config, stall).await;

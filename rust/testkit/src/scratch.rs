@@ -1,25 +1,25 @@
 //! Temporary directories for tests that need files.
 use std::{
+    hash::{BuildHasher, RandomState},
     io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
 };
 
 /// A private directory under the system's temporary directory, removed on drop.
 pub struct Scratch(PathBuf);
 
 impl Scratch {
+    /// Created exclusively under a random name, so no other process's directory is ever taken over.
     pub fn new() -> io::Result<Self> {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!("graphite-meter-scratch-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-        // A temporary directory that climbs with `..` is refused, so scratch files stay below it.
-        let base = std::env::temp_dir().to_string_lossy().into_owned();
-        if base.contains("..") {
-            return Err(io::Error::other(format!("the temporary directory {base} must not contain ..")));
+        loop {
+            let suffix = RandomState::new().hash_one(std::process::id());
+            let path = std::env::temp_dir().join(format!("graphite-meter-scratch-{suffix:016x}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
         }
-        let path = Path::new(&base).join(name);
-        std::fs::create_dir_all(&path)?;
-        Ok(Self(path))
     }
 
     pub fn path(&self) -> &Path {

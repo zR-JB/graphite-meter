@@ -42,6 +42,11 @@ impl Server {
 
     /// The server with `settings` over the test configuration, presenting `identity`.
     pub async fn serve(settings: &[(&str, &str)], identity: &Identity) -> Self {
+        Self::try_serve(settings, identity).await.unwrap()
+    }
+
+    /// `serve`, or why the server could not bind.
+    pub async fn try_serve(settings: &[(&str, &str)], identity: &Identity) -> Result<Self, String> {
         let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
         let key = scratch.file("key.pem", &identity.key).unwrap();
@@ -58,7 +63,7 @@ impl Server {
         let Ok(Loaded::Config(config)) = loaded else {
             panic!("the test configuration loads: {:?}", loaded.err());
         };
-        let server = runtime::Server::bind(*config, Pool::inline()).await.unwrap();
+        let server = runtime::Server::bind(*config, Pool::inline()).await?;
         let address = |endpoint| server.local_addr(endpoint).unwrap();
         let origin = |scheme, endpoint| Origin::parse(&format!("{scheme}://{}", address(endpoint))).unwrap();
         let (http1, http2, http3) = (
@@ -71,7 +76,7 @@ impl Server {
         tokio::spawn(server.serve(async {
             let _ = stopped.await;
         }));
-        Self {
+        Ok(Self {
             http1,
             http2,
             http3,
@@ -79,7 +84,7 @@ impl Server {
             app,
             _stop: stop,
             _scratch: scratch,
-        }
+        })
     }
 }
 

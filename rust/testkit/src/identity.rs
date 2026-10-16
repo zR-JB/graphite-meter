@@ -1,15 +1,11 @@
-//! Disposable TLS identities from the openssl CLI, so no key lives in source.
-use crate::{Error, Scratch};
+//! Disposable TLS identities generated in memory, so no key lives in source.
+use crate::Error;
+use rcgen::{
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    KeyUsagePurpose,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use std::{path::Path, process::Command, sync::Arc};
-
-const NEW_KEY: &str = "req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1";
-const CA: &str = "-subj /CN=graphite-meter-test-ca -addext basicConstraints=critical,CA:TRUE \
-                  -addext keyUsage=critical,keyCertSign";
-const LEAF: &str = "-subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 \
-                    -addext basicConstraints=critical,CA:FALSE -addext extendedKeyUsage=serverAuth";
-const INTERMEDIATE: &str = "-subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 \
-                            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign";
+use std::{sync::Arc, time::SystemTime};
 
 /// A CA and the certificate it signed, as PEM: for `localhost`, `127.0.0.1` and `::1` unless self-signed.
 pub struct Identity {
@@ -18,42 +14,60 @@ pub struct Identity {
     pub key: String,
 }
 
+/// Valid from the start of last year to the end of next year.
+fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificateParams, Error> {
+    let mut params = CertificateParams::new(names.iter().map(|name| name.to_string()).collect::<Vec<_>>())?;
+    params.distinguished_name.push(DnType::CommonName, common_name);
+    let year = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() / 31_556_952 + 1970;
+    let year = i32::try_from(year)?;
+    (params.not_before, params.not_after) =
+        (rcgen::date_time_ymd(year - 1, 1, 1), rcgen::date_time_ymd(year + 1, 12, 31));
+    if ca {
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    } else {
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    }
+    Ok(params)
+}
+
+const LOCAL: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
 impl Identity {
     /// A CA and a server certificate it signed.
     pub fn generate() -> Result<Self, Error> {
-        Self::signed(LEAF)
+        Self::signed(params(&LOCAL, "localhost", false)?)
     }
 
     /// A CA and a CA certificate it signed, which no TLS client takes as a server's own.
     pub fn intermediate() -> Result<Self, Error> {
-        Self::signed(INTERMEDIATE)
+        Self::signed(params(&LOCAL, "localhost", true)?)
     }
 
-    fn signed(subject: &str) -> Result<Self, Error> {
-        let scratch = Scratch::new()?;
-        let [ca, ca_key, leaf, key] =
-            ["ca.pem", "ca.key", "leaf.pem", "leaf.key"].map(|name| scratch.path().join(name));
-        openssl(CA, &[("-keyout", &ca_key), ("-out", &ca)])?;
-        openssl(subject, &[("-CA", &ca), ("-CAkey", &ca_key), ("-keyout", &key), ("-out", &leaf)])?;
-        let read = std::fs::read_to_string;
-        Ok(Self { ca: read(ca)?, certificate: read(leaf)?, key: read(key)? })
-    }
-
-    /// A certificate for the DNS name `host` that is its own CA, as `openssl req -x509` makes one.
-    pub fn self_signed(host: &str) -> Result<Self, Error> {
-        let scratch = Scratch::new()?;
-        let [certificate, key] = ["self.pem", "self.key"].map(|name| scratch.path().join(name));
-        let subject =
-            format!("-subj /CN={host} -addext subjectAltName=DNS:{host} -addext basicConstraints=critical,CA:TRUE");
-        openssl(&subject, &[("-keyout", &key), ("-out", &certificate)])?;
-        let certificate = std::fs::read_to_string(certificate)?;
+    fn signed(leaf: CertificateParams) -> Result<Self, Error> {
+        let ca = CertifiedIssuer::self_signed(params(&[], "graphite-meter-test-ca", true)?, KeyPair::generate()?)?;
+        let key = KeyPair::generate()?;
+        let certificate = leaf.signed_by(&key, &ca)?;
         Ok(Self {
-            ca: certificate.clone(),
-            certificate,
-            key: std::fs::read_to_string(key)?,
+            ca: ca.pem(),
+            certificate: certificate.pem(),
+            key: key.serialize_pem(),
         })
     }
 
+    /// A certificate for the DNS name `host` that is its own CA.
+    pub fn self_signed(host: &str) -> Result<Self, Error> {
+        let key = KeyPair::generate()?;
+        let mut params = params(&[host], host, true)?;
+        params.key_usages.clear();
+        let certificate = params.self_signed(&key)?.pem();
+        Ok(Self {
+            ca: certificate.clone(),
+            certificate,
+            key: key.serialize_pem(),
+        })
+    }
     /// A TLS 1.3 server config presenting the leaf.
     pub fn server(&self, alpn: &[&[u8]]) -> rustls::ServerConfig {
         let chain = CertificateDer::pem_slice_iter(self.certificate.as_bytes()).collect::<Result<_, _>>();
@@ -98,19 +112,4 @@ impl Identity {
 
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
-}
-
-fn openssl(subject: &str, files: &[(&str, &Path)]) -> Result<(), Error> {
-    let mut command = Command::new("openssl");
-    command
-        .args(NEW_KEY.split_whitespace())
-        .args(subject.split_whitespace());
-    for (option, path) in files {
-        command.arg(option).arg(path);
-    }
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(format!("openssl failed: {}", String::from_utf8_lossy(&output.stderr)).into());
-    }
-    Ok(())
 }

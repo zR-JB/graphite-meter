@@ -16,7 +16,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
 http.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "test-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 

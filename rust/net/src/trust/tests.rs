@@ -96,7 +96,7 @@ fn a_trusted_root_serving_as_its_own_chain_still_expires() {
     let now = UnixTime::now();
     verify(&store, &ca, "localhost", now).unwrap();
     assert!(verify(&store, &ca, "other.test", now).is_err(), "its name still counts");
-    let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 10 * 86_400));
+    let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 3 * 366 * 86_400));
     let expired = verify(&store, &ca, "localhost", later);
     assert!(
         matches!(expired, Err(rustls::Error::InvalidCertificate(Expired | ExpiredContext { .. }))),
