@@ -5,7 +5,7 @@
 export const pageMs = (): number => performance.now();
 
 /** Paints one frame at `now` and returns whether it still moves. */
-export type Painter = (now: number) => boolean;
+type Painter = (now: number) => boolean;
 
 const painters = new Set<Painter>();
 /** This frame's painters, in one array reused frame to frame. */
@@ -47,10 +47,7 @@ function release(): void {
 // one visibility listener stays from the first painter on, rather than come and go with every motion.
 function wake(): void {
   if (visible()) request();
-  else if (pending) {
-    globalThis.cancelAnimationFrame?.(pending);
-    pending = 0;
-  }
+  else release();
 }
 
 /** Paints with `paint` from the next frame until it returns false or the returned stop runs. */

@@ -20,8 +20,9 @@ const fresh = "./trusted?policy";
 const { TRUSTED_TYPES_POLICY, workerScript }: typeof import("./trusted") = await import(fresh);
 
 test("the page's one policy admits the build's workers and nothing else", () => {
-  expect(created).toEqual([TRUSTED_TYPES_POLICY]);
+  expect(created).toEqual([]);
   for (const url of Object.values(workers)) expect(workerScript(url)).toBe(url);
+  expect(created).toEqual([TRUSTED_TYPES_POLICY]);
   for (const url of ["/assets/other.js", "https://elsewhere.example/assets/lane-2.js", "data:text/javascript,"])
     expect(() => workerScript(url)).toThrow(TypeError);
 });
