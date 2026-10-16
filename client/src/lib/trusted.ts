@@ -15,7 +15,8 @@ let policy: ScriptURLPolicy | undefined;
 export function workerScript(url: string): string {
   policy ??= trustedTypes?.createPolicy(TRUSTED_TYPES_POLICY, {
     createScriptURL(url) {
-      if (Object.values(WORKERS).includes(url)) return url;
+      // The build defines each WORKERS member, never WORKERS itself.
+      if ([WORKERS.clock, WORKERS.lane, WORKERS.session, WORKERS.probe].includes(url)) return url;
       throw new TypeError(`${url} is not a worker of this app`);
     },
   });
