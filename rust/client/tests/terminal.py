@@ -1,12 +1,13 @@
 """Drive the client binary in the working directory through a pseudo-terminal.
 
-    python3 terminal.py quit|interrupt|signals PORT
+    python3 terminal.py quit|interrupt|signals|query PORT
 
 It runs ./graphite-meter-client against http://127.0.0.1:PORT in a 100x24 terminal, answers its background query,
 presses the mode's keys once their cues appear in the output, and prints the exit status, everything the client wrote
 and whether the terminal echoes again as JSON. The interrupt mode names a terminal that draws progress bars. In the
 signals mode the client runs with --report and its query goes unanswered; once the query appears it gets SIGINT, then
-SIGTERM once no thread holds the SIGINT pending, and the JSON adds the seconds from SIGTERM to its exit.
+SIGTERM once no thread holds the SIGINT pending, and the JSON adds the seconds from SIGTERM to its exit. In the query
+mode the client runs with --report and gets Ctrl+C while its query waits.
 """
 
 import fcntl
@@ -29,11 +30,12 @@ MODES = {
     "quit": ([], [(FRAME, b"q")], {}),
     "interrupt": ([], [(FRAME, b"r"), (PREPARING, b"\x03")], {"TERM_PROGRAM": "ghostty"}),
     "signals": (["--report"], [], {}),
+    "query": (["--report"], [(QUERY, b"\x03")], {}),
 }
 
 mode, port = sys.argv[1], int(sys.argv[2])
 if mode not in MODES or not 0 < port <= 65535:
-    raise SystemExit("usage: terminal.py quit|interrupt|signals PORT")
+    raise SystemExit("usage: terminal.py quit|interrupt|signals|query PORT")
 arguments, keys, named = MODES[mode]
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
@@ -75,7 +77,7 @@ try:
                 output += os.read(master, 65536)
             except OSError:
                 break
-            if mode != "signals" and not answered and QUERY in output:
+            if mode not in ("signals", "query") and not answered and QUERY in output:
                 os.write(master, ANSWER)
                 answered = True
             if step < len(keys) and keys[step][0] in output[mark:]:

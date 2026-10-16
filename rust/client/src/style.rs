@@ -184,14 +184,20 @@ pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     if set("NO_COLOR") {
         return if tty { Profile::Ascii } else { Profile::Plain };
     }
-    let forced = set("CLICOLOR_FORCE") || set("FORCE_COLOR");
-    if !forced && (!tty || term == "dumb") {
+    if !(set("CLICOLOR_FORCE") || set("FORCE_COLOR")) && (!tty || term == "dumb") {
         return Profile::Plain;
     }
+    const DIRECT: [&str; 8] = ["alacritty", "contour", "foot", "ghostty", "kitty", "rio", "st", "wezterm"];
     let color_term = var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
+    // tmux and screen pass on 256 colors unless told otherwise, and screen never 24-bit.
+    let multiplexer = term.starts_with("tmux") || term.starts_with("screen");
+    let direct = matches!(color_term.as_str(), "truecolor" | "24bit" | "yes" | "true")
+        || set("WT_SESSION")
+        || term.ends_with("direct")
+        || term.split('-').any(|part| DIRECT.contains(&part));
     match () {
-        _ if matches!(color_term.as_str(), "truecolor" | "24bit") || term.ends_with("direct") => Profile::TrueColor,
-        _ if term.contains("256color") => Profile::Ansi256,
+        _ if direct && !multiplexer => Profile::TrueColor,
+        _ if multiplexer || term.contains("256color") => Profile::Ansi256,
         // A Windows console sets no TERM and takes 24-bit color.
         _ if term.is_empty() && cfg!(windows) => Profile::TrueColor,
         _ => Profile::Ansi,
@@ -213,40 +219,49 @@ impl Drop for Raw {
     }
 }
 
-/// Asks a raw terminal on stdin and stdout for its background until DA1 answers or `limit` passed.
+/// What the background query brought: the background, if named, and whether Ctrl+C was pressed meanwhile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Answer {
+    pub background: Option<Background>,
+    pub interrupted: bool,
+}
+
+/// Asks a raw terminal on stdin and stdout for its background until DA1 answers, Ctrl+C or `limit` passed.
 #[cfg(unix)]
-pub fn ask(limit: Duration) -> Option<Background> {
+pub fn ask(limit: Duration) -> Answer {
     use rustix::{
         event::{PollFd, PollFlags, Timespec, poll},
         io::Errno,
     };
     use std::{io::Write, time::Instant};
     let mut out = io::stdout();
-    out.write_all(QUERY).and_then(|()| out.flush()).ok()?;
+    if out.write_all(QUERY).and_then(|()| out.flush()).is_err() {
+        return Answer::default();
+    }
     let (stdin, deadline) = (io::stdin(), Instant::now() + limit);
     let (mut answers, mut chunk) = (Vec::new(), [0; 1024]);
     while answers.len() < 4096 {
-        let left = Timespec::try_from(deadline.saturating_duration_since(Instant::now())).ok()?;
+        let left = Timespec::try_from(deadline.saturating_duration_since(Instant::now())).unwrap_or_default();
         match poll(&mut [PollFd::new(&stdin, PollFlags::IN)], Some(&left)) {
-            Ok(0) => break,
-            Ok(_) => {}
             Err(Errno::INTR) => continue,
-            Err(_) => return None,
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
         }
-        let read = rustix::io::read(&stdin, &mut chunk).ok().filter(|&read| read > 0)?;
+        let Ok(read @ 1..) = rustix::io::read(&stdin, &mut chunk) else { break };
         answers.extend_from_slice(&chunk[..read]);
+        // Raw mode turns Ctrl+C into a byte, which interrupts as the signal would.
         let (background, ended) = scan(&answers);
-        // Ctrl+C arrives as a byte in raw mode; it ends the wait.
-        if ended || answers.contains(&0x03) {
-            return background;
+        let interrupted = answers.contains(&0x03);
+        if ended || interrupted {
+            return Answer { background, interrupted };
         }
     }
-    scan(&answers).0
+    Answer { background: scan(&answers).0, interrupted: false }
 }
 
 #[cfg(not(unix))]
-pub fn ask(_: Duration) -> Option<Background> {
-    None
+pub fn ask(_: Duration) -> Answer {
+    Answer::default()
 }
 
 /// What a terminal says its background is: its color, unless it could not be read.
@@ -323,6 +338,39 @@ fn rgb(color: &[u8]) -> Option<[u8; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_profile_follows_the_terminal_its_overrides_and_multiplexers() {
+        use Profile::*;
+        type Vars = &'static [(&'static str, &'static str)];
+        #[rustfmt::skip]
+        let rows: [(bool, Vars, Profile); 16] = [
+            (true, &[("TERM", "xterm")], Ansi),
+            (true, &[("TERM", "xterm-256color")], Ansi256),
+            (true, &[("TERM", "xterm-256color"), ("COLORTERM", "truecolor")], TrueColor),
+            (true, &[("TERM", "xterm-256color"), ("COLORTERM", "yes")], TrueColor),
+            (true, &[("TERM", "xterm-kitty")], TrueColor),
+            (true, &[("TERM", "st-256color")], TrueColor),
+            (true, &[("TERM", "xterm-direct")], TrueColor),
+            (true, &[("TERM", "xterm-256color"), ("WT_SESSION", "1")], TrueColor),
+            (true, &[("TERM", "screen")], Ansi256),
+            (true, &[("TERM", "screen-256color"), ("COLORTERM", "truecolor")], Ansi256),
+            (true, &[("TERM", "tmux-256color"), ("COLORTERM", "truecolor")], Ansi256),
+            (true, &[("TERM", "dumb")], Plain),
+            (false, &[("TERM", "xterm-256color")], Plain),
+            (false, &[("TERM", "xterm-256color"), ("FORCE_COLOR", "1")], Ansi256),
+            (true, &[("TERM", "xterm-kitty"), ("NO_COLOR", "1")], Ascii),
+            (false, &[("TERM", "xterm"), ("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")], Plain),
+        ];
+        for (tty, vars, expected) in rows {
+            let var = |name: &str| {
+                vars.iter()
+                    .find(|(own, _)| *own == name)
+                    .map(|(_, value)| (*value).to_owned())
+            };
+            assert_eq!(profile(tty, var), expected, "{tty} {vars:?}");
+        }
+    }
 
     #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {

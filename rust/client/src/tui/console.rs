@@ -515,7 +515,7 @@ impl App {
         let inner = area.width.saturating_sub(2);
         let mark = Line::styled(icon(stage), palette.stage(stage)).and(" ", Style::default());
         canvas.line(area.x + 1, area.y, inner, &mark.and(format::label(stage), palette.heading));
-        let (status, style) = self.card_status(state);
+        let (status, style) = self.card_status(stage, state);
         canvas.right(area.x + 1, area.y, inner, &Line::styled(status, style));
         let run = self.view.run.as_ref();
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
@@ -548,13 +548,20 @@ impl App {
         }
     }
 
-    /// The card's head end: what the stage is doing, or how it ended.
-    fn card_status(&self, state: State) -> (&'static str, Style) {
+    /// The card's head end: what the stage is doing, how it ended, or that a stopped test never reached it.
+    fn card_status(&self, stage: Stage, state: State) -> (&'static str, Style) {
         let palette = &self.palette;
+        let run = self
+            .view
+            .run
+            .as_ref()
+            .filter(|run| run.outcome == Some(Outcome::Stopped));
+        let planned = run.is_some_and(|run| run.plan.iter().any(|(own, _)| *own == stage));
         match state {
             State::Measuring => ("Running", palette.text),
             State::Warmup => ("Warmup", palette.muted),
             State::Ended(status) => self.ended(status),
+            State::Pending if planned => ("Not reached", palette.muted),
             State::Pending => ("", palette.muted),
         }
     }

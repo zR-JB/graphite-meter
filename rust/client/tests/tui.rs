@@ -605,3 +605,17 @@ fn the_settings_editor_applies_values_in_bounds_and_says_why_it_refuses_others()
         command => panic!("{command:?}"),
     }
 }
+
+#[test]
+fn a_background_answer_arriving_late_never_presses_a_key() {
+    let (mut app, now) = app();
+    app.event(&prepared(), now);
+    let mut effects = app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT), now);
+    for c in "11;rgb:1e1e/1e1e/1e1e".chars() {
+        effects.extend(press(&mut app, KeyCode::Char(c), now));
+    }
+    effects.extend(app.key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT), now));
+    assert_eq!(effects, [], "the answer started nothing");
+    assert!(!shows(&mut app, now, "Settings esc close"));
+    assert_matches!(command(&press(&mut app, KeyCode::Char('r'), now)), Command::Run(_));
+}

@@ -27,7 +27,9 @@ use crate::{
     style::Palette,
     text::{self, Line, Profile, Style},
 };
-use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use dialogs::{Chooser, SignIn};
 use graphite_meter_proto::origin::Origin;
 use keys::{Action, Key};
@@ -134,6 +136,8 @@ pub struct App {
     profile: Profile,
     palette: Palette,
     overlay: Overlay,
+    /// Whether keys are a late OSC 11 answer, which starts as Alt+].
+    answering: bool,
     setup: Setup,
     live: run::Live,
     toast: Option<Toast>,
@@ -176,6 +180,7 @@ impl App {
             profile,
             palette,
             overlay: Overlay::None,
+            answering: false,
             setup: Setup::default(),
             live: run::Live::default(),
             toast: None,
@@ -428,9 +433,24 @@ impl App {
         Vec::new()
     }
 
+    /// Reacts to a key; a background answer arriving after the query gave up is dropped.
     pub fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         self.now = now;
-        Key::of(event).map_or_else(Vec::new, |key| self.press(key))
+        let answer = |c: char| c.is_ascii_hexdigit() || "rgb:/;#".contains(c);
+        match (event.code, event.modifiers) {
+            (KeyCode::Char(']'), KeyModifiers::ALT) => self.answering = true,
+            (KeyCode::Char(c), KeyModifiers::NONE) if self.answering && answer(c) => {}
+            (KeyCode::Char('\\'), KeyModifiers::ALT) | (KeyCode::Char('g'), KeyModifiers::CONTROL)
+                if self.answering =>
+            {
+                self.answering = false;
+            }
+            _ => {
+                self.answering = false;
+                return Key::of(event).map_or_else(Vec::new, |key| self.press(key));
+            }
+        }
+        Vec::new()
     }
 
     /// Does what `key` does in the context on top.

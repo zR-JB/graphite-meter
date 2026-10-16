@@ -85,22 +85,34 @@ fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<Ex
         }
         let columns = columns(terminal);
         let asked = match columns.is_some() && io::stdin().is_terminal() {
-            true => Some(tokio::task::spawn_blocking(|| {
-                let _raw = style::Raw::enter().ok()?;
-                style::ask(style::ANSWER)
+            true => Some(tokio::task::spawn_blocking(|| match style::Raw::enter() {
+                Ok(_raw) => style::ask(style::ANSWER),
+                Err(_) => style::Answer::default(),
             })),
             false => None,
         };
-        let named = match asked {
-            Some(asked) => asked.await.ok().flatten(),
-            None => None,
+        let answer = match asked {
+            Some(asked) => asked.await.unwrap_or_default(),
+            None => style::Answer::default(),
         };
-        let (view, status) = headless(config, pool, first(signals)).await;
+        let stop = async {
+            match answer.interrupted {
+                true => INTERRUPTED,
+                false => first(signals).await,
+            }
+        };
+        let (view, status) = headless(config, pool, stop).await;
         if let Some(reason) = report::unreported(&view) {
             eprintln!("graphite-meter-client: {reason}");
             return Ok(ExitCode::from(status));
         }
-        print(&view, &named.map_or_else(|| Palette::new(true), Palette::over), columns, terminal, status)
+        print(
+            &view,
+            &answer.background.map_or_else(|| Palette::new(true), Palette::over),
+            columns,
+            terminal,
+            status,
+        )
     })
 }
 

@@ -43,13 +43,13 @@ pub async fn interactive(
     let asked = io::stdin()
         .is_terminal()
         .then(|| tokio::task::spawn_blocking(|| style::ask(style::ANSWER)));
-    let background = match asked {
-        Some(asked) => asked.await.ok().flatten(),
-        None => None,
+    let answer = match asked {
+        Some(asked) => asked.await.unwrap_or_default(),
+        None => style::Answer::default(),
     };
     // The clear wipes what a terminal that ignores the query shows.
     execute!(io::stdout(), Clear(ClearType::All))?;
-    let palette = background.map_or_else(|| Palette::new(true), Palette::over);
+    let palette = answer.background.map_or_else(|| Palette::new(true), Palette::over);
     let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
     terminal.hide_cursor()?;
     let (events, mut received) = Events::channel();
@@ -58,6 +58,10 @@ pub async fn interactive(
     let input = EventStream::new().take_while(|input| std::future::ready(input.is_ok()));
     let mut input = pin!(input.filter_map(|input| std::future::ready(input.ok())));
     let (mut app, mut shown) = (App::new(config, kept, (profile, palette), Instant::now()), None);
+    // Ctrl+C while the terminal was asked quits, as it does at setup.
+    if answer.interrupted {
+        return Ok(app.exit());
+    }
     let mut frames = tokio::time::interval(FRAME);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let (mut changed, mut resized) = (true, true);

@@ -386,3 +386,28 @@ fn outcomes_follow_stage_results() {
     let results = run(&[("a", 5, ms(3000)), ("b", 0, STAGE)]);
     assert_eq!((focus(&results), Outcome::of(&results, &plan)), (None, Outcome::Incomplete));
 }
+
+#[test]
+fn each_member_s_latency_so_far_counts_its_own_probes_within_the_window() {
+    let mut script = Script::new(plan(Stage::Download, &["a", "b"], true));
+    let up = [(id("a"), ProberEvent::Up), (id("b"), ProberEvent::Up)];
+    script.step(Duration::ZERO, &[down("a", 0), down("b", 0)], &up);
+    assert_eq!(script.window(), Some((Duration::ZERO, STAGE)));
+    let probe =
+        |server, sent: Duration, outcome| (id(server), ProberEvent::Outcome { sent: script.base + sent, outcome });
+    let reply = |rtt| ProbeOutcome::Reply { rtt: ms(rtt), handling: Duration::ZERO };
+    let early = ProberEvent::Outcome { sent: script.base - ms(10), outcome: reply(5) };
+    let probes = [
+        probe("a", ms(50), reply(20)),
+        probe("b", ms(60), ProbeOutcome::Timeout),
+        probe("a", ms(70), reply(30)),
+        (id("b"), early),
+    ];
+    script.step(ms(250), &[down("a", 1000), down("b", 1000)], &probes);
+    let (a, b) = (script.engine.latency(&id("a")).unwrap(), script.engine.latency(&id("b")).unwrap());
+    assert_eq!((a.replies, a.timeouts, a.p50), (2, 0, Some(ms(25))));
+    assert_eq!((b.replies, b.timeouts), (0, 1), "a probe sent before the window does not count");
+    assert_eq!(script.engine.latency(&id("c")), None);
+    let quiet = Script::new(plan(Stage::Download, &["a"], false));
+    assert_eq!(quiet.engine.latency(&id("a")), None, "a stage without probes has no latency");
+}

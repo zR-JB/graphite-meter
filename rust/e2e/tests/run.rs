@@ -102,9 +102,11 @@ async fn completes(server: &Server, args: &[&str]) {
         _ => None,
     });
     assert_eq!(measuring.collect::<Vec<_>>(), Stage::ALL);
-    let replied =
-        |event: &Event| matches!(event, Event::Probes { probes, .. } if probes.iter().any(|probe| probe.rtt.is_some()));
-    assert!(events.iter().any(replied), "live round trips");
+    let replied = |event: &Event| match event {
+        Event::Probes { probes, latency, .. } => probes.iter().any(|probe| probe.rtt.is_some()) && latency.replies > 0,
+        _ => false,
+    };
+    assert!(events.iter().any(replied), "live round trips and the latency they add up to");
     let up = |event: &Event| matches!(event, Event::Sample { rates, .. } if rates.up.is_some_and(|rate| rate > 0.0));
     assert!(events.iter().any(up), "live upload rates");
 }
