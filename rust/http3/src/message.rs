@@ -1,6 +1,6 @@
 //! A request stream's frames (RFC 9114 §4.1): HEADERS, DATA, optional trailers, then FIN.
 use crate::{
-    code::{Code, WtCode},
+    code::Code,
     driver::Role,
     fields,
     frame::{FrameType, Piece, Reader},
@@ -94,7 +94,7 @@ impl Message {
             (FrameType::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
             (FrameType::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => Err(Code::H3_ID_ERROR),
             // No route takes a peer's WebTransport stream: it is refused like a cancelled lane.
-            (FrameType::WEBTRANSPORT_BIDI, _) => Err(WtCode(0).to_http()),
+            (FrameType::WEBTRANSPORT_BIDI, _) => Err(Code::WT_CANCELLED),
             // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
             (FrameType::PUSH_PROMISE, _) if self.response => Err(Code::H3_ID_ERROR),
             (
@@ -240,7 +240,7 @@ mod tests {
             (frame(FrameType::HEADERS, &[0; 4097]), Code::H3_EXCESSIVE_LOAD),
             ([get.clone(), frame(FrameType::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
             (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 2]), Code::H3_ID_ERROR),
-            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 4]), WtCode(0).to_http()),
+            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 4]), Code::WT_CANCELLED),
             (get[..get.len() - 1].to_vec(), Code::H3_FRAME_ERROR),
             (frame(FrameType(0x21), b"grease"), Code::H3_REQUEST_INCOMPLETE),
         ] {

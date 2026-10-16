@@ -11,26 +11,22 @@ const ENABLE_CONNECT_PROTOCOL: u64 = 0x08;
 const H3_DATAGRAM: u64 = 0x33;
 const H3_DATAGRAM_DRAFT04: u64 = 0xffd277;
 const WT_ENABLE_DRAFT02: u64 = 0x2b603742;
-const WT_MAX_SESSIONS_DRAFT07: u64 = 0xc671706a;
-const WT_MAX_SESSIONS_DRAFT13: u64 = 0x14e9cd29;
 const WT_ENABLED: u64 = 0x2c7cf000;
-/// Go's bound on a SETTINGS frame.
+/// Bounds on a peer's SETTINGS frame and its distinct identifiers, far above any real peer's.
 const MAX_LENGTH: u64 = 8 * 1024;
-/// Our bound on a frame's distinct identifiers; Go has none.
 const MAX_IDS: usize = 64;
 
-/// The largest field section each role accepts: Go's server limit, and our client's.
+/// The largest field section each role accepts: request heads are small, responses may carry more.
 pub(crate) const SERVER_FIELD_SECTION: u64 = 4096;
 pub(crate) const CLIENT_FIELD_SECTION: u64 = 32 * 1024;
 
-/// Exactly the Go server's set: static-only QPACK and no WebTransport flow control.
-pub(crate) const SERVER: [(u64, u64); 6] = [
+/// Static-only QPACK and no WebTransport flow control.
+pub(crate) const SERVER: [(u64, u64); 5] = [
     (MAX_FIELD_SECTION_SIZE, SERVER_FIELD_SECTION),
     (ENABLE_CONNECT_PROTOCOL, 1),
     (H3_DATAGRAM, 1),
     (WT_ENABLE_DRAFT02, 1),
     (WT_ENABLED, 1),
-    (WT_MAX_SESSIONS_DRAFT13, varint::MAX),
 ];
 pub(crate) const CLIENT: [(u64, u64); 3] =
     [(MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION), (H3_DATAGRAM, 1), (WT_ENABLED, 1)];
@@ -49,7 +45,7 @@ pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
     bytes
 }
 
-/// How a peer speaks WebTransport: draft 02 (Chromium and Firefox) or the current draft (Go).
+/// How a peer speaks WebTransport: draft 02 (Chromium and Firefox) or the current draft.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Dialect {
     Draft02,
@@ -77,7 +73,7 @@ impl Peer {
         }
     }
 
-    /// Needs a WebTransport signal, HTTP datagrams and the datagram parameter; drafts 07-14 get no flow control, as Go.
+    /// Needs a WebTransport signal, HTTP datagrams and the datagram parameter.
     pub(crate) fn webtransport(&self, datagram_frames: bool) -> Option<Dialect> {
         if !self.datagrams || !datagram_frames {
             None
@@ -127,7 +123,7 @@ impl Reader {
     }
 
     fn apply(&mut self, id: u64, value: u64) -> Result<(), Code> {
-        // HTTP/2's identifiers are reserved; duplicates are refused, as by Go.
+        // HTTP/2's identifiers are reserved; duplicates are refused.
         if matches!(id, 0x00 | 0x02..=0x05) || self.seen[..self.count].contains(&id) {
             return Err(Code::H3_SETTINGS_ERROR);
         }
@@ -147,7 +143,7 @@ impl Reader {
             }
             H3_DATAGRAM_DRAFT04 => peer.datagrams |= value == 1,
             WT_ENABLE_DRAFT02 => peer.draft02 = value == 1,
-            WT_ENABLED | WT_MAX_SESSIONS_DRAFT13 | WT_MAX_SESSIONS_DRAFT07 => peer.current |= value > 0,
+            WT_ENABLED => peer.current = value > 0,
             _ => {}
         }
         Ok(())
@@ -187,11 +183,11 @@ mod tests {
             (GREASE, 1),
         ];
         let firefox = [(0x01, 65536), (0x07, 20), (0x2b603742, 1), (0xffd277, 1), (0x33, 1), (0x08, 1)];
-        let go_client = [(0x06, 10 << 20), (0x33, 1), (0x2c7cf000, 1)];
+        let current = [(0x06, 10 << 20), (0x33, 1), (0x2c7cf000, 1)];
         for (settings, dialect) in [
             (&chromium[..], Dialect::Draft02),
             (&firefox, Dialect::Draft02),
-            (&go_client, Dialect::Draft15),
+            (&current, Dialect::Draft15),
             (&SERVER, Dialect::Draft15),
             (&CLIENT, Dialect::Draft15),
         ] {
@@ -206,10 +202,10 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_peers() {
+    fn webtransport_needs_a_known_signal_and_datagrams() {
         for (settings, dialect) in [
-            (&[(0xc671706a, 1), (0x33, 1)][..], Some(Dialect::Draft15)),
-            (&[(0x2b603742, 1), (0xffd277, 1)], Some(Dialect::Draft02)),
+            (&[(0x2b603742, 1), (0xffd277, 1)][..], Some(Dialect::Draft02)),
+            (&[(0x14e9cd29, 1), (0x33, 1)], None),
             (&[(0x2b603742, 1)], None),
             (&[(0x2b603742, 2), (0x33, 1)], None),
             (&[], None),
@@ -224,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn refusals() {
+    fn invalid_settings_are_refused() {
         for invalid in [&[(0x08, 2)][..], &[(0x33, 2)], &[(0x02, 0)], &[(0x00, 0)], &[(GREASE, 1), (GREASE, 2)]] {
             assert_eq!(parse(invalid), Err(Code::H3_SETTINGS_ERROR), "{invalid:x?}");
         }

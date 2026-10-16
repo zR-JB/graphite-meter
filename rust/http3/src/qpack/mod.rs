@@ -33,8 +33,12 @@ pub(crate) fn decode(
     section: &[u8],
     mut field: impl FnMut(&[u8], &[u8]) -> Result<(), Invalid>,
 ) -> Result<(), Invalid> {
-    // Required Insert Count 0 and Base 0.
-    let mut section = section.strip_prefix(&[0, 0]).ok_or(Invalid::Qpack)?;
+    // Required Insert Count 0; with nothing to reference, any non-negative Base (sign bit 0) is moot.
+    let mut section = section.strip_prefix(&[0]).ok_or(Invalid::Qpack)?;
+    if section.first().is_none_or(|&base| base & 0x80 != 0) {
+        return Err(Invalid::Qpack);
+    }
+    integer(&mut section, 7)?;
     let (mut name_buffer, mut value_buffer) = (Vec::new(), Vec::new());
     while let Some(&first) = section.first() {
         match first {
@@ -217,19 +221,19 @@ mod tests {
     }
 
     #[test]
-    fn go_and_rust_decode_each_other() {
-        let (mut block, mut go) = (Vec::new(), Vec::new());
+    fn sections_decode_from_another_encoder_and_encode_as_pinned() {
+        let (mut block, mut other) = (Vec::new(), Vec::new());
         for line in include_str!("vectors.txt")
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
         {
-            if let Some(encoded) = line.strip_prefix("go: ") {
-                go = hex(encoded);
-            } else if let Some(encoded) = line.strip_prefix("rust: ") {
-                assert_eq!(fields(&go), Ok(block.clone()), "Rust decodes Go's encoding");
+            if let Some(encoded) = line.strip_prefix("other: ") {
+                other = hex(encoded);
+            } else if let Some(encoded) = line.strip_prefix("ours: ") {
+                assert_eq!(fields(&other), Ok(block.clone()));
                 let mut ours = Vec::new();
                 encode(block.iter().map(|(name, value)| (name.as_slice(), value.as_slice())), &mut ours);
-                assert_eq!(ours, hex(encoded), "our encoding changed: recheck that Go decodes it");
+                assert_eq!(ours, hex(encoded));
                 assert_eq!(fields(&ours), Ok(block.clone()));
                 block.clear();
             } else {
@@ -247,8 +251,8 @@ mod tests {
             "",
             "00",
             "0100d1",
-            "0001d1",
             "0080d1",
+            "00ff00d1",
             "000080",
             "000010",
             "00004f0161",
@@ -264,6 +268,9 @@ mod tests {
             assert_eq!(fields(&hex(section)), Err(Invalid::Qpack), "{section}");
         }
         assert_eq!(fields(&hex("0000")), Ok(vec![]));
+        let get = Ok(vec![(b":method".to_vec(), b"GET".to_vec())]);
+        assert_eq!(fields(&hex("0001d1")), get, "a moot positive Base");
+        assert_eq!(fields(&hex("007f01d1")), get);
     }
 
     #[test]

@@ -81,7 +81,7 @@ impl RequestStream {
     }
 
     /// The QUIC stream ID; a CONNECT stream's is its WebTransport session ID.
-    pub fn id(&self) -> u64 {
+    pub(crate) fn id(&self) -> u64 {
         self.send.stream.id().into()
     }
 
@@ -141,7 +141,7 @@ impl RecvHalf {
         poll_fn(|cx| self.poll_data(cx)).await
     }
 
-    /// Reads a response head past up to five interim ones; a sixth is H3_EXCESSIVE_LOAD, as quic-go's max1xxResponses.
+    /// Reads a response head past up to five interim ones; a sixth is H3_EXCESSIVE_LOAD.
     pub async fn response(&mut self) -> Result<http::Response<()>, Error> {
         for _ in 0..=5 {
             let section = poll_fn(|cx| self.poll_head(cx)).await?;
@@ -312,11 +312,11 @@ impl SendHalf {
         let stopped = self.stream.stopped();
         async move {
             let code = stopped.await.map_err(noq::WriteError::from)?;
-            Ok(code.map(|code| Code(code.into_inner())))
+            Ok(code.map(Code::from))
         }
     }
 
-    pub fn reset(&mut self, code: Code) {
+    pub(crate) fn reset(&mut self, code: Code) {
         if !std::mem::replace(&mut self.finished, true) {
             let _ = self.stream.reset(code.into());
         }

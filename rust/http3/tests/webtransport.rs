@@ -3,8 +3,14 @@
 mod support;
 
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, WtCode, webtransport::SessionClose};
-use std::{sync::Arc, time::Duration};
+use graphite_meter_http3::{Code, Error, webtransport::SessionClose};
+use std::{
+    future::{Future, poll_fn},
+    pin::pin,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 use support::*;
 use tokio::sync::{Notify, mpsc};
 
@@ -54,7 +60,7 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
                 } else {
                     let mut lane = session.open_uni().await.unwrap();
                     lane.write_all(&[1; 64 * 1024]).await.unwrap();
-                    lane.reset(WtCode(7));
+                    drop(lane);
                 }
                 let mut next = session.open_uni().await.unwrap();
                 next.write_all(b"next").await.unwrap();
@@ -73,8 +79,7 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
         }
         let (rest, end) = raw_stream(&mut lane).await;
         bytes.extend(rest);
-        let code = if window.is_some() { WtCode(0) } else { WtCode(7) };
-        assert_eq!(end, Err(code.to_http()), "reset, never FIN");
+        assert_eq!(end, Err(Code::WT_CANCELLED), "reset, never FIN");
         if reliable_reset {
             assert_eq!(&bytes[..3], [0x40, 0x54, 0x00], "RESET_STREAM_AT keeps the header");
         }
@@ -224,11 +229,12 @@ async fn a_cancelled_lane_gives_up_its_header_after_10_seconds() -> Result<(), T
     cancel.notify_one();
     yields().await;
     jump(Duration::from_secs(9)).await;
-    let early = tokio::time::timeout(Duration::from_millis(100), lane.received_reset()).await;
-    assert!(early.is_err(), "reset before the deadline");
+    yields().await;
+    let early = poll_fn(|cx| Poll::Ready(pin!(lane.received_reset()).poll(cx).is_ready())).await;
+    assert!(!early, "reset before the deadline");
     jump(Duration::from_secs(2)).await;
     let (bytes, end) = raw_stream(&mut lane).await;
-    assert_eq!(end, Err(WtCode(0).to_http()));
+    assert_eq!(end, Err(Code::WT_CANCELLED));
     assert!(bytes.len() < 3, "RESET_STREAM_AT kept a header that never completed");
     Ok(())
 }
@@ -243,7 +249,7 @@ async fn at_most_64_streams_wait_for_their_session_for_at_most_5_seconds() -> Re
     }
     let full = Some(Some(Code::WT_BUFFERED_STREAM_REJECTED));
     assert_eq!(refused.recv().await, full, "one stream finds the queue full");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    yields().await;
     assert!(refused.try_recv().is_err(), "the queued streams wait");
     jump(Duration::from_secs(6)).await;
     for _ in 0..64 {
@@ -281,5 +287,20 @@ async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestEr
     jump(Duration::from_secs(6)).await;
     assert_eq!(first_frame(&mut recv).await?, bad_request);
     drop(send);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lane_waiting_for_stream_credit_ends_with_its_session() -> Result<(), TestError> {
+    let setup = Setup { uni_streams: Some(0), ..DRAFT02 };
+    let Served { peers, mut outcomes, .. } = pair(setup)
+        .await?
+        .sessions(|session| async move { session.open_uni().await.err() });
+    let (mut connect, mut response) = peers.bi(&connect_head()).await?;
+    first_frame(&mut response).await?;
+    yields().await;
+    connect.write_all(&close_capsule(7, "bye")).await?;
+    let outcome = tokio::time::timeout(Duration::from_secs(5), outcomes.recv()).await?;
+    assert_eq!(outcome, Some(Some(Error::Refused)));
     Ok(())
 }

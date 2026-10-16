@@ -128,7 +128,7 @@ impl Connection {
     /// The code the server closed the connection with, if it did within `bound` of real time.
     pub(super) async fn closed_within(&self, bound: Duration) -> Option<Code> {
         match tokio::time::timeout(bound, self.quic.closed()).await {
-            Ok(noq::ConnectionError::ApplicationClosed(close)) => Some(Code(close.error_code.into_inner())),
+            Ok(noq::ConnectionError::ApplicationClosed(close)) => Some(close.error_code.into()),
             Ok(error) => panic!("closed without an application code: {error:?}"),
             Err(_) => None,
         }

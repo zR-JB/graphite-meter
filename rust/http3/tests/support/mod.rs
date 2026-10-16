@@ -79,7 +79,7 @@ pub struct Peers {
 
 fn identity() -> &'static Identity {
     static IDENTITY: OnceLock<Identity> = OnceLock::new();
-    IDENTITY.get_or_init(|| Identity::generate().expect("openssl"))
+    IDENTITY.get_or_init(|| Identity::generate().expect("a test identity"))
 }
 
 fn transport(setup: &Setup) -> Arc<noq::TransportConfig> {
@@ -253,13 +253,18 @@ pub async fn body(stream: &mut graphite_meter_http3::RecvHalf) -> Result<Vec<u8>
 
 /// Yields until the layer holds more than `above` bytes of the budget, and returns how many.
 pub async fn charged(budget: &Budget, above: usize) -> usize {
-    loop {
-        let used = budget.used.load(Ordering::Relaxed);
-        if used > above {
-            return used;
+    let charging = async {
+        loop {
+            let used = budget.used.load(Ordering::Relaxed);
+            if used > above {
+                return used;
+            }
+            tokio::task::yield_now().await;
         }
-        tokio::task::yield_now().await;
-    }
+    };
+    tokio::time::timeout(Duration::from_secs(5), charging)
+        .await
+        .expect("the layer charges the budget")
 }
 
 /// Waits for every layer charge to be refunded.
@@ -368,8 +373,8 @@ pub async fn raw_stream(recv: &mut noq::RecvStream) -> (Vec<u8>, Result<(), Code
         match recv.read_chunk(usize::MAX).await {
             Ok(Some(chunk)) => bytes.extend_from_slice(&chunk),
             Ok(None) => return (bytes, Ok(())),
-            Err(noq::ReadError::Reset(code)) => return (bytes, Err(Code(code.into_inner()))),
-            Err(_) => return (bytes, Err(Code(0))),
+            Err(noq::ReadError::Reset(code)) => return (bytes, Err(code.into())),
+            Err(_) => return (bytes, Err(noq::VarInt::from_u32(0).into())),
         }
     }
 }
@@ -384,10 +389,7 @@ pub async fn first_frame(recv: &mut noq::RecvStream) -> Result<Vec<u8>, TestErro
 }
 
 pub async fn stopped(send: &noq::SendStream) -> Option<Code> {
-    send.stopped()
-        .await
-        .expect("stream outcome")
-        .map(|code| Code(code.into_inner()))
+    send.stopped().await.expect("stream outcome").map(Code::from)
 }
 
 /// Whether STOP_SENDING has already arrived for a raw stream.
@@ -404,7 +406,7 @@ pub fn closed(code: Code) -> Error {
 /// The code a connection closed with, within 5 s.
 pub async fn closed_with(quic: &noq::Connection) -> Code {
     match tokio::time::timeout(Duration::from_secs(5), quic.closed()).await {
-        Ok(noq::ConnectionError::ApplicationClosed(close)) => Code(close.error_code.into_inner()),
+        Ok(noq::ConnectionError::ApplicationClosed(close)) => close.error_code.into(),
         error => panic!("closed without an application code: {error:?}"),
     }
 }

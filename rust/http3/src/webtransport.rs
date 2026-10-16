@@ -4,7 +4,7 @@ use crate::{
     budget::Charge,
     capsule,
     client::SendRequest,
-    code::{Code, WtCode},
+    code::Code,
     driver::Shared,
     error::Error,
     frame::{FrameType, Header, StreamType},
@@ -24,7 +24,7 @@ use tokio::{
     time::Instant,
 };
 
-/// How long a server waits for its client's SETTINGS, as webtransport-go's does.
+/// How long a server waits for its client's SETTINGS.
 const SETTINGS_WAIT: Duration = Duration::from_secs(5);
 /// How long the refusal of a CONNECT without a dialect may take to write.
 const REFUSAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -52,7 +52,7 @@ impl Phase {
     }
 }
 
-/// `work`'s outcome, refused once the session ended, even mid-wait as in webtransport-go; ready work watches nothing.
+/// `work`'s outcome, refused once the session ended, even mid-wait; ready work watches nothing.
 async fn unless_ended<T>(session: &watch::Receiver<Phase>, work: impl Future<Output = T>) -> Result<T, Error> {
     let gone = session.borrow().is_ended();
     tokio::select! {
@@ -64,7 +64,7 @@ async fn unless_ended<T>(session: &watch::Receiver<Phase>, work: impl Future<Out
 
 /// A session's ID: its CONNECT stream's, a client-initiated bidirectional stream and so a multiple of 4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SessionId(u64);
+pub(crate) struct SessionId(u64);
 
 impl SessionId {
     /// The session `id` names; `None` for an ID no CONNECT stream can have.
@@ -136,7 +136,7 @@ impl Session {
             return Err(Error::Refused);
         };
         if dialect == Dialect::Draft02 {
-            // Draft 02 requires it; Go omits it.
+            // Draft 02 requires it.
             let draft = http::HeaderValue::from_static("draft02");
             response.headers_mut().insert("sec-webtransport-http3-draft", draft);
         }
@@ -216,7 +216,7 @@ impl Session {
         if opened.map_or(true, |phase| phase.is_ended()) {
             return Err(Error::Refused);
         }
-        SendStream::open(&self.shared, self.id, self.phase.clone()).await
+        unless_ended(&self.phase, SendStream::open(&self.shared, self.id, self.phase.clone())).await?
     }
 
     /// A datagram's bytes, refused once the session ended: the drafts send none after it.
@@ -277,7 +277,6 @@ impl Drop for Session {
     }
 }
 
-/// The WebTransport rules applied to the peer's SETTINGS, awaited for `wait`, or the connection's earlier error.
 /// The dialect the peer's SETTINGS allow, waiting for them at most `wait`.
 async fn dialect(shared: &Shared, wait: Option<Duration>) -> Result<Option<Dialect>, Error> {
     let mut peer = shared.peer.subscribe();
@@ -653,7 +652,6 @@ impl Registry {
 
 /// How long a cancelled stream may take to deliver its association header.
 const RESET_DEADLINE: Duration = Duration::from_secs(10);
-const LANE_CANCELLED: WtCode = WtCode(0);
 
 /// A peer's stream in a session: noq's chunks as they arrived. Dropping it unread cancels the lane.
 pub struct RecvStream {
@@ -696,7 +694,7 @@ impl RecvStream {
     }
 
     /// Stops the stream with `code`, or once its session ended with WT_SESSION_GONE.
-    pub fn stop(&mut self, code: Code) {
+    pub(crate) fn stop(&mut self, code: Code) {
         if !std::mem::replace(&mut self.done, true) {
             let code = if self.session.borrow().is_ended() { Code::WT_SESSION_GONE } else { code };
             let _ = self.stream.stop(code.into());
@@ -706,7 +704,7 @@ impl RecvStream {
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
-        self.stop(LANE_CANCELLED.to_http());
+        self.stop(Code::WT_CANCELLED);
     }
 }
 
@@ -727,7 +725,7 @@ impl SendStream {
         let lane = Lane {
             stream,
             header: Header::new(StreamType::WEBTRANSPORT, id.get()),
-            code: LANE_CANCELLED.to_http(),
+            code: Code::WT_CANCELLED,
         };
         let mut opened = Self { lane: Some(lane), session, shared: shared.clone() };
         let lane = opened.lane.as_mut().expect("open stream");
@@ -766,10 +764,6 @@ impl SendStream {
         lane.stream
             .finish()
             .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
-    }
-
-    pub fn reset(mut self, code: WtCode) {
-        self.lane.as_mut().expect("open stream").code = code.to_http();
     }
 }
 

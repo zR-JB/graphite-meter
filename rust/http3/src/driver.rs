@@ -47,7 +47,6 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    /// The other end's role.
     pub(crate) fn peer(self) -> Self {
         match self {
             Self::Server => Self::Client,
@@ -126,7 +125,7 @@ impl Shared {
     }
 
     /// Takes what the peer's control stream says.
-    pub(crate) fn control(&self, event: ControlEvent) -> Result<(), Code> {
+    fn control(&self, event: ControlEvent) -> Result<(), Code> {
         match event {
             ControlEvent::Settings(peer) => {
                 peer.check(self.quic.max_datagram_size().is_some())?;
@@ -389,7 +388,7 @@ const TYPE_TIMEOUT: Duration = Duration::from_secs(10);
 const FLOOR: u8 = 3;
 
 /// The peer's unidirectional streams: classified within 10 s, then read as control or QPACK, or handed to WebTransport.
-pub(crate) struct Incoming {
+struct Incoming {
     streams: Vec<PeerStream>,
     /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
     critical: [bool; 3],
@@ -397,9 +396,9 @@ pub(crate) struct Incoming {
 }
 
 /// A WebTransport stream once its header is read: its session, the stream and the bytes after the header.
-pub(crate) type Classified = (u64, noq::RecvStream, Bytes);
+type Classified = (u64, noq::RecvStream, Bytes);
 
-pub(crate) struct PeerStream {
+struct PeerStream {
     stream: noq::RecvStream,
     input: Bytes,
     kind: Kind,
@@ -422,12 +421,12 @@ enum Read {
 }
 
 impl Incoming {
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self { streams: Vec::new(), critical: [false; 3], floor: FLOOR }
     }
 
     /// A budget refusal stops the new stream, never a critical one within the floor.
-    pub(crate) fn admit(&mut self, mut stream: noq::RecvStream, budget: &Budget) {
+    fn admit(&mut self, mut stream: noq::RecvStream, budget: &Budget) {
         let charge = match self.floor.checked_sub(1) {
             Some(floor) => {
                 self.floor = floor;
@@ -447,7 +446,7 @@ impl Incoming {
     }
 
     /// Reads every stream as far as it goes; `Ready` with a WebTransport stream or a violation's close code.
-    pub(crate) fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<Result<Classified, Code>> {
+    fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<Result<Classified, Code>> {
         let mut index = 0;
         while index < self.streams.len() {
             match self.streams[index].read(cx, shared, &mut self.critical)? {
@@ -463,7 +462,7 @@ impl Incoming {
     }
 
     /// Stops streams that did not declare their type in time.
-    pub(crate) fn expire(&mut self, now: Instant) {
+    fn expire(&mut self, now: Instant) {
         self.streams.retain_mut(|peer| match peer.kind {
             Kind::Unknown { deadline, .. } if deadline <= now => {
                 let _ = peer.stream.stop(Code::H3_STREAM_CREATION_ERROR.into());
@@ -473,7 +472,7 @@ impl Incoming {
         });
     }
 
-    pub(crate) fn deadline(&self) -> Option<Instant> {
+    fn deadline(&self) -> Option<Instant> {
         let deadlines = self.streams.iter().filter_map(|peer| match peer.kind {
             Kind::Unknown { deadline, .. } => Some(deadline),
             _ => None,
@@ -545,14 +544,14 @@ fn classify(
 
 /// The peer's control stream after its type (RFC 9114 §6.2.1): SETTINGS, then GOAWAY, MAX_PUSH_ID and CANCEL_PUSH.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ControlEvent {
+enum ControlEvent {
     Settings(Peer),
     /// The server's GOAWAY: requests from this stream ID on go unprocessed.
     Goaway(u64),
 }
 
 #[derive(Default)]
-pub(crate) struct ControlReader {
+struct ControlReader {
     frames: Reader<FrameType>,
     settings: Option<settings::Reader>,
     started: bool,
@@ -564,7 +563,7 @@ pub(crate) struct ControlReader {
 
 impl ControlReader {
     /// Reads `input` from `peer`, passing each event on. Errors carry the close code.
-    pub(crate) fn read(
+    fn read(
         &mut self,
         peer: Role,
         input: &mut Bytes,
@@ -603,6 +602,8 @@ impl ControlReader {
         self.kind = kind;
         match kind {
             FrameType::MAX_PUSH_ID if peer == Role::Server => Err(Code::H3_FRAME_UNEXPECTED),
+            // We send no MAX_PUSH_ID, so a server's CANCEL_PUSH names a push ID over our limit (RFC 9114 §7.2.3).
+            FrameType::CANCEL_PUSH if peer == Role::Server => Err(Code::H3_ID_ERROR),
             FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH if !(1..=8).contains(&length) => {
                 Err(Code::H3_FRAME_ERROR)
             }
@@ -679,6 +680,7 @@ mod control_tests {
             (Role::Server, frame(FrameType::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
             (Role::Server, frame(FrameType::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
             (Role::Client, frame(FrameType::GOAWAY, &[]), Code::H3_FRAME_ERROR),
+            (Role::Server, frame(FrameType::CANCEL_PUSH, &[0]), Code::H3_ID_ERROR),
         ] {
             assert_eq!(events(peer, std::slice::from_ref(&frames)), Err(code), "{frames:x?}");
         }

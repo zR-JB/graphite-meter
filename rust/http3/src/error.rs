@@ -31,7 +31,7 @@ impl Error {
         Self::Connection { local: true, code, reason: Bytes::new() }
     }
 
-    /// A normal close: H3_NO_ERROR, a peer's 0 (Go's server stops with it), or an application close below the layer.
+    /// A normal close: H3_NO_ERROR, a peer's 0, which some servers stop with, or an application close below the layer.
     pub(crate) fn graceful(&self) -> bool {
         match self {
             Self::Connection { local, code, .. } => *code == Code::H3_NO_ERROR || !local && *code == Code(0),
@@ -80,18 +80,12 @@ impl std::error::Error for Error {
     }
 }
 
-impl From<Code> for noq::VarInt {
-    fn from(code: Code) -> Self {
-        Self::from_u64(code.0).expect("HTTP/3 codes are varints")
-    }
-}
-
 impl From<noq::ConnectionError> for Error {
     fn from(error: noq::ConnectionError) -> Self {
         match error {
             noq::ConnectionError::ApplicationClosed(close) => Self::Connection {
                 local: false,
-                code: Code(close.error_code.into_inner()),
+                code: close.error_code.into(),
                 reason: close.reason,
             },
             error => Self::Transport(error),
@@ -103,7 +97,7 @@ impl From<noq::ConnectionError> for Error {
 impl From<noq::ReadError> for Error {
     fn from(error: noq::ReadError) -> Self {
         match error {
-            noq::ReadError::Reset(code) => Self::Reset(Code(code.into_inner())),
+            noq::ReadError::Reset(code) => Self::Reset(code.into()),
             noq::ReadError::ConnectionLost(error) => error.into(),
             noq::ReadError::ClosedStream | noq::ReadError::ZeroRttRejected => Self::Reset(Code::H3_REQUEST_CANCELLED),
         }
@@ -113,7 +107,7 @@ impl From<noq::ReadError> for Error {
 impl From<noq::WriteError> for Error {
     fn from(error: noq::WriteError) -> Self {
         match error {
-            noq::WriteError::Stopped(code) => Self::Stopped(Code(code.into_inner())),
+            noq::WriteError::Stopped(code) => Self::Stopped(code.into()),
             noq::WriteError::ConnectionLost(error) => error.into(),
             noq::WriteError::ClosedStream | noq::WriteError::ZeroRttRejected => {
                 Self::Stopped(Code::H3_REQUEST_CANCELLED)
