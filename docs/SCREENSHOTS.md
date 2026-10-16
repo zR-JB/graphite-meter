@@ -68,23 +68,24 @@ reached at, and the password with a key to show it. While the server checks it, 
 <img src="assets/signin-checking.png" alt="The same sign-in page in the dark theme while the password is checked, its ring sweeping in the latency hue" width="320">
 </p>
 
-## Native terminal client
+## Terminal client
 
-The TUI runs the same measurement against the same servers on one console: the dial, the latency lanes, the run key
-over its stage chips, and a card per stage.
+The terminal client runs the same measurement against the same servers on one console: the dial, the latency lanes,
+the run key over its stage chips, and a card per stage.
 
-<img src="assets/tui.png" alt="Native terminal client after a complete latency, download and upload run" width="1080">
+<img src="assets/tui.png" alt="The terminal client after a complete latency, download and upload test" width="1080">
 
-Browser captures: production build of revision 10f36298, which the status bars name, over HTTPS, headless Chrome 154
-on a GitHub-hosted Ubuntu 24.04 runner, 1600 × 1000 (workspace 1920 × 1080) at 2× density, and 430 × 839 at 3× (the
-screen of a 430 × 932 phone between its status bar and home indicator); stages latency 4 s, download and upload 8 s,
-bidirectional 6 s, a 1 s warmup; the dial's maximum automatic.
-Paths: the laptop's carries 3.4 Gbit/s down and 1.9 Gbit/s up with 1 ms of one-way delay; the phone's 1.65 Gbit/s
-down and 0.86 Gbit/s up with 1.5 ms. Each queues up to 4 ms of data, so latency under load comes from real
-queueing. The three servers of the multi-server run each have their own path (1.3, 1.1 and 1.0 Gbit/s down with 1,
-1.5 and 2 ms), together about the laptop's, and the partial run stops the Mini PC's server during download. The
-terminal capture is a source build of the Go TUI from 0.11.0's development with its default stages at 120 × 40 in
-VTE at 2×, over TLS on loopback, which runs far faster than any of those paths. Each capture is shown as a plain screen;
-the README's hero sets the laptop's upload stage and the phone's result in a laptop and a phone outline. The sign-in
-pages come from a local server with password sign-in, at the phone's size.
+## How these were captured
+
+The browser captures come from a production build of revision 10f36298 in headless Chrome 154, at 1600 × 1000
+(workspace 1920 × 1080) with 2× density and 430 × 839 with 3× for the phone, with stages of 4 s latency, 8 s download
+and upload, 6 s bidirectional and a 1 s warmup. The laptop's path carries 3.4 Gbit/s down and 1.9 Gbit/s up with
+1 ms of one-way delay, the phone's 1.65 and 0.86 Gbit/s with 1.5 ms; each queues up to 4 ms of data, so latency
+under load comes from real queueing. The three servers of the multi-server test each have their own path, together
+about the laptop's, and the partial test stops one server during download. The sign-in pages come from a local
+server with password sign-in. The hero sets the laptop's upload stage and the phone's result in device outlines.
+
+The terminal capture is a development build of the client with its default stages, 120 × 40 cells in VTE at 2×,
+against a local server behind a shaping proxy of 2.35 Gbit/s each way with 1.2 ms of one-way delay.
+
 To measure your own network, follow [deployment and configuration](DEPLOYMENT.md).
