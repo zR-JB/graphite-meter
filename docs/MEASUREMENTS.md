@@ -10,10 +10,10 @@ in both clients unless [client differences](#client-differences) says otherwise.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Download / upload           | Payload bytes per second over the headline interval, in the chosen rate unit.                                                                                                                            | No sufficient interval: no rate.                                             |
 | Peak                        | Highest mean over the headline window and consecutive ≥ 500 ms windows of its interval, on every clock.                                                                                                  | No headline: no peak.                                                        |
-| Latency                     | Median (P50) RTT of in-window replies, per server and stage; P95 secondary.                                                                                                                              | No reply, or a failed stage with fewer than three replies and timeouts: "—". |
+| Latency                     | Median (P50) RTT of in-window replies, per server and stage; P95 secondary.                                                                                                                              | No reply, or a failed stage with fewer than three replies and timeouts: "–". |
 | Added latency               | Loaded median − idle median, per loaded stage and server, in ms; negative values are kept.                                                                                                               | Either median missing: no value.                                             |
-| Jitter                      | Mean absolute change between consecutive replies, in ms.                                                                                                                                                 | Fewer than two comparable replies: "—".                                      |
-| Probe timeouts              | `timeouts / (replies + timeouts)`, as a percentage.                                                                                                                                                      | No resolved probe: "—", not zero.                                            |
+| Jitter                      | Mean absolute change between consecutive replies, in ms.                                                                                                                                                 | Fewer than two comparable replies: "–".                                      |
+| Timeouts                    | `timeouts / (replies + timeouts)`, as a percentage.                                                                                                                                                      | No resolved probe: "–", not zero.                                            |
 | Paired server timing        | Mean raw RTT and server handling over the same valid pairs.                                                                                                                                              | No valid pair: absent.                                                       |
 | Rate stability (browser)    | `100 × (1 − CV)` of every 250 ms rate bucket in the headline window, holes included, floored at 0 %.                                                                                                     | Fewer than two buckets: 0 %.                                                 |
 | No data (browser)           | Time in the headline window when no server moved that direction: client time for download, the shortest receiver clock for upload. It counts in the mean.                                                | Shown from 0.5 s; older saved results have none.                             |
@@ -47,7 +47,7 @@ contributions share the client's connection and are not independent capacity tes
   Uploads take each receiver's latest observation, divide its byte delta by its own elapsed time and add the rates;
   receiver durations are never added. The final boundary always requests fresh receiver checkpoints, and in the
   browser asks every download lane what it had counted by one cutoff, waiting up to 250 ms for the answers. Each
-  lane answers from readings of its running total kept at least once a millisecond, so however late its answer
+  lane answers from readings of its running total, taken at most once a millisecond and at every report, so however late its answer
   arrives it counts to the same moment as every other lane, and the boundary closes at that cutoff; a lane that
   answered counts nothing more.
 - **Headline and peak** come from the combined boundary samples, never from per-server windows; per-server
@@ -61,7 +61,7 @@ contributions share the client's connection and are not independent capacity tes
   server shares is the link's: nobody leaves for it, the run shows it as Recovering and the stage keeps its planned
   time. The browser times an upload receiver that still reports on that receiver's clock, and one that sends no record
   at all only after 4 s, since its feed can lag a busy uplink, and reconnects an HTTP progress feed that sends no line,
-  heartbeats included, for 1.5 s; the native client times every direction on its own clock from the boundary where
+  heartbeats included, for 1.5 s; the terminal client times every direction on its own clock from the boundary where
   the server's counted bytes last grew. At the final boundary a refused grant
   removes a server, and so does a direction still silent past the limit or a stream still retrying a failure while
   that direction's bytes have not moved for 500 ms; the stage then records that failure. The interval ends at the
@@ -83,9 +83,9 @@ contributions share the client's connection and are not independent capacity tes
 
 ### Stage timing
 
-Stages last from 1 s up to the smallest stage limit among the selected servers: 5 min unless an operator raises
-`GM_MAX_STAGE_DURATION`, at most 24 h; a server that predates the limit counts as 5 min. A longer plan blocks the
-start and names the server. A quiet link never ends a stage: it runs its planned time unless an early finish, a
+Stages last from 1 s up to the smallest stage limit among the selected servers: 5 min by default, set from 1 s to
+24 h with `GM_MAX_STAGE_DURATION`. A longer plan blocks the start and names the server; a server that reports no limit
+fails its check. A quiet link never ends a stage: it runs its planned time unless an early finish, a
 live change or a failure no server survives ends it sooner, and the browser never finishes a stage early once a
 server moved no bytes in a direction for 500 ms, the run stalled, a server left or evidence resumed. Warmup runs
 before every stage, including latency: the configured 0–4 s, stretched to ten idle RTTs but at most 4 s. Stage
@@ -115,9 +115,8 @@ A failed stage keeps its measured population, marked incomplete. Every selected 
 is the shown server's when the run starts (the first selected unless the browser was switched to another), or a
 survivor's once it leaves; switching the shown server never retargets probes or changes saved statistics.
 
-The native client probes from a thread of its own, apart from the threads that carry transfers, which run five nice
-steps lower on Linux. On Windows its timers can follow the system timer resolution (15.6 ms by default), so fixed
-cadences send on that grid; RTTs and deadlines are read from the monotonic clock and are unaffected.
+The terminal client probes from threads of its own, apart from the threads that carry transfers, which run five nice
+steps lower on Linux.
 
 ## Paired server timing
 
@@ -126,13 +125,13 @@ encoding ([wire protocol](../api/wire.md#reflector-handling-time)). The paired p
 replies with a valid handling time. A handling time above that reply's raw RTT, or one the client cannot represent
 exactly, omits the pair but keeps the raw reply; values are never clamped. Malformed replies are ignored.
 
-Handling time is a diagnostic of parsing and handling alone (about 100 ns by design). The server's receive queue, its
+Handling time is a diagnostic of parsing and handling alone. The server's receive queue, its
 wait for a thread, TLS and the reply's encoding and write fall outside it, so under load the server's share of an RTT
 can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added latency.
 
 ## Client differences
 
-| Rule                      | Browser                                                                                                                                                                                                      | Native                                                                                                                                                        |
+| Rule                      | Browser                                                                                                                                                                                                      | Terminal                                                                                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Skipping a stage          | Duration 0                                                                                                                                                                                                   | `--stages` or the setup toggle                                                                                                                                |
 | Early finish              | Optional, also for the idle latency stage: after 52 % of the stage, a stability score of at least 0.86 over the last 4 s held for 1.1 s with enough samples ends it; that window is then the headline        | None: the full window                                                                                                                                         |
@@ -142,8 +141,8 @@ can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added la
 | Gap rule                  | Page-timer lateness; held during preparation and finalization; the interval before the gap still counts                                                                                                      | Sampler-tick lateness; the interval before the gap no longer counts                                                                                           |
 | Silence limit             | 1.5 s of active run time while another server moves, else at the stage end; an upload receiver on its own clock, or 4 s without a record                                                                     | 2 s of client time without counted bytes or three missed checkpoints (not at the end), while another server moves, else at the end; failing lanes quit at 2 s |
 | HTTP 429 / 503            | Lanes and the upload feed retry until silence or the readiness budget lapses, then server at capacity; Retry-After in whole seconds                                                                          | Retried for 2 s, then server at capacity                                                                                                                      |
-| Forced streams            | At most 14 per direction over HTTP/2 and HTTP/3 and 16 per WebTransport session, within a server's 32 measurements per client                                                                                | At most 14 per direction                                                                                                                                      |
-| Automatic streams         | HTTP/1.1 up to 4 per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1                                                                               | `--auto-streams`, default 6                                                                                                                                   |
+| Forced streams            | Up to 128 per direction, 16 per WebTransport session; over HTTP/1.1 only what the origin's six connections can run gates readiness; within the server's per-client measurement limit                       | At most 14 per direction                                                                                                                                      |
+| Automatic streams         | HTTP/1.1 up to the HTTP/1.1 stream limit (default 4) per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1                                          | `--auto-streams`, default 6                                                                                                                                   |
 | Path freshness            | A verified path older than 2 min is checked again before a run                                                                                                                                               | Preparation is reused for 30 s                                                                                                                                |
 | Latency recovery          | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down                                                           | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down                                      |
 | Warmup RTT                | The latency focus server's path-check RTT                                                                                                                                                                    | The highest RTT among active servers, updated to latency-stage medians                                                                                        |
@@ -160,7 +159,7 @@ can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added la
 | Complete   | Every planned stage finished with every server.                                      |
 | Partial    | Every stage has its results, but a server or latency population failed.              |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
-| Stopped    | Cancelled by the user; work a failure cancels carries that failure, never "stopped". |
+| Stopped    | Canceled by the user; work a failure cancels carries that failure, never "stopped". |
 | Failed     | Nothing was measured.                                                                |
 
 The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving
@@ -170,7 +169,8 @@ failures on other servers make the run Partial. A population or stage that ends 
 
 ### Failure reasons
 
-Both clients name a failure with one of seven reasons (labels in `vocabulary.ts` and `vocabulary.go`):
+Both clients name a failure with one of seven reasons, whose labels [`api/failurereasons.txt`](../api/failurereasons.txt)
+pins:
 
 | Reason                  | Label                           | Typical cause                                                                                                                |
 | ----------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -184,24 +184,17 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 
 ## Saved history
 
-The browser saves history schema 5: `{schemaVersion, id, completedAt, build, engine, result}`, where `result` is
-the run's own result and `engine` the latency-focus server's engine version. Schema 4 records are read with the
-servers they saved (one when they saved none), without their old grade, and stay unchanged in storage. Other or
-malformed records stay in storage but are skipped and reported; a database of another version is refused unchanged.
-Up to 2,000 readable results are kept, and unreadable records never count toward that or get pruned; Complete,
-Partial and Incomplete runs are saved when saving is on.
-
-A result holds the selected servers and survivors, per-server transport evidence and stage statuses, latency
-populations with exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent
-intervals, with an omitted count), failures with reasons, unique byte totals, the headline with its peak, stability
-and wire estimate model, and the latency focus. Missing measurements stay null. Grants and socket tickets never enter
-history or preferences.
+When saving is on, the browser keeps Complete, Partial and Incomplete results in its own IndexedDB, at most the
+newest 2,000. A record (schema 5) holds the build, the latency-focus server's engine version and the result: the
+selected servers and survivors, per-server path evidence and stage statuses, latency populations with exact probe
+counts, at most 128 recent intervals, failures with reasons, byte totals, and the headline with its peak,
+stability and wire estimate. Missing measurements stay null; grants and socket tickets are never saved. Records of
+earlier releases (schema 4) are upgraded once when the database opens; records that cannot be read stay in storage,
+are skipped and are reported.
 
 Before saving, a result must be coherent: every failure has one of the seven reasons; a failed or partial stage has
 a failure in its scope; a complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
-a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span, from first to last,
-at least 75 % of its planned time (52 % with early finish), so a hidden-page gap between them still counts; and the
-outcome follows the stage statuses (any failed stage: Incomplete, else any failure: Partial). The run applies the
-same span rule as each stage ends (52 % only after an early finish), so a stage below it settles Partial with
-`insufficient-evidence` and History agrees with what was shown. An incoherent result is logged as an error and saved
-as Incomplete.
+a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span at least 75 % of its
+planned time (52 % with early finish); and the outcome follows the stage statuses (any failed stage: Incomplete, else
+any failure: Partial). The run applies the same span rule as each stage ends, so History agrees with what was shown.
+An incoherent result is logged as an error and saved as Incomplete.

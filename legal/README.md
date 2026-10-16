@@ -65,7 +65,7 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
 1. **Prepare.** `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
    build scripts and procedural macros included. Each needs its approved review or manual provenance; the target
    needs its approved platform record, whose missing notice texts are fetched from `rust-notice-sources.json` into
-   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_RUST_LEGAL_DIR`:
+   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_LEGAL_DIR`:
    `LEGAL.txt` (the `--legal` report) with its SHA-256 in `LEGAL.sha256`, `package.txt`, `target.txt`,
    `rustc-path.txt`, and `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the
    browser build in `browser-assets/` with its `legal/` files (the license, the notices and `about.json`, whose
@@ -86,7 +86,7 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    prerelease publishes no tag or source offer, so its `SOURCE.txt` names the repository.
 
 `--development` notices, which local builds (`scripts.build`, through `mise run dev`, `tui`, `server-build`,
-`tui-build` and `e2e`) embed, need the dependency reviews but no platform record, so any host builds them. Their
+`tui-build` and `e2e-server`) embed, need the dependency reviews but no platform record, so any host builds them. Their
 report and their executable carry `UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable. A reviewed
 build's executable must not carry the marker, the workflow policy keeps development builds out of everything CI and
 releases run, and release verification refuses an image or archive whose executable or notices carry it.

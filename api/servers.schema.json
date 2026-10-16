@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://graphite-meter/api/servers.schema.json",
   "title": "ServerCatalog",
-  "description": "The originating operator's bounded server catalogue. The first entry is synthesized self. IDs and canonical origins are unique; every defaultSelection ID must exist. Runtime validation also enforces UTF-8 byte limits and canonical HTTP(S) origins.",
+  "description": "The originating operator's bounded server catalog. The first entry is synthesized self. IDs and canonical origins are unique; every defaultSelection ID must exist. Runtime validation also enforces UTF-8 byte limits and canonical HTTP(S) origins.",
   "type": "object",
   "additionalProperties": false,
   "required": ["defaultSelection", "servers"],

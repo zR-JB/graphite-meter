@@ -4,13 +4,13 @@ A test runs against one to four selected servers on one stage schedule; the defa
 interface. All-servers throughput is what those paths achieve together while sharing the client's connection, not
 independent server capacity or the physical link's maximum.
 
-## Operator catalogue
+## Server catalog
 
 Every server runs the same image and configures itself. Servers never contact each other: clients connect directly
-to each selected server and never import a peer's catalogue. No shared keys, database or discovery service.
+to each selected server and never import a peer's catalog. No shared keys, database or discovery service.
 
 Set one of `GM_SERVER_CATALOG` (inline JSON) or `GM_SERVER_CATALOG_FILE` (an absolute file path, normally mounted
-read-only) and restart. With neither, the catalogue holds only `self`. Usually a list of the other servers' origins is
+read-only) and restart. With neither, the catalog holds only `self`. Usually a list of the other servers' origins is
 enough:
 
 ```sh
@@ -51,40 +51,39 @@ The object form adds named IDs, a default selection and extra measurement hosts:
 | `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none.     |
 | `defaultSelection`  | One to four existing IDs; omitted means `self`, empty is invalid.                       |
 
-The raw configuration is limited to 64 KiB and the normalized catalogue, which adds this server's own entry, to
+The raw configuration is limited to 64 KiB and the normalized catalog, which adds this server's own entry, to
 48 KiB. The interface derives its browser
 connection policy from these destinations, so discovery cannot authorize an unrelated host; proxies must keep that
 policy and allow streaming and `Authorization` headers. Protected servers accept measurement grants only on their
 own hostname. For Compose, edit [the example](../container/server-catalog.example.json), save it as
-`container/server-catalog.json` and add [the catalogue overlay](../container/docker-compose.catalog.yml).
+`container/server-catalog.json` and add [the catalog overlay](../container/docker-compose.catalog.yml).
 
 Browsers save a choice as ID plus canonical origin. A removed or changed entry needs the user to apply a new
-selection; an ID never silently redirects to another server. Listing a server does not make it reachable: a catalogue
+selection; an ID never silently redirects to another server. Listing a server does not make it reachable: a catalog
 may mix public, intranet and LAN servers, unselected unavailable entries do not block a test, and an unavailable
 selected entry fails by name until access returns or it is deselected.
 
 HTTP and HTTPS servers may be mixed; Automatic resolves each server's advertised paths separately. From an HTTPS
 page the browser blocks non-loopback HTTP paths as mixed content, and protected servers need HTTPS on both the page
-and the server. The native client has no mixed-content rule.
+and the server. The terminal client has no mixed-content rule.
 
 ### Local-network browser permission
 
 A hosted page reaching a private-address server, or an intranet page reaching loopback, may trigger the browser's
 local-network permission. It covers the client's own requests, not server-to-server traffic; allow it only for
-servers you trust, then Retry or reopen Settings. Chrome requires a secure page and, from Chrome 147, applies it to
-WebSocket and WebTransport too ([release notes](https://support.google.com/chrome/a/answer/10314655?hl=en)). It does
-not replace certificates, server authorization, CORS or the page's security policy.
+servers you trust, then Retry or reopen Settings. Chrome requires a secure page for it. It does not replace
+certificates, server authorization, CORS or the page's security policy.
 
 Chromium's connection policy cannot match literal IPv6 hosts, so use a DNS name for a separate IPv6 origin; the page's
-own origin and the native client accept literals.
+own origin and the terminal client accept literals.
 
 ## Browser controls
 
-**Settings → Connection → Test servers** is a checklist shown when the catalogue has more than one server.
-Select one to four; the last one cannot be cleared. Each entry shows its status (Checking, Ready, Recheck needed,
-Failed, Sign in) and its **preflight request time**: the HTTP discovery request including connection setup, not a
-latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve
-individual entries; **Use available servers** repairs a stale saved selection.
+**Settings → Connection → Test servers** is a checklist shown when the catalog has more than one server.
+Select one to four; the last one cannot be cleared. Each entry shows its status (Checking, Ready when selected,
+Sign in, Failed) and its preflight request time: the HTTP discovery request including connection setup, not a
+latency measurement. Hover or focus shows name, location and host. Below the list, each selected server that needs it
+gets **Retry** or **Sign in**; **Use available servers** repairs a stale saved selection.
 
 With several servers, every one is probed for latency. The latency lanes show one server at a time, named in their
 head, where it can be switched at any moment, mid-run included; the first selected server is shown until then, and
@@ -92,14 +91,14 @@ the shown server is the run's latency ([latency definitions](MEASUREMENTS.md#lat
 server selector (all servers, or one) that waits for the run to finish, Details inspects any server at any time, and a
 saved result in History has its own selector; all of them change only what is shown.
 
-Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
-back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or
-Retry. A selected server without idle latency pings quietly re-reads its `/preflight` every 5 s and whenever the
-page returns, so a server that stopped answering shows Failed; an offline device blocks remote servers until it is
-back. Start re-reads every selected server's `/preflight` and rechecks paths older than two minutes; a failed run
-invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit, a stage
-longer than a selected server's `GM_MAX_STAGE_DURATION`) is shown before Start; the smallest limit applies. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish
-and display settings stay live.
+Opening Settings discovers unselected entries (5 s each) and closing it cancels that; failures back off and retry,
+sign-in failures wait for Sign in or Retry. A selected server without idle latency pings quietly re-reads its
+`/preflight` every 5 s and whenever the page returns, so a server that stopped answering shows Failed; an offline
+device blocks remote servers until it is back. Start re-reads every selected server's `/preflight` and rechecks paths
+older than two minutes; a failed run invalidates its paths. A known blocker (offline, sign-in, missing capability, a
+stream plan that cannot fit, a stage longer than a selected server's `GM_MAX_STAGE_DURATION`) is shown before Start;
+the smallest limit applies. Server, path, stream and probe settings lock during a run; durations of unstarted stages,
+early finish and display settings stay live.
 
 There is one throughput and one latency path preference. Automatic checks each server independently: throughput
 tries HTTP/1.1 bulk streams, HTTP/2, HTTP/3, proxy-negotiated HTTP, then WebTransport streams; latency tries
@@ -108,8 +107,8 @@ must work on every server it applies to; the client never downgrades it or drops
 recovers. Changing servers carries the chosen protocol or transport, not the old address. Exact origins can be
 chosen only with a single server.
 
-The terminal client takes `--url` as the catalogue and repeatable `--server ID`; the **Test servers** row of its
-settings opens the same checklist ([keys](DEPLOYMENT.md#native-terminal-client)). It probes latency on every server.
+The terminal client takes `--url` as the catalog and repeatable `--server ID`; the **Test servers** row of its
+settings opens the same checklist ([keys](TERMINAL.md#console)). It probes latency on every server.
 
 ## Independent sign-in
 

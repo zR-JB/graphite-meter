@@ -41,9 +41,9 @@ gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with five
 assets: the client archives for Linux amd64, Linux arm64 and Windows amd64, one third-party source archive for every
 shipped build, and `checksums.txt`. A prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or
-`-f pr=N -f sha=<PR head>` to build an open same-repository PR; it publishes only the image `X.Y.Z-rc.N`, which no
-alias follows. `mode=validate` stops before any write. Approve the `ghcr-release` deployment when the Release run
-asks.
+`-f pr=N -f sha=<PR head>` to build an open same-repository PR; it publishes only the image of that version, such as
+`X.Y.Z-rc.N`, which no alias follows. `mode=validate` stops before any write. Approve the `ghcr-release` deployment
+when the Release run asks.
 
 1. **Untrusted build.** `release-request.yml` is one `workflow_dispatch` job on main with `contents: read`, no secrets
    and no caches. Only `release.py prepare` sees the inputs, which GitHub also renders into the run title. The pinned
@@ -110,9 +110,9 @@ with a version comment for Dependabot and run the checks above.
 
 ## Pre-commit
 
-The hook refuses commits to `main` and whitespace errors, and scans the index with the pinned Gitleaks.
-`precommit.py` selects the mise checks for the staged paths, counting both sides of a rename: `api/`, `mise.toml` and
-`mise.lock` select the full `check`; workflows, scripts, the container files and `legal/` select `workflow-check` and
-`pipeline-test`; `client/` and the sign-in assets it generates (`rust/server/src/auth/assets/`) select `client-ci`.
-CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree with the client's frozen
-dependencies.
+The hook refuses commits to `main` and whitespace errors, and scans the index with the pinned Gitleaks. `precommit.py`
+selects the mise checks for the staged paths, counting both sides of a rename: `api/`, `mise.toml` and `mise.lock`
+select the full `check`; workflows, `.githooks/`, scripts, the container files and `legal/` select `workflow-check`
+and `pipeline-test`; `client/` and the sign-in assets it generates (`rust/server/src/auth/assets/`) select
+`client-ci`. CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree with the
+client's frozen dependencies.
