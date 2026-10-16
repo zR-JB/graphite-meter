@@ -34,13 +34,28 @@ test("a document with a malformed target, capability, stage limit or text is ref
       ...golden,
       capabilities: { ...golden.capabilities, latency: [{ baseUrl: "https://a.example/x", transport: "websocket" }] },
     },
-    ...["\u202e", "\u200b", "\u2028", "\u0007"].map((hidden) => ({ ...golden, server: { name: `evil${hidden}txt` } })),
+    ...["\u202e", "\u2066", "\u061c", "\u200f", "\u0007", "\u0085"].map((hidden) => ({
+      ...golden,
+      server: { name: `evil${hidden}txt` },
+    })),
     {
       ...golden,
       capabilities: { ...golden.capabilities, throughput: Array(33).fill(golden.capabilities.throughput[0]) },
     },
   ];
   for (const document of refused) expect(() => preflight(document)).toThrow();
+});
+
+test("a name in any script or emoji sequence is kept, as the terminal client keeps it", async () => {
+  const golden = await json("preflight.golden.json");
+  const names = [
+    "dev \u{1f468}\u200d\u{1f4bb}",
+    "\u0645\u06cc\u0632\u200c\u06a9\u0627\u0631",
+    "Lab\u00adnet",
+    "\ufeffHome",
+    "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} Glasgow",
+  ];
+  for (const name of names) expect(preflight({ ...golden, server: { ...golden.server, name } }).server.name).toBe(name);
 });
 
 test("a catalog binds unique IDs to canonical origins with self first", () => {

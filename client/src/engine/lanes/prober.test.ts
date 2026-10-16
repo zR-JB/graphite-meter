@@ -3,14 +3,16 @@ import type { ProbeReport } from "../../protocol/messages";
 import type { ProbeOutcome } from "../types";
 import { Prober } from "./prober";
 
-/** A probe's fate: a reply after so many ms, none, a send that throws, or a write that never confirms. */
-type Fate = number | "lost" | "unsent" | "unconfirmed";
+/** A probe's fate: a reply after so many ms, none, a send that throws, a write that never confirms, or one that
+    confirms and is answered after so many ms. */
+type Fate = number | "lost" | "unsent" | "unconfirmed" | { confirmed: number; reply: number };
 
 /** A bus on a fake clock. At one instant replies run before the timer. */
 function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) => Fate) {
   const clock = { now: 0, due: null as number | null, dials: 0, wakes: 0 };
   const sent: number[] = [];
   const replies: { id: number; at: number }[] = [];
+  const confirms: { at: number; confirm(): void }[] = [];
   const reports: ProbeReport[] = [];
   const stamps: [number, ProbeReport["type"]][] = [];
   const prober = new Prober(
@@ -29,6 +31,13 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
         const kind = fate(id);
         if (kind === "unsent") throw new Error("not open");
         if (kind === "unconfirmed") return new Promise<void>(() => {});
+        if (typeof kind === "object") {
+          replies.push({ id, at: clock.now + kind.reply });
+          // A thenable the clock settles in step with replies and timers.
+          return {
+            then: (confirm: () => void) => void confirms.push({ at: clock.now + kind.confirmed, confirm }),
+          } as unknown as Promise<void>;
+        }
         if (kind !== "lost") replies.push({ id, at: clock.now + kind });
       },
       hangUp() {},
@@ -41,10 +50,14 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
   const run = (until: number) => {
     for (;;) {
       const reply = replies.reduce<(typeof replies)[number] | null>((a, b) => (a && a.at <= b.at ? a : b), null);
-      const at = Math.min(reply?.at ?? Infinity, clock.due ?? Infinity);
+      const confirm = confirms.reduce<(typeof confirms)[number] | null>((a, b) => (a && a.at <= b.at ? a : b), null);
+      const at = Math.min(confirm?.at ?? Infinity, reply?.at ?? Infinity, clock.due ?? Infinity);
       if (at > until) break;
       clock.now = at;
-      if (reply?.at === at) {
+      if (confirm?.at === at) {
+        confirms.splice(confirms.indexOf(confirm), 1);
+        confirm.confirm();
+      } else if (reply?.at === at) {
         replies.splice(replies.indexOf(reply), 1);
         prober.frame(`PONG,${reply.id},0`, at);
       } else {
@@ -157,8 +170,8 @@ test("a window's end drains its probes to their own deadlines outside it while t
     { rttMs: 100, timedOut: false, observedAt: 120, inWindow: false },
     { rttMs: 250, timedOut: true, observedAt: 290, inWindow: false },
   ]);
-  // A write never confirmed stays unresolved when the drain ends at the last deadline.
-  expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 1, reason: "unresolved" }]);
+  // A write still unconfirmed at its deadline never left: a send failure, not a timeout.
+  expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 1, reason: "send-failed" }]);
   // Between windows the bus keeps its cadence, and nothing it sends enters a population.
   expect(b.sent.filter((at) => at > 65 && at <= 400)).toHaveLength(17);
   b.prober.measure();
@@ -244,16 +257,26 @@ test("a send the browser could not make is interrupted after the replies already
   expect(b.sent).toEqual([0, 50, 100, 150, 200]);
 });
 
-test("a write the browser never confirms gives up its place after 3 s as a send failure, never a timeout", () => {
+test("a write the browser never confirms gives up its place at its deadline as a send failure, never a timeout", () => {
   const b = opened(bus(null, 2, (id) => (id < 2 ? "unconfirmed" : 5)));
   b.run(4_000);
   expect(b.of("interrupted")).toEqual([
     { type: "interrupted", count: 1, reason: "send-failed" },
     { type: "interrupted", count: 1, reason: "send-failed" },
   ]);
-  expect(b.sent.slice(0, 3)).toEqual([0, 250, 3_000]);
+  expect(b.sent.slice(0, 3)).toEqual([0, 250, 500]);
   expect(b.outcomes().length).toBeGreaterThan(100);
   expect(b.outcomes().every(({ timedOut }) => !timedOut)).toBe(true);
+});
+
+test("a write confirmed late still counts its reply when that comes before the deadline", () => {
+  // Replies that fix the deadline near 7 s, as under bufferbloat, before the slow writes start.
+  const slow = opened(bus(1_000, 1, (id) => (id < 6 ? 6_000 : { confirmed: 3_200, reply: 3_600 })));
+  slow.run(60_000);
+  expect(slow.of("interrupted")).toEqual([]);
+  const late = slow.outcomes().filter(({ rttMs }) => rttMs === 3_600);
+  expect(late.length).toBeGreaterThan(5);
+  expect(late.every(({ timedOut }) => !timedOut)).toBe(true);
 });
 
 test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wakes only to probe and report", () => {

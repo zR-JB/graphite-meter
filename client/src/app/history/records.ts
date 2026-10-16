@@ -100,75 +100,81 @@ const shape = (fields: Record<string, Check>): Check => {
 };
 const perStage = (check: Check) => shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
 const STATUSES: readonly StageStatus[] = ["complete", "partial", "failed", "not-run"];
-const statuses = perStage(among(STATUSES));
 const PROTOCOLS: readonly HttpProtocol[] = ["http1", "http2", "http3", "negotiated"];
 
-const rate = nullable(
-  shape({
-    reportedBytesPerSec: finite,
-    peakBytesPerSec: finite,
-    totalBytes: finite,
-    stabilityPct: finite,
-    wire: nullable(
-      shape({
-        totalMultiplier: finite,
-        mtuBytes: finite,
-        factors: list(shape({ label: text, contributionPct: finite })),
-      }),
-    ),
-  }),
-);
-const measured = {
-  latency: nullable(shape({ reportedMs: finite, stabilityPct: orNull(finite) })),
-  latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
-  addedLatency: nullable(
-    shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
-  ),
-  download: rate,
-  upload: rate,
-  bidirectional: nullable(shape({ down: rate, up: rate })),
-};
-const readable = shape({
-  schemaVersion: (value) => value === 5,
-  id: text,
-  // Any time a Date holds.
-  completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
-  build: text,
-  engine: text,
-  result: shape({
-    ...measured,
-    outcome: among(["complete", "partial", "incomplete"] satisfies Outcome[]),
-    stages: statuses,
-    durationMs: finite,
-    multiServer: shape({
-      latencyFocus: text,
-      selection: list(shape({ id: text, name: text, url: text })),
-      servers: list(
+/** The fields History's views dereference, as this build saves them, or (`upgraded` false) as any release did. */
+function recordShape(upgraded: boolean): Check {
+  const rate = nullable(
+    shape({
+      reportedBytesPerSec: finite,
+      ...(upgraded ? { peakBytesPerSec: finite } : {}),
+      totalBytes: finite,
+      stabilityPct: finite,
+      wire: nullable(
         shape({
-          ...measured,
-          server: shape({ id: text }),
-          throughput: shape({ transport: text, protocol: among(PROTOCOLS) }),
-          latencyTarget: nullable(shape({ transport: text })),
-          totalBytes: shape({ down: finite, up: finite }),
-          stages: statuses,
+          totalMultiplier: finite,
+          mtuBytes: finite,
+          factors: list(shape({ label: text, contributionPct: finite })),
         }),
       ),
-      failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
     }),
-  }),
-});
+  );
+  const measured = {
+    latency: nullable(shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) })),
+    latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
+    addedLatency: nullable(
+      shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
+    ),
+    download: rate,
+    upload: rate,
+    bidirectional: nullable(shape({ down: rate, up: rate })),
+  };
+  const stages = upgraded ? perStage(among(STATUSES)) : isObject;
+  return shape({
+    schemaVersion: (value) => value === 5,
+    id: text,
+    // Any time a Date holds.
+    completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
+    build: text,
+    engine: text,
+    result: shape({
+      ...measured,
+      outcome: among(["complete", "partial", "incomplete"] satisfies Outcome[]),
+      stages,
+      durationMs: finite,
+      multiServer: shape({
+        latencyFocus: text,
+        selection: list(shape({ id: text, name: text, url: text })),
+        servers: list(
+          shape({
+            ...measured,
+            server: shape({ id: text }),
+            throughput: shape({ transport: text, ...(upgraded ? { protocol: among(PROTOCOLS) } : {}) }),
+            latencyTarget: nullable(shape({ transport: text })),
+            totalBytes: shape({ down: finite, up: finite }),
+            stages,
+          }),
+        ),
+        failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
+      }),
+    }),
+  });
+}
+const readable = recordShape(true);
+const stored = recordShape(false);
 
 /** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
   return isObject(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
 }
 
-/** A row an earlier release saved, schema 4 or 5, in this build's form; null when it cannot be read even so, and is
-    then left as stored. */
+/** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
+    either, and it is then left as stored. */
 export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isObject(value) || !plain(value)) return null;
   try {
-    return readHistoryRecord(current((value.schemaVersion === 4 ? lift(value as never) : value) as HistoryRecord));
+    const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
+    return stored(saved) ? readHistoryRecord(current(saved as HistoryRecord)) : null;
   } catch {
     return null;
   }
@@ -282,6 +288,21 @@ interface Lane4 {
   p95?: number | null;
   jitter: number | null;
 }
+
+const liftable = shape({
+  id: text,
+  stages: shape({
+    latency: shape({ lanes: perStage(nullable(isObject)) }),
+    download: isObject,
+    upload: isObject,
+    bidirectional: isObject,
+  }),
+  server: isObject,
+  client: isObject,
+  transport: shape({ throughput: isObject, latency: isObject }),
+  wireEstimates: nullable(shape({ breakdown: isObject })),
+  multiServer: nullable(shape({ servers: list(isObject) })),
+}) as (value: unknown) => value is Schema4;
 
 const summary = (lane: Lane4 | null): LatencySummary | null =>
   lane && {

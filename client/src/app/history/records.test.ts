@@ -445,6 +445,23 @@ test("a schema 4 row upgrades to schema 5 with its servers, without its grade or
   for (const [path, value] of broken) expect(upgradeRecord(altered(flat, path, value)), path).toBeNull();
 });
 
+test("a row no release could read stays unreadable rather than upgraded into made-up stages or rates", () => {
+  const server = "result.multiServer.servers.0";
+  const rows = [
+    ...["x", 7, [], null].map((stages) => altered(full, "result.stages", stages)),
+    ...["h2", 7, []].map((bidirectional) => altered(full, "result.bidirectional", bidirectional)),
+    ...["x", 7, []].map((stages) => altered(full, `${server}.stages`, stages)),
+    ...["h2", 7].map((throughput) => altered(full, `${server}.throughput`, throughput)),
+    ...["x", 7, []].map((stages) => altered(flat, "stages", stages)),
+    ...["x", 7].map((transport) => altered(flat, "transport", transport)),
+    altered(flat, "stages.download", 7),
+    altered(flat, "transport.latency", "websocket"),
+    altered(flat, "wireEstimates.breakdown", "x"),
+    altered(flat, "stages.latency.lanes", []),
+  ];
+  for (const row of rows) expect(upgradeRecord(row), JSON.stringify(row).slice(0, 200)).toBeNull();
+});
+
 test("History sorts missing values last, equal ones newest first, each field in its natural direction", () => {
   const record = (id: string, completedAt: number, result: Partial<RunResult>): HistoryRecord => ({
     ...full,

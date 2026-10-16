@@ -5,7 +5,6 @@ import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
 import { DEADLINE_FLOOR_MS, RttEstimator } from "../measure/latency";
 import type { ProbeOutcome } from "../types";
-import { ESTABLISH_MS } from "./endings";
 
 const FLUSH_MS = 50;
 const BATCH_MAX = 128;
@@ -17,8 +16,6 @@ const BACKUP_FLOOR_MS = 8;
 const BACKUP_CEILING_MS = 1_000;
 /** A timer this late means the worker or its page froze, as the run's own gap rule judges a page. */
 const FROZEN_MS = 1_500;
-/** A write the browser has not confirmed by now never left: it stops holding a place in the window. */
-const UNSENT_MS = ESTABLISH_MS;
 
 /** Time as the prober sees it, so tests can drive it. */
 interface ProberClock {
@@ -43,7 +40,7 @@ interface ProberIO {
 interface Probe {
   sentAt: number;
   deadline: number;
-  /** A datagram's write resolves later; a probe that never left cannot time out. */
+  /** A datagram's write resolves later; one still unconfirmed at its deadline never left, so it cannot time out. */
   confirmed: boolean;
   /** Warmup probes never enter a population. */
   measured: boolean;
@@ -271,22 +268,20 @@ export class Prober {
     this.#settle(this.clock.now());
   }
 
-  /** Resolves each confirmed probe against the deadline fixed when it was sent, and gives up on a write that never
-      confirmed, which is neither a timeout nor a reply. */
+  /** Resolves each probe at the deadline fixed when it was sent: a timeout, or a send failure while its write is still
+      unconfirmed. */
   #sweep(now: number): void {
     let evicted = false;
     let head = false;
     let unsent = 0;
     for (const [id, probe] of this.#pending) {
+      if (now < probe.deadline) continue;
+      this.#pending.delete(id);
       if (!probe.confirmed) {
-        if (now < probe.sentAt + UNSENT_MS) continue;
-        this.#pending.delete(id);
         if (probe.measured) unsent++;
         evicted = head = true;
         continue;
       }
-      if (now < probe.deadline) continue;
-      this.#pending.delete(id);
       this.#graveyard.set(id, probe.sentAt);
       if (this.#graveyard.size > GRAVEYARD_MAX) this.#graveyard.delete(this.#graveyard.keys().next().value!);
       if (probe.measured) this.#record(probe, probe.deadline, true, null);
@@ -344,18 +339,10 @@ export class Prober {
     this.io.hangUp();
   }
 
-  /** The ended window's probes resolved, or their last deadline passed with a write still unconfirmed, which stays
-      unresolved. */
+  /** The ended window's probes all resolved, each by its deadline at the latest. */
   #drained(now: number): void {
     this.#sweep(now);
-    let unresolved = 0;
-    for (const [id, probe] of this.#pending)
-      if (probe.cutoff < Infinity) {
-        this.#pending.delete(id);
-        unresolved++;
-      }
     this.#flush();
-    if (unresolved) this.io.post({ type: "interrupted", count: unresolved, reason: "unresolved" });
     this.#draining = false;
     this.io.post({ type: "drained" });
   }
@@ -376,8 +363,7 @@ export class Prober {
       }
     }
     let at = Math.min(this.#flushAt, this.#reconnectAt, drainAt);
-    for (const probe of this.#pending.values())
-      at = Math.min(at, probe.confirmed ? probe.deadline : probe.sentAt + UNSENT_MS);
+    for (const probe of this.#pending.values()) at = Math.min(at, probe.deadline);
     const { intervalMs, maxInFlight } = this.#pace;
     // A backup due while the window is full puts the chain to sleep; a full cadence waits for a free slot.
     if (this.#state === "open")

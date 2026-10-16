@@ -42,16 +42,17 @@ export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): P
   }
 }
 
-// Controls, format characters (direction overrides, zero-width marks) and line separators could disguise a server's
-// displayed identity.
-const UNSAFE_TEXT = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+// Controls and direction formatting could disguise a server's displayed identity; the same set as
+// rust/proto/src/text.rs.
+const UNSAFE_TEXT = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 /** Text a view shows: bounded, and refused when it carries controls or direction overrides. */
 export const displayText =
   (max: number, min = 0): Decoder<string> =>
   (value, path = "") => {
     const text = string(min, max)(value, path);
-    if (UNSAFE_TEXT.test(text)) throw new DecodeError(`${path} must not contain control characters`);
+    if (UNSAFE_TEXT.test(text))
+      throw new DecodeError(`${path} must not contain control or direction formatting characters`);
     return text;
   };
 

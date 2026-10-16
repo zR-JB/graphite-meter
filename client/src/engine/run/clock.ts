@@ -18,51 +18,42 @@ export interface Clock {
 
 let worker: Worker | null | undefined;
 let nextId = 0;
-const due = new Map<number, { fn: () => void; at: number; fallback?: ReturnType<typeof setTimeout> }>();
-
-function fire(id: number): void {
-  const timer = due.get(id);
-  if (!timer) return;
-  due.delete(id);
-  clearTimeout(timer.fallback);
-  timer.fn();
-}
+const due = new Map<number, () => void>();
 
 // A tab hidden for a few minutes wakes its own timers about once a minute, which would split a long run's evidence
-// at every wake; a worker's timers keep their pace. A worker that cannot run hands its timers to the page.
+// at every wake; a worker's timers keep their pace.
 function timerWorker(): Worker | null {
   if (worker !== undefined) return worker;
   worker = null;
   if (typeof document === "undefined") return worker;
   try {
-    const host = new Worker(workerScript(WORKERS.clock), { type: "module" });
-    host.onmessage = ({ data: id }: MessageEvent<number>) => fire(id);
-    host.onerror = () => {
-      host.terminate();
-      worker = null;
-      for (const [id, timer] of due) timer.fallback = setTimeout(() => fire(id), Math.max(0, timer.at - pageMs()));
-    };
-    worker = host;
+    worker = new Worker(workerScript(WORKERS.clock), { type: "module" });
+    worker.onmessage = ({ data: id }: MessageEvent<number>) => due.get(id)?.();
   } catch {}
   return worker;
 }
 
 function after(ms: number, fn: () => void): () => void {
   const host = timerWorker();
-  if (!host) {
-    const timer = setTimeout(fn, ms);
-    return () => clearTimeout(timer);
-  }
   const id = ++nextId;
-  due.set(id, { fn, at: pageMs() + ms });
-  host.postMessage({ id, ms });
-  return () => {
-    const timer = due.get(id);
-    if (!timer) return;
-    due.delete(id);
-    clearTimeout(timer.fallback);
-    worker?.postMessage({ id, ms: null });
+  // The page timer backs the worker up: one that failed to load or hung never answers.
+  const backstop = setTimeout(() => {
+    cancel();
+    fn();
+  }, ms);
+  const cancel = () => {
+    clearTimeout(backstop);
+    if (due.delete(id)) host!.postMessage({ id, ms: null });
   };
+  if (host) {
+    due.set(id, () => {
+      clearTimeout(backstop);
+      due.delete(id);
+      fn();
+    });
+    host.postMessage({ id, ms });
+  }
+  return cancel;
 }
 
 export const pageClock: Clock = { now: pageMs, epoch: epochMs, after };
