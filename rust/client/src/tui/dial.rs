@@ -1,10 +1,10 @@
-//! The dial: a 270° ring of braille dots opening downward, on the browser's transfer curve and scale, with nine ticks
-//! and five labels outside it and the readout inside it in figures drawn with heavy lines.
-use super::{
-    paint::{Canvas, Dots},
-    theme::Palette,
+//! The dial: a 270° braille ring on the browser's transfer curve and scale, its readout inside in heavy-line figures.
+use super::paint::{Canvas, Dots};
+use crate::{
+    format::MISSING,
+    style::Palette,
+    text::{Color, Line},
 };
-use crate::text::{Color, Line};
 use ratatui_core::layout::Rect;
 use std::cell::RefCell;
 
@@ -20,7 +20,7 @@ const BAND: f64 = 0.08;
 const TRACK: f64 = 0.03;
 const BEAD: f64 = 0.16;
 
-/// One arc: how far it reaches, 0–1 of the sweep, in its colour.
+/// One arc: how far it reaches, 0–1 of the sweep, in its color.
 pub struct Arc {
     pub to: f64,
     pub color: Color,
@@ -192,11 +192,7 @@ fn stack(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     canvas.center(area.x, area.y, area.width, &dial.label);
     let rows = figures(&dial.value);
     let width = rows.iter().map(|row| crate::text::width(row)).max().unwrap_or(0) as u16;
-    let style = if dial.value == crate::report::vocabulary::MISSING {
-        palette.muted
-    } else {
-        palette.text
-    };
+    let style = if dial.value == MISSING { palette.muted } else { palette.text };
     for (index, row) in rows.iter().enumerate() {
         let x = area.x + area.width.saturating_sub(width) / 2;
         canvas.line(x, area.y + 2 + index as u16, width, &Line::styled(row, style));
@@ -220,7 +216,7 @@ pub fn figures(text: &str) -> [String; 3] {
             '9' => ["┏━┓", "┗━┫", "╺━┛"],
             '.' => [" ", " ", "•"],
             '<' => [" ", "<", " "],
-            '—' | '-' => ["   ", "╺━╸", "   "],
+            '–' | '-' => ["   ", "╺━╸", "   "],
             _ => return None,
         })
     };

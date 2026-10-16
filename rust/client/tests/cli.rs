@@ -28,9 +28,14 @@ fn help_prints_the_usage_to_stderr() {
 
 #[test]
 fn a_flag_error_prints_its_message_and_the_usage() {
-    let cases: [(&[&str], &str); 3] = [
+    let cases: [(&[&str], &str); 5] = [
         (&["-bogus"], "unknown option --bogus"),
-        (&["--streams", "x"], "invalid value \"x\" for --streams: parse error"),
+        (&["--streams", "x"], "invalid value \"x\" for --streams: use a whole number"),
+        (&["--streams", "-1"], "invalid value \"-1\" for --streams: use a whole number"),
+        (
+            &["--throughput-protocol", "h9"],
+            "invalid value \"h9\" for --throughput-protocol: use auto, http1, http2 or http3",
+        ),
         (&["-insecure=maybe"], "invalid value \"maybe\" for --insecure: use true or false"),
     ];
     for (args, message) in cases {

@@ -10,28 +10,31 @@ use graphite_meter_proto::{
     origin::Origin,
     text::quote,
 };
-use std::{
-    ffi::OsString,
-    fmt,
-    num::{IntErrorKind, NonZero},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{ffi::OsString, fmt, num::NonZero, path::PathBuf, time::Duration};
 
 /// Why settings without a server address cannot run; nothing has a sensible default one.
 pub const NO_SERVER: &str = "enter the server's address";
-/// Forced and automatic lanes per server and direction stay within this many.
+/// Exact and automatic streams per server and direction stay within this many.
 pub const MAX_STREAMS: usize = 14;
-const MAX_WARMUP: Duration = Duration::from_secs(4);
+/// The longest warmup a setting or a server's round trip asks for.
+pub const MAX_WARMUP: Duration = Duration::from_secs(4);
 const FASTEST_CADENCE: Duration = Duration::from_millis(80);
+/// Half the server's idle bound, so a quiet probe channel is never closed.
 const SLOWEST_CADENCE: Duration = Duration::from_secs(IDLE_BOUND.as_secs() / 2);
+/// The probe cadence presets by name.
+pub const CADENCES: [(&str, Cadence); 4] = [
+    ("reply-driven", Cadence::ReplyDriven),
+    ("fast", Cadence::Every(FASTEST_CADENCE)),
+    ("medium", Cadence::Every(Duration::from_millis(250))),
+    ("slow", Cadence::Every(Duration::from_millis(600))),
+];
 
 /// One run's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    /// The server whose catalogue lists the test servers; none until one is given.
+    /// The server whose server catalog lists the test servers; none until one is given.
     pub url: Option<Origin>,
-    /// Catalogue IDs; empty selects the operator's default.
+    /// Test server IDs; empty selects the server's default.
     pub servers: Vec<ServerId>,
     pub paths: PathChoice,
     /// Distinct, in run order.
@@ -57,7 +60,7 @@ pub struct PathChoice {
     pub latency_transport: Option<LatencyTransport>,
 }
 
-/// Lanes per server and direction: HTTP/1.1's automatic count, and a count forced on every path.
+/// Streams per server and direction: HTTP/1.1's automatic limit, and an exact count on every path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Streams {
     pub auto: usize,
@@ -101,8 +104,8 @@ impl Default for Config {
             warmup: Duration::from_millis(800),
             durations: [4, 10, 10, 10].map(Duration::from_secs),
             streams: Streams { auto: 6, forced: None },
-            ping: Cadence::ReplyDriven,
-            loaded_ping: Cadence::Every(Duration::from_millis(250)),
+            ping: CADENCES[0].1,
+            loaded_ping: CADENCES[2].1,
             loaded_latency: true,
             insecure: false,
             report: false,
@@ -161,13 +164,13 @@ impl Config {
     /// Why the settings cannot run, if they cannot.
     pub fn validate(&self) -> Result<(), Invalid> {
         let outside = |stage: &&Stage| !STAGE_LIMITS.contains(&self.duration(**stage));
-        let fast = |cadence| matches!(cadence, Cadence::Every(spacing) if spacing < FASTEST_CADENCE);
+        let spaced = |cadence| matches!(cadence, Cadence::Every(spacing) if !(FASTEST_CADENCE..=SLOWEST_CADENCE).contains(&spacing));
         match () {
             _ if self.url.is_none() => Err(Invalid::NoServer),
             _ if self.stages.is_empty() => Err(Invalid::NoStages),
             _ if self.warmup > MAX_WARMUP => Err(Invalid::Warmup),
             _ if let Some(stage) = Stage::ALL.iter().find(outside) => Err(Invalid::StageDuration(*stage)),
-            _ if fast(self.ping) || fast(self.loaded_ping) => Err(Invalid::Cadence),
+            _ if spaced(self.ping) || spaced(self.loaded_ping) => Err(Invalid::Cadence),
             _ if self.streams.forced.is_some_and(|forced| forced.get() > MAX_STREAMS) => Err(Invalid::ForcedStreams),
             _ if !(1..=MAX_STREAMS).contains(&self.streams.auto) => Err(Invalid::AutoStreams),
             _ => Ok(()),
@@ -194,16 +197,25 @@ impl fmt::Display for Invalid {
             Self::NoStages => {
                 formatter.write_str("select at least one stage: latency, download, upload or bidirectional")
             }
-            Self::Warmup => formatter.write_str("warmup must be from 0s to 4s"),
-            Self::StageDuration(stage) => write!(formatter, "{} duration must be from 1s to 24h", stage.name()),
-            Self::Cadence => formatter.write_str("latency cadence must be reply-driven or at least 80ms"),
-            Self::ForcedStreams => write!(
-                formatter,
-                "forced streams must be from 1 to {MAX_STREAMS} per server and direction, or 0 for automatic"
-            ),
-            Self::AutoStreams => {
-                write!(formatter, "the automatic stream maximum must be from 1 to {MAX_STREAMS} per direction")
+            Self::Warmup => write!(formatter, "warmup must be from 0s to {}", duration::format(MAX_WARMUP)),
+            Self::StageDuration(stage) => {
+                let (shortest, longest) = (STAGE_LIMITS.start(), STAGE_LIMITS.end());
+                let range = format!("{} to {}", duration::format(*shortest), duration::format(*longest));
+                write!(formatter, "the {} stage must take from {range}", stage.name())
             }
+            Self::Cadence => write!(
+                formatter,
+                "a probe interval must be reply-driven or from {} to {}",
+                duration::format(FASTEST_CADENCE),
+                duration::format(SLOWEST_CADENCE)
+            ),
+            Self::ForcedStreams => {
+                write!(
+                    formatter,
+                    "exact streams must be from 1 to {MAX_STREAMS} per direction, or 0 for automatic"
+                )
+            }
+            Self::AutoStreams => write!(formatter, "the HTTP/1.1 stream limit must be from 1 to {MAX_STREAMS}"),
         }
     }
 }
@@ -250,46 +262,25 @@ pub fn usage(program: &str) -> String {
     format!("Usage: {program} [options]\n\nOptions:\n{}", flag::options(&FLAGS, &Flags::default()))
 }
 
-/// What the flags set; path choices stay text until every flag is read, so the last one given counts.
 #[derive(Default)]
 struct Flags {
     config: Config,
-    protocol: String,
-    throughput_transport: String,
-    latency_transport: String,
     legal: bool,
     version: bool,
 }
 
 impl Flags {
     /// The settings; a missing server is for `main` to recall or refuse.
-    fn finish(mut self) -> Result<Config, String> {
+    fn finish(self) -> Result<Config, String> {
         match self.config.validate() {
-            Ok(()) | Err(Invalid::NoServer) => {}
-            Err(invalid) => return Err(invalid.to_string()),
+            Ok(()) | Err(Invalid::NoServer) => Ok(self.config),
+            Err(invalid) => Err(invalid.to_string()),
         }
-        let paths = &mut self.config.paths;
-        let protocols = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
-        paths.protocol = choice("throughput protocol", &self.protocol, &protocols, Protocol::name)?;
-        let transports = [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
-        let transport = &self.throughput_transport;
-        paths.throughput_transport = choice("throughput transport", transport, &transports, ThroughputTransport::name)?;
-        let transports = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
-        let transport = &self.latency_transport;
-        paths.latency_transport = choice("latency transport", transport, &transports, LatencyTransport::name)?;
-        let spacing = |cadence| match cadence {
-            Cadence::Every(spacing) => spacing,
-            Cadence::ReplyDriven => Duration::ZERO,
-        };
-        if spacing(self.config.ping).max(spacing(self.config.loaded_ping)) > SLOWEST_CADENCE {
-            return Err("latency interval must be at most 15s, half the server's 30s lane idle bound".into());
-        }
-        Ok(self.config)
     }
 }
 
 /// The choice named `text`, `auto` or empty being none.
-fn choice<T: Copy>(what: &str, text: &str, choices: &[T], name: fn(T) -> &'static str) -> Result<Option<T>, String> {
+fn choice<T: Copy>(text: &str, choices: &[T], name: fn(T) -> &'static str) -> Result<Option<T>, String> {
     if matches!(text, "" | "auto") {
         return Ok(None);
     }
@@ -298,18 +289,11 @@ fn choice<T: Copy>(what: &str, text: &str, choices: &[T], name: fn(T) -> &'stati
     }
     let names: Vec<_> = choices.iter().map(|&choice| name(choice)).collect();
     let (last, others) = names.split_last().expect("choices are named");
-    Err(format!("invalid {what} {}: use auto, {}, or {last}", quote(text), others.join(", ")))
+    Err(format!("use auto, {} or {last}", others.join(", ")))
 }
 
-/// A decimal count; a negative one reads as a count validation refuses.
-fn count(text: &str) -> Result<usize, String> {
-    match text.parse::<i64>() {
-        Ok(count) => Ok(usize::try_from(count).unwrap_or(usize::MAX)),
-        Err(error) if matches!(error.kind(), IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) => {
-            Err("value out of range".into())
-        }
-        Err(_) => Err("parse error".into()),
-    }
+fn count(text: &str) -> Result<usize, &'static str> {
+    text.parse().map_err(|_| "use a whole number")
 }
 
 fn origin(text: &str) -> Result<Option<Origin>, String> {
@@ -319,7 +303,7 @@ fn origin(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The catalogue origin, empty being none.
+/// The server's origin, empty being none.
 fn url(text: &str) -> Result<Option<Origin>, String> {
     match text {
         "" => Ok(None),
@@ -327,10 +311,8 @@ fn url(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The server an entered or pasted address names: its origin, whatever path, query, fragment or credentials came with
-/// it. An address without a scheme gets HTTPS, or HTTP where TLS is all but unheard of: loopback, private and
-/// link-local addresses, and names only a local network resolves. A failed HTTPS never falls back to HTTP, which would
-/// let anyone on the path force a plaintext test.
+/// The origin an entered or pasted address names. Without a scheme it is HTTPS, or HTTP on the local network; HTTPS
+/// never falls back to HTTP, which would let anyone on the path force a plaintext test.
 pub fn server_origin(raw: &str) -> Result<Origin, String> {
     let raw = raw.trim();
     let (scheme, rest) = raw.split_once("://").unwrap_or(("", raw));
@@ -368,8 +350,7 @@ fn local(authority: &str) -> bool {
     }
 }
 
-/// Where the server is kept once the user asks to remember it, so a later start needs no `-url`: the user's
-/// configuration directory.
+/// Where the server is kept once the user asks to remember it, so a later start needs no `--url`.
 pub fn kept_server() -> Option<PathBuf> {
     // A directory that climbs with `..` is refused, so the file stays where it belongs.
     let var = |name| {
@@ -417,19 +398,22 @@ pub fn remember(path: &std::path::Path, origin: &Origin) {
     }
 }
 
-fn cadence(text: &str) -> Result<Cadence, String> {
-    let named = [
-        ("reply-driven", Cadence::ReplyDriven),
-        ("fast", Cadence::Every(FASTEST_CADENCE)),
-        ("medium", Cadence::Every(Duration::from_millis(250))),
-        ("slow", Cadence::Every(Duration::from_millis(600))),
-    ];
+fn cadence(text: &str) -> Result<Cadence, &'static str> {
     let text = text.trim();
-    if let Some((_, cadence)) = named.iter().find(|(name, _)| name.eq_ignore_ascii_case(text)) {
+    if let Some((_, cadence)) = CADENCES.iter().find(|(name, _)| name.eq_ignore_ascii_case(text)) {
         return Ok(*cadence);
     }
     let spacing = duration::parse(text).map(Cadence::Every);
-    spacing.map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms".into())
+    spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
+}
+
+/// A cadence as its flag spells it.
+fn cadence_name(cadence: Cadence) -> String {
+    match (CADENCES.iter().find(|(_, preset)| *preset == cadence), cadence) {
+        (Some((name, _)), _) => (*name).into(),
+        (None, Cadence::Every(spacing)) => duration::format(spacing),
+        (None, Cadence::ReplyDriven) => CADENCES[0].0.into(),
+    }
 }
 
 fn stages(text: &str) -> Result<Vec<Stage>, String> {
@@ -442,7 +426,7 @@ fn stages(text: &str) -> Result<Vec<Stage>, String> {
             "upload" | "up" => Stage::Upload,
             "bidirectional" | "bidi" => Stage::Bidirectional,
             _ => {
-                return Err(format!("unknown stage {}: use latency, download, upload, or bidirectional", quote(&part)));
+                return Err(format!("unknown stage {}: use latency, download, upload or bidirectional", quote(&part)));
             }
         });
     }
@@ -452,11 +436,12 @@ fn stages(text: &str) -> Result<Vec<Stage>, String> {
 }
 
 fn server(servers: &mut Vec<ServerId>, text: &str) -> Result<(), String> {
-    let refused = || format!("select one to {MAX_SELECTED} different server IDs");
+    let refused = || format!("select 1 to {MAX_SELECTED} different test server IDs");
     if text.is_empty() || servers.len() >= MAX_SELECTED || servers.iter().any(|known| known.as_str() == text) {
         return Err(refused());
     }
-    let id = ServerId::parse(text).ok_or("a server ID has 1 to 64 letters, digits, dots, underscores or hyphens")?;
+    let id =
+        ServerId::parse(text).ok_or("a test server ID has 1 to 64 letters, digits, dots, underscores or hyphens")?;
     servers.push(id);
     Ok(())
 }
@@ -496,49 +481,58 @@ macro_rules! stage_duration {
 
 #[rustfmt::skip]
 const FLAGS: [Flag<Flags>; 22] = [
-    row!("auto-streams", "count", "Maximum H1 streams per direction",
+    row!("auto-streams", "count", "HTTP/1.1 stream limit per direction",
         |f, v| f.config.streams.auto = count(v)?, |f| f.config.streams.auto.to_string()),
-    stage_duration!("bidirectional-duration", Bidirectional, "Bidirectional measurement duration"),
-    stage_duration!("download-duration", Download, "Download measurement duration"),
+    stage_duration!("bidirectional-duration", Bidirectional, "Bidirectional stage duration"),
+    stage_duration!("download-duration", Download, "Download stage duration"),
     row!("insecure", "", "Skip TLS certificate verification",
         |f, v| f.config.insecure = flag::parse_bool(v)?, |f| f.config.insecure.to_string()),
-    stage_duration!("latency-duration", Latency, "Latency measurement duration"),
+    stage_duration!("latency-duration", Latency, "Latency stage duration"),
     row!("latency-origin", "origin", "Latency origin from discovery, or auto",
         |f, v| f.config.paths.latency_origin = origin(v)?, |f| show_origin(&f.config.paths.latency_origin)),
-    row!("latency-transport", "name", "Latency transport: auto, websocket, or webtransport",
-        |f, v| v.clone_into(&mut f.latency_transport), |_f| "auto".into()),
+    row!("latency-transport", "name", "Latency transport: auto, websocket or webtransport",
+        |f, v| f.config.paths.latency_transport = choice(v, &LATENCY_TRANSPORTS, LatencyTransport::name)?,
+        |f| f.config.paths.latency_transport.map_or("auto", LatencyTransport::name).into()),
     row!("legal", "", "Print the licenses of the bundled software and exit",
         |f, v| f.legal = flag::parse_bool(v)?, |f| f.legal.to_string()),
     row!("loaded-latency", "", "Measure latency while transfer stages are loaded",
         |f, v| f.config.loaded_latency = flag::parse_bool(v)?, |f| f.config.loaded_latency.to_string()),
-    row!("loaded-ping", "cadence", "Loaded latency cadence: reply-driven, fast, medium, slow, or a duration from \
-        80 ms to 15 s", |f, v| f.config.loaded_ping = cadence(v)?, |_f| "medium".into()),
-    row!("ping", "cadence", "Idle latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to \
-        15 s", |f, v| f.config.ping = cadence(v)?, |_f| "reply-driven".into()),
+    row!("loaded-ping", "cadence", "Loaded probe interval: reply-driven, fast, medium, slow or a duration from \
+        80ms to 15s", |f, v| f.config.loaded_ping = cadence(v)?, |f| cadence_name(f.config.loaded_ping)),
+    row!("ping", "cadence", "Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to \
+        15s", |f, v| f.config.ping = cadence(v)?, |f| cadence_name(f.config.ping)),
     row!("report", "",
         "Run once without the interface and print the final report (automatic when stdout is not a terminal)",
         |f, v| f.config.report = flag::parse_bool(v)?, |f| f.config.report.to_string()),
-    row!("server", "id", "Selected catalogue ID (repeat up to 4 times; omission uses operator defaults)",
+    row!("server", "id", "Test server ID from the server catalog; repeat for several (default: its default selection)",
         |f, v| server(&mut f.config.servers, v)?, |_f| String::new()),
-    row!("stages", "list", "Comma-separated stages: latency (ping), download (down), upload (up), bidirectional \
-        (bidi)", |f, v| f.config.stages = stages(v)?, |_f| "latency,download,upload".into()),
-    row!("streams", "count", "Force exact streams per server and direction (0 = automatic; at most 14)",
+    row!("stages", "list", "Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional \
+        (bidi)", |f, v| f.config.stages = stages(v)?,
+        |f| f.config.stages.iter().map(|stage| stage.name()).collect::<Vec<_>>().join(",")),
+    row!("streams", "count", "Exact stream count per server and direction; 0 is automatic",
         |f, v| f.config.streams.forced = NonZero::new(count(v)?),
         |f| f.config.streams.forced.map_or(0, NonZero::get).to_string()),
     row!("throughput-origin", "origin", "Throughput origin from discovery, or auto",
         |f, v| f.config.paths.throughput_origin = origin(v)?, |f| show_origin(&f.config.paths.throughput_origin)),
-    row!("throughput-protocol", "name", "Protocol for a negotiated throughput origin: auto, http1, http2, or http3",
-        |f, v| v.clone_into(&mut f.protocol), |_f| "auto".into()),
-    row!("throughput-transport", "name", "Throughput transport: auto, fetch-stream, or webtransport",
-        |f, v| v.clone_into(&mut f.throughput_transport), |_f| "auto".into()),
-    stage_duration!("upload-duration", Upload, "Upload measurement duration"),
-    row!("url", "origin", "Origin of the operator server catalogue",
+    row!("throughput-protocol", "name", "Protocol for a negotiated throughput origin: auto, http1, http2 or http3",
+        |f, v| f.config.paths.protocol = choice(v, &PROTOCOLS, Protocol::name)?,
+        |f| f.config.paths.protocol.map_or("auto", Protocol::name).into()),
+    row!("throughput-transport", "name", "Throughput transport: auto, fetch-stream or webtransport",
+        |f, v| f.config.paths.throughput_transport = choice(v, &THROUGHPUT_TRANSPORTS, ThroughputTransport::name)?,
+        |f| f.config.paths.throughput_transport.map_or("auto", ThroughputTransport::name).into()),
+    stage_duration!("upload-duration", Upload, "Upload stage duration"),
+    row!("url", "origin", "The Graphite Meter server, whose server catalog lists the test servers",
         |f, v| f.config.url = url(v)?, |_f| String::new()),
-    row!("version", "", "Print version and exit",
+    row!("version", "", "Print the version and exit",
         |f, v| f.version = flag::parse_bool(v)?, |f| f.version.to_string()),
-    row!("warmup", "duration", "Per-stage warmup duration",
+    row!("warmup", "duration", "Warmup before each stage",
         |f, v| f.config.warmup = duration::parse(v)?, |f| duration::format(f.config.warmup)),
 ];
+
+const PROTOCOLS: [Protocol; 3] = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
+const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
+    [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
+const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
 
 #[cfg(test)]
 mod tests {
@@ -557,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn no_flags_take_go_defaults_without_a_server() {
+    fn no_flags_take_the_defaults_without_a_server() {
         let config = run("").unwrap();
         assert_eq!(config, Config::default());
         assert_eq!((config.url.as_ref(), config.validate()), (None, Err(Invalid::NoServer)));

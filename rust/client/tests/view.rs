@@ -22,7 +22,7 @@ fn server(name: &str, left: bool, median: Option<Duration>) -> ServerResult {
 }
 
 fn result(stage: Stage, servers: Vec<ServerResult>, failures: Vec<ServerFailure>) -> StageResult {
-    let (measured, throughput, intervals) = (SECOND, Dir::default(), Vec::new());
+    let (measured, throughput) = (SECOND, Dir::default());
     StageResult {
         stage,
         measured,
@@ -30,8 +30,6 @@ fn result(stage: Stage, servers: Vec<ServerResult>, failures: Vec<ServerFailure>
         throughput,
         servers,
         failures,
-        intervals,
-        omitted: 0,
     }
 }
 
@@ -48,7 +46,7 @@ fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
     let left = ServerFailure {
         server: id("a"),
         scope: Scope::Throughput,
-        failure: Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s"),
+        failure: Failure::new(FailureReason::Timeout, "no download data for 2 s"),
         at: at + SECOND * 3,
     };
     let unprepared = ServerFailure {

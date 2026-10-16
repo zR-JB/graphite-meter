@@ -1,25 +1,25 @@
 Usage: graphite-meter-client [options]
 
 Options:
-  --auto-streams <count>               Maximum H1 streams per direction (default: 6)
-  --bidirectional-duration <duration>  Bidirectional measurement duration (default: 10s)
-  --download-duration <duration>       Download measurement duration (default: 10s)
+  --auto-streams <count>               HTTP/1.1 stream limit per direction (default: 6)
+  --bidirectional-duration <duration>  Bidirectional stage duration (default: 10s)
+  --download-duration <duration>       Download stage duration (default: 10s)
   --insecure                           Skip TLS certificate verification
-  --latency-duration <duration>        Latency measurement duration (default: 4s)
+  --latency-duration <duration>        Latency stage duration (default: 4s)
   --latency-origin <origin>            Latency origin from discovery, or auto (default: auto)
-  --latency-transport <name>           Latency transport: auto, websocket, or webtransport (default: auto)
+  --latency-transport <name>           Latency transport: auto, websocket or webtransport (default: auto)
   --legal                              Print the licenses of the bundled software and exit
   --loaded-latency                     Measure latency while transfer stages are loaded (default: true)
-  --loaded-ping <cadence>              Loaded latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to 15 s (default: medium)
-  --ping <cadence>                     Idle latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to 15 s (default: reply-driven)
+  --loaded-ping <cadence>              Loaded probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: medium)
+  --ping <cadence>                     Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: reply-driven)
   --report                             Run once without the interface and print the final report (automatic when stdout is not a terminal)
-  --server <id>                        Selected catalogue ID (repeat up to 4 times; omission uses operator defaults)
-  --stages <list>                      Comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) (default: latency,download,upload)
-  --streams <count>                    Force exact streams per server and direction (0 = automatic; at most 14) (default: 0)
+  --server <id>                        Test server ID from the server catalog; repeat for several (default: its default selection)
+  --stages <list>                      Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional (bidi) (default: latency,download,upload)
+  --streams <count>                    Exact stream count per server and direction; 0 is automatic (default: 0)
   --throughput-origin <origin>         Throughput origin from discovery, or auto (default: auto)
-  --throughput-protocol <name>         Protocol for a negotiated throughput origin: auto, http1, http2, or http3 (default: auto)
-  --throughput-transport <name>        Throughput transport: auto, fetch-stream, or webtransport (default: auto)
-  --upload-duration <duration>         Upload measurement duration (default: 10s)
-  --url <origin>                       Origin of the operator server catalogue
-  --version                            Print version and exit
-  --warmup <duration>                  Per-stage warmup duration (default: 800ms)
+  --throughput-protocol <name>         Protocol for a negotiated throughput origin: auto, http1, http2 or http3 (default: auto)
+  --throughput-transport <name>        Throughput transport: auto, fetch-stream or webtransport (default: auto)
+  --upload-duration <duration>         Upload stage duration (default: 10s)
+  --url <origin>                       The Graphite Meter server, whose server catalog lists the test servers
+  --version                            Print the version and exit
+  --warmup <duration>                  Warmup before each stage (default: 800ms)

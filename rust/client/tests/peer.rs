@@ -118,7 +118,7 @@ async fn an_abandoned_quic_dial_stops_sending() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut datagram = [0; 2048];
     while silent.try_recv(&mut datagram).is_ok() {}
-    let resent = tokio::time::timeout(Duration::from_secs(2), silent.recv(&mut datagram)).await;
+    let resent = tokio::time::timeout(Duration::from_millis(1200), silent.recv(&mut datagram)).await;
     assert!(resent.is_err(), "the abandoned dial kept sending");
 }
 
@@ -173,10 +173,7 @@ async fn an_empty_trust_store_fails_only_tls_connections() {
     let refused = probe(&verified, Protocol::Http1, &secure).await.unwrap_err();
     assert_matches!(&refused, Fault::Connect(ConnectError::Tls(_)));
     let text = refused.to_string();
-    assert!(
-        text.starts_with("Certificate not trusted: certificate signed by unknown authority. "),
-        "{text}"
-    );
+    assert!(text.starts_with("Certificate not trusted: its issuer is unknown. "), "{text}");
     probe(&client(true), Protocol::Http1, &secure).await.unwrap();
 }
 
@@ -286,7 +283,7 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     finalized.expect("the receiver was asked to finalize");
 }
 
-/// A catalogue of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
+/// A server catalog of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
 fn discovery(head: &str, checkpoints: bool, extra: &str) -> Option<String> {
     let preflight = format!(
         r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"maxStageMs":300000,"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}}}}"#

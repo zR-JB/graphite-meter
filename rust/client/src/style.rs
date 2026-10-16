@@ -1,13 +1,14 @@
-//! The graphite palette in the terminal's colour profile, which follows the environment, and the OSC 11 background.
+//! The graphite palette in the terminal's color profile, which follows the environment, and the OSC 11 background.
 use crate::{
     model::{Outcome, Stage},
     text::{Color, Profile, Style},
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use graphite_meter_proto::flag::parse_bool;
+use std::{io, time::Duration};
 
-/// The background query: OSC 11, then DA1, which every terminal answers, in order; none on Windows.
-pub const QUERY: &[u8] = if cfg!(windows) { b"" } else { b"\x1b]11;?\x1b\\\x1b[c" };
+/// The background query: OSC 11, then DA1, which every terminal answers, in order.
+pub const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
+/// How long a terminal may take to answer the query.
+pub const ANSWER: Duration = Duration::from_secs(2);
 
 /// A tone's light and dark shades.
 type Tone = [Color; 2];
@@ -131,7 +132,7 @@ impl Palette {
         mix(self.trace(stage), under, share)
     }
 
-    /// An outcome's label: bold in its badge's colour.
+    /// An outcome's label: bold in its badge's color.
     pub fn outcome(&self, outcome: Outcome) -> Style {
         let tone = match outcome {
             Outcome::Complete => GOOD,
@@ -143,7 +144,7 @@ impl Palette {
     }
 }
 
-/// `share` of `color` over `under` in sRGB, at the nearest of the 256 colours, and `color`'s own of the 16.
+/// `share` of `color` over `under` in sRGB, at the nearest of the 256 colors, and `color`'s own of the 16.
 pub fn mix(color: Color, under: Color, share: f64) -> Color {
     let channel = |at: u32| {
         let (over, below) = (f64::from((color.rgb >> at) as u8), f64::from((under.rgb >> at) as u8));
@@ -152,7 +153,7 @@ pub fn mix(color: Color, under: Color, share: f64) -> Color {
     nearest([channel(16), channel(8), channel(0)], color.ansi)
 }
 
-/// `rgb` with the nearest of the 256 colours and `ansi` of the 16.
+/// `rgb` with the nearest of the 256 colors and `ansi` of the 16.
 pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
@@ -161,7 +162,7 @@ pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
             .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
             .sum::<u32>()
     };
-    // The 6×6×6 cube's nearest colour or the grey ramp's, whichever lies closer.
+    // The 6×6×6 cube's nearest color or the grey ramp's, whichever lies closer.
     let cube = rgb.map(|value| (0..6).min_by_key(|&index| value.abs_diff(LEVELS[index])).unwrap_or(0));
     let grey = (rgb.iter().map(|&value| u16::from(value)).sum::<u16>() / 3).saturating_sub(3) / 10;
     let grey = grey.min(23) as u8;
@@ -176,100 +177,79 @@ pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     }
 }
 
-/// The colour profile of a terminal, `tty` when output reaches one, from the environment `var` reads.
+/// The color profile of a terminal, `tty` when output reaches one, from the environment `var` reads.
 pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
-    let flag = |name| var(name).is_some_and(|value| parse_bool(&value) == Ok(true));
-    let (tty, term) = (tty || flag("TTY_FORCE"), var("TERM"));
-    let true_color = var("WT_SESSION").is_some_and(|session| !session.is_empty()) || flag("GOOGLE_CLOUD_SHELL");
-    let env = environment(term.as_deref().unwrap_or_default(), &var("COLORTERM").unwrap_or_default(), true_color);
-    let dumb = term.as_deref().map_or(!cfg!(windows), |term| term == "dumb");
-    let mut profile = if tty && !dumb { env } else { Profile::Plain };
-    if flag("NO_COLOR") && tty {
-        return profile.min(Profile::Ascii);
+    let set = |name| var(name).is_some_and(|value| !value.is_empty() && value != "0");
+    let term = var("TERM").unwrap_or_default();
+    if set("NO_COLOR") {
+        return if tty { Profile::Ascii } else { Profile::Plain };
     }
-    if flag("CLICOLOR_FORCE") {
-        profile = profile.max(Profile::Ansi).max(env);
-    } else if flag("CLICOLOR") && tty && !dumb {
-        profile = profile.max(Profile::Ansi);
+    let forced = set("CLICOLOR_FORCE") || set("FORCE_COLOR");
+    if !forced && (!tty || term == "dumb") {
+        return Profile::Plain;
     }
-    // A named terminal reads as ANSI, and tmux as 256 colours, as terminfo and tmux report without Tc or RGB.
-    match term.filter(|term| term != "dumb" && tty && profile != Profile::TrueColor) {
-        Some(term) if !term.is_empty() => {
-            let tmux = var("TMUX").is_some_and(|tmux| !tmux.is_empty());
-            profile.max(if tmux { Profile::Ansi256 } else { Profile::Ansi })
-        }
-        _ => profile,
-    }
-}
-
-/// The profile `TERM` and `COLORTERM` name.
-fn environment(term: &str, color_term: &str, true_color_terminal: bool) -> Profile {
-    let mut profile = match term {
-        "" | "dumb" if cfg!(windows) => Profile::TrueColor,
-        "" | "dumb" => Profile::Plain,
+    let color_term = var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
+    match () {
+        _ if matches!(color_term.as_str(), "truecolor" | "24bit") || term.ends_with("direct") => Profile::TrueColor,
+        _ if term.contains("256color") => Profile::Ansi256,
+        // A Windows console sets no TERM and takes 24-bit color.
+        _ if term.is_empty() && cfg!(windows) => Profile::TrueColor,
         _ => Profile::Ansi,
+    }
+}
+
+/// The terminal in raw mode until dropped.
+pub struct Raw;
+
+impl Raw {
+    pub fn enter() -> io::Result<Self> {
+        crossterm::terminal::enable_raw_mode().map(|()| Self)
+    }
+}
+
+impl Drop for Raw {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+/// Asks a raw terminal on stdin and stdout for its background until DA1 answers or `limit` passed.
+#[cfg(unix)]
+pub fn ask(limit: Duration) -> Option<Background> {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        io::Errno,
     };
-    let multiplexer = term.starts_with("tmux") || term.starts_with("screen");
-    if multiplexer {
-        profile = profile.max(Profile::Ansi256);
+    use std::{io::Write, time::Instant};
+    let mut out = io::stdout();
+    out.write_all(QUERY).and_then(|()| out.flush()).ok()?;
+    let (stdin, deadline) = (io::stdin(), Instant::now() + limit);
+    let (mut answers, mut chunk) = (Vec::new(), [0; 1024]);
+    while answers.len() < 4096 {
+        let left = Timespec::try_from(deadline.saturating_duration_since(Instant::now())).ok()?;
+        match poll(&mut [PollFd::new(&stdin, PollFlags::IN)], Some(&left)) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(Errno::INTR) => continue,
+            Err(_) => return None,
+        }
+        let read = rustix::io::read(&stdin, &mut chunk).ok().filter(|&read| read > 0)?;
+        answers.extend_from_slice(&chunk[..read]);
+        let (background, ended) = scan(&answers);
+        // Ctrl+C arrives as a byte in raw mode; it ends the wait.
+        if ended || answers.contains(&0x03) {
+            return background;
+        }
     }
-    let direct = ["truecolor", "24bit", "yes", "true"].contains(&color_term.to_ascii_lowercase().as_str());
-    let named = ["alacritty", "contour", "foot", "ghostty", "kitty", "rio", "st", "wezterm"];
-    if named.iter().any(|name| term.contains(name)) || true_color_terminal || direct && !multiplexer {
-        return Profile::TrueColor;
-    }
-    match term.ends_with("direct") {
-        true => Profile::TrueColor,
-        false if term.ends_with("256color") => profile.max(Profile::Ansi256),
-        false => profile,
-    }
+    scan(&answers).0
 }
 
-/// A query answer as keys: `ESC ]` as `alt+]` or split esc and `]`, characters as keys, its end as `alt+\` or `ctrl+g`.
-#[derive(Debug, Default)]
-pub struct Answer {
-    answer: Option<Vec<u8>>,
-    escaped: bool,
+#[cfg(not(unix))]
+pub fn ask(_: Duration) -> Option<Background> {
+    None
 }
 
-/// What a key was to an answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Taken {
-    Not,
-    Part,
-    /// The answer's end, naming the background.
-    Background(Background),
-}
-
-impl Answer {
-    pub fn take(&mut self, key: KeyEvent) -> Taken {
-        let escaped = std::mem::replace(&mut self.escaped, key.code == KeyCode::Esc);
-        let Some(answer) = &mut self.answer else {
-            let opens = key.code == KeyCode::Char(']')
-                && (key.modifiers == KeyModifiers::ALT || escaped && key.modifiers == KeyModifiers::NONE);
-            self.answer = opens.then(|| b"\x1b]".to_vec());
-            return if opens { Taken::Part } else { Taken::Not };
-        };
-        let end: &[u8] = match (key.code, key.modifiers) {
-            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) if answer.len() < 64 => {
-                answer.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-                return Taken::Part;
-            }
-            (KeyCode::Char('\\'), KeyModifiers::ALT) => b"\x1b\\",
-            (KeyCode::Char('g'), KeyModifiers::CONTROL) => b"\x07",
-            _ => {
-                self.answer = None;
-                return Taken::Not;
-            }
-        };
-        answer.extend_from_slice(end);
-        let (background, _) = scan(answer);
-        self.answer = None;
-        background.map_or(Taken::Part, Taken::Background)
-    }
-}
-
-/// What a terminal says its background is: its colour, unless it could not be read.
+/// What a terminal says its background is: its color, unless it could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Background(pub Option<[u8; 3]>);
 
@@ -315,7 +295,7 @@ pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
     (background, false)
 }
 
-/// An `rgb:`/`rgba:` or `#` colour's channels.
+/// An `rgb:`/`rgba:` or `#` color's channels.
 fn rgb(color: &[u8]) -> Option<[u8; 3]> {
     let hex = |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
     let color = std::str::from_utf8(color).unwrap_or_default();

@@ -5,7 +5,10 @@ use graphite_meter_client::{
     config::{self, Config},
     controller::{Command, Kind},
     events::{Event, Probed, SignInEnd, SignInPrompt},
-    measure::aggregate::Rate,
+    measure::{
+        aggregate::Rate,
+        latency::{Latency, ProbeOutcome},
+    },
     model::{Dir, Failure, Outcome, Stage, StageResult, Throughput},
     net::{ThroughputPath, approval::Unapproved},
     report::report,
@@ -14,6 +17,7 @@ use graphite_meter_client::{
         prepare::{Paths, ServerPath},
     },
     status,
+    style::Palette,
     text::Profile,
     tui::{App, Effect},
 };
@@ -50,7 +54,7 @@ fn config() -> Config {
 /// The console for the default settings, its first check already asked for.
 fn app() -> (App, Instant) {
     let start = Instant::now();
-    let mut app = App::new(config(), None, Profile::Plain, start);
+    let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), start);
     assert_eq!(checked(app.tick(start)), config());
     (app, start)
 }
@@ -142,7 +146,7 @@ fn prepared_server(name: &str, origin: &Origin) -> ServerPath {
     }
 }
 
-/// A catalogue of five servers of which the check prepared the first.
+/// A catalog of five servers of which the check prepared the first.
 fn prepared() -> Event {
     let origin = |name: &str| Origin::parse(&format!("https://{name}.example")).unwrap();
     let entry = |name: &str| ServerEntry {
@@ -152,9 +156,9 @@ fn prepared() -> Event {
         location: String::new(),
         additional_origins: Vec::new(),
     };
-    let catalogue = ["a", "b", "c", "d", "e"].map(entry);
+    let catalog = ["a", "b", "c", "d", "e"].map(entry);
     let servers = Arc::new([prepared_server("a", &origin("a"))]);
-    Event::Prepared { servers, catalogue: Arc::new(catalogue) }
+    Event::Prepared { servers, catalog: Arc::new(catalog) }
 }
 
 fn prompt(now: Instant) -> SignInPrompt {
@@ -169,11 +173,11 @@ fn prompt(now: Instant) -> SignInPrompt {
 /// A run of `plan` over `names`, started with enter and prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
-    let mut app = App::new(Config { stages, ..config() }, None, Profile::Plain, now);
+    let mut app = App::new(Config { stages, ..config() }, None, (Profile::Plain, Palette::new(true)), now);
     assert_matches!(command(&press(&mut app, KeyCode::Enter, now)), Command::Run(_));
     let origin = Origin::parse("https://meter.example").unwrap();
     let servers = names.iter().map(|name| prepared_server(name, &origin)).collect();
-    app.event(&Event::Prepared { servers, catalogue: Arc::new([]) }, now);
+    app.event(&Event::Prepared { servers, catalog: Arc::new([]) }, now);
     app.event(&Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at: now }, now);
     app
 }
@@ -213,7 +217,7 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
         press(&mut app, KeyCode::Char(' '), now);
     }
     assert!(shows(&mut app, now, "Test servers · 4 selected"));
-    assert!(shows(&mut app, now, "At most four servers share one test."));
+    assert!(shows(&mut app, now, "At most 4 test servers share one test."));
     press(&mut app, KeyCode::Enter, now);
     let config = checked(app.tick(now + REST));
     let ids: Vec<_> = config.servers.iter().map(ServerId::as_str).collect();
@@ -226,12 +230,12 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
     let failure = Failure::new(FailureReason::PreparationFailed, graphite_meter_client::net::UNREACHABLE);
     app.event(&Event::Checking(Kind::Check), now);
     app.event(&Event::CheckFailed(failure), now);
-    assert!(frame(&mut app, now)[0].ends_with("● Unreachable"), "{:?}", frame(&mut app, now)[0]);
-    assert!(shows(&mut app, now, "Couldn't reach meter.example."));
+    assert!(frame(&mut app, now)[0].ends_with("● Failed"), "{:?}", frame(&mut app, now)[0]);
+    assert!(shows(&mut app, now, "Could not reach meter.example."));
     assert!(shows(
         &mut app,
         now,
-        "Check the address and that the server is running; enter tries again."
+        "Check the address and that the server is running; Enter tries again."
     ));
     press(&mut app, KeyCode::Enter, now);
     assert_eq!(checked(app.tick(now)), config(), "enter checks again at once");
@@ -242,15 +246,15 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
 }
 
 #[test]
-fn a_cancelled_or_expired_sign_in_asks_again_on_the_next_start() {
-    for (end, notice) in [(SignInEnd::Cancelled, "Sign-in canceled"), (SignInEnd::Expired, "Sign-in expired")] {
+fn a_canceled_or_expired_sign_in_asks_again_on_the_next_start() {
+    for (end, notice) in [(SignInEnd::Canceled, "Sign-in canceled"), (SignInEnd::Expired, "Sign-in expired")] {
         let (mut app, now) = app();
         app.event(&Event::Checking(Kind::Check), now);
         app.event(&Event::SignIn(prompt(now)), now);
         assert!(shows(&mut app, now, "Sign in to Meter") && shows(&mut app, now, "ABCD-EFGH"));
         assert_eq!(press(&mut app, KeyCode::Enter, now), [Effect::OpenBrowser(PAGE.into())]);
         assert!(shows(&mut app, now, "Waiting for approval…"));
-        if end == SignInEnd::Cancelled {
+        if end == SignInEnd::Canceled {
             assert_eq!(command(&press(&mut app, KeyCode::Esc, now)), &Command::Stop);
         }
         app.event(&Event::SignInEnded(end), now);
@@ -276,7 +280,7 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
     let (now, download) = (Instant::now(), [(Stage::Download, SECOND * 10)]);
     let mut app = running(&["a"], &download, now);
     assert_eq!(command(&press(&mut app, KeyCode::Char('q'), now)), &Command::Stop);
-    assert!(shows(&mut app, now, "Stopping the test before quitting… ctrl+c quits at once."));
+    assert!(shows(&mut app, now, "Stopping the test before quitting… Ctrl+C quits at once."));
     assert_eq!(press(&mut app, KeyCode::Char('q'), now), []);
     assert_eq!(app.event(&ended(Outcome::Stopped), now), [Effect::Quit]);
     let exit = app.exit();
@@ -330,7 +334,7 @@ fn esc_stops_a_run_at_once_and_quitting_after_one_reports_it() {
 #[test]
 fn a_first_start_asks_for_the_server_and_remembers_it_only_when_asked() {
     let now = Instant::now();
-    let mut app = App::new(Config::default(), None, Profile::Plain, now);
+    let mut app = App::new(Config::default(), None, (Profile::Plain, Palette::new(true)), now);
     assert_eq!(app.tick(now), [], "nothing is checked without a server");
     assert!(shows(&mut app, now, "Connect to a server"));
     assert!(shows(&mut app, now, "Enter the address of your Graphite Meter server, or paste it."));
@@ -361,7 +365,7 @@ fn a_first_start_asks_for_the_server_and_remembers_it_only_when_asked() {
     assert_eq!(app.event(&prepared(), now), []);
     press(&mut app, KeyCode::Char('s'), now);
     press(&mut app, KeyCode::Down, now);
-    assert!(shows(&mut app, now, "Remember server ● on"));
+    assert!(shows(&mut app, now, "Remember this server ● on"));
     assert_eq!(
         press(&mut app, KeyCode::Char(' '), now),
         [Effect::Forget],
@@ -373,10 +377,10 @@ fn a_first_start_asks_for_the_server_and_remembers_it_only_when_asked() {
         [Effect::Remember(kept.clone())],
         "a ready server is kept at once"
     );
-    let mut later = App::new(config(), Some(kept.clone()), Profile::Plain, now);
+    let mut later = App::new(config(), Some(kept.clone()), (Profile::Plain, Palette::new(true)), now);
     later.tick(now);
     press(&mut later, KeyCode::Char('s'), now);
-    assert!(shows(&mut later, now, "Remember server ● on"), "a kept server starts remembered");
+    assert!(shows(&mut later, now, "Remember this server ● on"), "a kept server starts remembered");
 
     let scratch = graphite_meter_testkit::Scratch::new().unwrap();
     let path = scratch.path().join("graphite-meter").join("server");
@@ -400,20 +404,24 @@ fn idle_latency_fills_its_lane_live_from_the_replies() {
     let now = Instant::now();
     let mut app = running(&["a"], &[(Stage::Latency, SECOND * 4)], now);
     measuring(&mut app, Stage::Latency, SECOND * 4, now);
+    let mut latency = Latency::default();
+    let mut probed = |app: &mut App, at: Duration, rtt: Option<Duration>| {
+        latency.record(rtt.map_or(ProbeOutcome::Timeout, |rtt| ProbeOutcome::Reply { rtt, handling: Duration::ZERO }));
+        let (server, probes) = (id("a"), Box::new([Probed { at, rtt }]));
+        app.event(&Event::Probes { server, probes, latency: latency.summary() }, now + at);
+    };
     for ms in 10..=29 {
-        let (at, rtt) = (Duration::from_millis(100 * (ms - 9)), Some(Duration::from_millis(ms)));
-        app.event(&Event::Probes { server: id("a"), probes: Box::new([Probed { at, rtt }]) }, now + at);
+        probed(&mut app, Duration::from_millis(100 * (ms - 9)), Some(Duration::from_millis(ms)));
     }
-    let timeout = Probed { at: SECOND * 3, rtt: None };
-    app.event(&Event::Probes { server: id("a"), probes: Box::new([timeout]) }, now + SECOND * 3);
+    probed(&mut app, SECOND * 3, None);
     let later = now + SECOND * 3;
     let lane = frame(&mut app, later)
         .into_iter()
         .find(|row| row.contains("≈ Idle"))
         .unwrap();
-    assert!(lane.contains("19.5 ms") && lane.contains("4.8%") && lane.contains("Baseline"), "{lane:?}");
+    assert!(lane.contains("19.5 ms") && lane.contains("4.8%"), "{lane:?}");
     assert!(shows(&mut app, later, "Range 10.0–29.0 ms") && shows(&mut app, later, "Replies 20"));
-    assert!(shows(&mut app, later, "1 probe unanswered"), "the dial notes the streak");
+    assert!(shows(&mut app, later, "1 timeout in a row"), "the dial notes the streak");
 }
 
 #[test]
@@ -440,8 +448,6 @@ fn the_console_follows_a_download_and_takes_presses() {
         throughput,
         servers: Vec::new(),
         failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
     };
     app.event(&Event::StageFinished(result), later);
     app.event(&ended(Outcome::Complete), later);
@@ -492,8 +498,6 @@ fn downloaded(now: Instant) -> App {
         throughput,
         servers: Vec::new(),
         failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
     };
     app.event(&Event::StageFinished(result), now);
     app.event(&ended(Outcome::Complete), now);
@@ -566,4 +570,38 @@ fn the_sign_in_card_stays_for_a_press_beside_it_and_ctrl_c_while_typing_stops_a_
     press(&mut app, KeyCode::Char('s'), now);
     press(&mut app, KeyCode::Enter, now);
     assert_eq!(command(&app.key(ctrl_c(), now)), &Command::Stop);
+}
+
+#[test]
+fn the_settings_editor_applies_values_in_bounds_and_says_why_it_refuses_others() {
+    let (mut app, now) = app();
+    let typed = |app: &mut App, text: &str| {
+        app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), now);
+        text.chars().for_each(|c| _ = press(app, KeyCode::Char(c), now));
+        press(app, KeyCode::Enter, now);
+    };
+    press(&mut app, KeyCode::Char('s'), now);
+    (0..15).for_each(|_| _ = press(&mut app, KeyCode::Down, now));
+    press(&mut app, KeyCode::Enter, now);
+    typed(&mut app, "15");
+    assert!(
+        shows(&mut app, now, "Streams must be a whole number from 1 to 14."),
+        "{:#?}",
+        frame(&mut app, now)
+    );
+    typed(&mut app, "3");
+    assert!(shows(&mut app, now, "HTTP/1.1 stream limit 3"), "{:#?}", frame(&mut app, now));
+    assert_eq!(checked(app.tick(now + REST)).streams.auto, 3);
+    (0..4).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
+    press(&mut app, KeyCode::Enter, now);
+    typed(&mut app, "5");
+    assert!(shows(&mut app, now, "Warmup must be from 0s to 4s."), "{:#?}", frame(&mut app, now));
+    typed(&mut app, "soon");
+    assert!(shows(&mut app, now, "Use a time like 800ms, 4s or 1m; a bare number is seconds."));
+    typed(&mut app, "1.5");
+    assert!(shows(&mut app, now, "Warmup 1.5 s"), "{:#?}", frame(&mut app, now));
+    match command(&press(&mut app, KeyCode::Char('r'), now)) {
+        Command::Run(config) => assert_eq!(config.warmup, Duration::from_millis(1500)),
+        command => panic!("{command:?}"),
+    }
 }

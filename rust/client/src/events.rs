@@ -1,10 +1,7 @@
 //! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
 use crate::{
     controller::Kind,
-    measure::{
-        latency::{Latency, ProbeOutcome},
-        live::LiveRate,
-    },
+    measure::{latency::Summary, live::LiveRate},
     model::{Dir, Direction, Failure, Outcome, ServerFailure, Stage, StageResult, focus},
     run::{engine::StagePlan, prepare::ServerPath},
 };
@@ -19,10 +16,10 @@ use tokio::sync::mpsc;
 pub enum Event {
     /// A path check began, or a run's preparation.
     Checking(Kind),
-    /// The catalogue and the selected servers with their paths, in catalogue order.
+    /// The server catalog and the selected test servers with their paths, in catalog order.
     Prepared {
         servers: Arc<[ServerPath]>,
-        catalogue: Arc<[ServerEntry]>,
+        catalog: Arc<[ServerEntry]>,
     },
     /// The path check could not finish.
     CheckFailed(Failure),
@@ -43,10 +40,12 @@ pub enum Event {
         at: Duration,
         rates: Dir<Option<f64>>,
     },
-    /// A server's probes resolved since the last tick that it sent within the window, in resolution order.
+    /// A server's probes resolved since the last tick that it sent within the window, in resolution order, and its
+    /// latency over the window so far.
     Probes {
         server: ServerId,
         probes: Box<[Probed]>,
+        latency: Summary,
     },
     /// A failure as it happens.
     ServerFailed(ServerFailure),
@@ -62,7 +61,7 @@ pub enum Event {
 /// What the sign-in screen shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInPrompt {
-    /// The server's name, or the catalogue's origin.
+    /// The test server's name, or the server's origin.
     pub issuer: String,
     /// The approval page.
     pub url: String,
@@ -75,7 +74,7 @@ pub enum SignInEnd {
     Approved,
     Expired,
     Failed,
-    Cancelled,
+    Canceled,
 }
 
 /// The sending side of the events.
@@ -176,9 +175,9 @@ impl Series {
 pub struct View {
     pub check: Check,
     pub sign_in: Option<SignInPrompt>,
-    /// The latest preparation's servers and catalogue.
+    /// The latest preparation's test servers and server catalog.
     pub servers: Arc<[ServerPath]>,
-    pub catalogue: Arc<[ServerEntry]>,
+    pub catalog: Arc<[ServerEntry]>,
     /// The run shown: the latest that started, kept while the next one checks its paths.
     pub run: Option<Run>,
     /// Whether a run checks its paths and has not started yet.
@@ -194,7 +193,7 @@ pub enum Check {
     Checking,
     Ready,
     Failed(Failure),
-    /// A sign-in the check asked for was cancelled or expired.
+    /// A sign-in the check asked for was canceled or expired.
     SignIn,
 }
 
@@ -241,8 +240,8 @@ pub struct Run {
     pub moved: f64,
     /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
-    /// Each server's replies in each stage, as they arrive.
-    pub replies: Vec<(Stage, ServerId, Latency)>,
+    /// Each server's latency in each stage while it runs.
+    pub latency: Vec<(Stage, ServerId, Summary)>,
     pub results: Vec<StageResult>,
     /// Every failure with its stage, a finished stage's as its result records them.
     pub issues: Vec<(Stage, ServerFailure)>,
@@ -252,12 +251,12 @@ pub struct Run {
 }
 
 impl View {
-    /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
     /// The run that ended last: one refused at its start, else the one shown.
     pub fn latest(&self) -> Option<&Run> {
         self.refused.as_ref().or(self.run.as_ref())
     }
 
+    /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
     pub fn remains(&self, server: &ServerId) -> bool {
         let results = self.run.iter().flat_map(|run| run.results.iter().rev());
         let mut own = results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
@@ -272,14 +271,14 @@ impl View {
         match event {
             Event::Checking(Kind::Run) => (self.starting, self.refused) = (true, None),
             Event::Checking(Kind::Check) => self.check = Check::Checking,
-            Event::Prepared { servers, catalogue } => {
-                (self.servers, self.catalogue, self.check) = (servers.clone(), catalogue.clone(), Check::Ready);
+            Event::Prepared { servers, catalog } => {
+                (self.servers, self.catalog, self.check) = (servers.clone(), catalog.clone(), Check::Ready);
             }
             Event::CheckFailed(failure) if self.check == Check::Checking => self.check = Check::Failed(failure.clone()),
             Event::SignIn(prompt) => self.sign_in = Some(prompt.clone()),
             Event::SignInEnded(end) => {
                 self.sign_in = None;
-                if matches!(end, SignInEnd::Cancelled | SignInEnd::Expired) && self.check == Check::Checking {
+                if matches!(end, SignInEnd::Canceled | SignInEnd::Expired) && self.check == Check::Checking {
                     self.check = Check::SignIn;
                 }
             }
@@ -345,25 +344,19 @@ impl Run {
                 let presented = Direction::BOTH.map(|direction| self.live[direction].presented().unwrap_or_default());
                 self.peak = self.peak.max(presented.iter().sum());
             }
-            Event::Probes { server, probes } => {
+            Event::Probes { server, probes, latency } => {
                 let Some((stage, offset)) = self.window() else { return };
                 let series = self.series(server);
                 for probe in probes {
                     series.push(offset + probe.at, probe.rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
                 }
-                let at = self
-                    .replies
-                    .iter()
-                    .position(|(own, id, _)| *own == stage && id == server);
-                let at = at.unwrap_or_else(|| {
-                    self.replies.push((stage, server.clone(), Latency::default()));
-                    self.replies.len() - 1
-                });
-                for probe in probes {
-                    self.replies[at].2.record(match probe.rtt {
-                        Some(rtt) => ProbeOutcome::Reply { rtt, handling: Duration::ZERO },
-                        None => ProbeOutcome::Timeout,
-                    });
+                let own = self
+                    .latency
+                    .iter_mut()
+                    .find(|(own, id, _)| *own == stage && id == server);
+                match own {
+                    Some((.., summary)) => *summary = *latency,
+                    None => self.latency.push((stage, server.clone(), *latency)),
                 }
             }
             Event::ServerFailed(failure) => {

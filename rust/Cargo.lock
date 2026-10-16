@@ -573,6 +573,7 @@ dependencies = [
  "ratatui-core",
  "ratatui-crossterm",
  "rustfs-mimalloc",
+ "rustix",
  "rustls",
  "serde_json",
  "tokio",

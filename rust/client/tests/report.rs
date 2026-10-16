@@ -1,16 +1,16 @@
-//! The printed report of a reduced view: its lines, plain and in the 16-colour profile, and its width.
+//! The printed report of a reduced view: its lines, plain and in the 16-color profile, and its width.
 use graphite_meter_client::{
     controller::Kind,
     events::{Event, View},
     measure::{
-        aggregate::{Aggregate, Boundary, Rate, Reading},
+        aggregate::Rate,
         latency::{Population, Summary, Timing},
     },
     model::{Dir, Failure, Outcome, Scope, ServerFailure, ServerResult, Stage, StageResult, Throughput},
-    report::{WIDTH, details, report},
+    report::{WIDTH, report},
     run::prepare::ServerPath,
-    text::{Line, Profile, capitalised, write},
-    tui::theme::Palette,
+    style::Palette,
+    text::{Line, Profile, write},
 };
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
 use std::{
@@ -63,7 +63,7 @@ fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>,
     });
     let mut events = vec![
         Event::Checking(Kind::Run),
-        Event::Prepared { servers: servers.collect(), catalogue: Arc::new([]) },
+        Event::Prepared { servers: servers.collect(), catalog: Arc::new([]) },
         Event::RunStarted { plan: plan.to_vec(), focus: id(names[0]), at },
     ];
     events.extend(results.into_iter().map(Event::StageFinished));
@@ -81,8 +81,6 @@ fn result(stage: Stage, measured: Duration, down: Option<Throughput>, servers: V
         throughput: Dir { down, up: None },
         servers,
         failures: Vec::new(),
-        intervals: Vec::new(),
-        omitted: 0,
     }
 }
 
@@ -100,7 +98,7 @@ fn view(names: &[&str]) -> View {
     let share = Some(1.25e7 / names.len() as f64);
     let mut download = result(Stage::Download, SECOND * 10, Some(headline), shares(true, share).collect());
     if let [_, second, ..] = names {
-        let failure = Failure::new(FailureReason::Timeout, "download bytes stopped growing for 2s");
+        let failure = Failure::new(FailureReason::Timeout, "no download data for 2 s");
         let failed = ServerFailure {
             server: id(second),
             scope: Scope::Throughput,
@@ -126,21 +124,28 @@ fn printed(lines: &[Line], profile: Profile) -> String {
 }
 
 #[test]
-fn full_details_open_with_each_result_s_facts_and_end_with_the_intervals_a_run_has() {
+fn several_servers_add_each_server_s_share_and_the_issues_after_the_notes() {
     let mut view = view(&["a", "b"]);
     let idle = &mut view.run.as_mut().unwrap().results[0].servers[0];
     let idle = idle.latency.as_mut().unwrap();
     let handling = Duration::from_micros(300);
     idle.summary.timing = Some(Timing { pairs: 38, rtt: Duration::from_millis(12), handling });
-    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
+    let text = printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain);
     let expected = "\
-Complete · 1 of 2 servers
+Graphite Meter  Complete  2 servers · 17.4 s · 125.0 MB
+
+↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
+
+Latency to a meter  Median   Added    P95      Jitter  Timeouts
+Idle                12.0 ms           24.0 ms  0.4 ms  1 / 41 (2.4%)
+Loaded down         12.0 ms  +0.0 ms  24.0 ms  0.4 ms  1 / 41 (2.4%)
+
 Idle latency: 40 replies · 4.0 s
-Server timing (38 paired replies, means): raw 12.0 ms · handling 0.3 ms
-Download: peak 120.0 Mbit/s · 125.0 MB · 10.0 s
-Loaded latency · Download: 40 replies · 10.0 s
+Loaded latency, Download: 40 replies · 10.0 s
+Server handling of the mean round trip: Idle 0.3 ms of 12.0 ms (38 pairs)
 Added: loaded median minus idle median, same server.
 
+Complete · 1 of 2 servers
 Server       Download
 All servers  100.0 Mbit/s
 a meter      50.00 Mbit/s
@@ -155,32 +160,10 @@ Issues
 b meter · Download throughput · at 7.5 s · Stopped delivering data
 ";
     assert_eq!(text, expected);
-    let run = view.run.as_mut().unwrap();
-    let (base, a) = (run.at.unwrap(), id("a"));
-    let mut aggregate = Aggregate::new(Stage::Download, vec![a.clone()], base);
-    for ms in [0, 1000, 2000] {
-        let reading = Reading {
-            server: a.clone(),
-            down: Some(ms * 1000),
-            up: None,
-            fed: None,
-        };
-        let at = base + Duration::from_millis(ms);
-        aggregate.observe(Boundary {
-            at,
-            stalled: false,
-            last: ms == 2000,
-            readings: vec![reading],
-        });
-    }
-    run.results[1].intervals = aggregate.intervals.iter().cloned().collect();
-    let text = printed(&details(&view, WIDTH, &Palette::new(true), true), Profile::Plain);
-    let intervals = "\n\nAggregation intervals\nDownload 0.0–2.0 s · a meter · measured window\n";
-    assert!(text.ends_with(intervals), "{text}");
 }
 
 #[test]
-fn the_16_colour_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_its_width() {
+fn the_16_color_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_its_width() {
     let lines = report(&view(&["a", "b"]), 40, &Palette::new(false));
     let text = printed(&lines, Profile::Ansi);
     let codes: Vec<u8> = text
@@ -202,7 +185,10 @@ fn the_16_colour_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_i
     assert!(ascii.starts_with("\x1b[1mGraphite Meter\x1b[m"), "{ascii}");
     assert_eq!(ascii.replace("\x1b[1m", "").replace("\x1b[m", ""), printed(&lines, Profile::Plain));
     let plain = printed(&lines, Profile::Plain);
-    assert!(plain.contains("\nIdle\n  Median 12.0 ms · P95 24.0 ms\n  Jitter 0.4 ms\n"), "{plain}");
+    assert!(
+        plain.contains("\nIdle\n  Median 12.0 ms · P95 24.0 ms\n  Jitter 0.4 ms · Timeouts 1 / 41 (2.4%)\n"),
+        "{plain}"
+    );
     let details = plain.split_once("\nComplete · 1 of 2 servers\n").unwrap().1;
     assert!(details.lines().all(|line| line.chars().count() <= 40), "{details}");
     assert!(details.ends_with("\nb meter · Download throughput · at 7.5 …\n"), "{details}");
@@ -251,13 +237,13 @@ Graphite Meter  Partial  a meter · 12.0 s · 125.0 MB
 
 ↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
 
-Latency      Median   Added  P95      Jitter  Probe timeouts
-Loaded down  12.0 ms  —      24.0 ms  0.4 ms  1 / 41 (2.4%)
+Latency      Median   Added  P95      Jitter  Timeouts
+Loaded down  12.0 ms  –      24.0 ms  0.4 ms  1 / 41 (2.4%)
 
 Download: Connection lost
-Loaded latency · Download: Connection lost
+Loaded latency, Download: Connection lost
 
-Loaded latency · Download: 40 replies · 10.0 s
+Loaded latency, Download: 40 replies · 10.0 s
 Added: loaded median minus idle median, same server.
 ";
     assert_eq!(sole(result, Outcome::Partial, None), expected);
@@ -267,7 +253,7 @@ Added: loaded median minus idle median, same server.
 fn too_little_measured_time_shows_only_a_dash() {
     let result = download(SECOND * 10, false, Some((Scope::Throughput, FailureReason::InsufficientEvidence)));
     let text = sole(result, Outcome::Incomplete, None);
-    assert!(text.contains("\n↓ Download  —\n\nLatency "), "{text}");
+    assert!(text.contains("\n↓ Download  –\n\nLatency "), "{text}");
     assert!(!text.contains("Too little measured time"), "{text}");
 }
 
@@ -277,9 +263,9 @@ fn a_stop_before_the_window_shows_stopped_and_a_zero_window_no_duration() {
     result.stopped = true;
     let text = sole(result, Outcome::Stopped, None);
     assert!(text.contains("\n↓ Download  Stopped\n"), "{text}");
-    assert!(text.contains("\nLoaded latency · Download stopped.\n"), "{text}");
+    assert!(text.contains("\nLoaded latency, Download stopped.\n"), "{text}");
     assert!(!text.contains("\nDownload stopped."), "{text}");
-    assert!(text.contains("\nLoaded latency · Download: 40 replies\n"), "{text}");
+    assert!(text.contains("\nLoaded latency, Download: 40 replies\n"), "{text}");
 }
 
 #[test]
@@ -291,11 +277,4 @@ fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
     let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
     let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
     assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
-}
-
-#[test]
-fn capitalising_takes_the_first_character_whatever_its_width() {
-    assert_eq!(capitalised("élan to spare"), "Élan to spare");
-    assert_eq!(capitalised("warmup must be from 0s to 4s"), "Warmup must be from 0s to 4s");
-    assert_eq!(capitalised(""), "");
 }

@@ -7,6 +7,8 @@ const FAST_WINDOW_MS: f64 = 750.0;
 const REGIME_READY_MS: f64 = 2000.0;
 const DOWNSHIFT_MS: f64 = 750.0;
 const UPSHIFT_MS: f64 = 500.0;
+/// Spans kept past this many merge in pairs from the oldest half, so a long stage holds a bounded history.
+const MAX_SPANS: usize = 4096;
 
 /// Bytes over a stretch of evidence, and all bytes up to its end.
 #[derive(Debug, Clone, Copy, Default)]
@@ -82,7 +84,27 @@ impl LiveRate {
             self.spans.drain(..self.head);
             self.head = 0;
         }
+        if self.spans.len() - self.head > MAX_SPANS {
+            self.coarsen();
+        }
         changed
+    }
+
+    /// Merges pairs of the older kept spans; a window edge then prorates over the merged span.
+    fn coarsen(&mut self) {
+        self.spans.drain(..self.head);
+        self.head = 0;
+        let older = (self.spans.len() / 2) & !1;
+        let merged: Vec<_> = self.spans[..older]
+            .chunks(2)
+            .map(|pair| Span {
+                end: pair[1].end,
+                bytes: pair[0].bytes + pair[1].bytes,
+                total: pair[1].total,
+                ..pair[0]
+            })
+            .collect();
+        self.spans.splice(..older, merged);
     }
 
     fn recalculate(&mut self) {
@@ -128,5 +150,21 @@ impl LiveRate {
         }
         (self.regime_start, self.candidate) = (candidate.start, None);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_long_steady_stage_keeps_a_bounded_history_and_its_rate() {
+        let mut rate = LiveRate::default();
+        for _ in 0..40_000 {
+            rate.observe(1000.0, 250.0);
+        }
+        assert!(rate.spans.len() - rate.head <= MAX_SPANS, "{}", rate.spans.len());
+        let presented = rate.presented().unwrap();
+        assert!((presented - 4000.0).abs() < 1e-6, "{presented}");
     }
 }

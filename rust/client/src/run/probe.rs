@@ -1,16 +1,13 @@
 //! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
-    controller::INTERNAL,
+    controller::internal,
     measure::latency::{Deadline, ProbeOutcome},
-    model::{Cadence, Failure, Stage},
+    model::{Cadence, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
-    run::engine::Probe,
+    run::engine::ProberEvent,
 };
 use futures_util::FutureExt;
-use graphite_meter_proto::{
-    bus::{Ping, Pong},
-    reason::FailureReason,
-};
+use graphite_meter_proto::bus::{Ping, Pong};
 use std::{
     collections::BTreeMap,
     panic::AssertUnwindSafe,
@@ -99,7 +96,7 @@ impl Schedule {
     }
 
     /// Resolves a reply at `now`: in time, else a timeout, and resends; a late one only teaches the deadline.
-    pub fn reply(&mut self, pong: Pong, now: Instant) -> Option<Probe> {
+    pub fn reply(&mut self, pong: Pong, now: Instant) -> Option<ProberEvent> {
         if let Some(sent) = self.late.remove(&pong.id) {
             self.observe(now.saturating_duration_since(sent));
             return None;
@@ -114,18 +111,18 @@ impl Schedule {
             true => ProbeOutcome::Reply { rtt, handling: Duration::from_nanos(pong.handling_nanos) },
             false => ProbeOutcome::Timeout,
         };
-        Some(Probe::Outcome { sent, outcome })
+        Some(ProberEvent::Outcome { sent, outcome })
     }
 
     /// Probes whose deadline passed by `now`, as timeouts.
-    pub fn expire(&mut self, now: Instant) -> Vec<Probe> {
+    pub fn expire(&mut self, now: Instant) -> Vec<ProberEvent> {
         let recent = |_: &u32, sent: &mut Instant| now.saturating_duration_since(*sent) <= LATE_REPLIES;
         self.late.retain(recent);
         let mut expired = Vec::new();
         self.pending.retain(|&id, &mut (sent, deadline)| {
             let waiting = now < deadline;
             if !waiting {
-                expired.push(Probe::Outcome { sent, outcome: ProbeOutcome::Timeout });
+                expired.push(ProberEvent::Outcome { sent, outcome: ProbeOutcome::Timeout });
                 self.late.insert(id, sent);
             }
             waiting
@@ -134,16 +131,16 @@ impl Schedule {
     }
 
     /// A probe that could not leave.
-    pub fn failed(&mut self, ping: Ping) -> Option<Probe> {
+    pub fn failed(&mut self, ping: Ping) -> Option<ProberEvent> {
         let (sent, _) = self.pending.remove(&ping.id)?;
-        Some(Probe::Outcome { sent, outcome: ProbeOutcome::SendFailed })
+        Some(ProberEvent::Outcome { sent, outcome: ProbeOutcome::SendFailed })
     }
 
     /// The channel is gone: probes in flight stay unresolved.
-    pub fn lost(&mut self) -> Vec<Probe> {
+    pub fn lost(&mut self) -> Vec<ProberEvent> {
         self.late.clear();
         let pending = std::mem::take(&mut self.pending).into_values();
-        let unresolved = |(sent, _)| Probe::Outcome { sent, outcome: ProbeOutcome::Unresolved };
+        let unresolved = |(sent, _)| ProberEvent::Outcome { sent, outcome: ProbeOutcome::Unresolved };
         pending.map(unresolved).collect()
     }
 
@@ -152,9 +149,8 @@ impl Schedule {
         self.due = None;
     }
 
-    /// When a channel lost at `now`, opened at `opened`, is dialed again and by when it must open: within 2 s, capped
-    /// at the window's `end`; after 500 ms when it was lost within 500 ms of opening, unless that wait reaches the cap.
-    /// None before the first reply or past the cap.
+    /// When a lost channel is dialed again and by when it must open, within 2 s and the window's `end`; a channel lost
+    /// early waits 500 ms. None before the first reply or past the bound.
     pub fn redial(&self, opened: Instant, now: Instant, end: Option<Instant>) -> Option<(Instant, Instant)> {
         let bound = end.map_or(now + REDIAL_WINDOW, |end| end.min(now + REDIAL_WINDOW));
         if !self.answered || now >= bound {
@@ -175,7 +171,7 @@ impl Schedule {
 #[derive(Debug)]
 pub struct Prober {
     window: watch::Sender<Window>,
-    probes: mpsc::UnboundedReceiver<Probe>,
+    probes: mpsc::UnboundedReceiver<ProberEvent>,
     _ends: DropGuard,
 }
 
@@ -187,8 +183,7 @@ enum Window {
 }
 
 impl Prober {
-    /// Probes `path` at `cadence` for `stage` on the latency runtime, where its bus also runs, until `token` is
-    /// cancelled; a panic ends the population as down.
+    /// Probes `path` on the latency runtime until `token` is canceled; a panic ends the population as down.
     pub fn spawn(client: Client, path: LatencyPath, stage: Stage, cadence: Cadence, token: CancellationToken) -> Self {
         let (window, windows) = watch::channel(Window::Waiting);
         let (sender, probes) = mpsc::unbounded_channel();
@@ -198,8 +193,7 @@ impl Prober {
         let running = token.clone();
         runtime.spawn(async move {
             if let Some(Err(_)) = running.run_until_cancelled_owned(probing).await {
-                let failure = Failure::new(FailureReason::ConnectionLost, INTERNAL);
-                drop(sender.send(Probe::Down { at: Instant::now(), failure }));
+                drop(sender.send(ProberEvent::Down { at: Instant::now(), failure: internal() }));
             }
         });
         Self { window, probes, _ends: token.drop_guard() }
@@ -215,7 +209,7 @@ impl Prober {
         self.window.send_replace(Window::Closed);
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = Probe> {
+    pub fn drain(&mut self) -> impl Iterator<Item = ProberEvent> {
         std::iter::from_fn(|| self.probes.try_recv().ok())
     }
 }
@@ -226,7 +220,7 @@ async fn probe(
     path: LatencyPath,
     mut schedule: Schedule,
     mut window: watch::Receiver<Window>,
-    out: mpsc::UnboundedSender<Probe>,
+    out: mpsc::UnboundedSender<ProberEvent>,
 ) {
     let emit = |probe| drop(out.send(probe));
     let (mut at, mut bound) = (Instant::now(), Instant::now() + REDIAL_WINDOW);
@@ -238,11 +232,11 @@ async fn probe(
             Err(fault) => break fault,
         };
         let opened = Instant::now();
-        emit(Probe::Up);
+        emit(ProberEvent::Up);
         let served = serve(&mut bus, &mut schedule, &mut window, &emit).await;
         schedule.lost().into_iter().for_each(emit);
         let (end, fault) = match (*window.borrow(), served) {
-            (Window::Closed, _) | (_, Ok(())) => return emit(Probe::Drained),
+            (Window::Closed, _) | (_, Ok(())) => return emit(ProberEvent::Drained),
             (Window::Open { end }, Err(fault)) => (Some(end), fault),
             (Window::Waiting, Err(fault)) => (None, fault),
         };
@@ -251,7 +245,7 @@ async fn probe(
             _ => break fault,
         }
     };
-    emit(Probe::Down { at: Instant::now(), failure: fault.failure() });
+    emit(ProberEvent::Down { at: Instant::now(), failure: fault.failure() });
 }
 
 /// Sends, resolves and expires probes on `bus` until sending stopped and every probe resolved, or the bus failed.
@@ -259,7 +253,7 @@ async fn serve(
     bus: &mut Bus,
     schedule: &mut Schedule,
     window: &mut watch::Receiver<Window>,
-    emit: &impl Fn(Probe),
+    emit: &impl Fn(ProberEvent),
 ) -> Result<(), Fault> {
     let mut timer = pin!(sleep_until(time::Instant::now()));
     loop {
