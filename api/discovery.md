@@ -22,7 +22,7 @@ Engine version is metadata, not a compatibility test; unknown additive fields ar
 before its targets are published and invalid probe evidence before it reaches the caller, so a rejected body never
 turns into a successful probe.
 
-Duplicate object member names are ambiguous: the native clients (Go `encoding/json/v2`, Rust) reject them at any depth,
+Duplicate object member names are ambiguous: the terminal client rejects them at any depth,
 including inside unknown fields, in these responses and in [upload progress records](upload.md#progress-records). The
 browser client's `JSON.parse` keeps the last duplicate.
 

@@ -1,4 +1,4 @@
-# Graphite Meter — upload refusal failure reason pin (shared across Go / TS / Rust).
+# Graphite Meter upload refusal failure reason pin, shared by the Rust workspace and the browser client.
 #
 # Format (one refusal per non-comment, non-blank line):
 #   <name> | <failure reason>
@@ -7,7 +7,7 @@
 #   reason = the failurereasons.txt reason a client records when that refusal ends a server's stage
 #            (`invalid` first replaces the receiver once per server and run)
 #
-# Every refusal in uploadrefusals.txt has exactly one row. Read by go/internal/goclient/refusal_test.go and
+# Every refusal in uploadrefusals.txt has exactly one row. Read by rust/proto/tests/codes.rs and
 # client/src/engine/lanes/endings.test.ts.
 
 invalid | protocol-error

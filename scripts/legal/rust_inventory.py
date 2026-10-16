@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..ci.rust_workspace import ROOT
+from ..ci.workspace import ROOT
 from .check_rust_reviews import compiled as tree
 from .model import Component, LegalError, Provenance, Review, array, obj, read_json, strings, text
 from .review import add_provenance, component_legal_files, validate_review

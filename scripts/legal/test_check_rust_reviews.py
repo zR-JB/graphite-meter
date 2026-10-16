@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from scripts.ci.rust_workspace import Workspace
+from scripts.ci.workspace import Workspace
 from scripts.legal.check_rust_reviews import BUDGET, layout, over_budget, shipped, unreviewed, unreviewed_platforms
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,81 +1,134 @@
-# Graphite Meter - production image.
-# Multi-stage: build the browser client (bun), then build the Go server with the
-# client embedded, then ship a single static binary on scratch.
+# Graphite Meter: the server image and the terminal client archives.
 #
-# Build from the REPO ROOT:
-#   docker build -f container/Dockerfile -t graphite-meter:latest .
-#
-# Direct source builds are explicitly development builds. Release and
-# prerelease automation supplies the public server and client versions.
+# Build from the repository root on an amd64 host; the builder cross-compiles arm64:
+#   mise run container-build          (target server: the image)
+#   mise run tui-package VERSION      (target tui-artifacts: the client archives)
+# Target server-artifacts exports the server's third-party source offer.
 ARG VERSION=0.0.0-dev
-ARG CLIENT_VERSION
-# Build-time client config (override with --build-arg). The client stage declares it again, since only a stage's
-# own arguments reach its steps and Podman's cache keys, and promotes it to ENV for `bun run build`'s process.env.
-ARG GM_CLIENT_BUILD_PROFILE=prod
-ARG GM_CLIENT_REVISION=source
-# Keep Docker builds self-validating. Stable release builds set this to 0 only
-# after main's CI has already checked the same commit.
-ARG GM_CLIENT_VALIDATE=1
+ARG TARGETARCH
 
-# ---------------------------------------------------------------------------
-# Stage: client - the browser client (client/).
-# ---------------------------------------------------------------------------
-FROM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS client
-ARG GM_CLIENT_BUILD_PROFILE
-ARG GM_CLIENT_REVISION
-ARG GM_CLIENT_VALIDATE
-ARG CLIENT_VERSION
-ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS python
+
+# The reviewed builder: legal/rust-platform-debian-bookworm.json records what it links into each target.
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS rust-amd64
+COPY --from=python /usr/local /usr/local
+ENV LD_LIBRARY_PATH=/usr/local/lib \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc
+# Debian's archive serves one version of each package, so apt reads it as it was when the platform
+# records were reviewed: the pinned versions and every dependency stay installable. C dependencies
+# use musl headers; Rust's final link still uses its self-contained libc.
+RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
+        debian 'bookworm bookworm-updates' debian-security bookworm-security >/etc/apt/sources.list.d/debian.sources \
+    && rm -f /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.3-1 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+# The pinned toolchain, checked against its channel manifest, with the standard library of every shipped target and
+# the LLVM tools that merge PGO profiles.
+COPY mise.toml ./
+COPY rust/rust-toolchain.toml rust/Cargo.toml rust/
+COPY scripts/ci/workspace.py scripts/ci/toolchains.py scripts/ci/
+RUN cd rust && rustup toolchain install --no-self-update \
+    && rustup component add llvm-tools \
+    && python3 ../scripts/ci/toolchains.py verify-rust \
+    && rustup target add $( (python3 ../scripts/ci/workspace.py targets tui; \
+        python3 ../scripts/ci/workspace.py targets server) | sort -u)
+
+# Debian's arm64 musl wrapper uses the GNU cross compiler with musl target headers.
+FROM rust-amd64 AS rust-arm64
+RUN dpkg --add-architecture arm64 \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 musl-dev:arm64=1.2.3-1 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
+
+FROM scratch AS source
+COPY LICENSE COPYRIGHT mise.toml ./
+COPY scripts/ scripts/
+COPY legal/ legal/
+COPY rust/ rust/
+
+# A PGO profile per architecture, trained on that architecture's own code: amd64 natively, arm64 under QEMU.
+FROM rust-amd64 AS pgo-amd64
+ARG PROFILE=release
+COPY --from=source / /src/
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/amd64)" --profile "$PROFILE"
+
+FROM rust-arm64 AS pgo-arm64
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static=1:7.2+dfsg-7+deb12u18+b3 \
+    && rm -rf /var/lib/apt/lists/*
+ARG PROFILE=release
+COPY --from=source / /src/
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/arm64)" --profile "$PROFILE" \
+        --runner qemu-aarch64-static
+
+FROM pgo-${TARGETARCH} AS pgo
+
+# The TUI archives for every TUI platform of the workspace metadata, each with its source offer; the Windows TUI uses
+# amd64's profile.
+FROM rust-arm64 AS tui-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+COPY --from=source / /src/
+COPY --from=pgo-amd64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+COPY --from=pgo-arm64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+ARG VERSION
+RUN python3 -m scripts.package "$VERSION" --output dist
+
+FROM scratch AS tui-artifacts
+COPY --from=tui-build /src/dist/ /
+
+FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS browser
+ARG VERSION
+ARG GM_CLIENT_REVISION=source
+# CI sets this to 0 only after the same commit passed the client checks.
+ARG GM_CLIENT_VALIDATE=1
+ENV VERSION=$VERSION \
+    GM_CLIENT_BUILD_PROFILE=prod \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
-    VERSION=$CLIENT_VERSION
-WORKDIR /app/client
+    GM_LEGAL_SCAN_OUT=/tmp/browser-modules.json
+WORKDIR /src/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
 COPY client/ ./
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
-FROM scratch AS client-dist
-COPY --from=client /app/client/dist /
-
-# ---------------------------------------------------------------------------
-# Stage: server - build the Go binary with the client embedded.
-# ---------------------------------------------------------------------------
-FROM docker.io/library/golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS server
+# The static musl server with reviewed notices and the browser app.
+FROM rust-${TARGETARCH} AS server-build
+ARG TARGETARCH
+ARG PROFILE=release
+COPY --from=source / /src/
+COPY --from=pgo /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+COPY --from=browser /src/client/ /src/client/
+# The legal scan names the bundled packages at their paths in Bun's installation cache.
+COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
+COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
 ARG VERSION
-WORKDIR /src/go
-# Module graph first for caching.
-COPY go/go.mod go/go.sum ./
-RUN go mod download
-# Server source; contract fixtures are only needed by tests.
-COPY go/ ./
-# Legal assets are generated from the same runtime closure used by the
-# server/browser and container inventories.
-COPY LICENSE COPYRIGHT legal/generated/container/THIRD_PARTY_NOTICES.txt legal/generated/container/SOURCE.txt /legal/graphite-meter/
-# Embed the built client.
-COPY --from=client-dist / ./internal/static/dist
-RUN CGO_ENABLED=0 go build \
-      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=${VERSION}" \
-      -trimpath \
-      -o /graphite-meter ./cmd/graphite-meter
-RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/ca-certificates; cp /usr/share/doc/ca-certificates/copyright /legal/ca-certificates/COPYRIGHT
+RUN target=$(python3 scripts/ci/workspace.py target server "linux/$TARGETARCH") \
+    && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
+        --version "$VERSION" --out rust/target/server-notices --browser-assets client/dist \
+        --browser-scan /tmp/browser-modules.json \
+    && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter
 
-# ---------------------------------------------------------------------------
-# Final: a single static binary. The browser client is embedded inside it.
-# Config comes from GM_* env and/or flags - read natively by the
-# binary, so no shell entrypoint is needed (scratch has no shell anyway).
-# ---------------------------------------------------------------------------
-FROM scratch
-COPY --from=server /graphite-meter /graphite-meter
-COPY --from=server /legal/graphite-meter /usr/share/licenses/graphite-meter
-COPY --from=server /legal/ca-certificates/COPYRIGHT /usr/share/licenses/ca-certificates/COPYRIGHT
-# Outbound OIDC discovery, token exchange, UserInfo, and JWKS requests need the
-# public CA roots. A scratch image does not provide them on its own.
-COPY --from=server /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-EXPOSE 7246/tcp
-EXPOSE 7247/tcp
-EXPOSE 7248/tcp
-EXPOSE 7249/tcp
-EXPOSE 7249/udp
+# The source offer, which the image's SOURCE.txt names, is a release asset, not image content.
+FROM scratch AS server-artifacts
+COPY --from=server-build /src/rust/target/server-notices/*_third-party-source.tar.gz /
+
+# One static binary, its notices and the CA roots, with no libc, shell or package manager.
+FROM scratch AS server
+COPY --from=server-build /graphite-meter /graphite-meter
+COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
+# The binary's notices followed by the image's own additions.
+COPY --from=server-build /src/rust/target/server-notices/IMAGE_NOTICES.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+COPY --from=server-build /src/rust/target/server-notices/SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
+COPY --from=rust-amd64 /usr/share/doc/ca-certificates/copyright /usr/share/licenses/ca-certificates/COPYRIGHT
+# Outbound OIDC discovery, token exchange, UserInfo and JWKS requests need the public CA roots.
+COPY --from=rust-amd64 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
 # Distroless "nonroot"; mounted keys and secrets must be readable by it.
 USER 65532:65532
 ENTRYPOINT ["/graphite-meter"]

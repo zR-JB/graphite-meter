@@ -1,8 +1,8 @@
 """Local Rust builds with development notices, for this host.
 
-    python3 -m scripts.rust_build --package NAME --profile {ci,release} [--browser {dev,prod}] [--version V]
+    python3 -m scripts.build --package NAME --profile {ci,release} [--browser {dev,prod}] [--version V]
 
-The server embeds a browser build kept in rust/target/browser/PROFILE, apart from Go's client/dist,
+The server embeds a browser build kept in rust/target/browser/PROFILE, apart from client/dist,
 together with its module scan. It is rebuilt only when a browser input, the Bun release or a client build variable
 changes, or when its outputs no longer match their stamp. Cargo then owns the binary's freshness: the notices
 keep unchanged files untouched, so a build after a Rust edit reuses every other artifact. A build whose inputs, as file
@@ -18,13 +18,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .ci.workspace import VERSION
 from .legal.model import LegalError, marshal, sha256
-from .legal.rust import PACKAGES, PROFILES, VERSION, Build, collect, write_changed
+from .legal.rust import PACKAGES, PROFILES, Build, collect, write_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 BROWSER_PROFILES = ("dev", "prod")
 # The tracked and new files the browser build and check read, never ignored build products.
-BROWSER_SOURCES = ("client", "api", "scripts/rust_build.py")
+BROWSER_SOURCES = ("client", "api", "scripts/build.py")
 BROWSER_VARIABLES = ("GM_CLIENT_", "BUN_", "NODE_")
 
 
@@ -36,7 +37,7 @@ def fingerprint(paths: list[Path], root: Path) -> dict[str, str]:
 def inputs_state() -> dict[str, object]:
     """The development build's inputs as file sizes and times, with its arguments and build variables."""
     files = {}
-    for top in ("rust", "legal", "scripts/legal", "scripts/rust_build.py", "mise.toml"):
+    for top in ("rust", "legal", "scripts/legal", "scripts/build.py", "mise.toml"):
         for directory, names, found in os.walk(ROOT / top):
             names[:] = [name for name in names if Path(directory, name) != ROOT / "rust/target"]
             for name in found:

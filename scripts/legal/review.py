@@ -182,10 +182,3 @@ def prepare_scopes(scopes: dict[str, list[Component]], reviews: list[Review], mo
             review = find_review(component.ecosystem, component.name, reviews)
             selected = review.selectedLicenseExpression if review else component.selectedLicenseExpression
             scopes[scope].append(replace(component, selectedLicenseExpression=selected))
-
-
-def refresh_reviewed_versions(scopes: dict[str, list[Component]], reviews: list[Review]) -> None:
-    versions = {(item.ecosystem, item.name): item.version for items in scopes.values() for item in items}
-    for review in reviews:
-        if version := versions.get((review.ecosystem, review.name)):
-            review.reviewedVersion = version

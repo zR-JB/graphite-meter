@@ -47,8 +47,8 @@ fn legal_without_embedded_notices_names_the_task_that_embeds_them() {
         let output = client(args);
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
-        let expected = "graphite-meter-client: this build embeds no notices; mise run rust-client-run -- --legal \
-                        builds the TUI with dependency notices and prints them\n";
+        let expected = "graphite-meter-client: this build embeds no notices; mise run tui -- --legal \
+                        builds the client with dependency notices and prints them\n";
         assert_eq!(text(output.stderr), expected);
     }
 }

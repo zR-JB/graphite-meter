@@ -10,7 +10,7 @@ Each layer imports only from the layers above it in this table; the composition 
 
 | Folder | Owns |
 | --- | --- |
-| `auth` | Sources of the sign-in pages' assets; `bun run build:auth` writes `go/internal/auth/assets`, which both servers embed. |
+| `auth` | Sources of the sign-in pages' assets; `bun run build:auth` writes `rust/server/src/auth/assets`, which the server embeds. |
 | `src/lib` | Signals (push-pull, owners, batched effects), a JSX runtime that builds real DOM, keyed lists, the one frame clock, motion (glides, hand-offs, springs), decoders. |
 | `src/protocol` | Server documents and their decoders, routes, wire and progress records, failure reasons, worker messages. |
 | `src/engine` | Measurement without a DOM: `net` (catalogue, selection, credentials, connection checks, readiness, sign-in), `lanes` + `workers` (fetch and WebTransport lanes, the probe channel, the upload receiver), `measure` (aggregation, latency, live rates, stability), `run` (schedule, clocks, the coordinator, results). |
@@ -34,5 +34,5 @@ policy `src/lib/trusted.ts` creates (the servers then require Trusted Types), `<
 `bun build.ts` (`build:bundle`) bundles the workers, then the app with their hashed URLs, minifies the shell's inline
 blocks, copies `public` and writes compressed siblings. `bun check` type-checks with the TypeScript 7 port Bun ships;
 Biome formats. Unit tests (`bun test src`) cover pure logic and the engine against fake clocks and fakes. The browser
-suite in `e2e/` runs real Chrome and Firefox against local Go servers, and Chrome against the Rust server in CI;
+suite in `e2e/` runs real Chrome and Firefox against a local server fleet;
 `scripts/e2e.ts` starts the server fleet, and `e2e/webview.ts` and `e2e/browsers.ts` drive the browsers.

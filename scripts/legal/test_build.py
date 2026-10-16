@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts import rust_build
+from scripts import build
 from scripts.legal.test_rust import Scratch
 
 
@@ -15,7 +15,7 @@ class BrowserCacheTests(Scratch):
         self.write("client/src/app.ts", "app")
         builds: list[tuple[Path, str]] = []
 
-        def build(command: list[str], cwd: Path, check: bool, env: dict[str, str]) -> None:
+        def bun_build(command: list[str], cwd: Path, check: bool, env: dict[str, str]) -> None:
             builds.append((cwd, env["GM_CLIENT_BUILD_PROFILE"]))
             (Path(env["GM_LEGAL_SCAN_DIR"]) / "assets").mkdir(parents=True)
             (Path(env["GM_LEGAL_SCAN_DIR"]) / "index.html").write_text(env.get("VERSION", "unversioned"))
@@ -26,14 +26,14 @@ class BrowserCacheTests(Scratch):
                 return b"client/src/app.ts\0client/removed.ts\0"
             return "abc1234\n" if command[0] == "git" else "1.4.2\n"
 
-        self.enterContext(patch.object(rust_build, "ROOT", self.root))
-        self.enterContext(patch("subprocess.run", side_effect=build))
+        self.enterContext(patch.object(build, "ROOT", self.root))
+        self.enterContext(patch("subprocess.run", side_effect=bun_build))
         self.enterContext(patch("subprocess.check_output", side_effect=output))
         self.enterContext(patch.dict(os.environ, {"VERSION": "1.2.3"}))
         self.enterContext(patch("sys.stdout", io.StringIO()))
-        assets, scan = rust_build.browser("prod")
+        assets, scan = build.browser("prod")
         self.assertEqual(((assets / "index.html").read_text(), scan.read_text()), ("1.2.3", "[]"))
-        self.assertEqual(rust_build.browser("dev")[0].joinpath("index.html").read_text(), "unversioned")
+        self.assertEqual(build.browser("dev")[0].joinpath("index.html").read_text(), "unversioned")
         for change, rebuilds in (
             (lambda: None, False),
             (lambda: os.environ.update(GM_LISTEN=":7000", GM_TLS_CERT="cert.pem"), False),
@@ -45,7 +45,7 @@ class BrowserCacheTests(Scratch):
         ):
             before = len(builds)
             change()
-            rust_build.browser("prod")
+            build.browser("prod")
             self.assertEqual(len(builds) - before, int(rebuilds))
         self.assertEqual([profile for _, profile in builds].count("dev"), 1)
         self.assertEqual((assets, builds[-1]),

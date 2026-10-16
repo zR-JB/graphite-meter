@@ -1,12 +1,12 @@
-"""Rust TUI release archives: Go's archive layout and names with a `_rust` marker, each with its source offer.
+"""Client release archives, each with its build's part of the source offer.
 
-    python3 -m scripts.package_rust VERSION [--output DIR] [--check]
+    python3 -m scripts.package VERSION [--output DIR] [--check]
 
-Builds the TUI with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata. It runs in
-the pinned builder image (container/Dockerfile.rust), which provides the toolchain and the cross compilers; a
-build for the builder's own system and architecture is run to check its version and allocator setting.
-Archives are reproducible: fixed times, owners and modes. --check builds nothing: it runs the TUI built for this
-machine out of its archive in DIR; rust_release.py verifies every archive and source offer as a release does.
+Builds the client with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata. It runs in
+the pinned builder image (container/Dockerfile), which provides the toolchain and the cross compilers; a build for
+the builder's own system and architecture is run to check its version and allocator setting. Archives are
+reproducible: fixed times, owners and modes. --check builds nothing: it runs the client built for this machine out
+of its archive in DIR; scripts/ci/assets.py verifies every archive and the source offer as a release does.
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.rust_workspace import ROOT, load, offer_name, tui_archive
+from .ci.workspace import ROOT, VERSION, build_offer, load, tui_archive
 from .legal.model import LegalError
-from .legal.rust import VERSION, Build, collect
+from .legal.rust import Build, collect
 
 
 def host_platform() -> str:
@@ -41,8 +41,8 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
     """A build for this machine reports its version and, on Linux, mimalloc's huge pages off by default."""
     reported = subprocess.run([str(executable), "--version"], capture_output=True, text=True, check=True,
                               timeout=10).stdout.strip()
-    if reported != f"graphite-meter-client {version}-rust":
-        raise LegalError(f"the {platform_name} TUI reports {reported!r}, not version {version}-rust")
+    if reported != f"graphite-meter-client {version}":
+        raise LegalError(f"the {platform_name} TUI reports {reported!r}, not version {version}")
     if not platform_name.startswith("linux/"):
         return
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("MIMALLOC_")}
@@ -54,9 +54,10 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
 
 
 def package(version: str, platform_name: str, target: str, output: Path) -> None:
-    """Build and write the archive and source offer of one platform, replacing neither until both are complete."""
+    """Build and write the archive and source offer part of one platform, replacing neither until both are
+    complete."""
     archive, base, binary = tui_archive(version, platform_name)
-    offer = offer_name("graphite-meter-client", version, platform_name)
+    offer = build_offer("graphite-meter-client", platform_name)
     cargo = ROOT / "rust/target"
     cargo.mkdir(parents=True, exist_ok=True)
     # The notices must lie inside the checkout, where the build script reads them.
@@ -79,7 +80,7 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
 
 
 def write_archive(path: Path, base: str, files: dict[str, tuple[bytes, int]]) -> None:
-    """Go's layout, `base/` holding `files` with their modes, at fixed times and owners."""
+    """`base/` holding `files` with their modes, at fixed times and owners."""
     if path.suffix == ".zip":
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
             directory = zipfile.ZipInfo(f"{base}/", (1980, 1, 1, 0, 0, 0))
@@ -128,7 +129,7 @@ def check(version: str, output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("version")
-    parser.add_argument("--output", type=Path, default=ROOT / "go/dist")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--check", action="store_true", help="run this machine's TUI out of --output instead of building")
     args = parser.parse_args()
     if VERSION.fullmatch(args.version) is None:

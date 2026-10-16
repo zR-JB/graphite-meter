@@ -1,4 +1,4 @@
-# Graphite Meter — HTTP route pin (shared across Go / TS / Rust).
+# Graphite Meter HTTP route pin, shared by the Rust workspace and the browser client.
 #
 # Format (one route per non-comment, non-blank line):
 #   <name> | <path> | <kind>
@@ -12,9 +12,8 @@
 # Routes are never transmitted: preflight advertises origins and transports only,
 # so each site carries its own table and this file keeps the tables identical.
 # Every route test loads THIS file as its fixture:
-#   Go — go/internal/route/catalog_test.go (the catalog the server mounts from)
-#   Go — go/internal/auth/routes_test.go (the CORS preflight of every route)
-#   TS — client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES)
+#   Rust: rust/proto/tests/codes.rs (proto::route, the table the server mounts and the client requests)
+#   TS:   client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES)
 #
 preflight | /preflight | http
 probe | /probe | http

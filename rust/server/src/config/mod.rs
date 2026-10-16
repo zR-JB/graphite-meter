@@ -26,7 +26,7 @@ use zeroize::Zeroizing;
 /// The engine version `version` prints and discovery reports.
 pub const ENGINE_VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
-    None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
 
 /// What the command line asked for.

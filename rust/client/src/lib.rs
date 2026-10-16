@@ -37,7 +37,7 @@ use std::{io::Write, pin::pin, sync::Arc};
 /// The version `--version` prints.
 pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
-    None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
 
 /// The statuses of an interrupt and of a termination that stopped a run.

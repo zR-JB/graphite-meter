@@ -19,7 +19,7 @@ from pathlib import Path
 
 from rust.interop.fixture import Fixture, Server
 
-from .ci.rust_workspace import load
+from .ci.workspace import load
 from .legal.rust import PGO, PROFILES, pgo_profile, remap_flags
 
 ROOT = Path(__file__).resolve().parents[1]

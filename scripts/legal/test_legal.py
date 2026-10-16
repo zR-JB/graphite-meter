@@ -7,18 +7,14 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.legal.artifacts import about, render, review_audit, review_template
-from scripts.legal.discovery import (
-    discover_browser, discover_go, go_discovery_targets, go_packages, go_toolchain_component,
-    has_go_replacement_provenance, legal_go_version, package_license, package_root,
-    repository_go_toolchain_version, repository_url, source_for,
-)
+from scripts.legal.artifacts import about, copyright_notice
+from scripts.legal.discovery import discover_browser, package_license, package_root, repository_url
 from scripts.legal.model import (
-    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, read_json, sha256,
+    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
 )
 from scripts.legal.review import (
     add_provenance, component_from_files, component_legal_files, prepare_scopes,
-    read_legal_files, refresh_reviewed_versions, reviewed_legal_files, sort_components, validate_review,
+    read_legal_files, reviewed_legal_files, validate_review,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -148,14 +144,11 @@ class LegalTests(unittest.TestCase):
                 with self.assertRaisesRegex(LegalError, "new component"):
                     validate_review(component, [])
 
-    def test_scoped_review_selection_and_version_refresh(self) -> None:
+    def test_scoped_review_selection(self) -> None:
         component, review = self.reviewed()
         scopes = {"tui": [replace(component, version="2", selectedLicenseExpression="MIT OR GPL-3.0")]}
-        unused = replace(review, name="unused", reviewedVersion="7")
         prepare_scopes(scopes, [review], "check")
         self.assertEqual(scopes["tui"][0].selectedLicenseExpression, "MIT")
-        refresh_reviewed_versions(scopes, [review, unused])
-        self.assertEqual((review.reviewedVersion, unused.reviewedVersion), ("2", "7"))
         unresolved = {"tui": [Component("new", ecosystem="npm")]}
         prepare_scopes(unresolved, [], "review-template")
         with self.assertRaisesRegex(LegalError, "tui:"):
@@ -194,10 +187,7 @@ class LegalTests(unittest.TestCase):
         self.assertEqual((components[0].name, components[0].source),
                          ("@scope/package", "https://example.invalid/package"))
         self.assertEqual(package_license(None, [{"type": "ISC"}], "UNKNOWN"), "ISC")
-        self.assertEqual(repository_url(None, "golang.org/x/net"), "https://go.googlesource.com/net")
-        self.assertEqual(source_for("github.com/example/module"), "https://github.com/example/module")
-        self.assertEqual(source_for("anything", "explicit"), "explicit")
-        self.assertEqual(source_for("charm.land/lipgloss/v2"), "https://github.com/charmbracelet/lipgloss")
+        self.assertEqual(repository_url(None), "")
 
     def test_a_browser_scan_names_each_bundled_package_once(self) -> None:
         modules = []
@@ -225,86 +215,14 @@ class LegalTests(unittest.TestCase):
         self.write("client/package.json", json.dumps({"patchedDependencies": {"patched-lib@5.57.0": "old.patch"}}))
         self.assertFalse(next(item for item in discover_browser(scan, []) if item.name == "patched-lib").modified)
 
-    def test_go_targets_and_replacements_preserve_scope(self) -> None:
-        targets = go_discovery_targets(ROOT)
-        def built(component: str) -> list[str]:
-            return [f"{os}/{arch}" for scope, os, arch in targets if scope == component]
+    def test_the_committed_fonts_and_ca_roots_match_their_reviews(self) -> None:
+        reviews = [Review.parse(item) for item in array(read_json(ROOT / "legal/reviewed-components.json"))]
+        entries = [Provenance.parse(item) for item in array(read_json(ROOT / "legal/provenance.json"))]
+        prepare_scopes({scope: add_provenance(ROOT, [], entries, scope) for scope in ("server/browser", "container")},
+                       reviews, "check")
 
-        self.assertEqual(built("server"), ["linux/amd64", "linux/arm64"])
-        self.assertEqual(built("tui"), (ROOT / "scripts/tui-targets.txt").read_text().splitlines())
-        entries = [Provenance("go", "replacement", "v1", artifactScopes=["server/browser"])]
-        self.assertFalse(has_go_replacement_provenance([], "replacement", "v1", "server"))
-        self.assertTrue(has_go_replacement_provenance(entries, "replacement", "v1", "server"))
-        self.assertTrue(has_go_replacement_provenance(entries, "replacement", "", "server"))
-        self.assertFalse(has_go_replacement_provenance(entries, "replacement", "v2", "server"))
-        self.assertFalse(has_go_replacement_provenance(entries, "replacement", "v1", "tui"))
-        for content in ("", "linux/amd64\nlinux/amd64\n", "linux/amd64/extra\n", "linux/amd64\n"):
-            self.write("scripts/tui-targets.txt", content)
-            with self.subTest(content=content), self.assertRaises(LegalError):
-                go_discovery_targets(self.root)
-
-    def test_go_discovery_uses_toolchain_metadata_and_resolved_replacement(self) -> None:
-        self.write("LICENSE", "MIT License\n")
-        packages: list[dict[str, Json]] = [
-            {"Standard": True}, {"Module": {"Path": "github.com/zR-JB/graphite-meter/go"}},
-            {"Module": {"Path": "example/module", "Replace": {"Path": "../replacement", "Dir": str(self.root)}}},
-        ]
-        provenance = [Provenance("go", "../replacement", "local", artifactScopes=["server"])]
-        with patch("scripts.legal.discovery.go_discovery_targets", return_value=[("server", "linux", "arm64")]), \
-             patch("scripts.legal.discovery.go_packages", return_value=packages) as listing, \
-             patch("scripts.legal.discovery.go_toolchain_component",
-                   return_value=Component("Go standard library", ecosystem="go-toolchain")):
-            with self.assertRaisesRegex(LegalError, "requires provenance"):
-                discover_go(self.root, [], [])
-            server, tui = discover_go(self.root, [], provenance)
-            listing.assert_called_with(self.root, "./cmd/graphite-meter", "linux", "arm64")
-            self.assertEqual(server[0].source_path, self.root)
-            self.assertEqual(server[0].name, "../replacement")
-            self.assertEqual(tui[0].ecosystem, "go-toolchain")
-        listing = ' {"ImportPath":"one"}\n {"Standard":true}\n'
-        with patch("scripts.legal.discovery.run_go", return_value=listing) as command:
-            self.assertEqual(len(go_packages(self.root, "./cmd/server", "linux", "arm64")), 2)
-            command.assert_called_once_with(self.root, "list", "-deps", "-json", "./cmd/server",
-                                            target=("linux", "arm64"))
-
-    def test_go_pin_and_canonical_toolchain_legal_material(self) -> None:
-        for raw, expected in (("go1.27.1", "go1.27.1"), ("go1.27.1-X:experiment", "go1.27.1"),
-                              ("go1.27.1 local build", "go1.27.1"), ("devel go1.28-abcd", "devel go1.28-abcd")):
-            self.assertEqual(legal_go_version(raw), expected)
-        for content in ("go 1.27\n", "go latest\n", "go 1.27.1\ntoolchain go1.27.1 extra\n"):
-            self.write("go/go.mod", content)
-            with self.assertRaises(LegalError):
-                repository_go_toolchain_version(self.root)
-        self.write("go/go.mod", "module example\ngo 1.27.0\ntoolchain go1.27.1\n")
-        self.write("legal/toolchains/go/LICENSE", "Redistribution and use in source and binary forms")
-        self.write("legal/toolchains/go/PATENTS", "canonical snapshot")
-        with patch("scripts.legal.discovery.run_go", return_value="go1.27.1 local build\n") as command:
-            component = go_toolchain_component(self.root)
-            self.assertEqual(component.version, "go1.27.1")
-            self.assertEqual(component.notices[0].text, "canonical snapshot")
-            command.assert_called_once_with(self.root, "env", "GOVERSION")
-        with (patch("scripts.legal.discovery.run_go", return_value="go1.27.0\n"),
-              self.assertRaisesRegex(LegalError, "pins go1.27.1.*go1.27.0")):
-            go_toolchain_component(self.root)
-
-    def test_rendering_preserves_scope_release_identity_and_private_source_path(self) -> None:
-        self.write("LICENSE", "Project license")
-        self.write("legal/rust-forks.json", "[]")
-        self.write("client/package.json", "{}")
-        project = Project(name="Graphite Meter", repository="https://example.invalid/repo")
-        component, review = self.reviewed()
-        component.source_path = self.root
-        scopes = {"server/browser": [component], "tui": [component], "container": [component]}
-        for version, source in (("v1.2.3-rc.4", project.repository + "/tree/v1.2.3-rc.4"),
-                                ("development", project.repository), ("0.0.0-dev+abc", project.repository)):
-            files = render(self.root, project, version, scopes)
-            self.assertEqual(files["legal/generated/tui/SOURCE.txt"], (source + "\n").encode())
-            self.assertIn(b"Project license\n\nTHIRD-PARTY", files["go/internal/legal/assets/TUI_LEGAL.txt"])
-            self.assertNotIn(str(self.root).encode(), files["legal/generated/server/inventory.json"])
-        self.assertIn(b"fingerprint-matches", review_audit(scopes, [review]))
-        self.assertIn(b'"selectedLicenseExpression": ""', review_template(scopes))
-        ordered = sort_components([replace(component, name="b"), component, replace(component, source="updated")])
-        self.assertEqual([item.name for item in ordered], ["b", "example"])
+    def test_copyright_follows_the_project_record(self) -> None:
+        self.assertEqual((ROOT / "COPYRIGHT").read_text(encoding="utf-8"), copyright_notice(Project.read(ROOT)))
 
     def test_about_links_each_component_to_its_source_and_a_fork_or_patch_to_its_upstream_and_changes(self) -> None:
         fork = "https://github.com/owner/quic"

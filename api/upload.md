@@ -82,7 +82,7 @@ Malformed or unknown records are not observations. An invalid or stale
 during an active measurement follows bounded feed recovery; failure to recover
 may interrupt that measurement. After the measurement window ends, finalization
 and terminal-record collection are bounded cleanup. Readers bound each record
-to 64 Ki units (bytes in Go, UTF-16 code units in the browser) and release their
+to 64 Ki units (bytes in Rust, UTF-16 code units in the browser) and release their
 input on termination.
 
 Explicit zero counters are valid data, but a zero-duration window cannot produce
@@ -92,5 +92,5 @@ not fabricate counters or a zero rate. A successfully sampled receiver window
 can remain valid without a terminal record; `complete` confirms aggregate
 finalization independently of the measured window outcome.
 
-The Go and TypeScript decoders share
+The Rust and TypeScript decoders share
 [record conformance fixtures](upload-progress.testvectors.json).

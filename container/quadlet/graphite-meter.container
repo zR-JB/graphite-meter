@@ -3,8 +3,6 @@
 # client) are stamped into the image at release time, so there is only runtime
 # config here. Install: see ./README.md.
 #
-# To build from source instead, see README.md.
-#
 # Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
 
 [Unit]

@@ -19,7 +19,7 @@ from scripts.legal.check_rust_reviews import manual_problems
 from scripts.legal.model import Component, LegalError, Review, marshal, sha256
 from scripts.legal.model import Project
 from scripts.legal.rust import (DEVELOPMENT, REVIEWED, ROOT, Build, Prepared, build_verify, parse, report,
-                                source_notice, source_offer, stage_browser, write_changed)
+                                source_offer, stage_browser, write_changed)
 from scripts.legal.rust_inventory import compiled, components, selected
 from scripts.legal.rust_platform import SYSROOT
 
@@ -117,13 +117,12 @@ class CollectorTests(Scratch):
             self.assertIn(f'const {name}: &str = "{marker}";', build)
         # The verifiers and the image check look for them.
         for path, copy in (("scripts/ci/verify_oci.py", f'DEVELOPMENT = "{DEVELOPMENT}"'),
-                           ("scripts/ci/rust_release.py", f'REVIEWED = "{REVIEWED}"'),
+                           ("scripts/ci/assets.py", f'REVIEWED = "{REVIEWED}"'),
                            ("scripts/verify-container.sh", f"'{DEVELOPMENT}'")):
             with self.subTest(path=path):
                 self.assertIn(copy, (ROOT / path).read_text())
 
     def test_development_reports_open_with_the_marker_rust_legal_keeps(self) -> None:
-        from scripts.legal.model import Project
         project = Project.read(ROOT)
         development = report(project, "development", "notices\n", True)
         self.assertTrue(development.startswith(DEVELOPMENT.encode()))
@@ -131,17 +130,15 @@ class CollectorTests(Scratch):
         self.assertTrue(reviewed.startswith(b"Graphite Meter\n"))
         self.assertIn(b"Source code: https://github.com/zR-JB/graphite-meter/tree/v1.2.3\n", reviewed)
         self.assertTrue(reviewed.endswith(b"\nnotices\n"))
-        # A prerelease has no tag; as Go's prerelease image, it names the repository.
+        # A prerelease has no tag, so it names the repository.
         prerelease = report(project, "1.2.3-rc.1", "notices\n", False)
         self.assertIn(b"Source code: https://github.com/zR-JB/graphite-meter\n\n", prerelease)
-        self.assertEqual(source_notice(project, "1.2.3-rc.1", "offer.tar.gz", "x86_64-unknown-linux-musl"),
-                         (ROOT / "legal/generated/container/SOURCE.txt").read_text())
 
     def test_staging_mirrors_the_browser_build_but_keeps_the_server_legal_files(self) -> None:
         source, staged = self.root / "dist", self.root / "staged"
         self.write("dist/index.html", "<head></head>")
         self.write("dist/assets/app.js", "app")
-        self.write("dist/legal/about.json", "Go's")
+        self.write("dist/legal/about.json", "the browser's")
         self.write("staged/legal/about.json", "Rust's")
         self.write("staged/assets/stale.js", "stale")
         stage_browser(source, staged)
@@ -286,7 +283,7 @@ class BuildVerifyTests(Scratch):
         with self.assertRaisesRegex(LegalError, "only a development build's executable"):
             self.run_build()
 
-    def test_the_source_offer_lies_under_its_own_name_and_source_txt_names_it(self) -> None:
+    def test_a_build_s_part_lies_under_the_release_offer_s_name_and_source_txt_names_both(self) -> None:
         def vendor(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             (Path(command[-1]) / "dependency-1.0.0").mkdir(parents=True)
             (Path(command[-1]) / "dependency-1.0.0/lib.rs").write_text("code\n")
@@ -297,17 +294,18 @@ class BuildVerifyTests(Scratch):
         build = Build("graphite-meter-client", "x86_64-pc-windows-gnu", "release", "1.2.3", self.out)
         with patch("scripts.legal.rust.subprocess.run", vendor):
             source_offer(build, self.state, self.state.components)
-        base = "graphite-meter-client_1.2.3_windows_amd64_rust"
         self.assertEqual(sorted(path.name for path in self.out.glob("*_third-party-source.tar.gz")),
-                         [f"{base}_third-party-source.tar.gz"])
-        with tarfile.open(self.out / f"{base}_third-party-source.tar.gz") as archive:
-            self.assertEqual(sorted(archive.getnames()), [f"{base}_third-party-source/{name}" for name in (
-                "LEGAL.txt", "inventory.json", "legal/rust-forks.json", "third_party/cargo/dependency-1.0.0/lib.rs")])
+                         ["graphite-meter-client_windows_amd64_third-party-source.tar.gz"])
+        with tarfile.open(self.out / "graphite-meter-client_windows_amd64_third-party-source.tar.gz") as archive:
+            self.assertEqual(sorted(archive.getnames()), [
+                f"graphite-meter_1.2.3_third-party-source/{name}" for name in (
+                "builds/graphite-meter-client_windows_amd64/LEGAL.txt",
+                "builds/graphite-meter-client_windows_amd64/inventory.json", "legal/rust-forks.json",
+                "third_party/cargo/dependency-1.0.0/lib.rs")])
         self.assertEqual((self.out / "SOURCE.txt").read_text().splitlines(), [
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
-            f"Dependency source archive: {base}_third-party-source.tar.gz", "Rust target: x86_64-pc-windows-gnu"])
-        self.assertEqual((self.out / "SOURCE.txt").read_text(), source_notice(
-            Project.read(ROOT), "1.2.3", f"{base}_third-party-source.tar.gz", "x86_64-pc-windows-gnu"))
+            "Dependency source archive: graphite-meter_1.2.3_third-party-source.tar.gz",
+            "Build: graphite-meter-client_windows_amd64 (x86_64-pc-windows-gnu)"])
 
     def test_a_reviewed_executable_carries_its_notices_sha_256_beside_them(self) -> None:
         report = self.write("notices/LEGAL.txt", "notices\n").read_bytes()
@@ -336,10 +334,9 @@ class BuildVerifyTests(Scratch):
         build = Build("graphite-meter-server", "x86_64-unknown-linux-musl", "release", "1.2.3", self.out)
         with patch("scripts.legal.rust.subprocess.run", vendor):
             source_offer(build, self.state, [])
-        base = "graphite-meter-server_1.2.3_linux_amd64_rust_third-party-source"
-        with tarfile.open(self.out / f"{base}.tar.gz") as archive:
+        with tarfile.open(self.out / "graphite-meter-server_linux_amd64_third-party-source.tar.gz") as archive:
             self.assertEqual([name for name in archive.getnames() if "/third_party/" in name],
-                             [f"{base}/third_party/npm/@scope/package-1.0.0/index.js"])
+                             ["graphite-meter_1.2.3_third-party-source/third_party/npm/@scope/package-1.0.0/index.js"])
         self.state.browser = [Component("lost", "1.0.0", "npm")]
         with patch("scripts.legal.rust.subprocess.run", vendor), \
                 self.assertRaisesRegex(LegalError, "source directory unavailable for npm lost@1.0.0"):

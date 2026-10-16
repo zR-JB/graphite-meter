@@ -1,6 +1,6 @@
 # Graphite Meter ping protocol conformance corpus.
 # operation | input | expected (INVALID means malformed)
-# Go verifies all directions; the browser verifies encode-ping and decode-pong.
+# Rust verifies all directions; the browser verifies encode-ping and decode-pong.
 encode-ping | 0 | PING,0
 encode-ping | 4294967295 | PING,4294967295
 encode-pong | 0,0 | PONG,0,0

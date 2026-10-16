@@ -1,19 +1,15 @@
-//! The sign-in and approval pages, byte for byte from `go/internal/auth/assets`, and authentication answer headers.
+//! The sign-in and approval pages, from the assets `client/auth/build.ts` generates, and authentication answer headers.
 
 use http::{HeaderMap, HeaderValue, header};
 use std::{fmt::Write as _, sync::LazyLock};
 
-const STYLES: &str = include_str!("../../../../go/internal/auth/assets/auth.css");
-const THEME: &str = include_str!("../../../../go/internal/auth/assets/theme.js");
-const PENDING: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
-static LOGIN: LazyLock<Template> =
-    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/login.tmpl")));
-static CLI: LazyLock<Template> =
-    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/cli.tmpl")));
-static CLI_DONE: LazyLock<Template> =
-    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/cli-done.tmpl")));
-static CONTINUE: LazyLock<Template> =
-    LazyLock::new(|| Template::parse(include_str!("../../../../go/internal/auth/assets/continue.tmpl")));
+const STYLES: &str = include_str!("assets/auth.css");
+const THEME: &str = include_str!("assets/theme.js");
+const PENDING: &str = include_str!("assets/pending.js");
+static LOGIN: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/login.tmpl")));
+static CLI: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/cli.tmpl")));
+static CLI_DONE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/cli-done.tmpl")));
+static CONTINUE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/continue.tmpl")));
 
 /// The sign-in page.
 pub(super) struct Login<'a> {

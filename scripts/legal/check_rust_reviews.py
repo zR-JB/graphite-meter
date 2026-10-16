@@ -18,7 +18,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from ..ci.rust_workspace import ROOT, Workspace, load
+from ..ci.workspace import ROOT, Workspace, load
 from .model import LegalError, Provenance, array, read_json
 from .review import add_provenance
 from .rust_platform import check_notice_sources

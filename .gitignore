@@ -1,44 +1,25 @@
-# --- Browser client (bun) ---
+# Browser client
 client/node_modules
 client/dist
-client/.e2e-dist
 client/test-results
 
-# --- Go module (server + native client) ---
-go/graphite-meter
-go/graphite-meter-client
-# test/coverage artifacts mise tasks and `go test -c` emit
-go/cover.out
-.go-cache/
-*.test
-# release cross-compile intermediates + archives; must stay ignored so
-# buildvcs stamps vcs.modified=false and release binaries reproduce
-# bit-for-bit from a clean checkout of the tag
-go/graphite-meter-client.exe
-go/dist/
-# embedded client build injected at Docker/build time (not committed);
-# keep the placeholder so //go:embed + go build/test work without a client build.
-go/internal/static/dist/*
-!go/internal/static/dist/.gitkeep
+# Rust workspace and release archives
+rust/target
+dist/
 
-# --- General ---
-.tools/
-# (no bare `dist` rule — it would shadow the Go embed placeholder negation
-#  above; dist dirs are ignored explicitly per-package.)
+# Platform notices fetched from the pinned sources in legal/rust-notice-sources.json and checked by SHA-256.
+legal/manual/llvm/
+legal/manual/musl/
+
+# General
 node_modules
 .DS_Store
 *.local
-.vite
-
-# Python bytecode and cache
 *.pyc
 __pycache__
-
-# Claude Code — personal, machine-local settings
 .claude/settings.local.json
 
-# Local TLS material must stay outside Git. Certificates are public, but
-# committing them encourages committing the matching private key later.
+# Local TLS material stays outside Git: committed certificates invite committing their keys.
 .dev-certs/
 certs/
 certificates/
@@ -57,10 +38,3 @@ letsencrypt/
 
 # Populated Tailscale-sidecar Quadlet environment files may contain auth keys.
 container/quadlet/tailscale-sidecar/*.env
-
-# --- Rust workspace ---
-rust/target
-
-# Platform notices fetched from the pinned sources in legal/rust-notice-sources.json and checked by SHA-256.
-legal/manual/llvm/
-legal/manual/musl/
