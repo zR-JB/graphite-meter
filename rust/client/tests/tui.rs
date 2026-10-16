@@ -595,7 +595,7 @@ fn the_settings_editor_applies_values_in_bounds_and_says_why_it_refuses_others()
     (0..4).for_each(|_| _ = press(&mut app, KeyCode::Up, now));
     press(&mut app, KeyCode::Enter, now);
     typed(&mut app, "5");
-    assert!(shows(&mut app, now, "Warmup must be from 0 s to 4 s."), "{:#?}", frame(&mut app, now));
+    assert!(shows(&mut app, now, "Warmup must be from 0s to 4s."), "{:#?}", frame(&mut app, now));
     typed(&mut app, "soon");
     assert!(shows(&mut app, now, "Use a time like 800ms, 4s or 1m; a bare number is seconds."));
     typed(&mut app, "1.5");

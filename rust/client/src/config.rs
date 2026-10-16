@@ -1,9 +1,6 @@
 //! The command line: the client's 22 flags, their validation and the `Config` they give.
 
-use crate::{
-    format,
-    model::{Cadence, Dir, Direction, Stage},
-};
+use crate::model::{Cadence, Dir, Direction, Stage};
 use graphite_meter_proto::{
     catalog::{MAX_SELECTED, ServerId},
     discovery::{LatencyTransport, Protocol, STAGE_LIMITS, ThroughputTransport},
@@ -200,17 +197,17 @@ impl fmt::Display for Invalid {
             Self::NoStages => {
                 formatter.write_str("select at least one stage: latency, download, upload or bidirectional")
             }
-            Self::Warmup => write!(formatter, "warmup must be from 0 s to {}", format::stage_time(MAX_WARMUP)),
+            Self::Warmup => write!(formatter, "warmup must be from 0s to {}", duration::format(MAX_WARMUP)),
             Self::StageDuration(stage) => {
                 let (shortest, longest) = (STAGE_LIMITS.start(), STAGE_LIMITS.end());
-                let range = format!("{} to {}", format::stage_time(*shortest), format::stage_time(*longest));
+                let range = format!("{} to {}", duration::format(*shortest), duration::format(*longest));
                 write!(formatter, "the {} stage must take from {range}", stage.name())
             }
             Self::Cadence => write!(
                 formatter,
-                "a probe interval must be reply-driven or from {} ms to {}",
-                FASTEST_CADENCE.as_millis(),
-                format::stage_time(SLOWEST_CADENCE)
+                "a probe interval must be reply-driven or from {} to {}",
+                duration::format(FASTEST_CADENCE),
+                duration::format(SLOWEST_CADENCE)
             ),
             Self::ForcedStreams => {
                 write!(
@@ -501,9 +498,9 @@ const FLAGS: [Flag<Flags>; 22] = [
     row!("loaded-latency", "", "Measure latency while transfer stages are loaded",
         |f, v| f.config.loaded_latency = flag::parse_bool(v)?, |f| f.config.loaded_latency.to_string()),
     row!("loaded-ping", "cadence", "Loaded probe interval: reply-driven, fast, medium, slow or a duration from \
-        80 ms to 15 s", |f, v| f.config.loaded_ping = cadence(v)?, |f| cadence_name(f.config.loaded_ping)),
-    row!("ping", "cadence", "Idle probe interval: reply-driven, fast, medium, slow or a duration from 80 ms to \
-        15 s", |f, v| f.config.ping = cadence(v)?, |f| cadence_name(f.config.ping)),
+        80ms to 15s", |f, v| f.config.loaded_ping = cadence(v)?, |f| cadence_name(f.config.loaded_ping)),
+    row!("ping", "cadence", "Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to \
+        15s", |f, v| f.config.ping = cadence(v)?, |f| cadence_name(f.config.ping)),
     row!("report", "",
         "Run once without the interface and print the final report (automatic when stdout is not a terminal)",
         |f, v| f.config.report = flag::parse_bool(v)?, |f| f.config.report.to_string()),

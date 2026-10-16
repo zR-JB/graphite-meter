@@ -10,8 +10,8 @@ Options:
   --latency-transport <name>           Latency transport: auto, websocket or webtransport (default: auto)
   --legal                              Print the licenses of the bundled software and exit
   --loaded-latency                     Measure latency while transfer stages are loaded (default: true)
-  --loaded-ping <cadence>              Loaded probe interval: reply-driven, fast, medium, slow or a duration from 80 ms to 15 s (default: medium)
-  --ping <cadence>                     Idle probe interval: reply-driven, fast, medium, slow or a duration from 80 ms to 15 s (default: reply-driven)
+  --loaded-ping <cadence>              Loaded probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: medium)
+  --ping <cadence>                     Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to 15s (default: reply-driven)
   --report                             Run once without the interface and print the final report (automatic when stdout is not a terminal)
   --server <id>                        Test server ID from the server catalog; repeat for several (default: its default selection)
   --stages <list>                      Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional (bidi) (default: latency,download,upload)

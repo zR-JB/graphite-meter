@@ -7,7 +7,6 @@ use super::{
 };
 use crate::{
     config::{CADENCES, Config, MAX_STREAMS, MAX_WARMUP, server_origin},
-    format,
     style::Palette,
     text::Line,
 };
@@ -230,7 +229,7 @@ impl App {
         let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
         let parsed = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
         if !bounds.contains(&parsed) {
-            let range = format!("{} to {}", format::stage_time(*bounds.start()), format::stage_time(*bounds.end()));
+            let range = format!("{} to {}", duration::format(*bounds.start()), duration::format(*bounds.end()));
             return Err(format!("{} must be from {range}.", row.label()));
         }
         *value = parsed;
