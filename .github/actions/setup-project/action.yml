@@ -5,10 +5,6 @@ inputs:
     description: Include the pinned Python type checker and workflow linters
     required: false
     default: 'false'
-  go:
-    description: Include the pinned Go toolchain
-    required: false
-    default: 'false'
   bun:
     description: Include the pinned Bun runtime
     required: false
@@ -22,17 +18,9 @@ inputs:
     required: false
     default: 'false'
   cache:
-    description: Cache mise tools, Go modules and build results, Bun packages, and Cargo downloads and builds
+    description: Cache mise tools, Bun packages, and Cargo downloads and builds
     required: false
     default: 'true'
-  staticcheck:
-    description: Include pinned staticcheck
-    required: false
-    default: 'false'
-  govulncheck:
-    description: Include pinned govulncheck
-    required: false
-    default: 'false'
   gitleaks:
     description: Include pinned Gitleaks
     required: false
@@ -57,21 +45,15 @@ runs:
       shell: bash
       env:
         INCLUDE_PYTHON_TOOLS: ${{ inputs.python }}
-        INCLUDE_GO: ${{ inputs.go }}
         INCLUDE_BUN: ${{ inputs.bun }}
-        INCLUDE_STATICCHECK: ${{ inputs.staticcheck }}
-        INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
         INCLUDE_GITLEAKS: ${{ inputs.gitleaks }}
         INCLUDE_BIOME: ${{ inputs.biome }}
         INCLUDE_CARGO_DENY: ${{ inputs.cargo-deny }}
         INCLUDE_CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
       run: |
         tools=(python)
-        if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
         if [[ "$INCLUDE_BUN" == true ]]; then tools+=(bun); fi
         if [[ "$INCLUDE_PYTHON_TOOLS" == true ]]; then tools+=(aqua:astral-sh/ty github:jdx/jactionlint aqua:zizmorcore/zizmor); fi
-        if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(go:honnef.co/go/tools/cmd/staticcheck); fi
-        if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
         if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
         if [[ "$INCLUDE_BIOME" == true ]]; then tools+=(aqua:biomejs/biome); fi
         if [[ "$INCLUDE_CARGO_DENY" == true ]]; then tools+=(aqua:EmbarkStudios/cargo-deny); fi
@@ -82,9 +64,6 @@ runs:
       uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       env:
         MISE_AUTO_INSTALL: '0'
-        # Go tools build from a module cache of their own: Go's read-only module directories would make the Go
-        # cache below fail to restore.
-        GOMODCACHE: ${{ runner.temp }}/mise-go-modules
       with:
         version: 2026.10.7
         install_args: --locked ${{ steps.tools.outputs.install-args }}
@@ -103,33 +82,7 @@ runs:
       shell: bash
       run: |
         printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
-        go=$(python3 scripts/ci/toolchains.py get runtime.go)
-        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
-        printf 'go=%s\nbun=%s\n' "$go" "$bun" >> "$GITHUB_OUTPUT"
-
-    - id: go-cache
-      name: Locate Go caches
-      if: inputs.go == 'true' && inputs.cache == 'true'
-      shell: bash
-      run: |
-        printf 'modules=%s\n' "$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-        printf 'build=%s\n' "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-
-    - name: Cache Go modules and build results
-      if: inputs.go == 'true' && inputs.cache == 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: |
-          ${{ steps.go-cache.outputs.modules }}
-          ${{ steps.go-cache.outputs.build }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ steps.versions.outputs.go }}-${{ hashFiles('go/go.sum') }}
-
-    - name: Show Go version and download dependencies
-      if: inputs.go == 'true'
-      shell: bash
-      run: |
-        go version
-        cd go && go mod download
+        printf 'bun=%s\n' "$(python3 scripts/ci/toolchains.py get runtime.bun)" >> "$GITHUB_OUTPUT"
 
     - name: Show Bun version
       if: inputs.bun == 'true'

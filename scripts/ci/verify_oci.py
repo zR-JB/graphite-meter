@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify release OCI platforms, provenance, notices and labels with the pinned Skopeo image."""
+"""Verify the release image's OCI platforms, provenance, notices and labels with the pinned Skopeo image."""
 
 from __future__ import annotations
 
@@ -33,13 +33,15 @@ MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
 LAYER_LIMIT = 256 * 1024 * 1024
-# Where both images keep their server, its third-party notices and its SOURCE.txt.
+# Where the image keeps its server, its third-party notices and its SOURCE.txt.
 SERVER, NOTICES = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
 SOURCE = "usr/share/licenses/graphite-meter/SOURCE.txt"
 # Opens an unreviewed development build's notices; its executable carries it too (rust/legal/src/lib.rs).
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
 ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
+# The Dockerfile and target that build the image.
+STAGE = ("container/Dockerfile", "server")
 
 
 def validate_index_descriptors(index: JsonObject) -> tuple[list[str], dict[str, str]]:
@@ -118,9 +120,9 @@ def check_image_files(archive: tarfile.TarFile, image: str) -> tuple[str, bytes]
     return source.decode(errors="replace"), server
 
 
-def source_commit(statement: JsonObject, repository: str, stage: tuple[str, str] | None = None) -> str:
-    """Return the commit a BuildKit SLSA provenance statement says it built from `repository`, and with `stage`
-    require it to have built that Dockerfile's target: by its path in the context, or for a local context its name."""
+def source_commit(statement: JsonObject, repository: str) -> str:
+    """Return the commit a BuildKit SLSA provenance statement says it built from `repository`, requiring it to have
+    built STAGE: the Dockerfile by its path in the context, or for a local context its name."""
     def nested(*keys: str) -> JsonObject:
         value = statement
         for key in keys:
@@ -139,24 +141,22 @@ def source_commit(statement: JsonObject, repository: str, stage: tuple[str, str]
         expected = f"https://github.com/{repository}"
     if statement.get("predicateType") != SLSA or origin != expected:
         fail(f"provenance built {origin!r}, not {expected!r}")
-    if stage is not None:
-        dockerfile, target = stage
-        request = nested("predicate", "buildDefinition", "externalParameters", "request")
-        built = (str_field(source, "path", "configSource"), object_field(request, "args", "request").get("target"))
-        if built[0] not in (dockerfile, PurePosixPath(dockerfile).name) or built[1] != target:
-            fail(f"provenance built target {built[1]!r} of {built[0]!r}, not {target!r} of {dockerfile!r}")
+    dockerfile, target = STAGE
+    request = nested("predicate", "buildDefinition", "externalParameters", "request")
+    built = (str_field(source, "path", "configSource"), object_field(request, "args", "request").get("target"))
+    if built[0] not in (dockerfile, PurePosixPath(dockerfile).name) or built[1] != target:
+        fail(f"provenance built target {built[1]!r} of {built[0]!r}, not {target!r} of {dockerfile!r}")
     return commit
 
 
-def provenance_sources(archive: tarfile.TarFile, attestation: str, repository: str,
-                       stage: tuple[str, str] | None = None) -> set[str]:
+def provenance_sources(archive: tarfile.TarFile, attestation: str, repository: str) -> set[str]:
     """Return the commits that the SLSA statements in `attestation` say BuildKit built."""
     sources = set()
     for item in expect_array(blob(archive, attestation).get("layers"), attestation):
         layer = expect_object(item, attestation)
         if object_field(layer, "annotations", attestation).get("in-toto.io/predicate-type") == SLSA:
             statement = blob(archive, str_field(layer, "digest", attestation))
-            sources.add(source_commit(statement, repository, stage))
+            sources.add(source_commit(statement, repository))
     if not sources:
         fail(f"{attestation} holds no SLSA provenance statement")
     return sources
@@ -188,9 +188,9 @@ def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> 
 
 
 def verify(version: str, revision: str, archive: Path,
-           check_files: Callable[[str, str, bytes], None] | None = None, stage: tuple[str, str] | None = None) -> str:
-    """Verify the archive, built from `stage`'s Dockerfile and target if given, passing each architecture's
-    SOURCE.txt and server to `check_files`, and return its manifest digest."""
+           check_files: Callable[[str, str, bytes], None] | None = None) -> str:
+    """Verify the archive, passing each architecture's SOURCE.txt and server to `check_files`, and return its
+    manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         fail(f"OCI archive is missing, empty, or not a regular file: {archive}")
     engine, image = select_engine(), env("SKOPEO_IMAGE")
@@ -203,8 +203,7 @@ def verify(version: str, revision: str, archive: Path,
     attestations, images = validate_index_descriptors(inspect("--raw"))
     try:
         with tarfile.open(archive, mode="r:") as tar:
-            sources = set().union(*(provenance_sources(tar, digest, repository, stage)
-                                    for digest in attestations))
+            sources = set().union(*(provenance_sources(tar, digest, repository) for digest in attestations))
             for arch, digest in images.items():
                 source, server = check_image_files(tar, digest)
                 if check_files is not None:

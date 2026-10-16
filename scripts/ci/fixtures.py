@@ -1,4 +1,4 @@
-"""Fake boundaries for control-plane tests: GitHub API, Git, a Skopeo engine and assets."""
+"""Fake boundaries for control-plane tests: GitHub API, Git, a Skopeo engine and release files."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import io
 import json
 import os
 import tarfile
+import tempfile
 import unittest
 import zipfile
 from collections.abc import Callable, Mapping
@@ -15,20 +16,18 @@ from pathlib import Path, PurePosixPath
 from typing import cast
 from unittest.mock import patch
 
+from assets import CLIENT, OCI, SERVER, prerelease, stage_assets
 from github_api import ControlPlaneError, JsonObject, JsonValue
-from rust_workspace import ROOT, load, offer_name, source_url, tui_archive
-from verify_release_assets import TARGETS, TUI_FILES, tui_archives
+from verify_oci import STAGE
+from workspace import ROOT, build_name, build_offer, load, offer_name, source_txt, tui_archive
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
-# The Rust archive, when FAKE_RUST_INDEX is set, has its own index and labels.
+REPOSITORY_URL = "https://github.com/zR-JB/graphite-meter"
 ENGINE = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_ENGINE_LOG"
-case "$*" in
-  *-rust.oci.tar:*) [ -z "$FAKE_RUST_INDEX" ] || { FAKE_INDEX=$FAKE_RUST_INDEX; FAKE_LABELS=$FAKE_RUST_LABELS; } ;;
-esac
 case "$*" in
   *" inspect --raw "*) printf '%s\\n' "$FAKE_INDEX" ;;
   *"{{json .Labels}}"*) printf '%s\\n' "$FAKE_LABELS" ;;
@@ -108,7 +107,7 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
               predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
               arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
-              stage: tuple[str, str | None] = ("container/Dockerfile", None)) -> JsonObject:
+              stage: tuple[str, str | None] = STAGE) -> JsonObject:
     """Write two images of `files`, each with its `arch_files`, and BuildKit-shaped provenance of building `stage`, a
     Dockerfile and target, into an OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
@@ -157,32 +156,26 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tampe
 
 
 def engine(directory: Path, repository: str, version: str, revision: str,
-           oci: JsonObject | None = None, rust: JsonObject | None = None) -> dict[str, str]:
-    """Serve a two-platform image, `oci` or one with placeholder provenance, from a fake `docker`, and `rust` as
-    the VERSION-rust image of an archive named like the Rust one."""
+           oci: JsonObject | None = None) -> dict[str, str]:
+    """Serve a two-platform image of `version`, `oci` or one with placeholder provenance, from a fake `docker`."""
     script = directory / "bin" / "docker"
     script.parent.mkdir(exist_ok=True)
     script.write_text(ENGINE)
     script.chmod(0o755)
-
-    def labels(version: str) -> str:
-        return json.dumps({"org.opencontainers.image.source": f"https://github.com/{repository}",
-                           "org.opencontainers.image.revision": revision,
-                           "org.opencontainers.image.version": version,
-                           "org.opencontainers.image.licenses": "AGPL-3.0-or-later"})
-
     return {
         "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
         "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
         "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
         "FAKE_INDEX": json.dumps(oci or index(*RUNNABLE, *ATTESTED)),
-        "FAKE_LABELS": labels(version),
-        "FAKE_RUST_INDEX": json.dumps(rust) if rust else "", "FAKE_RUST_LABELS": labels(f"{version}-rust"),
+        "FAKE_LABELS": json.dumps({"org.opencontainers.image.source": f"https://github.com/{repository}",
+                                   "org.opencontainers.image.revision": revision,
+                                   "org.opencontainers.image.version": version,
+                                   "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}),
         "FAKE_DIGEST": AMD, "REPOSITORY": repository,
     }
 
 
-def write_tar(path: Path, members: dict[str, bytes]) -> None:
+def write_tar(path: Path, members: Mapping[str, bytes]) -> None:
     with tarfile.open(path, "w:gz") as archive:
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
@@ -190,44 +183,6 @@ def write_tar(path: Path, members: dict[str, bytes]) -> None:
             archive.addfile(info, io.BytesIO(payload))
 
 
-def source_members(version: str) -> dict[str, bytes]:
-    root = f"graphite-meter_{version}_third-party-source"
-    readme = (b"Use Source code (tar.gz) or Source code (zip). This archive does not "
-              b"duplicate Graphite Meter's own repository source.\n")
-    return {
-        f"{root}/README.txt": readme,
-        f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}',
-        f"{root}/PROVENANCE.json": b"[]",
-        f"{root}/third_party/go/quic-go/internal/testdata/priv.key": b"upstream fixture",
-        f"{root}/third_party/manual/sample/source.txt": b"manual source",
-    }
-
-
-def write_checksums(dist: Path) -> None:
-    lines = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-             for path in sorted(dist.iterdir()) if path.name != "checksums.txt"]
-    (dist / "checksums.txt").write_text("".join(lines))
-
-
-def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
-    """Write the native release a stable request uploads; each TUI prints `reported`."""
-    dist.mkdir(parents=True, exist_ok=True)
-    write_tar(dist / f"graphite-meter_{version}_third-party-source.tar.gz",
-              source_members(version))
-    script = f"#!/bin/sh\necho graphite-meter-client {reported or version}\n".encode()
-    for name, (base, binary) in tui_archives(version, TARGETS).items():
-        members = {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script}
-        if name.endswith(".zip"):
-            with zipfile.ZipFile(dist / name, "w") as archive:
-                for member, payload in members.items():
-                    archive.writestr(member, payload)
-        else:
-            write_tar(dist / name, members)
-    write_checksums(dist)
-
-
-RUST_OCI = "graphite-meter-rust.oci.tar"
-RUST_STAGE = ("container/Dockerfile.rust", "server")
 # 64-bit little-endian executable headers for each Rust target's architecture.
 ELF = {"x86_64": 62, "aarch64": 183}
 
@@ -241,48 +196,43 @@ def executable(target: str, payload: bytes = b"") -> bytes:
 
 
 def reviewed(notices: bytes) -> bytes:
-    """The marker of a reviewed Rust build of `notices`."""
+    """The marker of a reviewed build of `notices`."""
     return b"graphite-meter reviewed notices sha256:" + hashlib.sha256(notices).hexdigest().encode()
 
 
-def rust_server(target: str) -> bytes:
-    """The image's server of `target`, built with the notices of write_rust_offer's offer."""
-    return b"server\0" + reviewed(f"notices of graphite-meter-server for {target}\n".encode())
+def notices(build: str) -> bytes:
+    return f"notices of {build}\n".encode()
 
 
-def rust_source(version: str, offer: str, target: str) -> bytes:
-    return (f"Graphite Meter source: {source_url('https://github.com/zR-JB/graphite-meter', version)}\n"
-            f"Matching release: v{version}\nDependency source archive: {offer}\nRust target: {target}\n").encode()
+def server_binary(platform: str) -> bytes:
+    """The image's server for `platform`, the reviewed build of its notices in the source offer."""
+    return b"server\0" + reviewed(notices(build_name(SERVER, platform)))
 
 
-def write_rust_offer(path: Path, package: str, target: str, profile: str = "release",
-                     extra: Mapping[str, bytes] | None = None) -> None:
-    """A source offer as the collector writes it, against this checkout."""
-    top = path.name.removesuffix(".tar.gz")
-    inventory = {"schemaVersion": 1, "package": package, "target": target, "profile": profile,
+def write_part(path: Path, version: str, package: str, platform: str, profile: str = "release",
+               extra: Mapping[str, bytes] | None = None) -> None:
+    """A build's part of the source offer as the collector writes it, against this checkout."""
+    top, build = offer_name(version).removesuffix(".tar.gz"), build_name(package, platform)
+    shipped = load().server if package == SERVER else load().tui
+    inventory = {"schemaVersion": 1, "package": package, "target": shipped[platform], "profile": profile,
                  "cargoLockSha256": hashlib.sha256((ROOT / "rust/Cargo.lock").read_bytes()).hexdigest(),
                  "components": [{"component": {"name": "dependency", "version": "1.0.0"}}],
-                 "browser": [{"name": "package", "version": "1.0.0"}] if package == "graphite-meter-server" else []}
-    write_tar(path, {f"{top}/inventory.json": json.dumps(inventory).encode(),
-                     f"{top}/LEGAL.txt": f"notices of {package} for {target}\n".encode(),
+                 "browser": [{"name": "package", "version": "1.0.0"}] if package == SERVER else []}
+    write_tar(path, {f"{top}/builds/{build}/inventory.json": json.dumps(inventory).encode(),
+                     f"{top}/builds/{build}/LEGAL.txt": notices(build),
                      f"{top}/legal/rust-forks.json": (ROOT / "legal/rust-forks.json").read_bytes(),
                      f"{top}/third_party/cargo/dependency-1.0.0/src/lib.rs": b"code\n",
-                     **({f"{top}/third_party/npm/package-1.0.0/index.js": b"code\n"}
-                        if package == "graphite-meter-server" else {}),
+                     **({f"{top}/third_party/npm/package-1.0.0/index.js": b"code\n"} if package == SERVER else {}),
                      **(extra or {})})
 
 
-def write_rust_tui(directory: Path, version: str, platform: str, target: str,
-                   changes: Mapping[str, bytes] | None = None) -> None:
-    """A TUI archive and its source offer as package_rust writes them; `changes` replaces archive members."""
+def write_client(directory: Path, version: str, platform: str, changes: Mapping[str, bytes] | None = None) -> None:
+    """A client archive as the packager writes it; `changes` replaces archive members."""
     archive, base, binary = tui_archive(version, platform)
-    offer = offer_name("graphite-meter-client", version, platform)
-    write_rust_offer(directory / offer, "graphite-meter-client", target)
-    notices = f"notices of graphite-meter-client for {target}\n".encode()
-    members = {binary: executable(target, reviewed(notices)), "LICENSE": (ROOT / "LICENSE").read_bytes(),
-               "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(),
-               "THIRD_PARTY_NOTICES.txt": notices,
-               "SOURCE.txt": rust_source(version, offer, target)} | dict(changes or {})
+    target, build = load().tui[platform], build_name(CLIENT, platform)
+    members = {binary: executable(target, reviewed(notices(build))), "LICENSE": (ROOT / "LICENSE").read_bytes(),
+               "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(), "THIRD_PARTY_NOTICES.txt": notices(build),
+               "SOURCE.txt": source_txt(REPOSITORY_URL, version, build, target).encode()} | dict(changes or {})
     files = {f"{base}/{name}": payload for name, payload in members.items()}
     if archive.endswith(".zip"):
         with zipfile.ZipFile(directory / archive, "w") as handle:
@@ -292,26 +242,37 @@ def write_rust_tui(directory: Path, version: str, platform: str, target: str,
         write_tar(directory / archive, files)
 
 
-def write_rust_release(image: Path, tui: Path | None, version: str, revision: str, repository: str) -> JsonObject:
-    """Stage the Rust image with its server source offers and the TUI archives; return the image's index. Without
-    `tui`, stage a prerelease's image, which BuildKit fetched from GitHub and whose SOURCE.txt names the repository."""
-    image.mkdir(parents=True, exist_ok=True)
+def write_exports(root: Path, version: str, revision: str, repository: str,
+                  server_profile: str = "release") -> JsonObject:
+    """Write what the builds export into `root`: the OCI archive, server-export with each platform's source offer
+    part and tui-export with the client archives and their parts; return the image's index. A prerelease's image,
+    which BuildKit fetched from GitHub, names the repository."""
     workspace = load()
-    sources: dict[str, Mapping[str, bytes]] = {}
+    server, client = root / "server-export", root / "tui-export"
+    client.mkdir(parents=True)
+    files: dict[str, Mapping[str, bytes]] = {}
     for platform, target in workspace.server.items():
-        offer = offer_name("graphite-meter-server", version, platform)
-        source = rust_source(version, offer, target)
-        if tui is None:
-            source = f"https://github.com/{repository}\n".encode()
-        else:
-            write_rust_offer(image / offer, "graphite-meter-server", target)
-        sources[platform.split("/")[1]] = {"usr/share/licenses/graphite-meter/SOURCE.txt": source,
-                                           "graphite-meter": rust_server(target)}
-    oci = write_oci(image / RUST_OCI, repository, revision, remote=tui is None, arch_files=sources, stage=RUST_STAGE)
-    (image / f"{RUST_OCI}.sha256").write_text(
-        f"{hashlib.sha256((image / RUST_OCI).read_bytes()).hexdigest()}  {RUST_OCI}\n")
-    if tui is not None:
-        tui.mkdir(parents=True, exist_ok=True)
-        for platform, target in workspace.tui.items():
-            write_rust_tui(tui, version, platform, target)
+        build = build_name(SERVER, platform)
+        (server / platform.replace("/", "_")).mkdir(parents=True)
+        write_part(server / platform.replace("/", "_") / build_offer(SERVER, platform), version, SERVER, platform,
+                   server_profile)
+        files[platform.split("/")[1]] = {
+            "usr/share/licenses/graphite-meter/SOURCE.txt": source_txt(REPOSITORY_URL, version, build, target).encode(),
+            "graphite-meter": server_binary(platform)}
+    for platform in workspace.tui:
+        write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform)
+        write_client(client, version, platform)
+    return write_oci(root / OCI, repository, revision, remote=prerelease(version), arch_files=files)
+
+
+def write_staged(out: Path, version: str, revision: str, repository: str) -> JsonObject:
+    """Stage a release of `version` into `out` as assets.py stage does; return the image's index."""
+    with tempfile.TemporaryDirectory() as directory:
+        exports = Path(directory)
+        oci = write_exports(exports, version, revision, repository)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / OCI).write_bytes((exports / OCI).read_bytes())
+        (out / f"{OCI}.sha256").write_text(f"{hashlib.sha256((out / OCI).read_bytes()).hexdigest()}  {OCI}\n")
+        if not prerelease(version):
+            stage_assets(version, exports / "server-export", exports / "tui-export", out)
     return oci

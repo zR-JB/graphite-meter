@@ -6,15 +6,6 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
-  - package-ecosystem: gomod
-    directory: /go
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      go-deps:
-        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /rust
     schedule:

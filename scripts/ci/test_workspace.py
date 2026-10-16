@@ -7,14 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rust_workspace import ROOT, load
+from workspace import ROOT, load
 
 
 class RustWorkspaceTests(unittest.TestCase):
     def test_members_and_targets_load_from_the_workspace(self) -> None:
         workspace = load()
         self.assertIn("server", workspace.members)
-        script = str(ROOT / "scripts/ci/rust_workspace.py")
+        script = str(ROOT / "scripts/ci/workspace.py")
 
         def run(*args: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run([sys.executable, script, *args], capture_output=True, text=True)

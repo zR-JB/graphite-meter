@@ -15,8 +15,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
-                     "rust/rust-toolchain.toml"):
+        for name in ("mise.toml", "mise.lock", "container/Dockerfile", "rust/rust-toolchain.toml"):
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
@@ -41,13 +40,11 @@ class ToolchainBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
         updates = literal_updates(root)
-        self.assertEqual(set(updates), {root / "container/Dockerfile", root / "container/Dockerfile.rust"})
+        self.assertEqual(set(updates), {root / "container/Dockerfile"})
         for path, content in updates.items():
             path.write_text(content)
         check(root)
-        self.assertIn(f"FROM {image} AS client", (root / "container/Dockerfile").read_text())
-        self.assertIn(f"FROM --platform=$BUILDPLATFORM {image} AS browser",
-                      (root / "container/Dockerfile.rust").read_text())
+        self.assertIn(f"FROM --platform=$BUILDPLATFORM {image} AS browser", (root / "container/Dockerfile").read_text())
 
     def test_the_rust_builder_images_follow_the_python_and_rust_pins(self) -> None:
         root = self.copy_pins()
@@ -64,17 +61,27 @@ class ToolchainBoundaryTests(unittest.TestCase):
                     load_pins(root)
         path.write_text(original)
         digest = load_pins(root)["images"]["rust"].rsplit("@sha256:", 1)[1]
-        dockerfile = root / "container/Dockerfile.rust"
+        dockerfile = root / "container/Dockerfile"
         dockerfile.write_text(dockerfile.read_text().replace(digest, "0" * 64))
-        with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
+        with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
 
-    def test_publication_image_drift_is_rejected(self) -> None:
+    def test_publication_and_builder_image_drift_is_rejected(self) -> None:
+        for name, pin in ((".github/workflows/release.yml", "skopeo"),
+                          (".github/actions/setup-buildx/action.yml", "buildkit")):
+            with self.subTest(pin=pin):
+                root = self.copy_pins()
+                path = root / name
+                image = load_pins(root)["images"][pin]
+                path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
+                with self.assertRaisesRegex(ValueError, name):
+                    check(root)
+
+    def test_the_lock_pins_only_the_tools_mise_uses(self) -> None:
         root = self.copy_pins()
-        path = root / ".github/workflows/release.yml"
-        image = load_pins(root)["images"]["skopeo"]
-        path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
-        with self.assertRaisesRegex(ValueError, "release.yml"):
+        lock = root / "mise.lock"
+        lock.write_text(lock.read_text() + '\n[[tools.go]]\nversion = "1.27.2"\nbackend = "core:go"\n')
+        with self.assertRaisesRegex(ValueError, "does not use: go"):
             check(root)
 
     def test_rust_is_installed_only_from_the_pinned_channel_manifest(self) -> None:

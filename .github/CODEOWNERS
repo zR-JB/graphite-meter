@@ -7,8 +7,6 @@
 /mise.lock                       @zR-JB
 /container/                      @zR-JB
 /scripts/                        @zR-JB
-/go/go.mod                       @zR-JB
-/go/go.sum                       @zR-JB
 /client/package.json             @zR-JB
 /client/bun.lock                 @zR-JB
 /client/bunfig.toml              @zR-JB

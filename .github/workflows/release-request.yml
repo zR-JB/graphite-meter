@@ -1,8 +1,7 @@
 name: Request release
 run-name: >-
   Release request · ${{ inputs.mode }} · ${{ inputs.tag }} ·
-  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }} ·
-  Rust ${{ inputs.rust }}
+  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }}
 
 # LOW AUTHORITY: dispatch may select any ref, so this build has read-only access,
 # no secrets or caches, and no path to publication. Release accepts its output
@@ -30,11 +29,6 @@ on:
         default: validate
         type: choice
         options: [validate, publish]
-      rust:
-        description: Also release the experimental Rust image, and with a stable release its TUIs; Go stays the default
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -44,14 +38,7 @@ jobs:
     name: Build untrusted release candidate
     if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      rust: ${{ steps.request.outputs.rust }}
-      stable: ${{ steps.request.outputs.stable }}
-      version: ${{ steps.request.outputs.version }}
-      sha: ${{ steps.request.outputs.sha }}
-      client_validate: ${{ steps.request.outputs.client_validate }}
-      context: ${{ steps.source.outputs.context }}
+    timeout-minutes: 120
     steps:
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,14 +46,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Set up pinned mise and Python
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
-        env:
-          MISE_AUTO_INSTALL: '0'
+      - name: Set up pinned mise and Python without caches
+        uses: ./.github/actions/setup-project
         with:
-          version: 2026.10.7
-          install_args: --locked python
-          cache: false
+          cache: 'false'
 
       - id: request
         name: Validate and record the request
@@ -85,29 +68,8 @@ jobs:
           PR: ${{ inputs.pr }}
           SHA: ${{ inputs.sha }}
           MODE: ${{ inputs.mode }}
-          RUST: ${{ inputs.rust }}
           OUT_DIR: ${{ runner.temp }}/release-request
         run: python3 scripts/ci/release.py prepare
-
-      - name: Set up the stable build toolchain without caches
-        if: steps.request.outputs.stable == 'true'
-        uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-          bun: 'true'
-          client-deps: 'true'
-          cache: 'false'
-
-      - name: Build and verify stable native artifacts and third-party source
-        if: steps.request.outputs.stable == 'true'
-        env:
-          VERSION: ${{ steps.request.outputs.version }}
-          RELEASE_DIST: ${{ runner.temp }}/release-assets
-        run: |
-          VERSION= mise run legal-check
-          mise run legal-generate
-          mise run release-artifacts "$VERSION"
-          python3 scripts/ci/verify_release_assets.py "$VERSION"
 
       # A prerelease never checks PR files out here: BuildKit fetches that exact
       # commit remotely and receives no GitHub credential.
@@ -128,27 +90,11 @@ jobs:
           fi
           echo "context=$context" >>"$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          # setup-qemu runs this image privileged to register binfmt. Pin the
-          # secondary image as tightly as the Action that launches it.
-          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-          platforms: arm64
-          cache-image: 'false'
+      - name: Set up pinned Buildx
+        uses: ./.github/actions/setup-buildx
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
-          cache-binary: 'false'
-          cleanup: 'false'
-          # Supplying any explicit flags resets setup-buildx's default
-          # security.insecure/network.host entitlements. This build needs neither.
-          buildkitd-flags: --log-level=info
-
-      - name: Build linux/amd64 + linux/arm64 OCI archive
+      # The pinned builder cross-compiles arm64, so no build emulates it.
+      - name: Build the linux/amd64 + linux/arm64 OCI archive
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           # Avoid an extra build-record artifact from this untrusted build.
@@ -156,8 +102,9 @@ jobs:
         with:
           context: ${{ steps.source.outputs.context }}
           file: container/Dockerfile
+          target: server
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/release-request/graphite-meter.oci.tar
+          outputs: type=oci,dest=${{ runner.temp }}/build/graphite-meter.oci.tar
           no-cache: true
           provenance: mode=max
           # Public exact-commit Git contexts do not need a repository credential.
@@ -170,194 +117,64 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           build-args: |
             VERSION=${{ steps.request.outputs.version }}
-            CLIENT_VERSION=${{ steps.request.outputs.version }}
-            GM_CLIENT_BUILD_PROFILE=prod
             GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
             GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
 
-      - name: Record the OCI checksum
-        working-directory: ${{ runner.temp }}/release-request
-        run: sha256sum graphite-meter.oci.tar >graphite-meter.oci.tar.sha256
+      # This job's fresh builder holds only this request's layers, so the exports reuse the image build's.
+      - name: Export the server's source offers
+        if: steps.request.outputs.stable == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: ${{ steps.source.outputs.context }}
+          file: container/Dockerfile
+          target: server-artifacts
+          platforms: linux/amd64,linux/arm64
+          outputs: type=local,dest=${{ runner.temp }}/build/server-export
+          provenance: mode=max
+          github-token: ''
+          build-args: |
+            VERSION=${{ steps.request.outputs.version }}
+            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
+            GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
 
-      - name: Upload untrusted request and OCI archive
+      - name: Build the Linux and Windows client archives with their source offers
+        if: steps.request.outputs.stable == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: ${{ steps.source.outputs.context }}
+          file: container/Dockerfile
+          target: tui-artifacts
+          platforms: linux/amd64
+          outputs: type=local,dest=${{ runner.temp }}/build/tui-export
+          provenance: mode=max
+          github-token: ''
+          build-args: |
+            VERSION=${{ steps.request.outputs.version }}
+
+      # The amd64 client runs here; the trusted consumer verifies the files and never executes candidates.
+      - name: Stage the release files and run the amd64 client
+        env:
+          VERSION: ${{ steps.request.outputs.version }}
+          STABLE: ${{ steps.request.outputs.stable }}
+          OCI_ARCHIVE: ${{ runner.temp }}/build/graphite-meter.oci.tar
+          SERVER_EXPORT: ${{ runner.temp }}/build/server-export
+          TUI_EXPORT: ${{ runner.temp }}/build/tui-export
+          OUT_DIR: ${{ runner.temp }}/release-request
+        run: |
+          python3 scripts/ci/assets.py stage
+          if [[ "$STABLE" == true ]]; then
+            python3 -m scripts.package "$VERSION" --output "$OUT_DIR" --check
+          fi
+
+      - name: Upload the untrusted request and release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-request-${{ github.run_id }}
           path: ${{ runner.temp }}/release-request/
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-      - name: Upload untrusted stable assets
-        if: steps.request.outputs.stable == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-assets-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-assets/
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-  # The Rust jobs build the source the build job resolved: main, where a stable release alone ships TUI archives
-  # and source offers, or the exact PR head that BuildKit fetches for a PR prerelease, as Go's image.
-  # Each job runs alone, so release.py binds every artifact to the one job that ran while it was written.
-  rust-image:
-    name: Build untrusted Rust image
-    needs: build
-    if: needs.build.outputs.rust == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Set up pinned mise and Python
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
-        env:
-          MISE_AUTO_INSTALL: '0'
-        with:
-          version: 2026.10.7
-          install_args: --locked python
-          cache: false
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
-          cache-binary: 'false'
-          cleanup: 'false'
-          # Supplying any explicit flags resets setup-buildx's default
-          # security.insecure/network.host entitlements. This build needs neither.
-          buildkitd-flags: --log-level=info
-
-      # The pinned builder cross-compiles arm64, so neither build emulates it.
-      - name: Build the Rust linux/amd64 + linux/arm64 OCI archive
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        env:
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
-        with:
-          context: ${{ needs.build.outputs.context }}
-          file: container/Dockerfile.rust
-          target: server
-          platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/rust-image.oci.tar
-          no-cache: true
-          provenance: mode=max
-          github-token: ''
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.build.outputs.sha }}
-            org.opencontainers.image.version=${{ needs.build.outputs.version }}-rust
-            org.opencontainers.image.licenses=AGPL-3.0-or-later
-          build-args: |
-            VERSION=${{ needs.build.outputs.version }}
-            GM_CLIENT_REVISION=${{ needs.build.outputs.sha }}
-            GM_CLIENT_VALIDATE=${{ needs.build.outputs.client_validate }}
-
-      # This job's fresh builder holds only the image build's layers, so the source offers come from that build.
-      - name: Export the Rust server's source offers
-        if: needs.build.outputs.stable == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        env:
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
-        with:
-          context: ${{ needs.build.outputs.context }}
-          file: container/Dockerfile.rust
-          target: server-artifacts
-          platforms: linux/amd64,linux/arm64
-          outputs: type=local,dest=${{ runner.temp }}/rust-server-export
-          provenance: mode=max
-          github-token: ''
-          build-args: |
-            VERSION=${{ needs.build.outputs.version }}
-            GM_CLIENT_REVISION=${{ needs.build.outputs.sha }}
-            GM_CLIENT_VALIDATE=${{ needs.build.outputs.client_validate }}
-
-      - name: Stage the Rust image and a stable release's server source offers
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-          OCI_ARCHIVE: ${{ runner.temp }}/rust-image.oci.tar
-          SERVER_EXPORT: ${{ runner.temp }}/rust-server-export
-          OUT_DIR: ${{ runner.temp }}/release-rust-image
-        run: python3 scripts/ci/rust_release.py stage-image
-
-      - name: Upload the untrusted Rust image and its staged source offers
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-rust-image-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-rust-image/
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
-  rust-tui:
-    name: Build untrusted Rust TUI archives
-    needs: [build, rust-image]
-    if: needs.build.outputs.rust == 'true' && needs.build.outputs.stable == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Set up pinned mise and Python
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
-        env:
-          MISE_AUTO_INSTALL: '0'
-        with:
-          version: 2026.10.7
-          install_args: --locked python
-          cache: false
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          driver-opts: image=docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
-          cache-binary: 'false'
-          cleanup: 'false'
-          # Supplying any explicit flags resets setup-buildx's default
-          # security.insecure/network.host entitlements. This build needs neither.
-          buildkitd-flags: --log-level=info
-
-      - name: Build the Rust Linux and Windows TUI archives with their source offers
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        env:
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
-        with:
-          context: ${{ needs.build.outputs.context }}
-          file: container/Dockerfile.rust
-          target: tui-artifacts
-          platforms: linux/amd64
-          outputs: type=local,dest=${{ runner.temp }}/rust-tui-export
-          no-cache: true
-          provenance: mode=max
-          github-token: ''
-          build-args: |
-            VERSION=${{ needs.build.outputs.version }}
-
-      # The amd64 TUI runs here; the trusted consumer verifies the archives and never executes candidates.
-      - name: Stage the TUI archives and run the amd64 TUI
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-          TUI_EXPORT: ${{ runner.temp }}/rust-tui-export
-          OUT_DIR: ${{ runner.temp }}/release-rust-tui
-        run: |
-          python3 scripts/ci/rust_release.py stage-tui
-          python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check
-
-      - name: Upload the untrusted Rust TUI archives and source offers
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-rust-tui-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-rust-tui/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
