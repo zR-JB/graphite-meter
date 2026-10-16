@@ -511,7 +511,7 @@ impl App {
         for server in self.view.servers.iter() {
             entries.push(Entry::Heading(match self.several() {
                 true => server.name.clone(),
-                false => "Tested server".into(),
+                false => "Test server".into(),
             }));
             entries.push(item("Name", server.name.clone()));
             entries.push(item("Address", server.origin.to_string()));
@@ -526,7 +526,7 @@ impl App {
                     let latency = paths.latency.as_ref().map_or(MISSING.into(), format::latency_path);
                     entries.push(item("Latency path", latency));
                     if let Some(rtt) = paths.idle_rtt {
-                        entries.push(item("Idle latency", round_trip(rtt)));
+                        entries.push(item("Path check round trip", round_trip(rtt)));
                     }
                     entries.push(item("IP family", format!("IPv{}", paths.ip_family.version())));
                 }

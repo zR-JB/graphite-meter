@@ -100,7 +100,7 @@ async fn a_run_whose_server_left_ends_its_report_with_why() {
     assert_eq!((status, stderr.as_str()), (Some(1), ""), "{report}");
     assert!(report.starts_with("Graphite Meter  Failed  A · "), "{report}");
     assert!(
-        report.ends_with(" s\n\nall selected test servers failed: HTTP 404 from /download\n"),
+        report.ends_with(" s\n\nAll selected test servers failed. A: HTTP 404 from /download\n"),
         "{report}"
     );
     assert_eq!(report.lines().count(), 3, "{report}");

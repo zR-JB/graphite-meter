@@ -79,6 +79,15 @@ fn ctrl_c_during_a_run_exits_130() {
     assert_eq!((session.keys, session.status), (2, 130), "{:?}", session.text);
     assert!(session.text.contains("\x1b]9;4;0\x07"), "the progress bar is cleared");
     assert_eq!(after_restore(&session), "", "a test stopped before it started has no report");
+    assert!(session.restored);
+}
+
+#[test]
+fn ctrl_c_while_the_report_asks_the_terminal_stops_with_130() {
+    let Some(session) = drive("query") else { return };
+    assert_eq!((session.keys, session.status), (1, 130), "{:?}", session.text);
+    assert!(session.text.ends_with("Test stopped before it started.\r\n"), "{:?}", session.text);
+    assert!(session.restored);
 }
 
 /// The unanswered background query holds the report for 2 s in raw mode, so it cannot exit by itself meanwhile.

@@ -132,7 +132,7 @@ fn several_servers_add_each_server_s_share_and_the_issues_after_the_notes() {
     idle.summary.timing = Some(Timing { pairs: 38, rtt: Duration::from_millis(12), handling });
     let text = printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain);
     let expected = "\
-Graphite Meter  Complete  2 servers · 17.4 s · 125.0 MB
+Graphite Meter  Complete  2 test servers · 17.4 s · 125.0 MB
 
 ↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
 
@@ -145,16 +145,16 @@ Loaded latency, Download: 40 replies · 10.0 s
 Server handling of the mean round trip: Idle 0.3 ms of 12.0 ms (38 pairs)
 Added: loaded median minus idle median, same server.
 
-Complete · 1 of 2 servers
-Server       Download
-All servers  100.0 Mbit/s
-a meter      50.00 Mbit/s
-b meter ✗    50.00 Mbit/s
+Complete · 1 of 2 test servers
+Test server       Download
+All test servers  100.0 Mbit/s
+a meter           50.00 Mbit/s
+b meter ✗         50.00 Mbit/s
 
-Latency median by server
-Server   Idle     Loaded down
-a meter  12.0 ms  12.0 ms
-b meter  13.0 ms  13.0 ms
+Latency median by test server
+Test server  Idle     Loaded down
+a meter      12.0 ms  12.0 ms
+b meter      13.0 ms  13.0 ms
 
 Issues
 b meter · Download throughput · at 7.5 s · Stopped delivering data
@@ -189,7 +189,7 @@ fn the_16_color_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_it
         plain.contains("\nIdle\n  Median 12.0 ms · P95 24.0 ms\n  Jitter 0.4 ms · Timeouts 1 / 41 (2.4%)\n"),
         "{plain}"
     );
-    let details = plain.split_once("\nComplete · 1 of 2 servers\n").unwrap().1;
+    let details = plain.split_once("\nComplete · 1 of 2 test servers\n").unwrap().1;
     assert!(details.lines().all(|line| line.chars().count() <= 40), "{details}");
     assert!(details.ends_with("\nb meter · Download throughput · at 7.5 …\n"), "{details}");
 }
@@ -277,4 +277,15 @@ fn a_started_run_s_error_ends_its_report_and_an_expired_sign_in_withholds_it() {
     let error = Failure::new(FailureReason::SignInRequired, "all selected servers failed: sign in");
     let failure = Some((Scope::Throughput, FailureReason::SignInRequired));
     assert_eq!(sole(download(SECOND * 10, true, failure), Outcome::Incomplete, Some(error)), "");
+}
+
+#[test]
+fn a_stopped_test_marks_the_stages_it_never_reached() {
+    let at = Instant::now();
+    let idle = result(Stage::Latency, SECOND * 4, None, vec![server("a", false, None, 12)]);
+    let plan = [(Stage::Latency, SECOND * 4), (Stage::Download, SECOND * 10)];
+    let end = Event::RunFinished { outcome: Outcome::Stopped, error: None, elapsed: SECOND * 5 };
+    let view = viewed(&["a"], &plan, vec![idle], end, at);
+    let text = printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain);
+    assert!(text.contains("\n↓ Download  Not reached\n"), "{text}");
 }

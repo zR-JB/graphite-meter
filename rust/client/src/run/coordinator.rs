@@ -29,7 +29,7 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 const FINISH: Duration = Duration::from_secs(10);
 const STOPPED_FINISH: Duration = Duration::from_secs(1);
 /// Why a run whose test servers all left ends.
-const NO_SURVIVORS: &str = "all selected test servers failed";
+const NO_SURVIVORS: &str = "All selected test servers failed";
 
 /// A prepared server across the run.
 struct Seat<'a> {
@@ -87,7 +87,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
         events.send(Event::StageFinished(result.clone()));
         results.push(result);
         if !token.is_cancelled() && seats.iter().all(|seat| !seat.present) {
-            match survivor(&results, sole) {
+            match survivor(&results, &prepared.servers, sole) {
                 Ok(()) => seats[0].present = true,
                 Err(failure) => {
                     error = Some(failure);
@@ -105,16 +105,23 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
 }
 
 /// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in; else why it ends.
-fn survivor(results: &[StageResult], sole: bool) -> Result<(), Failure> {
-    let failures = results.iter().flat_map(|result| &result.failures);
-    let last = failures
-        .map(|failure| &failure.failure)
-        .rfind(|failure| failure.reason != FailureReason::InsufficientEvidence);
+fn survivor(results: &[StageResult], servers: &[ServerPath], sole: bool) -> Result<(), Failure> {
+    let mut failures = results.iter().flat_map(|result| &result.failures);
+    let last = failures.rfind(|failure| failure.failure.reason != FailureReason::InsufficientEvidence);
     let measured = results.iter().any(|result| !result.measured.is_zero());
+    let name = |id: &ServerId| {
+        servers
+            .iter()
+            .find(|server| server.id == *id)
+            .map_or("", |server| server.name.as_str())
+    };
     match last {
-        _ if sole && measured && last.is_none_or(|last| last.reason != FailureReason::SignInRequired) => Ok(()),
-        Some(last) => Err(Failure::new(last.reason, format!("{NO_SURVIVORS}: {}", last.text))),
-        None => Err(Failure::new(FailureReason::ConnectionLost, NO_SURVIVORS)),
+        _ if sole && measured && last.is_none_or(|last| last.failure.reason != FailureReason::SignInRequired) => Ok(()),
+        Some(last) => {
+            let text = format!("{NO_SURVIVORS}. {}: {}", name(&last.server), last.failure.text);
+            Err(Failure::new(last.failure.reason, text))
+        }
+        None => Err(Failure::new(FailureReason::ConnectionLost, format!("{NO_SURVIVORS}."))),
     }
 }
 

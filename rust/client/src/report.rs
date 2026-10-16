@@ -47,7 +47,7 @@ pub fn unreported(view: &View) -> Option<String> {
     Some(match (error, signed_out) {
         _ if run.at.is_some() => return signed_out.map(|_| EXPIRED.into()),
         (_, Some(error)) => error.text.clone(),
-        (Some(error), None) => format!("Test could not start: {}", error.text),
+        (Some(error), None) => format!("Test could not start. {}", crate::text::capitalized(&error.text)),
         (None, None) => "Test stopped before it started.".into(),
     })
 }
@@ -81,7 +81,9 @@ impl Report<'_> {
 
     /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        self.status(stage).map_or("Skipped", |status| match status {
+        let stopped = self.run.outcome == Some(Outcome::Stopped);
+        let skipped = if stopped { "Not reached" } else { "Skipped" };
+        self.status(stage).map_or(skipped, |status| match status {
             StageStatus::Complete => MISSING,
             status => format::status_label(status),
         })
@@ -98,7 +100,7 @@ impl Report<'_> {
         let mut facts = match self.view.servers.len() {
             0 => Vec::new(),
             1 => vec![format::server(&self.view.servers[0].name, &self.view.servers[0].location)],
-            servers => vec![format!("{servers} servers")],
+            servers => vec![format!("{servers} test servers")],
         };
         facts.push(format::duration(self.run.elapsed));
         let results = self.run.results.iter();
@@ -320,7 +322,7 @@ impl Report<'_> {
         let combined =
             |&(stage, direction): &_| rate(self.result(stage).and_then(|result| result.throughput[direction]));
         let all = columns.iter().map(combined);
-        let mut rates = vec![[vec![Line::plain("All servers")], all.collect()].concat()];
+        let mut rates = vec![[vec![Line::plain("All test servers")], all.collect()].concat()];
         let mut medians = Vec::new();
         for server in self.view.servers.iter() {
             let own = |stage: Stage| {
@@ -340,14 +342,14 @@ impl Report<'_> {
         let labels = columns
             .iter()
             .map(|&(stage, direction)| direction_label(stage, direction));
-        let mut headers = vec!["Server".to_owned()];
+        let mut headers = vec!["Test server".to_owned()];
         headers.extend(labels);
         let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
         let populations = run.plan.iter().map(|&(stage, _)| compact_population(stage));
-        let populations: Vec<&str> = std::iter::once("Server").chain(populations).collect();
+        let populations: Vec<&str> = std::iter::once("Test server").chain(populations).collect();
         let mut lines = vec![Line::styled(self.notice(), palette.heading)];
         lines.extend(self.grid(&headers, rates));
-        lines.extend([Line::default(), Line::styled("Latency median by server", palette.heading)]);
+        lines.extend([Line::default(), Line::styled("Latency median by test server", palette.heading)]);
         lines.extend(self.grid(&populations, medians));
         if !run.issues.is_empty() {
             lines.extend([Line::default(), Line::styled("Issues", palette.heading)]);
@@ -369,8 +371,8 @@ impl Report<'_> {
         let remaining = servers.filter(|server| self.view.remains(&server.id)).count();
         let outcome = outcome_label(self.run.outcome.unwrap_or(Outcome::Failed));
         match remaining < selected {
-            true => format!("{outcome} · {remaining} of {selected} servers"),
-            false => format!("{outcome} · all {selected} servers"),
+            true => format!("{outcome} · {remaining} of {selected} test servers"),
+            false => format!("{outcome} · all {selected} test servers"),
         }
     }
 }
