@@ -178,7 +178,7 @@ pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
 
 /// The colour profile of a terminal, `tty` when output reaches one, from the environment `var` reads.
 pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
-    let flag = |name| var(name).is_some_and(|value| parse_bool(&value) == Some(true));
+    let flag = |name| var(name).is_some_and(|value| parse_bool(&value) == Ok(true));
     let (tty, term) = (tty || flag("TTY_FORCE"), var("TERM"));
     let true_color = var("WT_SESSION").is_some_and(|session| !session.is_empty()) || flag("GOOGLE_CLOUD_SHELL");
     let env = environment(term.as_deref().unwrap_or_default(), &var("COLORTERM").unwrap_or_default(), true_color);

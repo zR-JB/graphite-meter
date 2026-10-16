@@ -92,7 +92,11 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
     let Some((stage, _)) = plan.iter().find(|(_, duration)| *duration > limit) else {
         return Ok(());
     };
-    Err(format!("{name} allows stages up to {}; shorten the {} stage", short(limit), stage.name()))
+    Err(format!(
+        "{name} allows stages up to {}; shorten the {} stage",
+        duration::format(limit),
+        stage.name()
+    ))
 }
 
 /// The paths that resolved, in order; the first refusal when none did.
@@ -156,17 +160,6 @@ fn throughput_path(
     Ok(ThroughputPath { origin, transport: target.transport, protocol })
 }
 
-/// A stage limit as an operator writes it, such as `5m` or `1h30m`.
-fn short(limit: Duration) -> String {
-    let mut text = duration::format(limit);
-    for whole in ["m0s", "h0m"] {
-        if text.ends_with(whole) {
-            text.truncate(text.len() - 2);
-        }
-    }
-    text
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,7 +199,7 @@ mod tests {
         assert_eq!(selected("-server b -server a -server self").unwrap(), ["self", "a", "b"]);
         let unknown = "unknown or repeated server \"nowhere\"";
         assert_eq!(selected("-server a -server nowhere").unwrap_err(), unknown);
-        let left = "the catalogue's server \"broken\" was left out: invalid catalogue origin";
+        let left = "the catalogue's server \"broken\" was left out: invalid catalog origin";
         assert_eq!(selected("-server broken").unwrap_err(), left);
         let explicit = "explicit origins need a single selected server; use Automatic origins for several";
         assert_eq!(selected("-server a -server b -latency-origin https://a.example").unwrap_err(), explicit);
@@ -222,7 +215,8 @@ mod tests {
         let throughput: Vec<_> = throughput.iter().copied().map(fetch).collect();
         let probe = |(base, transport)| json!({"baseUrl": base, "transport": transport});
         let latency: Vec<_> = latency.iter().copied().map(probe).collect();
-        let capabilities = json!({"throughput": throughput, "latency": latency});
+        let capabilities =
+            json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": latency});
         let document = json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
             "capabilities": capabilities});
         Preflight::decode(document.to_string().as_bytes()).unwrap()

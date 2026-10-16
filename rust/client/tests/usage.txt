@@ -1,45 +1,25 @@
-Usage of graphite-meter-client:
-  -auto-streams int
-    	maximum H1 streams per direction (default 6)
-  -bidirectional-duration duration
-    	bidirectional measurement duration (default 10s)
-  -download-duration duration
-    	download measurement duration (default 10s)
-  -insecure
-    	skip TLS certificate verification
-  -latency-duration duration
-    	latency measurement duration (default 4s)
-  -latency-origin string
-    	latency origin from discovery, or auto (default "auto")
-  -latency-transport string
-    	latency transport: auto, websocket, or webtransport (default "auto")
-  -legal
-    	print the licences of the bundled software and exit
-  -loaded-latency
-    	measure latency while transfer stages are loaded (default true)
-  -loaded-ping value
-    	loaded latency cadence (default medium): reply-driven, fast, medium, slow, or a duration from 80ms to 15s
-  -ping value
-    	idle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a duration from 80ms to 15s
-  -report
-    	run once without the interface and print the final report (automatic when stdout is not a terminal)
-  -server value
-    	selected catalogue ID (repeat up to 4 times; omission uses operator defaults)
-  -stages value
-    	comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) (default latency,download,upload)
-  -streams int
-    	force exact streams per server and direction (0 = automatic; at most 14)
-  -throughput-origin string
-    	throughput origin from discovery, or auto (default "auto")
-  -throughput-protocol string
-    	protocol for a negotiated throughput origin: auto, http1, http2, or http3 (default "auto")
-  -throughput-transport string
-    	throughput transport: auto, fetch-stream, or webtransport (default "auto")
-  -upload-duration duration
-    	upload measurement duration (default 10s)
-  -url string
-    	origin of the operator server catalogue
-  -version
-    	print version and exit
-  -warmup duration
-    	per-stage warmup duration (default 800ms)
+Usage: graphite-meter-client [options]
+
+Options:
+  --auto-streams <count>               Maximum H1 streams per direction (default: 6)
+  --bidirectional-duration <duration>  Bidirectional measurement duration (default: 10s)
+  --download-duration <duration>       Download measurement duration (default: 10s)
+  --insecure                           Skip TLS certificate verification
+  --latency-duration <duration>        Latency measurement duration (default: 4s)
+  --latency-origin <origin>            Latency origin from discovery, or auto (default: auto)
+  --latency-transport <name>           Latency transport: auto, websocket, or webtransport (default: auto)
+  --legal                              Print the licenses of the bundled software and exit
+  --loaded-latency                     Measure latency while transfer stages are loaded (default: true)
+  --loaded-ping <cadence>              Loaded latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to 15 s (default: medium)
+  --ping <cadence>                     Idle latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to 15 s (default: reply-driven)
+  --report                             Run once without the interface and print the final report (automatic when stdout is not a terminal)
+  --server <id>                        Selected catalogue ID (repeat up to 4 times; omission uses operator defaults)
+  --stages <list>                      Comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) (default: latency,download,upload)
+  --streams <count>                    Force exact streams per server and direction (0 = automatic; at most 14) (default: 0)
+  --throughput-origin <origin>         Throughput origin from discovery, or auto (default: auto)
+  --throughput-protocol <name>         Protocol for a negotiated throughput origin: auto, http1, http2, or http3 (default: auto)
+  --throughput-transport <name>        Throughput transport: auto, fetch-stream, or webtransport (default: auto)
+  --upload-duration <duration>         Upload measurement duration (default: 10s)
+  --url <origin>                       Origin of the operator server catalogue
+  --version                            Print version and exit
+  --warmup <duration>                  Per-stage warmup duration (default: 800ms)

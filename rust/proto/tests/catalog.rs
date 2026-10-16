@@ -35,7 +35,7 @@ fn received(document: Value) -> Result<(ServerCatalog, Vec<Rejected>), serde_jso
 }
 
 #[test]
-fn a_catalogue_encodes_as_the_schema_spells_it_and_decodes_back() {
+fn a_catalog_encodes_as_the_schema_spells_it_and_decodes_back() {
     let encoded = serde_json::to_value(catalog()).unwrap();
     let frankfurt = json!({
         "id": "frankfurt",
@@ -48,7 +48,7 @@ fn a_catalogue_encodes_as_the_schema_spells_it_and_decodes_back() {
 }
 
 #[test]
-fn a_published_catalogue_holds_self_first_and_at_most_32_servers() {
+fn a_published_catalog_holds_self_first_and_at_most_32_servers() {
     let mut catalog = catalog();
     catalog.servers.swap(0, 1);
     assert_eq!(catalog.validate(), Err(CatalogError::Servers));
@@ -117,7 +117,8 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
         "servers": [
             {"id": "self", "url": ".", "name": "graphite-meter"},
             {"id": "frankfurt", "url": "https://fra.example.net/", "name": "Frankfurt"},
-            {"id": "munich", "url": "https://München.example/", "additionalOrigins": ["https://straße.example:8443/"]},
+            {"id": "munich", "url": "https://munich.example/", "additionalOrigins": ["https://transfer.example:8443/"]},
+            {"id": "international", "url": "https://München.example"},
             {"id": "broken", "url": "https://user@broken.example", "name": "Broken"},
             {"id": "twin", "url": "https://FRA.example.net"},
             {"id": "many", "url": "https://many.example", "additionalOrigins": vec!["https://x.example"; 33]},
@@ -131,13 +132,13 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
     let slash_dropped = BaseUrl::parse("https://fra.example.net").unwrap();
     assert_eq!(catalog.servers[1].url, slash_dropped, "one slash may end it");
     let munich = serde_json::to_value(&catalog.servers[2]).unwrap();
-    assert_eq!(munich["url"], "https://xn--mnchen-3ya.example", "international hosts become punycode");
-    assert_eq!(munich["additionalOrigins"], json!(["https://xn--strae-oqa.example:8443"]));
+    assert_eq!(munich["additionalOrigins"], json!(["https://transfer.example:8443"]));
     assert_eq!(catalog.default_selection, [id("frankfurt")]);
     let faults: Vec<_> = rejected.iter().map(|entry| (entry.id.as_str(), entry.error)).collect();
     assert_eq!(
         faults,
         [
+            ("international", CatalogError::Origin),
             ("broken", CatalogError::Origin),
             ("twin", CatalogError::Duplicate),
             ("many", CatalogError::AdditionalOrigins),
@@ -148,7 +149,7 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
 }
 
 #[test]
-fn a_received_catalogue_still_holds_as_a_whole() {
+fn a_received_catalog_still_holds_as_a_whole() {
     let own = json!({"id": "self", "url": ".", "name": "graphite-meter"});
     let other = |index: usize| json!({"id": format!("s{index}"), "url": format!("https://s{index}.example")});
     let (fallback, _) = received(json!({"defaultSelection": ["gone"], "servers": [own]})).unwrap();
@@ -171,7 +172,9 @@ fn discovery_may_use_the_entry_host_on_any_port_or_an_exact_additional_origin() 
     let served = Origin::parse("https://fra.example.net").unwrap();
     let approves = |targets: &[&str]| {
         let target = |base| json!({"baseUrl": base, "transport": "fetch-stream", "protocol": "http2"});
-        let capabilities = json!({"throughput": targets.iter().map(target).collect::<Vec<_>>(), "latency": []});
+        let throughput: Vec<_> = targets.iter().map(target).collect();
+        let capabilities =
+            json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": []});
         let document =
             json!({"server": {"name": ""}, "engineVersion": "", "generation": "g", "capabilities": capabilities});
         frankfurt.approves(&served, &Preflight::decode(&serde_json::to_vec(&document).unwrap()).unwrap())

@@ -183,9 +183,9 @@ mod tests {
             (r#"{"defaultSelection":["gone"],"servers":[]}"#, "select one to four"),
             (
                 r#"{"servers":[{"id":"a b","url":"https://a.example"}]}"#,
-                "invalid catalogue server identity",
+                "invalid catalog server identity",
             ),
-            (r#"["https://a.example","https://A.example:443"]"#, "duplicate catalogue server"),
+            (r#"["https://a.example","https://A.example:443"]"#, "duplicate catalog server"),
             (r#"["ftp://a.example"]"#, "server catalogue origin \"ftp://a.example\": expected"),
         ] {
             let error = parse(document.as_bytes()).unwrap_err();

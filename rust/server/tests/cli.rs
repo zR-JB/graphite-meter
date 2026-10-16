@@ -82,7 +82,7 @@ fn help_prints_the_usage_and_exits_zero() {
     assert_eq!(text(&output.stderr), include_str!("usage.txt"));
     let output = server(&["-nope"], &[], b"");
     assert_eq!(output.status.code(), Some(1));
-    assert!(text(&output.stderr).starts_with("flag provided but not defined: -nope\nUsage:\n"));
+    assert!(text(&output.stderr).starts_with("unknown option --nope\nUsage: "));
 }
 
 /// A verbose throughput line's message, checked for its shape, with its transfer count.

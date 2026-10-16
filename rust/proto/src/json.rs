@@ -1,4 +1,4 @@
-//! Strict JSON objects, read as Go's `encoding/json/v2` reads control responses and progress records.
+//! Strict JSON objects: control responses and progress records.
 
 use serde::de::{DeserializeOwned, Error as _};
 use std::collections::HashSet;
@@ -10,7 +10,7 @@ pub fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T, serde_json::Error> 
     serde_json::from_str(text)
 }
 
-/// Refuses what serde_json would accept from valid JSON and Go would not; serde_json refuses the rest.
+/// Refuses a non-object document and repeated member names, which serde_json would accept.
 fn check(text: &str) -> Result<(), serde_json::Error> {
     if !text.trim_start().starts_with('{') {
         return Err(serde_json::Error::custom("expected a JSON object"));

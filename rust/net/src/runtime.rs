@@ -11,9 +11,8 @@ use tokio::{
 /// How much lower than the caller's threads a pool runs its pinned ones on Linux, in nice steps.
 const PINNED_NICE: i32 = 5;
 
-/// Pinned current-thread runtimes, each on a thread of its own, or none, and a latency runtime in a probing pool;
-/// their threads end with the pool. On Linux the pinned runtimes, which carry bulk transfers, run niced, so the
-/// caller's threads and the latency runtime preempt them.
+/// Pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and a probing pool's
+/// latency runtime preempt them; their threads end with the pool.
 #[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
@@ -62,7 +61,6 @@ impl Pool {
         })
     }
 
-    /// No pinned runtimes: work runs on the caller's runtime.
     pub fn inline() -> Self {
         Self::default()
     }

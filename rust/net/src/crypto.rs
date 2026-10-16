@@ -2,37 +2,27 @@
 use crate::trust::{self, Trust};
 use graphite_meter_proto::discovery::Protocol;
 use rustls::{
-    CipherSuite::{
-        TLS13_AES_128_GCM_SHA256 as AES_128, TLS13_AES_256_GCM_SHA384 as AES_256,
-        TLS13_CHACHA20_POLY1305_SHA256 as CHACHA,
-    },
-    ClientConfig, SupportedProtocolVersion,
-    client::danger::ServerCertVerifier,
-    crypto::CryptoProvider,
+    CipherSuite::TLS13_CHACHA20_POLY1305_SHA256, ClientConfig, SupportedProtocolVersion,
+    client::danger::ServerCertVerifier, crypto::CryptoProvider,
 };
 use std::sync::{Arc, LazyLock};
 use tokio::sync::OnceCell;
 
-/// Go's TLS 1.3 client order with AES hardware.
-const AES_FIRST: [rustls::CipherSuite; 3] = [AES_128, AES_256, CHACHA];
-/// Go's TLS 1.3 client order without it.
-const CHACHA_FIRST: [rustls::CipherSuite; 3] = [CHACHA, AES_128, AES_256];
-
-/// ring with TLS 1.3's suites first, in the order Go's client offers them.
+/// ring, preferring ChaCha20-Poly1305 where AES-GCM has no hardware support and runs slower.
 pub fn provider() -> Arc<CryptoProvider> {
     static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| {
-        let order = if aes_hardware() { AES_FIRST } else { CHACHA_FIRST };
         let mut provider = rustls::crypto::ring::default_provider();
-        provider.cipher_suites.sort_by_key(|suite| {
-            let rank = order.iter().position(|&id| id == suite.suite());
-            rank.unwrap_or(order.len())
-        });
+        if !aes_hardware() {
+            provider
+                .cipher_suites
+                .sort_by_key(|suite| suite.suite() != TLS13_CHACHA20_POLY1305_SHA256);
+        }
         Arc::new(provider)
     });
     PROVIDER.clone()
 }
 
-/// Go's hasAESGCMHardwareSupport on the architectures the binaries ship for.
+/// Whether AES-GCM runs in hardware on the architectures the binaries ship for.
 pub fn aes_hardware() -> bool {
     cfg_select! {
         any(target_arch = "x86", target_arch = "x86_64") => {
@@ -59,15 +49,6 @@ impl Verify {
     /// Against the process's roots, which `SSL_CERT_FILE` and `SSL_CERT_DIR` adjust.
     pub fn trusted() -> Self {
         Self::Trusted(Trust::system())
-    }
-}
-
-impl PartialEq for Verify {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Trusted(one), Self::Trusted(another)) => Arc::ptr_eq(one, another),
-            (one, another) => std::mem::discriminant(one) == std::mem::discriminant(another),
-        }
     }
 }
 

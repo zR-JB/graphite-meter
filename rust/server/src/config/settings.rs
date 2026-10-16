@@ -5,7 +5,7 @@ use graphite_meter_proto::{
     catalog::ServerCatalog,
     discovery::DEFAULT_STAGE_LIMIT,
     duration,
-    flag::{self, Flag, Kind, Parsed},
+    flag::{self, Flag, Parsed},
 };
 use ipnet::IpNet;
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
@@ -23,11 +23,9 @@ pub(super) struct TrustedProxies(pub Vec<IpNet>);
 
 /// A setting's value type: how trimmed text sets it and how a usage line shows it.
 trait Value {
-    const KIND: Kind = Kind::Value;
-
     fn set(&mut self, text: &str) -> Result<(), String>;
 
-    /// The value as Go's flag shows it, empty for the type's zero value but for booleans.
+    /// The value as a usage default, empty for none.
     fn show(&self) -> String;
 }
 
@@ -49,7 +47,7 @@ impl Value for Vec<String> {
     }
 
     fn show(&self) -> String {
-        if self.is_empty() { String::new() } else { format!("[{}]", self.join(" ")) }
+        self.join(",")
     }
 }
 
@@ -72,11 +70,9 @@ impl Value for usize {
 }
 
 impl Value for bool {
-    const KIND: Kind = Kind::Bool;
-
     fn set(&mut self, text: &str) -> Result<(), String> {
         if !text.is_empty() {
-            *self = flag::parse_bool(&text.to_lowercase()).ok_or("must be true/false or 1/0")?;
+            *self = flag::parse_bool(text)?;
         }
         Ok(())
     }
@@ -87,11 +83,9 @@ impl Value for bool {
 }
 
 impl Value for Duration {
-    /// A negative duration reads as zero, which validation refuses by name.
     fn set(&mut self, text: &str) -> Result<(), String> {
         if !text.is_empty() {
-            let nanos = duration::parse(text)?;
-            *self = Duration::from_nanos(u64::try_from(nanos).unwrap_or(0));
+            *self = duration::parse(text)?;
         }
         Ok(())
     }
@@ -150,7 +144,7 @@ impl Value for TrustedProxies {
     }
 }
 
-/// A CIDR as Go's `netip.ParsePrefix` accepts it: no sign or leading zero in the length.
+/// A CIDR without a sign or leading zero in its prefix length.
 fn prefix(cidr: &str) -> Result<IpNet, String> {
     let (address, bits) = cidr.rsplit_once('/').ok_or("the prefix length after '/' is missing")?;
     let address = address
@@ -175,7 +169,7 @@ fn split_list(text: &str) -> Vec<String> {
 
 /// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
 macro_rules! settings {
-    ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $usage:literal;)+) => {
+    ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $placeholder:expr, $usage:literal;)+) => {
         /// Settings as given, before validation.
         pub(super) struct Settings {
             $(pub $field: $type,)+
@@ -192,9 +186,9 @@ macro_rules! settings {
 
         const SETTINGS: &[Flag<Settings>] = &[$(Flag {
             name: $flag,
+            value: $placeholder,
             usage: $usage,
             env: Some($env),
-            kind: <$type as Value>::KIND,
             set: |settings, text| {
                 settings.given.insert($env);
                 Value::set(&mut settings.$field, text.trim())
@@ -205,71 +199,73 @@ macro_rules! settings {
 }
 
 settings! {
-    h1_addr: String = ":7246".into(), "GM_H1_ADDR", "h1-addr", "clear HTTP/1.1 listen `address`";
-    h1_tls_addr: String = String::new(), "GM_H1_TLS_ADDR", "h1-tls-addr",
-        "HTTPS HTTP/1.1 listen `address`; empty disables it";
-    h2_addr: String = String::new(), "GM_H2_ADDR", "h2-addr", "HTTP/2 TLS listen `address`; empty disables it";
-    h3_addr: String = String::new(), "GM_H3_ADDR", "h3-addr",
-        "HTTP/3 UDP and bootstrap TCP listen `address`; empty disables it";
-    tls_cert: String = String::new(), "GM_TLS_CERT", "tls-cert", "TLS certificate PEM `path`";
-    tls_key: String = String::new(), "GM_TLS_KEY", "tls-key", "TLS private key PEM `path`";
-    h1_public_origin: String = String::new(), "GM_H1_PUBLIC_ORIGIN", "h1-public-origin",
-        "public `origin` of the native clear HTTP/1.1 listener";
-    h1_tls_public_origin: String = String::new(), "GM_H1_TLS_PUBLIC_ORIGIN", "h1-tls-public-origin",
-        "public `origin` of the native HTTPS HTTP/1.1 listener";
-    h2_public_origin: String = String::new(), "GM_H2_PUBLIC_ORIGIN", "h2-public-origin",
-        "public `origin` of the native HTTP/2 listener";
-    h3_public_origin: String = String::new(), "GM_H3_PUBLIC_ORIGIN", "h3-public-origin",
-        "public `origin` of the native HTTP/3 listener";
-    advertised: Advertised = Advertised::All, "GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints",
-        "all, none, or comma-separated native endpoint `names`";
-    public_origins: Vec<String> = Vec::new(), "GM_PUBLIC_ORIGINS", "public-origins",
-        "comma-separated negotiated `origins` providing throughput and latency";
+    h1_addr: String = ":7246".into(), "GM_H1_ADDR", "h1-addr", "address", "Clear HTTP/1.1 listen address";
+    h1_tls_addr: String = String::new(), "GM_H1_TLS_ADDR", "h1-tls-addr", "address",
+        "HTTPS HTTP/1.1 listen address; empty disables it";
+    h2_addr: String = String::new(), "GM_H2_ADDR", "h2-addr", "address", "HTTP/2 TLS listen address; empty disables it";
+    h3_addr: String = String::new(), "GM_H3_ADDR", "h3-addr", "address",
+        "HTTP/3 UDP and bootstrap TCP listen address; empty disables it";
+    tls_cert: String = String::new(), "GM_TLS_CERT", "tls-cert", "path", "TLS certificate PEM path";
+    tls_key: String = String::new(), "GM_TLS_KEY", "tls-key", "path", "TLS private key PEM path";
+    h1_public_origin: String = String::new(), "GM_H1_PUBLIC_ORIGIN", "h1-public-origin", "origin",
+        "Public origin of the native clear HTTP/1.1 listener";
+    h1_tls_public_origin: String = String::new(), "GM_H1_TLS_PUBLIC_ORIGIN", "h1-tls-public-origin", "origin",
+        "Public origin of the native HTTPS HTTP/1.1 listener";
+    h2_public_origin: String = String::new(), "GM_H2_PUBLIC_ORIGIN", "h2-public-origin", "origin",
+        "Public origin of the native HTTP/2 listener";
+    h3_public_origin: String = String::new(), "GM_H3_PUBLIC_ORIGIN", "h3-public-origin", "origin",
+        "Public origin of the native HTTP/3 listener";
+    advertised: Advertised = Advertised::All, "GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints", "names",
+        "All, none, or comma-separated native endpoint names";
+    public_origins: Vec<String> = Vec::new(), "GM_PUBLIC_ORIGINS", "public-origins", "origins",
+        "Comma-separated negotiated origins providing throughput and latency";
     public_throughput_origins: Vec<String> = Vec::new(), "GM_PUBLIC_THROUGHPUT_ORIGINS", "public-throughput-origins",
-        "comma-separated negotiated throughput `origins`";
-    public_latency_origins: Vec<String> = Vec::new(), "GM_PUBLIC_LATENCY_ORIGINS", "public-latency-origins",
-        "comma-separated WebSocket latency `origins`";
-    name: String = "graphite-meter".into(), "GM_SERVER_NAME", "name", "server `name` advertised in /preflight";
-    location: String = String::new(), "GM_SERVER_LOCATION", "location", "server `location` label";
-    result_history_default: bool = false, "GM_RESULT_HISTORY_DEFAULT", "result-history-default",
-        "save completed browser results on this device by default";
-    verbose: bool = false, "GM_VERBOSE", "verbose", "log per-second download/upload throughput";
-    max_active_measurements: usize = 256, "GM_MAX_ACTIVE_MEASUREMENTS", "max-active-measurements",
-        "maximum `number` of concurrent measurement handlers";
+        "origins", "Comma-separated negotiated throughput origins";
+    public_latency_origins: Vec<String> = Vec::new(), "GM_PUBLIC_LATENCY_ORIGINS", "public-latency-origins", "origins",
+        "Comma-separated WebSocket latency origins";
+    name: String = "graphite-meter".into(), "GM_SERVER_NAME", "name", "name", "Server name advertised in /preflight";
+    location: String = String::new(), "GM_SERVER_LOCATION", "location", "location", "Server location label";
+    result_history_default: bool = false, "GM_RESULT_HISTORY_DEFAULT", "result-history-default", "",
+        "Save completed browser results on this device by default";
+    verbose: bool = false, "GM_VERBOSE", "verbose", "", "Log per-second download/upload throughput";
+    max_active_measurements: usize = 256, "GM_MAX_ACTIVE_MEASUREMENTS", "max-active-measurements", "number",
+        "Maximum number of concurrent measurement handlers";
     max_active_measurements_per_client: usize = 32, "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-        "max-active-measurements-per-client", "maximum `number` of concurrent measurement handlers per client";
-    max_active_sessions: usize = 64, "GM_MAX_ACTIVE_SESSIONS", "max-active-sessions",
-        "maximum `number` of concurrent WebTransport sessions, a share of the measurement pool";
-    max_sessions_per_client: usize = 8, "GM_MAX_SESSIONS_PER_CLIENT", "max-sessions-per-client",
-        "maximum `number` of concurrent WebTransport sessions per client";
-    max_buffer_bytes: usize = 8 << 30, "GM_MAX_BUFFER_BYTES", "max-buffer-bytes",
-        "`bytes` of connection buffers shared by QUIC and HTTP/2";
-    max_connections: usize = 4096, "GM_MAX_CONNECTIONS", "max-connections",
-        "maximum `number` of concurrent TCP and QUIC connections";
-    max_connections_per_client: usize = 64, "GM_MAX_CONNECTIONS_PER_CLIENT", "max-connections-per-client",
-        "maximum `number` of concurrent connections per direct client";
+        "max-active-measurements-per-client", "number", "Maximum number of concurrent measurement handlers per client";
+    max_active_sessions: usize = 64, "GM_MAX_ACTIVE_SESSIONS", "max-active-sessions", "number",
+        "Maximum number of concurrent WebTransport sessions, a share of the measurement pool";
+    max_sessions_per_client: usize = 8, "GM_MAX_SESSIONS_PER_CLIENT", "max-sessions-per-client", "number",
+        "Maximum number of concurrent WebTransport sessions per client";
+    max_buffer_bytes: usize = 8 << 30, "GM_MAX_BUFFER_BYTES", "max-buffer-bytes", "bytes",
+        "Bytes of connection buffers shared by QUIC and HTTP/2";
+    max_connections: usize = 4096, "GM_MAX_CONNECTIONS", "max-connections", "number",
+        "Maximum number of concurrent TCP and QUIC connections";
+    max_connections_per_client: usize = 64, "GM_MAX_CONNECTIONS_PER_CLIENT", "max-connections-per-client", "number",
+        "Maximum number of concurrent connections per direct client";
     max_operation_duration: Duration = Duration::from_mins(5), "GM_MAX_OPERATION_DURATION",
-        "max-operation-duration", "maximum measurement operation `duration`";
+        "max-operation-duration", "duration", "Maximum measurement operation duration";
     max_session_duration: Duration = Duration::from_hours(2), "GM_MAX_SESSION_DURATION",
-        "max-session-duration", "maximum WebTransport session `duration`";
-    max_stage_duration: Duration = DEFAULT_STAGE_LIMIT, "GM_MAX_STAGE_DURATION", "max-stage-duration",
-        "longest stage `duration` clients may plan, 1s to 24h";
-    trusted_proxies: TrustedProxies = TrustedProxies::default(), "GM_TRUSTED_PROXIES", "", "";
-    auth_mode: String = "off".into(), "GM_AUTH_MODE", "auth-mode",
-        "authentication `mode`: off, password, oidc, or hybrid";
-    auth_public_url: String = String::new(), "GM_AUTH_PUBLIC_URL", "auth-public-url", "canonical HTTPS UI `origin`";
-    auth_password_hash: String = String::new(), "GM_AUTH_PASSWORD_HASH", "", "";
-    auth_password_hash_file: String = String::new(), "GM_AUTH_PASSWORD_HASH_FILE", "auth-password-hash-file",
-        "`file` containing the operator Argon2id PHC hash";
-    auth_oidc_issuer: String = String::new(), "GM_AUTH_OIDC_ISSUER", "auth-oidc-issuer", "OIDC issuer `URL`";
-    auth_oidc_client_id: String = String::new(), "GM_AUTH_OIDC_CLIENT_ID", "auth-oidc-client-id", "OIDC client `ID`";
-    auth_oidc_client_secret: String = String::new(), "GM_AUTH_OIDC_CLIENT_SECRET", "", "";
+        "max-session-duration", "duration", "Maximum WebTransport session duration";
+    max_stage_duration: Duration = DEFAULT_STAGE_LIMIT, "GM_MAX_STAGE_DURATION", "max-stage-duration", "duration",
+        "Longest stage duration clients may plan, 1 s to 24 h";
+    trusted_proxies: TrustedProxies = TrustedProxies::default(), "GM_TRUSTED_PROXIES", "", "", "";
+    auth_mode: String = "off".into(), "GM_AUTH_MODE", "auth-mode", "mode",
+        "Authentication mode: off, password, oidc, or hybrid";
+    auth_public_url: String = String::new(), "GM_AUTH_PUBLIC_URL", "auth-public-url", "origin",
+        "Canonical HTTPS UI origin";
+    auth_password_hash: String = String::new(), "GM_AUTH_PASSWORD_HASH", "", "", "";
+    auth_password_hash_file: String = String::new(), "GM_AUTH_PASSWORD_HASH_FILE", "auth-password-hash-file", "file",
+        "File containing the operator Argon2id PHC hash";
+    auth_oidc_issuer: String = String::new(), "GM_AUTH_OIDC_ISSUER", "auth-oidc-issuer", "url", "OIDC issuer URL";
+    auth_oidc_client_id: String = String::new(), "GM_AUTH_OIDC_CLIENT_ID", "auth-oidc-client-id", "id",
+        "OIDC client ID";
+    auth_oidc_client_secret: String = String::new(), "GM_AUTH_OIDC_CLIENT_SECRET", "", "", "";
     auth_oidc_client_secret_file: String = String::new(), "GM_AUTH_OIDC_CLIENT_SECRET_FILE",
-        "auth-oidc-client-secret-file", "`file` containing the OIDC client secret";
+        "auth-oidc-client-secret-file", "file", "File containing the OIDC client secret";
     auth_oidc_allowed_groups: Vec<String> = Vec::new(), "GM_AUTH_OIDC_ALLOWED_GROUPS", "auth-oidc-allowed-groups",
-        "comma-separated case-sensitive OIDC `groups`";
+        "groups", "Comma-separated case-sensitive OIDC groups";
     auth_oidc_provider_name: String = "Authelia".into(), "GM_AUTH_OIDC_PROVIDER_NAME", "auth-oidc-provider-name",
-        "OIDC provider `label`";
+        "label", "OIDC provider label";
 }
 
 /// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
@@ -336,11 +332,15 @@ impl Settings {
 }
 
 fn write_usage(usage: &mut dyn Write, flags: &[Flag<Settings>]) -> std::io::Result<()> {
-    write!(
-        usage,
-        "Usage:\n  graphite-meter [flags]\n  graphite-meter version | --version\n  graphite-meter hash-password    \
-         read a password twice on stdin, print its Argon2id hash\n  graphite-meter --legal           \
-         print the reviewed project and dependency notices\n\nFlags:\n{}",
-        flag::defaults(flags, &Settings::default())
-    )
+    const COMMANDS: &str = "Usage: graphite-meter-server [options]
+       graphite-meter-server <command>
+
+Commands:
+  version, --version  Print the version
+  hash-password       Read a password twice on stdin and print its Argon2id hash
+  --legal             Print the reviewed project and dependency notices
+
+Options:
+";
+    write!(usage, "{COMMANDS}{}", flag::options(flags, &Settings::default()))
 }

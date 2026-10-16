@@ -142,7 +142,7 @@ impl Policy {
         let trust = self.trust(request, endpoint, peer);
         let secure = trust >= Trust::Secure;
         let (method, path) = (request.method(), request.uri().path());
-        let route = Route::from_path(path);
+        let route = Route::find_by(Route::path, path);
         if trust == Trust::Foreign {
             return self.required(request, endpoint, false);
         }
@@ -345,7 +345,7 @@ impl Policy {
         if origin == Some(&self.origin) {
             Access::Cookie(self.origin.clone()).apply(headers);
         } else if let Some(origin) = origin.and_then(BrowserOrigin::parse)
-            && Route::from_path(request.uri().path()).is_some()
+            && Route::find_by(Route::path, request.uri().path()).is_some()
         {
             Access::Bearer(origin.header().clone()).apply(headers);
         }

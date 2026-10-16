@@ -229,8 +229,7 @@ impl App {
         let Some((value, bounds, range)) = span(config, row) else { return Ok(()) };
         let seconds = raw.parse::<f64>();
         let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
-        let nanos = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
-        let parsed = u64::try_from(nanos).map_or(Duration::MAX, Duration::from_nanos);
+        let parsed = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
         if !bounds.contains(&parsed) {
             return Err(format!("{} must be from {range}.", row.label()));
         }

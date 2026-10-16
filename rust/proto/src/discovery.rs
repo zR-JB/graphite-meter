@@ -10,7 +10,7 @@ pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 pub const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 pub const MAX_METADATA_BYTES: usize = 256;
-/// The stage limit of a server that advertises none.
+/// A server's stage limit unless its operator sets one.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
 /// The stage limits a server may advertise.
 pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_hours(24);
@@ -78,10 +78,8 @@ pub struct ServerInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     /// Fresh owner-checked receiver checkpoints are available.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub upload_checkpoint: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_stage_ms: Option<u64>,
+    pub max_stage_ms: u64,
     #[serde(deserialize_with = "throughput_targets")]
     pub throughput: Vec<ThroughputTarget>,
     #[serde(deserialize_with = "latency_targets")]
@@ -112,8 +110,7 @@ impl Preflight {
         if generation.is_empty() || !metadata.iter().all(|text| is_metadata(text)) {
             return Err(serde_json::Error::custom("invalid discovery metadata"));
         }
-        let limit = capabilities.max_stage_ms.map(Duration::from_millis);
-        if limit.is_some_and(|limit| !STAGE_LIMITS.contains(&limit)) {
+        if !STAGE_LIMITS.contains(&capabilities.stage_limit()) {
             return Err(serde_json::Error::custom("invalid stage limit"));
         }
         Ok(preflight)
@@ -129,7 +126,7 @@ impl Preflight {
 impl Capabilities {
     /// The longest stage a client may plan against this server.
     pub fn stage_limit(&self) -> Duration {
-        self.max_stage_ms.map_or(DEFAULT_STAGE_LIMIT, Duration::from_millis)
+        Duration::from_millis(self.max_stage_ms)
     }
 }
 
@@ -150,9 +147,10 @@ fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<
         if transport.is_empty() || protocol.is_empty() {
             return Err(D::Error::custom("a throughput target lacks its transport or protocol"));
         }
-        let (Some(transport), Some(protocol)) =
-            (ThroughputTransport::from_name(&transport), Protocol::from_name(&protocol))
-        else {
+        let (Some(transport), Some(protocol)) = (
+            ThroughputTransport::find_by(ThroughputTransport::name, &transport),
+            Protocol::find_by(Protocol::name, &protocol),
+        ) else {
             continue;
         };
         targets.push(ThroughputTarget { base_url: base_url_of(&base_url)?, transport, protocol });
@@ -172,7 +170,7 @@ fn latency_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Lat
         if transport.is_empty() {
             return Err(D::Error::custom("a latency target lacks its transport"));
         }
-        if let Some(transport) = LatencyTransport::from_name(&transport) {
+        if let Some(transport) = LatencyTransport::find_by(LatencyTransport::name, &transport) {
             targets.push(LatencyTarget { base_url: base_url_of(&base_url)?, transport });
         }
     }

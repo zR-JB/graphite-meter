@@ -1,4 +1,4 @@
-//! The trust store for server certificates, loaded once on first use from the places Go 1.27 reads.
+//! The trust store for server certificates, loaded once on first use.
 use crate::crypto::{CONFIGS, Verify, provider};
 use rustls::{
     CertificateError, DigitallySignedStruct, OtherError, RootCertStore, SignatureScheme,
@@ -20,7 +20,7 @@ use std::{
 };
 use tokio::sync::OnceCell;
 
-/// Go's Linux root files, of which the first that reads counts.
+/// Linux distributions' root bundles, of which the first that reads counts.
 #[cfg(target_os = "linux")]
 const FILES: &[&str] = &[
     "/etc/ssl/certs/ca-certificates.crt",
@@ -30,7 +30,7 @@ const FILES: &[&str] = &[
     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
     "/etc/ssl/cert.pem",
 ];
-/// Go's Linux root directories, every file of which counts.
+/// Linux root directories, every file of which counts.
 #[cfg(target_os = "linux")]
 const DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 
@@ -79,15 +79,10 @@ pub(crate) async fn verifier(verify: &Verify) -> Result<Arc<dyn ServerCertVerifi
     let Verify::Trusted(trust) = verify else {
         return Ok(Arc::new(Verifier::Insecure));
     };
-    let (file, directories) = (trust.file.clone(), trust.directories.clone());
-    let lookup = move |name: &str| match name {
-        "SSL_CERT_FILE" => file.clone(),
-        "SSL_CERT_DIR" => directories.clone(),
-        _ => None,
-    };
+    let locations = Locations::new(trust.file.clone(), trust.directories.clone());
     trust
         .verifier
-        .get_or_try_init(|| tokio::task::spawn_blocking(move || system(lookup)))
+        .get_or_try_init(|| tokio::task::spawn_blocking(move || system(locations)))
         .await
         .cloned()
 }
@@ -97,18 +92,16 @@ pub(crate) fn refusing(reason: impl Error + Send + Sync + 'static) -> Arc<dyn Se
     Arc::new(Verifier::Empty(Some(Arc::new(reason))))
 }
 
-/// The roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name, each replacing its own part of the default lists.
 #[cfg(target_os = "linux")]
-fn system(lookup: impl Fn(&str) -> Option<OsString>) -> Arc<dyn ServerCertVerifier> {
-    Arc::new(Verifier::load(&Locations::from_lookup(lookup, FILES, DIRECTORIES)))
+fn system(locations: Locations) -> Arc<dyn ServerCertVerifier> {
+    Arc::new(Verifier::load(&locations.or(FILES, DIRECTORIES)))
 }
 
 /// The platform verifier, or only the roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name when either is set.
 #[cfg(not(target_os = "linux"))]
-fn system(lookup: impl Fn(&str) -> Option<OsString>) -> Arc<dyn ServerCertVerifier> {
-    let set = |name| lookup(name).is_some_and(|value: OsString| !value.is_empty());
-    if set("SSL_CERT_FILE") || set("SSL_CERT_DIR") {
-        return Arc::new(Verifier::load(&Locations::from_lookup(lookup, &[], &[])));
+fn system(locations: Locations) -> Arc<dyn ServerCertVerifier> {
+    if !locations.files.is_empty() || !locations.directories.is_empty() {
+        return Arc::new(Verifier::load(&locations));
     }
     match rustls_platform_verifier::Verifier::new(provider()) {
         Ok(verifier) => Arc::new(verifier),
@@ -123,17 +116,24 @@ struct Locations {
 }
 
 impl Locations {
-    /// Each set, non-empty variable replaces its default list; `SSL_CERT_DIR` is a path list.
-    fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>, files: &[&str], directories: &[&str]) -> Self {
-        let set = |name| lookup(name).filter(|value| !value.is_empty());
-        let (file, directory_list) = (set("SSL_CERT_FILE"), set("SSL_CERT_DIR"));
+    /// `SSL_CERT_FILE`'s file and `SSL_CERT_DIR`'s path list.
+    fn new(file: Option<OsString>, directories: Option<OsString>) -> Self {
         Self {
-            files: file.map_or_else(|| files.iter().map(PathBuf::from).collect(), |file| vec![file.into()]),
-            directories: directory_list.map_or_else(
-                || directories.iter().map(PathBuf::from).collect(),
-                |list| std::env::split_paths(&list).collect(),
-            ),
+            files: file.into_iter().map(PathBuf::from).collect(),
+            directories: directories.map_or_else(Vec::new, |list| std::env::split_paths(&list).collect()),
         }
+    }
+
+    /// Each list left empty takes its defaults.
+    #[cfg(any(target_os = "linux", test))]
+    fn or(mut self, files: &[&str], directories: &[&str]) -> Self {
+        if self.files.is_empty() {
+            self.files = files.iter().map(PathBuf::from).collect();
+        }
+        if self.directories.is_empty() {
+            self.directories = directories.iter().map(PathBuf::from).collect();
+        }
+        self
     }
 
     /// The roots, each once, and the first failure other than a missing path, which matters only when none loaded.
@@ -175,7 +175,7 @@ fn add(roots: &mut Vec<CertificateDer<'static>>, data: &[u8]) {
     }
 }
 
-/// A link to a bare file name, as c_rehash's hash links are; Go skips them so each root loads once.
+/// A link to a bare file name, as c_rehash's hash links are, skipped so each root loads once.
 fn same_directory_link(entry: &fs::DirEntry, path: &Path) -> bool {
     entry.file_type().is_ok_and(|kind| kind.is_symlink())
         && fs::read_link(path).is_ok_and(|target| target.components().count() == 1)

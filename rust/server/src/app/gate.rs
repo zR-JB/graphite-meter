@@ -25,7 +25,7 @@ impl App {
         }
         let (endpoint, method) = (connection.endpoint, request.method());
         // Where the app is served, a method the route does not take falls through to it.
-        let route = Route::from_path(request.uri().path())
+        let route = Route::find_by(Route::path, request.uri().path())
             .filter(|&route| endpoint.mounts(route) && (!endpoint.ui() || allows(route, method)));
         let address = Address::resolve(connection.peer, request.headers(), &self.config.trusted_proxies);
         let peer = Peer::new(address);

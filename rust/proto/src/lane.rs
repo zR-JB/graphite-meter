@@ -32,12 +32,4 @@ impl LaneEnding {
             Self::Finished | Self::Lifetime | Self::Shutdown => None,
         }
     }
-
-    pub fn from_websocket_code(code: u16) -> Option<Self> {
-        Self::ALL.iter().copied().find(|end| end.websocket_code() == code)
-    }
-
-    pub fn from_webtransport_code(code: u32) -> Option<Self> {
-        Self::ALL.iter().copied().find(|end| end.webtransport_code() == code)
-    }
 }

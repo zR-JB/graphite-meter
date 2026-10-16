@@ -39,17 +39,17 @@ fn with_tls<'a>(env: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
 }
 
 #[test]
-fn flag_errors_print_go_messages_then_the_usage() {
+fn flag_errors_print_their_message_then_the_usage() {
     for (args, message) in [
-        (&["---x"][..], "bad flag syntax: ---x"),
-        (&["-nope"], "flag provided but not defined: -nope"),
+        (&["---x"][..], "unknown option ---x"),
+        (&["-nope"], "unknown option --nope"),
         (
-            &["-max-connections", "x"],
-            "invalid value \"x\" for flag -max-connections: must be an integer",
+            &["--max-connections", "x"],
+            "invalid value \"x\" for --max-connections: must be an integer",
         ),
         (
             &["-advertised-native-endpoints", "h4"],
-            "invalid value \"h4\" for flag -advertised-native-endpoints: unknown endpoint \"h4\"",
+            "invalid value \"h4\" for --advertised-native-endpoints: unknown endpoint \"h4\"",
         ),
     ] {
         let (loaded, usage) = load(&[], args);
@@ -59,7 +59,7 @@ fn flag_errors_print_go_messages_then_the_usage() {
 }
 
 #[test]
-fn help_lists_every_flag_with_its_variable_as_go_does() {
+fn help_lists_every_flag_with_its_variable() {
     for flag in ["-h", "-help", "--help"] {
         let (loaded, usage) = load(&[("GM_MAX_CONNECTIONS", "x")], &[flag]);
         assert_matches!(loaded, Ok(Loaded::Help));
@@ -71,8 +71,8 @@ fn help_lists_every_flag_with_its_variable_as_go_does() {
 fn secrets_and_proxies_have_no_flag() {
     let env_only = ["trusted-proxies", "auth-password-hash", "auth-oidc-client-secret", "server-catalog"];
     for flag in env_only.into_iter().chain(["server-catalog-file"]) {
-        assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("flag provided but not defined: -{flag}"));
-        assert!(!include_str!("usage.txt").contains(&format!("-{flag} ")), "{flag}");
+        assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("unknown option --{flag}"));
+        assert!(!include_str!("usage.txt").contains(&format!("--{flag} ")), "{flag}");
     }
 }
 
@@ -98,7 +98,8 @@ fn unset_lifetimes_cover_the_stage_limit() {
     assert_eq!(error(&explicit, &[]), message);
     let zero = "GM_MAX_OPERATION_DURATION must be greater than zero";
     assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "0")], &[]), zero);
-    assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "-1s")], &[]), zero);
+    let negative = "GM_MAX_OPERATION_DURATION: a duration cannot be negative";
+    assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "-1s")], &[]), negative);
     for stage in ["999ms", "24h1s", "0"] {
         let message = "GM_MAX_STAGE_DURATION must be from 1s to 24h";
         assert_eq!(error(&[("GM_MAX_STAGE_DURATION", stage)], &[]), message, "{stage}");
@@ -224,7 +225,7 @@ fn dedupe<'a>(env: Vec<(&'a str, &'a str)>) -> Vec<(&'a str, &'a str)> {
 }
 
 #[test]
-fn authentication_refusals_read_as_go_does() {
+fn authentication_refusals_name_the_setting() {
     let with = |changes: &[(&'static str, &'static str)]| {
         let mut env = password_auth();
         env.extend_from_slice(changes);

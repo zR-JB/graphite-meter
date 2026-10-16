@@ -160,7 +160,7 @@ impl Bus {
 
 /// The fault a close frame names: its lane ending, else a lost bus.
 fn closed(client: &Client, origin: &Origin, frame: Option<CloseFrame>) -> Fault {
-    match frame.and_then(|frame| LaneEnding::from_websocket_code(frame.code.into())) {
+    match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into())) {
         Some(ending) => client.ending(origin, ending),
         None => Fault::Lost("latency bus closed".into()),
     }

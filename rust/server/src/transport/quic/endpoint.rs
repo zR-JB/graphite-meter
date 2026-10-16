@@ -19,7 +19,10 @@ use std::{
     net::SocketAddr,
     num::NonZeroUsize,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
 };
 use tokio::runtime::Handle;
@@ -182,9 +185,15 @@ impl Udp {
     fn bind(address: SocketAddr, sockets: usize, runtime: &Handle) -> Result<Self, String> {
         let _entered = runtime.enter();
         let bound = graphite_meter_net::bind_udp(address, sockets);
-        let (socket, warning) = bound.map_err(|error| path_error("listen udp", &address.to_string(), &error))?;
-        if let Some(warning) = warning {
-            log!(Warn, "udp", "{warning}");
+        let (socket, shortfall) = bound.map_err(|error| path_error("listen udp", &address.to_string(), &error))?;
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if let Some(shortfall) = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed)) {
+            log!(
+                Warn,
+                "udp",
+                "UDP buffer too small for QUIC above about 1 Gbit/s: {shortfall}; raise net.core.rmem_max and \
+                 net.core.wmem_max on the host (docs/DEPLOYMENT.md, UDP buffers)"
+            );
         }
         let buffers = socket2::SockRef::from(&socket);
         let kernel = buffers

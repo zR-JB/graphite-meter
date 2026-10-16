@@ -3,10 +3,10 @@ use graphite_meter_proto::lane::IDLE_BOUND;
 use noq::{IdleTimeout, TransportConfig, VarInt};
 
 /// The receive window autotuning grows each stream to.
-pub const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
+const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
 /// The receive window autotuning grows each connection to.
 pub const RECEIVE_WINDOW: u32 = 48 << 20;
-/// quic-go's first connection receive window, from which autotuning starts.
+/// The first connection receive window, from which autotuning starts.
 pub const INITIAL_RECEIVE_WINDOW: u32 = 768 << 10;
 /// A server connection's receive window until an admitted upload reads: one maximal HTTP/3 frame.
 pub const RECEIVE_WINDOW_FLOOR: u32 = 64 << 10;
@@ -17,7 +17,7 @@ pub const MAX_SEND_WINDOW: u64 = 16 << 20;
 
 /// The unidirectional streams a client accepts from a server.
 const CLIENT_UNI_STREAMS: u32 = 36;
-/// Go's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
+/// The client's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
 const SERVER_UNI_STREAMS: u32 = 3 + 16 + 4;
 const CLIENT_DATAGRAM_BUFFER: usize = 256 << 10;
 const SERVER_DATAGRAM_BUFFER: usize = 64 << 10;

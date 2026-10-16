@@ -209,13 +209,54 @@ async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
         assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
     }
     for (method, status, reason) in [
-        (0xff, 0, "no acceptable authentication methods"),
-        (2, 0, "unsupported authentication method 2"),
-        (0, 5, "unknown error connection refused"),
+        (0xff, 0, "accepts none of the offered authentication methods"),
+        (2, 0, "asked for unsupported authentication method 2"),
+        (0, 5, "refused: connection refused"),
     ] {
         let (proxy, _) = socks(method, status).await;
         let connector = connector("HTTP_PROXY", &format!("socks5://{proxy}"), Verify::trusted());
         let refused = connect(&connector, "http://meter.test").await.err().unwrap();
-        assert_eq!(refused.to_string(), format!("socks connect: {reason}"));
+        assert_eq!(refused.to_string(), format!("SOCKS5 proxy {reason}"));
     }
+}
+
+#[tokio::test]
+async fn socks5_offers_a_login_only_when_the_proxy_url_carries_one() {
+    for (answer, refused) in [(0, None), (1, Some("SOCKS5 proxy refused the username and password"))] {
+        let (proxy, sent) = peer(move |mut stream| async move {
+            let mut greeting = [0; 4];
+            stream.read_exact(&mut greeting).await.unwrap();
+            stream.write_all(&[5, 2]).await.unwrap();
+            let mut login = [0; 2 + 4 + 1 + 3];
+            stream.read_exact(&mut login).await.unwrap();
+            stream.write_all(&[1, answer]).await.unwrap();
+            if answer == 0 {
+                let mut request = [0; 10];
+                stream.read_exact(&mut request).await.unwrap();
+                stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+            }
+            [&greeting[..], &login].concat()
+        })
+        .await;
+        let connector = connector("HTTP_PROXY", &format!("socks5://user:p%3Aw@{proxy}"), Verify::trusted());
+        let result = connect(&connector, "http://192.0.2.1").await;
+        assert_eq!(result.err().map(|error| error.to_string()).as_deref(), refused);
+        assert_eq!(sent.await.unwrap(), b"\x05\x02\x00\x02\x01\x04user\x03p:w");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
+    let (address, _target) = peer(|stream| async move {
+        std::future::pending::<()>().await;
+        drop(stream);
+    })
+    .await;
+    let started = Instant::now();
+    let refused = connect(&Connector::new(Proxy::default(), Verify::Insecure), &format!("https://{address}")).await;
+    let Err(ConnectError::Unreachable(error)) = &refused else {
+        panic!("{:?}", refused.err());
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!((Duration::from_secs(10)..Duration::from_secs(19)).contains(&started.elapsed()));
 }

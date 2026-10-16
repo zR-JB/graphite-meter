@@ -94,10 +94,13 @@ impl Fault {
         let retry_after = seconds
             .and_then(|value| value.parse().ok())
             .map(|seconds: u32| Duration::from_secs(seconds.into()));
-        Some(match header("x-graphite-upload-refusal").and_then(UploadRefusal::from_name) {
-            Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
-            None => Self::Status { status, from, retry_after },
-        })
+        Some(
+            match header("x-graphite-upload-refusal").and_then(|name| UploadRefusal::find_by(UploadRefusal::name, name))
+            {
+                Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
+                None => Self::Status { status, from, retry_after },
+            },
+        )
     }
 
     /// The fault an upload refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.

@@ -5,7 +5,7 @@ use graphite_meter_proto::{
     catalog::{MAX_SELECTED, ServerId},
     discovery::{LatencyTransport, Protocol, STAGE_LIMITS, ThroughputTransport},
     duration,
-    flag::{self, Flag, Kind},
+    flag::{self, Flag},
     lane::IDLE_BOUND,
     origin::Origin,
     text::quote,
@@ -247,7 +247,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
 
 /// The usage text for `program`.
 pub fn usage(program: &str) -> String {
-    format!("Usage of {program}:\n{}", flag::defaults(&FLAGS, &Flags::default()))
+    format!("Usage: {program} [options]\n\nOptions:\n{}", flag::options(&FLAGS, &Flags::default()))
 }
 
 /// What the flags set; path choices stay text until every flag is read, so the last one given counts.
@@ -301,10 +301,6 @@ fn choice<T: Copy>(what: &str, text: &str, choices: &[T], name: fn(T) -> &'stati
     Err(format!("invalid {what} {}: use auto, {}, or {last}", quote(text), others.join(", ")))
 }
 
-fn boolean(text: &str) -> Result<bool, String> {
-    flag::parse_bool(text).ok_or_else(|| "parse error".into())
-}
-
 /// A decimal count; a negative one reads as a count validation refuses.
 fn count(text: &str) -> Result<usize, String> {
     match text.parse::<i64>() {
@@ -314,12 +310,6 @@ fn count(text: &str) -> Result<usize, String> {
         }
         Err(_) => Err("parse error".into()),
     }
-}
-
-/// A duration such as `1m30s`; a negative one reads as `negative`.
-fn span(text: &str, negative: Duration) -> Result<Duration, String> {
-    let nanos = duration::parse(text).map_err(|_| "parse error")?;
-    Ok(u64::try_from(nanos).map_or(negative, Duration::from_nanos))
 }
 
 fn origin(text: &str) -> Result<Option<Origin>, String> {
@@ -438,7 +428,7 @@ fn cadence(text: &str) -> Result<Cadence, String> {
     if let Some((_, cadence)) = named.iter().find(|(name, _)| name.eq_ignore_ascii_case(text)) {
         return Ok(*cadence);
     }
-    let spacing = span(text, Duration::ZERO).map(Cadence::Every);
+    let spacing = duration::parse(text).map(Cadence::Every);
     spacing.map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms".into())
 }
 
@@ -477,10 +467,10 @@ fn show_origin(origin: &Option<Origin>) -> String {
 
 /// One flag row; `show` gives the value its usage default prints.
 macro_rules! row {
-    ($name:literal, $kind:ident, $usage:expr, |$flags:ident, $text:ident| $set:expr, |$shown:ident| $show:expr) => {
+    ($name:literal, $value:literal, $usage:expr, |$flags:ident, $text:ident| $set:expr, |$shown:ident| $show:expr) => {
         Flag {
             name: $name,
-            kind: Kind::$kind,
+            value: $value,
             usage: $usage,
             env: None,
             set: |$flags: &mut Flags, $text: &str| {
@@ -492,14 +482,13 @@ macro_rules! row {
     };
 }
 
-/// A stage's window; a negative one reads as one validation refuses.
 macro_rules! stage_duration {
     ($name:literal, $stage:ident, $usage:literal) => {
         row!(
             $name,
-            Duration,
+            "duration",
             $usage,
-            |f, v| f.config.durations[Stage::$stage.index()] = span(v, Duration::ZERO)?,
+            |f, v| f.config.durations[Stage::$stage.index()] = duration::parse(v)?,
             |f| duration::format(f.config.durations[Stage::$stage.index()])
         )
     };
@@ -507,47 +496,48 @@ macro_rules! stage_duration {
 
 #[rustfmt::skip]
 const FLAGS: [Flag<Flags>; 22] = [
-    row!("auto-streams", Int, "maximum H1 streams per direction",
+    row!("auto-streams", "count", "Maximum H1 streams per direction",
         |f, v| f.config.streams.auto = count(v)?, |f| f.config.streams.auto.to_string()),
-    stage_duration!("bidirectional-duration", Bidirectional, "bidirectional measurement duration"),
-    stage_duration!("download-duration", Download, "download measurement duration"),
-    row!("insecure", Bool, "skip TLS certificate verification",
-        |f, v| f.config.insecure = boolean(v)?, |f| f.config.insecure.to_string()),
-    stage_duration!("latency-duration", Latency, "latency measurement duration"),
-    row!("latency-origin", String, "latency origin from discovery, or auto",
+    stage_duration!("bidirectional-duration", Bidirectional, "Bidirectional measurement duration"),
+    stage_duration!("download-duration", Download, "Download measurement duration"),
+    row!("insecure", "", "Skip TLS certificate verification",
+        |f, v| f.config.insecure = flag::parse_bool(v)?, |f| f.config.insecure.to_string()),
+    stage_duration!("latency-duration", Latency, "Latency measurement duration"),
+    row!("latency-origin", "origin", "Latency origin from discovery, or auto",
         |f, v| f.config.paths.latency_origin = origin(v)?, |f| show_origin(&f.config.paths.latency_origin)),
-    row!("latency-transport", String, "latency transport: auto, websocket, or webtransport",
+    row!("latency-transport", "name", "Latency transport: auto, websocket, or webtransport",
         |f, v| v.clone_into(&mut f.latency_transport), |_f| "auto".into()),
-    row!("legal", Bool, "print the licences of the bundled software and exit",
-        |f, v| f.legal = boolean(v)?, |f| f.legal.to_string()),
-    row!("loaded-latency", Bool, "measure latency while transfer stages are loaded",
-        |f, v| f.config.loaded_latency = boolean(v)?, |f| f.config.loaded_latency.to_string()),
-    row!("loaded-ping", Value, "loaded latency cadence (default medium): reply-driven, fast, medium, slow, or a \
-        duration from 80ms to 15s", |f, v| f.config.loaded_ping = cadence(v)?, |_f| String::new()),
-    row!("ping", Value, "idle latency cadence (default reply-driven): reply-driven, fast, medium, slow, or a \
-        duration from 80ms to 15s", |f, v| f.config.ping = cadence(v)?, |_f| String::new()),
-    row!("report", Bool,
-        "run once without the interface and print the final report (automatic when stdout is not a terminal)",
-        |f, v| f.config.report = boolean(v)?, |f| f.config.report.to_string()),
-    row!("server", Value, "selected catalogue ID (repeat up to 4 times; omission uses operator defaults)",
+    row!("legal", "", "Print the licenses of the bundled software and exit",
+        |f, v| f.legal = flag::parse_bool(v)?, |f| f.legal.to_string()),
+    row!("loaded-latency", "", "Measure latency while transfer stages are loaded",
+        |f, v| f.config.loaded_latency = flag::parse_bool(v)?, |f| f.config.loaded_latency.to_string()),
+    row!("loaded-ping", "cadence", "Loaded latency cadence: reply-driven, fast, medium, slow, or a duration from \
+        80 ms to 15 s", |f, v| f.config.loaded_ping = cadence(v)?, |_f| "medium".into()),
+    row!("ping", "cadence", "Idle latency cadence: reply-driven, fast, medium, slow, or a duration from 80 ms to \
+        15 s", |f, v| f.config.ping = cadence(v)?, |_f| "reply-driven".into()),
+    row!("report", "",
+        "Run once without the interface and print the final report (automatic when stdout is not a terminal)",
+        |f, v| f.config.report = flag::parse_bool(v)?, |f| f.config.report.to_string()),
+    row!("server", "id", "Selected catalogue ID (repeat up to 4 times; omission uses operator defaults)",
         |f, v| server(&mut f.config.servers, v)?, |_f| String::new()),
-    row!("stages", Value, "comma-separated stages: latency (ping), download (down), upload (up), bidirectional (bidi) \
-        (default latency,download,upload)", |f, v| f.config.stages = stages(v)?, |_f| String::new()),
-    row!("streams", Int, "force exact streams per server and direction (0 = automatic; at most 14)",
+    row!("stages", "list", "Comma-separated stages: latency (ping), download (down), upload (up), bidirectional \
+        (bidi)", |f, v| f.config.stages = stages(v)?, |_f| "latency,download,upload".into()),
+    row!("streams", "count", "Force exact streams per server and direction (0 = automatic; at most 14)",
         |f, v| f.config.streams.forced = NonZero::new(count(v)?),
         |f| f.config.streams.forced.map_or(0, NonZero::get).to_string()),
-    row!("throughput-origin", String, "throughput origin from discovery, or auto",
+    row!("throughput-origin", "origin", "Throughput origin from discovery, or auto",
         |f, v| f.config.paths.throughput_origin = origin(v)?, |f| show_origin(&f.config.paths.throughput_origin)),
-    row!("throughput-protocol", String, "protocol for a negotiated throughput origin: auto, http1, http2, or http3",
+    row!("throughput-protocol", "name", "Protocol for a negotiated throughput origin: auto, http1, http2, or http3",
         |f, v| v.clone_into(&mut f.protocol), |_f| "auto".into()),
-    row!("throughput-transport", String, "throughput transport: auto, fetch-stream, or webtransport",
+    row!("throughput-transport", "name", "Throughput transport: auto, fetch-stream, or webtransport",
         |f, v| v.clone_into(&mut f.throughput_transport), |_f| "auto".into()),
-    stage_duration!("upload-duration", Upload, "upload measurement duration"),
-    row!("url", String, "origin of the operator server catalogue",
+    stage_duration!("upload-duration", Upload, "Upload measurement duration"),
+    row!("url", "origin", "Origin of the operator server catalogue",
         |f, v| f.config.url = url(v)?, |_f| String::new()),
-    row!("version", Bool, "print version and exit", |f, v| f.version = boolean(v)?, |f| f.version.to_string()),
-    row!("warmup", Duration, "per-stage warmup duration",
-        |f, v| f.config.warmup = span(v, Duration::MAX)?, |f| duration::format(f.config.warmup)),
+    row!("version", "", "Print version and exit",
+        |f, v| f.version = flag::parse_bool(v)?, |f| f.version.to_string()),
+    row!("warmup", "duration", "Per-stage warmup duration",
+        |f, v| f.config.warmup = duration::parse(v)?, |f| duration::format(f.config.warmup)),
 ];
 
 #[cfg(test)]

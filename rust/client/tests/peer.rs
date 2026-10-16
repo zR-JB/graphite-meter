@@ -289,7 +289,7 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
 /// A catalogue of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
 fn discovery(head: &str, checkpoints: bool, extra: &str) -> Option<String> {
     let preflight = format!(
-        r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}}}}"#
+        r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"maxStageMs":300000,"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}}}}"#
     );
     match target(head) {
         "/servers" => Some(ok(r#"{"servers":[{"id":"self","url":".","name":"Peer"}]}"#)),

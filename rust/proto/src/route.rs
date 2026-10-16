@@ -41,10 +41,3 @@ table! {
         UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Kind::Http, POST),
     }
 }
-
-impl Route {
-    /// The route mounted at exactly `path`, without URL decoding or slash normalization.
-    pub fn from_path(path: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|route| route.path() == path)
-    }
-}

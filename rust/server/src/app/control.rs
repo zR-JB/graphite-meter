@@ -48,10 +48,9 @@ impl App {
     /// Who this server is and the targets it offers, based on the host the request named.
     pub(super) fn preflight<B>(&self, request: &Request<B>) -> Preflight {
         let host = request_host(request);
-        let stage = u64::try_from(self.config.lifetimes.stage.as_millis()).ok();
         let mut offered = Capabilities {
             upload_checkpoint: true,
-            max_stage_ms: stage,
+            max_stage_ms: u64::try_from(self.config.lifetimes.stage.as_millis()).unwrap_or(u64::MAX),
             throughput: vec![],
             latency: vec![],
         };

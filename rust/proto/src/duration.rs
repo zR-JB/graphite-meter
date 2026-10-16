@@ -1,131 +1,88 @@
-//! Go's `time.Duration` text, as flags, environment variables and usage defaults spell durations.
+//! Durations as flags and environment variables spell them: `800ms`, `10s`, `1m30s`, `1.5h`.
 
 use std::time::Duration;
 
-const UNITS: [(&str, u64); 8] = [
+const UNITS: [(&str, u128); 6] = [
     ("ns", 1),
     ("us", 1_000),
-    ("\u{b5}s", 1_000),
-    ("\u{3bc}s", 1_000),
     ("ms", 1_000_000),
     ("s", 1_000_000_000),
     ("m", 60_000_000_000),
     ("h", 3_600_000_000_000),
 ];
-const LIMIT: u64 = 1 << 63;
+/// Fraction digits past this many stay below a nanosecond in every unit.
+const FRACTION_DIGITS: usize = 20;
+const INVALID: &str = "use a duration such as 800ms, 10s or 1m30s";
+const TOO_LONG: &str = "duration too long";
 
-/// Parses Go's duration syntax, such as `1h30m` or `-1.5s`, into signed nanoseconds as `time.ParseDuration` does.
-pub fn parse(text: &str) -> Result<i64, String> {
-    let invalid = || format!("time: invalid duration {}", quote(text.as_bytes()));
-    let (negative, mut rest) = match text.as_bytes() {
-        [b'-', rest @ ..] => (true, rest),
-        [b'+', rest @ ..] => (false, rest),
-        rest => (false, rest),
-    };
-    match rest {
-        b"0" => return Ok(0),
-        [] => return Err(invalid()),
+/// Parses `0` or numbers with units, such as `1h30m` or `1.5s`; fractions are exact to the nanosecond.
+pub fn parse(text: &str) -> Result<Duration, &'static str> {
+    match text {
+        "0" => return Ok(Duration::ZERO),
+        "" => return Err(INVALID),
+        _ if text.starts_with('-') => return Err("a duration cannot be negative"),
         _ => {}
     }
-    let number_byte = |byte: &u8| *byte == b'.' || byte.is_ascii_digit();
-    let mut total = 0_u64;
-    while let Some(first) = rest.first() {
-        if !number_byte(first) {
-            return Err(invalid());
-        }
-        let (whole, after_whole) = leading_int(rest).ok_or_else(invalid)?;
-        let (fraction, scale, after_fraction) = match after_whole.strip_prefix(b".") {
-            Some(digits) => leading_fraction(digits),
-            None => (0, 1.0, after_whole),
+    let (mut rest, mut nanos) = (text.as_bytes(), 0_u128);
+    while !rest.is_empty() {
+        let (whole, after) = digits(rest);
+        let (fraction, after) = after.strip_prefix(b".").map_or((&b""[..], after), digits);
+        let (unit, after) = after.split_at(after.iter().take_while(|byte| byte.is_ascii_alphabetic()).count());
+        let unit = UNITS
+            .iter()
+            .find(|(name, _)| name.as_bytes() == unit)
+            .map(|&(_, nanos)| nanos);
+        let Some(unit) = unit.filter(|_| !whole.is_empty() || !fraction.is_empty()) else {
+            return Err(INVALID);
         };
-        if !rest[..rest.len() - after_fraction.len()].iter().any(u8::is_ascii_digit) {
-            return Err(invalid());
-        }
-        let unit = after_fraction.split(number_byte).next().unwrap_or_default();
-        rest = &after_fraction[unit.len()..];
-        if unit.is_empty() {
-            return Err(format!("time: missing unit in duration {}", quote(text.as_bytes())));
-        }
-        let Some(&(_, unit_nanos)) = UNITS.iter().find(|(name, _)| name.as_bytes() == unit) else {
-            let (unit, text) = (quote(unit), quote(text.as_bytes()));
-            return Err(format!("time: unknown unit {unit} in duration {text}"));
-        };
-        if whole > LIMIT / unit_nanos {
-            return Err(invalid());
-        }
-        // Go multiplies the fraction by `unit / scale` in floating point.
-        let nanos = whole * unit_nanos + (fraction as f64 * (unit_nanos as f64 / scale)) as u64;
-        let sum = total.checked_add(nanos).filter(|&sum| nanos <= LIMIT && sum <= LIMIT);
-        total = sum.ok_or_else(invalid)?;
+        let fraction = &fraction[..fraction.len().min(FRACTION_DIGITS)];
+        let fraction_nanos = decimal(fraction).ok_or(TOO_LONG)? * unit / 10_u128.pow(fraction.len() as u32);
+        nanos = decimal(whole)
+            .and_then(|whole| whole.checked_mul(unit)?.checked_add(fraction_nanos)?.checked_add(nanos))
+            .ok_or(TOO_LONG)?;
+        rest = after;
     }
-    match negative {
-        true => Ok(total.cast_signed().wrapping_neg()),
-        false => i64::try_from(total).map_err(|_| invalid()),
-    }
+    u64::try_from(nanos).map(Duration::from_nanos).map_err(|_| TOO_LONG)
 }
 
-/// The leading digits as a number of at most 2^63.
-fn leading_int(bytes: &[u8]) -> Option<(u64, &[u8])> {
-    let (digits, rest) = bytes.split_at(bytes.iter().take_while(|byte| byte.is_ascii_digit()).count());
-    let value = digits.iter().try_fold(0, |value, &digit| append(value, digit))?;
-    Some((value, rest))
+fn digits(bytes: &[u8]) -> (&[u8], &[u8]) {
+    bytes.split_at(bytes.iter().take_while(|byte| byte.is_ascii_digit()).count())
 }
 
-/// The leading digits as a numerator and its power-of-ten scale; digits past 2^63 are read and dropped.
-fn leading_fraction(bytes: &[u8]) -> (u64, f64, &[u8]) {
-    let (digits, rest) = bytes.split_at(bytes.iter().take_while(|byte| byte.is_ascii_digit()).count());
-    let (mut value, mut scale) = (0, 1.0);
-    for &digit in digits {
-        let Some(next) = append(value, digit) else { break };
-        (value, scale) = (next, scale * 10.0);
-    }
-    (value, scale, rest)
+fn decimal(digits: &[u8]) -> Option<u128> {
+    digits
+        .iter()
+        .try_fold(0_u128, |value, &digit| value.checked_mul(10)?.checked_add(u128::from(digit - b'0')))
 }
 
-/// `value` with a decimal digit appended, while it stays at most 2^63.
-fn append(value: u64, digit: u8) -> Option<u64> {
-    value
-        .checked_mul(10)?
-        .checked_add(u64::from(digit - b'0'))
-        .filter(|&value| value <= LIMIT)
-}
-
-/// Go's `time` quoting: bytes outside printable ASCII as `\x` escapes.
-fn quote(text: &[u8]) -> String {
-    let mut quoted = String::from('"');
-    for &byte in text {
-        match byte {
-            b'"' | b'\\' => quoted.extend(['\\', char::from(byte)]),
-            b' '..=0x7f => quoted.push(char::from(byte)),
-            _ => quoted.push_str(&format!("\\x{byte:02x}")),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
-/// Formats a duration as Go's `Duration.String`, such as `5m0s` or `1.5ms`.
+/// Formats a duration as `parse` reads it, such as `5m`, `1m30s`, `1.5s` or `800ms`.
 pub fn format(duration: Duration) -> String {
     let nanos = duration.as_nanos();
     match nanos {
         0 => "0s".into(),
         1..1_000 => format!("{nanos}ns"),
-        1_000..1_000_000 => format!("{}\u{b5}s", decimal(nanos, 1_000)),
-        1_000_000..1_000_000_000 => format!("{}ms", decimal(nanos, 1_000_000)),
+        1_000..1_000_000 => format!("{}us", fixed(nanos, 1_000)),
+        1_000_000..1_000_000_000 => format!("{}ms", fixed(nanos, 1_000_000)),
         _ => {
-            let (hours, minutes) = (nanos / 3_600_000_000_000, nanos / 60_000_000_000 % 60);
-            let seconds = decimal(nanos % 60_000_000_000, 1_000_000_000);
-            match (hours, minutes) {
-                (0, 0) => format!("{seconds}s"),
-                (0, _) => format!("{minutes}m{seconds}s"),
-                _ => format!("{hours}h{minutes}m{seconds}s"),
+            let (hours, minutes, seconds) =
+                (nanos / 3_600_000_000_000, nanos / 60_000_000_000 % 60, nanos % 60_000_000_000);
+            let mut text = String::new();
+            if hours > 0 {
+                text += &format!("{hours}h");
             }
+            if minutes > 0 {
+                text += &format!("{minutes}m");
+            }
+            if seconds > 0 {
+                text += &format!("{}s", fixed(seconds, 1_000_000_000));
+            }
+            text
         }
     }
 }
 
 /// `value / scale` in decimal, without trailing zeros in its fraction.
-fn decimal(value: u128, scale: u128) -> String {
+fn fixed(value: u128, scale: u128) -> String {
     let (whole, fraction) = (value / scale, value % scale);
     if fraction == 0 {
         return whole.to_string();
