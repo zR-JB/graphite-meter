@@ -1,10 +1,12 @@
+import { upgradeRecord } from "../src/app/history/records";
 import { countSaves, home, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
 const base = Date.UTC(2026, 7, 28, 12);
 
-function record(index: number, completedAt = base - index * 60_000) {
+/** A row as schema 4 saved it, before database version 3. */
+function legacy(index: number, completedAt = base - index * 60_000) {
   const lane = (rate: number) => ({
     reportedBytesPerSec: rate,
     peakBytesPerSec: rate * 1.08,
@@ -69,6 +71,8 @@ function record(index: number, completedAt = base - index * 60_000) {
   };
 }
 
+const record = (index: number, completedAt?: number) => upgradeRecord(legacy(index, completedAt))!;
+
 interface Archive {
   records: unknown[];
   clears?: unknown;
@@ -87,10 +91,7 @@ function seed(page: Page, archive: Archive) {
           database
             .createObjectStore(db.resultsStore, { keyPath: db.resultKeyPath })
             .createIndex(db.completedAtIndex, db.completedAtIndex);
-          if (version === undefined)
-            database.createObjectStore(db.metadataStore, {
-              keyPath: db.metadataKeyPath,
-            });
+          database.createObjectStore(db.metadataStore, { keyPath: db.metadataKeyPath });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
@@ -237,7 +238,7 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await page.setViewportSize({ width: 390, height: 844 });
   await history(page);
   const options = page.getByRole("dialog", { name: "History view options" });
-  await page.getByRole("button", { name: "Choose columns and sort order" }).click();
+  await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(options).toBeVisible();
   await page.press("Escape");
   await page.locator(".result-row").click();
@@ -249,7 +250,7 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   await seed(page, { records: [record(1)] });
   await page.setViewportSize({ width: 1280, height: 800 });
   await history(page);
-  await page.getByRole("button", { name: "Choose columns and sort order" }).click();
+  await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "History view options" })).toBeVisible();
   // Each order: whether it is chosen, a tab stop and focused.
   const orders = () =>
@@ -336,17 +337,23 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
   await expect(handle).toHaveCount(0);
 });
 
-test("unsupported and malformed rows are skipped, kept and clearable", async (page) => {
+test("version 2's readable rows are upgraded; unsupported and malformed rows are skipped, kept and clearable", async (page) => {
   await fixturePage(page);
-  const current = record(1);
-  const old = [{ ...record(2), schemaVersion: 1 }, { ...record(3), schemaVersion: 2 }, record(4, 1e20)];
-  const broken = record(5);
+  const readable = legacy(1);
+  const old = [{ ...legacy(2), schemaVersion: 1 }, { ...legacy(3), schemaVersion: 2 }, legacy(4, 1e20)];
+  const broken = legacy(5);
   Object.assign(broken.stages.latency.result, { reportedMs: "fast" });
-  await seed(page, { records: [current, broken, ...old] });
+  await seed(page, { records: [readable, broken, ...old], version: 2 });
   const before = await stored(page);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(1);
-  await expect(page.locator(".history-workspace")).toContainText("4 unsupported or malformed records were ignored.");
+  await expect(page.locator(".history-workspace")).toContainText("4 unreadable results were skipped.");
+  const upgraded = {
+    ...before,
+    version: HISTORY_DB.version,
+    records: before.records.map((row: any) => (row.id === readable.id ? upgradeRecord(row) : row)),
+  };
+  expect(await stored(page)).toEqual(upgraded);
   const unreadable = page.getByRole("heading", {
     name: "Unreadable saved result",
   });
@@ -356,14 +363,14 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
   }
   await page.reload();
   await expect(unreadable).toBeVisible();
-  expect(await stored(page)).toEqual(before);
+  expect(await stored(page)).toEqual(upgraded);
 
   const management = page.getByRole("button", { name: "History actions" });
   await management.click();
-  await page.getByRole("menuitem", { name: "Clear history" }).click();
+  await page.getByRole("menuitem", { name: "Clear History" }).click();
   await page
-    .getByRole("alertdialog", { name: "Clear history?" })
-    .getByRole("button", { name: "Clear history" })
+    .getByRole("alertdialog", { name: "Clear History?" })
+    .getByRole("button", { name: "Clear History" })
     .click();
   await expect(page.getByRole("heading", { name: "No saved results" })).toBeVisible();
   expect((await stored(page)).records).toEqual([]);
@@ -396,10 +403,10 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
   await expect.poll(async () => (await stored(page)).records.length, { timeout: 20_000 }).toBe(4);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(3);
-  await expect(page.locator(".history-workspace")).toContainText("1 unsupported or malformed record was ignored.");
+  await expect(page.locator(".history-workspace")).toContainText("1 unreadable result was skipped.");
 });
 
-test("History never waits on another version's connection and never changes its database", async (page) => {
+test("History refuses other database versions at once and on Retry, and never changes them", async (page) => {
   const refusal = page.getByRole("heading", { name: "History is unavailable" });
   await fixturePage(page);
   await seed(page, { records: [record(1)] });
@@ -461,32 +468,19 @@ test("History never waits on another version's connection and never changes its 
       pending: [],
     });
   expect(await stored(page)).toEqual(before);
-});
-
-test("History refuses other database versions without changing them", async (page) => {
-  for (const version of [1, HISTORY_DB.version + 1]) {
-    await fixturePage(page);
-    await seed(page, { records: [{ id: "preserved" }], version });
-    const before = await stored(page);
-    await history(page);
-    const refusal = page.getByRole("heading", {
-      name: "History is unavailable",
-    });
-    await expect(refusal).toBeVisible(OPEN_BOUND);
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    // The refusal shows before an upgrade's abort settles, and was already shown before Retry. Chrome 153's
-    // renderer crashes when an open races an aborting upgrade, so read once both of History's opens settled.
-    await expect
-      .poll(async () => {
-        const { opens } = await page.storage();
-        const history = opens.filter((o) => o.version === HISTORY_DB.version);
-        const settled = history.filter(({ events }) => events.some((event) => /^(success|error)/.test(event)));
-        return { opened: history.length, settled: settled.length };
-      }, OPEN_BOUND)
-      .toEqual({ opened: 2, settled: 2 });
-    await expect(refusal).toBeVisible(OPEN_BOUND);
-    expect(await stored(page)).toEqual(before);
-  }
+  // Chrome 153's renderer crashes when an open races an aborting upgrade, so read once Retry's open has settled.
+  const tried = (await page.storage()).opens.length;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const { opens } = await page.storage();
+      return (
+        opens.length > tried && opens.every(({ events }) => events.some((event) => /^(success|error)/.test(event)))
+      );
+    }, OPEN_BOUND)
+    .toBe(true);
+  await expect(refusal).toBeVisible(OPEN_BOUND);
+  expect(await stored(page)).toEqual(before);
 });
 
 test("a result History refused to save says so, and starting over, a new run or leaving asks first", async (page) => {
@@ -648,12 +642,12 @@ test("Up and Down open the results beside the open one on its history entry, pas
   await page.press("Escape");
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/history");
   await expect(row).toBeFocused();
-  // Past the newest result Up does nothing.
   await history(page, id(1));
   await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
+  // Past the newest result Up does nothing, so Down then opens the second.
   await page.press("ArrowUp");
-  await Bun.sleep(200);
-  expect(await open()).toBe(id(1));
+  await page.press("ArrowDown");
+  await expect.poll(open).toBe(id(2));
 });
 
 test("closing a linked result far down the list returns to its row", async (page) => {

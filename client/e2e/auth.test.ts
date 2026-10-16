@@ -87,7 +87,7 @@ test("signing out lands on the signed-out notice, even with a token another sign
     document.querySelector<HTMLInputElement>('form.account input[name="csrf"]')!.value = "replaced";
   });
   await signOut.click();
-  await expect(page.getByRole("status")).toHaveText("You're signed out.");
+  await expect(page.getByRole("status")).toHaveText("You are signed out.");
   expect(await page.evaluate(() => location.search)).toBe("?reason=signed_out");
 });
 
@@ -132,7 +132,7 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
     });
     await savedResult(page);
     await signOut.click();
-    await expect(page.getByRole("status")).toHaveText("You're signed out.");
+    await expect(page.getByRole("status")).toHaveText("You are signed out.");
   } finally {
     vault.kill("SIGKILL");
   }
@@ -228,7 +228,7 @@ test("an HTTP interface explains a protected HTTPS refusal", async (page) => {
   await expect(settings.locator('.server-status[data-state="verified"]')).toHaveCount(2, { timeout: 15_000 });
 });
 
-test("a full remote login offers renewal instead of an approval link", async (page) => {
+test("a full remote sign-in offers renewal instead of an approval link", async (page) => {
   await page.addInitScript((peer) => {
     window.open = () => null;
     const original = window.fetch.bind(window);
@@ -243,7 +243,7 @@ test("a full remote login offers renewal instead of an approval link", async (pa
   await openSettings(page);
   const row = feedback(page, "Private");
   await row.getByRole("button", { name: "Sign in to Private" }).click();
-  const renewal = row.getByRole("link", { name: "Renew login at Private" });
+  const renewal = row.getByRole("link", { name: "Renew your sign-in at Private" });
   await expect(renewal).toHaveAttribute("href", `${locked.url}/login`);
   await expect(renewal).toHaveAttribute("rel", "noopener noreferrer");
   await expect(row.getByRole("link", { name: "Open sign-in page" })).toHaveCount(0);
@@ -314,7 +314,7 @@ test.chrome("peer sign-in opens an isolated popup from the user click", async (p
   }
 });
 
-/* The approving browser keeps the login session that owns the grant. */
+/* The approving browser keeps the sign-in session that owns the grant. */
 async function approve(row: Locator): Promise<Page> {
   const link = row.getByRole("link", { name: "Open sign-in page" });
   await expect(link).toBeVisible();
@@ -329,7 +329,7 @@ async function approve(row: Locator): Promise<Page> {
     await approval.getByRole("button", { name: "Approve this client" }).click();
     return approval;
   } catch (error) {
-    approval.close();
+    await approval.close();
     throw error;
   }
 }
@@ -367,7 +367,7 @@ test.chrome("a protected WebSocket peer approved through the sign-in link joins 
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, locked.url);
-  (await approve(row)).close();
+  await (await approve(row)).close();
   const retry = row.getByRole("button", { name: "Retry Private" });
   await expect(retry).toBeVisible({ timeout: 10_000 });
   await expect(signInButton).toHaveCount(0);
@@ -408,7 +408,7 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
       await fetch("/auth/logout", { method: "POST", body });
     });
   } finally {
-    approval.close();
+    await approval.close();
   }
   const saved = await savedResult(page, startedAt, 20_000);
   expect(saved.result.outcome).toBe("partial");

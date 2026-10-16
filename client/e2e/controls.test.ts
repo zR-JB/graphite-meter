@@ -23,7 +23,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await warmup.fill("1.2");
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
   const wireLabel = "Show estimated wire rate";
-  const wire = settings.getByRole("checkbox", { name: wireLabel });
+  const wire = settings.getByRole("switch", { name: wireLabel });
   await settings.locator("label.switch", { hasText: wireLabel }).click();
   expect(await checked(wire)).toBe(false);
 
@@ -72,7 +72,7 @@ test("an arrow key or a step key steps the time typed into a field, not the one 
   await expect(download).toHaveValue("3 s");
   // The key beside the field steps the typed time too: 20 typed over 3 s lengthens from 20 s.
   await type("20");
-  await settings.getByRole("button", { name: "Lengthen Download stage" }).click();
+  await settings.getByRole("button", { name: "Download stage time, increase" }).click();
   await expect(download).toHaveValue("21 s");
 });
 
@@ -233,7 +233,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await page.getByRole("button", { name: "Details" }).click();
   await page.getByRole("button", { name: "About & legal" }).click();
   const dialog = page.getByRole("dialog", { name: "About & legal" });
-  await expect(dialog).toContainText("Unable to load legal notices.");
+  await expect(dialog).toContainText("Could not load legal notices.");
   await page.blockRequests([]);
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
@@ -269,7 +269,7 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
   await open(page);
   const trigger = page.getByRole("button", { name: "More controls" });
   const menu = page.getByRole("menu", { name: "More controls" });
-  const items = menu.getByRole("menuitem");
+  const items = menu.locator("[data-more]");
   await trigger.evaluate((el: HTMLElement) => el.focus());
   await page.press("ArrowDown");
   await expect(items.nth(0)).toBeFocused();
@@ -424,25 +424,36 @@ test.chrome(
     await page.setViewportSize({ width: 390, height: 844 });
     await open(page);
     const settings = await openSettings(page);
-    const field = settings.getByRole("spinbutton", { name: "Streams" });
+    const field = settings.getByRole("spinbutton", { name: "Streams per direction" });
     const value = async () => (await field.state())[0]!.value;
     const before = await value();
-    const box = await settings.getByRole("button", { name: "More streams" }).evaluate((key: HTMLElement) => {
-      key.scrollIntoView({ block: "center" });
-      return key.getBoundingClientRect().toJSON();
-    });
+    const box = await settings
+      .getByRole("button", { name: "Streams per direction, increase" })
+      .evaluate((key: HTMLElement) => {
+        key.scrollIntoView({ block: "center" });
+        return key.getBoundingClientRect().toJSON();
+      });
     const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
     await page.touch("start", x, y);
     // Upwards, so the sheet's content scrolls rather than the sheet being dragged away.
     for (let step = 1; step <= 8; step++) await page.touch("move", x, y - step * 15);
     await page.touch("end", x, y - 120);
-    // A tap during the swipe's fling only stops the fling, on a phone too.
-    await Bun.sleep(1_000);
+    // A tap during the swipe's fling only stops the fling, on a phone too, so the next one waits for it to rest.
+    let top = Number.NaN;
+    const resting = async () => {
+      const at = await settings
+        .getByRole("button", { name: "Streams per direction, increase" })
+        .evaluate((key: HTMLElement) => key.getBoundingClientRect().top);
+      return top === (top = at);
+    };
+    await expect.poll(resting).toBe(true);
     expect(await value()).toBe(before);
-    const key = await settings.getByRole("button", { name: "More streams" }).evaluate((key: HTMLElement) => {
-      const rect = key.getBoundingClientRect();
-      return [rect.x + rect.width / 2, rect.y + rect.height / 2];
-    });
+    const key = await settings
+      .getByRole("button", { name: "Streams per direction, increase" })
+      .evaluate((key: HTMLElement) => {
+        const rect = key.getBoundingClientRect();
+        return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+      });
     await page.touch("start", key[0]!, key[1]!);
     await page.touch("end", key[0]!, key[1]!);
     await expect.poll(value).toBe(String(Number(before) + 1));
