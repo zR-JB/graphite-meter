@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHN0eWxlPnN2Z3tjb2xvcjojMTcxYjIwfS5oZXh7c3Ryb2tlOiMwZjk0ODV9QG1lZGlhIChwcmVmZXJzLWNvbG9yLXNjaGVtZTpkYXJrKXtzdmd7Y29sb3I6I2VlZjBmM30uaGV4e3N0cm9rZTojNzBkYmM0fX08L3N0eWxlPjxwYXRoIGNsYXNzPSJoZXgiIGQ9Ik0xMiAyLjYgMy45IDcuM3Y5LjRsOC4xIDQuNyA4LjEtNC43VjcuM1oiIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PHBhdGggZD0iTTEyIDEyIDE4LjYgOC4yIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjIuNCIgZmlsbD0iY3VycmVudENvbG9yIi8+PC9zdmc+">
     <meta http-equiv="refresh" content="0; url={{if .Challenge}}/auth/cli?challenge={{.Challenge}}{{else}}/{{end}}">
-    <title>Graphite Meter — Signing in</title>
+    <title>{{if .Opening}}Continue sign-in{{else}}Signed in{{end}} · Graphite Meter</title>
     {{template "theme"}}
     <style>{{.Styles}}</style>
   </head>

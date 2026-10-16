@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <!-- icon -->
     <meta http-equiv="refresh" content="0; url={{if .Challenge}}/auth/cli?challenge={{.Challenge}}{{else}}/{{end}}">
-    <title>Graphite Meter — Signing in</title>
+    <title>{{if .Opening}}Continue sign-in{{else}}Signed in{{end}} · Graphite Meter</title>
     {{template "theme"}}
     <style>{{.Styles}}</style>
   </head>

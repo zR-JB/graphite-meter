@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { install, leftThisPage } from "./pending";
+import { install } from "./pending";
 
 // Just the DOM the script touches: elements found by tag, class, id and attribute.
 let focused: El | null = null;
@@ -7,8 +7,6 @@ class El {
   parent: El | null = null;
   readonly attributes: Map<string, string>;
   textContent = "";
-  hidden: boolean;
-  disabled = false;
   type: string;
   value: string;
   tabIndex = 0;
@@ -18,7 +16,6 @@ class El {
     readonly children: El[],
   ) {
     this.attributes = new Map(Object.entries(attributes));
-    this.hidden = "hidden" in attributes;
     this.type = attributes.type ?? "";
     this.value = attributes.value ?? "";
     for (const child of children) child.parent = this;
@@ -27,7 +24,10 @@ class El {
     return new URL(this.attributes.get("action")!, "https://meter.example/login").href;
   }
   matches(selector: string): boolean {
-    if (selector.startsWith("[")) return this.attributes.has(selector.slice(1, -1));
+    if (selector.startsWith("[")) {
+      const [name, value] = selector.slice(1, -1).split("=");
+      return this.attributes.has(name!) && (value === undefined || this.attributes.get(name!) === value);
+    }
     if (selector.startsWith("#")) return this.attributes.get("id") === selector.slice(1);
     const [tag, name] = selector.split(".");
     return this.tag === tag && (!name || this.attributes.get("class") === name);
@@ -88,10 +88,15 @@ const signIn = (action = "/auth/password") =>
       { action },
       h("input", { name: "csrf", value: "token" }),
       h("input", { id: "password", name: "password", type: "password", value: "pass word&" }),
-      h("button", { type: "button", "data-reveal": "password", hidden: "" }, h("svg")),
+      h("button", { type: "button", "data-reveal": "password" }, h("svg")),
       h("button", { type: "submit" }),
     ),
   );
+// The form's aria-busy and its submit key's aria-disabled: a busy key keeps its focus.
+const busy = (form: El) => [
+  form.getAttribute("aria-busy"),
+  form.querySelector("[type=submit]")!.getAttribute("aria-disabled"),
+];
 const done = () => h("main", { class: "card" }, h("h1"), h("p"));
 
 type Reply = { redirected?: boolean; url: string; ok?: boolean; status?: number; card?: El };
@@ -180,53 +185,15 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
   };
 }
 
-test("only a redirect to another page leaves this page", () => {
-  for (const [redirected, url, pathname, left] of [
-    [true, "https://meter.example/login?error=password", "/login", false],
-    [true, "https://meter.example/", "/login", true],
-    [true, "https://meter.example/auth/cli?challenge=abc", "/login", true],
-    [false, "https://meter.example/auth/cli/approve", "/auth/cli", false],
-  ] as const)
-    expect(leftThisPage({ redirected, url }, { pathname })).toBe(left);
-});
-
-test("the card shows its host, and the show key reveals the password without taking its focus", () => {
-  const card = signIn();
-  const { document, fire } = load(card);
-  const key = card.querySelector("[data-reveal]")!;
-  const field = document.getElementById("password")!;
-  expect([card.querySelector("[data-host]")!.textContent, key.hidden]).toEqual(["meter.example", false]);
-
-  expect(fire("pointerdown", key.children[0]!)).toBe(false);
-  field.focus();
-  expect(fire("pointerdown", key.children[0]!)).toBe(true);
-  fire("click", key.children[0]!);
-  expect([field.type, key.getAttribute("aria-pressed"), key.getAttribute("aria-label")]).toEqual([
-    "text",
-    "true",
-    "Hide password",
-  ]);
-  fire("click", key);
-  expect([field.type, key.getAttribute("aria-pressed"), key.getAttribute("aria-label")]).toEqual([
-    "password",
-    "false",
-    "Show password",
-  ]);
-});
-
+// A wrong password's swap, the host line and the show key run in a real browser in e2e/auth.test.ts.
 test("a sign-in posts in place, then swaps in the answer's card or follows it off the page", async () => {
-  const cases: { reply: Reply; effects: string[]; focus?: "password" | "heading" }[] = [
+  const cases: { reply: Reply; effects: string[] }[] = [
     { reply: { redirected: true, url: "https://meter.example/" }, effects: ["assign https://meter.example/"] },
-    {
-      reply: { redirected: true, url: "https://meter.example/login?error=password", card: signIn() },
-      effects: [],
-      focus: "password",
-    },
-    { reply: { url: "https://meter.example/auth/cli/approve", card: done() }, effects: [], focus: "heading" },
+    { reply: { url: "https://meter.example/auth/cli/approve", card: done() }, effects: [] },
     { reply: { url: "https://meter.example/auth/password" }, effects: ["assign https://meter.example/auth/password"] },
     { reply: { url: "https://meter.example/auth/password", ok: false, status: 403 }, effects: ["reload"] },
   ];
-  for (const { reply, effects, focus } of cases) {
+  for (const { reply, effects } of cases) {
     const card = signIn();
     const page = load(card, async () => reply);
     const form = card.querySelector("form")!;
@@ -235,8 +202,7 @@ test("a sign-in posts in place, then swaps in the answer's card or follows it of
 
     expect(page.fire("submit", form)).toBe(true);
     expect(field.type).toBe("password");
-    expect(form.hasAttribute("data-busy")).toBe(true);
-    expect(form.querySelectorAll("button").map((button) => button.disabled)).toEqual([true, true]);
+    expect(busy(form)).toEqual(["true", "true"]);
     const [[url, init]] = page.posts as [[string, RequestInit]];
     expect([url, init.method, String(init.body), init.credentials, init.redirect]).toEqual([
       "https://meter.example/auth/password",
@@ -253,14 +219,7 @@ test("a sign-in posts in place, then swaps in the answer's card or follows it of
     if (!reply.card) continue;
     expect(page.document.title).toBe("Next");
     const heading = shown.querySelector("h1")!;
-    if (focus === "password") {
-      expect([shown.querySelector("[data-host]")!.textContent, shown.querySelector("[data-reveal]")!.hidden]).toEqual([
-        "meter.example",
-        false,
-      ]);
-      expect(focused).toBe(shown.querySelector("#password"));
-    } else expect(focused).toBe(heading);
-    expect(heading.tabIndex).toBe(focus === "heading" ? -1 : 0);
+    expect([focused, heading.tabIndex]).toEqual([heading, -1]);
   }
 });
 
@@ -276,11 +235,7 @@ test("a post that cannot reach the server says so once and leaves the form usabl
     await page.settled();
     page.fire("submit", form);
     await page.settled();
-    expect([form.hasAttribute("data-busy"), ...form.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    expect(busy(form)).toEqual([null, null]);
     const notices = card.querySelectorAll("[data-unreachable]");
     expect(notices.map((each) => [each.textContent, each.getAttribute("role"), each.getAttribute("class")])).toEqual([
       ["Could not reach the server. Try again.", "alert", "notice"],
@@ -297,14 +252,10 @@ test("a post that gets no answer frees its form after 20 s, says the outcome is 
   await page.settled();
   page.advance(19_999);
   await page.settled();
-  expect(form.hasAttribute("data-busy")).toBe(true);
+  expect(form.hasAttribute("aria-busy")).toBe(true);
   page.advance(1);
   await page.settled();
-  expect([form.hasAttribute("data-busy"), ...form.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
-    false,
-    false,
-    false,
-  ]);
+  expect(busy(form)).toEqual([null, null]);
   expect(card.querySelectorAll("[data-unreachable]").map((each) => each.textContent)).toEqual([
     "The server did not answer in time. Reload to see whether it went through, or try again.",
   ]);
@@ -313,19 +264,15 @@ test("a post that gets no answer frees its form after 20 s, says the outcome is 
 
 test("a busy form takes no second submit, until the page returns from the back-forward cache", () => {
   const waiting = load(signIn());
-  const busy = waiting.root.querySelector("form")!;
-  waiting.fire("submit", busy);
-  expect(waiting.fire("submit", busy)).toBe(true);
+  const form = waiting.root.querySelector("form")!;
+  waiting.fire("submit", form);
+  expect(waiting.fire("submit", form)).toBe(true);
   expect(waiting.posts).toHaveLength(1);
   waiting.restore(false);
-  expect(busy.hasAttribute("data-busy")).toBe(true);
+  expect(busy(form)).toEqual(["true", "true"]);
   waiting.restore(true);
-  expect([busy.hasAttribute("data-busy"), ...busy.querySelectorAll("button").map((each) => each.disabled)]).toEqual([
-    false,
-    false,
-    false,
-  ]);
-  waiting.fire("submit", busy);
+  expect(busy(form)).toEqual([null, null]);
+  waiting.fire("submit", form);
   expect(waiting.posts).toHaveLength(2);
 });
 
@@ -335,6 +282,6 @@ test("forms bound elsewhere submit natively, busy", () => {
     const page = load(card);
     const form = card.querySelector("form")!;
     expect(page.fire("submit", form)).toBe(false);
-    expect([page.posts.length, form.hasAttribute("data-busy")]).toEqual([0, true]);
+    expect([page.posts.length, form.hasAttribute("aria-busy")]).toEqual([0, true]);
   }
 });
