@@ -56,7 +56,7 @@ impl Client {
         request.headers_mut().extend(field);
         let sending = timeout(TIMEOUT, fetch(self.connector.clone(), request));
         let sent = self.runtime.spawn(sending).await.map_err(failed)?;
-        sent.map_err(|_| "OIDC request timed out".to_owned())?
+        sent.map_err(|_| "OIDC request failed: timed out".to_owned())?
     }
 }
 
@@ -87,7 +87,7 @@ async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Resul
         while let Some(frame) = poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx)).await {
             if let Ok(data) = frame.map_err(failed)?.into_data() {
                 if bytes.len() + data.len() > MAX_BODY {
-                    return Err("OIDC response too large".to_owned());
+                    return Err(format!("OIDC response refused: over {} MiB", MAX_BODY >> 20));
                 }
                 bytes.extend_from_slice(&data);
             }

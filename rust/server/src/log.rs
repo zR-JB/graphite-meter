@@ -1,4 +1,4 @@
-//! Log lines with a time, level, `[gm:topic]` tag and source, and limits for lines peers or load can repeat.
+//! Log lines with a UTC time, level, topic and source, and limits for lines peers or load can repeat.
 //!
 //! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
 //! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
@@ -13,7 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender, TrySendError},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 /// Writes one line to stderr: `log!(Warn, "tls", "certificate expires in {left}")`.
@@ -42,8 +42,8 @@ impl Level {
         }
     }
 
-    /// The label's and the message's terminal colours.
-    fn colours(self) -> (&'static str, &'static str) {
+    /// The label's and the message's terminal colors.
+    fn colors(self) -> (&'static str, &'static str) {
         match self {
             Self::Debug => ("34", "2"),
             Self::Info => ("32", "0"),
@@ -55,20 +55,19 @@ impl Level {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
-    /// `2026-10-06T16:31:02+02:00 WARN  tls:       message; advice (transport::tls)`, for files, pipes and `docker logs`.
+    /// `2026-10-06T14:31:02Z WARN  tls:       message; advice (transport::tls)`, for files, pipes and `docker logs`.
     Plain,
-    /// The plain line in colour; a warning's or error's advice on a `help:` line.
-    Colour,
+    /// The plain line in color; a warning's or error's advice on a `help:` line.
+    Color,
 }
 
-/// Colour on a terminal that is not `TERM=dumb` unless `NO_COLOR`
-/// is set; `FORCE_COLOR` asks for colour anywhere. Windows consoles get colour only when asked.
+/// Color on a terminal that is not `TERM=dumb` unless `NO_COLOR` is set; `FORCE_COLOR` asks for it anywhere.
 static STYLE: LazyLock<Style> = LazyLock::new(|| {
     let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0");
     let terminal =
         cfg!(unix) && std::io::stderr().is_terminal() && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
     if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) {
-        Style::Colour
+        Style::Color
     } else {
         Style::Plain
     }
@@ -148,10 +147,10 @@ fn emit(line: &str) {
 }
 
 fn now() -> String {
-    crate::clock::local(SystemTime::now())
+    crate::clock::rfc3339(SystemTime::now())
 }
 
-/// Topics are padded to the longest, `discovery:`, so messages start in one column.
+/// Topics are padded to the longest, `admission:`, so messages start in one column.
 const TOPIC_WIDTH: usize = 10;
 
 /// One log line; control characters are escaped so no peer text drives a terminal. Warnings and errors name the
@@ -173,8 +172,8 @@ pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>
     let (topic, label) = (format!("{topic}:"), level.label());
     match style {
         Style::Plain => format!("{time} {label:<5} {topic:<TOPIC_WIDTH$} {text}{source}\n"),
-        Style::Colour => {
-            let (badge, colour) = level.colours();
+        Style::Color => {
+            let (badge, color) = level.colors();
             let advice = text
                 .split_once("; ")
                 .filter(|_| matches!(level, Level::Warn | Level::Error));
@@ -182,7 +181,7 @@ pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>
             let dim = if source.is_empty() { source } else { format!("\x1b[2m{source}\x1b[0m") };
             let mut line = format!(
                 "\x1b[2m{time}\x1b[0m \x1b[{badge}m{label:<5}\x1b[0m \x1b[1m{topic:<TOPIC_WIDTH$}\x1b[0m \
-                 \x1b[{colour}m{what}\x1b[0m{dim}\n"
+                 \x1b[{color}m{what}\x1b[0m{dim}\n"
             );
             if let Some(advice) = advice {
                 let indent = time.len() + 8 + TOPIC_WIDTH - "help: ".len();
@@ -193,38 +192,18 @@ pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>
     }
 }
 
-/// A whole-second UTC time as Go's `time.RFC3339` prints it, such as `2026-10-04T23:59:59Z`.
-pub fn rfc3339(time: SystemTime) -> String {
-    let [year, month, day, hour, minute, second] = utc(time);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// A whole-second UTC time as HTTP dates and cookie expiries print it, such as `Thu, 01 Jan 1970 00:00:01 GMT`.
-pub fn http_date(time: SystemTime) -> String {
-    const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let [year, month, day, hour, minute, second] = utc(time);
-    let days = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 86_400;
-    let (weekday, month) = (WEEKDAYS[(days % 7) as usize], MONTHS[month as usize - 1]);
-    format!("{weekday}, {day:02} {month} {year:04} {hour:02}:{minute:02}:{second:02} GMT")
-}
-
-fn utc(time: SystemTime) -> [u64; 6] {
-    let seconds = time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let (year, month, day) = civil(seconds / 86_400);
-    [year, month, day, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60]
-}
-
-/// The proleptic Gregorian date of a day count since 1970-01-01.
-fn civil(days: u64) -> (u64, u64, u64) {
-    let shifted = days + 719_468;
-    let (era, day_of_era) = (shifted / 146_097, shifted % 146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
-    (year_of_era + era * 400 + u64::from(month <= 2), month, day)
+/// A span in prose: `80 ms`, `4 s`, `4.5 s`, `1 min 5 s`, `2 h 5 min`.
+pub fn span(span: Duration) -> String {
+    let (millis, seconds) = (span.as_millis(), span.as_secs());
+    let (minutes, hours) = (seconds / 60 % 60, seconds / 3600);
+    let part = |value: u64, unit: &str| if value > 0 { format!(" {value} {unit}") } else { String::new() };
+    match seconds {
+        0 => format!("{millis} ms"),
+        1..60 if millis / 100 % 10 > 0 => format!("{seconds}.{} s", millis / 100 % 10),
+        1..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min{}", seconds / 60, part(seconds % 60, "s")),
+        _ => format!("{hours} h{}", part(minutes, "min")),
+    }
 }
 
 const INTERVAL: Duration = Duration::from_mins(1);
@@ -235,6 +214,7 @@ pub struct RateLimited {
     topic: &'static str,
     /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
+    module: &'static str,
     state: Mutex<Window>,
 }
 
@@ -245,22 +225,24 @@ struct Window {
 }
 
 impl RateLimited {
-    pub const fn new(level: Level, topic: &'static str, what: &'static str) -> Self {
+    /// `module` is the caller's `module_path!()`.
+    pub const fn new(level: Level, topic: &'static str, what: &'static str, module: &'static str) -> Self {
         Self {
             level,
             topic,
             what,
+            module,
             state: Mutex::new(Window { next: None, held: 0 }),
         }
     }
 
     pub fn write(&self, message: fmt::Arguments<'_>) {
         match self.admit(Instant::now()) {
-            Some(0) => write(self.level, self.topic, "", message),
+            Some(0) => write(self.level, self.topic, self.module, message),
             Some(held) => write(
                 self.level,
                 self.topic,
-                "",
+                self.module,
                 format_args!("{message} (and {held} more {} in the last minute)", self.what),
             ),
             None => {}
@@ -299,14 +281,14 @@ mod tests {
 
     #[test]
     fn lines_carry_level_topic_and_source_in_each_style_and_escape_control_characters() {
-        let time = "2025-10-06T16:31:02+02:00";
+        let time = "2025-10-06T14:31:02Z";
         let tls = "graphite_meter_server::transport::tls";
         let warn = |style| line(Level::Warn, "tls", tls, format_args!("key\u{1b}[31m\nnext; renew it"), time, style);
-        let plain = "2025-10-06T16:31:02+02:00 WARN  tls:       key\\u{1b}[31m\\nnext; renew it (transport::tls)\n";
+        let plain = "2025-10-06T14:31:02Z WARN  tls:       key\\u{1b}[31m\\nnext; renew it (transport::tls)\n";
         assert_eq!(warn(Style::Plain), plain);
         let info = line(Level::Info, "listen", tls, format_args!("ready"), time, Style::Plain);
         assert_eq!(
-            info, "2025-10-06T16:31:02+02:00 INFO  listen:    ready\n",
+            info, "2025-10-06T14:31:02Z INFO  listen:    ready\n",
             "only warnings and errors name a source"
         );
         let error = line(
@@ -315,11 +297,11 @@ mod tests {
             "graphite_meter_server",
             format_args!("bad: x; fix it"),
             time,
-            Style::Colour,
+            Style::Color,
         );
         let expected = format!(
-            "\x1b[2m2025-10-06T16:31:02+02:00\x1b[0m \x1b[1;31mERROR\x1b[0m \x1b[1mconfig:   \x1b[0m \
-             \x1b[1;31mbad: x\x1b[0m\n{:37}\x1b[1;36mhelp:\x1b[0m fix it\n",
+            "\x1b[2m2025-10-06T14:31:02Z\x1b[0m \x1b[1;31mERROR\x1b[0m \x1b[1mconfig:   \x1b[0m \
+             \x1b[1;31mbad: x\x1b[0m\n{:32}\x1b[1;36mhelp:\x1b[0m fix it\n",
             ""
         );
         assert_eq!(error, expected);

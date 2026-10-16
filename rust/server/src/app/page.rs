@@ -1,10 +1,7 @@
-//! The browser app on the listeners that serve it, under the page's content security policy.
+//! The browser app on the listeners that serve it, its documents under the page's content security policy.
 
 use super::{App, Endpoint, finalize::harden, response};
-use crate::{
-    peer::{Address, Peer},
-    transport::body::Body,
-};
+use crate::{peer::Peer, transport::body::Body};
 use graphite_meter_proto::{
     discovery::Preflight,
     origin::{BaseUrl, Host, Origin},
@@ -35,17 +32,21 @@ impl App {
             None => response::status(StatusCode::NOT_FOUND),
         };
         let length = http_body::Body::size_hint(response.body()).exact().unwrap_or_default();
-        let secure = secure(request, endpoint, peer);
-        let policy = self
-            .assets
-            .policy(&self.connect_sources(&self.preflight(request), secure));
         let status = response.status();
         let headers = response.headers_mut();
         if status != StatusCode::NOT_MODIFIED {
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
         }
-        let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
-        headers.insert(header::CONTENT_SECURITY_POLICY, policy);
+        // Only a document a browser renders runs under the policy, which costs a preflight to build.
+        let media = headers.get(header::CONTENT_TYPE).map(HeaderValue::as_bytes);
+        if media.is_some_and(|media| media.starts_with(b"text/html") || media.starts_with(b"image/svg+xml")) {
+            let secure = secure(request, endpoint, peer);
+            let policy = self
+                .assets
+                .policy(&self.connect_sources(&self.preflight(request), secure));
+            let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
+            headers.insert(header::CONTENT_SECURITY_POLICY, policy);
+        }
         headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
         harden(headers, false);
         if head {
@@ -54,7 +55,7 @@ impl App {
         response
     }
 
-    /// What the page may connect to beyond itself: catalogue servers and this host's targets, less IPv6 literals and,
+    /// What the page may connect to beyond itself: catalog servers and this host's targets, less IPv6 literals and,
     /// on an HTTPS page, the clear-text sources it cannot use.
     fn connect_sources(&self, preflight: &Preflight, secure: bool) -> Vec<String> {
         let mut sources = Vec::new();
@@ -84,10 +85,7 @@ impl App {
 
 /// Whether the browser loaded the page over HTTPS: on the TLS listener, or through a trusted proxy that says so.
 fn secure<B>(request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> bool {
-    let mut proto = request.headers().get_all("x-forwarded-proto").iter();
-    let forwarded =
-        matches!((proto.next(), proto.next()), (Some(proto), None) if proto.as_bytes().trim_ascii() == b"https");
-    endpoint == Endpoint::H1Tls || forwarded && !matches!(peer.address(), Address::Socket(_))
+    endpoint == Endpoint::H1Tls || peer.forwarded_tls(request.headers())
 }
 
 /// A clear-text source, which browsers block from an HTTPS page as mixed content unless its host is loopback.

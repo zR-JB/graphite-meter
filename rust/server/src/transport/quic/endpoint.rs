@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     app::App,
-    config::{Limits, path_error},
+    config::{Limits, could_not},
     limits::Lease,
     log,
     transport::tls::Certificates,
@@ -114,8 +114,8 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
             log!(
                 Warn,
                 "udp",
-                "QUIC endpoints route by connection ID in user space only ({error}); connections stay \
-                 where they arrive"
+                "kernel routing by connection ID unavailable: {error}; QUIC endpoints route in user space and \
+                 connections stay where they arrive"
             );
         }
         let packet = budget::packet_bytes(&config).ok_or(OVERFLOW)?;
@@ -185,7 +185,7 @@ impl Udp {
     fn bind(address: SocketAddr, sockets: usize, runtime: &Handle) -> Result<Self, String> {
         let _entered = runtime.enter();
         let bound = graphite_meter_net::bind_udp(address, sockets);
-        let (socket, shortfall) = bound.map_err(|error| path_error("listen udp", &address.to_string(), &error))?;
+        let (socket, shortfall) = bound.map_err(|error| could_not(&format!("listen on {address}/udp"), &error))?;
         static WARNED: AtomicBool = AtomicBool::new(false);
         if let Some(shortfall) = shortfall.filter(|_| !WARNED.swap(true, Ordering::Relaxed)) {
             log!(

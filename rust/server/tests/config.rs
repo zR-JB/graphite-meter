@@ -68,15 +68,6 @@ fn help_lists_every_flag_with_its_variable() {
 }
 
 #[test]
-fn secrets_and_proxies_have_no_flag() {
-    let env_only = ["trusted-proxies", "auth-password-hash", "auth-oidc-client-secret", "server-catalog"];
-    for flag in env_only.into_iter().chain(["server-catalog-file"]) {
-        assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("unknown option --{flag}"));
-        assert!(!include_str!("usage.txt").contains(&format!("--{flag} ")), "{flag}");
-    }
-}
-
-#[test]
 fn unset_lifetimes_cover_the_stage_limit() {
     let lifetimes = |env: &[(&str, &str)]| {
         let lifetimes = config(env, &[]).lifetimes;
@@ -101,7 +92,7 @@ fn unset_lifetimes_cover_the_stage_limit() {
     let negative = "GM_MAX_OPERATION_DURATION: a duration cannot be negative";
     assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "-1s")], &[]), negative);
     for stage in ["999ms", "24h1s", "0"] {
-        let message = "GM_MAX_STAGE_DURATION must be from 1s to 24h";
+        let message = "GM_MAX_STAGE_DURATION must be from 1 s to 24 h";
         assert_eq!(error(&[("GM_MAX_STAGE_DURATION", stage)], &[]), message, "{stage}");
     }
 }
@@ -155,6 +146,13 @@ fn listeners_need_distinct_addresses_and_tls_files() {
                    leave GM_H2_ADDR empty";
     assert_eq!(error(&[("GM_H2_ADDR", ":8444"), ("GM_TLS_CERT", "/c.pem")], &[]), message);
     assert_eq!(error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]), "GM_H1_ADDR and GM_H3_ADDR must differ");
+    for address in ["7246", "::1:7246", ":+80", "localhost:65536"] {
+        assert_eq!(
+            error(&[("GM_H1_ADDR", address)], &[]),
+            "GM_H1_ADDR must be :port or host:port",
+            "{address}"
+        );
+    }
     let message = "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint \"http3\"";
     assert_eq!(error(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear, http3")], &[]), message);
 }

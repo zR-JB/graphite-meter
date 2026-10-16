@@ -1,4 +1,4 @@
-//! A fake OIDC provider over TLS for the sign-in tests, which run in a child process trusting it.
+//! A fake OIDC provider over TLS for the sign-in tests, whose apps trust it through `SSL_CERT_FILE`.
 
 use base64::{
     Engine as _,

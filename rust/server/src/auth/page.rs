@@ -1,4 +1,4 @@
-//! The sign-in and approval pages, from the assets `client/auth/build.ts` generates, and authentication answer headers.
+//! The sign-in and approval pages from the assets `client/auth/build.ts` writes, and authentication answer headers.
 
 use http::{HeaderMap, HeaderValue, header};
 use std::{fmt::Write as _, sync::LazyLock};
@@ -111,9 +111,9 @@ pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
 /// The headers of every authentication page and refusal, with HSTS once the request is known to be secure.
 pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use sha2::{Digest, Sha256};
+    use ring::digest::{SHA256, digest};
     static POLICY: LazyLock<HeaderValue> = LazyLock::new(|| {
-        let hash = |asset: &str| STANDARD.encode(Sha256::digest(asset));
+        let hash = |asset: &str| STANDARD.encode(digest(&SHA256, asset.as_bytes()));
         let (styles, theme, pending) = (hash(STYLES), hash(THEME), hash(PENDING));
         let policy = format!(
             "default-src 'none'; style-src 'sha256-{styles}'; font-src 'self'; script-src 'sha256-{theme}' \
@@ -134,7 +134,7 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
 struct Template(Vec<(String, String)>);
 
 impl Template {
-    /// Splits `source` at its actions, without the HTML comments html/template drops.
+    /// Splits `source` at its actions, without its HTML comments.
     fn parse(source: &str) -> Self {
         let mut source = source.to_owned();
         while let Some(start) = source.find("<!--") {
@@ -222,7 +222,7 @@ fn condition<'a>(test: &'a str, field: &impl Fn(&'a str) -> &'a str) -> bool {
     !value(&mut words, field).is_empty()
 }
 
-/// html/template's escaping of text and quoted attribute values.
+/// Escapes text and quoted attribute values.
 fn escape(page: &mut String, text: &str) {
     for character in text.chars() {
         match character {

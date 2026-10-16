@@ -4,11 +4,15 @@ use super::*;
 use futures_util::FutureExt;
 use tokio::time::{Instant, sleep};
 
-/// How long the server takes to close the connection, on paused time moved in steps, so that no timer the close
-/// starts moves it further.
-async fn closes_after(client: &mut Client<TcpStream>) -> Duration {
+/// How long the server takes to close the connection, open at `open`, on paused time moved in steps after it, so that
+/// no timer the close starts moves it further.
+async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duration {
     tokio::time::pause();
     let started = Instant::now();
+    tokio::time::advance(open).await;
+    tokio::task::yield_now().await;
+    std::thread::sleep(Duration::from_millis(1));
+    assert!(client.answer().now_or_never().is_none(), "open after {open:?}");
     loop {
         tokio::time::advance(Duration::from_millis(50)).await;
         tokio::task::yield_now().await;
@@ -23,30 +27,35 @@ async fn closes_after(client: &mut Client<TcpStream>) -> Duration {
 }
 
 /// Sends part of a head after `idle` seconds without traffic, and returns how long the server then took to close.
-async fn partial_head_closes_after(client: &mut Client<TcpStream>, idle: u64) -> Duration {
+async fn partial_head_closes_after(client: &mut Client<TcpStream>, idle: u64, open: Duration) -> Duration {
     tokio::time::pause();
     sleep(Duration::from_secs(idle)).await;
     tokio::time::resume();
     client.send("GET /probe HTTP/1.1\r\nHost: test\r\n").await;
     sleep(Duration::from_millis(50)).await;
-    closes_after(client).await
+    closes_after(client, open).await
 }
 
 #[tokio::test]
 async fn keep_alive_idleness_and_request_heads_have_fifteen_seconds() {
     let server = start(&[]).await;
-    let fifteen = |elapsed: Duration| elapsed > Duration::from_secs(14) && elapsed < Duration::from_millis(15_100);
+    let (four, fourteen) = (Duration::from_secs(4), Duration::from_secs(14));
     let mut idle = server.connect().await;
     assert_eq!(idle.request("GET /probe", "").await.status, 200);
-    let elapsed = closes_after(&mut idle).await;
-    assert!(fifteen(elapsed), "an idle keep-alive connection: {elapsed:?}");
-    let elapsed = partial_head_closes_after(&mut server.connect().await, 10).await;
-    let five = elapsed > Duration::from_secs(4) && elapsed < Duration::from_millis(5_100);
-    assert!(five, "the first head counts from the connection start: {elapsed:?}");
+    let elapsed = closes_after(&mut idle, fourteen).await;
+    assert!(elapsed < Duration::from_millis(15_100), "an idle keep-alive connection: {elapsed:?}");
+    let elapsed = partial_head_closes_after(&mut server.connect().await, 10, four).await;
+    assert!(
+        elapsed < Duration::from_millis(5_100),
+        "the first head counts from the connection start: {elapsed:?}"
+    );
     let mut later = server.connect().await;
     assert_eq!(later.request("GET /probe", "").await.status, 200);
-    let elapsed = partial_head_closes_after(&mut later, 10).await;
-    assert!(fifteen(elapsed), "a later head counts from its first byte: {elapsed:?}");
+    let elapsed = partial_head_closes_after(&mut later, 10, fourteen).await;
+    assert!(
+        elapsed < Duration::from_millis(15_100),
+        "a later head counts from its first byte: {elapsed:?}"
+    );
 }
 
 #[tokio::test]
@@ -111,9 +120,6 @@ async fn discovery_names_the_bound_port_of_a_listener_configured_with_port_zero(
     let preflight: serde_json::Value = serde_json::from_slice(&server.get("/preflight").await.body).unwrap();
     let target = &preflight["capabilities"]["throughput"][0];
     assert_eq!(target["baseUrl"], format!("http://test:{port}"));
-    let servers = server.get("/servers").await;
-    assert_eq!(servers.status, 200);
-    let page = server.get("/").await;
-    let policy = page.header("content-security-policy").unwrap();
-    assert!(policy.contains(&format!("http://test:{port}")), "{policy}");
+    let servers: serde_json::Value = serde_json::from_slice(&server.get("/servers").await.body).unwrap();
+    assert_eq!(servers["servers"][0]["additionalOrigins"][0], format!("http://test:{port}"));
 }

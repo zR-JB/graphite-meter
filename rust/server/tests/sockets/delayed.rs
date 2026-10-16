@@ -43,7 +43,7 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
     let link = Link::udp_through(h3.server.quic.unwrap(), Duration::from_millis(20), bottleneck)
         .await
         .unwrap();
-    // A quic-go peer's connection credit stays at its first window on a path this slow.
+    // A peer that never grows its connection credit past the first window on a path this slow.
     let mut credit = transport(None);
     credit.receive_window(INITIAL_RECEIVE_WINDOW.into());
     let connection = h3.connect_via(link.address, credit).await;

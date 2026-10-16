@@ -30,7 +30,7 @@ use graphite_meter_proto::{
     lane::LaneEnding,
     route::{Kind, Route},
 };
-use http::{HeaderValue, Method, Request, Response, StatusCode, header};
+use http::{HeaderValue, Method, Request, Response, StatusCode, header, uri::Authority};
 use std::{
     future::poll_fn,
     net::IpAddr,
@@ -89,14 +89,14 @@ pub enum Outcome {
 }
 
 impl App {
-    /// Draws the download block from the budget; admitted work ends when `shutdown` is cancelled.
+    /// Draws the download block from the budget; admitted work ends when `shutdown` is canceled.
     pub fn new(config: Config, shutdown: CancellationToken) -> Result<Self, String> {
         let auth = Auth::new(config.auth.as_ref(), &config.outbound, config.verbose)?;
         let budget = Budget::new(config.max_buffer_bytes);
         let block = Block::new(&budget, Meter::new(config.verbose))?;
-        let alt_svc = config.listener(ListenerKind::H3).and_then(|listener| {
-            let port = listen_port(&listener.address)?;
-            HeaderValue::from_str(&format!("h3=\":{port}\"")).ok()
+        let alt_svc = config.listener(ListenerKind::H3).map(|listener| {
+            let port = listener.address.port;
+            HeaderValue::from_str(&format!("h3=\":{port}\"")).expect("a port is a header value")
         });
         let password = config.auth.as_ref().and_then(|auth| auth.methods.password());
         let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
@@ -119,6 +119,10 @@ impl App {
     pub fn with_assets(self, files: &'static [Asset], notices: &'static Notices) -> Self {
         let assets = Assets::new(files, notices, self.config.auth.is_some(), self.config.result_history_default);
         Self { assets, ..self }
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     pub fn budget(&self) -> &Budget {
@@ -372,8 +376,7 @@ enum End {
     Lane(LaneEnding),
 }
 
-/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check, finer than Go's 64 KiB reads; pending
-/// only while none is.
+/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check; pending only while none is.
 fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
     let mut bytes = 0;
     for taken in 0..READ_BATCH {
@@ -392,9 +395,11 @@ fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, l
     Poll::Ready(Batch { bytes, end: lane.due().map(End::Lane) })
 }
 
-/// The port of a listen address such as `:7246` or `[::]:7249`.
-pub(super) fn listen_port(address: &str) -> Option<u16> {
-    address.rsplit_once(':')?.1.parse().ok()
+/// The authority a request names in its URI or Host header, without user information.
+pub(crate) fn authority<B>(request: &Request<B>) -> Option<Authority> {
+    let named = || request.headers().get(header::HOST)?.to_str().ok()?.parse().ok();
+    let authority = request.uri().authority().cloned().or_else(named);
+    authority.filter(|authority| !authority.as_str().contains('@'))
 }
 
 /// What accepted a connection: a TCP listener, HTTP/3's TCP companion or QUIC; its mounts follow `api/routes.txt`.

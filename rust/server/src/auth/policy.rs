@@ -3,18 +3,18 @@
 use super::{AuthLease, Decision, Store, Via, protect};
 use crate::headers::{
     GRAPHITE_METER_AUTH, GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN,
-    X_FORWARDED_HOST, X_FORWARDED_PROTO,
+    X_FORWARDED_HOST,
 };
 use crate::{
-    app::{Endpoint, finalize::Access, finalize::close, query, response},
+    app::{Endpoint, authority, finalize::Access, finalize::close, query, response},
     config,
-    peer::{Address, Peer},
+    peer::{Peer, single},
 };
 use graphite_meter_proto::{
     origin::{Origin, Scheme},
     route::{Kind, Route},
 };
-use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority};
 
 /// Fields a request may carry at most once.
 const SINGLE: [HeaderName; 6] = [
@@ -62,10 +62,7 @@ graphite_meter_proto::table! {
 impl AuthRoute {
     /// The route `method` and `path` name exactly.
     pub(super) fn find(method: &str, path: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|route| route.method() == method && route.path() == path)
+        Self::find_by(Self::path, path).filter(|route| route.method() == method)
     }
 }
 
@@ -194,23 +191,22 @@ impl Policy {
     }
 
     fn trust<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Trust {
-        let authority = self.origin.to_str().unwrap_or_default().trim_start_matches("https://");
+        let public = self.origin.to_str().unwrap_or_default().trim_start_matches("https://");
         if endpoint != Endpoint::H1 {
-            let named = request_authority(request).unwrap_or_default();
+            let named = authority(request);
+            let named = named.as_ref().map_or("", Authority::as_str);
             let host = Origin::parse(&format!("https://{named}"))
                 .ok()
                 .map(|origin| origin.host);
-            return match (host.as_ref() == Some(&self.public.host), same_host(named, authority)) {
+            return match (host.as_ref() == Some(&self.public.host), same_host(named, public)) {
                 (false, _) => Trust::Foreign,
                 (true, false) => Trust::Secure,
                 (true, true) => Trust::Canonical,
             };
         }
         let headers = request.headers();
-        let forwarded = !matches!(peer.address(), Address::Socket(_))
-            // Traefik names a WebSocket upgrade's TLS "wss".
-            && matches!(single(headers, &X_FORWARDED_PROTO), Some("https" | "wss"))
-            && single(headers, &X_FORWARDED_HOST).is_some_and(|host| same_host(host, authority));
+        let forwarded = peer.forwarded_tls(headers)
+            && single(headers, &X_FORWARDED_HOST).is_some_and(|host| same_host(host, public));
         if forwarded { Trust::Canonical } else { Trust::Insecure }
     }
 
@@ -235,7 +231,7 @@ impl Policy {
 
     /// Spends the ticket `token` presented at this request's HTTPS origin and path from its `Origin`.
     fn redeem<B>(&self, store: &Store, request: &Request<B>, token: &str) -> Option<AuthLease> {
-        let origin = request_authority(request).and_then(|named| Origin::parse(&format!("https://{named}")).ok());
+        let origin = authority(request).and_then(|named| Origin::parse(&format!("https://{named}")).ok());
         let target = origin
             .map(|origin| format!("{origin}{}", request.uri().path()))
             .unwrap_or_default();
@@ -357,24 +353,9 @@ impl Policy {
     }
 }
 
-/// The host and port a request names: its URI's authority, else its Host header.
-fn request_authority<B>(request: &Request<B>) -> Option<&str> {
-    match request.uri().authority() {
-        Some(authority) => Some(authority.as_str()),
-        None => request.headers().get(header::HOST)?.to_str().ok(),
-    }
-}
-
 /// A field's first value: empty when absent, `None` when it is no text.
 fn text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).map_or(Some(""), |value| value.to_str().ok())
-}
-
-/// A field present once with one comma-free value.
-fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
-    (!value.contains(',')).then(|| value.trim())
 }
 
 fn same_host(first: &str, second: &str) -> bool {

@@ -1,8 +1,8 @@
-//! Cross-field validation into a `Config`, in Go's order: catalogue, authentication, limits, listeners, origins.
+//! Cross-field validation into a `Config`: catalog, authentication, limits, listeners, origins.
 
 use super::{
-    Auth, Config, Groups, Lifetimes, Limits, Listener, ListenerKind, Methods, Oidc, Outbound, PublicOrigins, Secret,
-    TlsFiles,
+    Auth, Config, Groups, Lifetimes, Limits, ListenAddress, Listener, ListenerKind, Methods, Oidc, Outbound,
+    PublicOrigins, Secret, TlsFiles,
     settings::{Advertised, Settings},
 };
 use graphite_meter_proto::{
@@ -19,7 +19,7 @@ pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, S
     catalog.servers[0].location.clone_from(&settings.location);
     catalog
         .validate()
-        .map_err(|error| format!("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalogue: {error}"))?;
+        .map_err(|error| format!("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalog: {error}"))?;
     let auth = auth(&settings)?;
     let (limits, lifetimes) = limits(&settings)?;
     let listeners = listeners(&settings)?;
@@ -87,7 +87,7 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
         return Err("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION".into());
     }
     if !STAGE_LIMITS.contains(&lifetimes.stage) {
-        return Err("GM_MAX_STAGE_DURATION must be from 1s to 24h".into());
+        return Err("GM_MAX_STAGE_DURATION must be from 1 s to 24 h".into());
     }
     Ok((limits, lifetimes))
 }
@@ -102,12 +102,11 @@ fn natives(settings: &Settings) -> [(ListenerKind, &str, &str); 4] {
     ]
 }
 
-fn advertised(settings: &Settings, kind: ListenerKind, address: &str) -> bool {
-    !address.is_empty()
-        && match &settings.advertised {
-            Advertised::All => true,
-            Advertised::Only(kinds) => kinds.contains(&kind),
-        }
+fn advertised(settings: &Settings, kind: ListenerKind) -> bool {
+    match &settings.advertised {
+        Advertised::All => true,
+        Advertised::Only(kinds) => kinds.contains(&kind),
+    }
 }
 
 /// The enabled listeners; their public origins are checked with the other origins.
@@ -128,13 +127,14 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
             "TLS certificate missing for {set}: GM_TLS_CERT and GM_TLS_KEY must both be set; set them, or leave {set} empty"
         ));
     }
-    for (index, (kind, address, _)) in natives.iter().enumerate() {
-        if let Some((other, ..)) = natives[index + 1..]
-            .iter()
-            .find(|(_, other, _)| !address.is_empty() && address == other)
-        {
-            return Err(format!("{}_ADDR and {}_ADDR must differ", kind.env(), other.env()));
+    let mut enabled: Vec<(ListenerKind, ListenAddress, &str)> = Vec::new();
+    for &(kind, address, public) in natives.iter().filter(|(_, address, _)| !address.is_empty()) {
+        let parsed = ListenAddress::parse(address);
+        let parsed = parsed.ok_or_else(|| format!("{}_ADDR must be :port or host:port", kind.env()))?;
+        if let Some((other, ..)) = enabled.iter().find(|(_, known, _)| *known == parsed) {
+            return Err(format!("{}_ADDR and {}_ADDR must differ", other.env(), kind.env()));
         }
+        enabled.push((kind, parsed, public));
     }
     if let Advertised::Only(kinds) = &settings.advertised
         && let Some(kind) = kinds.iter().find(|&&kind| {
@@ -145,13 +145,13 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
     {
         return Err(format!("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}", kind.name()));
     }
-    let enabled = natives.into_iter().filter(|(_, address, _)| !address.is_empty());
     Ok(enabled
+        .into_iter()
         .map(|(kind, address, public)| Listener {
             kind,
-            address: address.into(),
+            address,
             public_origin: Origin::parse(public).ok(),
-            advertised: advertised(settings, kind, address),
+            advertised: advertised(settings, kind),
         })
         .collect())
 }
@@ -167,7 +167,7 @@ fn origins(settings: &Settings) -> Result<PublicOrigins, String> {
             let scheme = kind.scheme().name();
             return Err(format!("{}_PUBLIC_ORIGIN must be an origin with {scheme} scheme", kind.env()));
         }
-        if !advertised(settings, kind, address) {
+        if address.is_empty() || !advertised(settings, kind) {
             continue;
         }
         throughput = true;
@@ -251,7 +251,7 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
     Ok(Some(Auth { public_origin, methods, provider }))
 }
 
-/// Go's secret checks, in its order: both exclusions, each method's sources, then the provider's settings.
+/// Both exclusions first, then each method's sources, then the provider's settings.
 fn methods(settings: &Settings, mode: AuthMode) -> Result<Methods, String> {
     let password = secret(&settings.auth_password_hash, &settings.auth_password_hash_file);
     let client_secret = secret(&settings.auth_oidc_client_secret, &settings.auth_oidc_client_secret_file);
@@ -316,7 +316,7 @@ fn https_issuer(issuer: &str) -> bool {
 
 /// Under authentication clear HTTP/1.1 is not advertised, and advertised origins share the sign-in hostname.
 fn advertised_auth_origins(settings: &Settings, public: &Origin) -> Result<(), String> {
-    if advertised(settings, ListenerKind::H1, &settings.h1_addr) {
+    if !settings.h1_addr.is_empty() && advertised(settings, ListenerKind::H1) {
         return Err("clear HTTP/1.1 advertised with sign-in enabled: GM_ADVERTISED_NATIVE_ENDPOINTS includes \
                     http1-clear or is unset; list only TLS endpoints, such as http1-tls,http2,http3"
             .into());

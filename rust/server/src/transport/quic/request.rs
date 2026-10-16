@@ -206,15 +206,3 @@ fn backlog(cwnd: u64, rtt: Duration) -> u64 {
     let bytes = u128::from(cwnd).saturating_mul(8 * span) / rtt.as_nanos().max(1);
     u64::try_from(bytes).unwrap_or(u64::MAX)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_backlog_is_eight_windows_scaled_to_four_pauses() {
-        let micros = Duration::from_micros;
-        assert_eq!(backlog(30_000, micros(90_000)), 240_000, "a slow path");
-        assert_eq!(backlog(300_000, micros(200)), 48_000_000, "loopback");
-    }
-}

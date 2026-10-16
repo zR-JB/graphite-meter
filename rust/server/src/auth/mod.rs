@@ -24,7 +24,6 @@ use crate::{
     transport::body::Body,
 };
 use graphite_meter_proto::{
-    duration,
     route::{Kind, Route},
     token::SocketTicket,
 };
@@ -88,8 +87,7 @@ impl Auth {
             Methods::Oidc(settings) => SignIn::Oidc(Box::new(oidc(settings)?)),
             Methods::Hybrid(secret, settings) => SignIn::Hybrid(load(secret)?, Box::new(oidc(settings)?)),
         };
-        // How people sign in, one line per concern, with only the settings the mode uses.
-        let lifetime = duration::format(LOGIN_LIFETIME);
+        let lifetime = log::span(LOGIN_LIFETIME);
         log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
         if let Some(oidc) = settings {
             let groups = match oidc.allowed_groups.as_slice() {
@@ -110,25 +108,24 @@ impl Auth {
 
     /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
-        let Some(auth) = &self.0 else { return Ok(()) };
-        match auth.sign_in.oidc() {
-            Some(oidc) => oidc.discover(&auth.security).await,
+        match self.0.as_ref().and_then(|auth| auth.sign_in.oidc()) {
+            Some(oidc) => oidc.discover().await,
             None => Ok(()),
         }
     }
 
-    /// Hybrid mode's discovery, retried in the background until the provider answers; it never completes.
+    /// Hybrid mode's discovery, retried in the background until the provider answers.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
         let SignIn::Hybrid(_, oidc) = &auth.sign_in else { return None };
-        Some(oidc.retry(&auth.security))
+        Some(oidc.retry())
     }
 
     pub fn enabled(&self) -> bool {
         self.0.is_some()
     }
 
-    /// A test hook: the store of logins, grants and tickets, when enabled, for signing in without credentials.
+    /// The store of logins, grants and tickets, when enabled.
     pub fn store(&self) -> Option<&Store> {
         self.0.as_ref().map(|auth| &auth.store)
     }

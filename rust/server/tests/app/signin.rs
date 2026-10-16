@@ -1,4 +1,4 @@
-//! Password sign-in over the app: the page, Go's cookies, refusals and their notices, the attempt budgets, renewal
+//! Password sign-in over the app: the page, cookies, refusals and their notices, the attempt budgets, renewal
 //! and the security log's counts.
 
 use super::{
@@ -47,7 +47,7 @@ fn line(app: &App, last: &mut [u64; COUNTERS]) -> Option<String> {
 }
 
 #[tokio::test]
-async fn the_sign_in_page_and_a_right_password_set_gos_cookies_and_redirect() {
+async fn the_sign_in_page_and_a_right_password_set_the_cookies_and_redirect() {
     let app = auth_app(&[]);
     let page = tls(&app, empty(public("GET", "/login?reason=renew&error=forged"))).await;
     assert_eq!(page.status(), StatusCode::OK);

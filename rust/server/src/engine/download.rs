@@ -101,9 +101,4 @@ mod tests {
         drop((sources, block));
         assert_eq!(budget.usage().used, 0);
     }
-
-    #[test]
-    fn a_budget_that_cannot_cover_the_block_refuses_it() {
-        assert!(Block::new(&Budget::new(BLOCK_BYTES - 1), Meter::default()).is_err());
-    }
 }

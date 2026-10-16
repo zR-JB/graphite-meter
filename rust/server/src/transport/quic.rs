@@ -140,12 +140,12 @@ impl Http3 {
                     Ok(Ok(quic)) => quic,
                     Ok(Err(error)) => {
                         if !ended_normally(&error.clone().into()) {
-                            PEER_FAILURES.write(format_args!("QUIC handshake failed from {address}: {error}"));
+                            PEER_FAILURES.write(format_args!("QUIC handshake from {address} failed: {error}"));
                         }
                         return;
                     }
                     Err(_) => {
-                        PEER_FAILURES.write(format_args!("QUIC handshake failed from {address}: timed out"));
+                        PEER_FAILURES.write(format_args!("QUIC handshake from {address} failed: timed out"));
                         return;
                     }
                 }

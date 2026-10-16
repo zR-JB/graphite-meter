@@ -137,11 +137,11 @@ async fn a_run_completes_over_webtransport_with_datagram_latency() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial() {
     let (_relayed, link) = relayed().await;
-    let catalogue = format!(
+    let catalog = format!(
         r#"{{"servers": [{{"id": "relayed", "url": "http://{}", "name": "Relayed"}}]}}"#,
         link.address
     );
-    let server = Server::with(&[("GM_SERVER_CATALOG", &catalogue)]).await;
+    let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
     let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "6s"];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {

@@ -3,7 +3,7 @@
 use crate::{
     app::{App, Endpoint},
     auth::{COUNTERS, Security},
-    config::{Config, ENGINE_VERSION, ListenerKind, Methods, path_error},
+    config::{Config, ENGINE_VERSION, ListenAddress, ListenerKind, Methods, could_not},
     engine::download::BLOCK_BYTES,
     limits::Transport,
     log,
@@ -15,7 +15,7 @@ use crate::{
         tls::{self, Certificates},
     },
 };
-use futures_util::{StreamExt, stream::FuturesUnordered};
+use futures_util::{StreamExt, future::OptionFuture, stream::FuturesUnordered};
 use graphite_meter_net::Pool;
 use std::{
     future::Future,
@@ -43,14 +43,11 @@ pub struct Server {
     listeners: Vec<Listening>,
     certificates: Option<Arc<Certificates>>,
     shutdown: CancellationToken,
-    auth: bool,
-    verbose: bool,
 }
 
 struct Listening {
     endpoint: Endpoint,
-    /// The address as configured, which the startup line names.
-    address: String,
+    address: ListenAddress,
     socket: Socket,
 }
 
@@ -70,7 +67,7 @@ impl Socket {
     }
 }
 
-type Service<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+type Accepting<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 impl Server {
     /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port; a failure closes those bound.
@@ -83,8 +80,13 @@ impl Server {
         };
         let location = Some(config.location()).filter(|location| !location.is_empty());
         let location = location.map(|location| format!(" ({location})")).unwrap_or_default();
-        log!(Info, "config", "serving as {}{location}; the catalogue lists {others}", config.name());
-        let (tls, hosts, auth) = (config.tls.clone(), tls::covered_hosts(&config), config.auth.is_some());
+        log!(
+            Info,
+            "config",
+            "serving as {}{location}; the server catalog lists {others}",
+            config.name()
+        );
+        let (tls, hosts) = (config.tls.clone(), tls::covered_hosts(&config));
         let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
         let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
@@ -98,17 +100,21 @@ impl Server {
             Some(files) => {
                 let load = move || Certificates::load(files, hosts, SystemTime::now(), fits);
                 let load = tokio::task::spawn_blocking(load);
-                Some(Arc::new(load.await.map_err(|error| error.to_string())??))
+                Some(Arc::new(
+                    load.await
+                        .map_err(|error| format!("certificate loading failed: {error}"))??,
+                ))
             }
             None => None,
         };
         let mut listeners = bind_all(&mut config, certificates.as_ref()).await?;
-        let (limits, verbose) = (config.limits, config.verbose);
         let shutdown = CancellationToken::new();
         let app = Arc::new(App::new(config, shutdown.clone())?);
         if oidc_only {
             let discovery = app.auth().discover();
-            discovery.await.map_err(|error| format!("OIDC discovery: {error}"))?;
+            discovery
+                .await
+                .map_err(|error| format!("OIDC discovery failed: {error}"))?;
         }
         let companion = listeners
             .iter()
@@ -117,18 +123,19 @@ impl Server {
             let fits = |bytes| terms.check(certificates.handshake_bytes(), bytes);
             let binding = Binding {
                 app: &app,
-                limits: &limits,
+                limits: &app.config().limits,
                 certificates,
                 fits,
                 shutdown: &shutdown,
             };
-            let local = companion.socket.local_addr().map_err(|error| error.to_string())?;
+            let local = companion.socket.local_addr();
+            let local = local.map_err(|error| format!("could not read the HTTP/3 port: {error}"))?;
             let bound = binding.bind(local, &pool)?;
             endpoint_bytes.store(bound.bytes, Ordering::Relaxed);
             let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
             listeners.push(Listening { endpoint, address, socket: Socket::Quic(Box::new(bound)) });
         }
-        Ok(Self { app, pool, listeners, certificates, shutdown, auth, verbose })
+        Ok(Self { app, pool, listeners, certificates, shutdown })
     }
 
     /// Where the listener of `endpoint` accepts.
@@ -137,7 +144,7 @@ impl Server {
         listening.socket.local_addr().ok()
     }
 
-    /// An observation hook for tests: how many endpoints share the HTTP/3 port.
+    /// How many endpoints share the HTTP/3 port.
     pub fn quic_endpoints(&self) -> usize {
         let quic = self.listeners.iter().find_map(|listening| match &listening.socket {
             Socket::Quic(quic) => Some(quic.listeners.len()),
@@ -146,16 +153,15 @@ impl Server {
         quic.unwrap_or(0)
     }
 
-    /// A test hook: the state every listener shares.
     pub fn app(&self) -> Arc<App> {
         self.app.clone()
     }
 
     /// Serves until `stop`, then closes every listener at once, ends running lanes and drains connections.
     pub async fn serve(self, stop: impl Future<Output = ()>) -> Result<(), String> {
-        let Self { app, pool, listeners, certificates, shutdown, auth, verbose } = self;
-        let (pool, stopping) = (&pool, &shutdown);
-        let mut services = FuturesUnordered::<Service<'_>>::new();
+        let Self { app, pool, listeners, certificates, shutdown } = self;
+        let (pool, stopping, auth) = (&pool, &shutdown, app.auth().enabled());
+        let mut accepting = FuturesUnordered::<Accepting<'_>>::new();
         for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.protocol();
             let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
@@ -169,13 +175,13 @@ impl Server {
                         shutdown,
                     };
                     let serve = move |socket, peer| http1.connection(socket, peer);
-                    services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"
                 }
                 Socket::Http2(socket, tls) => {
                     let http2 = Http2 { app: app.clone(), tls, shutdown };
                     let serve = move |socket, peer| http2.connection(socket, peer);
-                    services.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"
                 }
                 Socket::Quic(quic) => {
@@ -188,43 +194,46 @@ impl Server {
                             let next = move || next.clone();
                             listen(app, listener, next, &stopping, role, Transport::Quic, serve).await
                         });
-                        services
+                        accepting
                             .push(Box::pin(async move { serving.await.map_err(|error| format!("{role}: {error}"))? }));
                     }
                     "udp"
                 }
             };
-            // A table: where, which protocol, what for.
             let place = format!("{address}/{protocol}");
             log!(Info, "listen", "{place:<21} {role:<9} {}", endpoint.roles(auth));
         }
-        if let Some(certificates) = certificates {
-            services.push(Box::pin(async move {
-                certificates.watch(stopping.clone()).await;
-                Ok(())
-            }));
-        }
-        let release = release_when_idle(&app, || release_memory(pool));
-        services.push(until_stopped(stopping, release));
-        if let Some(security) = app.auth().security() {
-            services.push(until_stopped(stopping, log_security(security)));
-        }
-        if let Some(discovery) = app.auth().background_discovery() {
-            services.push(until_stopped(stopping, discovery));
-        }
-        if verbose {
-            services.push(until_stopped(stopping, log_verbose(&app)));
-        }
-        log!(Info, "server", "ready");
-        let mut result = tokio::select! {
-            () = stop => Ok(()),
-            Some(ended) = services.next() => ended.and(Err("server listener stopped unexpectedly".into())),
+        let tasks = async {
+            tokio::join!(
+                OptionFuture::from(certificates.map(Certificates::watch)),
+                release_when_idle(&app, || release_memory(pool)),
+                OptionFuture::from(app.auth().security().map(log_security)),
+                OptionFuture::from(app.auth().background_discovery()),
+                OptionFuture::from(app.config().verbose.then(|| log_verbose(&app))),
+            )
         };
-        log!(Info, "server", "stop requested; closing listeners and draining connections");
-        shutdown.cancel();
-        while let Some(ended) = services.next().await {
-            result = result.and(ended);
-        }
+        let background = async {
+            tokio::select! {
+                () = stopping.cancelled() => {}
+                _ = tasks => {}
+            }
+        };
+        let serving = async {
+            log!(Info, "server", "ready");
+            let mut result = tokio::select! {
+                () = stop => Ok(()),
+                Some(ended) = accepting.next() => {
+                    ended.and(Err("a listener stopped accepting; stopping the server".into()))
+                }
+            };
+            log!(Info, "server", "stop requested; closing listeners and draining connections");
+            shutdown.cancel();
+            while let Some(ended) = accepting.next().await {
+                result = result.and(ended);
+            }
+            result
+        };
+        let (result, ()) = tokio::join!(serving, background);
         if result.is_ok() {
             log!(Info, "server", "stopped");
         }
@@ -241,7 +250,7 @@ fn listen<'a, L, F>(
     role: &'static str,
     transport: Transport,
     serve: impl Fn(L::Connection, SocketAddr) -> F + Send + 'a,
-) -> Service<'a>
+) -> Accepting<'a>
 where
     L: Listen + Send + 'a,
     F: Future<Output = ()> + Send + 'static,
@@ -250,17 +259,6 @@ where
         let hold = |peer: SocketAddr| app.connection(peer.ip(), transport);
         let serving = accept::serve(socket, runtime, stopping, hold, serve);
         serving.await.map_err(|error| format!("{role}: {error}"))
-    })
-}
-
-/// Runs `work` until the server stops.
-fn until_stopped<'a>(stopping: &'a CancellationToken, work: impl Future<Output = ()> + Send + 'a) -> Service<'a> {
-    Box::pin(async move {
-        tokio::select! {
-            () = stopping.cancelled() => {}
-            () = work => {}
-        }
-        Ok(())
     })
 }
 
@@ -354,51 +352,31 @@ async fn log_verbose(app: &App) {
 async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>) -> Result<Vec<Listening>, String> {
     let mut listeners = Vec::new();
     for listener in &mut config.listeners {
-        let (endpoint, alpn): (_, Option<&[u8]>) = match listener.kind {
-            ListenerKind::H1 => (Endpoint::H1, None),
-            ListenerKind::H1Tls => (Endpoint::H1Tls, Some(b"http/1.1")),
-            ListenerKind::H2 => (Endpoint::H2, Some(b"h2")),
-            ListenerKind::H3 => (Endpoint::H3Companion, Some(b"http/1.1")),
-        };
-        let tls = match (alpn, certificates) {
-            (None, _) => None,
-            (Some(alpn), Some(certificates)) => Some(certificates.acceptor(alpn)),
-            (Some(_), None) => return Err("TLS listeners need a certificate".into()),
-        };
-        let configured = &mut listener.address;
-        let socket = bind(configured)
+        let acceptor = |alpn: &[u8]| certificates.expect("validation requires TLS files").acceptor(alpn);
+        let address = &mut listener.address;
+        let socket = bind(address)
             .await
-            .map_err(|error| path_error("listen tcp", configured, &error))?;
-        let address = configured.clone();
+            .map_err(|error| could_not(&format!("listen on {address}/tcp"), &error))?;
         if let Ok(local) = socket.local_addr() {
-            *configured = bound(configured, local.port());
+            address.port = local.port();
         }
-        let socket = match (listener.kind, tls) {
-            (ListenerKind::H2, Some(tls)) => Socket::Http2(socket, tls),
-            (ListenerKind::H2, None) => return Err("TLS listeners need a certificate".into()),
-            (ListenerKind::H1 | ListenerKind::H1Tls | ListenerKind::H3, tls) => Socket::Http1(socket, tls),
+        let (endpoint, socket) = match listener.kind {
+            ListenerKind::H1 => (Endpoint::H1, Socket::Http1(socket, None)),
+            ListenerKind::H1Tls => (Endpoint::H1Tls, Socket::Http1(socket, Some(acceptor(b"http/1.1")))),
+            ListenerKind::H2 => (Endpoint::H2, Socket::Http2(socket, acceptor(b"h2"))),
+            ListenerKind::H3 => (Endpoint::H3Companion, Socket::Http1(socket, Some(acceptor(b"http/1.1")))),
         };
-        listeners.push(Listening { endpoint, address, socket });
+        listeners.push(Listening { endpoint, address: address.clone(), socket });
     }
     Ok(listeners)
 }
 
-/// `address` with a port 0 replaced by the `port` it bound.
-fn bound(address: &str, port: u16) -> String {
-    match address.rsplit_once(':') {
-        Some((host, "0")) => format!("{host}:{port}"),
-        _ => address.into(),
+/// Binds `address`; without a host it takes every IPv6 and IPv4 address, or every IPv4 one on a host without IPv6.
+async fn bind(address: &ListenAddress) -> io::Result<TcpListener> {
+    let port = address.port;
+    if address.host.is_some() {
+        return TcpListener::bind(address.to_string()).await;
     }
-}
-
-/// Binds `address`; a bare `:port` takes every IPv6 and IPv4 address, or every IPv4 one on a host without IPv6.
-async fn bind(address: &str) -> io::Result<TcpListener> {
-    let Some(port) = address.strip_prefix(':') else {
-        return TcpListener::bind(address).await;
-    };
-    let port: u16 = port
-        .parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid port"))?;
     let ipv4 = || TcpListener::bind((Ipv4Addr::UNSPECIFIED, port));
     let dual = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None).and_then(|socket| {
         socket.set_only_v6(false)?;
@@ -466,9 +444,7 @@ impl Terms {
         let (limit, connections) = (self.limit, self.connections);
         let minimum = floor as u128 * connections as u128 + endpoint as u128 + BLOCK_BYTES as u128;
         if minimum > limit as u128 {
-            // What is short, of what, and values that fit: one line each, so none wraps. The kernel may grant the
-            // endpoints twice the buffers asked for and each handshake adds to its floor, so the advice keeps a
-            // tenth spare: a budget rounded up to whole GiB, connections rounded down to a multiple of 32.
+            // The kernel may double endpoint buffers and handshakes grow floors, so the advice keeps a tenth spare.
             const GIB: u128 = 1 << 30;
             let fits = (limit as u128).saturating_sub(endpoint as u128 + BLOCK_BYTES as u128) / (floor as u128).max(1);
             let fits = match fits * 9 / 10 {

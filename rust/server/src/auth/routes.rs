@@ -12,8 +12,8 @@ use super::{
 };
 use crate::{
     app::{query, response},
+    clock::{http_date, rfc3339},
     limits::Refusal,
-    log::{http_date, rfc3339},
     peer::Peer,
     transport::body::Body,
 };

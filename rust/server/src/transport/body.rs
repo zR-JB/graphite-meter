@@ -2,7 +2,6 @@
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
-    exchange::EXCHANGE_BOUND,
     lane::Lane,
 };
 use bytes::Bytes;
@@ -148,16 +147,15 @@ enum Rule {
 type Ended = Pin<Box<dyn Future<Output = LaneEnding> + Send>>;
 
 impl ReplyBound {
-    /// The bound of `body`; one the app left unbound has the exchange bound from now.
+    /// The bound of `body`, which the app bounded.
     pub fn of(body: &Body) -> Self {
-        match &body.bound {
-            Some(Bound::Lane(lane)) => {
+        match body.bound.as_ref().expect("the app bounds every reply") {
+            Bound::Lane(lane) => {
                 let ending = lane.clone();
                 let ended: Ended = Box::pin(async move { ending.ended().await });
                 Self(Rule::Lane(lane.clone(), ended.fuse()))
             }
-            Some(Bound::Until(deadline)) => Self(Rule::Until(Box::pin(sleep_until(*deadline)))),
-            None => Self(Rule::Until(Box::pin(sleep_until(Instant::now() + EXCHANGE_BOUND)))),
+            Bound::Until(deadline) => Self(Rule::Until(Box::pin(sleep_until(*deadline)))),
         }
     }
 
@@ -280,7 +278,7 @@ mod tests {
     use super::*;
     use crate::{
         engine::Block,
-        exchange::Exchange,
+        exchange::{EXCHANGE_BOUND, Exchange},
         lane::Work,
         limits::{Budget, Quota},
         peer::ClientKeys,

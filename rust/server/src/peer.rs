@@ -3,12 +3,12 @@
 use crate::auth::{AuthLease, Holder, Principal};
 use crate::log::{Level, RateLimited};
 use graphite_meter_proto::discovery::ClientIpSource;
-use http::HeaderMap;
+use http::{HeaderMap, HeaderName};
 use ipnet::{IpNet, Ipv6Net};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
-static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests");
+static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests", module_path!());
 
 /// A client's address and where it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +88,13 @@ fn hop(text: &str) -> Option<IpAddr> {
     ip.ok().map(|ip| ip.to_canonical())
 }
 
+/// A field present once with one comma-free value.
+pub(crate) fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
+    (!value.contains(',')).then(|| value.trim())
+}
+
 fn is_trusted(ip: IpAddr, trusted: &[IpNet]) -> bool {
     trusted.iter().any(|prefix| prefix.contains(&ip))
 }
@@ -114,6 +121,12 @@ impl Peer {
 
     pub fn auth(&self) -> Option<&AuthLease> {
         self.auth.as_ref()
+    }
+
+    /// Whether a trusted proxy says the client connected over TLS; Traefik names a WebSocket upgrade's TLS `wss`.
+    pub fn forwarded_tls(&self, headers: &HeaderMap) -> bool {
+        let proto = single(headers, &crate::headers::X_FORWARDED_PROTO);
+        !matches!(self.address, Address::Socket(_)) && matches!(proto, Some("https" | "wss"))
     }
 
     /// The identity limits charge and uploads belong to: sign-in, else address; `None` for ambiguous proxy evidence.

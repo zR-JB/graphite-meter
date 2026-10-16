@@ -1,4 +1,4 @@
-//! Authentication over the app: Go's refusals, trust, and cookie and grant access.
+//! Authentication over the app: refusals, trust, and cookie and grant access.
 
 use super::*;
 use graphite_meter_server::{
@@ -10,7 +10,7 @@ use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
-/// `api/password.testvectors.json`: the operator's password and Go's hash of it.
+/// `api/password.testvectors.json`: the operator's password and its pinned hash.
 pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -69,7 +69,7 @@ pub(super) fn assert_headers(response: &Response<Body>, expected: &[(&str, Optio
 }
 
 #[tokio::test]
-async fn an_unauthenticated_request_gets_gos_refusal_and_the_app_root_a_redirect() {
+async fn an_unauthenticated_request_gets_the_sign_in_refusal_and_the_app_root_a_redirect() {
     let app = auth_app(&[]);
     let refused = tls(&app, empty(public("GET", "/download?bytes=1"))).await;
     assert_eq!(refused.status(), StatusCode::FORBIDDEN);

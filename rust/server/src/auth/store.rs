@@ -8,7 +8,6 @@ use crate::lock;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_proto::token::SocketTicket;
 use http::HeaderValue;
-use sha2::{Digest as _, Sha256};
 use std::{
     collections::HashMap,
     fmt,
@@ -226,7 +225,7 @@ impl Store {
         Some(login.lease(grant.login, holder, via, grant.revoked.clone()))
     }
 
-    /// A test hook: issues a grant as an approved challenge does.
+    /// Issues a grant as an approved challenge does.
     pub fn grant(&self, login: LoginKey, browser: Option<BrowserOrigin>) -> Result<GrantToken, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
@@ -345,7 +344,10 @@ impl State {
         }
         self.tickets
             .retain(|_, ticket| now < ticket.deadline && !ticket.lease.is_ended(now));
-        self.approvals.retain(|_, approval| now < approval.deadline);
+        self.approvals.retain(|_, approval| {
+            approval.forget_token(now);
+            now < approval.deadline
+        });
     }
 }
 
@@ -357,7 +359,8 @@ impl Login {
 }
 
 pub(super) fn digest(token: &str) -> Digest {
-    Sha256::digest(token).into()
+    let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
+    digest.as_ref().try_into().expect("SHA-256 digests are 32 bytes")
 }
 
 /// `N` random bytes in unpadded base64url.

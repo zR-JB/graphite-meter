@@ -104,7 +104,10 @@ impl Value for Advertised {
             names => Self::Only(
                 split_list(names)
                     .iter()
-                    .map(|name| ListenerKind::from_name(name).ok_or_else(|| format!("unknown endpoint {name:?}")))
+                    .map(|name| {
+                        ListenerKind::find_by(ListenerKind::name, name)
+                            .ok_or_else(|| format!("unknown endpoint {name:?}"))
+                    })
                     .collect::<Result<_, _>>()?,
             ),
         };
@@ -293,7 +296,7 @@ pub(super) fn load(
 }
 
 impl Settings {
-    /// Applies each variable present, stopping at the first refused one, then loads the catalogue.
+    /// Applies each variable present, stopping at the first refused one, then loads the catalog.
     fn load_env(&mut self, env: &dyn Fn(&str) -> Option<OsString>) -> Result<(), String> {
         let text = |name: &str| match env(name) {
             Some(value) => value

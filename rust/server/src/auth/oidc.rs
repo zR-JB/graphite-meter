@@ -91,33 +91,30 @@ impl Oidc {
     }
 
     /// Discovers the provider unless it is known.
-    pub async fn discover(&self, security: &Security) -> Result<(), String> {
+    pub async fn discover(&self) -> Result<(), String> {
         if self.provider.get().is_some() {
             return Ok(());
         }
-        let provider = Provider::discover(&self.client, &self.settings.issuer).await;
-        let provider = provider.inspect_err(|error| security.debug(format_args!("OIDC discovery failed: {error}")))?;
+        let provider = Provider::discover(&self.client, &self.settings.issuer).await?;
         if self.provider.set(Arc::new(provider)).is_ok() {
             log!(Info, "auth", "OIDC provider ready");
         }
         Ok(())
     }
 
-    /// Discovers the provider, retrying with backoff until it answers; then waits forever.
-    pub async fn retry(&self, security: &Security) {
+    /// Discovers the provider, retrying with backoff until it answers.
+    pub async fn retry(&self) {
         let mut delay = Duration::from_secs(1);
-        for attempt in 0.. {
-            if self.discover(security).await.is_ok() {
-                break;
-            }
-            match attempt {
-                0 => log!(Warn, "auth", "OIDC provider unavailable; retrying; password still signs in"),
-                _ => log!(Warn, "auth", "OIDC provider unavailable; retrying"),
-            }
+        while let Err(error) = self.discover().await {
+            let retry = log::span(delay);
+            log!(
+                Warn,
+                "auth",
+                "OIDC provider unavailable: {error}; retrying in {retry}, password sign-in still works"
+            );
             sleep(delay).await;
             delay = (delay * 2).min(RETRY_MAX);
         }
-        std::future::pending().await
     }
 
     /// Opens a transaction for `keys`, returning the provider's sign-in URL and the transaction cookie's value.
