@@ -1,4 +1,4 @@
-//! Embeds the third-party notices and, from `GM_RUST_ASSET_DIR`, the browser app.
+//! Embeds the third-party notices and, from `GM_ASSET_DIR`, the browser app.
 
 #[path = "src/assets/scan.rs"]
 mod scan;
@@ -12,20 +12,20 @@ fn main() {
 }
 
 fn embed() -> Result<(), String> {
-    println!("cargo:rerun-if-env-changed=GM_RUST_ASSET_DIR");
-    let configured = env::var_os("GM_RUST_ASSET_DIR");
+    println!("cargo:rerun-if-env-changed=GM_ASSET_DIR");
+    let configured = env::var_os("GM_ASSET_DIR");
     let reviewed = graphite_meter_legal::embed(configured.is_some())?;
     let output = graphite_meter_legal::out_dir()?;
     let output = output.as_path();
     let mut manifest = String::from("static EMBEDDED: &[Asset] = &[\n");
     if let Some(configured) = configured {
         if configured.is_empty() {
-            return Err("GM_RUST_ASSET_DIR must name a directory".into());
+            return Err("GM_ASSET_DIR must name a directory".into());
         }
         // A relative directory resolves against this package.
         let root = graphite_meter_legal::inside(&graphite_meter_legal::checkout()?, Path::new(&configured))?;
         if reviewed.as_ref().is_some_and(|reviewed| *reviewed != root) {
-            return Err("reviewed builds embed the browser app from GM_RUST_LEGAL_DIR/browser-assets".into());
+            return Err("reviewed builds embed the browser app from GM_LEGAL_DIR/browser-assets".into());
         }
         println!("cargo:rerun-if-changed={}", root.display());
         for (number, file) in scan::scan(&root, reviewed.is_some())?.into_iter().enumerate() {

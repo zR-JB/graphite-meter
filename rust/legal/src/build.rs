@@ -17,10 +17,10 @@ const MAX_REPORT_BYTES: usize = 16 << 20;
 /// The browser build that a reviewed legal directory's notices cover.
 const BROWSER_ASSETS: &str = "browser-assets";
 
-/// Checks `GM_ENGINE_VERSION` and, if set, the reviewed notices in `GM_RUST_LEGAL_DIR`, then writes `legal.rs` to
+/// Checks `GM_ENGINE_VERSION` and, if set, the reviewed notices in `GM_LEGAL_DIR`, then writes `legal.rs` to
 /// `OUT_DIR`. With `browser` the report must end with the browser's notice, and the covered browser build is returned.
 pub fn embed(browser: bool) -> Result<Option<PathBuf>, String> {
-    for name in ["GM_ENGINE_VERSION", "GM_RUST_LEGAL_DIR"] {
+    for name in ["GM_ENGINE_VERSION", "GM_LEGAL_DIR"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     embed_with(&|name| env::var_os(name), &checkout()?, &out_dir()?, browser)
@@ -59,12 +59,12 @@ fn embed_with(
             return Err("GM_ENGINE_VERSION must be a nonempty release identifier".into());
         }
     }
-    let Some(configured) = var("GM_RUST_LEGAL_DIR") else {
+    let Some(configured) = var("GM_LEGAL_DIR") else {
         generate(output, "None", None, "")?;
         return Ok(None);
     };
     if !Path::new(&configured).is_absolute() {
-        return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
+        return Err("GM_LEGAL_DIR must be an absolute directory".into());
     }
     let directory = inside(checkout, Path::new(&configured))?;
     for (name, variable) in [("package.txt", "CARGO_PKG_NAME"), ("target.txt", "TARGET"), ("rustc-path.txt", "RUSTC")] {
@@ -178,7 +178,7 @@ mod tests {
     fn run(root: &Path, overrides: &[(&str, &str)], browser: bool) -> Result<Option<PathBuf>, String> {
         let legal = root.join("legal").display().to_string();
         let defaults = [
-            ("GM_RUST_LEGAL_DIR", legal.as_str()),
+            ("GM_LEGAL_DIR", legal.as_str()),
             ("CARGO_PKG_NAME", "graphite-meter-server"),
             ("TARGET", "x86_64-unknown-linux-musl"),
             ("RUSTC", "/toolchain/rustc"),
@@ -249,15 +249,9 @@ mod tests {
             "notice target.txt does not match this build"
         );
         assert_eq!(refusal(&[("RUSTC", "rustc")]), "notice rustc-path.txt does not match this build");
-        assert_eq!(
-            refusal(&[("GM_RUST_LEGAL_DIR", "legal")]),
-            "GM_RUST_LEGAL_DIR must be an absolute directory"
-        );
+        assert_eq!(refusal(&[("GM_LEGAL_DIR", "legal")]), "GM_LEGAL_DIR must be an absolute directory");
         let outside = root.parent().unwrap().display().to_string();
-        assert_eq!(
-            refusal(&[("GM_RUST_LEGAL_DIR", &outside)]),
-            format!("{outside} is outside {}", root.display())
-        );
+        assert_eq!(refusal(&[("GM_LEGAL_DIR", &outside)]), format!("{outside} is outside {}", root.display()));
         let version = "GM_ENGINE_VERSION must be a nonempty release identifier";
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "")]), version);
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "1.0 beta")]), version);
