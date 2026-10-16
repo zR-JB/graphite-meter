@@ -1,6 +1,6 @@
 // The seven reasons any failure carries (api/failurereasons.txt), with the words every view shows for them.
 export const FAILURE_REASONS = {
-  "preparation-failed": "Couldn't prepare the connection",
+  "preparation-failed": "Could not prepare the connection",
   "connection-lost": "Connection lost",
   timeout: "Stopped delivering data",
   "sign-in-required": "Sign-in required",
