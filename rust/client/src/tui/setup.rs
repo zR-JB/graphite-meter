@@ -49,7 +49,7 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
     (None, Row::Stage(Stage::Upload), "Upload", "Client to server, timed by the server as it receives."),
     (None, Row::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once."),
     (None, Row::LoadedLatency, "Loaded latency", "Round trips during transfers: the latency the load adds."),
-    (Some("Advanced"), Row::Warmup, "Warmup", "Ramp-up before each stage is measured, at least 10 round trips."),
+    (Some("Advanced"), Row::Warmup, "Warmup", "Opens the connections before each stage; at least 10 round trips"),
     (None, Row::IdleCadence, "Idle probe interval",
         "How often idle latency is probed: on each reply, or at a fixed interval."),
     (None, Row::LoadedCadence, "Loaded probe interval", "How often latency is probed during transfers."),
@@ -214,7 +214,9 @@ impl App {
             }
             Row::Servers => help.push_str(&format!(" Enter picks up to {MAX_SELECTED}.")),
             Row::Stage(_) => help.push_str(" ←→ steps its time; Space switches it."),
-            Row::Warmup => help.push_str(&format!(" ←→ ±100 ms, from 0 s to {}.", format::stage_time(MAX_WARMUP))),
+            Row::Warmup => {
+                help.push_str(&format!(", up to {}. Never counted. ←→ ±100 ms.", format::stage_time(MAX_WARMUP)));
+            }
             Row::Streams if self.config.streams.forced.is_some() => {
                 help = format!("The streams every path opens per direction. ←→ ±1, from 1 to {MAX_STREAMS}.");
             }

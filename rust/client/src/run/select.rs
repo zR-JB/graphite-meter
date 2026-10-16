@@ -92,13 +92,19 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
     let Some((limit, name)) = limits.min_by_key(|(limit, _)| *limit) else {
         return Ok(());
     };
-    let Some((stage, _)) = plan.iter().find(|(_, duration)| *duration > limit) else {
-        return Ok(());
+    let over: Vec<_> = plan
+        .iter()
+        .filter(|(_, duration)| *duration > limit)
+        .map(|&(stage, _)| format::label(stage))
+        .collect();
+    let Some((last, others)) = over.split_last() else { return Ok(()) };
+    let (stages, plural) = match others {
+        [] => ((*last).to_owned(), ""),
+        others => (format!("{} and {last}", others.join(", ")), "s"),
     };
     Err(format!(
-        "{name} allows stages up to {}; shorten the {} stage",
-        format::stage_time(limit),
-        stage.name()
+        "{name} allows stages up to {}; shorten the {stages} stage{plural}.",
+        format::stage_time(limit)
     ))
 }
 
@@ -337,5 +343,30 @@ mod tests {
             ..prepared
         };
         assert!(!failed.reusable(&longer, at));
+    }
+
+    #[test]
+    fn a_plan_past_the_shortest_stage_limit_names_every_stage_to_shorten() {
+        let servers = [
+            server("a", 300, None),
+            server("b", 30, None),
+            server("c", 1, Some(Failure::new(FailureReason::Timeout, "late"))),
+        ];
+        let plan = |download, upload| {
+            [
+                (Stage::Latency, Duration::from_secs(4)),
+                (Stage::Download, Duration::from_secs(download)),
+                (Stage::Upload, Duration::from_secs(upload)),
+            ]
+        };
+        assert_eq!(fit(&plan(30, 30), &servers), Ok(()));
+        assert_eq!(
+            fit(&plan(60, 10), &servers),
+            Err("B allows stages up to 30 s; shorten the Download stage.".into())
+        );
+        assert_eq!(
+            fit(&plan(60, 60), &servers),
+            Err("B allows stages up to 30 s; shorten the Download and Upload stages.".into())
+        );
     }
 }

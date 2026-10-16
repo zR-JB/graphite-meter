@@ -153,6 +153,16 @@ pub fn compact_stage(stage: Stage) -> &'static str {
     if stage == Stage::Bidirectional { "Bi-dir" } else { label(stage) }
 }
 
+pub fn population(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Latency => "Idle",
+        Stage::Download => "Loaded download",
+        Stage::Upload => "Loaded upload",
+        Stage::Bidirectional => "Loaded bidirectional",
+    }
+}
+
+/// `population` where a lane's label column cannot hold it.
 pub fn compact_population(stage: Stage) -> &'static str {
     match stage {
         Stage::Latency => "Idle",

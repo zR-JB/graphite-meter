@@ -2,8 +2,7 @@
 use crate::{
     events::{Run, View},
     format::{
-        self, MISSING, arrow, compact_population, compact_stage, count, direction_label, label, outcome_label,
-        population_label, round_trip,
+        self, MISSING, arrow, compact_stage, count, direction_label, label, outcome_label, population_label, round_trip,
     },
     measure::latency::{Population, Summary, added},
     model::{Direction, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, Throughput},
@@ -174,7 +173,7 @@ impl Report<'_> {
                 measured |= result.is_some_and(|result| result.throughput[direction].is_some());
                 failures.extend(result.and_then(|result| self.throughput_failure(result, direction)));
             }
-            let name = Line::styled(compact_population(stage), palette.stage(stage));
+            let name = Line::styled(format::population(stage), palette.stage(stage));
             let Some(population) = self.population(stage) else {
                 if stage == Stage::Latency {
                     rows.push(vec![name, Line::plain(self.unmeasured(stage))]);
@@ -247,7 +246,7 @@ impl Report<'_> {
             }
             if let Some(paired) = summary.timing {
                 let (handling, rtt) = (round_trip(paired.handling), round_trip(paired.rtt));
-                let mut part = format!("{} {handling} of {rtt}", compact_population(stage));
+                let mut part = format!("{} {handling} of {rtt}", format::population(stage));
                 if paired.pairs != summary.replies {
                     part.push_str(&format!(" ({} pairs)", count(paired.pairs)));
                 }
@@ -345,7 +344,7 @@ impl Report<'_> {
         let mut headers = vec!["Test server".to_owned()];
         headers.extend(labels);
         let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
-        let populations = run.plan.iter().map(|&(stage, _)| compact_population(stage));
+        let populations = run.plan.iter().map(|&(stage, _)| format::population(stage));
         let populations: Vec<&str> = std::iter::once("Test server").chain(populations).collect();
         let mut lines = vec![Line::styled(self.notice(), palette.heading)];
         lines.extend(self.grid(&headers, rates));

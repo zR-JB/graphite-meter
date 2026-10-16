@@ -138,7 +138,7 @@ Graphite Meter  Complete  2 test servers · 17.4 s · 125.0 MB
 
 Latency to a meter  Median   Added    P95      Jitter  Timeouts
 Idle                12.0 ms           24.0 ms  0.4 ms  1 / 41 (2.4%)
-Loaded down         12.0 ms  +0.0 ms  24.0 ms  0.4 ms  1 / 41 (2.4%)
+Loaded download     12.0 ms  +0.0 ms  24.0 ms  0.4 ms  1 / 41 (2.4%)
 
 Idle latency: 40 replies · 4.0 s
 Loaded latency, Download: 40 replies · 10.0 s
@@ -152,7 +152,7 @@ a meter           50.00 Mbit/s
 b meter ✗         50.00 Mbit/s
 
 Latency median by test server
-Test server  Idle     Loaded down
+Test server  Idle     Loaded download
 a meter      12.0 ms  12.0 ms
 b meter      13.0 ms  13.0 ms
 
@@ -237,8 +237,8 @@ Graphite Meter  Partial  a meter · 12.0 s · 125.0 MB
 
 ↓ Download  100.0 Mbit/s   Partial · peak 120.0 · 125.0 MB · 10.0 s
 
-Latency      Median   Added  P95      Jitter  Timeouts
-Loaded down  12.0 ms  –      24.0 ms  0.4 ms  1 / 41 (2.4%)
+Latency          Median   Added  P95      Jitter  Timeouts
+Loaded download  12.0 ms  –      24.0 ms  0.4 ms  1 / 41 (2.4%)
 
 Download: Connection lost
 Loaded latency, Download: Connection lost
