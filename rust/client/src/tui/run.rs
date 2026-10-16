@@ -1,6 +1,9 @@
-//! What the console reads of a run: each stage's state, the shown rates and the needle, the latency server's
-//! populations and probes, and the share of the plan done.
-use super::{App, chrome::Progress, console::ceil_step};
+//! What the console reads of a run: stage states, shown rates, the needle and the latency server's populations.
+use super::{
+    App,
+    chrome::Progress,
+    console::{LADDER, ceil_step},
+};
 use crate::{
     events::{Event, Run, Running},
     measure::latency::Summary,
@@ -16,8 +19,7 @@ use std::{
 /// The needle closes on its reading by e⁻¹ every 110 ms, so it rises, falls and drains without a jump.
 const NEEDLE: f64 = 0.11;
 
-/// Run-screen state: stage timing, shown rates, each server's latest round trip and timeout streak, the idle latency
-/// scale, `l`'s latency pick, the needle and the result's sweep.
+/// What the console animates and picks during a run, beside what the view keeps.
 #[derive(Debug, Default)]
 pub struct Live {
     since: Option<Instant>,
@@ -78,7 +80,7 @@ impl Live {
                     };
                 }
             }
-            Event::Probes { server, probes } => {
+            Event::Probes { server, probes, .. } => {
                 let at = self.probes.iter().position(|(probed, ..)| probed == server);
                 let at = at.unwrap_or_else(|| {
                     self.probes.push((server.clone(), None, 0));
@@ -96,7 +98,7 @@ impl Live {
                     .is_some_and(|running| running.plan().stage == Stage::Latency);
                 let slowest = probes.iter().filter_map(|probe| probe.rtt).max();
                 if let Some(rtt) = slowest.filter(|_| idle && Some(server) == shown) {
-                    let ceiling = ceil_step(rtt.as_secs_f64() * 1e3 * 1.25, &[1.0, 2.0, 4.0]);
+                    let ceiling = ceil_step(rtt.as_secs_f64() * 1e3 * 1.25, &LADDER);
                     self.rtt_scale = self.rtt_scale.max(ceiling);
                 }
             }
@@ -123,8 +125,7 @@ impl Live {
         shown
     }
 
-    /// A result arc reaching `to`, cut at the front sweeping on from where the needle stood: in that share of 0.9 s
-    /// and no less than 0.36 s, easing out.
+    /// A result arc reaching `to`, sweeping on from where the needle stood over at most 0.9 s, easing out.
     pub fn swept(&self, to: f64, now: Instant) -> f64 {
         let Some((at, from)) = self.sweep else { return to };
         let over = (0.9 * (1.0 - from)).max(0.36);
@@ -199,7 +200,7 @@ impl App {
 
     pub(super) fn name(&self, id: Option<&ServerId>) -> String {
         let server = self.view.servers.iter().find(|server| Some(&server.id) == id);
-        server.map_or_else(|| crate::report::vocabulary::MISSING.into(), |server| server.name.clone())
+        server.map_or_else(|| crate::format::MISSING.into(), |server| server.name.clone())
     }
 
     /// How long the stage's warmup or window has run.
@@ -221,7 +222,7 @@ impl App {
         }
     }
 
-    /// The latency server's statistics in `stage`: the stage's own once it ended, else its replies so far.
+    /// The latency server's statistics in `stage`: the stage's own once it ended, else its latency so far.
     pub(super) fn population(&self, stage: Stage) -> Option<Summary> {
         let run = self.view.run.as_ref()?;
         let server = self.latency_server()?;
@@ -229,8 +230,8 @@ impl App {
             let population = result.servers.iter().find(|own| &own.server == server)?.latency?;
             return Some(Summary { p50: population.median(), ..population.summary });
         }
-        let live = run.replies.iter().find(|(own, id, _)| *own == stage && id == server);
-        live.map(|(.., latency)| latency.summary())
+        let live = run.latency.iter().find(|(own, id, _)| *own == stage && id == server);
+        live.map(|&(.., summary)| summary)
     }
 
     /// The latency server's latest round trip.
@@ -240,14 +241,14 @@ impl App {
         probe.and_then(|(_, rtt, _)| *rtt)
     }
 
-    /// Unanswered probes in a row, in the warning tone and from three on the error tone.
+    /// Timeouts in a row, in the warning tone and from three on the error tone.
     pub(super) fn timeout_streak(&self) -> Line {
         let shown = self.latency_server();
         match self.live.probes.iter().find(|(id, ..)| Some(id) == shown) {
             Some(&(.., streak @ 1..)) => {
                 let style = if streak >= 3 { self.palette.err } else { self.palette.warn };
-                let noun = if streak == 1 { "probe" } else { "probes" };
-                Line::styled(format!("{streak} {noun} unanswered"), style)
+                let noun = if streak == 1 { "timeout" } else { "timeouts" };
+                Line::styled(format!("{streak} {noun} in a row"), style)
             }
             _ => Line::default(),
         }

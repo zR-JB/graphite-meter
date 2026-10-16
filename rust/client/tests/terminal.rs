@@ -13,9 +13,11 @@ struct Session {
     text: String,
     /// Seconds from the termination to the exit, in the signals mode.
     exited: Option<f64>,
+    /// The terminal echoes and reads lines again after the exit.
+    restored: bool,
 }
 
-/// The client's session in `mode`; none without python3.
+/// The client's session in `mode`; none without python3, which CI must have.
 fn drive(mode: &str) -> Option<Session> {
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = silent.local_addr().unwrap().port().to_string();
@@ -27,6 +29,7 @@ fn drive(mode: &str) -> Option<Session> {
         .output();
     let output = match output {
         Err(error) if error.kind() == ErrorKind::NotFound => {
+            assert!(std::env::var_os("CI").is_none(), "python3 is missing");
             eprintln!("skipped: python3 is missing");
             return None;
         }
@@ -36,7 +39,14 @@ fn drive(mode: &str) -> Option<Session> {
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let number = |name: &str| result[name].as_i64().unwrap();
     let (text, exited) = (result["text"].as_str().unwrap().to_owned(), result["exited"].as_f64());
-    Some(Session { status: number("code"), keys: number("keys"), text, exited })
+    let restored = result["restored"].as_bool().unwrap();
+    Some(Session {
+        status: number("code"),
+        keys: number("keys"),
+        text,
+        exited,
+        restored,
+    })
 }
 
 /// What the client wrote after leaving the alternate screen.
@@ -53,28 +63,31 @@ fn q_at_setup_exits_0() {
     let Some(session) = drive("quit") else { return };
     assert_eq!((session.keys, session.status), (1, 0), "{:?}", session.text);
     assert!(session.text.contains("Start"), "the setup frame: {:?}", session.text);
-    assert!(session.text.contains("\x1b]9;4;0\x07"));
+    assert!(!session.text.contains("\x1b]9;4"), "no progress bar where the terminal draws none");
     assert!(
         session.text.contains("\x1b[22;0t\x1b[?1003h\x1b[?1006h"),
         "title pushed, every move reported"
     );
     assert!(session.text.contains("\x1b[?1006l\x1b[?1003l\x1b[23;0t"), "title put back");
     assert_eq!(after_restore(&session), "");
+    assert!(session.restored);
 }
 
 #[test]
 fn ctrl_c_during_a_run_exits_130() {
     let Some(session) = drive("interrupt") else { return };
     assert_eq!((session.keys, session.status), (2, 130), "{:?}", session.text);
+    assert!(session.text.contains("\x1b]9;4;0\x07"), "the progress bar is cleared");
     assert_eq!(after_restore(&session), "", "a test stopped before it started has no report");
 }
 
-/// The background query holds `main` for 2 s before any run starts, so it cannot exit by itself meanwhile.
+/// The unanswered background query holds the report for 2 s in raw mode, so it cannot exit by itself meanwhile.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_termination_after_an_interrupt_exits_143_at_once() {
+fn a_termination_after_an_interrupt_exits_143_at_once_and_restores_the_terminal() {
     let Some(session) = drive("signals") else { return };
     assert_eq!(session.status, 143, "{:?}", session.text);
     assert!(session.exited.unwrap() < 2.0, "{:?}", session.exited);
     assert_eq!(session.text, "\x1b]11;?\x1b\\\x1b[c", "nothing but the background query");
+    assert!(session.restored, "the terminal echoes again");
 }

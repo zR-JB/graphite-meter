@@ -7,9 +7,8 @@ use crate::{
 };
 use ratatui_core::layout::Rect;
 
-/// `points` over `window` seconds as a line of dots up to `head`, the live value where the window stands now; a gap
-/// breaks it. The line's tip is lit in `tip`; with a `field`, the area under the line fills with its hue fading down
-/// into the field, a cell at a time under the line's exact dots.
+/// `points` over `window` seconds as a line up to `head`, the live value now, its tip in `tip` and the area under it
+/// fading into `field`; a gap breaks it.
 pub fn line(
     canvas: &mut Canvas,
     area: Rect,
@@ -72,7 +71,7 @@ pub fn line(
             for row in first..rows {
                 let share = 0.05 + 0.2 * (1.0 - f64::from(row) / f64::from(rows));
                 let cell = Rect::new(area.x + column as u16, area.y + row, 1, 1);
-                canvas.fill(cell, super::theme::mix(color, field, share));
+                canvas.fill(cell, crate::style::mix(color, field, share));
             }
         }
     }

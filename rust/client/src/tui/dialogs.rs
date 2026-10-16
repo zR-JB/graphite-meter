@@ -2,23 +2,23 @@
 use super::{App, Effect, Overlay, Target, frame::Entry, keys::Action, keys::Key};
 use crate::{
     controller::Command,
-    report::vocabulary as words,
+    format,
     text::{Line, Style},
 };
 use graphite_meter_proto::catalog::{MAX_SELECTED, ServerId};
 use std::{process::Stdio, time::Instant};
 
-/// The chooser's focused catalogue entry and the up to four servers it would select; none takes the default ones.
+/// The chooser's focused catalog entry and the test servers it would select; none takes the default ones.
 pub struct Chooser {
     row: usize,
     draft: Vec<ServerId>,
 }
 
 impl App {
-    /// Opens the chooser over the catalogue, or once the check in progress brings it.
+    /// Opens the chooser over the catalog, or once the check in progress brings it.
     pub(super) fn open_chooser(&mut self) {
-        let catalogue = self.view.catalogue.clone();
-        let later = match catalogue.len() {
+        let catalog = self.view.catalog.clone();
+        let later = match catalog.len() {
             _ if self.checking() => true,
             0 => {
                 self.recheck_soon();
@@ -33,11 +33,7 @@ impl App {
                     true => self.view.servers.iter().any(|server| server.id == *id),
                     false => self.config.servers.contains(id),
                 };
-                let draft = catalogue
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .filter(selected)
-                    .collect();
+                let draft = catalog.iter().map(|entry| entry.id.clone()).filter(selected).collect();
                 (self.overlay, self.scroll) = (Overlay::Chooser(Chooser { row: 0, draft }), 0);
                 false
             }
@@ -50,19 +46,19 @@ impl App {
 
     pub(super) fn chooser_key(&mut self, action: Action, key: Key) {
         let Overlay::Chooser(chooser) = &mut self.overlay else { return };
-        let catalogue = &self.view.catalogue;
+        let catalog = &self.view.catalog;
         match action {
             Action::Move => {
-                let last = catalogue.len().saturating_sub(1);
+                let last = catalog.len().saturating_sub(1);
                 chooser.row = chooser.row.saturating_add_signed(key.step()).min(last);
             }
             Action::Select => self.select_entry(),
             Action::Apply => {
                 self.config.servers = std::mem::take(&mut chooser.draft);
-                self.overlay = Overlay::Settings;
+                self.overlay = Overlay::SETTINGS;
                 self.recheck_soon();
             }
-            Action::Cancel => self.overlay = Overlay::Settings,
+            Action::Cancel => self.overlay = Overlay::SETTINGS,
             _ => {}
         }
     }
@@ -75,14 +71,17 @@ impl App {
         self.select_entry();
     }
 
-    /// Selects the focused entry, or deselects it; at most four share a test.
+    /// Selects the focused entry, or deselects it.
     fn select_entry(&mut self) {
         let Overlay::Chooser(chooser) = &mut self.overlay else { return };
-        let Some(entry) = self.view.catalogue.get(chooser.row) else { return };
+        let Some(entry) = self.view.catalog.get(chooser.row) else { return };
         match chooser.draft.iter().position(|id| *id == entry.id) {
             Some(at) => _ = chooser.draft.remove(at),
             None if chooser.draft.len() < MAX_SELECTED => chooser.draft.push(entry.id.clone()),
-            None => self.notify(Line::styled("At most four servers share one test.", self.palette.warn)),
+            None => {
+                let text = format!("At most {MAX_SELECTED} test servers share one test.");
+                self.notify(Line::styled(text, self.palette.warn));
+            }
         }
     }
 
@@ -91,20 +90,21 @@ impl App {
         format!("Test servers · {} selected", chooser.draft.len())
     }
 
-    /// The catalogue as the chooser's entries, each with its address and readiness, and the focused one's index.
+    /// The catalog as the chooser's entries, each with its address and readiness, and the focused one's index.
     pub(super) fn chooser_entries(&self) -> (Vec<Entry>, usize) {
         let Overlay::Chooser(chooser) = &self.overlay else { return (Vec::new(), 0) };
         let palette = &self.palette;
-        let mut entries = vec![Entry::Text(Line::styled("Choose up to four. Their speeds add up.", palette.muted))];
+        let lead = format!("Choose up to {MAX_SELECTED}. Their speeds add up.");
+        let mut entries = vec![Entry::Text(Line::styled(lead, palette.muted))];
         let mut focus = 0;
-        for (index, entry) in self.view.catalogue.iter().enumerate() {
+        for (index, entry) in self.view.catalog.iter().enumerate() {
             if index == chooser.row {
                 focus = entries.len();
             }
             let checked = self.checkbox(chooser.draft.contains(&entry.id));
             let label = checked
                 .and(" ", Style::default())
-                .and(words::server(&entry.name, &entry.location), palette.text);
+                .and(format::server(&entry.name, &entry.location), palette.text);
             let server = self.view.servers.iter().find(|server| server.id == entry.id);
             let value = match server {
                 Some(server) => Line::styled(self.readiness(server).label(), palette.muted),

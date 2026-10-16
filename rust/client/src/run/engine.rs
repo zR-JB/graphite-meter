@@ -1,9 +1,11 @@
 //! The stage engine (`docs/MEASUREMENTS.md`), pure and tick-synchronous: the coordinator feeds time and observations.
 
 use crate::{
+    config::MAX_WARMUP,
+    format,
     measure::{
         aggregate::{Aggregate, Boundary, Reading},
-        latency::{Latency, Population, ProbeOutcome},
+        latency::{Latency, Population, ProbeOutcome, Summary},
     },
     model::{
         Cadence, Dir, Direction, Failure, LaneHealth, Scope, ServerFailure, ServerResult, Stage, StageResult,
@@ -28,7 +30,6 @@ const SILENCE: Duration = Duration::from_secs(2);
 const QUIET: Duration = Duration::from_millis(500);
 const MISSED_CHECKPOINTS: u32 = 3;
 const DRAIN_BOUND: Duration = Duration::from_secs(10);
-const MAX_WARMUP: Duration = Duration::from_secs(4);
 const MAX_STAGGER: Duration = Duration::from_millis(75);
 const UNCHECKPOINTED: &str = "receiver checkpoint unavailable before measurement";
 
@@ -64,7 +65,7 @@ pub struct Sample {
 
 /// What a member's prober observed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Probe {
+pub enum ProberEvent {
     Outcome {
         sent: Instant,
         outcome: ProbeOutcome,
@@ -86,7 +87,7 @@ pub struct Input<'a> {
     /// `lateness(fired, previous Tick.next, when the previous tick returned)`; zero for the first tick.
     pub lateness: Duration,
     pub samples: &'a [Sample],
-    pub probes: &'a [(ServerId, Probe)],
+    pub probes: &'a [(ServerId, ProberEvent)],
     /// Members whose participant could not open the stage.
     pub departed: &'a [(ServerId, Failure)],
 }
@@ -269,10 +270,6 @@ impl Engine {
                 complete: seat.present && seat.probing != Probing::Failed && !self.stopped(),
             }),
         });
-        let (intervals, omitted) = match self.aggregate() {
-            Some(all) => (all.intervals.clone().into(), all.omitted),
-            None => (Vec::new(), 0),
-        };
         StageResult {
             stage: self.plan.stage,
             measured,
@@ -280,9 +277,13 @@ impl Engine {
             throughput: self.throughput(None),
             servers: servers.collect(),
             failures: self.failures.clone(),
-            intervals,
-            omitted,
         }
+    }
+
+    /// `server`'s latency so far, counting the probes sent within the window.
+    pub fn latency(&self, server: &ServerId) -> Option<Summary> {
+        let seat = self.seats.iter().find(|seat| seat.server == *server)?;
+        (seat.probing != Probing::Off).then(|| seat.latency.summary())
     }
 
     /// Per direction the stage moves, `server`'s share or all servers' headline and bytes; none without a window.
@@ -362,7 +363,8 @@ impl Engine {
         matches!(self.phase, Phase::Done { stopped: true, .. })
     }
 
-    fn aggregate(&self) -> Option<&Aggregate> {
+    /// The window's throughput accounting, once a transfer stage's window opened.
+    pub fn aggregate(&self) -> Option<&Aggregate> {
         self.window()?.aggregate.as_ref()
     }
 
@@ -393,22 +395,26 @@ impl Engine {
         out.push(if leaves { Decision::Remove(failure) } else { Decision::Failed(failure) });
     }
 
-    fn probe(&mut self, server: &ServerId, probe: &Probe, out: &mut Vec<Decision>) {
+    fn probe(&mut self, server: &ServerId, probe: &ProberEvent, out: &mut Vec<Decision>) {
         let Some(index) = self.index(server) else { return };
         let (window, seat) = (self.bounds(), &mut self.seats[index]);
         match probe {
-            Probe::Outcome { sent, outcome } if window.is_some_and(|(start, end)| (start..end).contains(sent)) => {
+            ProberEvent::Outcome { sent, outcome }
+                if window.is_some_and(|(start, end)| (start..end).contains(sent)) =>
+            {
                 seat.latency.record(*outcome);
             }
-            Probe::Up => {
+            ProberEvent::Up => {
                 seat.latency.break_continuity();
                 if seat.probing == Probing::Waiting {
                     seat.probing = Probing::Up;
                 }
             }
-            Probe::Drained if matches!(seat.probing, Probing::Waiting | Probing::Up) => seat.probing = Probing::Drained,
-            Probe::Down { at, failure } => self.latency_failed(index, failure.clone(), *at, out),
-            Probe::Outcome { .. } | Probe::Drained => {}
+            ProberEvent::Drained if matches!(seat.probing, Probing::Waiting | Probing::Up) => {
+                seat.probing = Probing::Drained
+            }
+            ProberEvent::Down { at, failure } => self.latency_failed(index, failure.clone(), *at, out),
+            ProberEvent::Outcome { .. } | ProberEvent::Drained => {}
         }
     }
 
@@ -444,7 +450,7 @@ impl Engine {
     /// Waits until every member's lanes and prober are ready; at the bound the late ones fail.
     fn ready(&mut self, input: &Input, tick: &mut Tick) {
         let transfers = !self.plan.stage.directions().is_empty();
-        let up = |server: &ServerId| input.probes.contains(&(server.clone(), Probe::Up));
+        let up = |server: &ServerId| input.probes.contains(&(server.clone(), ProberEvent::Up));
         let seats = self.seats.iter().enumerate().filter(|(_, seat)| seat.present);
         let late = seats.filter_map(|(index, seat)| {
             let lanes = transfers && !sample(input, &seat.server).is_some_and(|sample| sample.ready);
@@ -457,7 +463,8 @@ impl Engine {
             tick.next = tick.next.min(bound);
             return;
         }
-        let failure = Failure::new(FailureReason::Timeout, "server resources were not ready within 10 seconds");
+        let text = format!("the test server was not ready within {}", format::stage_time(READY_BOUND));
+        let failure = Failure::new(FailureReason::Timeout, text);
         for (index, lanes) in late {
             match lanes {
                 true => self.fail(index, Scope::Throughput, failure.clone(), input.now, true, &mut tick.decisions),
@@ -545,10 +552,9 @@ impl Engine {
         };
         let bytes = |seat: &Seat| Dir::from_fn(|direction| aggregate.bytes(&seat.server, direction));
         let before: Vec<_> = self.seats.iter().map(bytes).collect();
-        let intervals = |aggregate: &Aggregate| aggregate.intervals.len() + aggregate.omitted;
-        let earlier = intervals(aggregate);
+        let earlier = aggregate.begun();
         let window = aggregate.observe(boundary);
-        let restarted = intervals(aggregate) > earlier;
+        let restarted = aggregate.begun() > earlier;
         if restarted || window.as_ref().is_some_and(|window| window.shortest() >= LIVE_WINDOW) {
             tick.live = Some(window.map(|window| window.rates).unwrap_or_default());
         }
@@ -581,7 +587,8 @@ impl Engine {
         for &direction in self.plan.stage.directions() {
             if seat.quiet(direction, now) >= SILENCE && (last || self.moving(index, direction, now)) {
                 let name = if direction == Direction::Down { "download" } else { "upload" };
-                return Some(Failure::new(FailureReason::Timeout, format!("{name} bytes stopped growing for 2s")));
+                let text = format!("no {name} data for {}", format::stage_time(SILENCE));
+                return Some(Failure::new(FailureReason::Timeout, text));
             }
             if let Some(LaneHealth::Retrying(failure)) = sample.map(|sample| &sample.lanes[direction])
                 && last

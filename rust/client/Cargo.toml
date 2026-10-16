@@ -39,6 +39,9 @@ tokio-rustls.workspace = true
 [build-dependencies]
 graphite-meter-legal = { workspace = true, features = ["build"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["event"] }
+
 [target.'cfg(target_env = "musl")'.dependencies]
 rustfs-mimalloc.workspace = true
 

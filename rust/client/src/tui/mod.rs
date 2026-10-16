@@ -12,7 +12,6 @@ mod run;
 mod settings;
 mod setup;
 mod terminal;
-pub mod theme;
 
 pub use terminal::interactive;
 
@@ -20,10 +19,12 @@ use crate::{
     INTERRUPTED,
     config::{Config, PrepKey},
     controller::Command,
-    events::{Event, SignInEnd, View},
+    events::{Check, Event, SignInEnd, View},
+    format,
     model::{Outcome, Stage},
     net::approval,
     report,
+    style::Palette,
     text::{self, Line, Profile, Style},
 };
 use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
@@ -37,11 +38,10 @@ use std::{
     cell::RefCell,
     time::{Duration, Instant},
 };
-use theme::{Answer, Palette, Taken};
 
 /// How long settings rest before their paths are checked again.
 const RECHECK: Duration = Duration::from_millis(350);
-/// Animation repaints at 120 fps, so the needle and readouts glide on fast displays; input paints at once regardless.
+/// Animation repaints at 120 fps, so the needle and readouts glide on fast displays; input paints at once.
 const FRAME: Duration = Duration::from_micros(8_333);
 /// How long the spinner shows each of its glyphs.
 const SPIN: Duration = Duration::from_millis(80);
@@ -51,16 +51,24 @@ const TOAST: Duration = Duration::from_millis(3200);
 const SMALLEST: (u16, u16) = (60, 16);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// What opens over the console.
+/// What opens over the console, with the state it keeps while open.
 enum Overlay {
     None,
-    Settings,
+    /// The row being typed into, and whether a reset awaits its confirmation.
+    Settings {
+        editor: Option<Editor>,
+        resetting: bool,
+    },
     Details,
     Help,
     Chooser(Chooser),
     SignIn(SignIn),
     /// The server's address, asked for at a first start or after its check could not reach it.
-    Connect,
+    Connect(Editor),
+}
+
+impl Overlay {
+    const SETTINGS: Self = Self::Settings { editor: None, resetting: false };
 }
 
 /// What a press on a drawn region does.
@@ -125,11 +133,7 @@ pub struct App {
     view: View,
     profile: Profile,
     palette: Palette,
-    /// The terminal's background answer while it arrives.
-    answer: Answer,
     overlay: Overlay,
-    /// The address or setting being typed.
-    editor: Option<Editor>,
     setup: Setup,
     live: run::Live,
     toast: Option<Toast>,
@@ -163,17 +167,15 @@ pub struct App {
 }
 
 impl App {
-    /// The console for `config` in `profile`, with the server `kept` for later starts if one is; its first tick checks
-    /// the paths, or it asks for the server without one.
-    pub fn new(config: Config, kept: Option<Origin>, profile: Profile, now: Instant) -> Self {
+    /// The console for `config` in `profile` and `palette`, with the server `kept` for later starts if one is; its first
+    /// tick checks the paths, or it asks for the server without one.
+    pub fn new(config: Config, kept: Option<Origin>, (profile, palette): (Profile, Palette), now: Instant) -> Self {
         let mut app = Self {
             config,
             view: View::default(),
             profile,
-            palette: Palette::new(true),
-            answer: Answer::default(),
+            palette,
             overlay: Overlay::None,
-            editor: None,
             setup: Setup::default(),
             live: run::Live::default(),
             toast: None,
@@ -211,7 +213,7 @@ impl App {
             self.kept = None;
             return vec![Effect::Forget];
         }
-        if self.view.check == crate::events::Check::Ready && self.config.url.is_some() {
+        if self.view.check == Check::Ready && self.config.url.is_some() {
             self.kept.clone_from(&self.config.url);
             return self.kept.clone().map(Effect::Remember).into_iter().collect();
         }
@@ -221,8 +223,22 @@ impl App {
     /// Opens the server's address for typing, with the one set so far.
     fn ask_for_server(&mut self) {
         let address = self.config.url.as_ref().map(ToString::to_string).unwrap_or_default();
-        self.overlay = Overlay::Connect;
-        self.editor = Some(Editor::new(Row::Catalogue, &address));
+        self.overlay = Overlay::Connect(Editor::new(Row::Address, &address));
+    }
+
+    /// The address or setting being typed.
+    fn editor(&self) -> Option<&Editor> {
+        match &self.overlay {
+            Overlay::Settings { editor: Some(editor), .. } | Overlay::Connect(editor) => Some(editor),
+            _ => None,
+        }
+    }
+
+    fn editor_mut(&mut self) -> Option<&mut Editor> {
+        match &mut self.overlay {
+            Overlay::Settings { editor: Some(editor), .. } | Overlay::Connect(editor) => Some(editor),
+            _ => None,
+        }
     }
 
     /// Shows `text` in the bottom bar for a while.
@@ -248,10 +264,10 @@ impl App {
                 let current = self.asked == Some(self.config.key());
                 let prepared = current && !servers.is_empty() && servers.iter().all(|server| server.path.is_ok());
                 if current
-                    && matches!(self.overlay, Overlay::Connect)
+                    && matches!(self.overlay, Overlay::Connect(_))
                     && servers.iter().any(|server| server.path.is_ok())
                 {
-                    (self.overlay, self.editor) = (Overlay::None, None);
+                    self.overlay = Overlay::None;
                     let ready = self.labels().join(", ");
                     self.notify(Line::styled("Ready  ", self.palette.ok).and(ready, self.palette.text));
                 }
@@ -266,12 +282,12 @@ impl App {
             Event::CheckFailed(_) => {
                 self.setup.chooser = false;
                 // A sign-in that lapsed leaves the address as it is; a server that could not be reached opens it.
-                if !self.running() && matches!(self.view.check, crate::events::Check::Failed(_)) {
+                if !self.running() && matches!(self.view.check, Check::Failed(_)) {
                     self.unreachable();
                 }
             }
             Event::SignIn(_) => {
-                (self.overlay, self.editor) = (Overlay::SignIn(SignIn { since: now, opened: false }), None);
+                self.overlay = Overlay::SignIn(SignIn { since: now, opened: false });
             }
             Event::SignInEnded(end) => {
                 if matches!(self.overlay, Overlay::SignIn(_)) {
@@ -280,7 +296,7 @@ impl App {
                 match end {
                     SignInEnd::Approved => self.notify(Line::styled("Signed in", self.palette.ok)),
                     SignInEnd::Expired => self.notify(Line::styled(approval::EXPIRED, self.palette.warn)),
-                    SignInEnd::Failed | SignInEnd::Cancelled => {}
+                    SignInEnd::Failed | SignInEnd::Canceled => {}
                 }
             }
             Event::RunStarted { .. } => self.stopping = false,
@@ -324,11 +340,11 @@ impl App {
             Input::Key(key) if key.kind != KeyEventKind::Release => return self.key(key, now),
             Input::Paste(text) => {
                 // An address pasted over the console is the server to test.
-                if self.editor.is_none() && matches!(self.overlay, Overlay::None) && !self.running() {
+                if matches!(self.overlay, Overlay::None) && !self.running() {
                     self.ask_for_server();
-                    self.editor.as_mut().map(Editor::clear);
+                    self.editor_mut().map(Editor::clear);
                 }
-                if let Some(editor) = &mut self.editor {
+                if let Some(editor) = self.editor_mut() {
                     editor.insert(text.trim());
                 }
             }
@@ -349,7 +365,7 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let step = if mouse.kind == MouseEventKind::ScrollUp { -1 } else { 1 };
                 match self.overlay {
-                    Overlay::Settings => self.move_focus(step),
+                    Overlay::Settings { .. } => self.move_focus(step),
                     Overlay::Details | Overlay::Help => self.scroll = self.scroll.saturating_add_signed(3 * step),
                     Overlay::Chooser(_) => {
                         let key = if step < 0 { KeyCode::Up } else { KeyCode::Down };
@@ -384,13 +400,15 @@ impl App {
             Target::Key => return self.start(),
             Target::Chip(stage) => self.switch(stage),
             // A cap pressed while typing does what its key does in the editor, and any other cap leaves the editor.
-            Target::Cap(Action::Apply) if self.editor.is_some() => return self.edit_key(Key::Code(KeyCode::Enter)),
-            Target::Cap(Action::Cancel) if self.editor.is_some() => return self.edit_key(Key::Code(KeyCode::Esc)),
+            Target::Cap(Action::Apply) if self.editor().is_some() => return self.edit_key(Key::Code(KeyCode::Enter)),
+            Target::Cap(Action::Cancel) if self.editor().is_some() => return self.edit_key(Key::Code(KeyCode::Esc)),
             Target::Cap(action) => {
-                self.editor = None;
+                if let Overlay::Settings { editor, .. } = &mut self.overlay {
+                    *editor = None;
+                }
                 return self.act(action, Key::Code(KeyCode::Null));
             }
-            Target::Server => self.open_settings(Some(Row::Catalogue)),
+            Target::Server => self.open_settings(Some(Row::Address)),
             Target::Row(index) => return self.click_row(index),
             Target::Entry(index) => self.click_entry(index),
             Target::Link => {
@@ -404,29 +422,20 @@ impl App {
             Target::Remember => return self.remember(!self.remembering),
             // The sign-in card stays while its sign-in waits.
             Target::Backdrop if matches!(self.overlay, Overlay::SignIn(_)) => {}
-            Target::Backdrop => (self.overlay, self.editor) = (Overlay::None, None),
+            Target::Backdrop => self.overlay = Overlay::None,
             Target::Sheet => {}
         }
         Vec::new()
     }
 
-    /// Reacts to a key, or takes it as part of the terminal's background answer.
     pub fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         self.now = now;
-        match self.answer.take(event) {
-            Taken::Not => {}
-            Taken::Part => return Vec::new(),
-            Taken::Background(background) => {
-                self.palette = Palette::over(background);
-                return Vec::new();
-            }
-        }
         Key::of(event).map_or_else(Vec::new, |key| self.press(key))
     }
 
     /// Does what `key` does in the context on top.
     fn press(&mut self, key: Key) -> Vec<Effect> {
-        if self.editor.is_some() {
+        if self.editor().is_some() {
             return self.edit_key(key);
         }
         let action = keys::find(self.table(), key, |action| self.offers(action));
@@ -441,19 +450,21 @@ impl App {
             Action::Help => (self.overlay, self.scroll) = (Overlay::Help, 0),
             Action::Settings => self.open_settings(None),
             Action::Details => (self.overlay, self.scroll) = (Overlay::Details, 0),
-            Action::Close if matches!(self.overlay, Overlay::Settings | Overlay::Details | Overlay::Help) => {
+            Action::Close if matches!(self.overlay, Overlay::Settings { .. } | Overlay::Details | Overlay::Help) => {
                 self.overlay = Overlay::None;
             }
             // The chooser closes back to the settings, as esc does.
-            Action::Close if matches!(self.overlay, Overlay::Chooser(_)) => self.overlay = Overlay::Settings,
+            Action::Close if matches!(self.overlay, Overlay::Chooser(_)) => self.overlay = Overlay::SETTINGS,
             Action::Start => return self.start(),
             Action::Stop => return self.stop(),
             Action::Stage => {
                 let index = match key {
-                    Key::Code(KeyCode::Char(digit @ '1'..='4')) => digit as usize - '1' as usize,
+                    Key::Code(KeyCode::Char(digit @ '1'..='9')) => digit as usize - '1' as usize,
                     _ => return Vec::new(),
                 };
-                self.switch([Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional][index]);
+                if let Some(&stage) = Stage::ALL.get(index) {
+                    self.switch(stage);
+                }
             }
             Action::Latency => self.next_latency_server(),
             Action::Recheck => {
@@ -462,7 +473,7 @@ impl App {
             }
             Action::Scroll | Action::Page => self.page(key),
             _ => match self.overlay {
-                Overlay::Settings => return self.settings_key(action, key),
+                Overlay::Settings { .. } => return self.settings_key(action, key),
                 Overlay::Chooser(_) => self.chooser_key(action, key),
                 Overlay::SignIn(_) => return self.sign_in_key(action),
                 _ => {}
@@ -490,7 +501,7 @@ impl App {
         }
         self.overlay = Overlay::None;
         self.notify(Line::styled(
-            "Stopping the test before quitting… ctrl+c quits at once.",
+            "Stopping the test before quitting… Ctrl+C quits at once.",
             self.palette.muted,
         ));
         self.stop()
@@ -561,8 +572,8 @@ impl App {
     /// The key table of what is on top.
     fn table(&self) -> &'static [keys::Binding] {
         match &self.overlay {
-            Overlay::None | Overlay::Connect => keys::CONSOLE,
-            Overlay::Settings => keys::SETTINGS_SHEET,
+            Overlay::None | Overlay::Connect(_) => keys::CONSOLE,
+            Overlay::Settings { .. } => keys::SETTINGS_SHEET,
             Overlay::Details => keys::DETAILS_SHEET,
             Overlay::Help => keys::HELP_SHEET,
             Overlay::Chooser(_) => keys::CHOOSER,
@@ -598,12 +609,12 @@ impl App {
             return Vec::new();
         }
         if let Err(invalid) = self.config.validate() {
-            let text = format!("{}.", text::capitalised(&invalid.to_string()));
+            let text = format!("{}.", text::capitalized(&invalid.to_string()));
             self.notify(Line::styled(text, self.palette.warn));
             return Vec::new();
         }
         (self.recheck, self.asked) = (None, Some(self.config.key()));
-        (self.overlay, self.editor, self.stopping) = (Overlay::None, None, false);
+        (self.overlay, self.stopping) = (Overlay::None, false);
         self.view.starting = true;
         Effect::command(Command::Run(self.config.clone()))
     }
@@ -623,8 +634,7 @@ impl App {
 
     /// The selected servers' names with their locations.
     pub(super) fn labels(&self) -> Vec<String> {
-        let label =
-            |server: &crate::run::prepare::ServerPath| report::vocabulary::server(&server.name, &server.location);
+        let label = |server: &crate::run::prepare::ServerPath| format::server(&server.name, &server.location);
         self.view.servers.iter().map(label).collect()
     }
 

@@ -3,7 +3,7 @@ use super::App;
 use crate::{
     config::PathChoice,
     events::Check,
-    report::vocabulary as words,
+    format,
     run::prepare::{Paths, ServerPath},
 };
 use graphite_meter_proto::{
@@ -97,7 +97,7 @@ impl App {
         for (origin, transport, version) in (kind.offered)(offered, &server.origin) {
             let chosen = (Some(&origin), Some(transport));
             if !choices.iter().any(|choice| choice.selects(chosen)) {
-                let label = words::connection((kind.label)(transport), version, &origin);
+                let label = format::path((kind.label)(transport), version, &origin);
                 let note = self.short(&origin);
                 choices.push(Choice::new(Some(origin), Some(transport), label, note));
             }
@@ -113,7 +113,7 @@ impl App {
             Some(choice) => format!("{} · {}", choice.label, choice.note),
             None => {
                 let origin = chosen.0.map_or_else(|| "automatic origin".into(), Origin::to_string);
-                format!("{} · {origin} (not offered)", chosen.1.map_or("auto", kind.label))
+                format!("{} · {origin} (not offered)", chosen.1.map_or("Automatic", kind.label))
             }
         }
     }
@@ -140,16 +140,14 @@ impl App {
         (version != Protocol::Negotiated).then_some(version)
     }
 
-    /// An origin by its authority, or by its port alone on the catalogue's host.
+    /// An origin by its authority, or by its port alone on the server's host.
     fn short(&self, origin: &Origin) -> String {
         if self.config.url.as_ref().is_some_and(|url| url.host == origin.host)
             && origin.port != origin.scheme.default_port()
         {
             return format!(":{}", origin.port);
         }
-        let text = origin.to_string();
-        let authority = text.split_once("://").map(|(_, authority)| authority.to_owned());
-        authority.unwrap_or(text)
+        format::authority(origin)
     }
 }
 
@@ -168,7 +166,7 @@ pub(super) struct Kind<T> {
 
 pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
     shared: [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
-    label: words::throughput_transport,
+    label: format::throughput_transport,
     chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
     choose: |paths, origin, transport| (paths.throughput_origin, paths.throughput_transport) = (origin, transport),
     offered: |offered, served| {
@@ -183,13 +181,13 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
 
 pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
     shared: [LatencyTransport::WebSocket, LatencyTransport::WebTransport],
-    label: words::latency_transport,
+    label: format::latency_transport,
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
     choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),
     offered: |offered, served| {
         let offer = |target: &LatencyTarget| {
             let origin = target.base_url.resolve(served).clone();
-            (origin, target.transport, words::latency_protocol(target.transport))
+            (origin, target.transport, format::latency_protocol(target.transport))
         };
         offered.latency.iter().map(offer).collect()
     },

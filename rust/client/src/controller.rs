@@ -28,10 +28,14 @@ use tokio_util::sync::CancellationToken;
 const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
-const REJECTED: &str = "server rejected the approved credential; verify its authentication configuration";
-/// What an operation that panicked ends with.
+const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
 /// What a failure from a panic says.
-pub const INTERNAL: &str = "internal error";
+const INTERNAL: &str = "Internal error";
+
+/// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
+pub fn internal() -> Failure {
+    Failure::new(FailureReason::PreparationFailed, INTERNAL)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -166,17 +170,8 @@ impl Work {
                 Kind::Check => self.check(&config, &mut state).await,
             }
         };
-        let overdue = async {
-            self.stop.cancelled().await;
-            tokio::time::sleep(GRACE).await;
-        };
-        tokio::select! {
-            () = guarded(&self.events, kind, started, work) => {}
-            () = overdue => if kind == Kind::Run {
-                let (outcome, elapsed) = (Outcome::Stopped, started.elapsed());
-                self.events.send(Event::RunFinished { outcome, error: None, elapsed });
-            }
-        }
+        let guarded = guarded(&self.events, kind, started, work);
+        bounded(&self.events, kind, started, &self.stop, guarded).await;
         state
     }
 
@@ -258,7 +253,7 @@ impl Work {
         self.events.send(Event::SignIn(prompt));
         let granted = self.stop.run_until_cancelled(approval.grant(client)).await;
         let end = match &granted {
-            None => SignInEnd::Cancelled,
+            None => SignInEnd::Canceled,
             Some(Ok(_)) => SignInEnd::Approved,
             Some(Err(Unapproved::Expired)) => SignInEnd::Expired,
             Some(Err(Unapproved::Failed(_))) => SignInEnd::Failed,
@@ -268,19 +263,40 @@ impl Work {
     }
 }
 
+/// Awaits `work` until it ends, or until the grace after `stop`; a run cut short ends as stopped.
+async fn bounded(
+    events: &Events,
+    kind: Kind,
+    started: Instant,
+    stop: &CancellationToken,
+    work: impl Future<Output = ()>,
+) {
+    let overdue = async {
+        stop.cancelled().await;
+        tokio::time::sleep(GRACE).await;
+    };
+    tokio::select! {
+        () = work => {}
+        () = overdue => if kind == Kind::Run {
+            let (outcome, elapsed) = (Outcome::Stopped, started.elapsed());
+            events.send(Event::RunFinished { outcome, error: None, elapsed });
+        }
+    }
+}
+
 /// Runs `work`, the operation begun at `started`; a panic in it ends the check or run as failed.
 async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Future<Output = ()>) {
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
     }
-    let (failure, elapsed) = (Failure::new(FailureReason::ConnectionLost, INTERNAL), started.elapsed());
+    let (failure, elapsed) = (internal(), started.elapsed());
     events.send(match kind {
         Kind::Run => Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), elapsed },
         Kind::Check => Event::CheckFailed(failure),
     });
 }
 
-/// The first origin asking for sign-in, the catalogue's or a server's, with the name a prompt gives it.
+/// The first origin asking for sign-in, the server's or a test server's, with the name a prompt gives it.
 fn asking(prepared: &Result<Prepared, Failure>, url: Option<&Origin>) -> Option<(Origin, String)> {
     let asks = |failure: &Failure| failure.reason == FailureReason::SignInRequired;
     match prepared {
@@ -313,6 +329,7 @@ fn refuse(prepared: &mut Result<Prepared, Failure>, refusal: &Failure) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[tokio::test]
     async fn an_operation_that_panics_ends_its_run_or_check_as_failed() {
@@ -328,5 +345,24 @@ mod tests {
         }
         guarded(&events, Kind::Run, Instant::now(), async {}).await;
         assert!(received.try_recv().is_err(), "a finished operation sends nothing more");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stopped_run_that_hangs_ends_as_stopped_after_its_grace() {
+        let (events, mut received) = Events::channel();
+        for kind in [Kind::Check, Kind::Run] {
+            let (stop, started) = (CancellationToken::new(), tokio::time::Instant::now());
+            stop.cancel();
+            bounded(&events, kind, Instant::now(), &stop, std::future::pending()).await;
+            assert_eq!(started.elapsed(), GRACE);
+            let ended = received.try_recv().ok();
+            match kind {
+                Kind::Check => assert_eq!(ended, None),
+                Kind::Run => assert_matches!(ended, Some(Event::RunFinished { outcome: Outcome::Stopped, .. })),
+            }
+        }
+        let stop = CancellationToken::new();
+        bounded(&events, Kind::Run, Instant::now(), &stop, async {}).await;
+        assert!(received.try_recv().is_err(), "a run that ends needs no grace");
     }
 }

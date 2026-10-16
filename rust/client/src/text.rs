@@ -1,9 +1,9 @@
-//! Styled terminal text: spans measured in cells, fitting, padding and wrapping, and one SGR writer per colour profile.
+//! Styled terminal text: spans measured in cells, fitting, padding and wrapping, and one SGR writer per color profile.
 use graphite_meter_proto::text::safe;
 use std::io::{self, Write};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// A colour as each profile writes it: 24-bit, and the 256- and 16-colour indexes it converts to.
+/// A color as each profile writes it: 24-bit, and the 256- and 16-color indexes it converts to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
     pub rgb: u32,
@@ -28,11 +28,11 @@ impl Style {
     }
 }
 
-/// What a terminal shows of colour.
+/// What a terminal shows of color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Profile {
     Plain,
-    /// Bold without colour.
+    /// Bold without color.
     Ascii,
     Ansi,
     Ansi256,
@@ -136,7 +136,7 @@ impl Line {
 }
 
 /// `text` with its first character in upper case.
-pub fn capitalised(text: &str) -> String {
+pub fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars
         .next()

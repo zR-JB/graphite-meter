@@ -1,6 +1,6 @@
 //! A run: stages over the prepared participants and engine, membership between stages, idle-round-trip warmups, events.
 use super::{
-    engine::{Decision, Engine, Input, Member, Probe, Sample, StagePlan, Tick, lateness, stagger, warmup},
+    engine::{Decision, Engine, Input, Member, ProberEvent, Sample, StagePlan, Tick, lateness, stagger, warmup},
     prepare::{Prepared, ServerPath},
     probe::Prober,
     select,
@@ -28,8 +28,8 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 /// How long a stage's upload sessions may take to finish, and a stopped stage's.
 const FINISH: Duration = Duration::from_secs(10);
 const STOPPED_FINISH: Duration = Duration::from_secs(1);
-/// Why a run whose servers all left ends.
-const NO_SURVIVORS: &str = "all selected servers failed";
+/// Why a run whose test servers all left ends.
+const NO_SURVIVORS: &str = "all selected test servers failed";
 
 /// A prepared server across the run.
 struct Seat<'a> {
@@ -124,7 +124,7 @@ fn refusal(servers: &[ServerPath], unprepared: &[ServerFailure], plan: &[(Stage,
     match unprepared.first() {
         _ if servers.iter().any(|server| server.path.is_ok()) => select::fit(plan, servers).err().map(refused),
         Some(first) => Some(first.failure.clone()),
-        None => Some(refused("no server was prepared".into())),
+        None => Some(refused("no test server was prepared".into())),
     }
 }
 
@@ -227,7 +227,7 @@ impl Live<'_> {
     }
 
     /// Snapshots every participant, gathers the checkpoints asked for, drains probes and ticks the engine.
-    async fn tick(&mut self, now: Instant, lateness: Duration) -> (Tick, Vec<(ServerId, Probe)>) {
+    async fn tick(&mut self, now: Instant, lateness: Duration) -> (Tick, Vec<(ServerId, ProberEvent)>) {
         let mut samples: Vec<_> = self.participants.iter_mut().map(Participant::local).collect();
         if let Some(budget) = self.checkpoint.take() {
             let gathered = self.participants.iter().map(|member| member.checkpoint(budget));
@@ -255,7 +255,7 @@ impl Live<'_> {
     }
 
     /// Carries out the tick's decisions, then announces what it measured.
-    fn apply(&mut self, mut tick: Tick, probes: &[(ServerId, Probe)], now: Instant) {
+    fn apply(&mut self, mut tick: Tick, probes: &[(ServerId, ProberEvent)], now: Instant) {
         let (participants, mut closed) = (&mut self.participants, false);
         for decision in std::mem::take(&mut tick.decisions) {
             match decision {
@@ -294,21 +294,28 @@ impl Live<'_> {
 
     /// Announces each server's probes sent within the window, as the engine counts them, and while the window is
     /// open the boundary's live rates `now` into it.
-    fn announce(&self, tick: &Tick, probes: &[(ServerId, Probe)], now: Instant, (start, end): (Instant, Instant)) {
+    fn announce(
+        &self,
+        tick: &Tick,
+        probes: &[(ServerId, ProberEvent)],
+        now: Instant,
+        (start, end): (Instant, Instant),
+    ) {
         let events = self.run.events;
         // Each participant's probes arrive together.
         for own in probes.chunk_by(|(one, _), (other, _)| one == other) {
             let probed = own.iter().filter_map(|(_, probe)| {
                 let (sent, rtt) = match probe {
-                    Probe::Outcome { sent, outcome: ProbeOutcome::Reply { rtt, .. } } => (*sent, Some(*rtt)),
-                    Probe::Outcome { sent, outcome: ProbeOutcome::Timeout } => (*sent, None),
+                    ProberEvent::Outcome { sent, outcome: ProbeOutcome::Reply { rtt, .. } } => (*sent, Some(*rtt)),
+                    ProberEvent::Outcome { sent, outcome: ProbeOutcome::Timeout } => (*sent, None),
                     _ => return None,
                 };
                 (start..end).contains(&sent).then(|| Probed { at: sent - start, rtt })
             });
             let probes: Box<[Probed]> = probed.collect();
-            if !probes.is_empty() {
-                events.send(Event::Probes { server: own[0].0.clone(), probes });
+            let server = &own[0].0;
+            if let Some(latency) = self.engine.latency(server).filter(|_| !probes.is_empty()) {
+                events.send(Event::Probes { server: server.clone(), probes, latency });
             }
         }
         if let Some(rates) = tick.live.filter(|_| self.open) {
@@ -394,7 +401,7 @@ impl Participant {
     }
 
     /// Moves what its prober observed into `into`.
-    pub fn probes(&mut self, into: &mut Vec<(ServerId, Probe)>) {
+    pub fn probes(&mut self, into: &mut Vec<(ServerId, ProberEvent)>) {
         if let Some(prober) = &mut self.prober {
             into.extend(prober.drain().map(|probe| (self.server.clone(), probe)));
         }

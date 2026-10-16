@@ -28,18 +28,23 @@ pub struct Link {
     pub text: Line,
 }
 
+impl Progress {
+    /// What clears the bar.
+    pub const CLEAR: &[u8] = b"\x1b]9;4;0\x07";
+}
+
 impl Chrome {
-    /// The sequences that change what `shown` set, or set everything; links are rewritten once `redrawn` cells may cover
-    /// them.
+    /// The sequences that change what `shown` set, or set everything but an absent bar; links are rewritten once
+    /// `redrawn` cells may cover them.
     pub fn bytes(&self, shown: Option<&Self>, redrawn: bool, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {
             let title: String = self.title.chars().filter(|c| !c.is_control()).collect();
             let _ = write!(out, "\x1b]2;{title}\x07");
         }
-        if shown.is_none_or(|shown| shown.progress != self.progress) {
+        if shown.map_or(Progress::None, |shown| shown.progress) != self.progress {
             let _ = match self.progress {
-                Progress::None => write!(out, "\x1b]9;4;0\x07"),
+                Progress::None => out.write_all(Progress::CLEAR),
                 Progress::Busy => write!(out, "\x1b]9;4;3\x07"),
                 Progress::Share(share) => write!(out, "\x1b]9;4;1;{share}\x07"),
             };
@@ -54,4 +59,19 @@ impl Chrome {
         }
         out
     }
+}
+
+/// Whether the terminal draws the progress bar of OSC 9;4; elsewhere it may print the sequence as text.
+pub fn progress(var: impl Fn(&str) -> Option<String>) -> bool {
+    let program = var("TERM_PROGRAM").unwrap_or_default();
+    let version = || {
+        let version = var("TERM_PROGRAM_VERSION").unwrap_or_default();
+        let parts = version.split('.').map(|part| part.parse::<u32>().unwrap_or(0));
+        parts.chain(std::iter::repeat(0)).take(3).collect::<Vec<_>>()
+    };
+    var("WT_SESSION").is_some_and(|session| !session.is_empty())
+        || var("ConEmuANSI").is_some_and(|ansi| ansi == "ON")
+        || program == "ghostty"
+        || var("TERM").is_some_and(|term| term.contains("ghostty"))
+        || program == "iTerm.app" && version() >= vec![3, 6, 6]
 }
