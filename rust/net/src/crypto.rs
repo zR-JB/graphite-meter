@@ -2,21 +2,29 @@
 use crate::trust::{self, Trust};
 use graphite_meter_proto::discovery::Protocol;
 use rustls::{
-    CipherSuite::TLS13_CHACHA20_POLY1305_SHA256, ClientConfig, SupportedProtocolVersion,
-    client::danger::ServerCertVerifier, crypto::CryptoProvider,
+    CipherSuite::{
+        TLS13_AES_128_GCM_SHA256 as AES_128, TLS13_AES_256_GCM_SHA384 as AES_256,
+        TLS13_CHACHA20_POLY1305_SHA256 as CHACHA,
+    },
+    ClientConfig, SupportedProtocolVersion,
+    client::danger::ServerCertVerifier,
+    crypto::CryptoProvider,
 };
 use std::sync::{Arc, LazyLock};
 use tokio::sync::OnceCell;
 
-/// ring, preferring ChaCha20-Poly1305 where AES-GCM has no hardware support and runs slower.
+/// ring with TLS 1.3 first in the cheapest order: AES-128-GCM with AES hardware, ChaCha20-Poly1305 without.
 pub fn provider() -> Arc<CryptoProvider> {
     static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| {
+        let order = if aes_hardware() {
+            [AES_128, AES_256, CHACHA]
+        } else {
+            [CHACHA, AES_128, AES_256]
+        };
         let mut provider = rustls::crypto::ring::default_provider();
-        if !aes_hardware() {
-            provider
-                .cipher_suites
-                .sort_by_key(|suite| suite.suite() != TLS13_CHACHA20_POLY1305_SHA256);
-        }
+        provider
+            .cipher_suites
+            .sort_by_key(|suite| order.iter().position(|&id| id == suite.suite()).unwrap_or(order.len()));
         Arc::new(provider)
     });
     PROVIDER.clone()

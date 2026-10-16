@@ -107,6 +107,24 @@ mod tests {
     use std::net::Ipv4Addr;
     use tokio::{net::TcpListener, time::Instant};
 
+    #[test]
+    fn the_first_address_picks_the_family_tried_first() {
+        let [a, b, c, d]: [SocketAddr; 4] = ["192.0.2.1:1", "192.0.2.2:1", "[2001:db8::1]:1", "[2001:db8::2]:1"]
+            .map(|address| address.parse().unwrap());
+        assert_eq!(families(vec![a, c, b, d]), (vec![a, b], vec![c, d]));
+        assert_eq!(families(vec![c, a, d]), (vec![c, d], vec![a]));
+        assert_eq!(families(vec![a]), (vec![a], vec![]));
+    }
+
+    #[test]
+    fn each_address_gets_an_equal_share_of_at_least_two_seconds_while_time_lasts() {
+        let seconds = Duration::from_secs_f64;
+        for (left, addresses, expected) in [(9.0, 2, 4.5), (9.0, 1, 9.0), (9.0, 10, 2.0), (3.0, 2, 2.0), (1.0, 3, 1.0)]
+        {
+            assert_eq!(share(seconds(left), addresses), seconds(expected), "{left} s for {addresses}");
+        }
+    }
+
     async fn listener() -> (TcpListener, SocketAddr) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let address = listener.local_addr().unwrap();

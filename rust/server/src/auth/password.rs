@@ -117,11 +117,17 @@ pub(super) enum Verdict {
 /// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
 pub(super) struct Password {
     hash: Hash,
-    /// Drawn per process: a restart forgets known devices, and the configuration cannot forge one.
+    /// Derived from the configured hash: devices survive restarts, and a new password forgets them.
     device: hmac::Key,
     slots: Arc<Semaphore>,
     attempts: Attempts,
     wrong: Ceiling,
+}
+
+/// The device-cookie key: an HMAC of a fixed label under the hash, so no other use of the hash shares the key.
+fn device_key(encoded: &str) -> hmac::Key {
+    let derived = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, encoded.as_bytes()), b"graphite-meter device cookie");
+    hmac::Key::new(hmac::HMAC_SHA256, derived.as_ref())
 }
 
 impl Password {
@@ -129,7 +135,7 @@ impl Password {
     pub fn new(encoded: &str) -> Result<Self, String> {
         Ok(Self {
             hash: Hash::parse(encoded)?,
-            device: hmac::Key::new(hmac::HMAC_SHA256, &crate::random::<32>()),
+            device: device_key(encoded),
             slots: Arc::new(Semaphore::new(2)),
             attempts: Attempts::new("password-attempt", 5),
             wrong: Ceiling::new("password-attempt", 60),
@@ -230,15 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn a_device_cookie_is_known_to_its_process_until_it_expires_and_passes_the_shared_ceiling() {
+    fn a_device_cookie_outlives_a_restart_until_it_expires_or_the_password_changes_and_passes_the_shared_ceiling() {
         let vectors = vectors();
         let configured = vectors["hash"].as_str().unwrap();
         let password = Password::new(configured).unwrap();
         let (cookie, expires) = password.device(SystemTime::now());
         assert!(expires > SystemTime::now() + DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(password.known(&cookie));
-        let restarted = Password::new(configured).unwrap();
-        assert!(!restarted.known(&cookie), "the configured hash alone neither knows nor forges a device");
+        assert!(Password::new(configured).unwrap().known(&cookie), "a restart keeps known devices");
+        let changed = configured.replacen("$9kV", "$8kV", 1);
+        assert!(!Password::new(&changed).unwrap().known(&cookie), "a new password forgets them");
         let (old, _) = password.device(SystemTime::now() - DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(!password.known(&old));
         let forged = format!("{}A{}", &cookie[..10], &cookie[11..]);

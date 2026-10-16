@@ -261,3 +261,17 @@ fn desired(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
     };
     demand.clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_send_window_wants_two_bandwidth_delay_products_within_its_bounds() {
+        let millis = Duration::from_millis;
+        assert_eq!(desired(16 << 20, millis(50), millis(250)), 6_710_886);
+        assert_eq!(desired(16 << 20, millis(100), millis(100)), MAX_SEND_WINDOW);
+        assert_eq!(desired(1 << 20, millis(1), millis(250)), MIN_SEND_WINDOW);
+        assert_eq!(desired(1 << 20, millis(1), Duration::ZERO), MIN_SEND_WINDOW, "no time observed");
+    }
+}

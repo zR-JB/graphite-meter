@@ -98,7 +98,7 @@ async fn fourteen_webtransport_lanes_outgrow_the_first_connection_window_without
 }
 
 #[tokio::test]
-async fn a_silent_quic_address_fails_after_3_s_while_a_delayed_answering_one_finishes() {
+async fn a_silent_quic_address_waits_at_least_3_s_while_a_delayed_answering_one_finishes() {
     let (server, client) = (Server::start().await, client());
     let silent = Link::udp(server.quic, Duration::ZERO).await.unwrap();
     silent.stall();

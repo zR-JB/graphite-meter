@@ -292,3 +292,13 @@ fn authentication_refusals_name_the_setting() {
         assert_eq!(error(&dedupe(env), &[]), message, "{change:?}");
     }
 }
+
+// Secrets and proxy trust stay out of argv, which other local users can read.
+#[test]
+fn secrets_and_proxies_have_no_flag() {
+    let env_only = ["trusted-proxies", "auth-password-hash", "auth-oidc-client-secret", "server-catalog"];
+    for flag in env_only.into_iter().chain(["server-catalog-file"]) {
+        assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("unknown option --{flag}"));
+        assert!(!include_str!("usage.txt").contains(&format!("--{flag} ")), "{flag}");
+    }
+}

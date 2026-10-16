@@ -79,6 +79,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_budget_that_cannot_cover_the_block_refuses_it() {
+        assert!(Block::new(&Budget::new(BLOCK_BYTES - 1), Meter::default()).is_err());
+    }
+
+    #[test]
     fn every_download_repeats_one_block_charged_once() {
         let budget = Budget::new(BLOCK_BYTES + 10);
         let block = Block::new(&budget, Meter::new(true)).unwrap();

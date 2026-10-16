@@ -112,7 +112,8 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     let script = get(Endpoint::H1Tls, "/assets/app-1a2b.js").await;
     assert_eq!(header(&script, "content-type"), Some("text/javascript; charset=utf-8"));
     assert_eq!(header(&script, "cache-control"), Some("public, max-age=31536000, immutable"));
-    assert_eq!(header(&script, "content-security-policy"), None, "only documents carry the page's policy");
+    // A worker runs under its own script's policy, so scripts carry the page's.
+    assert!(header(&script, "content-security-policy").is_some_and(|policy| policy.contains("connect-src")));
     assert_eq!(text(script).await, "export {};");
     let icon = get(Endpoint::H1Tls, "/favicon.svg").await;
     assert_eq!(

@@ -37,16 +37,12 @@ impl App {
         if status != StatusCode::NOT_MODIFIED {
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
         }
-        // Only a document a browser renders runs under the policy, which costs a preflight to build.
-        let media = headers.get(header::CONTENT_TYPE).map(HeaderValue::as_bytes);
-        if media.is_some_and(|media| media.starts_with(b"text/html") || media.starts_with(b"image/svg+xml")) {
-            let secure = secure(request, endpoint, peer);
-            let policy = self
-                .assets
-                .policy(&self.connect_sources(&self.preflight(request), secure));
-            let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
-            headers.insert(header::CONTENT_SECURITY_POLICY, policy);
-        }
+        // Every response carries the policy: a worker runs under its own script's, not the page's.
+        let policy = self
+            .assets
+            .policy(&self.connect_sources(&self.preflight(request), secure(request, endpoint, peer)));
+        let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
+        headers.insert(header::CONTENT_SECURITY_POLICY, policy);
         headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
         harden(headers, false);
         if head {
