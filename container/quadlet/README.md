@@ -69,7 +69,7 @@ The supplied `[Install]` sections make the generated services start with the use
 lingering keeps that manager available after logout. Do not run `systemctl enable` on generated Quadlet services.
 See [Podman's Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html#enabling-unit-files).
 
-Upgrade native clients with the server and reload browser tabs; see
+Upgrade terminal clients with the server and reload browser tabs; see
 [upgrading](../../docs/DEPLOYMENT.md#upgrading).
 
 ## Networking

@@ -45,7 +45,7 @@ Cadence, deadlines, the in-flight window and probe timeouts are client behaviour
 
 ## Reflector handling time
 
-The server interval begins immediately after the message adapter's `Recv` returns
+The server interval begins immediately after the transport delivers the message
 and ends immediately before PONG encoding. It includes probe parsing and
 application handling, and excludes receive queues, earlier adapter work, reply
 encoding, transport submission, and delivery. No absolute server timestamp is sent.

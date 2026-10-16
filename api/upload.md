@@ -44,7 +44,7 @@ reader supersedes its predecessor. Watching a feed does not keep an idle upload
 alive; existing idle expiry, finalization retention, and capacity limits remain
 in force. A feed whose receiver expires, or is displaced at the capacity limit
 before its first byte, ends with an `invalid` error record, and that ID stays
-refused until its token would have expired. A WebTransport lane refused after the session opened gets its `error`
+refused until the ID would have expired. A WebTransport lane refused after the session opened gets its `error`
 record on a new server stream. The shared classifications are in [upload refusal codes](uploadrefusals.txt).
 
 ## Progress records

@@ -12,8 +12,8 @@ One static server binary with the browser client embedded. With no configuration
 | Current checkout            | [Build from source](#build-from-source)                                 | Git and Docker Compose, or the pinned toolchain. |
 
 Pin `:X.Y.Z` or an image digest instead of `:latest` for reproducible deployments. Jump to the
-[server reference](#server-reference), [terminal client](#native-terminal-client) or
-[troubleshooting](#troubleshooting). `container/` paths are relative to the repository root.
+[server reference](#server-reference) or [troubleshooting](#troubleshooting); the terminal client has
+[its own guide](TERMINAL.md). `container/` paths are relative to the repository root.
 
 ## Fast local deployment
 
@@ -46,8 +46,7 @@ It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key
 [TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
 
 Prefer an ECDSA P-256 key, which the TLS Quadlet issues (`certbot --key-type ecdsa`): every TLS and QUIC handshake
-signs with it, and with an RSA-2048 key the Rust server spends about four times the CPU per full TLS handshake
-(1.6 ms against 0.38 ms on an x86 CI runner), which a Raspberry Pi feels.
+signs with it, and an RSA-2048 key costs about four times the CPU per handshake.
 
 ### Authentication overlay
 
@@ -91,10 +90,6 @@ by it:
 - **Quadlet**: nothing. Podman secrets are world-readable inside the container, and the TLS and Tailscale units
   map your user, which owns their keys, to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
 
-Rootful Docker gives container root the host's root. _Rootless Podman already maps root to my user, so why a
-non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
-files; the keep-id units run as your user, as root did before.
-
 ### Resources and logs
 
 `GM_MAX_BUFFER_BYTES` (default 8 GiB) bounds the connection buffers the HTTP/2 and HTTP/3 listeners share. It must
@@ -105,10 +100,18 @@ with the values that fit. Connections run on one thread per runtime worker, a CP
 `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run five nice
 steps lower, so transfers yield to the host's other services and to the server's own probes.
 
-Log lines carry a level, a topic and local time; the image has no zone data, so mount
-`/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
-instead of UTC. The image's builder needs an amd64 host and cross-compiles arm64, so on arm64 hosts run a published
-tag.
+The server logs to stderr, one line per event in UTC:
+
+```text
+2026-10-06T14:31:02Z INFO  server:    ready
+2026-10-06T14:31:09Z WARN  tls:       certificate expires in 72 h; renew it (transport::tls)
+```
+
+Each line has a level (`DEBUG`, `INFO`, `WARN`, `ERROR`), a topic and the message; warnings and errors end with the
+module that wrote them. Lines a peer can repeat, such as failed handshakes, appear at most once a minute with a count
+of those held back. On a terminal the lines are colored unless `NO_COLOR` is set or `TERM=dumb`; `FORCE_COLOR`
+colors them anywhere. The image's builder needs an amd64 host and cross-compiles arm64, so on arm64 hosts run a
+published tag.
 
 ## Native listeners
 
@@ -270,100 +273,38 @@ the default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behi
 `http1-tls,http2,http3`, or the server refuses to start.
 
 Sign-in is rate limited per client address (an IPv6 /64 whose /56 and /48 share two and four times the limit): 5
-password attempts per minute, at most 60 wrong passwords per minute across all clients, and 10 OIDC code exchanges
-and 10 sign-in approval pages per minute. A password sign-in also leaves a 30-day device cookie (signed with the
-password hash, so changing the password forgets every device); a browser holding it keeps its own address's limit but
-skips the bounds all clients share, so others' attempts cannot lock a known operator out.
+password attempts per minute, at most 60 wrong passwords per minute across all clients, 10 OIDC code exchanges,
+10 OIDC sign-in starts and 10 sign-in approval pages per minute. A password sign-in also leaves a 30-day device
+cookie (signed with a key derived from the password hash, so changing the password forgets every device); a browser
+holding it keeps its own address's limit but skips the bounds all clients share, so others' attempts cannot lock a
+known operator out.
 
-**Terminal clients** never see the operator password: the client shows a short code and an approval URL, and after
-browser approval receives an in-memory, measurement-only grant bound to that session and HTTPS origin. Sign-out
-revokes it. The client refuses authenticated operation over HTTP or with `--insecure`, and signs in only in its
-interactive interface: a headless run against a protected server exits 1 with "Sign-in required".
+The [terminal client](TERMINAL.md#sign-in) never sees the operator password: an operator approves its short code in
+the browser, and it receives an in-memory, measurement-only grant bound to that login and HTTPS origin. Sign-out
+revokes it.
 
 ## Podman and Quadlet
 
 See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace networking can cap throughput;
 `Network=host` avoids it but gives up the network namespace, so apply host firewall policy.
 
-## Native terminal client
-
-`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it asks for the
-server's address. Nothing is kept unless asked: with **Remember server** on (Tab on that card, or in the settings) it
-keeps the address in `graphite-meter/server` under the user's configuration directory (`~/.config` on Linux), so the
-next start needs none, and turning it off deletes the file. Releases attach archives for
-Linux (amd64, arm64) and Windows (amd64); the server ships as the container image or a
-[source build](#build-from-source).
-
-| Flag                                             | Default                   | Meaning                                                                                         |
-| ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `--url`                                          | the remembered server     | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
-| `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
-| `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
-| `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
-| `--throughput-transport`                         | `auto`                    | `fetch-stream` or `webtransport`.                                                               |
-| `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                                  |
-| `--stages`                                       | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`).                    |
-| `--warmup`                                       | `800ms`                   | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s.                             |
-| `--latency-duration`                             | `4s`                      | Measured window, 1 s–24 h and within every selected server's limit (5 min unless raised).       |
-| `--download-/--upload-/--bidirectional-duration` | `10s`                     | Same bounds.                                                                                    |
-| `--auto-streams`                                 | `6`                       | Maximum HTTP/1.1 streams per direction, 1–14.                                                   |
-| `--streams`                                      | `0`                       | Exact streams per server and direction, at most 14; `0` keeps automatic.                        |
-| `--ping`                                         | `reply-driven`            | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms–15 s. |
-| `--loaded-ping`                                  | `medium`                  | Cadence during transfers, same values.                                                          |
-| `--loaded-latency`                               | `true`                    | Measure latency during transfer stages.                                                         |
-| `--insecure`                                     | `false`                   | Skip TLS verification; refuses sign-in.                                                         |
-| `--report`                                       | `false`                   | Run once without the interface, and without sign-in; automatic when stdout is not a terminal.   |
-| `--version` / `--legal`                          |                           | Print the version or third-party notices and exit.                                              |
-
-Fixed cadences are capped at 15 s, half the server's idle bound. Headless runs print stage progress to stderr and
-the report to stdout; an interactive run prints the same report on exit. It is plain text unless stdout is a
-terminal and `NO_COLOR` is unset.
-
-| Exit      | Meaning                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| 0         | Complete, or quit before a run.                                                       |
-| 1         | Any other outcome (Partial, Incomplete, Stopped, Failed) or a runtime error.          |
-| 2         | Invalid flags or arguments.                                                           |
-| 130 / 143 | A run stopped by SIGINT (or ctrl+c) / SIGTERM; after a finished run they exit like q. |
-
-The interface is one console: the dial, the latency lanes, the run key over a chip per stage, and a card per stage.
-**s** opens the settings as a sheet at the right (the server and its test servers, connection paths, stages, then
-advanced settings), its foot explaining the focused row; `?` lists every key. Without a server, or when none
-answers, a card asks for the address. Every selected server is probed for latency; the run's latency is the first
-selected server's, and if it leaves the test a surviving one takes over. `l` switches the server shown; the printed
-report keeps the run's. A selected server that fails its check leaves the run, which continues as Partial.
-
-| Key                        | Where           | Action                                                                                                            |
-| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| enter, space, r            | console         | Start test; after one, run again.                                                                                 |
-| esc                        | running         | Stop the test at once.                                                                                            |
-| 1–4                        | console         | Turn latency, download, upload or bidirectional on or off; a click on a stage's chip does the same.               |
-| s, d, ?                    | console         | Settings, details (servers, paths, rates, failures), keys; esc or the same key closes them.                       |
-| l, v                       | console         | With several servers, the latency server shown; check the server again.                                           |
-| ↑/↓ (k/j, tab), ←/→        | settings        | Move; change the focused value.                                                                                   |
-| enter, space, r            | settings        | Edit or open the row (the test servers open their chooser); space switches a row on or off; r starts the test.    |
-| ←/→, home/end, enter, esc  | editing a value | Move the cursor, apply, cancel.                                                                                   |
-| tab                        | connect card    | Remember the server for later starts, or forget it.                                                               |
-| space, enter, esc          | server chooser  | Select, apply, cancel.                                                                                            |
-| enter (o), esc             | sign-in         | Open the approval page, cancel.                                                                                   |
-| pgup/pgdn, home/end, wheel | sheets          | Scroll; in the settings the wheel moves the focus.                                                                |
-| mouse                      | any             | Hover lights what a click presses: the run key, a chip, a cap in the bottom bar, a row, the sign-in link.         |
-| q, ctrl+c                  | any             | Quit. While editing, q is typed. A running test stops first and prints its report; a second ctrl+c quits at once. |
-
 ## Upgrading
 
-Upgrade the server and native clients together and reload open tabs; wire changes stay additive, and discovery
-treats the engine version as metadata, not a compatibility test. Existing deployments stay single-server until you
-add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
-schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
-defaults.
+Upgrade the server and the terminal clients together and reload open tabs. Existing deployments stay single-server
+until you add a [server catalog](SERVERS.md). Unknown or obsolete browser preferences fall back to defaults; saved
+History stays readable.
 
 Releases up to 0.12 shipped a Go server as `latest` and an experimental Rust server as `latest-rust`. The Rust server
 is now the only one and carries the plain tags; the `-rust` tags stay where they were and no longer move. It keeps the
-ports, `GM_*` settings, `hash-password` command, [container user](#container-user) and layout, and adds
-[`GM_MAX_BUFFER_BYTES`](#resources-and-logs): a host that raised `GM_MAX_CONNECTIONS` far above its default may need
-to lower it, or the server stops at start and names the values that fit. Log lines read
-`2026-10-06T16:31:02+02:00 WARN  tls:       message (module)`; adjust log parsers that matched the old format.
+ports, `GM_*` settings, `hash-password` command, [container user](#container-user), password hashes and device
+cookies. Check these when switching:
+
+- [`GM_MAX_BUFFER_BYTES`](#resources-and-logs) is new: a host that raised `GM_MAX_CONNECTIONS` far above its default
+  may need to lower it, or the server stops at start and names the values that fit.
+- Boolean settings accept only `true`, `false`, `1` and `0`.
+- Log lines are always UTC in the [format above](#resources-and-logs); `TZ` no longer matters. Adjust log parsers.
+- Servers in a [server catalog](SERVERS.md) must run 0.9.1 or newer: both clients need the upload checkpoint and stage
+  limit that discovery reports since then.
 
 ## Troubleshooting
 
@@ -373,18 +314,18 @@ to lower it, or the server stops at start and names the values that fit. Log lin
 | WebTransport is unavailable                | HTTPS page, trusted certificate, browser support, advertised H3 origin, TCP+UDP reachability.                |
 | An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.                           |
 | A local peer fails only from a hosted page | Local-network permission and HTTPS; see [browser reachability](SERVERS.md#local-network-browser-permission). |
-| A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the native client accepts literals.                       |
+| A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the terminal client accepts literals.                       |
 | Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests.                  |
-| Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener.         |
-| Timeouts or "—" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
+| Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the terminal client on a direct listener.         |
+| Timeouts or "–" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
 
 ### UDP buffers
 
-HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers, shared by the server's HTTP/3 endpoints with at least
-2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
-server then logs one line at startup, `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
-of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
-results. Raise the caps on the host, which also covers containers:
+The HTTP/3 listener asks the kernel for 7 MiB of UDP buffer per direction, split among its sockets with at least
+2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the server then
+logs one `udp` warning at startup: `UDP buffer too small for QUIC above about 1 Gbit/s`. Below about 1 Gbit/s of
+QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport results.
+Raise the caps on the host, which also covers containers:
 
 ```sh
 sysctl --write net.core.rmem_max=7500000 net.core.wmem_max=7500000
@@ -394,8 +335,19 @@ Add both keys to a file under `/etc/sysctl.d/` to keep them after a reboot.
 
 ## Server reference
 
-Environment loads first; a flag overrides it. `graphite-meter -h` lists every flag with its variable. Rows marked
-_env only_ have no flag, so secrets stay out of process arguments.
+The server binary is `/graphite-meter` in the image and `graphite-meter-server` in a source build. Besides serving,
+it takes one command:
+
+| Command               | Effect                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `version`, `--version` | Print the version.                                                                          |
+| `hash-password`       | Read a password twice on stdin (1 to 1024 bytes, hidden on a terminal) and print its Argon2id hash. |
+| `--legal`             | Print the project and dependency license notices.                                            |
+| `--help`              | Print every flag with its variable and default.                                              |
+
+Environment loads first; a flag overrides it. Rows marked _env only_ have no flag, so secrets stay out of process
+arguments. Durations take units such as `90s`, `5m` or `2h`; booleans `true`, `false`, `1` or `0`. A configuration
+error stops the server with exit status 1 and names the setting.
 
 | Environment                             | Flag                                   | Default          | Meaning                                                                                |
 | --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
@@ -415,14 +367,15 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters.            |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Location label, with the same limits.                                                  |
 | `GM_RESULT_HISTORY_DEFAULT`             | `--result-history-default`             | `false`          | Default for saving completed browser results on the device.                            |
-| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log per-second throughput, admission counters and authentication debug lines.          |
+| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log throughput every second, admission counters every 30 s and sign-in debug lines.    |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Concurrent measurement handlers.                                                       |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Handlers per client identity.                                                          |
 | `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, a share of the handler pool.                                    |
 | `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
+| `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources-and-logs)).        |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client.                                                         |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | stage + 1m       | Request-shaped measurement lifetime; unset, at least `5m`.                             |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Request-shaped measurement lifetime; unset, at least the stage limit plus 1 min.       |
 | `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | WebTransport session lifetime; unset, at least the operation's.                        |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s`–`24h`; sent in `/preflight`.                      |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
@@ -436,8 +389,8 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_AUTH_OIDC_CLIENT_SECRET_FILE`       | `--auth-oidc-client-secret-file`       | empty            | File with the client secret.                                                           |
 | `GM_AUTH_OIDC_ALLOWED_GROUPS`           | `--auth-oidc-allowed-groups`           | empty            | Required comma-separated, case-sensitive groups.                                       |
 | `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, ≤ 64 bytes.                                                        |
-| `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalogue](SERVERS.md#operator-catalogue) JSON.                                |
-| `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalogue file path without `..`; exclusive with the inline form.             |
+| `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](SERVERS.md#server-catalog) JSON.                                      |
+| `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
   handlers, and session duration ≥ operation duration. Lifetimes left unset cover the stage limit plus a minute, so a

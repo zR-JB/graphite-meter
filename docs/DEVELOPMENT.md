@@ -72,8 +72,8 @@ the short Git revision).
 | Real-server E2E | `mise run e2e`        | Chrome or Firefox against a local fleet of real servers.     |
 
 `mise run e2e-server` builds the server the suite runs by default; `mise run e2e` takes another as its first argument,
-then `client/scripts/e2e.ts` starts five servers with an ephemeral certificate: a home server with a catalogue, three
-public peers (native TLS, plain, second catalogue) and a password-protected peer. Tests drive the browser through
+then `client/scripts/e2e.ts` starts five servers with an ephemeral certificate: a home server with a catalog, three
+public peers (native TLS, plain, second catalog) and a password-protected peer. Tests drive the browser through
 `client/e2e/webview.ts`: Chrome over its DevTools Protocol, or with `GM_E2E_BROWSER=firefox` Firefox over WebDriver
 BiDi (`GM_FIREFOX_PATH` names another build). Tests written `test.chrome` need the DevTools Protocol and Firefox
 skips them.

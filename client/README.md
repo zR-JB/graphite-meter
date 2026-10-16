@@ -22,8 +22,8 @@ Each layer imports only from the layers above it in this table; the composition 
 ## Compatibility
 
 Saved data and links from earlier releases keep working, so these are compatibility boundaries: `localStorage`
-`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at schema
-version 2 with schema-5 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (the Details panel
+`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 3
+(upgrading version 2) with schema-5 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (the Details panel
 is `endpoint` in URLs). The page keeps the servers' shell contract: one `</head>`, one attribute-less inline script
 and style (hashed into the content security policy), one `graphite-meter-trusted-types` meta naming the Trusted Types
 policy `src/lib/trusted.ts` creates (the servers then require Trusted Types), `<div id="app">`, hashed assets under
@@ -34,4 +34,5 @@ policy `src/lib/trusted.ts` creates (the servers then require Trusted Types), `<
 `bun build.ts` (`build:bundle`) bundles the workers, then the app with their hashed URLs, minifies the shell's inline
 blocks, copies `public` and writes compressed siblings. `bun check` type-checks with the TypeScript 7 port Bun ships;
 Biome formats. Unit tests (`bun test src`) cover pure logic and the engine against fake clocks and fakes. The browser
-suite in `e2e/` runs real Chrome and Firefox against local servers; `scripts/e2e.ts` starts the server fleet, and `e2e/webview.ts` and `e2e/browsers.ts` drive the browsers.
+suite in `e2e/` runs real Chrome and Firefox against local servers; `scripts/e2e.ts`
+starts the server fleet through `e2e/servers.ts`, and `e2e/webview.ts` and `e2e/browsers.ts` drive the browsers.
