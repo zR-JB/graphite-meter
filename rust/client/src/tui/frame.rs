@@ -579,7 +579,7 @@ impl App {
                 let median = summary.p50.map_or(MISSING.into(), round_trip);
                 let p95 = summary.p95.map_or(MISSING.into(), round_trip);
                 let value = format!("Median {median} · P95 {p95} · {} replies", format::count(summary.replies));
-                entries.push(item(format::compact_population(stage), value));
+                entries.push(item(format::population(stage), value));
             }
         }
         entries.push(Entry::Heading("Build".into()));
