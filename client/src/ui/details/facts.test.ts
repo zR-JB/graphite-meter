@@ -10,7 +10,6 @@ function offer(throughput: object[], latency: object[]): Discovery {
     generation: "g1",
     engineVersion: "",
     server: { name: "" },
-    uploadCheckpoint: true,
     maxStageMs: 300_000,
     origin: page.origin,
     protocol: null,

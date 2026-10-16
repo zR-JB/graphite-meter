@@ -3,7 +3,7 @@
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";
-import { BROWSER_POOL, MAX_STREAMS, normalizeStreamCount } from "../../engine/net/budget";
+import { BROWSER_POOL, MAX_STREAMS, normalizeStreamCount } from "../../engine/net/streams";
 import { parseSelection } from "../../engine/net/paths";
 import type { PingCadence, TestConfig } from "../../engine/types";
 import { Show } from "../../lib/dom";
@@ -85,7 +85,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
   // Unselected servers are discovered only while the sheet shows and nothing runs.
   effect(() => {
     const wanted =
-      shell.shown("settings") && !!servers.catalogue() && !servers.loading() && !run.running() && !run.preparing();
+      shell.shown("settings") && !!servers.catalog() && !servers.loading() && !run.running() && !run.preparing();
     untrack(() => servers.showMetadata(wanted));
   });
   // A confirmation belongs to the visible sheet.

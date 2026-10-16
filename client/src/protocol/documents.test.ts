@@ -10,25 +10,31 @@ test("a JSON body is read up to its bound and refused past it, 64 KiB unless nam
   expect(await readJSON(new Response(body), body.length)).toEqual(document);
 });
 
-test("the shared preflight and probe fixtures decode as Go and Rust read them", async () => {
+test("the shared preflight and probe fixtures decode", async () => {
   const golden = await json("preflight.golden.json");
   expect(preflight(golden)).toEqual(golden);
   const forward = await json("preflight.forward.golden.json");
-  const { throughput, latency } = preflight(forward.document).capabilities;
+  // The fixture predates the required stage limit.
+  const capabilities = { maxStageMs: 300_000, ...forward.document.capabilities };
+  const { throughput, latency } = preflight({ ...forward.document, capabilities }).capabilities;
   expect({ throughput, latency }).toEqual(forward.decoded);
   expect(probe(await json("probe.golden.json"))).toEqual(await json("probe.golden.json"));
 });
 
-test("a document with a malformed target, stage limit or text is refused whole", async () => {
+test("a document with a malformed target, capability, stage limit or text is refused whole", async () => {
   const golden = await json("preflight.golden.json");
+  const { maxStageMs, uploadCheckpoint, ...required } = golden.capabilities;
   const refused = [
     { ...golden, capabilities: { ...golden.capabilities, maxStageMs: 999 } },
+    { ...golden, capabilities: { ...required, maxStageMs } },
+    { ...golden, capabilities: { ...required, uploadCheckpoint } },
+    { ...golden, capabilities: { ...golden.capabilities, uploadCheckpoint: false } },
     { ...golden, capabilities: { ...golden.capabilities, latency: [{ baseUrl: ".", transport: "" }] } },
     {
       ...golden,
       capabilities: { ...golden.capabilities, latency: [{ baseUrl: "https://a.example/x", transport: "websocket" }] },
     },
-    { ...golden, server: { name: "evil‮txt" } },
+    ...["\u202e", "\u200b", "\u2028", "\u0007"].map((hidden) => ({ ...golden, server: { name: `evil${hidden}txt` } })),
     {
       ...golden,
       capabilities: { ...golden.capabilities, throughput: Array(33).fill(golden.capabilities.throughput[0]) },
@@ -37,7 +43,7 @@ test("a document with a malformed target, stage limit or text is refused whole",
   for (const document of refused) expect(() => preflight(document)).toThrow();
 });
 
-test("a catalogue binds unique IDs to canonical origins with self first", () => {
+test("a catalog binds unique IDs to canonical origins with self first", () => {
   const page = "https://meter.example";
   const parsed = catalog(
     {

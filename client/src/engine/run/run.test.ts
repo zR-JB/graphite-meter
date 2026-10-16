@@ -3,13 +3,13 @@ import { ServerBusyError, SignInRequired, StageFailure, type StageEvents } from 
 import { incoherence, type RunResult } from "./result";
 import { Run, type RunEvent, type RunPlan } from "./run";
 import type { Activity, Stage } from "./schedule";
-import { FakeClock, prepared, resources, type Peer } from "./testkit";
+import { FakeClock, prepared, resources, type Peer } from "./fakes.testutil";
 
 function harness(
   peers: Peer[],
   stages: Partial<RunPlan["stages"]>,
   duration: Partial<RunPlan["duration"]>,
-  options: { focus?: string; adaptive?: boolean; loadedLatency?: boolean } = {},
+  options: { focus?: string; adaptive?: boolean; loadedLatency?: boolean; deal?: (activity: Activity) => void } = {},
 ) {
   const clock = new FakeClock();
   const calls: string[] = [];
@@ -39,13 +39,15 @@ function harness(
         dropped: [],
         plan,
         open: (setup) => resources(peers.find(({ id }) => id === setup.server.server.id)!, setup, calls, clock),
-        streams: (servers, activity) =>
-          new Map(
+        streams: (servers, activity) => {
+          options.deal?.(activity);
+          return new Map(
             servers.map(({ server }) => [
               server.id,
               { streams: { down: +activity.transfer.includes("down"), up: +activity.transfer.includes("up") } },
             ]),
-          ),
+          );
+        },
         clock,
         online: () => true,
       });
@@ -314,7 +316,7 @@ test("a server lost in the latency stage is not prepared for the later stages", 
 test("server failure text is bounded and dropped when it could disguise itself", async () => {
   const say = (message: string) => (events: StageEvents) => later(100, () => events.failed("protocol-error", message));
   const h = setup(
-    [{ id: "a", measure: say("paid ‮evil") }, { id: "b", measure: say("x".repeat(300)) }, { id: "c" }],
+    [{ id: "a", measure: say("paid \u202eevil") }, { id: "b", measure: say("x".repeat(300)) }, { id: "c" }],
     { download: true },
     { downloadMs: 1_400 },
   );
@@ -1360,4 +1362,43 @@ test("a stage that cannot prepare reports the reason its lanes gave", async () =
     reason: "protocol-error",
     message: expect.stringContaining("HTTP 400"),
   });
+});
+
+test("a stage's readiness waits and checkpoints end as it settles", async () => {
+  const signals: AbortSignal[] = [];
+  const h = setup(
+    [{ id: "a", checkpoint: (signal) => void signals.push(signal) }],
+    { upload: true, bidirectional: true },
+    {
+      uploadMs: 1_000,
+      bidirectionalMs: 1_000,
+    },
+  );
+  h.start();
+  let ended: boolean[] = [];
+  h.run.on((event) => {
+    if (event.type === "stageEnd" && event.stage === "upload") ended = signals.map(({ aborted }) => aborted);
+  });
+  await h.result();
+  expect(ended.length).toBeGreaterThan(1);
+  expect(ended.every(Boolean)).toBe(true);
+});
+
+test("lanes a later stage cannot be dealt end the run with what earlier stages measured", async () => {
+  let dealt = 0;
+  const h = setup(
+    [{ id: "a" }],
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+    {
+      deal: (activity) => {
+        if (activity.stage === "upload" && dealt++) throw new Error("No lanes for this stage");
+      },
+    },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.download?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect([result.stages.upload, result.outcome]).toEqual(["failed", "incomplete"]);
+  expect(result.multiServer.failures).toMatchObject([{ stage: "upload", message: "No lanes for this stage" }]);
 });

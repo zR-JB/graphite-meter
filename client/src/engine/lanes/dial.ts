@@ -1,9 +1,8 @@
-// Dialling a socket from a worker: its ticket (api/wire.md#socket-credentials) and its budget. Tickets are
-// single-use and short-lived, minted right before a dial. The server spends one on any answer, a refusal too; one
-// whose dial lapsed unanswered may never have reached it, so dials within 6.3 s share it, keeping a worker's retries
-// inside the server's eight outstanding tickets per login. The worker that retries the dials holds the ticket.
+// Dialling a socket from a worker: its single-use ticket (api/wire.md#socket-credentials), minted right before a dial.
+// The server spends one on any answer, a refusal too; one whose dial lapsed unanswered may never have reached it, so
+// close dials share it, keeping a worker's retries inside the server's outstanding tickets per sign-in.
 import { DecodeError } from "../../lib/decode";
-import { readJSON, socketTicket } from "../../protocol/documents";
+import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";
 import type { TicketRecipe } from "../types";
 import { refused } from "./endings";
@@ -24,7 +23,7 @@ export class Tickets {
     try {
       const response = await fetch(url, { ...request, method: "POST", cache: "no-store", signal });
       if (!response.ok) {
-        response.body?.cancel().catch(() => {});
+        release(response);
         return { type: "ended", ending: refused(response, `socket ticket refused with HTTP ${response.status}`) };
       }
       const { token, expires } = socketTicket(await readJSON(response));
@@ -49,10 +48,3 @@ export class Tickets {
 /** The dial URL with its ticket; the empty ticket of a server without authentication adds nothing. */
 export const withToken = (url: string, token: string) =>
   token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url;
-
-/** Rejects with `signal`'s reason once it aborts: the side of a race that ends a dial. */
-export const aborted = (signal: AbortSignal) =>
-  new Promise<never>((_, reject) => {
-    if (signal.aborted) reject(signal.reason);
-    else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-  });

@@ -1,4 +1,4 @@
-// Every server route the browser reaches (api/routes.txt pins the table across Go, Rust and the browser).
+// Every measurement route the browser reaches, as api/routes.txt pins them.
 export const ROUTES = {
   servers: "/servers",
   preflight: "/preflight",
@@ -14,4 +14,12 @@ export const ROUTES = {
   wtDownload: "/wt/download",
   wtUpload: "/wt/upload",
   wtPing: "/wt/ping",
+} as const;
+
+/** The sign-in routes, which the measurement route pin leaves out. */
+export const AUTH_ROUTES = {
+  session: "/auth/session",
+  browser: "/auth/browser",
+  browserToken: "/auth/browser/token",
+  login: "/login",
 } as const;

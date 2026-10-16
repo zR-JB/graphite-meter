@@ -1,9 +1,11 @@
 // Fakes for the net tests: page time that moves only when a test says so, a network whose answers carry the next hop
 // Resource Timing reports, and latency buses.
 import { jest, spyOn } from "bun:test";
+import type { CatalogEntry } from "../../protocol/documents";
+import { delay } from "../run/clock";
 import type { OpenProbeChannel, ProbeChannelEvents, ProbeChannelOptions, TestConfig } from "../types";
-import { delay } from "./checks";
-import type { PageConfig } from "./page";
+import { initialAuth } from "./auth";
+import type { PageConfig, PageSession } from "./page";
 
 /** The app's default test settings, as a server set sees them. */
 export const CONFIG: TestConfig = {
@@ -27,6 +29,9 @@ export const page: PageConfig = {
   webTransport: "available",
 };
 
+/** Credentials for a server that needs none. */
+export const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, {} as PageSession);
+
 export const MARKER = { "Graphite-Meter-Auth": "required" };
 export const PROBE = { clientIp: "192.0.2.1", clientIpVersion: 4, clientIpSource: "socket", protocolNegotiated: "h2" };
 
@@ -37,7 +42,7 @@ export const preflight = (throughput: object[], latency: object[] = []) => ({
   server: { name: "Meter" },
   engineVersion: "1.0.0",
   generation: "g1",
-  capabilities: { throughput, latency, uploadCheckpoint: true },
+  capabilities: { throughput, latency, uploadCheckpoint: true, maxStageMs: 300_000 },
 });
 
 /** One answer: a JSON body after `afterMs` with the next hop the browser reports (h2 unless named; null when it names
@@ -68,6 +73,7 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
     if (answer === "hang")
       return new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
     if (answer.afterMs) await delay(answer.afterMs, signal);
+    signal.throwIfAborted();
     hops.set(String(input), answer.hop === undefined ? "h2" : (answer.hop ?? ""));
     const body = answer.body === undefined ? null : JSON.stringify(answer.body);
     return new Response(body, { status: answer.status ?? 200, headers: answer.headers });

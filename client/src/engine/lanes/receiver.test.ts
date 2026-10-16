@@ -29,7 +29,7 @@ function follow(
   let signedIn = false;
   const auth: ServerAuth = {
     kind: "public",
-    deadline: null,
+    left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch: async (url, init = {}) => {
       if (init.method === "DELETE") return deletes.push(init), new Response(null, { status: 204 });

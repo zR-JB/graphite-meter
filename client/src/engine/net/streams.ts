@@ -15,7 +15,7 @@ const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {
   http3: { down: 1, up: 1 },
 };
 
-export type StreamPolicy = TestConfig["transferStreams"];
+type StreamPolicy = TestConfig["transferStreams"];
 
 /** What planning reads of a server's verified paths. */
 export interface PlanServer {
@@ -29,7 +29,7 @@ export interface Lanes {
   planned: number;
   gating: number;
 }
-export type StreamPlan = Map<string, Record<Direction, Lanes>>;
+type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
 interface OriginBudget {
   /** What holds one of the origin's connections for the whole stage. */

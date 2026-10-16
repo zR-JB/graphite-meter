@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { json } from "../../protocol/pins.testutil";
 import { Population, RttEstimator } from "./latency";
 
+const reply = (rttMs: number, timedOut = false) => ({ rttMs, timedOut, handlingMs: null, inWindow: true });
+
 test("the shared latency vectors", async () => {
   for (const vector of await json("latency.testvectors.json")) {
     const population = new Population();
@@ -10,7 +12,7 @@ test("the shared latency vectors", async () => {
     let continuity = 0;
     for (const outcome of vector.outcomes) {
       if (outcome.break) continuity++;
-      else population.observe({ rttMs: outcome.rttMs ?? 250, timedOut: !!outcome.timeout }, continuity);
+      else population.observe(reply(outcome.rttMs ?? 250, !!outcome.timeout), continuity);
       if (outcome.rttMs !== undefined) {
         estimator.observe(outcome.rttMs);
         deadlines.push(estimator.deadlineMs());
@@ -21,7 +23,7 @@ test("the shared latency vectors", async () => {
       {
         replies: (summary?.probeCount ?? 0) - (summary?.timeoutCount ?? 0),
         timeouts: summary?.timeoutCount ?? 0,
-        timeoutRatio: population.timeoutRatio,
+        timeoutRatio: summary?.probeCount ? summary.timeoutCount / summary.probeCount : null,
         p50Ms: summary?.p50Ms ?? null,
         p95Ms: summary?.p95Ms ?? null,
         jitterMs: summary?.jitterMs ?? null,
@@ -38,8 +40,8 @@ test("summaries taken while a stage runs equal one summary of the whole stage", 
   const whole = new Population();
   const live = new Population();
   rtts.forEach((rttMs, index) => {
-    whole.observe({ rttMs, timedOut: false });
-    live.observe({ rttMs, timedOut: false });
+    whole.observe(reply(rttMs));
+    live.observe(reply(rttMs));
     if (index % 3 === 1) live.summary();
   });
   expect(live.summary()).toEqual(whole.summary());
@@ -60,7 +62,7 @@ test("a stage past 65,536 distinct RTTs keeps its percentiles to four significan
   for (let i = 0; i < 300_000; i++) {
     const rttMs = 10 + ((i * 7_919) % 100_000) / 1_000 + (i % 997) / 1e6;
     rtts.push(rttMs);
-    population.observe({ rttMs, timedOut: false });
+    population.observe(reply(rttMs));
   }
   rtts.sort((a, b) => a - b);
   const summary = population.summary()!;

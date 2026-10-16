@@ -1,9 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import type { Discovery } from "../types";
-import { publicAuth } from "./auth";
 import { checkLatency, checkThroughput, discover, failureOf, type CheckContext } from "./checks";
-import { FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, ws, type Answer } from "./fakes";
+import { FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, publicAuth, type Answer, ws } from "./fakes.testutil";
 import { parseSelection, type Selection } from "./paths";
 
 const entry: CatalogEntry = { id: "self", url: page.origin, name: "Meter", additionalOrigins: [] };

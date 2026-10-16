@@ -2,7 +2,7 @@
 // stalls, and the connection dot in the top bar.
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
-import { needsPings } from "../../engine/net/budget";
+import { needsPings } from "../../engine/net/streams";
 import { movedBytes } from "../../engine/run/result";
 import { activities } from "../../engine/run/schedule";
 import { Show } from "../../lib/dom";

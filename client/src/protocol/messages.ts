@@ -38,14 +38,14 @@ export interface ProbeOutcome {
 }
 
 /** Download bytes counted since the previous report, in the measurement epoch they belong to. */
-export interface BytesReport {
+interface BytesReport {
   type: "bytes";
   bytes: number;
   epoch: number;
 }
 
 /** A worker's terminal report: an ending classified from the server's answer, or a network break, which the owner
-    classifies because a login or grant that ended shows first as one. */
+    classifies because a sign-in or grant that ended shows first as one. */
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
 /** A lane's answer to `flush`: its epoch's download total as counted by `at`. */
@@ -56,9 +56,8 @@ export interface Flushed {
 }
 
 /** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
-    reports the download bytes counted so far, then answers `flushed` with the epoch's total as counted by its cutoff,
-    and the time that total stands at: the cutoff, unless it lies further back than the lane keeps. Both times are
-    `performance.timeOrigin + performance.now()`. */
+    reports the bytes counted so far, then answers `flushed` with the epoch's total as counted by its cutoff and the
+    time that total stands at, both on epoch ms. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
   | {

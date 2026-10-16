@@ -3,7 +3,7 @@
 // a frame rewrites the newest two curve segments and the head's dot, nothing else. A reading answers a pointer at
 // once, a finger on a sideways drag or a tap, and the keyboard bin by bin.
 import type { ThroughputSample } from "../../app/series";
-import type { Direction } from "../../engine/measure/aggregate";
+import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { Stage, TransferStage } from "../../engine/run/schedule";
 import { computed, effect, signal } from "../../lib/signal";

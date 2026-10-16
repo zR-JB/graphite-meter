@@ -244,6 +244,18 @@ test("a send the browser could not make is interrupted after the replies already
   expect(b.sent).toEqual([0, 50, 100, 150, 200]);
 });
 
+test("a write the browser never confirms gives up its place after 3 s as a send failure, never a timeout", () => {
+  const b = opened(bus(null, 2, (id) => (id < 2 ? "unconfirmed" : 5)));
+  b.run(4_000);
+  expect(b.of("interrupted")).toEqual([
+    { type: "interrupted", count: 1, reason: "send-failed" },
+    { type: "interrupted", count: 1, reason: "send-failed" },
+  ]);
+  expect(b.sent.slice(0, 3)).toEqual([0, 250, 3_000]);
+  expect(b.outcomes().length).toBeGreaterThan(100);
+  expect(b.outcomes().every(({ timedOut }) => !timedOut)).toBe(true);
+});
+
 test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wakes only to probe and report", () => {
   /** How long after its observation each outcome crossed. */
   const lags = ({ reports, stamps }: ReturnType<typeof bus>) =>

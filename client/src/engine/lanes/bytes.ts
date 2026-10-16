@@ -41,9 +41,8 @@ export async function countBytes(body: ReadableStream<Uint8Array>, count: (bytes
   }
 }
 
-/** A download's counted bytes, reported at most every 10 ms per reporter of its server with the measurement epoch they
-    belong to. The epoch's running total is read at most once a millisecond and at every report, and the last 512
-    readings kept, so a flush can answer what was counted by a moment up to about half a second back. */
+/** A download's counted bytes, reported in batches with the measurement epoch they belong to. Recent readings of the
+    epoch's running total let a flush answer what was counted by a moment shortly back. */
 export class ByteReports {
   #bytes = 0;
   #since = performance.now();
@@ -123,10 +122,9 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
 /** Bodies repeat one random block, so memory stays at the block whatever their size. */
 export const MAX_POST_BYTES = 256 * MIB;
 
-/** A lane's share of what a server's `streams` lanes post at once: 16 MiB on a device with 2 GB or
-    less, 24 MiB up to 4 GB, else 256 MiB. Where the browser does not say (Firefox), 128 MiB across all `sharing` lanes
-    of the run: Firefox stalls a body without an error when its POSTs together grow larger, more often under load.
-    Never under 2 MiB a lane. */
+/** A lane's share of what a server's `streams` lanes post at once, by device memory. Where the browser does not say
+    (Firefox), the pool spans all `sharing` lanes of the run: Firefox stalls a body without an error when its POSTs
+    together grow larger. */
 export function largestPost(streams: number, sharing: number, deviceMemory: number | undefined): number {
   const [pool, lanes] =
     deviceMemory === undefined

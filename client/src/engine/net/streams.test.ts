@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Activity } from "../run/schedule";
-import type { HttpProtocol } from "../types";
-import { planStreams, type PlanServer, type StreamPolicy } from "./budget";
+import type { HttpProtocol, TestConfig } from "../types";
+import { planStreams, type PlanServer } from "./streams";
 
 const ORIGIN = "https://meter.example";
 
@@ -24,11 +24,11 @@ const stage = (transfer: Activity["transfer"], loadedLatency = true): Activity =
   transfer,
   loadedLatency,
 });
-const auto = (count: number): StreamPolicy => ({ mode: "auto", count });
-const forced = (count: number): StreamPolicy => ({ mode: "forced", count });
+const auto = (count: number): TestConfig["transferStreams"] => ({ mode: "auto", count });
+const forced = (count: number): TestConfig["transferStreams"] => ({ mode: "forced", count });
 
 /** Each server's lanes as [planned, gating] per direction. */
-const lanes = (servers: PlanServer[], activity: Activity, policy: StreamPolicy) =>
+const lanes = (servers: PlanServer[], activity: Activity, policy: TestConfig["transferStreams"]) =>
   servers.map(({ server }) => {
     const plan = planStreams(servers, activity, policy).get(server.id)!;
     return { down: [plan.down.planned, plan.down.gating], up: [plan.up.planned, plan.up.gating] };

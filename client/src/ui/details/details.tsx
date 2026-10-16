@@ -2,7 +2,7 @@
 // report. Inspecting a server only reads; this browser's address is in the page only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
-import { describeStreams, needsPings } from "../../engine/net/budget";
+import { describeStreams, needsPings } from "../../engine/net/streams";
 import { activities } from "../../engine/run/schedule";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
@@ -39,7 +39,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     if (prepared.length) return prepared.map(({ server }) => server);
     const ids = servers.selected();
     const views = servers.views();
-    return (servers.catalogue()?.servers ?? [])
+    return (servers.catalog()?.servers ?? [])
       .filter((entry) => ids.includes(entry.id))
       .map((entry) => views.get(entry.id)?.server ?? entry);
   });
@@ -150,7 +150,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     return diagnosticReport({
       page: location.href,
       servers: [
-        ...(servers.catalogue.peek()?.servers ?? []),
+        ...(servers.catalog.peek()?.servers ?? []),
         ...[...views.values()].map((each) => each.server),
         ...(measured?.selection ?? []),
       ],

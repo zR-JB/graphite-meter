@@ -16,7 +16,6 @@ function offer(origin: string, throughput: object[], latency: object[] = [], pag
     generation: "g1",
     engineVersion: "",
     server: { name: "" },
-    uploadCheckpoint: true,
     maxStageMs: 300_000,
     origin,
     protocol: null,

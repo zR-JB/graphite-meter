@@ -1,7 +1,8 @@
-// The page's own facts, read once from its document, and its login: cookies and CSRF on its requests, the lifetime a
-// planned test needs, and the one end the app navigates on.
+// The page's own facts, read once from its document, and its sign-in: cookies and CSRF on its requests, the lifetime
+// a planned test needs, and the one end the app navigates on.
 import { signal, type Read } from "../../lib/signal";
-import { readJSON, session as sessionDocument } from "../../protocol/documents";
+import { readJSON, release, session as sessionDocument, signInMarker } from "../../protocol/documents";
+import { AUTH_ROUTES } from "../../protocol/routes";
 
 export interface PageConfig {
   origin: string;
@@ -24,13 +25,9 @@ export function readPageConfig(): PageConfig {
   };
 }
 
-/** Only HTTP 403 with this marker means a login or grant has ended; other refusals and failures are not evidence. */
-export const signInMarker = (response: Response) =>
-  response.status === 403 && response.headers.get("Graphite-Meter-Auth") === "required";
+type SessionEnd = "expired" | "renew";
 
-export type SessionEnd = "expired" | "renew";
-
-/** The login cannot cover a planned test; the message says what the user can do. */
+/** The sign-in cannot cover a planned test; the message says what the user can do. */
 export class CoverageError extends Error {}
 
 export interface Account {
@@ -40,25 +37,42 @@ export interface Account {
 }
 
 export interface PageSession {
-  /** Set once when the page's login ends; the app saves what it can and navigates to sign-in. */
+  /** Set once when the page's sign-in ends; the app saves what it can and navigates to sign-in. */
   readonly ended: Read<SessionEnd | null>;
   end(reason: SessionEnd): void;
-  /** What the login adds to a request: the CSRF token its readable cookie mirrors, on methods that change state. */
+  /** What the sign-in adds to a request: the CSRF token its readable cookie mirrors, on methods that change state. */
   headers(method: string): Record<string, string>;
   /** A request to the page's own server: its cookies, CSRF on unsafe methods, and no redirect with credentials. */
   fetch(input: string, init?: RequestInit): Promise<Response>;
-  /** Whether the login has ended, from one shared /auth/session check of at most 3 s; a yes ends the session. */
+  /** Whether the sign-in has ended, from one shared check; a yes ends the session. */
   expired(signal?: AbortSignal): Promise<boolean>;
-  /** The login's monotonic deadline when it covers `requiredMs`, null without authentication. */
+  /** The sign-in's monotonic deadline when it covers `requiredMs`, null without authentication. */
   coverage(requiredMs: number, signal: AbortSignal): Promise<number | null>;
   /** Who is signed in, for the account control; null without authentication or when it cannot be read. */
   account(signal: AbortSignal): Promise<Account | null>;
 }
 
-const SESSION_CHECK_MS = 3_000;
+/** One check whether a sign-in or grant ended gets this long. */
+export const ENDED_CHECK_MS = 3_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** The login's CSRF token, which it mirrors into a readable cookie, as a header for methods that change state. */
+/** Whether a sign-in or grant ended, from one `check` in flight for everyone who asks, so an expiry never fans out
+    into a burst from parallel lanes; an asker that gave up hears no. A failed check is no evidence. */
+export function endedCheck(check: () => Promise<Response>): (signal?: AbortSignal) => Promise<boolean> {
+  let checking: Promise<boolean> | null = null;
+  const marked = () =>
+    check().then(
+      (response) => (release(response), signInMarker(response)),
+      () => false,
+    );
+  return async (signal) => {
+    if (signal?.aborted) return false;
+    checking ??= marked().finally(() => (checking = null));
+    return (await checking) && !signal?.aborted;
+  };
+}
+
+/** The sign-in's CSRF token, which it mirrors into a readable cookie, as a header for methods that change state. */
 export function csrfHeaders(method: string, cookie: string): Record<string, string> {
   if (SAFE_METHODS.has(method.toUpperCase())) return {};
   const prefix = "__Host-gm_csrf=";
@@ -75,8 +89,6 @@ export function csrfHeaders(method: string, cookie: string): Record<string, stri
 
 export function createPageSession(config: PageConfig, now: () => number): PageSession {
   const ended = signal<SessionEnd | null>(null);
-  // A single expiry must not fan out into a burst of /auth/session requests from parallel lanes.
-  let checking: Promise<boolean> | null = null;
 
   const end = (reason: SessionEnd) => {
     if (config.auth && !ended.peek()) ended.set(reason);
@@ -86,37 +98,28 @@ export function createPageSession(config: PageConfig, now: () => number): PageSe
     const headers = new Headers(init.headers);
     for (const [name, value] of Object.entries(loginHeaders(init.method ?? "GET"))) headers.set(name, value);
     const credentials = config.auth ? "include" : init.credentials;
-    // A hop that redirects a credentialed request to a login page must not pass for its answer.
+    // A hop that redirects a credentialed request to a sign-in page must not pass for its answer.
     const redirect = credentials === "include" || credentials === "omit" ? "error" : init.redirect;
     const response = await fetch(input, { ...init, headers, credentials, redirect });
     if (!init.signal?.aborted && signInMarker(response)) end("expired");
     return response;
   }
+  const sessionRequest = (signal?: AbortSignal) => {
+    const timeout = AbortSignal.timeout(ENDED_CHECK_MS);
+    return request(AUTH_ROUTES.session, {
+      cache: "no-store",
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+  };
   async function login(signal: AbortSignal) {
-    const timeout = AbortSignal.any([signal, AbortSignal.timeout(SESSION_CHECK_MS)]);
-    const response = await request("/auth/session", { cache: "no-store", signal: timeout });
+    const response = await sessionRequest(signal);
     if (!response.ok) {
-      response.body?.cancel().catch(() => {});
-      throw new Error(`/auth/session answered HTTP ${response.status}`);
+      release(response);
+      throw new Error(`${AUTH_ROUTES.session} answered HTTP ${response.status}`);
     }
     return sessionDocument(await readJSON(response));
   }
-  async function check(): Promise<boolean> {
-    try {
-      const response = await fetch("/auth/session", {
-        cache: "no-store",
-        credentials: "include",
-        redirect: "error",
-        signal: AbortSignal.timeout(SESSION_CHECK_MS),
-      });
-      response.body?.cancel().catch(() => {});
-      const required = signInMarker(response);
-      if (required) end("expired");
-      return required;
-    } catch {
-      return false;
-    }
-  }
+  const signedOut = endedCheck(sessionRequest);
 
   return {
     ended,
@@ -125,9 +128,7 @@ export function createPageSession(config: PageConfig, now: () => number): PageSe
     fetch: request,
     async expired(signal) {
       if (!config.auth || signal?.aborted) return false;
-      if (ended.peek()) return true;
-      checking ??= check().finally(() => (checking = null));
-      return (await checking) && !signal?.aborted;
+      return !!ended.peek() || signedOut(signal);
     },
     async coverage(requiredMs, signal) {
       signal.throwIfAborted();
@@ -138,11 +139,11 @@ export function createPageSession(config: PageConfig, now: () => number): PageSe
         lifetime = await login(signal);
       } catch (cause) {
         signal.throwIfAborted();
-        throw new CoverageError("Could not verify the session lifetime.", { cause });
+        throw new CoverageError("Could not verify the sign-in.", { cause });
       }
       signal.throwIfAborted();
       if (requiredMs > lifetime.maximumLifetimeMs)
-        throw new CoverageError("This test is longer than the maximum session lifetime. Shorten it before starting.");
+        throw new CoverageError("This test is longer than a sign-in can last. Shorten it before starting.");
       if (requiredMs > lifetime.remainingMs) {
         end("renew");
         throw new CoverageError("Sign in again before starting this long test.");

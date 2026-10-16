@@ -14,7 +14,7 @@ import { clip, tip } from "../kit/tip";
 export function ServerSelection(props: { app: App; locked: Read<boolean> }): Node {
   const { servers } = props.app;
   const { locked } = props;
-  const entries = computed(() => servers.catalogue()?.servers ?? []);
+  const entries = computed(() => servers.catalog()?.servers ?? []);
   const retrying = signal<ReadonlySet<string>>(new Set());
   const rows = new Map<string, HTMLLabelElement>();
   /** One server's view, which keeps its identity while another server's changes. */
@@ -295,7 +295,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           </div>
         )}
       </Show>
-      <Show when={() => !servers.catalogue()}>
+      <Show when={() => !servers.catalog()}>
         {() => (
           <div class="selection-notice" role="status">
             <p>{() => (servers.loading() ? "Loading servers…" : "Could not load servers")}</p>
@@ -303,7 +303,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               class="btn"
               type="button"
               disabled={() => locked() || servers.loading()}
-              onclick={() => void servers.retryCatalogue()}
+              onclick={() => void servers.retryCatalog()}
             >
               Retry servers
             </button>

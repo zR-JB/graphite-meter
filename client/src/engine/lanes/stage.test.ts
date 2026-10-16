@@ -38,7 +38,7 @@ function stage(
   let checks = 0;
   const credentials: ServerAuth = {
     kind: "grant",
-    deadline: null,
+    left: () => Infinity,
     request: () => ({ headers: { authorization: "Bearer g" }, credentials: "omit", redirect: "error" }),
     fetch: async () => new Response(null, { status: 500 }),
     ticket: () => null,
@@ -216,7 +216,8 @@ test("a flush resolves once every lane answered what it counted by the cutoff, a
     for (const lane of lanes.slice(0, answering)) lane.report({ type: "flushed", total: 1_000, at });
     await elapse(300);
     expect(flushed.at).toBe(answering === 3 ? 0 : 250);
-    expect(read).toBe(cutoff);
+    // A lane that never answered counted on to the flush's end, where the counts then stand.
+    expect(read).toBe(answering === 3 ? cutoff : cutoff + 250);
     // A lane that answered counts nothing more: its later bytes lie past the boundary.
     for (const lane of lanes) bytes(lane, 1);
     expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering + 2 * (3 - answering));

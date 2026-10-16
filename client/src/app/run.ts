@@ -12,7 +12,7 @@ import type {
   StageStatus,
 } from "../engine/run/result";
 import { Run, type DroppedServer, type LiveSample, type Phase, type RunOptions, type RunPlan } from "../engine/run/run";
-import { adaptWarmup, changeable, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
+import { adaptWarmup, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
 import type { PreferenceStore } from "./preferences";
@@ -22,13 +22,13 @@ import { appendThroughput, upsertLatency, type ThroughputSample } from "./series
 const SESSION_MARGIN_MS = 60_000;
 const LONGEST_WARMUP_RTT_MS = Number.POSITIVE_INFINITY;
 
-export interface RunEnvironment {
+interface RunEnvironment {
   preferences: PreferenceStore;
   /** Why Start cannot run now; it shows where it arises, so a refused Start adds nothing. */
   blocker: Read<string>;
   /** Why a Start now is refused at once, said in its place until its cause clears; "" lets it run. */
   refusal: Read<string>;
-  /** The page's login and every grant must cover `plannedMs`; throws with the words to show. */
+  /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
   /** Checks the selected servers again: what Start runs on, the servers left out, and whose latency leads. Throws
       with the words to show when a server, as just read, refuses `config`; an AbortError means newer intent
@@ -37,7 +37,7 @@ export interface RunEnvironment {
     signal: AbortSignal,
     config: TestConfig,
   ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
-  /** Whether a run of `totalMs` still fits the session; a live change that lengthens the test must. */
+  /** Whether a run of `totalMs` still fits the sign-in; a live change that lengthens the test must. */
   fits(totalMs: number): boolean;
   /** A server failed during the run, or with null the whole run did: its paths are checked again. */
   recheck(failure: ServerFailure | null): void;
@@ -51,14 +51,20 @@ export interface RunEnvironment {
 export type Preparation = "idle" | "authenticating" | "checking" | "launching" | "blocked" | "failed";
 /** What the console shows; `data-phase` carries it. */
 export type ShownPhase = "idle" | Phase | "complete" | "aborted" | "error";
-export type Step = "preparing" | "running" | "finalizing";
-export type LiveChange = Partial<Pick<TestConfig, "stages" | "duration" | "adaptive" | "visualization">>;
+type Step = "preparing" | "running" | "finalizing";
 
 interface ServerSeries {
   buckets: LatencyBucket[];
   /** Bumped whenever `buckets` changes in place. */
   version: Signal<number>;
   summaries: Signal<Partial<Record<Stage, LatencySummary | null>>>;
+}
+
+/** One server's latency series as views read it. */
+interface LatencySeries {
+  readonly buckets: readonly LatencyBucket[];
+  readonly version: Read<number>;
+  readonly summaries: Read<Partial<Record<Stage, LatencySummary | null>>>;
 }
 
 const NO_RESULTS: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
@@ -77,6 +83,8 @@ export function createRun(env: RunEnvironment) {
   const throughput: ThroughputSample[] = [];
   const throughputVersion = signal(0);
   const serverSeries = new Map<string, ServerSeries>();
+  /** Bumped when the series of a run that went are let go. */
+  const seriesReset = signal(0);
   const results = signal(NO_RESULTS);
   const statuses = signal<Partial<Record<Stage, StageStatus>>>({});
   const details = signal<MultiServerResult | null>(null);
@@ -115,11 +123,8 @@ export function createRun(env: RunEnvironment) {
     batch(() => {
       throughput.length = 0;
       throughputVersion.set(throughputVersion.peek() + 1);
-      for (const entry of serverSeries.values()) {
-        entry.buckets.length = 0;
-        entry.version.set(entry.version.peek() + 1);
-        entry.summaries.set({});
-      }
+      serverSeries.clear();
+      seriesReset.set(seriesReset.peek() + 1);
       phase.set("idle");
       stage.set(null);
       step.set(null);
@@ -350,10 +355,14 @@ export function createRun(env: RunEnvironment) {
     untrack(cancel);
   });
 
-  /** May this stage be turned on or off now? Stages run in order, each changeable until it begins and while the run
-      goes on. */
-  const canToggle = (name: Stage) =>
-    !preparing() && (!running() || (changeable(stage(), name) && (run?.canChange(name) ?? false)));
+  /** May this stage be turned on or off now? While a test runs, the run's own rule decides, read again as its stage
+      moves on. */
+  const canToggle = (name: Stage) => {
+    if (preparing()) return false;
+    if (!running()) return true;
+    stage();
+    return run?.canChange(name) ?? false;
+  };
 
   /** The one writer of test settings: refused while a start prepares; while a run is live only stages, durations,
       early finish and the gauge maximum may change, a stage only until it begins. Returns whether it applied. */
@@ -377,20 +386,11 @@ export function createRun(env: RunEnvironment) {
       const refuse = (message: string) => (refusal.set(message), false);
       const remainingMs = totalMs(runPlan) - shownAt.peek() - progress.peek().elapsedMs;
       if (totalMs(runPlan) > totalMs(current.plan) && !env.fits(remainingMs + SESSION_MARGIN_MS))
-        return refuse("This change would extend the test beyond the current session.");
-      const uploads = (each: RunPlan) => planned(each, "upload") || planned(each, "bidirectional");
-      const lacking =
-        uploads(runPlan) && !uploads(current.plan)
-          ? prepared.peek().find(({ discovery }) => !discovery.uploadCheckpoint)
-          : undefined;
-      if (lacking)
-        return refuse(
-          `${lacking.server.name}: Receiver checkpoint support is required for uploads. Upgrade this measurement server.`,
-        );
+        return refuse("This change would extend the test beyond the current sign-in.");
       try {
         current.reconfigure({ stages: runPlan.stages, duration: runPlan.duration, adaptive: runPlan.adaptive });
       } catch (cause) {
-        return refuse(cause instanceof Error ? cause.message : "This change cannot be applied to the active test.");
+        return refuse(cause instanceof Error ? cause.message : "This change cannot apply to the running test.");
       }
       plan.set(current.plan);
       spanMs = totalMs(current.plan);
@@ -433,7 +433,10 @@ export function createRun(env: RunEnvironment) {
     throughput: throughput as readonly ThroughputSample[],
     throughputVersion: throughputVersion as Read<number>,
     /** One server's latency buckets and summaries; read `version` to follow the buckets. */
-    latency: (id: string) => series(id),
+    latency: (id: string): LatencySeries => {
+      seriesReset();
+      return series(id);
+    },
     results: results as Read<StageResults>,
     statuses: statuses as Read<Partial<Record<Stage, StageStatus>>>,
     details: details as Read<MultiServerResult | null>,

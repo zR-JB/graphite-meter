@@ -6,7 +6,7 @@ import type { Preparation, ShownPhase } from "../../app/run";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { ServerIdentity } from "../../engine/types";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { needsPings } from "../../engine/net/budget";
+import { needsPings } from "../../engine/net/streams";
 import type { Phase } from "../../engine/run/run";
 import { activities, planned, STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import { nextFrame, pageMs } from "../../lib/frame";
@@ -324,7 +324,7 @@ function createLive(app: App) {
     if (details) return details.selection;
     const views = servers.views();
     const selected = servers.selected();
-    return (servers.catalogue()?.servers ?? [])
+    return (servers.catalog()?.servers ?? [])
       .filter((entry) => selected.includes(entry.id))
       .map((entry) => views.get(entry.id)?.server ?? entry);
   });
