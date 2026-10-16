@@ -95,7 +95,6 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     const count = unreadable();
     return count ? `${count} unreadable ${count === 1 ? "result was" : "results were"} skipped.` : "";
   });
-  announceChanges(app.saver.warning);
   announceChanges(actionError);
   announceChanges(unreadableText);
   const paused = computed(() => hasRecords() && !app.saving());
@@ -157,7 +156,6 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
 
   const Unavailable = (malformed: boolean) => {
     const title = malformed ? "Unreadable saved result" : "Result not found";
-    announce(`${title}.`);
     return (
       <div class="detail-pane empty-state">
         <span class="empty-icon">!</span>
@@ -172,22 +170,19 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     );
   };
 
-  const Unread = () => {
-    announce("Result could not be read.");
-    return (
-      <div class="detail-pane empty-state">
-        <span class="empty-icon">!</span>
-        <h2>Result could not be read</h2>
-        <p>History could not read this result just now.</p>
-        <button class="btn" type="button" onclick={() => archive.reread()}>
-          Retry
-        </button>
-        <button class="btn" type="button" onclick={() => shell.history(null)}>
-          Back to results
-        </button>
-      </div>
-    );
-  };
+  const Unread = () => (
+    <div class="detail-pane empty-state">
+      <span class="empty-icon">!</span>
+      <h2>Result could not be read</h2>
+      <p>History could not read this result just now.</p>
+      <button class="btn" type="button" onclick={() => archive.reread()}>
+        Retry
+      </button>
+      <button class="btn" type="button" onclick={() => shell.history(null)}>
+        Back to results
+      </button>
+    </div>
+  );
 
   // The result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
@@ -249,6 +244,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       ) as HTMLElement;
     } catch (error) {
       reportError(error);
+      announce("Unreadable saved result.");
       return Unavailable(true);
     }
     if (focused !== record.id) {
@@ -279,6 +275,12 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
           : `ready\t${selected.record.id}`;
     return shownBefore;
   });
+  const PANE_NOTICE: Record<string, string> = {
+    unread: "Result could not be read.",
+    missing: "Result not found.",
+    malformed: "Unreadable saved result.",
+  };
+  announceChanges(() => PANE_NOTICE[shownKey()] ?? "");
 
   function Body(): Node {
     const open = computed(() => props.selectedId() !== null);

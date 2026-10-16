@@ -346,7 +346,7 @@ export const TIP = {
   serverLoad: "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   client: "Client\nThis page's build of the browser client",
   serverInstance: "Server\nEngine version; the instance changes on restart",
-  checkRoundTrip: "Check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
+  pathCheckRoundTrip: "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
 } as const;
 
 export const preflightNote = (ms: string) =>

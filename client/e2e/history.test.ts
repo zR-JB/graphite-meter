@@ -483,6 +483,42 @@ test("History refuses other database versions at once and on Retry, and never ch
   expect(await stored(page)).toEqual(before);
 });
 
+test("History never waits on a version 2 connection, and upgrades once that connection closes", async (page) => {
+  const refusal = page.getByRole("heading", { name: "History is unavailable" });
+  await fixturePage(page);
+  const row = legacy(1);
+  await seed(page, { records: [row], version: 2 });
+  await page.goto(home.url);
+  // An older build's tab keeps its connection open: the upgrade is blocked, and History says so within a moment.
+  const older = await page.evaluate(
+    (db) =>
+      new Promise<string>((resolve) => {
+        const opening = indexedDB.open(db.name);
+        opening.onerror = () => resolve(`failed: ${opening.error?.name}`);
+        opening.onsuccess = () => {
+          (window as any).older = opening.result;
+          resolve(`v${opening.result.version}`);
+        };
+      }),
+    HISTORY_DB,
+  );
+  expect(older).toBe("v2");
+  await page.evaluate(() => (location.hash = "#/history"));
+  await expect(refusal).toBeVisible(OPEN_BOUND);
+  // The blocked open stays queued: once the older connection closes it upgrades the row in place.
+  await page.evaluate(() => (window as any).older.close());
+  await expect
+    .poll(async () => {
+      const { databases, opens } = await page.storage();
+      const pending = opens.filter(({ events }) => !events.some((event) => /^(success|error)/.test(event)));
+      return { databases, pending };
+    }, OPEN_BOUND)
+    .toEqual({ databases: [{ name: HISTORY_DB.name, version: HISTORY_DB.version }], pending: [] });
+  expect((await stored(page)).records).toEqual([upgradeRecord(row)]);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.locator(".result-row")).toHaveCount(1);
+});
+
 test("a result History refused to save says so, and starting over, a new run or leaving asks first", async (page) => {
   await fixturePage(page);
   await seed(page, { records: [], version: HISTORY_DB.version + 1 });

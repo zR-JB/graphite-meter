@@ -147,7 +147,7 @@ export function describeStreams(
   if (transport === "webtransport-datagram") return { value: "Datagram flood", aside: "no streams" };
   if (policy.mode === "forced")
     return {
-      value: "Forced",
+      value: "Exact",
       aside:
         transport === "webtransport" && count > SESSION_MAX_LANES
           ? `${SESSION_MAX_LANES} per direction (capped from ${count} by the session)`

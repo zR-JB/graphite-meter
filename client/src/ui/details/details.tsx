@@ -326,12 +326,12 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           <Show when={latencyNeeded}>
             {() =>
               fact(
-                "Check round trip",
+                "Path check round trip",
                 () => {
                   const rttMs = facts().latency?.rttMs;
                   return rttMs == null ? unknown() : fmtLatency(rttMs);
                 },
-                () => TIP.checkRoundTrip,
+                () => TIP.pathCheckRoundTrip,
               )
             }
           </Show>

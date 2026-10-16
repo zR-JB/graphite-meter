@@ -16,7 +16,7 @@ export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon:
   },
   upload: {
     ...STAGE.upload,
-    tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes don't count",
+    tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes do not count",
   },
   bidirectional: { ...STAGE.bidirectional, tip: "Bidirectional\nDownload and upload at once, added together" },
   idle: { ...LATENCY.idle, icon: STAGE.latency.icon, tip: TIP.latency },
