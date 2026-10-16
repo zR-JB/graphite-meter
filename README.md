@@ -2,20 +2,34 @@
 
 # Graphite Meter
 
-**Self-hosted network testing for fast local networks, from any browser or terminal.**
-
-Measure download, upload, and latency before and during transfers, up to multi-gigabit links.\
-One server, a responsive web interface, and a native terminal client.
+Self-hosted speed and latency testing for your own network, from a browser or a terminal.
 
 [![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases) [![Container](https://img.shields.io/badge/container-ghcr.io%2Fzr--jb%2Fgraphite--meter-387d91)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-[Quick start](#quick-start) · [Measurements](#what-you-can-measure) · [Browser](#browser-client) · [Terminal](#native-terminal-client) · [Documentation](#documentation)
-
 <img src="docs/assets/hero.png" alt="A laptop screen with a Wi-Fi 7 test mid-run, uploading at 1.81 Gbit/s with 2.2 ms idle latency, and a phone beside it with its finished Wi-Fi 6E result" width="1080">
 
-<sub>Real runs over shaped home-network paths · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
+<sub>Real tests over shaped home-network paths · <a href="docs/SCREENSHOTS.md">screenshots</a></sub>
 
 </div>
+
+Graphite Meter measures download, upload and latency between your device and a server you run: across a LAN, over a
+VPN or to a remote host, up to multi-gigabit links. One container serves the browser app, and a native terminal
+client tests the same server.
+
+## Features
+
+- Receiver-timed throughput: downloads count the bytes the client consumed, uploads the bytes and time at the
+  server's receiver, so a sender's queue never inflates a result. Download, upload and bidirectional stages.
+- Latency under load: idle and loaded latency stay separate populations per stage, with median, P95, jitter and
+  timeouts. Added latency is the loaded median minus the idle median.
+- One to four test servers per test: an operator lists other servers in a server catalog, and a test runs them on
+  one schedule, together or shown one at a time. A server that drops out leaves a Partial result with its reason.
+- Your choice of path: throughput and latency paths are chosen independently over HTTP/1.1, HTTP/2, HTTP/3,
+  WebSocket and WebTransport, or automatically. Details show what the browser and the server each observed.
+- Browser and terminal: a responsive web app for phones and desktops, and a native client for Linux and Windows.
+- Self-hosted: one static binary in a small container, no database. Optional password or OIDC sign-in protects the
+  app and every measurement route.
+- History on your device: the browser can keep up to 2,000 results locally; the server stores none.
 
 ## Quick start
 
@@ -24,106 +38,47 @@ docker run -d --name graphite-meter --restart unless-stopped \
   -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open **[localhost:7246](http://localhost:7246)**, or `http://YOUR_SERVER_IP:7246` from another
-device, and start a test. The default provides HTTP/1.1 throughput and WebSocket latency,
-with no configuration file or database service. Measurements cover the path between your device
-and the server, whether that is your LAN, a VPN, or a remote host.
+Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device, and start a test. Without
+configuration the server offers HTTP/1.1 throughput and WebSocket latency.
 
-For other setups, see [Docker Compose](docs/DEPLOYMENT.md#docker-compose),
-[native TLS and HTTP/3](docs/DEPLOYMENT.md#native-listeners),
-[reverse proxies](docs/DEPLOYMENT.md#reverse-proxies),
-[Podman](container/quadlet/README.md), or [Tailscale](container/quadlet/tailscale-sidecar/README.md).
-Optional [password, OIDC, or hybrid authentication](docs/DEPLOYMENT.md#authentication) protects
-both the interface and measurement routes on public deployments.
+HTTP/2, HTTP/3 and WebTransport need TLS: see [native listeners](docs/DEPLOYMENT.md#native-listeners). Other setups:
+[Docker Compose](docs/DEPLOYMENT.md#docker-compose), [reverse proxies](docs/DEPLOYMENT.md#reverse-proxies),
+[sign-in](docs/DEPLOYMENT.md#authentication), [Podman Quadlet](container/quadlet/README.md) and a
+[Tailscale sidecar](container/quadlet/tailscale-sidecar/README.md).
 
-## What you can measure
+## Terminal client
 
-- **Throughput measured at the receiver:** downloads count bytes the client consumed; upload bytes and timing come
-  from the server, so a sender queue cannot inflate the result. Download, upload and bidirectional stages.
-- **One to four servers** from the operator's catalogue on one stage schedule, shown together or one at a time.
-  Latency is measured on every selected server. A server that drops out leaves an explicit Partial result with
-  its reason.
-- **Latency under load:** idle and loaded latency per stage with median, p95, jitter and probe timeouts; added
-  latency is the loaded median minus the idle median. Missing evidence stays explicit.
-- **Control over the connection path:** throughput and latency paths chosen independently over HTTP/1.1, HTTP/2,
-  HTTP/3, WebSocket and WebTransport. **Details** separates browser- and server-observed protocol evidence.
+<img src="docs/assets/tui.png" alt="The terminal client after a complete latency, download and upload test" width="1080">
 
-WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
-UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
-estimate is separate from measured payload throughput. See [measurement definitions](docs/MEASUREMENTS.md)
-for exact timing, statistics, and interpretation.
-
-## Browser client
-
-Run a test from a phone or desktop without installing a client. The dial carries the live rate and, once
-the run completes, every stage's result on one ring. Beside it, the latency lanes set idle and loaded latency
-side by side as box plots with what each load added. Under the run key, one card per stage keeps its graph,
-peak, stability and the latency its load caused, so transfer speed and responsiveness stay visible together.
-The run reads as one sequence: each stage's needle rises from zero, drains back as the next begins, and the
-result replays on the dial when the run ends.
-
-- **Flexible tests:** a key per stage over its card, duration presets or custom timings, automatic or fixed
-  stream counts, and optional early completion when a stage stabilizes.
-- **Server selection:** a **Test servers** checklist in Settings, independent sign-in for protected
-  peers, and one server selector over the results (all servers, or one) that the latency card and
-  Details follow. Automatic paths resolve per server.
-- **Display choices:** light and dark themes, decimal or binary bits/bytes, a fixed or automatic dial
-  maximum, and graph inspection by pointer, keyboard or touch, with reduced-motion support.
-- **Phone layout:** one vertical reading order; the bottom status bar keeps the current stage and remaining
-  time visible while you scroll.
-- **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize
-  each panel to suit your monitor; your widths survive resizing and reload. Below the docked
-  layout, one panel opens as a flyout and the URL follows the visible panel.
-- **Local history:** optionally save up to 2,000 results on your device, grouped by day. Inspect past runs
-  while the live test continues, then return to it from the toolbar. History is not a server-side archive.
-
-<img src="docs/assets/workspace.png" alt="Settings and Details docked on both sides of a completed Wi-Fi 7 test on a wide desktop" width="1080">
-
-<p align="center"><sub>Resizable desktop panels · more in the <a href="docs/SCREENSHOTS.md">gallery</a></sub></p>
-
-## Native terminal client
-
-**The same server, directly from your terminal.** `graphite-meter-client` is an interactive terminal client
-with server selection, stage and timing controls, independent connection paths, stream settings,
-and live throughput and latency results. It lets you test without browser runtime constraints.
-
-<img src="docs/assets/tui.png" alt="Graphite Meter native terminal client after a complete latency, download and upload run" width="1080">
-
-Download and extract the matching client archive from [Releases](https://github.com/zR-JB/graphite-meter/releases),
-then run:
+Download the archive for your platform from [Releases](https://github.com/zR-JB/graphite-meter/releases):
+`graphite-meter-client_X.Y.Z_linux_amd64.tar.gz`, `graphite-meter-client_X.Y.Z_linux_arm64.tar.gz` or
+`graphite-meter-client_X.Y.Z_windows_amd64.zip`.
 
 ```sh
-./graphite-meter-client --url http://YOUR_SERVER_IP:7246
-# Select catalogue entries explicitly, including runs without the catalogue host:
-./graphite-meter-client --url https://meter.example.net --server frankfurt --server amsterdam
+./graphite-meter-client --url http://192.168.1.20:7246
+./graphite-meter-client --url https://meter.example --server frankfurt --server amsterdam --report
 ```
 
-Prebuilt clients are available for **Linux on amd64/arm64** and **Windows on amd64**
-(`graphite-meter-client.exe`). On authenticated servers, approve the terminal's short code in your
-browser. The client keeps its measurement grant in memory and never asks for the operator password.
-Without a terminal, or with `--report`, it runs once and prints the report; the exit status
-reflects the outcome. Such a headless run cannot sign in, so it fails on a protected server.
-
-[Flags, keys and exit codes](docs/DEPLOYMENT.md#native-terminal-client) ·
-[Build from source](docs/DEVELOPMENT.md#commands) ·
-[Upgrading](docs/DEPLOYMENT.md#upgrading)
+Without a terminal, or with `--report`, it runs one test, prints the report and sets its exit status from the
+outcome. On a server with sign-in, you approve the client's code in your browser; the client never sees the
+password. The [terminal client guide](docs/TERMINAL.md) covers flags, keys and exit codes.
 
 ## Documentation
 
-- [Deployment and configuration](docs/DEPLOYMENT.md): TLS, authentication, containers, proxies, and troubleshooting.
-- [Measurement definitions](docs/MEASUREMENTS.md): what each result measures and how it is calculated.
-- [Development](docs/DEVELOPMENT.md): architecture, toolchain, testing, and releases.
-- Client contracts: [discovery](api/discovery.md), [uploads](api/upload.md), and [latency / WebTransport](api/wire.md).
-- [Server catalogue and independent authorization](docs/SERVERS.md): configure available servers and interpret simultaneous results.
-- [Rust workspace](rust/README.md): architecture, threading, memory and measured decisions.
+- [Deployment and configuration](docs/DEPLOYMENT.md): containers, TLS, proxies, sign-in and every setting.
+- [Test servers](docs/SERVERS.md): the server catalog and tests across several servers.
+- [Terminal client](docs/TERMINAL.md): install, flags, keys, report mode and environment.
+- [Measurement definitions](docs/MEASUREMENTS.md): what each result measures and how.
+- [Development](docs/DEVELOPMENT.md): building, testing and releasing.
+- Contracts: [discovery](api/discovery.md), [uploads](api/upload.md) and [latency](api/wire.md).
 
 ## Contributing
 
-Set up a checkout as in the [development guide](docs/DEVELOPMENT.md#prerequisites) (`mise run setup`, then
-`mise run dev`) and run `mise run check` before submitting a change.
+Set up a checkout with `mise run setup`, start it with `mise run dev`, and run `mise run check` before submitting a
+change. The [development guide](docs/DEVELOPMENT.md) has the details.
 
 ## License
 
-Copyright © 2026 zR-JB. Licensed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE) and
-[COPYRIGHT](COPYRIGHT). Third-party notices ship in the browser's About/legal view, native-client
-archives, and `/usr/share/licenses/graphite-meter/` in the container.
+Copyright © 2026 zR-JB. Licensed under AGPL-3.0-or-later; see [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT).
+Third-party notices ship in the browser's legal view, in the client archives and under
+`/usr/share/licenses/graphite-meter/` in the container.
