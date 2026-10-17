@@ -166,6 +166,13 @@ function launchFirefox(): Promise<Bidi> {
         // a phone; the suite tests a desktop with a mouse, as Chrome reports one (fine pointer 2 + hover 4).
         'user_pref("ui.primaryPointerCapabilities", 6);',
         'user_pref("ui.allPointerCapabilities", 6);',
+        // A machine's policies can install extensions into every profile, such as an ad blocker that holds each request
+        // and fetches its lists mid-test; a proxy nobody listens on keeps them out, and loopback is never proxied.
+        'user_pref("network.proxy.type", 1);',
+        'user_pref("network.proxy.http", "127.0.0.1");',
+        'user_pref("network.proxy.http_port", 9);',
+        'user_pref("network.proxy.ssl", "127.0.0.1");',
+        'user_pref("network.proxy.ssl_port", 9);',
         "",
       ].join("\n"),
     );
