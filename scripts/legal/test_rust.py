@@ -66,8 +66,9 @@ class InventoryTests(Scratch):
                     self.package("graphite-meter-net", "0.0.0", None)]
         metadata = {"packages": packages, "workspace_members": ["graphite-meter-net@0.0.0"]}
         builds: dict[str, Any] = {item["id"]: {} for item in packages}
-        found, inventory, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
-                                                                   self.review("noq", "1.3.0", NOQ, True)], [])
+        reviews = [self.review("ring", "0.16.20"), self.review("ring", "0.17.14"),
+                   self.review("noq", "1.3.0", NOQ, True)]
+        found, inventory, failures = components(metadata, builds, reviews, [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
         self.assertEqual(inventory[0]["upstreamRevision"], "2aba4e49f5c73f43ed23c40677ec96508842aa3c")
@@ -208,8 +209,8 @@ class BuildVerifyTests(Scratch):
              "manifest_path": str(self.write("app/Cargo.toml", ""))},
             {"id": "dependency", "name": "dependency", "version": "1.0.0", "source": REGISTRY, "license": "MIT",
              "manifest_path": str(manifest)}], "workspace_members": ["app"], "target_directory": str(self.root)}
-        review = Review.parse({"ecosystem": "cargo", "name": "dependency", "upstream": REGISTRY,
-                               "declaredLicenseExpression": "MIT", "selectedLicenseExpression": "MIT",
+        review = Review.parse({"ecosystem": "cargo", "name": "dependency", "reviewedVersion": "1.0.0",
+                               "upstream": REGISTRY, "declaredLicenseExpression": "MIT", "selectedLicenseExpression": "MIT",
                                "legalFiles": [{"name": "LICENSE", "sha256": sha256(b"license\n"), "kind": "license"}],
                                "reviewDecision": "approved", "reviewNotes": "reviewed"})
         self.reviews = [review]

@@ -198,7 +198,7 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     scopes["container"] = [component for component in add_provenance(ROOT, scopes["server/browser"],
                                                                       state.provenance, "container")
                            if component_key(component) not in shipped]
-    prepare_scopes(scopes, browser_reviews, "check")
+    prepare_scopes(scopes, browser_reviews)
     state.browser = scopes["server/browser"]
     staged = build.out / "browser-assets"
     stage_browser(assets, staged)
@@ -376,11 +376,12 @@ def parse(arguments: list[str] | None = None) -> tuple[Build, bool]:
         parser.error(f"{args.package} ships for {', '.join(shipped.values())}")
     if VERSION.fullmatch(args.version) is None:
         parser.error("--version must be a release identifier")
-    if (args.package == "graphite-meter-server") != (args.browser_assets is not None and args.browser_scan is not None):
+    browsed = args.browser_assets is not None and args.browser_scan is not None
+    if not args.review_template and (args.package == "graphite-meter-server") != browsed:
         parser.error("the server, and only the server, needs --browser-assets and --browser-scan")
     target = next((value for value in shipped.values() if value == args.target), None)
     browser = None
-    if args.browser_assets is not None and args.browser_scan is not None:
+    if browsed:
         browser = (local_path(args.browser_assets, ROOT), local_path(args.browser_scan, ROOT))
     out = local_path(args.out, ROOT)
     if not out.is_relative_to(ROOT):

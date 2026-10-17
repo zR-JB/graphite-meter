@@ -163,16 +163,12 @@ class Provenance:
     name: str = ""
     version: str = ""
     upstream: str = ""
-    upstreamRevision: str = ""
     licenseExpression: str = ""
     modified: bool = False
-    modificationNote: str = ""
-    modificationDate: str = ""
     artifactScopes: list[str] = field(default_factory=list[str])
     localPaths: list[str] = field(default_factory=list[str])
     localArtifacts: list[LocalArtifact] = field(default_factory=list[LocalArtifact])
     localLegalFiles: list[LegalFile] = field(default_factory=list[LegalFile])
-    correspondingSource: str = ""
     reviewNotes: str = ""
 
     @classmethod
@@ -180,22 +176,13 @@ class Provenance:
         data = obj(value)
         return cls(
             text(data, "ecosystem"), text(data, "name"), text(data, "version"), text(data, "upstream"),
-            text(data, "upstreamRevision"), text(data, "licenseExpression"),
-            boolean(data, "modified"), text(data, "modificationNote"), text(data, "modificationDate"),
+            text(data, "licenseExpression"), boolean(data, "modified"),
             strings(data, "artifactScopes"), strings(data, "localPaths"),
             [LocalArtifact(text(obj(item), "path"), text(obj(item), "sha256"))
                 for item in array(data.get("localArtifacts", []))],
             [LegalFile.parse(item) for item in array(data.get("localLegalFiles", []))],
-            text(data, "correspondingSource"), text(data, "reviewNotes"),
+            text(data, "reviewNotes"),
         )
-
-    def json(self) -> dict[str, Json]:
-        result = cast(dict[str, Json], asdict(self))
-        result["localLegalFiles"] = [item.json() for item in self.localLegalFiles]
-        for key in ("modificationNote", "modificationDate", "localArtifacts", "correspondingSource"):
-            if not result[key]:
-                del result[key]
-        return result
 
 
 @dataclass

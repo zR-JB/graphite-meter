@@ -6,7 +6,7 @@
 #   reason = the key every implementation uses for the failure
 #   label  = the text every view shows for it
 #
-# Read by rust/proto/tests/codes.rs and client/src/view/words.test.ts.
+# Read by rust/proto/tests/codes.rs, client/src/protocol/pins.test.ts and client/src/view/words.test.ts.
 
 preparation-failed | Could not prepare the connection
 connection-lost | Connection lost

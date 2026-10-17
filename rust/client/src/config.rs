@@ -361,7 +361,6 @@ pub fn kept_server() -> Option<PathBuf> {
     let home = || var("HOME");
     let directory = match () {
         _ if cfg!(windows) => var("APPDATA"),
-        _ if cfg!(target_os = "macos") => home().map(|home| home.join("Library/Application Support")),
         _ => var("XDG_CONFIG_HOME").or_else(|| home().map(|home| home.join(".config"))),
     };
     Some(directory?.join("graphite-meter").join("server"))

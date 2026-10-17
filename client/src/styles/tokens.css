@@ -1,4 +1,4 @@
-/* The design tokens (docs/DESIGN.md). Every color is one light-dark() pair, so a theme switch changes only
+/* The design tokens. Every color is one light-dark() pair, so a theme switch changes only
    color-scheme. The one copy outside this file: the canvas in index.html's theme-color metas. */
 @layer reset, tokens, base, primitives, components, utilities, overrides;
 

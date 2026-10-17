@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Run the publication against fake gh, Docker and Skopeo."""
+"""Run the publication against a fake `gh api`, Docker and Skopeo."""
 from __future__ import annotations
 
 import contextlib
@@ -10,12 +9,12 @@ import json
 import os
 import pathlib
 import subprocess
-import sys
 import tempfile
 import unittest
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import unquote
 
 from assets import release_assets
 from github_api import ControlPlaneError
@@ -47,105 +46,97 @@ gh() { printf '%s\\n' $RELEASES; }
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
 ASSETS = {name: name.encode() for name in (*release_assets("1.2.3"), "checksums.txt")}
-# GitHub's tags, annotated tags, releases and uploads behind `gh api`. A write becomes readable
-# only after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish
-# request can fail after it `commit`s or `drop`s the change.
-GITHUB = r"""import hashlib, json, os, sys
-from pathlib import Path
-from urllib.parse import unquote
-state_path = Path(os.environ["GH_STATE"])
-state = json.loads(state_path.read_text())
-flags, words = {}, iter(sys.argv[2:])
-for word in words:
-    flags[word if word.startswith("--") else "path"] = (
-        next(words) if word in ("--method", "--input", "--header") else word)
-
-
-def finish(out=None, error=""):
-    state_path.write_text(json.dumps(state))
-    if error:
-        sys.exit(f"gh: {error}")
-    print("" if out is None else json.dumps([out] if "--slurp" in flags else out), end="")
-    sys.exit()
-
-
-def release(rid):
-    item = next((item for item in state["releases"] if item["id"] == rid), None)
-    return item or finish(error="Not Found (HTTP 404)")
-
-
-def public(item):
-    return {key: value for key, value in item.items() if key not in ("assets", "lag")}
-
-
-if os.environ["GH_TOKEN"] in " ".join(sys.argv):
-    finish(error="token in argv")
-method = flags.get("--method", "GET")
-path = flags["path"].split("github.com/", 1)[-1].removeprefix(f"repos/{os.environ['REPOSITORY']}/")
-if method != "GET":
-    state["writes"].append(f"{method} {path}")
-tags, parts = state["tags"], path.split("?")[0].split("/")
-if "assets?name=" in path:
-    payload = Path(flags["--input"]).read_bytes() + state["tamper"].encode()
-    state["next"] += 1
-    release(int(parts[1]))["assets"].append({"id": state["next"], "name": unquote(path.split("=")[1]),
-                                             "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
-    finish({})
-body = json.loads(sys.stdin.read()) if flags.get("--input") == "-" else None
-if path.startswith("git/matching-refs/tags/"):
-    visible = []
-    for tag, target in tags.items():
-        if state["hidden"].get(tag, 0) > 0:
-            state["hidden"][tag] -= 1
-        elif tag.startswith(parts[-1]):
-            visible.append({"ref": f"refs/tags/{tag}", "object": target})
-    finish(visible)
-if path.startswith("git/tags/"):
-    finish({"object": state["annotated"][parts[-1]]})
-if path == "git/refs":
-    tag = body["ref"].removeprefix("refs/tags/")
-    if state["refs_error"]:
-        finish(error=state["refs_error"])
-    if state["race"]:
-        tags[tag] = {"type": "commit", "sha": state["race"]}
-    if tag in tags:
-        finish(error="Reference already exists (HTTP 422)")
-    tags[tag], state["hidden"][tag] = {"type": "commit", "sha": body["sha"]}, state["lag"]
-    finish({"ref": body["ref"], "object": tags[tag]})
-if path == "releases?per_page=100":
-    finish([public(item) for item in state["releases"]])
-if path == "releases":
-    state["next"] += 1
-    upload = f"https://uploads.github.com/{flags['path']}/{state['next']}/assets{{?name}}"
-    keys = ("tag_name", "target_commitish", "draft", "prerelease", "body")
-    item = {key: body[key] for key in keys} | {"id": state["next"], "assets": [], "upload_url": upload}
-    state["releases"].append(item)
-    finish(public(item))
-if parts[:2] == ["releases", "assets"]:
-    for item in state["releases"]:
-        item["assets"] = [asset for asset in item["assets"] if asset["id"] != int(parts[2])]
-    finish()
-if len(parts) == 3:
-    finish(release(int(parts[1]))["assets"])
-item = release(int(parts[1]))
-if method == "PATCH":
-    if body.get("draft") is False and state["patch_error"] == "drop":
-        finish(error="Bad Gateway (HTTP 502)")
-    item |= {key: value for key, value in body.items() if key != "make_latest"}
-    if not item["draft"]:
-        tags.setdefault(item["tag_name"], {"type": "commit", "sha": item["target_commitish"]})
-        item["lag"] = state["publish_lag"]
-        if state["patch_error"] == "commit":
-            finish(error="Bad Gateway (HTTP 502)")
-elif item.get("lag"):
-    item["lag"] -= 1
-    finish(public(item) | {"draft": True})
-finish(public(item))
-"""
 State = dict[str, Any]
 EMPTY: State = {"tags": {}, "annotated": {}, "releases": [], "race": "", "tamper": "", "writes": [],
                 "next": 100, "hidden": {}, "lag": 0, "publish_lag": 0, "refs_error": "",
                 "patch_error": ""}
+
+
+class Refused(Exception):
+    pass
+
+
+def github(state: State, argv: list[str], stdin: str | None) -> object:
+    """GitHub's tags, annotated tags, releases and uploads behind one `gh api` call. A write becomes readable only
+    after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish request can fail after
+    it `commit`s or `drop`s the change."""
+    flags: dict[str, str] = {}
+    words = iter(argv[2:])
+    for word in words:
+        flags[word if word.startswith("--") else "path"] = (
+            next(words) if word in ("--method", "--input", "--header") else word)
+
+    def release(rid: int) -> State:
+        if (item := next((item for item in state["releases"] if item["id"] == rid), None)) is None:
+            raise Refused("Not Found (HTTP 404)")
+        return item
+
+    def public(item: State) -> State:
+        return {key: value for key, value in item.items() if key not in ("assets", "lag")}
+
+    if "secret-token" in " ".join(argv):
+        raise Refused("token in argv")
+    method = flags.get("--method", "GET")
+    path = flags["path"].split("github.com/", 1)[-1].removeprefix("repos/owner/repo/")
+    if method != "GET":
+        state["writes"].append(f"{method} {path}")
+    tags, parts = state["tags"], path.split("?")[0].split("/")
+    if "assets?name=" in path:
+        payload = pathlib.Path(flags["--input"]).read_bytes() + state["tamper"].encode()
+        state["next"] += 1
+        release(int(parts[1]))["assets"].append({"id": state["next"], "name": unquote(path.split("=")[1]),
+                                                 "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
+        return {}
+    body: State = json.loads(stdin) if stdin and flags.get("--input") == "-" else {}
+    if path.startswith("git/matching-refs/tags/"):
+        visible = []
+        for tag, target in tags.items():
+            if state["hidden"].get(tag, 0) > 0:
+                state["hidden"][tag] -= 1
+            elif tag.startswith(parts[-1]):
+                visible.append({"ref": f"refs/tags/{tag}", "object": target})
+        return visible
+    if path.startswith("git/tags/"):
+        return {"object": state["annotated"][parts[-1]]}
+    if path == "git/refs":
+        tag = body["ref"].removeprefix("refs/tags/")
+        if state["refs_error"]:
+            raise Refused(state["refs_error"])
+        if state["race"]:
+            tags[tag] = {"type": "commit", "sha": state["race"]}
+        if tag in tags:
+            raise Refused("Reference already exists (HTTP 422)")
+        tags[tag], state["hidden"][tag] = {"type": "commit", "sha": body["sha"]}, state["lag"]
+        return {"ref": body["ref"], "object": tags[tag]}
+    if path == "releases?per_page=100":
+        return [public(item) for item in state["releases"]]
+    if path == "releases":
+        state["next"] += 1
+        upload = f"https://uploads.github.com/{flags['path']}/{state['next']}/assets{{?name}}"
+        keys = ("tag_name", "target_commitish", "draft", "prerelease", "body")
+        item = {key: body[key] for key in keys} | {"id": state["next"], "assets": [], "upload_url": upload}
+        state["releases"].append(item)
+        return public(item)
+    if parts[:2] == ["releases", "assets"]:
+        for item in state["releases"]:
+            item["assets"] = [asset for asset in item["assets"] if asset["id"] != int(parts[2])]
+        return None
+    if len(parts) == 3:
+        return release(int(parts[1]))["assets"]
+    item = release(int(parts[1]))
+    if method == "PATCH":
+        if body.get("draft") is False and state["patch_error"] == "drop":
+            raise Refused("Bad Gateway (HTTP 502)")
+        item |= {key: value for key, value in body.items() if key != "make_latest"}
+        if not item["draft"]:
+            tags.setdefault(item["tag_name"], {"type": "commit", "sha": item["target_commitish"]})
+            item["lag"] = state["publish_lag"]
+            if state["patch_error"] == "commit":
+                raise Refused("Bad Gateway (HTTP 502)")
+    elif item.get("lag"):
+        item["lag"] -= 1
+        return public(item) | {"draft": True}
+    return public(item)
 
 
 class RegistryTests(unittest.TestCase):
@@ -224,41 +215,45 @@ class RegistryTests(unittest.TestCase):
 
 
 class ReleasePublicationTests(unittest.TestCase):
-    def publish(self, state: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
+    def publish(self, before: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
+        state = copy.deepcopy(before)
+
+        def gh(argv: list[str], *, input: str | None = None, env: dict[str, str] | None = None,
+               **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual((os.environ if env is None else env).get("GH_TOKEN"), "secret-token")
+            try:
+                out = github(state, argv, input)
+            except Refused as exc:
+                return subprocess.CompletedProcess(argv, 1, "", f"gh: {exc}")
+            text = "" if out is None else json.dumps([out] if "--slurp" in argv else out)
+            return subprocess.CompletedProcess(argv, 0, text, "")
+
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            (root / "bin").mkdir()
-            (root / "bin/gh").write_text(f"#!{sys.executable} -IS\n{GITHUB}")
-            (root / "bin/gh").chmod(0o755)
-            (root / "assets").mkdir()
+            files = pathlib.Path(directory) / "assets"
+            files.mkdir()
             for name, payload in assets.items():
-                (root / "assets" / name).write_bytes(payload)
-            (root / "state.json").write_text(json.dumps(state))
-            env = {
-                "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
-                "GH_STATE": str(root / "state.json"), "GH_TOKEN": "secret-token",
-                "REPOSITORY": "owner/repo", "TAG": TAG, "TARGET_SHA": SHA,
-                "ASSETS_DIR": str(root / "assets"), "RUNNER_TEMP": directory,
-            }
+                (files / name).write_bytes(payload)
+            env = {"GH_TOKEN": "secret-token", "REPOSITORY": "owner/repo", "TAG": TAG, "TARGET_SHA": SHA,
+                   "ASSETS_DIR": str(files), "RUNNER_TEMP": directory}
             output, error = io.StringIO(), None
-            with (patch.dict(os.environ, env), patch("release.time.sleep"),
+            with (patch.dict(os.environ, env), patch("release.time.sleep"), patch("github_api.subprocess.run", gh),
                   contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
                 try:
                     command_publish()
                 except ControlPlaneError as exc:
                     error = str(exc)
-            return error, output.getvalue(), json.loads((root / "state.json").read_text())
+            return error, output.getvalue(), state
 
     def test_a_release_publishes_exactly_the_client_archives_the_source_offer_and_checksums(self) -> None:
         for assets in ({name: data for name, data in ASSETS.items() if name != SOURCE},
                        ASSETS | {"graphite-meter-client_1.2.3_darwin_arm64.tar.gz": b"x"}):
             with self.subTest(assets=sorted(assets)):
-                error, _, after = self.publish(copy.deepcopy(EMPTY), assets)
+                error, _, after = self.publish(EMPTY, assets)
                 self.assertIn("release handoff holds", error or "")
                 self.assertEqual(after["writes"], [])
 
     def test_release_publishes_only_exact_assets_at_the_exact_tag(self) -> None:
-        error, output, published = self.publish(copy.deepcopy(EMPTY))
+        error, output, published = self.publish(EMPTY)
         self.assertIsNone(error, output)
         release = published["releases"][0]
         self.assertEqual((release["draft"], release["prerelease"]), (False, False))
@@ -308,7 +303,7 @@ class ReleasePublicationTests(unittest.TestCase):
             (published, edit(draft=True, body="## Source availability\nold"), "stale source notice", True),
         )
         for base, change, expected, read_only in rows:
-            before: State = change(copy.deepcopy(base))
+            before: State = change(base)
             with self.subTest(expected=expected, before=before):
                 error, output, after = self.publish(before)
                 if read_only:

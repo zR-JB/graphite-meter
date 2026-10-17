@@ -87,7 +87,9 @@ COPY --from=pgo-amd64 /pgo/ /src/rust/target/pgo/
 COPY --from=pgo-arm64 /pgo/ /src/rust/target/pgo/
 ARG VERSION
 ARG PROFILE
-RUN python3 -m scripts.package "$VERSION" --profile "$PROFILE" --output dist
+# Empty builds every TUI platform; CI builds one per runner.
+ARG TUI_PLATFORM
+RUN python3 -m scripts.package "$VERSION" --profile "$PROFILE" --output dist ${TUI_PLATFORM:+--platform "$TUI_PLATFORM"}
 
 FROM scratch AS tui-artifacts
 COPY --from=tui-build /src/dist/ /

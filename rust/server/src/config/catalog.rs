@@ -1,4 +1,4 @@
-//! The server catalog from `GM_SERVER_CATALOG` or `GM_SERVER_CATALOG_FILE` (`docs/SERVERS.md`).
+//! The server catalog from `GM_SERVER_CATALOG` or `GM_SERVER_CATALOG_FILE` (`docs/DEPLOYMENT.md`).
 
 use super::could_not;
 use graphite_meter_proto::{

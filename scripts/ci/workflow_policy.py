@@ -147,7 +147,7 @@ def check_actions(root: Path) -> None:
             for needle in ("secrets.", "secrets[", "environment:"):
                 if needle in text:
                     fail(f"{name} must not use {needle}")
-        if re.search(r"uses: (?:actions/setup-(?:go|python|node)|oven-sh/setup-bun)@", text):
+        if re.search(r"uses: (?:actions/setup-[\w-]+|oven-sh/setup-bun)@", text):
             fail(f"{name} must provision project tools through mise")
         installs = re.findall(r"rustup\W+toolchain\W+install\b.*", text)
         if any("--no-self-update" not in line for line in installs):

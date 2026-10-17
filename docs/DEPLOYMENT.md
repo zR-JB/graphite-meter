@@ -1,24 +1,29 @@
-# Deployment and configuration
+# Deployment
 
-One static server binary with the browser client embedded. With no configuration it serves clear HTTP/1.1 on port 7246. Native TLS listeners add deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3 and WebTransport.
+Graphite Meter ships as one static server binary with the browser app embedded. With no configuration it serves
+clear HTTP/1.1 on port 7246, and native TLS listeners add HTTP/1.1 over TLS, HTTP/2, HTTP/3 and WebTransport.
 
-| Your setup                  | Start here                                                              | What you need                                    |
+| Setup                       | Start here                                                              | You need                                         |
 | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
-| Local or trusted LAN        | [One container](#fast-local-deployment)                                 | TCP 7246.                                        |
-| Existing HTTPS ingress      | [Reverse proxy](#reverse-proxies) and [authentication](#authentication) | A hostname, TLS proxy and its CIDR.              |
-| Direct protocol comparisons | [Compose with native TLS](#native-tls)                                  | A trusted certificate; TCP 7247–7249, UDP 7249.  |
-| systemd under your own user | [Quadlet](../container/quadlet/README.md)                               | Linux, Podman and systemd.                       |
-| Private tailnet             | [Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md)   | Tailnet identity, HTTPS certificates, policy.    |
+| Local or trusted LAN        | [One container](#one-container)                                         | TCP 7246.                                        |
+| Existing HTTPS ingress      | [Reverse proxies](#reverse-proxies) and [authentication](#authentication) | A hostname, a TLS proxy and its address.       |
+| Direct protocol comparisons | [Native TLS](#native-tls)                                               | A trusted certificate; TCP 7247–7249, UDP 7249.  |
+| systemd under your own user | [Podman Quadlet](../container/quadlet/README.md)                        | Linux, Podman and systemd.                       |
+| Private tailnet             | [Tailscale sidecar](../container/quadlet/README.md#tailscale-sidecar)   | A tailnet identity and HTTPS certificates.       |
 | Current checkout            | [Build from source](#build-from-source)                                 | Git and Docker Compose, or the pinned toolchain. |
 
-Pin `:X.Y.Z` or an image digest instead of `:latest` for reproducible deployments. Jump to the
-[server reference](#server-reference), [terminal client](#native-terminal-client) or
-[troubleshooting](#troubleshooting). `container/` paths are relative to the repository root.
+Pin `:X.Y.Z` or an image digest instead of `:latest` for reproducible deployments. The
+[server reference](#server-reference) lists every setting; the terminal client has [its own guide](TERMINAL.md).
+`container/` paths are relative to the repository root.
 
-## Fast local deployment
+## One container
 
-Start the [quick start](../README.md#quick-start) container and open <http://localhost:7246>. Clear HTTP gives
-fetch-stream throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
+```sh
+docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
+```
+
+Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device. Over clear HTTP the test measures
+HTTP/1.1 throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
 WebTransport needs HTTPS and the native HTTP/3 listener.
 
 ## Docker Compose
@@ -33,28 +38,27 @@ docker compose -f container/docker-compose.yml up -d
 
 ### Native TLS
 
-The TLS overlay does not issue certificates. Supply a Let's Encrypt-style tree whose `live/` entries link into the
-same mounted `archive/` tree:
+The TLS overlay issues no certificates. Supply a Let's Encrypt-style tree whose `live/` entries link into the same
+mounted `archive/` tree:
 
 ```sh
 export GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIFICATE_TREE=/etc/letsencrypt
 docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 ```
 
-It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key must be readable by the
+It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only. The key must be readable by the
 [container user](#container-user). For issuance and renewal, see the
-[TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
+[TLS Quadlet](../container/quadlet/README.md#native-tls-with-certbot), which uses Cloudflare DNS-01.
 
-Prefer an ECDSA P-256 key, which the TLS Quadlet issues (`certbot --key-type ecdsa`): every TLS and QUIC handshake
-signs with it, and with an RSA-2048 key the Rust server spends about four times the CPU per full TLS handshake
-(1.6 ms against 0.38 ms on an x86 CI runner), which a Raspberry Pi feels.
+Prefer an ECDSA P-256 key, which the TLS Quadlet issues with `certbot --key-type ecdsa`. Every TLS and QUIC
+handshake signs with the key, and an RSA-2048 key costs about four times the CPU per handshake.
 
 ### Authentication overlay
 
 [`docker-compose.auth.yml`](../container/docker-compose.auth.yml) shows password sign-in behind an HTTPS proxy on
-the host (its comments cover OIDC, hybrid and a proxy container). It needs Compose 2.24.4 or later, publishes 7246
-on `127.0.0.1` only and trusts only the network gateway the proxy's connections arrive from; stack no public ports
-on it, because loopback and IPv6 clients of a published port arrive from that gateway too.
+the host, and its comments cover OIDC, hybrid and a proxy container. It needs Compose 2.24.4 or later. It publishes
+7246 on `127.0.0.1` only and trusts only the network gateway the proxy's connections arrive from. Stack no public
+ports on it, because loopback and IPv6 clients of a published port arrive from that gateway too.
 
 1. Save one [password hash](#authentication) line to `/etc/graphite-meter/auth-password-hash`, owned by the
    [container user](#container-user).
@@ -72,51 +76,34 @@ docker compose -f container/docker-compose.yml -f container/docker-compose.build
 mise run server-build && rust/target/release/graphite-meter-server                                # binary
 ```
 
-Stop any container already bound to 7246 first. Source builds carry a development identity; release automation
-stamps the version and source revision.
+Stop any container already bound to 7246 first. Source builds carry a development identity, and release automation
+stamps the version and source revision. The image's builder needs an amd64 host and cross-compiles arm64, so on
+arm64 hosts run a published tag.
 
 ### Container user
 
 The image runs as the unprivileged user `65532:65532` and writes nothing. Mounted keys and secrets must be readable
 by it:
 
-- **Docker native TLS**: certbot keys are root `0600`; give the group read once and certbot keeps it on renewal.
+- With Docker and native TLS, certbot keys are root `0600`. Give the group read once, and certbot keeps it on
+  renewal.
 
   ```sh
   sudo chgrp -R 65532 /etc/letsencrypt/live /etc/letsencrypt/archive
   sudo chmod -R g+rX /etc/letsencrypt/live /etc/letsencrypt/archive
   ```
 
-- **Docker secrets**: `sudo chown 65532:65532 FILE && sudo chmod 0400 FILE`.
-- **Quadlet**: nothing. Podman secrets are world-readable inside the container, and the TLS and Tailscale units
-  map your user, which owns their keys, to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
-
-Rootful Docker gives container root the host's root. _Rootless Podman already maps root to my user, so why a
-non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
-files; the keep-id units run as your user, as root did before.
-
-### Resources and logs
-
-`GM_MAX_BUFFER_BYTES` (default 8 GiB) bounds the connection buffers the HTTP/2 and HTTP/3 listeners share. It must
-cover every allowed connection's floor: 1.5 MiB with the HTTP/2 listener on, about 0.5 MiB with HTTP/3 alone, none
-for HTTP/1.1. The default `GM_MAX_CONNECTIONS` of 4096 therefore needs up to 6 GiB; a small host lowers both, such
-as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the server at start
-with the values that fit. Connections run on one thread per runtime worker, a CPU each by default;
-`TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run five nice
-steps lower, so transfers yield to the host's other services and to the server's own probes.
-
-Log lines carry a level, a topic and local time; the image has no zone data, so mount
-`/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
-instead of UTC. The image's builder needs an amd64 host and cross-compiles arm64, so on arm64 hosts run a published
-tag.
+- Docker secrets need `sudo chown 65532:65532 FILE && sudo chmod 0400 FILE`.
+- Quadlet needs nothing. Podman secrets are world-readable inside the container. Your user owns the TLS and
+  Tailscale keys, and those units map it to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
 
 ## Native listeners
 
 Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
-clear HTTP/1.1 listener (`GM_H1_ADDR`) also serves the UI and discovery and is required; the others are off until
-given an address ([server reference](#server-reference)). HTTP/3 serves WebTransport and needs TCP (the Alt-Svc
-bootstrap) and UDP on its port end to end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`; a valid
-replacement PEM pair is hot-reloaded, and an incomplete renewal keeps the previous pair.
+clear HTTP/1.1 listener on `GM_H1_ADDR` is required and also serves the UI and discovery. The other listeners stay
+off until they get an address. HTTP/3 serves WebTransport and needs TCP for the Alt-Svc bootstrap and UDP on its
+port end to end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`. The server hot-reloads a valid replacement
+PEM pair and keeps the previous pair through an incomplete renewal.
 
 ```env
 GM_H1_TLS_ADDR=:7247
@@ -129,24 +116,25 @@ GM_H2_PUBLIC_ORIGIN=https://meter.example.com:7248
 GM_H3_PUBLIC_ORIGIN=https://meter.example.com:7249
 ```
 
-## Advertised measurement paths
+### Advertised measurement paths
 
 `/preflight` lists the paths that carry throughput and latency:
 
-- **Native endpoints** (`GM_ADVERTISED_NATIVE_ENDPOINTS`, `GM_H*_PUBLIC_ORIGIN`): Graphite Meter owns the listener, so
-  the protocol is known. Only enabled listeners can be advertised, and naming a disabled one is a startup error; each
-  public origin must match its scheme.
-- **Negotiated origins** (`GM_PUBLIC_ORIGINS` for both roles, `GM_PUBLIC_THROUGHPUT_ORIGINS`,
-  `GM_PUBLIC_LATENCY_ORIGINS`): usually a reverse proxy. The browser reports the protocol it reached, the server what
-  arrived upstream. `self` is the origin that served that server's discovery request.
+- Native endpoints come from `GM_ADVERTISED_NATIVE_ENDPOINTS` and `GM_H*_PUBLIC_ORIGIN`. Graphite Meter owns the
+  listener, so it knows the protocol. You can advertise only enabled listeners. Naming a disabled one is a startup
+  error, and each public origin must match its scheme.
+- Negotiated origins come from `GM_PUBLIC_ORIGINS` for both roles, `GM_PUBLIC_THROUGHPUT_ORIGINS` and
+  `GM_PUBLIC_LATENCY_ORIGINS`, and they usually name a reverse proxy. The browser reports the protocol it reached,
+  and the server reports what arrived upstream. `self` is the origin that served that server's discovery request.
 
-An origin cannot be both native and negotiated, except as a latency-only origin. Clear HTTP loopback from an HTTPS
-page is browser-dependent; advertise HTTPS paths for HTTPS deployments, including on `localhost`.
+An origin cannot be both native and negotiated, except as a latency-only origin. Browsers differ on clear HTTP
+loopback from an HTTPS page, so advertise HTTPS paths for HTTPS deployments, including on `localhost`.
 
 ## Reverse proxies
 
-A proxy adds a second protocol hop: the browser may reach the proxy over HTTP/2 or HTTP/3 while Graphite Meter sees
-clear HTTP/1.1. Advertise it as a negotiated origin, alongside native endpoints if users should choose both:
+A proxy adds a second protocol hop. The browser may reach the proxy over HTTP/2 or HTTP/3 while Graphite Meter sees
+clear HTTP/1.1. Advertise the proxy as a negotiated origin, and keep native endpoints beside it if users should
+choose both:
 
 ```env
 GM_ADVERTISED_NATIVE_ENDPOINTS=none
@@ -154,18 +142,18 @@ GM_PUBLIC_ORIGINS=self
 GM_TRUSTED_PROXIES=172.30.0.2/32
 ```
 
-`GM_TRUSTED_PROXIES` is the proxy's own address as Graphite Meter sees it, here a proxy container with a fixed
-address. A trusted peer names the client and, for authentication, the HTTPS origin, so trust no address that other
-clients share: a published container port's loopback and IPv6 clients arrive from the network gateway.
-`GM_ADVERTISED_NATIVE_ENDPOINTS=none` only stops discovery from offering the native listeners; they still listen, so
-publish no ports for them when the proxy should be the only way in.
+`GM_TRUSTED_PROXIES` is the proxy's own address as Graphite Meter sees it. Here it is a proxy container with a fixed
+address. A trusted peer names the client, and with authentication it also names the HTTPS origin. So trust no
+address that other clients share, because loopback and IPv6 clients of a published container port arrive from the
+network gateway. `GM_ADVERTISED_NATIVE_ENDPOINTS=none` only stops discovery from offering the native listeners.
+They still listen, so publish no ports for them when the proxy should be the only way in.
 
-WebTransport is HTTP/3 extended CONNECT over UDP, which a TCP proxy cannot carry; expose the native H3 endpoint
-directly when it is required.
+WebTransport is HTTP/3 extended CONNECT over UDP, which a TCP proxy cannot carry. Expose the native HTTP/3
+endpoint directly when WebTransport is required.
 
 ### nginx
 
-Merge into your HTTPS server (certificate setup omitted):
+Merge this into your HTTPS server. The example omits certificate setup:
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -194,12 +182,11 @@ server {
 }
 ```
 
-### Nginx Proxy Manager
-
-Tested with 2.15.1: create a Proxy Host with WebSocket support on and caching off, and put a complete
-`location / { ... }` block with the nginx directives above in **Advanced**, using
-`proxy_set_header Connection $http_connection;` (the `map` cannot go there). Add no `/` Custom Location; NPM then
-omits its default location, whose `$host` would drop a nonstandard port. Check the generated file with `nginx -t`.
+In Nginx Proxy Manager, create a Proxy Host with WebSocket support on and caching off, and put a complete
+`location / { ... }` block with the directives above under Advanced. Write
+`proxy_set_header Connection $http_connection;` there, because the `map` cannot go there. Add no `/` Custom Location.
+NPM then omits its default location, and that location's `$host` would drop a nonstandard port. Check the generated file
+with `nginx -t`.
 
 ### Caddy
 
@@ -214,7 +201,7 @@ meter.example {
 ### Traefik
 
 [`docker-compose.traefik.yml`](../container/docker-compose.traefik.yml) runs Traefik v3 in front of the default
-compose, with a Let's Encrypt certificate and Graphite Meter reachable only through it:
+Compose file. Traefik holds a Let's Encrypt certificate, and Graphite Meter is reachable only through it:
 
 ```sh
 docker compose -f container/docker-compose.yml -f container/docker-compose.traefik.yml up -d
@@ -222,180 +209,219 @@ docker compose -f container/docker-compose.yml -f container/docker-compose.traef
 
 Traefik needs no header middleware. For a client outside `forwardedHeaders.trustedIPs` it drops the client's
 `X-Real-Ip` and `X-Forwarded-*` headers, sets `X-Real-Ip` to the connection peer and appends the same address to
-`X-Forwarded-For`. It sends a WebSocket upgrade's protocol as `wss`, which counts as HTTPS. Two settings exist only in
-Traefik's static configuration, never in labels, and the overlay sets both as flags:
+`X-Forwarded-For`. It sends a WebSocket upgrade's protocol as `wss`, which counts as HTTPS. Two settings exist only
+in Traefik's static configuration, never in labels, and the overlay sets both as flags:
 
-- `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`: Traefik's 60 s default cuts an upload stage
-  that streams one request body for longer.
-- `--serversTransport.forwardingTimeouts.idleConnTimeout=10s`: Traefik keeps idle upstream connections for 90 s by
-  default, past the 15 s after which Graphite Meter closes them.
+- `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0` is needed because Traefik's 60 s default
+  cuts an upload stage that streams one request body for longer.
+- `--serversTransport.forwardingTimeouts.idleConnTimeout=10s` is needed because Traefik keeps idle upstream
+  connections for 90 s by default, but Graphite Meter closes them after 15 s.
 
-With authentication, stack `docker-compose.auth.yml` before the Traefik overlay; Traefik's address replaces the
-gateway as the trusted proxy. Do not list Traefik's clients in `forwardedHeaders.trustedIPs` or set `insecure`: their
-own `X-Real-Ip` would then pass through, and Graphite Meter refuses those requests.
+With authentication, stack `docker-compose.auth.yml` before the Traefik overlay, and Traefik's address replaces the
+gateway as the trusted proxy. Do not list Traefik's clients in `forwardedHeaders.trustedIPs` and do not set
+`insecure`. Their own `X-Real-Ip` would then pass through, and Graphite Meter refuses those requests.
 
 ### Proxy requirements
 
-- Preserve `Host`; overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`; set `GM_TRUSTED_PROXIES` to the proxy peers
-  only. Without it every client counts as the proxy, and with authentication no request counts as HTTPS, so sign-in
-  fails.
-- Set `X-Real-IP` to the connection peer, replacing any the client sent. `X-Forwarded-For` may stay, but its last entry
-  must be the same address, as Traefik, Caddy and nginx's `$proxy_add_x_forwarded_for` write it: a proxy that passes a
-  client's own `X-Real-IP` on still appends the peer it saw, so a different last entry shows the header was forged,
-  and Graphite Meter refuses the request rather than attribute it to an address the client chose. `Forwarded` is
-  ignored.
-- Allow WebSocket Upgrade to `/ws/ping`; do not buffer, cache, compress or transform `/upload/progress`.
-- Expire idle upstream connections within 15 s; Graphite Meter closes them then.
-- Keep the whole route family on one backend; do not add `forward_auth`; Graphite Meter owns authentication.
-- Redact the `/auth/oidc/callback` query string from logs; keep bandwidth policy off measurement routes.
+- Preserve `Host`, overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`, and set `GM_TRUSTED_PROXIES` to the proxy
+  peers only. Without it every client counts as the proxy, and with authentication no request counts as HTTPS, so
+  sign-in fails.
+- Set `X-Real-IP` to the connection peer and replace any the client sent. `X-Forwarded-For` may stay, but its last
+  entry must be the same address, as Traefik, Caddy and nginx's `$proxy_add_x_forwarded_for` write it. A different
+  last entry shows the header was forged, and Graphite Meter refuses the request rather than attribute it to an
+  address the client chose. The server ignores `Forwarded`.
+- Allow WebSocket Upgrade to `/ws/ping`, and do not buffer, cache, compress or transform `/upload/progress`.
+- Expire idle upstream connections within 15 s, because Graphite Meter closes them then.
+- Keep the whole route family on one backend and add no `forward_auth`, because Graphite Meter owns authentication.
+- Redact the `/auth/oidc/callback` query string from logs, and keep bandwidth policy off measurement routes.
 
 ## Authentication
 
-Off by default. When enabled it covers the UI, discovery, probes, transfers, progress, WebSockets and WebTransport;
-settings are in the [server reference](#server-reference). Password mode needs one hash source; OIDC needs issuer,
-client ID, one secret source and at least one allowed group; hybrid needs both and keeps the password usable when
-the provider is down.
+Authentication is off by default. When enabled, it covers the UI, discovery, probes, transfers, progress,
+WebSockets and WebTransport. Password mode needs one hash source. OIDC needs an issuer, a client ID, one secret
+source and at least one allowed group. Hybrid needs both and keeps the password usable while the provider is down.
 
 ```sh
 docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
 ```
 
 Register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client with PKCE S256,
-`client_secret_basic` and scopes `openid profile groups`. OIDC mode refuses to start until issuer discovery succeeds;
-hybrid retries it in the background. Browser sessions are HTTPS-only and last eight hours; a subject holds at most 8
-and the server 1024.
+`client_secret_basic` and scopes `openid profile groups`. OIDC mode refuses to start until issuer discovery
+succeeds, and hybrid retries it in the background. Browser sessions are HTTPS-only and last eight hours. A subject
+holds at most 8 sessions, and the server holds at most 1024.
 
-Advertised origins must use the authentication hostname (ports may differ), and clear HTTP/1.1 cannot be advertised:
-the default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behind a proxy or
+Advertised origins must use the authentication hostname, but their ports may differ. Clear HTTP/1.1 cannot be
+advertised. The default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behind a proxy or
 `http1-tls,http2,http3`, or the server refuses to start.
 
-Sign-in is rate limited per client address (an IPv6 /64 whose /56 and /48 share two and four times the limit): 5
-password attempts per minute, at most 60 wrong passwords per minute across all clients, and 10 OIDC code exchanges
-and 10 sign-in approval pages per minute. A password sign-in also leaves a 30-day device cookie (signed with the
-password hash, so changing the password forgets every device); a browser holding it keeps its own address's limit but
-skips the bounds all clients share, so others' attempts cannot lock a known operator out.
+Sign-in is rate limited per client address. An IPv6 client counts as its /64, and its /56 and /48 share two and
+four times the limit. Each address gets 5 password attempts, 10 OIDC code exchanges, 10 OIDC sign-in starts and 10
+sign-in approval pages per minute, and all clients together get at most 60 wrong passwords per minute. A password
+sign-in also leaves a 30-day device cookie. The cookie is signed with a key derived from the password hash, so
+changing the password forgets every device. A browser holding the cookie keeps its own address's limit but skips
+the bounds all clients share, so others' attempts cannot lock a known operator out.
 
-**Terminal clients** never see the operator password: the client shows a short code and an approval URL, and after
-browser approval receives an in-memory, measurement-only grant bound to that session and HTTPS origin. Sign-out
-revokes it. The client refuses authenticated operation over HTTP or with `--insecure`, and signs in only in its
-interactive interface: a headless run against a protected server exits 1 with "Sign-in required".
+The [terminal client](TERMINAL.md#sign-in) never sees the operator password. An operator approves its short code in
+the browser, and the client receives an in-memory, measurement-only grant bound to that login and HTTPS origin.
+Sign-out revokes the grant.
+
+## Server catalog
+
+A test runs against one to four selected test servers on one stage schedule, and the default is the server that
+serves the page. Every server runs the same image and configures itself. Servers never contact each other. Clients
+connect directly to each selected server and never import a peer's catalog, so there are no shared keys, database
+or discovery service.
+
+Set `GM_SERVER_CATALOG` to inline JSON, or set `GM_SERVER_CATALOG_FILE` to an absolute path that is normally
+mounted read-only, and restart. Usually a list of the other servers' origins is enough:
+
+```sh
+export GM_SERVER_CATALOG='["https://fra.example.net","https://ams.example.net"]'
+```
+
+Each server's name, location and paths come from its own `/preflight`, and until discovery succeeds the client
+shows the hostname. IDs derive from the canonical origin, so reordering keeps them and changing the origin creates
+a new one. Do not list `/preflight` or `/probe` paths. The object form adds named IDs, a default selection and
+extra measurement hosts:
+
+```json
+{
+  "defaultSelection": ["self"],
+  "servers": [
+    { "id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt" },
+    {
+      "id": "amsterdam",
+      "url": "https://ams.example.net",
+      "name": "Amsterdam",
+      "additionalOrigins": ["https://transfer.ams.example.net:8443"]
+    }
+  ]
+}
+```
+
+| Field               | Rule                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `servers`           | Holds up to 31 entries besides the synthesized `self`, which you omit. IDs and origins must be unique. |
+| `id`                | Has 1–64 ASCII letters, digits, `.`, `_` or `-`.                                        |
+| `url`               | Is an HTTP(S) origin of at most 2048 bytes with no credentials, path, query or fragment. |
+| `name`, `location`  | Are fallbacks of at most 256 UTF-8 bytes without control characters; discovery supplies current values. |
+| `additionalOrigins` | Lists up to 32 exact origins on other hosts; ports on the entry's own hostname need none. |
+| `defaultSelection`  | Names one to four existing IDs; omitted means `self`, and empty is invalid.             |
+
+The raw configuration is limited to 64 KiB. The normalized catalog adds this server's own entry and is limited to
+48 KiB. The page derives its browser connection policy from these destinations, so discovery cannot authorize an
+unrelated host. Proxies must keep that policy and allow streaming and `Authorization` headers. Protected servers
+accept measurement grants only on their own hostname. For Compose, edit
+[the example](../container/server-catalog.example.json), save it as `container/server-catalog.json` and add
+[the catalog overlay](../container/docker-compose.catalog.yml).
+
+Clients use the catalog as follows:
+
+- Browsers save a choice as ID plus canonical origin. A removed or changed entry needs the user to apply a new
+  selection, and an ID never silently redirects to another server. Listing a server does not make it reachable,
+  because a catalog may mix public, intranet and LAN servers. Unselected unavailable entries do not block a test,
+  and an unavailable selected entry fails by name until access returns or the user deselects it.
+- HTTP and HTTPS servers may be mixed, and Automatic resolves each server's advertised paths separately. From an
+  HTTPS page the browser blocks non-loopback HTTP paths as mixed content, and protected servers need HTTPS on both
+  the page and the server. The terminal client has no mixed-content rule.
+- When a hosted page reaches a private-address server, or an intranet page reaches loopback, the browser may ask
+  for local-network permission. Chrome requires a secure page for it. Chromium's connection policy cannot match literal
+  IPv6 hosts, so use a DNS name for a separate IPv6 origin. The terminal client accepts literals.
+- In the browser, Settings lists the test servers with their status and discovery time, and you select one to four.
+  Each selected server is probed for latency. The latency lanes show one server at a time and switch mid-run, and
+  the results selector shows all servers or one. A protected server shows Sign in, which opens that server's own
+  login in a popup followed by an approval page. Approve only if its eight-character code matches the one in
+  Settings. The grant lives in page memory and is bound to that server, the requesting origin and the login.
+  Reloading the page asks again, and signing out on the server revokes the grant. A server that fails is dropped
+  while the others continue, as [coordinated servers](MEASUREMENTS.md#coordinated-servers) explains.
+- The terminal client takes `--url` as the catalog and repeatable `--server ID`; see its
+  [flags](TERMINAL.md#flags).
 
 ## Podman and Quadlet
 
-See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace networking can cap throughput;
-`Network=host` avoids it but gives up the network namespace, so apply host firewall policy.
+See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace networking can cap throughput.
+`Network=host` avoids that but gives up the network namespace, so apply host firewall policy.
 
-## Native terminal client
+## Resources and logs
 
-`graphite-meter-client --url https://your-server` tests that server interactively. Without `--url` it asks for the
-server's address. Nothing is kept unless asked: with **Remember server** on (Tab on that card, or in the settings) it
-keeps the address in `graphite-meter/server` under the user's configuration directory (`~/.config` on Linux), so the
-next start needs none, and turning it off deletes the file. Releases attach archives for
-Linux (amd64, arm64) and Windows (amd64); the server ships as the container image or a
-[source build](#build-from-source).
+`GM_MAX_BUFFER_BYTES` defaults to 8 GiB and bounds the connection buffers the HTTP/2 and HTTP/3 listeners share.
+It must cover every allowed connection's floor. That floor is 1.5 MiB with the HTTP/2 listener on, about 0.5 MiB
+with HTTP/3 alone and none for HTTP/1.1. The default `GM_MAX_CONNECTIONS` of 4096 therefore needs up to 6 GiB. A
+small host lowers both, for example to `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget
+that falls short stops the server at start with the values that fit. Connections run on one thread per runtime
+worker, and by default there is one worker per CPU. Tokio's own `TOKIO_WORKER_THREADS` sets that count on a host
+shared with other services. On Linux those threads run five nice steps lower, so transfers yield to the host's
+other services and to the server's own probes.
 
-| Flag                                             | Default                   | Meaning                                                                                         |
-| ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `--url`                                          | the remembered server     | Origin of the operator server catalogue. Required with `--report` or without a terminal.        |
-| `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
-| `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
-| `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
-| `--throughput-transport`                         | `auto`                    | `fetch-stream` or `webtransport`.                                                               |
-| `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                                  |
-| `--stages`                                       | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`).                    |
-| `--warmup`                                       | `800ms`                   | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s.                             |
-| `--latency-duration`                             | `4s`                      | Measured window, 1 s–24 h and within every selected server's limit (5 min unless raised).       |
-| `--download-/--upload-/--bidirectional-duration` | `10s`                     | Same bounds.                                                                                    |
-| `--auto-streams`                                 | `6`                       | Maximum HTTP/1.1 streams per direction, 1–14.                                                   |
-| `--streams`                                      | `0`                       | Exact streams per server and direction, at most 14; `0` keeps automatic.                        |
-| `--ping`                                         | `reply-driven`            | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms–15 s. |
-| `--loaded-ping`                                  | `medium`                  | Cadence during transfers, same values.                                                          |
-| `--loaded-latency`                               | `true`                    | Measure latency during transfer stages.                                                         |
-| `--insecure`                                     | `false`                   | Skip TLS verification; refuses sign-in.                                                         |
-| `--report`                                       | `false`                   | Run once without the interface, and without sign-in; automatic when stdout is not a terminal.   |
-| `--version` / `--legal`                          |                           | Print the version or third-party notices and exit.                                              |
+The server logs to stderr and writes one line per event in UTC:
 
-Fixed cadences are capped at 15 s, half the server's idle bound. Headless runs print stage progress to stderr and
-the report to stdout; an interactive run prints the same report on exit. It is plain text unless stdout is a
-terminal and `NO_COLOR` is unset.
+```text
+2026-10-06T14:31:02Z INFO  server:    ready
+2026-10-06T14:31:09Z WARN  tls:       certificate expires in 72 h; renew it (transport::tls)
+```
 
-| Exit      | Meaning                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| 0         | Complete, or quit before a run.                                                       |
-| 1         | Any other outcome (Partial, Incomplete, Stopped, Failed) or a runtime error.          |
-| 2         | Invalid flags or arguments.                                                           |
-| 130 / 143 | A run stopped by SIGINT (or ctrl+c) / SIGTERM; after a finished run they exit like q. |
-
-The interface is one console: the dial, the latency lanes, the run key over a chip per stage, and a card per stage.
-**s** opens the settings as a sheet at the right (the server and its test servers, connection paths, stages, then
-advanced settings), its foot explaining the focused row; `?` lists every key. Without a server, or when none
-answers, a card asks for the address. Every selected server is probed for latency; the run's latency is the first
-selected server's, and if it leaves the test a surviving one takes over. `l` switches the server shown; the printed
-report keeps the run's. A selected server that fails its check leaves the run, which continues as Partial.
-
-| Key                        | Where           | Action                                                                                                            |
-| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| enter, space, r            | console         | Start test; after one, run again.                                                                                 |
-| esc                        | running         | Stop the test at once.                                                                                            |
-| 1–4                        | console         | Turn latency, download, upload or bidirectional on or off; a click on a stage's chip does the same.               |
-| s, d, ?                    | console         | Settings, details (servers, paths, rates, failures), keys; esc or the same key closes them.                       |
-| l, v                       | console         | With several servers, the latency server shown; check the server again.                                           |
-| ↑/↓ (k/j, tab), ←/→        | settings        | Move; change the focused value.                                                                                   |
-| enter, space, r            | settings        | Edit or open the row (the test servers open their chooser); space switches a row on or off; r starts the test.    |
-| ←/→, home/end, enter, esc  | editing a value | Move the cursor, apply, cancel.                                                                                   |
-| tab                        | connect card    | Remember the server for later starts, or forget it.                                                               |
-| space, enter, esc          | server chooser  | Select, apply, cancel.                                                                                            |
-| enter (o), esc             | sign-in         | Open the approval page, cancel.                                                                                   |
-| pgup/pgdn, home/end, wheel | sheets          | Scroll; in the settings the wheel moves the focus.                                                                |
-| mouse                      | any             | Hover lights what a click presses: the run key, a chip, a cap in the bottom bar, a row, the sign-in link.         |
-| q, ctrl+c                  | any             | Quit. While editing, q is typed. A running test stops first and prints its report; a second ctrl+c quits at once. |
+Each line has a level of `DEBUG`, `INFO`, `WARN` or `ERROR`, then a topic and the message. Warnings and errors end
+with the module that wrote them. Lines a peer can repeat, such as failed handshakes, appear at most once a minute
+with a count of those held back. On a terminal the lines are colored unless `NO_COLOR` is set or `TERM=dumb`, and
+`FORCE_COLOR` colors them anywhere.
 
 ## Upgrading
 
-Upgrade the server and native clients together and reload open tabs; wire changes stay additive, and discovery
-treats the engine version as metadata, not a compatibility test. Existing deployments stay single-server until you
-add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
-schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
-defaults.
+Upgrade the server and the terminal clients together and reload open tabs. Existing deployments stay
+single-server until you add a [server catalog](#server-catalog). Unknown or obsolete browser preferences fall back
+to defaults, and saved History stays readable.
 
-Releases up to 0.12 shipped a Go server as `latest` and an experimental Rust server as `latest-rust`. The Rust server
-is now the only one and carries the plain tags; the `-rust` tags stay where they were and no longer move. It keeps the
-ports, `GM_*` settings, `hash-password` command, [container user](#container-user) and layout, and adds
-[`GM_MAX_BUFFER_BYTES`](#resources-and-logs): a host that raised `GM_MAX_CONNECTIONS` far above its default may need
-to lower it, or the server stops at start and names the values that fit. Log lines read
-`2026-10-06T16:31:02+02:00 WARN  tls:       message (module)`; adjust log parsers that matched the old format.
+Releases up to 0.12 shipped a Go server as `latest`. The Rust server is now the only one and carries the plain
+tags. It keeps the ports, `GM_*` settings, `hash-password` command, [container user](#container-user), password
+hashes and device cookies. Check these when switching:
+
+- [`GM_MAX_BUFFER_BYTES`](#resources-and-logs) is new, so a host that raised `GM_MAX_CONNECTIONS` far above its
+  default may need to lower it. Otherwise the server stops at start and names the values that fit.
+- Boolean settings accept only `true`, `false`, `1` and `0`.
+- Log lines are always UTC in the [format above](#resources-and-logs), so `TZ` no longer matters. Adjust log
+  parsers.
+- Every server in a server catalog must be a current release, because both clients need the upload checkpoint and
+  the stage limits that the server's discovery reports.
 
 ## Troubleshooting
 
-| Symptom                                    | Check                                                                                                        |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                                              |
-| WebTransport is unavailable                | HTTPS page, trusted certificate, browser support, advertised H3 origin, TCP+UDP reachability.                |
-| An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.                           |
-| A local peer fails only from a hosted page | Local-network permission and HTTPS; see [browser reachability](SERVERS.md#local-network-browser-permission). |
-| A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the native client accepts literals.                       |
-| Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests.                  |
-| Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener.         |
-| Timeouts or "—" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
+| Symptom                                    | Check                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                             |
+| WebTransport is unavailable                | Check for an HTTPS page, a trusted certificate, browser support, an advertised HTTP/3 origin and TCP and UDP reachability. |
+| An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.          |
+| A local peer fails only from a hosted page | Check local-network permission and HTTPS; see the [server catalog](#server-catalog).        |
+| A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the terminal client accepts literals.     |
+| Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests. |
+| Throughput is lower than expected          | Check CPU, browser, Wi-Fi, proxy and container networking, and compare the terminal client on a direct listener. |
+| Timeouts or "–" appear                     | Inspect stage evidence, because unfinished probes and missing receiver counters are not zero. |
 
-### UDP buffers
-
-HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers, shared by the server's HTTP/3 endpoints with at least
-2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
-server then logs one line at startup, `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
-of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
-results. Raise the caps on the host, which also covers containers:
+The HTTP/3 listener asks the kernel for 7 MiB of UDP buffer per direction, split among its sockets with at least
+2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the server then
+logs one `udp` warning at startup that reads `UDP buffer too small for QUIC above about 1 Gbit/s`. Below about
+1 Gbit/s of QUIC the smaller buffer is enough. Above it, bursts can overflow the socket and lower HTTP/3 and
+WebTransport results. Raise the caps on the host, which also covers containers, and add both keys to a file under
+`/etc/sysctl.d/` to keep them after a reboot:
 
 ```sh
 sysctl --write net.core.rmem_max=7500000 net.core.wmem_max=7500000
 ```
 
-Add both keys to a file under `/etc/sysctl.d/` to keep them after a reboot.
-
 ## Server reference
 
-Environment loads first; a flag overrides it. `graphite-meter -h` lists every flag with its variable. Rows marked
-_env only_ have no flag, so secrets stay out of process arguments.
+The server binary is `/graphite-meter` in the image and `graphite-meter-server` in a source build. Besides
+serving, it takes one command:
+
+| Command                | Effect                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| `version`, `--version` | Print the version.                                                                                  |
+| `hash-password`        | Read a password twice on stdin (1 to 1024 bytes, hidden on a terminal) and print its Argon2id hash. |
+| `--legal`              | Print the project and dependency license notices.                                                   |
+| `--help`               | Print every flag with its variable and default.                                                     |
+
+The environment loads first, and a flag overrides it. Rows marked _env only_ have no flag, so secrets stay out of
+process arguments. Durations take units such as `90s`, `5m` or `2h`, and booleans take `true`, `false`, `1` or
+`0`. A configuration error stops the server with exit status 1 and names the setting.
 
 | Environment                             | Flag                                   | Default          | Meaning                                                                                |
 | --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
@@ -415,15 +441,16 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters.            |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Location label, with the same limits.                                                  |
 | `GM_RESULT_HISTORY_DEFAULT`             | `--result-history-default`             | `false`          | Default for saving completed browser results on the device.                            |
-| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log per-second throughput, admission counters and authentication debug lines.          |
+| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log throughput every second, admission counters every 30 s and sign-in debug lines.    |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Concurrent measurement handlers.                                                       |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Handlers per client identity.                                                          |
 | `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, a share of the handler pool.                                    |
 | `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
+| `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources-and-logs)).        |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client.                                                         |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | stage + 1m       | Request-shaped measurement lifetime; unset, at least `5m`.                             |
-| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | WebTransport session lifetime; unset, at least the operation's.                        |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Lifetime of a request-shaped measurement. When unset, it grows to at least the stage limit plus 1 min. |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Lifetime of a WebTransport session. When unset, it grows to at least the operation lifetime. |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s`–`24h`; sent in `/preflight`.                      |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
@@ -435,26 +462,27 @@ _env only_ have no flag, so secrets stay out of process arguments.
 | `GM_AUTH_OIDC_CLIENT_SECRET`            | _env only_                             | empty            | Inline client secret; prefer the file.                                                 |
 | `GM_AUTH_OIDC_CLIENT_SECRET_FILE`       | `--auth-oidc-client-secret-file`       | empty            | File with the client secret.                                                           |
 | `GM_AUTH_OIDC_ALLOWED_GROUPS`           | `--auth-oidc-allowed-groups`           | empty            | Required comma-separated, case-sensitive groups.                                       |
-| `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, ≤ 64 bytes.                                                        |
-| `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalogue](SERVERS.md#operator-catalogue) JSON.                                |
-| `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalogue file path without `..`; exclusive with the inline form.             |
+| `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, at most 64 bytes.                                                  |
+| `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](#server-catalog) JSON.                                                |
+| `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
 
-- Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
-  handlers, and session duration ≥ operation duration. Lifetimes left unset cover the stage limit plus a minute, so a
-  server allowing multi-hour stages never cuts their lanes on a short default; set them to keep lanes shorter, and
-  clients reconnect across each cut. Something must carry throughput: with no native endpoint
-  advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration
-  advertises no throughput endpoint".
-- A client identity is a login or measurement grant, whose subject shares twice its limit (every password login is
-  the one operator subject); otherwise an IPv4 address or IPv6 /64 whose /56 and /48 share two and four times its
-  limit. Upload receivers are counted the same way, and connections by address.
+- Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
+  limit, sessions may not exceed handlers, and the session duration must be at least the operation duration.
+  Lifetimes left unset cover the stage limit plus a minute, so a server that allows multi-hour stages never cuts
+  their lanes on a short default. Set them to keep lanes shorter, and clients reconnect across each cut. Something
+  must carry throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or
+  `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration advertises no throughput endpoint".
+- A client identity is a login or measurement grant, and its subject shares twice its limit. Every password login
+  is the one operator subject. Without a login, the identity is an IPv4 address or an IPv6 /64, and its /56 and
+  /48 share two and four times its limit. Upload receivers are counted the same way, and connections are counted
+  by address.
 - A direct client address holds at most 8 QUIC connections and a browser opens one per WebTransport session, so a
   larger per-client session share only helps a login that spans addresses.
-- Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at a
-  trusted proxy or firewall.
-- `GM_TRUSTED_PROXIES` rejects default routes (`0.0.0.0/0`, `::/0`). A trusted peer names its client with exactly one
-  `X-Real-IP`, which an `X-Forwarded-For` must end in. Measurement admission refuses any other request from it with
-  HTTP 400, the sign-in page says the proxy names no client, and the server logs the fault under `proxy` at most once
-  a minute.
-- The browser keeps history in its own IndexedDB; its own choice overrides `GM_RESULT_HISTORY_DEFAULT`. Stopped and
-  Failed runs are not saved.
+- Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at
+  a trusted proxy or firewall.
+- `GM_TRUSTED_PROXIES` rejects the default routes `0.0.0.0/0` and `::/0`. A trusted peer names its client with
+  exactly one `X-Real-IP`, and any `X-Forwarded-For` must end in that address. Measurement admission refuses any
+  other request from the peer with HTTP 400, the sign-in page says the proxy names no client, and the server logs
+  the fault under `proxy` at most once a minute.
+- The browser keeps History in its own IndexedDB, and its own choice overrides `GM_RESULT_HISTORY_DEFAULT`. Stopped
+  and Failed runs are not saved.
