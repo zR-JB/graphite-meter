@@ -87,7 +87,7 @@ test.chrome("a download graph leaves separate curves and fills across a page-clo
   await open(page, undefined, {
     config: {
       stages: { latency: false, download: true, upload: false, bidirectional: false },
-      duration: { ...baseConfig.duration, downloadMs: 8_000 },
+      duration: { ...baseConfig.duration, downloadMs: 5_000 },
     },
   });
   await ready(page);

@@ -96,7 +96,7 @@ interface Marker {
   parent?: string;
 }
 
-export interface Navigator {
+interface Navigator {
   /** Opens `next` on a new history entry. */
   push(next: Route): void;
   /** Rewrites the current entry, keeping where it was pushed from. */

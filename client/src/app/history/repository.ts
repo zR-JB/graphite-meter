@@ -2,8 +2,8 @@
 import { HISTORY_LIMIT, readHistoryRecord, upgradeRecord, type HistoryRecord } from "./records";
 
 const DATABASE = "graphite-meter";
-/** Version 2 held rows of any schema; version 3 holds them upgraded once, in this build's form. */
-const VERSION = 3;
+/** Version 2 held rows of any schema, version 3 schema 5; version 4 holds them upgraded once, in this build's form. */
+const VERSION = 4;
 const RESULTS = "results";
 const META = "meta";
 const COMPLETED_AT = "completedAt";
@@ -11,10 +11,10 @@ const CLEARS = "clears";
 const CHANNEL = "graphite-meter-history";
 const OPEN_MS = 5_000;
 const BLOCKED_MS = 1_000;
-const UNSAVABLE = "This result could not be saved in browser storage.";
+const UNSAVABLE = "Could not save this result in browser storage.";
 const FULL = "Browser storage is full. This result was not saved.";
 const UNAVAILABLE = "This browser has no storage for History: results are not saved.";
-const UNSUPPORTED = "Unsupported history database version. Saved data has not been changed.";
+const UNSUPPORTED = "Unsupported History database version. Saved data has not been changed.";
 const CLOSED = "History storage was closed before it opened.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
@@ -48,8 +48,6 @@ const clearCount = (row: unknown): number => {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
 };
 
-const clearedSince = (row: unknown, clears: number): boolean => clearCount(row) > clears;
-
 /** Walking rows newest first, the id of each readable row past the limit; unreadable rows are never counted. */
 function pastLimit(): (row: unknown) => string | null {
   let kept = 0;
@@ -64,8 +62,8 @@ interface OpenRequest {
   waiter: { opened(db: IDBDatabase): void; failed(error: unknown): void; blocked(): void } | null;
 }
 
-/** Creates the database from nothing, or upgrades version 2's readable rows in place, unreadable ones left as they
-    are; any other version is refused untouched. An unawaited answer is closed. */
+/** Creates the database from nothing, or upgrades version 2's or 3's readable rows in place, unreadable ones left as
+    they are; any other version is refused untouched. An unawaited answer is closed. */
 function openRequest(answered: () => void): OpenRequest {
   const opening = indexedDB.open(DATABASE, VERSION);
   const pending: OpenRequest = { blocked: false, waiter: null };
@@ -73,7 +71,7 @@ function openRequest(answered: () => void): OpenRequest {
   let refusal: Error | undefined;
   opening.onupgradeneeded = ({ oldVersion }) => {
     const upgrade = opening.transaction!;
-    if (oldVersion === 2) {
+    if (oldVersion === 2 || oldVersion === 3) {
       const scan = upgrade.objectStore(RESULTS).openCursor();
       scan.onsuccess = () => {
         const cursor = scan.result;
@@ -139,7 +137,7 @@ export class HistoryRepository {
     let refused: unknown;
     const pruned: string[] = [];
     stored.onsuccess = () => {
-      if (clearedSince(stored.result, clears)) return;
+      if (clearCount(stored.result) > clears) return;
       try {
         results.put(record);
       } catch (error) {

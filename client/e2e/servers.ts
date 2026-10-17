@@ -1,4 +1,5 @@
 import { closeSync, openSync } from "node:fs";
+import { createConnection, createServer, type Socket } from "node:net";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -24,7 +25,7 @@ export interface Launch {
 // processes share one TMPDIR, where an exclusive reservation file gives each port to one of them.
 const FIRST_PORT = 20_000;
 const PORTS = 12_000;
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   for (;;) {
     const port = FIRST_PORT + Math.floor(Math.random() * PORTS);
     try {
@@ -101,4 +102,45 @@ export async function launch({ bin, cert, key }: Launch, server: Server, env: Re
     }
     await Bun.sleep(50);
   }
+}
+
+/** A TCP proxy from `listen` to `target` that holds each direction, all its connections together, to `bytesPerSec`:
+    a link, not loopback, so no browser's network thread saturates. Resolves with its close. */
+export async function pace(listen: number, target: number, bytesPerSec: number): Promise<() => void> {
+  const link = () => {
+    let free = 0;
+    return (from: Socket, to: Socket) =>
+      from.on("data", (chunk: Buffer) => {
+        const now = performance.now();
+        free = Math.max(free, now) + (chunk.length * 1000) / bytesPerSec;
+        const written = to.write(chunk);
+        if (written && free - now < 1) return;
+        from.pause();
+        const drained = written ? null : new Promise((resolve) => to.once("drain", resolve));
+        void Promise.all([Bun.sleep(free - now), drained]).then(() => from.resume());
+      });
+  };
+  const [down, up] = [link(), link()];
+  const open = new Set<Socket>();
+  const proxy = createServer((client) => {
+    const server = createConnection({ host, port: target });
+    open.add(client).add(server);
+    for (const [from, to] of [
+      [client, server],
+      [server, client],
+    ] as const) {
+      from.on("error", () => to.destroy());
+      from.on("close", () => {
+        open.delete(from);
+        to.destroy();
+      });
+    }
+    up(client, server);
+    down(server, client);
+  });
+  await new Promise<void>((resolve) => proxy.listen(listen, host, resolve));
+  return () => {
+    proxy.close();
+    for (const socket of open) socket.destroy();
+  };
 }

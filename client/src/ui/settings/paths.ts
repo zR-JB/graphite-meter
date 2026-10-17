@@ -2,7 +2,7 @@
 // and why one cannot be chosen, and the line that states a role's check.
 import type { ServerView } from "../../engine/net/connection";
 import type { PageConfig } from "../../engine/net/page";
-import { parseSelection, pointsAt, PROTOCOL_LABEL, resolve, type Selection } from "../../engine/net/paths";
+import { blockedReason, parseSelection, PROTOCOL_LABEL, resolve, unresolvedReason } from "../../engine/net/paths";
 import { TRANSPORT_KEY } from "../../engine/net/servers";
 import type {
   Discovery,
@@ -65,33 +65,11 @@ export const pathSummary = (discovery: Discovery | null, role: Role, target: Pat
 
 const origins = (discovery: Discovery, role: Role) => discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
 
-/** The browser's reason, when its policy excludes every origin the choice points at. */
-function blockedReason(discovery: Discovery, role: Role, selection: Selection): string | null {
-  let reason: string | null = null;
-  for (const entry of origins(discovery, role).values()) {
-    if (!entry.targets.some((target) => pointsAt(selection, target))) continue;
-    if (!entry.blocked) return null;
-    reason ??= entry.blocked;
-  }
-  return reason;
-}
-
 /** Why one server cannot run `value` for `role`; null when it can. */
 function unavailable(discovery: Discovery | null, role: Role, value: string, page: Browser): string | null {
   if (!discovery) return "Checking server transports…";
   const selection = parseSelection(value);
-  const blocked = blockedReason(discovery, role, selection);
-  if (blocked) return blocked;
-  if (resolve(discovery, role, selection, page)) return null;
-  if (resolve(discovery, role, selection, { ...page, webTransport: "available" }))
-    return page.webTransport === "insecure-page"
-      ? "Needs a secure page: reopen this page on its https:// address, where browsers offer WebTransport"
-      : "WebTransport is unavailable in this browser";
-  if (selection.kind === "auto")
-    return role === "throughput"
-      ? "No offered throughput path works in this browser"
-      : `No ${page.secure ? "secure" : "clear"} WebSocket offered by this server`;
-  return "Not offered by this server";
+  return resolve(discovery, role, selection, page) ? null : unresolvedReason(discovery, role, selection, page).message;
 }
 
 export interface Choice {

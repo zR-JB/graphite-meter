@@ -228,7 +228,7 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
     outcome: "The approval's answer was lost on the way. Sign in again.",
     requests: [0, 1_000],
   });
-  // Cancelling sign-in stops the polling at once.
+  // Canceling sign-in stops the polling at once.
   net?.restore();
   net = fakeNet(() => ({ status: 202 }));
   const cancel = new AbortController();

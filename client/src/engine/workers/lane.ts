@@ -25,11 +25,7 @@ let body: Blob | undefined;
 
 onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch);
-  if (data.type === "flush") {
-    reports.flush();
-    const { total, at } = reports.totalAt(data.at - performance.timeOrigin);
-    return post({ type: "flushed", total, at: performance.timeOrigin + at });
-  }
+  if (data.type === "flush") return post(reports.flushed(data.at));
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.
   void (data.type === "download" ? download(data) : upload(data)).then(post, (error) =>
     post({ type: "broken", detail: String(error) }),
@@ -72,7 +68,7 @@ async function download({
   }
 }
 
-/** Reads an answer to its end without keeping it; false, and the rest cancelled, once it passes MAX_ANSWER_BYTES. A
+/** Reads an answer to its end without keeping it; false, and the rest canceled, once it passes MAX_ANSWER_BYTES. A
     failed read is the next request's to find. */
 async function drained(response: Response): Promise<boolean> {
   const reader = response.body?.getReader();

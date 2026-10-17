@@ -1,11 +1,10 @@
 import { readHistoryRecord } from "../src/app/history/records";
 import type { ServerMeasurementSummary } from "../src/engine/run/result";
 import {
-  amsterdam,
   baseConfig,
+  catalog,
   countSaves,
   frankfurt,
-  helsinki,
   home,
   open,
   phase,
@@ -13,19 +12,36 @@ import {
   run,
   runButton,
   savedResult,
+  spawnPeer,
 } from "./fleet";
-import { expect, test } from "./webview";
+import type { Server } from "./servers";
+import { browser, expect, test, type Page } from "./webview";
 
 export const combined = {
   ...baseConfig,
-  duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: 1000 },
+  // Firefox can starve both servers' loopback upload POSTs for a few hundred ms, which 1 s cannot spare.
+  duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: browser === "firefox" ? 2000 : 1000 },
 };
 
-// Firefox lets one uncapped loopback download starve the other servers' channels, so four local servers end partial.
-test.chrome("four servers share one run and keep separate receiver windows", async (page) => {
-  const four = [home, frankfurt, amsterdam, helsinki];
-  await open(page, home.url, {
-    servers: four,
+// Four loopback servers at GB/s saturate Firefox's one network thread, which then feeds one connection and starves the
+// rest for a second; on a link of 200 Mbit/s each way, as across the internet, every browser shares evenly.
+const LINK_BYTES_PER_SEC = 25e6;
+
+test("four servers share one run and keep separate receiver windows", async (page) => {
+  const peers = await Promise.all(
+    ["Frankfurt", "Amsterdam", "Helsinki"].map((name) => spawnPeer(name, {}, LINK_BYTES_PER_SEC)),
+  );
+  const self = await spawnPeer("Home", catalog(...peers.map(({ server }) => server)), LINK_BYTES_PER_SEC);
+  try {
+    await shareOneRun(page, [{ ...self.server, id: "self" }, ...peers.map(({ server }) => server)]);
+  } finally {
+    for (const server of [self, ...peers]) server.kill();
+  }
+});
+
+async function shareOneRun(page: Page, four: Server[]) {
+  await open(page, four[0]!.url, {
+    servers: four.map(({ id, url }) => ({ id, url })),
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
@@ -58,22 +74,21 @@ test.chrome("four servers share one run and keep separate receiver windows", asy
     name: "Servers shown in the results",
   });
   await expect(scope).toBeVisible();
-  await scope.fill("server-1");
-  await expect(scope).toHaveValue("server-1");
+  await scope.fill(four[1]!.id);
+  await expect(scope).toHaveValue(four[1]!.id);
   expect(await savedResult(page)).toEqual(saved);
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  const servers = page.locator(".result-detail section.group", {
-    hasText: "Address",
-  });
-  await expect(servers).toHaveCount(4);
-  await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
+  const facts = page.locator(".result-detail section.group", { hasText: "Address" });
+  const picker = facts.getByRole("combobox", { name: "Server", exact: true });
+  await expect(picker.locator("option")).toHaveCount(4);
+  await picker.fill(four[1]!.id);
+  await expect(facts).toContainText(new URL(four[1]!.url).host);
   expect(await savedResult(page)).toEqual(saved);
-});
+}
 
-// Firefox can stall both servers' loopback upload POSTs for the last few hundred ms of a 1 s upload, under the floor.
-test.chrome("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
+test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
   await page.addInitScript(() => Object.defineProperty(window, "WebTransport", { value: undefined }));
   await open(page, home.http, {
     servers: [{ id: "self", url: home.http }, frankfurt],
@@ -96,7 +111,7 @@ test.chrome("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1",
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
   const path = (role: string) => info.locator(`.path[data-role="${role}"] dd`);
-  await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
+  await info.getByRole("combobox", { name: "Server", exact: true }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(path("throughput")).toContainText("Used");
   await expect(path("latency")).toContainText("Used");
@@ -117,7 +132,7 @@ test("the lanes switch servers mid-run and Details inspects another without movi
   await lanes.fill("server-1");
   await expect(lanes).toHaveValue("server-1");
   await page.getByRole("button", { name: "Details" }).click();
-  const inspect = page.locator(".infra").getByRole("combobox", { name: "Inspect server" });
+  const inspect = page.locator(".infra").getByRole("combobox", { name: "Server", exact: true });
   await expect(inspect).toBeEnabled();
   await inspect.fill("self");
   await expect(page.locator(".infra .server-card")).toContainText(home.url);
@@ -126,7 +141,7 @@ test("the lanes switch servers mid-run and Details inspects another without movi
   await expect(lanes).toHaveValue("server-1");
 });
 
-test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
+test("a missed final upload checkpoint is retried, and the lens and the dial read each server's saved latency", async (page) => {
   await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
   // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt's checkpoints may go to any of its origins.
@@ -147,6 +162,7 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, origins);
+  const saves = await countSaves(page);
   const saved = await run(page);
   expect(await page.evaluate(() => (window as any).checkpoints)).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
@@ -159,20 +175,17 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
     participants: ["self", "server-1"],
   });
   expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-});
-
-test("every server's latency is saved; the lens and the dial read the chosen server and keep the record", async (page) => {
-  await open(page, home.url, { servers: [home, frankfurt], config: combined });
-  await ready(page);
-  const saves = await countSaves(page);
-  const saved = await run(page);
   expect(await saves()).toBe(1);
   expect(saved.result.multiServer.latencyFocus).toBe("self");
   for (const server of saved.result.multiServer.servers)
     expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
-  const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+  const lens = page.getByRole("combobox", {
+    name: "Servers shown in the results",
+  });
   const picker = page.getByRole("combobox", { name: "Show latency to" });
-  const latency = page.getByRole("region", { name: "Latency, jitter and probe timeouts by stage" });
+  const latency = page.getByRole("region", {
+    name: "Latency, jitter and probe timeouts by stage",
+  });
   const figure = (selector: string) =>
     page.evaluate(
       (selector: string) => Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),

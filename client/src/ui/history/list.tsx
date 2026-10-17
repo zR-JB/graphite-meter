@@ -1,5 +1,5 @@
-// The results list: heads that sort, rows grouped by day, pages of 50 added as they are asked for. A row is built once
-// per result from words worked out once per change, and the fold is decided from sizes the layout already has.
+// The results list: heads that sort, rows grouped by day or under their order, pages of 50 added as they are asked for.
+// A row is built once per result from words worked out once per change; the fold, from sizes the layout already has.
 import type { App } from "../../app/app";
 import {
   naturalDescending,
@@ -23,6 +23,7 @@ import {
   columnScales,
   daysAt,
   groupRows,
+  orderHeading,
   PAGE_ROWS,
   rowPresenter,
   SORT_LABEL,
@@ -55,7 +56,7 @@ export function ResultsList(props: {
   selectedId: Read<string | null>;
   /** Epoch ms, a minute apart. */
   now: Read<number>;
-}): { element: HTMLElement; fitTo(width: number): void; neighbour(id: string, by: 1 | -1): string | null } {
+}): { element: HTMLElement; fitTo(width: number): void; neighbor(id: string, by: 1 | -1): string | null } {
   const { app } = props;
   const columns = app.preferences.historyColumns;
   const units = computed(() => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
@@ -111,6 +112,7 @@ export function ResultsList(props: {
       .map((entry) => row(entry, today));
   });
   const groups = computed(() => groupRows(visible()));
+  const ordering = computed(() => orderHeading(props.sort().by, props.sort().descending));
 
   // The open result's row, marked by one write per change of selection rather than a binding per row.
   const links = new Map<string, HTMLAnchorElement>();
@@ -257,6 +259,7 @@ export function ResultsList(props: {
   const table = (
     <div
       class="history-table"
+      data-sort={() => props.sort().by}
       onclick={(event) => {
         const row = (event.target as Element).closest<HTMLAnchorElement>("a.result-row");
         // A modified or secondary click follows the link: a new tab or window.
@@ -281,8 +284,17 @@ export function ResultsList(props: {
           const id = () => `history-day-${index()}`;
           return (
             <section class="group day">
-              {heading && <h3 id={id}>{heading}</h3>}
-              <ol aria-label={heading ? undefined : "Saved results"} aria-labelledby={heading ? id : undefined}>
+              {heading ? (
+                <h3 id={id}>{heading}</h3>
+              ) : (
+                <div class="group-head">
+                  <h3 id={id}>{ordering}</h3>
+                  <button class="btn btn-quiet by-date" type="button" onclick={() => props.setSort("date", true)}>
+                    Sort by date
+                  </button>
+                </div>
+              )}
+              <ol aria-labelledby={id}>
                 <For each={() => group().rows} by={(row) => row.id}>
                   {(row) => () => <RowView row={row()} />}
                 </For>
@@ -335,7 +347,7 @@ export function ResultsList(props: {
   ]);
 
   // Rows fold once the table's columns no longer fit their content, judged on width alone. The content's own width
-  // differs on either side of BARS_PX, so each side keeps what it learnt until the rows change.
+  // differs on either side of BARS_PX, so each side keeps what it learned until the rows change.
   let folded = false;
   let sides = [unknown(), unknown()];
   /** The list's scrollbar gutter, which its expected width includes. */
@@ -413,7 +425,7 @@ export function ResultsList(props: {
       if (fits !== null) fold(!fits);
     },
     /** The result `by` rows from `id` in the list's order, its page added to those shown; null past either end. */
-    neighbour(id, by) {
+    neighbor(id, by) {
       const order = ordered.peek();
       const at = order.findIndex((entry) => entry.id === id);
       const next = at < 0 ? undefined : order[at + by];

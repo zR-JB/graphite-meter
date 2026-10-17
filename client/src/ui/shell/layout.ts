@@ -1,9 +1,10 @@
 // How the console lays out at this viewport: whether panels dock beside the stage (two, one) or fly over it, and the
-// dock widths. One owner for every breakpoint JS needs; it stamps the mode on <html> for the stylesheet.
+// dock widths. It stamps the mode on <html> for the stylesheet.
 import { nextFrame } from "../../lib/frame";
 import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
 
 export const DOCK = { min: 360, max: 720, preferred: 420 } as const;
+export const clampDock = (px: number) => Math.min(DOCK.max, Math.max(DOCK.min, px));
 /** The stage keeps this much beside docked panels, its padding included. */
 const STAGE_MIN = 800;
 const ONE_DOCK = 1_200;
@@ -27,8 +28,7 @@ export function resolveDocks(
   open: Record<Side, boolean>,
   priority: Side | null = null,
 ): Record<Side, DockWidths> {
-  const clamp = (px: number) => Math.min(DOCK.max, Math.max(DOCK.min, px));
-  const want = { left: open.left ? clamp(preferred.left) : 0, right: open.right ? clamp(preferred.right) : 0 };
+  const want = { left: open.left ? clampDock(preferred.left) : 0, right: open.right ? clampDock(preferred.right) : 0 };
   const count = +open.left + +open.right;
   const budget = Math.max(count * DOCK.min, width - STAGE_MIN);
   let { left, right } = want;

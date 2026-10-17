@@ -23,7 +23,7 @@ const WORDS = [...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).ma
 
 /** The strip's facts, left to right: the run's word, the time since it started, the bytes it moved, the time its
     stage has left, and the build. Each figure sits in a cell as wide as its longest value, so a counting figure never
-    moves its neighbours. */
+    moves its neighbors. */
 export function StatusBar(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;
@@ -45,7 +45,6 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
     (view) => `${view.show}:${view.recovering}`,
   );
 
-  // Each figure is a box of fixed size laid out alone, at least seven figures wide.
   const elapsed = new Figure("readout", 7);
   const remaining = new Figure("readout", 7);
   const moved = new Figure("readout", 7);

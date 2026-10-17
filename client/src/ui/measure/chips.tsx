@@ -5,18 +5,9 @@ import { planned, STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { handoff } from "../../lib/motion";
-import { computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
+import { computed, effect, untrack, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
-import {
-  NEXT_RUN,
-  PHASE,
-  reasonLabel,
-  runAction,
-  STAGE,
-  STAGE_STATE,
-  type StageState,
-  type Tone,
-} from "../../view/words";
+import { NEXT_RUN, PHASE, reasonLabel, STAGE, STAGE_STATE, type StageState, type Tone } from "../../view/words";
 import { flip } from "../flip";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
@@ -260,9 +251,6 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   );
 }
 
-/** How long a start may prepare before its key says Cancel rather than Stop. */
-const CANCEL_AFTER_MS = 250;
-
 /** Start, Stop or Cancel; a blocked start stays focusable and says why in its description, its tip and the dial's note. */
 export function RunButton(props: { app: App; shell: Shell }): Node {
   const { app } = props;
@@ -271,13 +259,6 @@ export function RunButton(props: { app: App; shell: Shell }): Node {
   const idle = computed(() => !busy());
   const blocker = computed(() => (idle() && !servers.loading() ? app.blocker() : ""));
   const eta = computed(() => fmtDuration(app.plannedMs(), 0));
-  // A start that is still preparing after a glance offers Cancel; a quick one goes straight to Stop.
-  const lingering = signal(false);
-  effect(() => {
-    if (!run.preparing()) return lingering.set(false);
-    const timer = setTimeout(() => lingering.set(true), CANCEL_AFTER_MS);
-    onCleanup(() => clearTimeout(timer));
-  });
   // The label, the skin and the stop mark change together, the moment the run's state does.
   return (
     <>
@@ -293,7 +274,7 @@ export function RunButton(props: { app: App; shell: Shell }): Node {
         <span class="skin stop" aria-hidden="true" />
         <span class="run-button-content">
           {() => busy() && <span class="stop-sq" aria-hidden="true" />}
-          {() => runAction(lingering(), busy(), run.phase())}
+          {props.shell.runWord}
         </span>
         {() =>
           idle() && (

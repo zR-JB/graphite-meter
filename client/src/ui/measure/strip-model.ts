@@ -12,7 +12,7 @@ const REPLY_PX = 4;
 
 export const columnsFor = (width: number) => Math.max(8, Math.floor(width / BIN_PX));
 
-/** One lane's non-empty bins: centre time (timeline ms) and mean rate (bytes/s), in time order. Buffers are kept and
+/** One lane's non-empty bins: center time (timeline ms) and mean rate (bytes/s), in time order. Buffers are kept and
     grown, so rebinning a live series allocates nothing once the width settles. */
 export class Lane {
   t = new Float64Array(0);
@@ -106,7 +106,7 @@ export function monotoneTangents(
   }
 }
 
-/** One bar of a reply track: the fastest to the slowest reply of the buckets it joins, at their centre time. */
+/** One bar of a reply track: the fastest to the slowest reply of the buckets it joins, at their center time. */
 export interface ReplyBar {
   t: number;
   t0: number;

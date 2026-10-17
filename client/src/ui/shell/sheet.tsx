@@ -7,7 +7,7 @@ import { Icon } from "../kit/icon";
 import { Splitter } from "../kit/splitter";
 import { dragSheet, type Edge } from "./drag";
 import { land } from "./land";
-import { DOCK, type DockWidths, type Side } from "./layout";
+import { clampDock, DOCK, type DockWidths, type Side } from "./layout";
 
 export function Sheet(props: {
   side: Side;
@@ -74,7 +74,7 @@ export function Sheet(props: {
   // docked sheet keeps the width its column gave it, so it leaves as it stood.
   let column = 0;
   effect(() => {
-    const flying = Math.min(DOCK.max, Math.max(DOCK.min, props.preferred()));
+    const flying = clampDock(props.preferred());
     column = props.dock().column || column;
     sheet.style.setProperty("--sheet-w", `${props.docked() ? column || flying : flying}px`);
   });

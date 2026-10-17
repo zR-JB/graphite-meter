@@ -50,10 +50,11 @@ type Fields<R extends Shape, O extends Shape> = { [K in keyof R]: Decoded<R[K]> 
   [K in keyof O]?: Decoded<O[K]>;
 };
 
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const record = (value: unknown, path: string): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : fail(path, "an object");
+  isRecord(value) ? value : fail(path, "an object");
 
 /** An object with `required` members and `optional` ones, which may be absent but never null. */
 export const object =

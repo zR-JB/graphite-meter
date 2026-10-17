@@ -111,9 +111,7 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   expect(multiServer.failures).toMatchObject([{ serverId: "server-1", reason: "preparation-failed" }]);
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
-  await expect(settings.locator(".server-feedback")).toContainText(
-    /timed out|could not be reached|Could not reach this test server\./,
-  );
+  await expect(settings.locator(".server-feedback")).toContainText(/timed out|Could not reach this test server/);
   await expect(settings.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
   const before = (await network(page)).preflights[frankfurt.url];
   await retry.click();

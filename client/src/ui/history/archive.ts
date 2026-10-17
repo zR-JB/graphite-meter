@@ -11,7 +11,7 @@ export type Selected =
 
 const NONE: Selected = { status: "none" };
 const PENDING: Selected = { status: "pending" };
-const STALE = "History could not be read again, so this list may be out of date.";
+const STALE = "Could not read History again, so this list may be out of date.";
 const UNREAD: Selected = { status: "unread" };
 
 /** Must run inside an owner: disposing it stops the read and the subscription. */
