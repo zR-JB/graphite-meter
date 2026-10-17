@@ -68,10 +68,14 @@ def distinct_keys(pairs: list[tuple[str, JsonValue]]) -> JsonObject:
     return dict(pairs)
 
 
+def nonfinite(name: str) -> NoReturn:
+    raise ValueError(f"{name} is not a JSON number")
+
+
 def decode_json(text: str, context: str) -> JsonValue:
     try:
-        return cast(JsonValue, json.loads(text, object_pairs_hook=distinct_keys))
-    except ValueError as exc:
+        return cast(JsonValue, json.loads(text, object_pairs_hook=distinct_keys, parse_constant=nonfinite))
+    except (ValueError, RecursionError) as exc:
         raise ControlPlaneError(f"{context} is not valid JSON: {exc}") from exc
 
 

@@ -112,6 +112,8 @@ class OCITests(unittest.TestCase):
             ("blob", '"manifests": [', '"Manifests": [], "manifests": [', r"\['Manifests', 'manifests'\]"),
             ("index.json", '"manifests": [', '"MANIFESTſ": [], "manifests": [', r"\['MANIFESTſ', 'manifests'\]"),
             ("index.json", '"manifests": [', '"layers": [], "manifests": [', "index.json must be .* only its fields"),
+            ("index.json", '"manifests": [', '"size": -Infinity, "manifests": [', "-Infinity is not a JSON number"),
+            ("index.json", '"manifests": [', '"manifests": ' + "[" * 100_000, "index.json is not valid JSON: .* decoding a JSON array"),
             ("index.json", '"digest": "sha256:', '"digest": "sha512:', "by its sha256 digest"),
             ("blob", '"layers": [', '"manifests": [], "layers": [', r"only its fields, not \['config', 'layers', 'man"),
             ("blob", manifest, manifest.replace("application/vnd.oci.image.manifest.v1+json", docker),
