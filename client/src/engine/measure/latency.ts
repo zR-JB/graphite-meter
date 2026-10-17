@@ -275,18 +275,10 @@ export class RttEstimator {
     }
   }
 
-  get srttMs(): number | null {
-    return this.#seen ? this.#srtt : null;
-  }
-
-  get rttvarMs(): number {
-    return this.#rttvar;
-  }
-
-  /** SRTT + 4 × max(RTTVAR, 1 ms), within 250 ms and 10 s; 250 ms before the first reply. */
-  deadlineMs(): number {
+  /** SRTT + 4 × max(RTTVAR, 1 ms), within `floor` and `ceiling`; 250 ms before the first reply. */
+  deadlineMs(floor = DEADLINE_FLOOR_MS, ceiling = DEADLINE_CEILING_MS): number {
     if (!this.#seen) return DEADLINE_FLOOR_MS;
-    return Math.min(Math.max(this.#srtt + 4 * Math.max(1, this.#rttvar), DEADLINE_FLOOR_MS), DEADLINE_CEILING_MS);
+    return Math.min(Math.max(this.#srtt + 4 * Math.max(1, this.#rttvar), floor), ceiling);
   }
 }
 

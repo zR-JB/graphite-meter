@@ -5,10 +5,9 @@ import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";
 import type { TicketRecipe } from "../types";
-import { refused } from "./endings";
+import { ESTABLISH_MS, refused, RESTART_MS } from "./endings";
 
-/** Two dial budgets and a restart pause. */
-const REUSE_MS = 6_300;
+const REUSE_MS = 2 * ESTABLISH_MS + RESTART_MS;
 
 type Ticket = { type: "token"; token: string } | EndReport;
 

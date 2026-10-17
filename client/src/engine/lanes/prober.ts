@@ -3,7 +3,7 @@
 // backoff, and a drain to the probes' own deadlines at each window's end. One timer serves it all.
 import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
-import { DEADLINE_FLOOR_MS, RttEstimator } from "../measure/latency";
+import { RttEstimator } from "../measure/latency";
 import { GAP_MS } from "../run/clock";
 import type { ProbeOutcome } from "../types";
 
@@ -298,9 +298,7 @@ export class Prober {
 
   /** The RTO within 8 ms and 1 s, so a reply-driven chain covers a late reply well before its deadline. */
   #backupMs(): number {
-    const srtt = this.#rtt.srttMs;
-    if (srtt === null) return DEADLINE_FLOOR_MS;
-    return Math.min(BACKUP_CEILING_MS, Math.max(BACKUP_FLOOR_MS, srtt + 4 * Math.max(1, this.#rtt.rttvarMs)));
+    return this.#rtt.deadlineMs(BACKUP_FLOOR_MS, BACKUP_CEILING_MS);
   }
 
   #record(probe: Probe, observedAt: number, timedOut: boolean, handlingMs: number | null): void {
