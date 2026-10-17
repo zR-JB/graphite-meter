@@ -355,9 +355,10 @@ export function shapeSoFar(
   for (const sample of samples) {
     if (sample.stage !== stage || sample.t < start) continue;
     const second = Math.floor((sample.t - start) / 1000);
-    const cell = seconds
-      .getOrInsertComputed(second, () => new Map())
-      .getOrInsertComputed(sample.dir, () => ({ sum: 0, n: 0 }));
+    const lanes = seconds.get(second) ?? new Map<string, { sum: number; n: number }>();
+    seconds.set(second, lanes);
+    const cell = lanes.get(sample.dir) ?? { sum: 0, n: 0 };
+    lanes.set(sample.dir, cell);
     cell.sum += sample.bytesPerSec;
     cell.n++;
   }
@@ -381,12 +382,13 @@ export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
   const lines = new Map<string, { server: string; stages: string[]; reason: string; throughput: Stage[] }>();
   for (const failure of details.failures) {
     if (scope && failure.serverId !== scope) continue;
-    const line = lines.getOrInsertComputed(`${failure.serverId} ${failure.reason}`, () => ({
-      server: details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server",
-      stages: [],
-      reason: reasonLabel(failure.reason),
-      throughput: [],
-    }));
+    const key = `${failure.serverId} ${failure.reason}`;
+    let line = lines.get(key);
+    if (!line) {
+      const server = details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
+      line = { server, stages: [], reason: reasonLabel(failure.reason), throughput: [] };
+      lines.set(key, line);
+    }
     const latency = failure.scope === "latency";
     line.stages.push(latency && failure.stage !== "latency" ? POPULATION[failure.stage] : STAGE[failure.stage].label);
     if (!latency) line.throughput.push(failure.stage);

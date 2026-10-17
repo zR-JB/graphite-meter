@@ -45,8 +45,11 @@ interface ReportSources {
 export function diagnosticReport({ page, servers, clientIps, state }: ReportSources): string {
   const hosts = new Map<string, string>();
   const words = new Map<string, string>();
-  const alias = (hostname: string) =>
-    hosts.getOrInsertComputed(hostname.toLowerCase(), () => `server-${hosts.size + 1}`);
+  const alias = (hostname: string) => {
+    const key = hostname.toLowerCase();
+    if (!hosts.has(key)) hosts.set(key, `server-${hosts.size + 1}`);
+    return hosts.get(key)!;
+  };
   // A server listed twice (by the catalog and as discovery names it) keeps its number.
   const ids = [...new Set(servers.map(({ id }) => id))];
   for (const server of servers) {

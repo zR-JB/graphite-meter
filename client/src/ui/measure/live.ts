@@ -28,7 +28,12 @@ const lives = new WeakMap<App, Live>();
 
 /** The app's live values, made once and kept as long as the app. */
 export function liveOf(app: App): Live {
-  return lives.getOrInsertComputed(app, () => scope(() => createLive(app))[0]);
+  let live = lives.get(app);
+  if (!live) {
+    [live] = scope(() => createLive(app));
+    lives.set(app, live);
+  }
+  return live;
 }
 
 function createLive(app: App) {

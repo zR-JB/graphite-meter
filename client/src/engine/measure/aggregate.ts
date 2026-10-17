@@ -157,7 +157,7 @@ export class Aggregate {
       const evicted = this.intervals.shift()!;
       this.#keep(evicted);
       this.#closed.delete(evicted.id);
-      this.#evictedStart.getOrInsert(evicted.stage, evicted.startMs);
+      if (!this.#evictedStart.has(evicted.stage)) this.#evictedStart.set(evicted.stage, evicted.startMs);
       this.omittedIntervals++;
     }
     const record: Interval = {
@@ -480,8 +480,11 @@ export class Aggregate {
 
   #credit(stage: TransferStage, id: string, dir: Direction, bytes: number): void {
     if (!(bytes > 0)) return;
-    const totals = this.#stageTotals.getOrInsertComputed(stage, () => new Map());
-    totals.getOrInsertComputed(id, () => ({ down: 0, up: 0 }))[dir] += bytes;
+    let totals = this.#stageTotals.get(stage);
+    if (!totals) this.#stageTotals.set(stage, (totals = new Map()));
+    const total = totals.get(id) ?? { down: 0, up: 0 };
+    total[dir] += bytes;
+    totals.set(id, total);
   }
 
   #stageTotal(stage: TransferStage, dir: Direction, id?: string): number {
@@ -501,8 +504,9 @@ const shortestMs = (window: AggregateWindow) =>
   Math.min(window.endMs - window.startMs, ...(window.up ?? []).map((c) => c.durationMs));
 
 function raise(peaks: Peaks, id: string, dir: Direction, rate: number): void {
-  const peak = peaks.getOrInsertComputed(id, () => ({}));
+  const peak = peaks.get(id) ?? {};
   peak[dir] = Math.max(peak[dir] ?? 0, rate);
+  peaks.set(id, peak);
 }
 
 /** Whether a window spans the evidence floor on the client clock and on every receiver clock of `dir` (or both). */

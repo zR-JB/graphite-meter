@@ -113,8 +113,11 @@ export function createRun(env: RunEnvironment) {
   const running = computed(() => !["idle", "complete", "aborted", "error"].includes(phase()));
   const preparing = computed(() => ["authenticating", "checking", "launching"].includes(preparation()));
 
-  const series = (id: string): ServerSeries =>
-    serverSeries.getOrInsertComputed(id, () => ({ buckets: [], version: signal(0), summaries: signal({}) }));
+  const series = (id: string): ServerSeries => {
+    let entry = serverSeries.get(id);
+    if (!entry) serverSeries.set(id, (entry = { buckets: [], version: signal(0), summaries: signal({}) }));
+    return entry;
+  };
 
   function reset(): void {
     batch(() => {
