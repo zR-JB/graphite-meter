@@ -275,6 +275,7 @@ class GateTests(unittest.TestCase):
              "missing"),
             ([ci_run(11, "success") | {"head_sha": OLD}], [GATE], "missing"),
             ([ci_run(11, "success") | {"event": "push"}], [GATE], "missing"),
+            ([ci_run(11, "success") | {"event": "schedule"}], [GATE], "missing"),
             ([ci_run(11, "success") | {"head_branch": "main"}], [GATE], "missing"),
         ):
             responses = {ci_runs("pull_request", HEAD): pages({"workflow_runs": runs}),
