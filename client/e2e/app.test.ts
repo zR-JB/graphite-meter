@@ -35,7 +35,7 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   const preflight = await fetch(`${home.http}/preflight`);
   const identity = await preflight.json();
   expect(saved.result.multiServer.selection[0]!.name).toBe(identity.server.name);
-  expect(saved.engine).toBe(identity.engineVersion);
+  expect(saved.result.multiServer.servers[0]!.engineVersion).toBe(identity.engineVersion);
   for (const stage of ["latency", "download", "upload", "bidirectional"] as const)
     expect(saved.result.stages[stage]).toBe("complete");
   expect(saved.result.latencyByStage.latency?.probeCount).toBeGreaterThan(0);

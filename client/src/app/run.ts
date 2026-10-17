@@ -43,7 +43,7 @@ interface RunEnvironment {
   /** A server failed during the run, or with null the whole run did: its paths are checked again. */
   recheck(failure: ServerFailure | null): void;
   /** Hands a finished run to History; null withdraws the one shown. */
-  finished(run: { result: RunResult; plans: StagePlans; engine: string } | null): void;
+  finished(run: { result: RunResult; plans: StagePlans } | null): void;
   open: OpenStage;
   streams: RunOptions["streams"];
   clock?: Clock;
@@ -224,8 +224,6 @@ export function createRun(env: RunEnvironment) {
           });
         case "complete": {
           const { result: finished, plans } = event;
-          const servers = prepared.peek();
-          const focus = servers.find(({ server }) => server.id === finished.multiServer.latencyFocus) ?? servers[0];
           batch(() => {
             live.set(null);
             stall.set(null);
@@ -237,7 +235,7 @@ export function createRun(env: RunEnvironment) {
             step.set(null);
             phase.set("complete");
           });
-          env.finished({ result: finished, plans, engine: focus?.discovery.engineVersion ?? "unknown" });
+          env.finished({ result: finished, plans });
           return releaseRun();
         }
         case "error":

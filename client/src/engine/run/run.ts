@@ -1469,6 +1469,7 @@ export class Run {
         : stageStatus(lanes(evidence, stage), this.#failed(stage, id));
     return {
       server: prepared.server,
+      engineVersion: prepared.discovery.engineVersion,
       throughput: {
         origin: throughput.target.origin,
         transport: throughput.target.transport,

@@ -9,7 +9,7 @@ import { expect, settled, type Page } from "./webview";
 /** The History database: the contract this suite holds the client to, written out on its own. */
 export const HISTORY_DB = {
   name: "graphite-meter",
-  version: 3,
+  version: 4,
   resultsStore: "results",
   resultKeyPath: "id",
   completedAtIndex: "completedAt",

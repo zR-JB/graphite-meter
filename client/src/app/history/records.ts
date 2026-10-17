@@ -1,4 +1,4 @@
-// Saved results: the schema 5 record each finished run becomes, how History reads and orders stored rows, and the one
+// Saved results: the schema 6 record each finished run becomes, how History reads and orders stored rows, and the one
 // upgrade that brings rows earlier releases saved to this build's form.
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../../engine/measure/latency";
@@ -20,27 +20,24 @@ import { isRecord } from "../../lib/decode";
 export const HISTORY_LIMIT = 2_000;
 
 export interface HistoryRecord {
-  schemaVersion: 5;
+  schemaVersion: 6;
   /** A v4 UUID when this client saved it; older rows may carry any text. */
   id: string;
   /** Epoch ms of the run's completion. */
   completedAt: number;
   /** The client version that saved it. */
   build: string;
-  /** The latency focus server's engine version, or "unknown". */
-  engine: string;
   result: RunResult;
 }
 
 /** A finished run as History keeps it, apart from the result on screen: one its own evidence contradicts is saved
     as incomplete, while the view keeps the outcome the run reported. */
-export function historyRecord(run: { result: RunResult; plans: StagePlans; engine: string }): HistoryRecord {
+export function historyRecord(run: { result: RunResult; plans: StagePlans }): HistoryRecord {
   const record: HistoryRecord = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     id: createUuid(),
     completedAt: epochMs(),
     build: BUILD.clientVersion,
-    engine: run.engine,
     result: structuredClone(run.result),
   };
   const problems = incoherence(record.result, run.plans);
@@ -130,12 +127,12 @@ function recordShape(upgraded: boolean): Check {
   };
   const stages = upgraded ? perStage(among(STATUSES)) : isRecord;
   return shape({
-    schemaVersion: (value) => value === 5,
+    schemaVersion: (value) => value === (upgraded ? 6 : 5),
     id: text,
     // Any time a Date holds.
     completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
     build: text,
-    engine: text,
+    ...(upgraded ? {} : { engine: text }),
     result: shape({
       ...measured,
       outcome: among(["complete", "partial", "incomplete"] satisfies Outcome[]),
@@ -148,6 +145,7 @@ function recordShape(upgraded: boolean): Check {
           shape({
             ...measured,
             server: shape({ id: text }),
+            ...(upgraded ? { engineVersion: nullable(text) } : {}),
             throughput: shape({ transport: text, ...(upgraded ? { protocol: among(PROTOCOLS) } : {}) }),
             latencyTarget: nullable(shape({ transport: text })),
             totalBytes: shape({ down: finite, up: finite }),
@@ -173,7 +171,7 @@ export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isRecord(value) || !plain(value)) return null;
   try {
     const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
-    return stored(saved) ? readHistoryRecord(current(saved as HistoryRecord)) : null;
+    return stored(saved) ? readHistoryRecord(current(saved as Schema5)) : null;
   } catch {
     return null;
   }
@@ -203,11 +201,16 @@ const stageStatuses = (saved: Record<Stage, StageStatus>) =>
     STAGES.map((stage) => [stage, STATUSES.includes(saved[stage]) ? saved[stage] : "not-run"]),
   ) as Record<Stage, StageStatus>;
 
-/** Older builds left out a missing peak, wire model or latency stability, and named HTTP versions otherwise. */
-function current({ result, ...record }: HistoryRecord): HistoryRecord {
+type Schema5 = Omit<HistoryRecord, "schemaVersion"> & { schemaVersion: 5; engine: string };
+
+/** Older builds left out a peak, wire model or latency stability, named HTTP versions, and kept one engine version. */
+function current({ result, engine, ...record }: Schema5): HistoryRecord {
   const { download, upload, bidirectional, multiServer } = result;
+  const owner =
+    multiServer.servers.find(({ server }) => server.id === multiServer.latencyFocus) ?? multiServer.servers[0];
   return {
     ...record,
+    schemaVersion: 6,
     result: {
       ...result,
       latency: latency(result.latency),
@@ -224,6 +227,7 @@ function current({ result, ...record }: HistoryRecord): HistoryRecord {
         ...multiServer,
         servers: multiServer.servers.map((server) => ({
           ...server,
+          ...(server === owner && engine !== "unknown" ? { engineVersion: engine } : {}),
           throughput: {
             ...server.throughput,
             protocol: Object.hasOwn(NAMED, server.throughput.protocol)
@@ -322,7 +326,7 @@ const summary = (lane: Lane4 | null): LatencySummary | null =>
     jitterMs: lane.jitter,
   };
 
-function lift(saved: Schema4): HistoryRecord {
+function lift(saved: Schema4): Schema5 {
   const { stages, wireEstimates } = saved;
   // Schema 4 kept the estimated wire rate; the model keeps its ratio to the measured rate.
   const wire = (stage: TransferStage, measuredRate: number): WireModel | null => {

@@ -6,11 +6,10 @@ import { HistoryRefusal, HistoryRepository } from "./repository";
 const notRun = { latency: null, download: null, upload: null, bidirectional: null };
 const record = (id: string) =>
   ({
-    schemaVersion: 5,
+    schemaVersion: 6,
     id,
     completedAt: 0,
     build: "v1",
-    engine: "e",
     result: {
       ...notRun,
       latencyByStage: notRun,
@@ -93,23 +92,28 @@ test("a write lands under the clear count it was queued with; past the limit the
   history.close();
 });
 
-test("version 2 rows are upgraded once, in place; unreadable ones stay as stored and other versions are refused", async () => {
+test("version 2 and 3 rows are upgraded once, in place; unreadable ones stay as stored and other versions are refused", async () => {
+  const { result } = record("older");
   const older = {
     ...record("older"),
-    result: { ...record("older").result, latency: { reportedMs: 9, jitterMs: null } },
+    schemaVersion: 5,
+    engine: "e",
+    result: { ...result, latency: { reportedMs: 9, jitterMs: null } },
   };
-  const unreadable = { id: "junk", schemaVersion: 6 };
-  const stored = await storage(2, [older, unreadable]);
-  const history = new HistoryRepository();
-  const listed = await history.list(new AbortController().signal, (each) => each);
-  expect(listed).toEqual({
-    records: [
-      { ...older, result: { ...older.result, latency: { reportedMs: 9, jitterMs: null, stabilityPct: null } } },
-    ],
-    malformedCount: 1,
-  });
-  history.close();
-  expect(await stored()).toEqual({ version: 3, rows: [unreadable, listed.records[0]] });
+  const unreadable = { id: "junk", schemaVersion: 7 };
+  for (const version of [2, 3]) {
+    const stored = await storage(version, [older, unreadable]);
+    const history = new HistoryRepository();
+    const listed = await history.list(new AbortController().signal, (each) => each);
+    expect(listed).toEqual({
+      records: [
+        { ...record("older"), result: { ...result, latency: { reportedMs: 9, jitterMs: null, stabilityPct: null } } },
+      ],
+      malformedCount: 1,
+    });
+    history.close();
+    expect(await stored()).toEqual({ version: 4, rows: [unreadable, listed.records[0]] });
+  }
 
   const refused = await storage(1, [unreadable]);
   const other = new HistoryRepository();

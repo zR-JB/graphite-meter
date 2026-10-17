@@ -376,6 +376,75 @@ test("version 2's readable rows are upgraded; unsupported and malformed rows are
   expect((await stored(page)).records).toEqual([]);
 });
 
+const facts = (page: Page) =>
+  page
+    .locator(".detail-pane .facts > .group")
+    .all((groups: HTMLElement[]) =>
+      Object.fromEntries(
+        groups.map((group) => [
+          group.querySelector("h3")!.textContent,
+          Object.fromEntries(
+            [...group.querySelectorAll("dl > div")].map((row) => [
+              row.querySelector("dt")!.textContent,
+              row.querySelector("select")?.value ?? row.querySelector("dd")!.textContent,
+            ]),
+          ),
+        ]),
+      ),
+    );
+
+test("version 3's run-wide engine version moves to its latency server, and a result shows each server's facts", async (page) => {
+  await fixturePage(page);
+  const current = record(1);
+  const run = current.result.multiServer;
+  const { engineVersion, ...self } = run.servers[0]!;
+  expect(engineVersion).toBe("e2e");
+  const oslo = {
+    ...self,
+    server: { id: "oslo", name: "Oslo", url: "https://oslo.example" },
+    throughput: { ...self.throughput, clientIpVersion: 4 },
+  };
+  const servers = [self, oslo];
+  const schema5 = {
+    ...current,
+    schemaVersion: 5,
+    engine: "0.9.1",
+    result: {
+      ...current.result,
+      multiServer: {
+        ...run,
+        selection: servers.map(({ server }) => server),
+        participants: servers.map(({ server }) => server.id),
+        latencyFocus: "oslo",
+        servers,
+      },
+    },
+  };
+  await seed(page, { records: [schema5], version: 3 });
+  await history(page, schema5.id);
+  const upgraded = upgradeRecord(schema5)!;
+  expect(upgraded.result.multiServer.servers.map((each) => each.engineVersion)).toEqual([undefined, "0.9.1"]);
+  await expect
+    .poll(() => stored(page))
+    .toEqual({ records: [upgraded], clears: undefined, version: HISTORY_DB.version });
+
+  const shows = (server: string, ip: string, build: object) =>
+    expect
+      .poll(() => facts(page))
+      .toMatchObject({
+        "Test server": { Server: server, "IP family": ip },
+        Build: { Client: "e2e", ...build },
+      });
+  await shows("oslo", "IPv4", { Server: "0.9.1" });
+  await page.locator(".detail-pane .facts").getByRole("combobox", { name: "Server", exact: true }).fill("self");
+  await shows("self", "IPv6", {});
+  expect((await facts(page)).Build).toEqual({ Client: "e2e" });
+  const lens = page.getByRole("combobox", { name: "Servers shown in this result" });
+  await lens.fill("self");
+  await lens.fill("");
+  await shows("oslo", "IPv4", { Server: "0.9.1" });
+});
+
 test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears over the clock", async (page) => {
   await fixturePage(page);
   const malformed = { id: id(9), completedAt: base, unexpected: "raw row" };

@@ -14,11 +14,10 @@ const latency = (p50Ms: number) => ({ p50Ms, probeCount: 20 });
 // Only what History's list reads; the rest of a record never reaches it.
 function stored(id: string, completedAt: number, result: Partial<Record<keyof RunResult, unknown>> = {}) {
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     id,
     completedAt,
     build: "",
-    engine: "",
     result: {
       latency: { reportedMs: 12.4, jitterMs: 2.2 },
       latencyByStage: { latency: latency(12.4), download: latency(23.9), upload: latency(30.25), bidirectional: null },

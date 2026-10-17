@@ -6,11 +6,10 @@ import { createArchive } from "./archive";
 
 const notRun = { latency: null, download: null, upload: null, bidirectional: null };
 const record = (id: string, completedAt: number): HistoryRecord => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   id,
   completedAt,
   build: "v1",
-  engine: "e",
   result: {
     ...notRun,
     latencyByStage: notRun,

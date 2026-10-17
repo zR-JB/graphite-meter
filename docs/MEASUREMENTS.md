@@ -184,9 +184,10 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 
 ## Saved history
 
-The browser saves history schema 5: `{schemaVersion, id, completedAt, build, engine, result}`, where `result` is
-the run's own result and `engine` the latency-focus server's engine version. Schema 4 records are read with the
-servers they saved (one when they saved none), without their old grade, and stay unchanged in storage. Other or
+The browser saves history schema 6: `{schemaVersion, id, completedAt, build, result}`, where `result` is the run's
+own result, each server with its engine version. Schema 5 records give their one engine version to the latency-focus
+server; schema 4 records are read with the servers they saved (one when they saved none), without their old grade.
+Both are upgraded in place once, when the database moves to version 4. Other or
 malformed records stay in storage but are skipped and reported; a database of another version is refused unchanged.
 Up to 2,000 readable results are kept, and unreadable records never count toward that or get pruned; Complete,
 Partial and Incomplete runs are saved when saving is on.

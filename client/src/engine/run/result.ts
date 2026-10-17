@@ -1,5 +1,5 @@
 // What a finished run reports and the rules that judge it: stage statuses, the outcome, and the coherence a saved
-// result must hold. History keeps these shapes as its schema 5.
+// result must hold. History keeps these shapes as its schema 6.
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
 import {
   coveredMs,
@@ -43,6 +43,7 @@ export interface StageResults {
 /** A server's share of the run; its throughput results come from its own full windows. */
 export interface ServerMeasurementSummary {
   server: ServerIdentity;
+  engineVersion?: string;
   throughput: {
     origin: string;
     transport: string;

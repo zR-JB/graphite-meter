@@ -354,8 +354,8 @@ report keeps the run's. A selected server that fails its check leaves the run, w
 
 Upgrade the server and native clients together and reload open tabs; wire changes stay additive, and discovery
 treats the engine version as metadata, not a compatibility test. Existing deployments stay single-server until you
-add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
-schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
+add a [catalogue](SERVERS.md). Browser history saves [schema 6](MEASUREMENTS.md#saved-history) and still reads
+schemas 4 and 5; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
 defaults.
 
 Releases up to 0.12 shipped a Go server as `latest` and an experimental Rust server as `latest-rust`. The Rust server
