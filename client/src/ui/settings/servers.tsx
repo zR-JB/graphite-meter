@@ -1,7 +1,8 @@
 // The Test servers checklist and what stands in its way: a catalog that did not load, a saved selection that
 // changed, and each selected server's problem with its Retry or Sign in.
 import type { App } from "../../app/app";
-import { MAX_SELECTED, type Approval } from "../../engine/net/servers";
+import type { Approval } from "../../engine/net/servers";
+import { MAX_SELECTED } from "../../engine/types";
 import type { CatalogEntry } from "../../protocol/documents";
 import { For, Show } from "../../lib/dom";
 import { computed, onCleanup, signal, type Read } from "../../lib/signal";
@@ -175,7 +176,9 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               class="btn"
               type="button"
               disabled={() => locked() || waiting()}
-              aria-label={() => `Sign in to ${name()}`}
+              aria-label={() =>
+                waiting() ? `Waiting for approval from ${name()}` : `Sign in${failed() ? " again" : ""} to ${name()}`
+              }
               // The sign-in window must open within this click.
               onclick={() => servers.signIn(id)}
             >
@@ -188,7 +191,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               disabled={locked}
               aria-disabled={() => String(pending())}
               aria-busy={() => String(pending())}
-              aria-label={() => `Retry ${name()}`}
+              aria-label={() => `${pending() ? READINESS.checking.label : "Retry"} ${name()}`}
               onclick={(event) => void retry(id, event.currentTarget)}
             >
               {() => (pending() ? READINESS.checking.label : "Retry")}
@@ -245,7 +248,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
   };
 
   announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
-  announceChanges(() => (servers.catalog() || servers.loading() ? "" : "Could not load test servers."));
+  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   return (
     <>
       <Show when={() => entries().length > 1}>
@@ -296,7 +299,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       <Show when={() => !servers.catalog()}>
         {() => (
           <div class="selection-notice">
-            <p>{() => (servers.loading() ? "Loading test servers…" : "Could not load test servers")}</p>
+            <p>{() => (servers.loading() ? "Loading test servers…" : servers.loadError())}</p>
             <button
               class="btn"
               type="button"

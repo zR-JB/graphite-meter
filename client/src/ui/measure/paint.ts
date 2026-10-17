@@ -1,6 +1,7 @@
 // The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
 // visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
 import { animate, pageMs } from "../../lib/frame";
+import { SVG_NS } from "../../lib/jsx-runtime";
 import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
@@ -199,13 +200,12 @@ export function setAttr(element: Element, name: string, value: string): void {
   if (element.getAttribute(name) !== value) element.setAttribute(name, value);
 }
 
-/** Writes a text node only when its text changes. */
 export function setText(node: Text, text: string): void {
   if (node.data !== text) node.data = text;
 }
 
 export const svg = <K extends keyof SVGElementTagNameMap>(tag: K, className?: string): SVGElementTagNameMap[K] => {
-  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  const element = document.createElementNS(SVG_NS, tag);
   if (className) element.setAttribute("class", className);
   return element;
 };

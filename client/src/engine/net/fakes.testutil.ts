@@ -104,7 +104,7 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
   };
 }
 
-export interface Bus {
+interface Bus {
   options: ProbeChannelOptions;
   events: ProbeChannelEvents;
   /** The spacing it was opened with, or paced to since. */

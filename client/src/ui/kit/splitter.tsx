@@ -1,5 +1,5 @@
-// A window splitter between a panel and its neighbour: drag it, or move it with the arrows in their own direction
-// (16 px, 48 px with Shift), Home and End for the limits, Enter or a double-click to reset.
+// A window splitter between a panel and its neighbor: drag it, or move it with the arrows in their own direction
+// (16 px, 48 px with Shift), Home and End for the limits, Enter, Space or a double-click to reset.
 import { onCleanup, type Read } from "../../lib/signal";
 
 let ids = 0;
@@ -27,7 +27,7 @@ export function keyed(
 }
 
 export function Splitter(props: {
-  /** Which edge of the panel the splitter sits on: the panel grows towards it. */
+  /** Which edge of the panel the splitter sits on: the panel grows toward it. */
   edge: "left" | "right";
   label: string;
   /** The panel's width in px, and its limits. */

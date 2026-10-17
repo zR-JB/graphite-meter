@@ -102,7 +102,7 @@ test("Start runs on what its checks verified however long they take, and never f
       {
         server: { id: "self", url: page.origin, name: "Meter" },
         reason: "preparation-failed",
-        message: "Connection check failed",
+        message: "Could not check the connection",
       },
     ],
   });

@@ -1,5 +1,5 @@
 import { upgradeRecord } from "../src/app/history/records";
-import { countSaves, home, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
+import { countSaves, home, latencyOnly, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
@@ -153,7 +153,7 @@ function stored(page: Page) {
   );
 }
 
-const fixturePage = (page: Page) => open(page, `${home.url}/version.json`);
+const fixturePage = (page: Page) => open(page, `${home.url}/version.json`, { config: latencyOnly });
 async function history(page: Page, selected = "") {
   await page.goto(`${home.url}/#/history${selected && `/${selected}`}`);
 }
@@ -243,6 +243,20 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await page.press("Escape");
   await page.locator(".result-row").click();
   await expect(page.locator(".result-detail")).toBeVisible();
+});
+
+test("folded at phone width, another order names itself and Sort by date brings the days back", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2, Date.now())] });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await history(page);
+  const headings = () => page.locator(".history-table h3").all((els: Element[]) => els.map((el) => el.textContent));
+  await expect.poll(headings).toHaveLength(2);
+  const days = await headings();
+  await page.locator('.column-head button:has([data-tone="idle"])').click();
+  await expect.poll(headings).toEqual(["Idle latency, lowest first"]);
+  await page.getByRole("button", { name: "Sort by date", exact: true }).click();
+  await expect.poll(headings).toEqual(days);
 });
 
 test("Sort by is one tab stop whose arrows, Home and End choose the order", async (page) => {
@@ -376,6 +390,75 @@ test("version 2's readable rows are upgraded; unsupported and malformed rows are
   expect((await stored(page)).records).toEqual([]);
 });
 
+const facts = (page: Page) =>
+  page
+    .locator(".detail-pane .facts > .group")
+    .all((groups: HTMLElement[]) =>
+      Object.fromEntries(
+        groups.map((group) => [
+          group.querySelector("h3")!.textContent,
+          Object.fromEntries(
+            [...group.querySelectorAll("dl > div")].map((row) => [
+              row.querySelector("dt")!.textContent,
+              row.querySelector("select")?.value ?? row.querySelector("dd")!.textContent,
+            ]),
+          ),
+        ]),
+      ),
+    );
+
+test("version 3's run-wide engine version moves to its latency server, and a result shows each server's facts", async (page) => {
+  await fixturePage(page);
+  const current = record(1);
+  const run = current.result.multiServer;
+  const { engineVersion, ...self } = run.servers[0]!;
+  expect(engineVersion).toBe("e2e");
+  const oslo = {
+    ...self,
+    server: { id: "oslo", name: "Oslo", url: "https://oslo.example" },
+    throughput: { ...self.throughput, clientIpVersion: 4 },
+  };
+  const servers = [self, oslo];
+  const schema5 = {
+    ...current,
+    schemaVersion: 5,
+    engine: "0.9.1",
+    result: {
+      ...current.result,
+      multiServer: {
+        ...run,
+        selection: servers.map(({ server }) => server),
+        participants: servers.map(({ server }) => server.id),
+        latencyFocus: "oslo",
+        servers,
+      },
+    },
+  };
+  await seed(page, { records: [schema5], version: 3 });
+  await history(page, schema5.id);
+  const upgraded = upgradeRecord(schema5)!;
+  expect(upgraded.result.multiServer.servers.map((each) => each.engineVersion)).toEqual([undefined, "0.9.1"]);
+  await expect
+    .poll(() => stored(page))
+    .toEqual({ records: [upgraded], clears: undefined, version: HISTORY_DB.version });
+
+  const shows = (server: string, ip: string, build: object) =>
+    expect
+      .poll(() => facts(page))
+      .toMatchObject({
+        "Test server": { Server: server, "IP family": ip },
+        Build: { Client: "e2e", ...build },
+      });
+  await shows("oslo", "IPv4", { Server: "0.9.1" });
+  await page.locator(".detail-pane .facts").getByRole("combobox", { name: "Server", exact: true }).fill("self");
+  await shows("self", "IPv6", {});
+  expect((await facts(page)).Build).toEqual({ Client: "e2e" });
+  const lens = page.getByRole("combobox", { name: "Servers shown in this result" });
+  await lens.fill("self");
+  await lens.fill("");
+  await shows("oslo", "IPv4", { Server: "0.9.1" });
+});
+
 test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears over the clock", async (page) => {
   await fixturePage(page);
   const malformed = { id: id(9), completedAt: base, unexpected: "raw row" };
@@ -452,7 +535,7 @@ test("History refuses other database versions at once and on Retry, and never ch
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible(OPEN_BOUND);
   await page.evaluate(() => (window as any).older.close());
-  // An open cannot be cancelled: read once History's queued upgrade has been refused and left version 1.
+  // An open cannot be canceled: read once History's queued upgrade has been refused and left version 1.
   await expect
     .poll(
       async () => {
@@ -692,12 +775,12 @@ test("closing a linked result far down the list returns to its row", async (page
   // Beside the list, and over it.
   for (const [width, close] of [
     [1280, "Close result"],
-    [700, "Back to results"],
+    [700, "Results"],
   ] as const) {
     await page.setViewportSize({ width, height: 800 });
     await history(page, id(60));
     await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
-    await page.getByRole("button", { name: close }).click();
+    await page.getByRole("button", { name: close, exact: true }).click();
     const row = page.locator(`a[data-history-id="${id(60)}"]`);
     await expect(row).toBeFocused();
     expect(

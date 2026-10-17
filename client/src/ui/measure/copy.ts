@@ -15,7 +15,6 @@ export const DIAL = {
   unknownError: "Something went wrong",
   noData: (time: string) => `No data for ${time}`,
   noReplies: (time: string) => `No replies for ${time}`,
-  checkFailed: "Connection check failed",
   /** What a finished run lacks: the stages with no result, else what it measured in part; "" when it names none. */
   unfinished: (failed: readonly string[], partial: readonly string[]) =>
     failed.length ? `${listed(failed)} failed` : partial.length ? `${listed(partial)} measured in part` : "",

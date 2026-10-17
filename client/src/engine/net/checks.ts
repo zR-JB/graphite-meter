@@ -12,10 +12,13 @@ import {
   type Probe,
 } from "../../protocol/documents";
 import { ROUTES } from "../../protocol/routes";
+import { ESTABLISH_MS } from "../lanes/endings";
 import { midpointMedian } from "../measure/latency";
 import { abortable, delay } from "../run/clock";
 import {
+  causes,
   identityOf,
+  isNetworkFailure,
   SignInRequired,
   type Discovery,
   type LatencyPath,
@@ -73,8 +76,6 @@ export interface CheckContext {
   now(): number;
 }
 
-/** A path that has not answered by now is not going to. */
-const ESTABLISH_MS = 3_000;
 /** Lets an inner bound (a channel's establishment, the HTTP/3 bootstrap) report before its owner gives up. */
 const ESTABLISH_MARGIN_MS = 500;
 // HTTP/3 bootstrap is bounded by attempts and by wall time together, so a path that never answers cannot hold a check.
@@ -87,16 +88,9 @@ const PREPARATION_RTTS = 5;
 const COLLECT_MS = 1_500;
 const SESSION_CHECK_BYTES = 16 * 1024;
 
-const NETWORK_FAILURE =
-  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
-
-/** The error and its causes, outermost first; engines word one network failure differently. */
-function* causes(error: unknown): Generator<Error> {
-  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++) yield error;
-}
-const isNetworkFailure = (error: unknown) =>
-  [...causes(error)].some(({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message));
 const signsIn = (error: unknown) => [...causes(error)].some((cause) => cause instanceof SignInRequired);
+
+export const CHECK_FAILED = "Could not check the connection";
 
 /** How a failed check reads on its server's row, `name` being the server's displayed name. */
 export function failureOf(error: unknown, name: string): Failure {
@@ -104,7 +98,7 @@ export function failureOf(error: unknown, name: string): Failure {
   if (error instanceof CheckError) return { message: error.message, retry: error.retry, signIn: false };
   const timedOut = error instanceof DOMException && error.name === "TimeoutError";
   return {
-    message: timedOut ? "Connection check timed out" : "Connection check failed",
+    message: timedOut ? "Connection check timed out" : CHECK_FAILED,
     retry: "retryable",
     signIn: false,
   };
@@ -207,7 +201,7 @@ async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, un
   signal.throwIfAborted();
   if (auth.kind === "session" && !signsIn(error)) await auth.ended(signal);
   if (error instanceof CheckError || signsIn(error)) throw error;
-  throw new CheckError(isNetworkFailure(error) ? unreachable : "Connection check failed", "retryable", {
+  throw new CheckError(isNetworkFailure(error) ? unreachable : CHECK_FAILED, "retryable", {
     cause: error,
   });
 }
@@ -227,9 +221,9 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
     const response = await auth.fetch(url, { cache: "no-store", signal });
     if (!response.ok) {
       await release(response);
-      throw new CheckError(`Connection check failed (HTTP ${response.status})`, "retryable");
+      throw new CheckError(`${CHECK_FAILED} (HTTP ${response.status})`, "retryable");
     }
-    const document = await decoded(response, preflight, "Connection check failed (unreadable discovery)");
+    const document = await decoded(response, preflight, `${CHECK_FAILED} (unreadable discovery)`);
     const requestMs = now() - startedAt;
     const { capabilities } = document;
     if (
@@ -255,7 +249,7 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
     // A protected HTTPS server refuses another origin without CORS headers, which reads as a network failure.
     const hint =
       entry.url.startsWith("https:") && !page.secure ? ". If it requires sign-in, open this interface over HTTPS." : "";
-    return settled(error, auth, signal, `Server could not be reached${hint}`);
+    return settled(error, auth, signal, `Could not reach this test server${hint}`);
   } finally {
     timing.stop();
   }
@@ -271,7 +265,7 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
     const probe: Probe = await decoded(response, probeDocument, "Unexpected probe answer");
     return { probe, protocol: await timing.read(signal) };
   } catch (error) {
-    return settled(error, auth, signal, `${origin} could not be reached`);
+    return settled(error, auth, signal, `Could not reach ${origin}`);
   } finally {
     timing.stop();
   }
@@ -357,7 +351,7 @@ async function verifyThroughput(
   }
   const observed = protocolFromNextHop(answer!.protocol);
   const proven = view.protocol === "negotiated" || observed === view.protocol;
-  // WebTransport proves its own data path; only its HTTP view's protocol is learnt here.
+  // WebTransport proves its own data path; only its HTTP view's protocol is learned here.
   if (!session && !proven)
     throw new CheckError(
       observed

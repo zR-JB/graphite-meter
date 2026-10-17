@@ -1,15 +1,19 @@
 // The words the views share, one per concept: stages and their state in the shown run, outcomes, run phases and the
 // run key, failure reasons, latency populations, paths, transports, HTTP versions, readiness, connectivity, servers,
 // themes, starting over and the explainers, with tones.
+import { HISTORY_LIMIT } from "../app/history/records";
 import type { Theme } from "../app/preferences";
+import { PEAK_WINDOW_MS } from "../engine/measure/aggregate";
 import type { Preparation, ShownPhase } from "../app/run";
 import type { Readiness } from "../engine/net/connection";
 import { PROTOCOL_LABEL, protocolFromNextHop } from "../engine/net/paths";
+import { SESSION_MAX_LANES } from "../engine/net/streams";
 import type { Outcome, StageStatus } from "../engine/run/result";
 import type { Phase } from "../engine/run/run";
-import { planned, STAGES, type Stage } from "../engine/run/schedule";
+import { planned, SLOW_START_RTTS, STAGES, WARMUP_CEILING_MS, type Stage } from "../engine/run/schedule";
 import {
   CADENCE_MS,
+  MAX_SELECTED,
   type HttpProtocol,
   type LatencyTarget,
   type PingCadence,
@@ -42,7 +46,7 @@ export const PHASE = {
   authenticating: "Checking sign-in",
   connecting: "Checking paths",
   blocked: "Test cannot start",
-  "start-failed": "Test could not start",
+  "start-failed": "Could not start the test",
   warmup: "Warmup",
   latency: STAGE.latency.label,
   download: STAGE.download.label,
@@ -283,7 +287,7 @@ export const START_OVER = {
   },
   rerun: {
     title: "Replace this result?",
-    description: "It could not be saved; a new test replaces it.",
+    description: "History could not save it; a new test replaces it.",
     cancel: "Keep result",
     confirm: "Run again",
   },
@@ -302,7 +306,7 @@ const SPACINGS = `Fast ${CADENCE_MS.fast} ms Â· Medium ${CADENCE_MS.medium} ms Â
 export const TIP = {
   latency: "Idle latency\nMedian round trip on an idle connection\nThe base for added latency",
   transferred: "Transferred\nPayload bytes measured in this stage",
-  peak: "Peak\nHighest mean over windows of 0.5 s or more\nNever below the headline",
+  peak: `Peak\nHighest mean over windows of ${PEAK_WINDOW_MS / 1000} s or more\nNever below the headline`,
   rateStability: "Stability\n100% minus the spread of the 250 ms rates\nSpread: standard deviation over the mean",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   latencyRange: "Range\nFastest to slowest reply",
@@ -313,8 +317,8 @@ export const TIP = {
   noReplies: "No replies\nThese probes timed out; not packet loss",
   addedLatency: "Added latency\nLoaded minus idle median, same server",
   latencyMedian: "Median\nHalf the replies were faster, half slower",
-  warmup: "Warmup\nOpens connections before each stage\n10 round trips to 4 s; never counted",
-  testServers: "Test servers\nUp to 4; their speeds add up\nAll are probed; the lanes show one at a time",
+  warmup: `Warmup\nOpens connections before each stage\n${SLOW_START_RTTS} round trips to ${WARMUP_CEILING_MS / 1000} s; never counted`,
+  testServers: `Test servers\nUp to ${MAX_SELECTED}; their speeds add up\nAll are probed; the lanes show one at a time`,
   stageTime: "Duration\nEach stage's planned length\nUp to the servers' limit, 5 min by default",
   bidirectionalStage: "Bidirectional stage\nDownload and upload at once, after the others",
   earlyFinish: "Early finish\nEnds a steady stage after about half its time\nNever after a stall, gap or lost server",
@@ -328,14 +332,13 @@ export const TIP = {
     "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
-  saveResults: "Save results\nKeeps the newest 2,000 results in this browser\nNothing is uploaded",
+  saveResults: `Save results\nKeeps the newest ${HISTORY_LIMIT.toLocaleString("en-US")} results in this browser\nNothing is uploaded`,
   idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply\n${SPACINGS}`,
   loadedCadence: `Loaded probe interval\nProbes during transfers, start to start\n${SPACINGS}`,
   skipLoadedLatency: "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   forcedStreams:
     "Streams\nParallel streams per server and direction\nAn exact count opens that many, past browser limits",
-  forcedStreamCount:
-    "Streams per direction\nOpens exactly this many per server\nWebTransport carries at most 16 per session",
+  forcedStreamCount: `Streams per direction\nOpens exactly this many per server\nWebTransport carries at most ${SESSION_MAX_LANES} per session`,
   autoStreamCount:
     "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   datagramThroughput:

@@ -7,7 +7,7 @@ import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, T
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
 export const BROWSER_POOL = 6;
 /** The server clamps a WebTransport session's lanes here in both directions. */
-const SESSION_MAX_LANES = 16;
+export const SESSION_MAX_LANES = 16;
 export const MAX_STREAMS = 128;
 // Upload splits by protocol: under loss HTTP/2 gains from four lanes while HTTP/3 loses.
 const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {

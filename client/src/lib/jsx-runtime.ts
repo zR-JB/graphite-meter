@@ -19,7 +19,7 @@ type Attributes<E> = {
 };
 type Props<E, M> = Attributes<E> & Handlers<E, M>;
 
-const SVG_NS = "http://www.w3.org/2000/svg";
+export const SVG_NS = "http://www.w3.org/2000/svg";
 // Children are built before their parent, so a tag's own name decides its namespace.
 const SVG_TAGS = new Set([
   "svg",

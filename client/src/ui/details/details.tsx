@@ -6,9 +6,10 @@ import { describeStreams, needsPings } from "../../engine/net/streams";
 import { activities } from "../../engine/run/schedule";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
+import { reducedMotion } from "../../lib/motion";
 import { computed, effect, onCleanup, signal, untrack } from "../../lib/signal";
 import { fmtLatency, MISSING } from "../../view/format";
-import { PATH, PATH_TIP, READINESS, TIP, type Word } from "../../view/words";
+import { PATH, PATH_TIP, READINESS, TIP, TRANSPORT, type Word } from "../../view/words";
 import { announce } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tipGroup } from "../kit/rove";
@@ -117,7 +118,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const uploadFeed = () => {
     const shown = target("throughput");
     if (!shown) return unknown();
-    const carrier = shown.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
+    const carrier = TRANSPORT[shown.transport === "fetch-stream" ? "fetch-stream" : "webtransport"];
     return `${carrier} over ${describePath(discovery(), "throughput", shown).carrier}`;
   };
   const address = computed(() => {
@@ -169,7 +170,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           webTransport: "WebTransport" in globalThis,
           online: navigator.onLine,
           viewport: `${innerWidth}x${innerHeight}@${devicePixelRatio}`,
-          reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+          reducedMotion: reducedMotion.peek(),
         },
         scope: mode.peek(),
         inspected: shownId.peek(),
@@ -239,7 +240,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
                 <dt>Server</dt>
                 <dd>
                   <ServerScope
-                    label="Inspect server"
+                    label="Server"
                     servers={listed}
                     value={() => shownId() ?? ""}
                     onChange={(id) => inspected.set(id)}
@@ -267,7 +268,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             </p>
           )}
         </For>
-        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server.") : "")}>
+        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server") : "")}>
           {(text) => (
             <p class="notice" data-tone="err">
               {text}

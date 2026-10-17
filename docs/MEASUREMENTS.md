@@ -186,11 +186,12 @@ pins:
 ## Saved history
 
 When saving is on, the browser keeps the newest 2,000 Complete, Partial and Incomplete results in its own IndexedDB.
-A record at schema 5 holds the build, the latency-focus server's engine version and the result. The result covers the
-selected servers and survivors, per-server path evidence and stage statuses, latency populations with exact probe
+A record at schema 6 holds the build and the result. The result covers the selected servers and survivors, each
+server's engine version, path evidence and stage statuses, latency populations with exact probe
 counts, at most 128 recent intervals, failures with reasons, byte totals, and the headline with its peak,
 stability and wire estimate. Missing measurements stay null, and grants and socket tickets are never saved. Records
-of earlier releases at schema 4 are upgraded once when the database opens, while records that cannot be read stay in
+of earlier releases at schemas 4 and 5 are upgraded once when the database opens (a schema 5 record's one engine
+version goes to its latency-focus server), while records that cannot be read stay in
 storage, are skipped and are reported.
 
 Before saving, a result must be coherent: every failure has one of the seven reasons; a failed or partial stage has

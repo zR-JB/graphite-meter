@@ -3,6 +3,7 @@ import {
   catalog,
   closeSettings,
   home,
+  latencyOnly,
   open,
   openSettings,
   phase,
@@ -75,7 +76,7 @@ test("without idle latency the page settles Connected and never shows a blocker 
   expect(await page.evaluate(() => (window as any).__labels)).toEqual(["Not started"]);
 });
 
-test("cancelling a new start keeps the previous result", async (page) => {
+test("canceling a new start keeps the previous result", async (page) => {
   await page.addInitScript(() => {
     const original = window.fetch.bind(window);
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -85,7 +86,7 @@ test("cancelling a new start keeps the previous result", async (page) => {
       return original(input, init);
     }) as typeof fetch;
   });
-  await open(page);
+  await open(page, home.url, { config: latencyOnly });
   await ready(page);
   await run(page);
   await page.evaluate(() => void Object.assign(window, { holdPreflight: true }));

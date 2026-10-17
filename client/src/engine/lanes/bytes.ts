@@ -103,6 +103,13 @@ export class ByteReports {
     return { total: this.#totals[oldest]!, at: this.#times[oldest]! };
   }
 
+  /** The answer to an owner's flush asked at page time `at`. */
+  flushed(at: number) {
+    this.flush();
+    const counted = this.totalAt(at - performance.timeOrigin);
+    return { type: "flushed" as const, total: counted.total, at: performance.timeOrigin + counted.at };
+  }
+
   /** A reading at most every millisecond, and at every report. */
   #keep(now: number, reported = false): void {
     if (!reported && this.#taken && now - this.#times[(this.#taken - 1) % TOTALS]! < 1) return;

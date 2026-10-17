@@ -5,13 +5,13 @@ import { HISTORY_COLUMNS, type HistoryColumn } from "../../app/preferences";
 import { For } from "../../lib/dom";
 import { computed, signal, type Read } from "../../lib/signal";
 import { Icon } from "../kit/icon";
+import { roveTo } from "../kit/rove";
 import { tip } from "../kit/tip";
 import type { Sort } from "./list";
 import { orders, SORT_LABEL } from "./model";
 
 // One History shows at a time, so one id serves its anchor.
 const ID = "history-view";
-const STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
 export function ViewControl(props: {
   columns: Read<readonly HistoryColumn[]>;
@@ -88,16 +88,7 @@ export function ViewControl(props: {
           aria-label="Sort by"
           onkeydown={(event) => {
             const list = options.peek();
-            const at = list.indexOf(by.peek());
-            const step = STEP[event.key];
-            const to =
-              event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? list.length - 1
-                  : step
-                    ? (at + step + list.length) % list.length
-                    : -1;
+            const to = roveTo(event.key, list.indexOf(by.peek()), list.length);
             if (to < 0) return;
             event.preventDefault();
             const option = list[to]!;

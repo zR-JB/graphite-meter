@@ -164,7 +164,7 @@ const inGroup = (target: Target, selection: Selection) =>
     : selection.kind === "transport" && target.transport === selection.transport;
 
 /** Whether `selection` points at `target` at all, usable or not. */
-export const pointsAt = (selection: Selection, target: Target) =>
+const pointsAt = (selection: Selection, target: Target) =>
   selection.kind === "auto" ||
   inGroup(target, selection) ||
   (selection.kind === "origin" &&
@@ -172,9 +172,8 @@ export const pointsAt = (selection: Selection, target: Target) =>
 
 const RANK: Record<HttpProtocol, number> = { http1: 0, http2: 1, http3: 2, negotiated: 3 };
 
-/** Automatic's candidates, best first. Throughput prefers HTTP/1.1 bulk streams, then HTTP/2, HTTP/3, negotiated HTTP
-    and WebTransport streams; latency prefers the WebTransport datagram bus. Ties go to the discovery origin, then TLS,
-    then the target id, so the order never depends on how the server listed them. */
+/** Automatic's candidates, best first; ties go to the discovery origin, then TLS, then the id, so the order never
+    depends on how the server listed them. */
 export function candidates<R extends Role>(discovery: Discovery, role: R, page: Browser): TargetOf<R>[] {
   const rank = (target: Target) => {
     if (role === "latency") return target.transport === "webtransport" ? 0 : 1;
@@ -224,23 +223,25 @@ export function resolve<R extends Role>(
   return usable.length === 1 ? usable[0]! : null;
 }
 
-/** Why `selection` resolves to nothing on `discovery`, in the words the server's row shows. */
+/** The browser's policy, when it excludes every origin `selection` points at. */
+export function blockedReason(discovery: Discovery, role: Role, selection: Selection): string | null {
+  let reason: string | null = null;
+  for (const entry of origins(discovery, role).values()) {
+    if (!entry.targets.some((target) => pointsAt(selection, target))) continue;
+    if (!entry.blocked) return null;
+    reason ??= entry.blocked;
+  }
+  return reason;
+}
+
+/** Why `selection` resolves to nothing on `discovery`, in the words the server's row and the pickers show. */
 export function unresolvedReason(
   discovery: Discovery,
   role: Role,
   selection: Selection,
   page: Browser,
 ): { message: string; retry: "needs-user" | "impossible" } {
-  // A browser policy explains the miss only when it excludes every origin the choice points at.
-  let blocked: string | null = null;
-  for (const entry of origins(discovery, role).values()) {
-    if (!entry.targets.some((target) => pointsAt(selection, target))) continue;
-    if (!entry.blocked) {
-      blocked = null;
-      break;
-    }
-    blocked ??= entry.blocked;
-  }
+  const blocked = blockedReason(discovery, role, selection);
   if (blocked) return { message: blocked, retry: "impossible" };
   if (page.webTransport !== "available" && resolve(discovery, role, selection, { ...page, webTransport: "available" }))
     return {
@@ -250,7 +251,14 @@ export function unresolvedReason(
           : "This browser does not support WebTransport.",
       retry: "impossible",
     };
-  if (selection.kind === "auto") return { message: `No ${role} path this browser can use`, retry: "impossible" };
+  if (selection.kind === "auto")
+    return {
+      message:
+        role === "throughput"
+          ? "No offered throughput path works in this browser"
+          : `No ${page.secure ? "secure" : "clear"} WebSocket offered by this server`,
+      retry: "impossible",
+    };
   return { message: `${selectionName(selection)} not offered`, retry: "needs-user" };
 }
 

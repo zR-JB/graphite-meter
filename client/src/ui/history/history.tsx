@@ -63,7 +63,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const sort = signal<Sort>({ by: "date", descending: true });
   const pages = signal(1);
   let list: HTMLElement | null = null;
-  let neighbour: ((id: string, by: 1 | -1) => string | null) | null = null;
+  let neighbor: ((id: string, by: 1 | -1) => string | null) | null = null;
   const setSort = (by: HistorySort, descending: boolean) => {
     batch(() => {
       sort.set({ by, descending });
@@ -125,7 +125,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       else if (action.id === props.selectedId.peek()) await app.history.delete(action.id);
       else return;
     } catch {
-      if (!disposed) actionError.set("History could not be changed. Try again.");
+      if (!disposed) actionError.set("Could not change History. Try again.");
       return;
     }
     if (disposed) return;
@@ -173,7 +173,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const Unread = () => (
     <div class="detail-pane empty-state">
       <span class="empty-icon">!</span>
-      <h2>Result could not be read</h2>
+      <h2>Could not read this result</h2>
       <p>History could not read this result just now.</p>
       <button class="btn" type="button" onclick={() => archive.reread()}>
         Retry
@@ -214,7 +214,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     if (event.shiftKey || isEditable(target) || target.closest(OWNS_ARROWS)) return;
     if (activeModal() || document.querySelector(":popover-open:not(.tooltip)")) return;
     event.preventDefault();
-    const next = neighbour?.(id, by);
+    const next = neighbor?.(id, by);
     if (next) shell.swapResult(next);
   };
   window.addEventListener("keydown", step);
@@ -276,7 +276,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     return shownBefore;
   });
   const PANE_NOTICE: Record<string, string> = {
-    unread: "Result could not be read.",
+    unread: "Could not read this result.",
     missing: "Result not found.",
     malformed: "Unreadable saved result.",
   };
@@ -300,10 +300,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       now,
     });
     list = results.element;
-    neighbour = results.neighbour;
+    neighbor = results.neighbor;
     onCleanup(() => {
       list = null;
-      neighbour = null;
+      neighbor = null;
     });
     const body = (
       <div class="workspace-body">

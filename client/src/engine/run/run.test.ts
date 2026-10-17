@@ -49,7 +49,6 @@ function harness(
           );
         },
         clock,
-        online: () => true,
       });
       run.on((event) => events.push(event));
       run.start();
@@ -410,9 +409,9 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
 
   const none = setup(two(refuse, refuse), { download: true }, { downloadMs: 1_000 });
   none.start();
-  expect(none.result()).rejects.toMatchObject({
+  await expect(none.result()).rejects.toMatchObject({
     reason: "preparation-failed",
-    message: expect.stringMatching(/^All selected servers failed/),
+    message: expect.stringMatching(/^All selected test servers failed/),
   });
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],
