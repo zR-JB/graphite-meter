@@ -59,7 +59,6 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(files[0].text, contents)
         self.assertEqual(files[0].sha256, sha256(contents.encode()))
         self.assertEqual([item.kind for item in files], ["license", "notice", "notice", "license"])
-        self.assertEqual(len(read_legal_files(self.root, recursive=False)), 3)
 
     def test_missing_legal_material_fails(self) -> None:
         self.write("README.md", "no license")
@@ -146,12 +145,10 @@ class LegalTests(unittest.TestCase):
     def test_scoped_review_selection(self) -> None:
         component, review = self.reviewed()
         scopes = {"tui": [replace(component, version="2", selectedLicenseExpression="MIT OR GPL-3.0")]}
-        prepare_scopes(scopes, [review], "check")
+        prepare_scopes(scopes, [review])
         self.assertEqual(scopes["tui"][0].selectedLicenseExpression, "MIT")
-        unresolved = {"tui": [Component("new", ecosystem="npm")]}
-        prepare_scopes(unresolved, [], "review-template")
         with self.assertRaisesRegex(LegalError, "tui:"):
-            prepare_scopes(unresolved, [], "generate")
+            prepare_scopes({"tui": [Component("new", ecosystem="npm")]}, [])
 
     def test_provenance_checks_artifact_bytes_and_flows_into_container(self) -> None:
         asset = self.write("font.woff2", "font bytes")
@@ -218,7 +215,7 @@ class LegalTests(unittest.TestCase):
         reviews = [Review.parse(item) for item in array(read_json(ROOT / "legal/reviewed-components.json"))]
         entries = [Provenance.parse(item) for item in array(read_json(ROOT / "legal/provenance.json"))]
         prepare_scopes({scope: add_provenance(ROOT, [], entries, scope) for scope in ("server/browser", "container")},
-                       reviews, "check")
+                       reviews)
 
     def test_copyright_follows_the_project_record(self) -> None:
         self.assertEqual((ROOT / "COPYRIGHT").read_text(encoding="utf-8"), copyright_notice(Project.read(ROOT)))
