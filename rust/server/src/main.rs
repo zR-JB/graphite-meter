@@ -34,10 +34,15 @@ fn main() -> ExitCode {
         [only] if only == "hash-password" => hash_password().err().map(|error| ("auth", error)),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
-            Ok(Loaded::Config(config)) => match runtime::check_budget(&config) {
-                Ok(()) => serve(*config).err().map(|error| ("server", error)),
-                Err(error) => Some(("config", error)),
-            },
+            Ok(Loaded::Config(config)) => {
+                if let Some(zone) = &config.log_zone {
+                    log::show_in(zone.clone());
+                }
+                match runtime::check_budget(&config) {
+                    Ok(()) => serve(*config).err().map(|error| ("server", error)),
+                    Err(error) => Some(("config", error)),
+                }
+            }
             Err(error) => Some(("config", error)),
         },
     };

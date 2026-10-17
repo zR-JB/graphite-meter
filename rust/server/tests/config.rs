@@ -302,3 +302,28 @@ fn secrets_and_proxies_have_no_flag() {
         assert!(!include_str!("usage.txt").contains(&format!("--{flag} ")), "{flag}");
     }
 }
+
+#[test]
+fn time_zone_is_a_bundled_name_or_utc() {
+    for name in ["Europe/Berlin", "America/New_York", "Asia/Kolkata"] {
+        let zone = config(&[("TZ", name)], &[]).log_zone;
+        assert_eq!(zone.as_ref().and_then(|zone| zone.iana_name()), Some(name));
+    }
+    for utc in [&[][..], &[("TZ", "")], &[("TZ", "UTC")], &[("TZ", "Etc/UTC")]] {
+        assert!(config(utc, &[]).log_zone.is_none(), "{utc:?}");
+    }
+    for refused in [
+        "CET-1CEST,M3.5.0,M10.5.0/3",
+        ":/etc/localtime",
+        "+02:00",
+        "Europe/Nowhere",
+        "../../etc/passwd",
+        "Etc/Unknown",
+    ] {
+        assert_eq!(
+            error(&[("TZ", refused)], &[]),
+            "TZ must be a time zone name such as Europe/Berlin",
+            "{refused}"
+        );
+    }
+}

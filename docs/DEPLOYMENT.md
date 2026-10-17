@@ -353,7 +353,7 @@ worker, and by default there is one worker per CPU. Tokio's own `TOKIO_WORKER_TH
 shared with other services. On Linux those threads run five nice steps lower, so transfers yield to the host's
 other services and to the server's own probes.
 
-The server logs to stderr and writes one line per event in UTC:
+The server logs to stderr and writes one line per event in UTC, or in the zone `TZ` names:
 
 ```text
 2026-10-06T14:31:02Z INFO  server:    ready
@@ -364,6 +364,11 @@ Each line has a level of `DEBUG`, `INFO`, `WARN` or `ERROR`, then a topic and th
 with the module that wrote them. Lines a peer can repeat, such as failed handshakes, appear at most once a minute
 with a count of those held back. On a terminal the lines are colored unless `NO_COLOR` is set or `TERM=dumb`, and
 `FORCE_COLOR` colors them anywhere.
+
+`TZ` takes an IANA zone name such as `Europe/Berlin`, and each line then carries the offset in effect at that time,
+such as `2026-10-06T16:31:02+02:00`. The zone data is built into the server, so it needs no mounts and is as
+current as the release. The server refuses to start on any other `TZ` value, such as a POSIX rule or a path. Only
+log lines change; cookies, HTTP dates and certificates stay UTC.
 
 ## Upgrading
 
@@ -378,8 +383,8 @@ hashes and device cookies. Check these when switching:
 - [`GM_MAX_BUFFER_BYTES`](#resources-and-logs) is new, so a host that raised `GM_MAX_CONNECTIONS` far above its
   default may need to lower it. Otherwise the server stops at start and names the values that fit.
 - Boolean settings accept only `true`, `false`, `1` and `0`.
-- Log lines are always UTC in the [format above](#resources-and-logs), so `TZ` no longer matters. Adjust log
-  parsers.
+- Log lines are UTC in the [format above](#resources-and-logs) unless `TZ` names a zone. Adjust log parsers, and
+  replace a POSIX rule or path in `TZ` with a zone name.
 - Every server in a server catalog must be a current release, because both clients need the upload checkpoint and
   the stage limits that the server's discovery reports.
 
@@ -465,6 +470,7 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, at most 64 bytes.                                                  |
 | `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](#server-catalog) JSON.                                                |
 | `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
+| `TZ`                                    | _env only_                             | UTC              | IANA zone name for [log times](#resources-and-logs), from zone data built into the release. |
 
 - Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
   limit, sessions may not exceed handlers, and the session duration must be at least the operation duration.
