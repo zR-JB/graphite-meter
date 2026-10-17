@@ -11,9 +11,6 @@ on:
 permissions:
   contents: read
 
-env:
-  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00
-
 jobs:
   verify:
     if: >-
@@ -110,6 +107,8 @@ jobs:
     concurrency:
       group: release-publish-${{ github.repository }}
       cancel-in-progress: false
+    env:
+      SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00
     permissions:
       contents: read
       actions: read

@@ -15,10 +15,10 @@ from unittest.mock import patch
 from assets import CLIENT, OCI, SERVER, find, main, merge, native_executable, staged_files, verify, verify_client, \
     verify_offer
 from fixtures import (
-    REPOSITORY_URL, engine, executable, notices, outcome, reviewed, server_binary, write_client, write_exports,
-    write_oci, write_staged, write_tar,
+    REPOSITORY_URL, executable, notices, outcome, reviewed, server_binary, write_client, write_exports, write_oci,
+    write_staged, write_tar,
 )
-from github_api import ControlPlaneError, JsonObject, file_sha256
+from github_api import ControlPlaneError, file_sha256
 from workspace import ROOT, build_name, load, offer_name, source_txt
 
 REPO, SHA = "zR-JB/graphite-meter", "f" * 40
@@ -42,6 +42,8 @@ def rewrite(path: Path, changes: Mapping[str, bytes | None]) -> None:
 class Scratch(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.enterContext(patch.dict(os.environ, {"REPOSITORY": REPO}))
+        self.enterContext(patch("sys.stdout", io.StringIO()))
 
     def fresh(self) -> Path:
         directory = self.root / str(len(list(self.root.iterdir())))
@@ -52,7 +54,7 @@ class Scratch(unittest.TestCase):
         env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "OUT_DIR": str(out),
                "OCI_ARCHIVE": str(exports / OCI), "SERVER_EXPORT": str(exports / "server-export"),
                "TUI_EXPORT": str(exports / "tui-export")}
-        with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "stage"]), patch("sys.stdout", io.StringIO()):
+        with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "stage"]):
             main()
 
 
@@ -125,12 +127,11 @@ class StagingTests(Scratch):
         out = self.root
         for version, profile in (("0.0.0-ci", "ci"), ("1.2.3", "release")):
             exports, out = self.fresh(), self.fresh()
-            oci = write_exports(exports, version, SHA, REPO, profile)
+            write_exports(exports, version, SHA, REPO, profile)
             self.stage(version, out, exports)
             env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "REVISION": SHA, "PROFILE": profile,
-                   "STAGED_DIR": str(out)} | engine(exports, REPO, version, SHA, oci)
-            with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "check"]), \
-                    patch("sys.stdout", io.StringIO()):
+                   "STAGED_DIR": str(out), "REPOSITORY": REPO}
+            with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "check"]):
                 main()
         (out / "extra").write_text("x")
         for change, error in (({"VERSION": "1.2.3/x"}, "not a release version"), ({"PROFILE": "dev"}, "PROFILE"),
@@ -229,18 +230,17 @@ class ClientTests(Scratch):
             f"Build: graphite-meter-client_windows_amd64 ({WINDOWS})"])
 
 
-Edit = Callable[[Path], JsonObject | None]
+Edit = Callable[[Path], None]
 
 
 class VerifyTests(Scratch):
     def run_verify(self, version: str, edit: Edit | None = None, profile: str = "release") -> tuple[str, str] | None:
         """Verify a staged release after `edit` changed it, and the image index it rewrote."""
         staged = self.fresh()
-        oci = write_staged(staged, version, SHA, REPO)
+        write_staged(staged, version, SHA, REPO)
         if edit is not None:
-            oci = edit(staged) or oci
-        with patch.dict(os.environ, engine(staged, REPO, version, SHA, oci)):
-            return verify(version, SHA, staged, profile)
+            edit(staged)
+        return verify(version, SHA, staged, profile)
 
     def test_the_image_the_client_archives_and_the_offer_bind_to_each_other(self) -> None:
         def checksum(staged: Path) -> None:
@@ -248,12 +248,11 @@ class VerifyTests(Scratch):
 
         def image(sources: dict[str, bytes], servers: dict[str, bytes],
                   stage: tuple[str, str | None] = ("container/Dockerfile", "server")) -> Edit:
-            def edit(staged: Path) -> JsonObject:
+            def edit(staged: Path) -> None:
                 files = {arch: {"usr/share/licenses/graphite-meter/SOURCE.txt": sources[arch],
                                 "graphite-meter": servers[arch]} for arch in ("amd64", "arm64")}
-                oci = write_oci(staged / OCI, REPO, SHA, remote=False, arch_files=files, stage=stage)
+                write_oci(staged / OCI, REPO, SHA, remote=False, arch_files=files, stage=stage)
                 (staged / f"{OCI}.sha256").write_text(f"{file_sha256(staged / OCI)}  {OCI}\n")
-                return oci
             return edit
 
         source = {arch: source_txt(REPOSITORY_URL, "1.2.3", build_name(SERVER, f"linux/{arch}"),
@@ -285,14 +284,13 @@ class VerifyTests(Scratch):
         version = "1.2.3-rc.1"
         self.assertEqual(staged_files(version), {OCI, f"{OCI}.sha256"})
         exports, out = self.fresh(), self.fresh()
-        oci = write_exports(exports, version, SHA, REPO)
+        write_exports(exports, version, SHA, REPO)
         # A prerelease's build exports no client archives or source offer parts.
         for export in ("server-export", "tui-export"):
             shutil.rmtree(exports / export)
         self.stage(version, out, exports)
         self.assertEqual({path.name for path in out.iterdir()}, staged_files(version))
-        with patch.dict(os.environ, engine(exports, REPO, version, SHA, oci)):
-            self.assertEqual(verify(version, SHA, out)[0], file_sha256(out / OCI))
+        self.assertEqual(verify(version, SHA, out)[0], file_sha256(out / OCI))
         repository = f"{REPOSITORY_URL}\n".encode()
         for sources, binary, error in (
             (repository, server_binary("linux/amd64"), None),
@@ -304,10 +302,9 @@ class VerifyTests(Scratch):
             with self.subTest(sources=sources, binary=binary):
                 image = self.fresh()
                 files = {"usr/share/licenses/graphite-meter/SOURCE.txt": sources, "graphite-meter": binary}
-                oci = write_oci(image / OCI, REPO, SHA, remote=True, arch_files={"amd64": files, "arm64": files})
+                write_oci(image / OCI, REPO, SHA, version, remote=True, arch_files={"amd64": files, "arm64": files})
                 (image / f"{OCI}.sha256").write_text(f"{file_sha256(image / OCI)}  {OCI}\n")
-                with patch.dict(os.environ, engine(image, REPO, version, SHA, oci)):
-                    outcome(self, error, lambda: verify(version, SHA, image))
+                outcome(self, error, lambda: verify(version, SHA, image))
 
 
 if __name__ == "__main__":

@@ -1,11 +1,10 @@
-"""Fake boundaries for control-plane tests: GitHub API, Git, a Skopeo engine and release files."""
+"""Fake boundaries for control-plane tests: the GitHub API, Git and the release files."""
 
 from __future__ import annotations
 
 import hashlib
 import io
 import json
-import os
 import tarfile
 import tempfile
 import unittest
@@ -24,18 +23,9 @@ from workspace import ROOT, build_name, build_offer, load, offer_name, source_tx
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
+CONFIG_TYPE = "application/vnd.oci.image.config.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
 REPOSITORY_URL = "https://github.com/zR-JB/graphite-meter"
-ENGINE = """#!/bin/sh
-printf '%s\\n' "$*" >>"$FAKE_ENGINE_LOG"
-case "$*" in
-  *" inspect --raw "*) printf '%s\\n' "$FAKE_INDEX" ;;
-  *"{{json .Labels}}"*) printf '%s\\n' "$FAKE_LABELS" ;;
-  *"{{.Digest}}"*) echo "$FAKE_DIGEST" ;;
-  *" copy --all "*) ;;
-  *) echo "unexpected engine call: $*" >&2; exit 1 ;;
-esac
-"""
 
 
 class Paged(list[object]):
@@ -90,8 +80,8 @@ def index(*manifests: JsonObject) -> JsonObject:
 
 
 def descriptor(os_name: str, arch: str, digest: str, attests: str | None = None) -> JsonObject:
-    item: JsonObject = {"mediaType": MANIFEST_TYPE, "digest": digest,
-                               "platform": {"os": os_name, "architecture": arch}}
+    item: JsonObject = {"mediaType": MANIFEST_TYPE, "digest": digest, "size": 1,
+                        "platform": {"os": os_name, "architecture": arch}}
     if attests is not None:
         item["annotations"] = {"vnd.docker.reference.type": "attestation-manifest",
                                "vnd.docker.reference.digest": attests}
@@ -104,79 +94,68 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
-def write_oci(path: Path, repository: str, revision: str, *, remote: bool, tamper: bool = False,
+def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3", *, remote: bool,
               predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
               arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
-              stage: tuple[str, str | None] = STAGE) -> JsonObject:
-    """Write two images of `files`, each with its `arch_files`, and BuildKit-shaped provenance of building `stage`, a
-    Dockerfile and target, into an OCI archive; return its index."""
+              stage: tuple[str, str | None] = STAGE, labels: Mapping[str, str] | None = None) -> str:
+    """Write the OCI layout BuildKit exports for two labelled images of `files`, each with its `arch_files`, and
+    provenance of building `stage`, a Dockerfile and target; return the digest of its image index."""
     blobs: dict[str, bytes] = {}
 
-    def add(value: object) -> str:
-        data = json.dumps(value).encode()
+    def add(data: bytes, media: str, **extra: JsonValue) -> JsonObject:
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
-        blobs[digest] = data + (b" " if tamper else b"")
-        return digest
+        blobs[digest] = data
+        return {"mediaType": media, "digest": digest, "size": len(data), **extra}
 
-    def layer(contents: Mapping[str, bytes]) -> str:
+    def add_json(value: JsonValue, media: str, **extra: JsonValue) -> JsonObject:
+        return add(json.dumps(value).encode(), media, **extra)
+
+    def layer(contents: Mapping[str, bytes]) -> JsonObject:
         data = io.BytesIO()
         with tarfile.open(fileobj=data, mode="w:gz") as archive:
             for name, payload in contents.items():
                 info = tarfile.TarInfo(name)
                 info.size = len(payload)
                 archive.addfile(info, io.BytesIO(payload))
-        digest = "sha256:" + hashlib.sha256(data.getvalue()).hexdigest()
-        blobs[digest] = data.getvalue()
-        return digest
+        return add(data.getvalue(), "application/vnd.oci.image.layer.v1.tar+gzip")
 
-    images = {arch: add({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "architecture": arch, "layers": [
-        {"digest": layer({**files, **(arch_files or {}).get(arch, {})})}]}) for arch in ("amd64", "arm64")}
+    values: JsonObject = {"org.opencontainers.image.source": f"https://github.com/{repository}",
+                          "org.opencontainers.image.revision": revision,
+                          "org.opencontainers.image.version": version,
+                          "org.opencontainers.image.licenses": "AGPL-3.0-or-later", **(labels or {})}
+    images = {arch: add_json({
+        "schemaVersion": 2, "mediaType": MANIFEST_TYPE,
+        "config": add_json({"architecture": arch, "os": "linux", "config": {"Labels": values}}, CONFIG_TYPE),
+        "layers": [layer({**files, **(arch_files or {}).get(arch, {})})],
+    }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in ("amd64", "arm64")}
 
     # A local context's Dockerfile is named without its directory.
     source: JsonObject = {"path": PurePosixPath(stage[0]).name}
     if remote:
         source = {"uri": f"https://github.com/{repository}.git#{revision}",
                   "digest": {"sha1": revision}, "path": stage[0]}
-    vcs = {"source": f"https://github.com/{repository}", "revision": revision}
+    vcs: JsonObject = {"source": f"https://github.com/{repository}", "revision": revision}
     args: JsonObject = {"target": stage[1]} if stage[1] else {}
-    statement = add({"predicateType": SLSA, "subject": [], "predicate": {
+    statement = add_json({"predicateType": SLSA, "subject": [], "predicate": {
         "buildDefinition": {"externalParameters": {"configSource": source, "request": {
             "frontend": "dockerfile.v0", "args": args}}},
-        "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
-    statement_layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
-             "annotations": {"in-toto.io/predicate-type": predicate}}
-    attested = [descriptor("unknown", "unknown", add({"layers": [statement_layer]}), image)
+        "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}},
+        "application/vnd.in-toto+json", annotations={"in-toto.io/predicate-type": predicate})
+    unknown = add_json({"architecture": "unknown", "os": "unknown", "config": {}}, CONFIG_TYPE)
+    attested = [add_json({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "config": unknown, "layers": [statement]},
+                         MANIFEST_TYPE, platform={"architecture": "unknown", "os": "unknown"},
+                         annotations={"vnd.docker.reference.type": "attestation-manifest",
+                                      "vnd.docker.reference.digest": image["digest"]})
                 for image in images.values()]
-    with tarfile.open(path, "w") as archive:
-        for digest, data in blobs.items():
-            info = tarfile.TarInfo("blobs/sha256/" + digest.removeprefix("sha256:"))
-            info.size = len(data)
-            archive.addfile(info, io.BytesIO(data))
-    return index(*(descriptor("linux", arch, image) for arch, image in images.items()), *attested)
+    top = add_json(index(*images.values(), *attested), INDEX_TYPE)
+    write_tar(path, {"oci-layout": b'{"imageLayoutVersion":"1.0.0"}', "index.json": json.dumps(index(top)).encode(),
+                     **{"blobs/sha256/" + digest.removeprefix("sha256:"): data for digest, data in blobs.items()}},
+              compressed=False)
+    return str(top["digest"])
 
 
-def engine(directory: Path, repository: str, version: str, revision: str,
-           oci: JsonObject | None = None) -> dict[str, str]:
-    """Serve a two-platform image of `version`, `oci` or one with placeholder provenance, from a fake `docker`."""
-    script = directory / "bin" / "docker"
-    script.parent.mkdir(exist_ok=True)
-    script.write_text(ENGINE)
-    script.chmod(0o755)
-    return {
-        "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
-        "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
-        "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
-        "FAKE_INDEX": json.dumps(oci or index(*RUNNABLE, *ATTESTED)),
-        "FAKE_LABELS": json.dumps({"org.opencontainers.image.source": f"https://github.com/{repository}",
-                                   "org.opencontainers.image.revision": revision,
-                                   "org.opencontainers.image.version": version,
-                                   "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}),
-        "FAKE_DIGEST": AMD, "REPOSITORY": repository,
-    }
-
-
-def write_tar(path: Path, members: Mapping[str, bytes]) -> None:
-    with tarfile.open(path, "w:gz") as archive:
+def write_tar(path: Path, members: Mapping[str, bytes], compressed: bool = True) -> None:
+    with tarfile.open(path, "w:gz") if compressed else tarfile.open(path, "w") as archive:
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(payload)
@@ -242,11 +221,10 @@ def write_client(directory: Path, version: str, platform: str, changes: Mapping[
         write_tar(directory / archive, files)
 
 
-def write_exports(root: Path, version: str, revision: str, repository: str,
-                  profile: str = "release") -> JsonObject:
+def write_exports(root: Path, version: str, revision: str, repository: str, profile: str = "release") -> str:
     """Write what the builds export into `root`: the OCI archive, server-export with each platform's source offer
-    part and tui-export with the client archives and their parts; return the image's index. A prerelease's image,
-    which BuildKit fetched from GitHub, names the repository."""
+    part and tui-export with the client archives and their parts; return the image index digest. A prerelease's
+    image, which BuildKit fetched from GitHub, names the repository."""
     workspace = load()
     server, client = root / "server-export", root / "tui-export"
     client.mkdir(parents=True)
@@ -262,17 +240,17 @@ def write_exports(root: Path, version: str, revision: str, repository: str,
     for platform in workspace.tui:
         write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform, profile)
         write_client(client, version, platform)
-    return write_oci(root / OCI, repository, revision, remote=prerelease(version), arch_files=files)
+    return write_oci(root / OCI, repository, revision, version, remote=prerelease(version), arch_files=files)
 
 
-def write_staged(out: Path, version: str, revision: str, repository: str) -> JsonObject:
-    """Stage a release of `version` into `out` as assets.py stage does; return the image's index."""
+def write_staged(out: Path, version: str, revision: str, repository: str) -> str:
+    """Stage a release of `version` into `out` as assets.py stage does; return the image index digest."""
     with tempfile.TemporaryDirectory() as directory:
         exports = Path(directory)
-        oci = write_exports(exports, version, revision, repository)
+        digest = write_exports(exports, version, revision, repository)
         out.mkdir(parents=True, exist_ok=True)
         (out / OCI).write_bytes((exports / OCI).read_bytes())
         (out / f"{OCI}.sha256").write_text(f"{hashlib.sha256((out / OCI).read_bytes()).hexdigest()}  {OCI}\n")
         if not prerelease(version):
             stage_assets(version, exports / "server-export", exports / "tui-export", out)
-    return oci
+    return digest

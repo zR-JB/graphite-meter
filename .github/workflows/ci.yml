@@ -279,7 +279,7 @@ jobs:
           REVISION: ${{ github.sha }}
           PROFILE: ci
           STAGED_DIR: ${{ runner.temp }}/staged
-        run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/assets.py check
+        run: python3 scripts/ci/assets.py check
 
   e2e:
     name: Browser E2E (${{ matrix.browser }}, ${{ matrix.group }})

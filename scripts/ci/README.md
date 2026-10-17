@@ -4,7 +4,8 @@ Workflow YAML owns events, jobs, permissions and environments; `mise` owns pinne
 Standard-library, type-checked Python in this directory owns trust decisions, GitHub JSON validation and artifact
 verification. `publish.sh` holds the Skopeo registry writes and `release.py publish` the GitHub Release;
 `test_release_transaction.py` runs both against a stateful fake GitHub, Docker and Skopeo, and `fixtures.py` fakes
-the GitHub API, the checked-out commit and the container engine, so trust tests run the real commands.
+the GitHub API and the checked-out commit and writes release files as the builds export them, so trust tests run the
+real commands.
 
 ```sh
 mise run workflow-check    # jactionlint, zizmor, workflow_policy.py, tool pins
@@ -74,7 +75,8 @@ snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal t
 one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose source is
 the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's server and
 notices must be the reviewed build its source offer names, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`.
-Skopeo copies every blob inside a network-less container whose only mount is the read-only archive. The untrusted
+Verification reads the archive as data and checks every blob the index reaches against its descriptor's size and
+digest; Skopeo runs only to publish. The untrusted
 build writes the provenance, so it shows which source was built but does not authenticate it. Build arguments carry no
 secrets because max provenance records them.
 
