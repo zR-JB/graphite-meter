@@ -19,8 +19,8 @@ systemctl --user daemon-reload
 systemctl --user start graphite-meter.service
 ```
 
-Open <http://localhost:7246>. For a rootful service, copy the unit to `/etc/containers/systemd/` and use `sudo
-systemctl` without `--user`.
+Open <http://localhost:7246>. For a rootful service, copy the unit to `/etc/containers/systemd/` and use
+`sudo systemctl` without `--user`.
 
 On rootless Podman, pasta user-mode networking limits measured throughput, so uncomment `Network=host` in the unit
 for LAN tests. Host networking gives up the container's network namespace, so apply firewall policy on the host.
@@ -70,9 +70,9 @@ systemctl --user start certbot-bootstrap.service
 systemctl --user start certbot-renew.service graphite-meter.service
 ```
 
-Verify with `systemctl --user status certbot-bootstrap certbot-renew graphite-meter`, `podman exec
-graphite-meter-certbot-renew certbot certificates` and `curl -v https://HOST:7247/`. `curl --http3-only -v
-https://HOST:7249/probe` checks HTTP/3 from a capable curl.
+Verify with `systemctl --user status certbot-bootstrap certbot-renew graphite-meter`,
+`podman exec graphite-meter-certbot-renew certbot certificates` and `curl -v https://HOST:7247/`.
+`curl --http3-only -v https://HOST:7249/probe` checks HTTP/3 from a capable curl.
 
 `certbot-bootstrap` uses a stable `--cert-name` with `--keep-until-expiring`, so restarting it reuses the lineage.
 `certbot-renew` runs `certbot renew` at start and every 12 hours and updates the `live/` symlinks atomically. The
@@ -115,8 +115,7 @@ systemctl --user daemon-reload
 systemctl --user start graphite-meter-tailnet-tailscale.service
 ```
 
-Starting the sidecar starts Graphite Meter after the certificate check. `podman port graphite-meter-tailnet` must
-print nothing. From another tailnet device, `curl -v https://HOST/preflight`, `curl -v --http2
-https://HOST:8443/probe` and `curl -v --http3-only https://HOST:8444/probe` exercise the three listeners. Results
-include the tunnel's path and overhead, so they are not a physical link's capacity
-([measurement definitions](../../docs/MEASUREMENTS.md)).
+Starting the sidecar starts Graphite Meter after the certificate check. `podman port graphite-meter-tailnet` must print
+nothing. From another tailnet device, `curl -v https://HOST/preflight`, `curl -v --http2 https://HOST:8443/probe` and
+`curl -v --http3-only https://HOST:8444/probe` exercise the three listeners. Results include the tunnel's path and
+overhead, so they are not a physical link's capacity ([measurement definitions](../../docs/MEASUREMENTS.md)).

@@ -183,9 +183,10 @@ server {
 ```
 
 In Nginx Proxy Manager, create a Proxy Host with WebSocket support on and caching off, and put a complete
-`location / { ... }` block with the directives above under Advanced. Write `proxy_set_header Connection
-$http_connection;` there, because the `map` cannot go there. Add no `/` Custom Location. NPM then omits its default
-location, and that location's `$host` would drop a nonstandard port. Check the generated file with `nginx -t`.
+`location / { ... }` block with the directives above under Advanced. Write
+`proxy_set_header Connection $http_connection;` there, because the `map` cannot go there. Add no `/` Custom Location.
+NPM then omits its default location, and that location's `$host` would drop a nonstandard port. Check the generated file
+with `nginx -t`.
 
 ### Caddy
 

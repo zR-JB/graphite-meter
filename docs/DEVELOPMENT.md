@@ -154,16 +154,16 @@ URLs). The page keeps the server's shell contract, which `build.ts` checks: one 
 script and style hashed into the content security policy, the `graphite-meter-trusted-types` meta naming the
 Trusted Types policy `src/lib/trusted.ts` creates, `<div id="app">` and hashed assets under `/assets/`.
 
-`bun build.ts` bundles the workers, then the app with their hashed URLs, minifies the shell, copies `public` and
-writes compressed siblings. `bun check` type-checks with the TypeScript port Bun ships and formats with Biome. `bun
-test src` covers pure logic and the engine against fake clocks.
+`bun build.ts` bundles the workers, then the app with their hashed URLs, minifies the shell, copies `public` and writes
+compressed siblings. `bun check` type-checks with the TypeScript port Bun ships and formats with Biome. `bun test src`
+covers pure logic and the engine against fake clocks.
 
 ## Containers and releases
 
 `mise run container-build` and `mise run container-smoke` build and verify the image on an amd64 host. The image is a
-staged build ending in `scratch`, and it holds the server binary, CA roots and license material. `mise run
-tui-package VERSION` builds the client archives in the same pinned builder. Releases stamp one version across every
-artifact, bind publication to the authorized commit and verify every file before publishing ([CI and
+staged build ending in `scratch`, and it holds the server binary, CA roots and license material.
+`mise run tui-package VERSION` builds the client archives in the same pinned builder. Releases stamp one version across
+every artifact, bind publication to the authorized commit and verify every file before publishing ([CI and
 release](../scripts/ci/README.md)). Never create or move release tags in ordinary work.
 
 ## Toolchain pins
@@ -181,6 +181,6 @@ release](../scripts/ci/README.md)). Never create or move release tags in ordinar
 | Browser dependencies             | `client/package.json`, `client/bun.lock`                | Frozen Bun installs                       |
 | External GitHub Actions          | Their `uses:` SHA                                       | Immutable workflow refs                   |
 
-To change a pin, edit its owner, then run `mise lock`, `mise run toolchain-sync`, `mise run setup` and `mise run
-check`. `mise run toolchain-sync` updates the Dockerfile, mise bootstrap and workflow literals, and `mise run
-workflow-check` rejects drift. Python tooling uses the pinned interpreter and the standard library only.
+To change a pin, edit its owner, then run `mise lock`, `mise run toolchain-sync`, `mise run setup` and `mise run check`.
+`mise run toolchain-sync` updates the Dockerfile, mise bootstrap and workflow literals, and `mise run workflow-check`
+rejects drift. Python tooling uses the pinned interpreter and the standard library only.
