@@ -20,7 +20,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -42,7 +42,7 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: plan
     steps:
@@ -70,7 +70,7 @@ jobs:
 
   rust:
     name: Rust checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
     if: needs.plan.outputs.code == 'true'
@@ -132,7 +132,7 @@ jobs:
   # The browser tests start from this amd64 server instead of waiting for both images.
   server:
     name: E2E server
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
     if: needs.plan.outputs.code == 'true'
@@ -160,7 +160,7 @@ jobs:
 
   image:
     name: Image
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
     if: needs.plan.outputs.code == 'true'
@@ -225,7 +225,7 @@ jobs:
 
   tui:
     name: Client archive (${{ matrix.platform }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     needs: plan
     if: needs.plan.outputs.code == 'true'
@@ -270,7 +270,7 @@ jobs:
   # Stages and verifies this run's builds as a release request stages and the release verifies them.
   release-staging:
     name: Release staging
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: [plan, image, tui]
     if: needs.plan.outputs.code == 'true'
@@ -310,7 +310,7 @@ jobs:
 
   e2e:
     name: Browser E2E (${{ matrix.browser }}, ${{ matrix.group }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     needs: [plan, server]
     if: needs.plan.outputs.code == 'true'
@@ -404,7 +404,7 @@ jobs:
 
   gate:
     name: Gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     if: always()
     needs: [plan, checks, rust, rust-windows, server, image, tui, release-staging, e2e]
