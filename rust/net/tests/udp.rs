@@ -1,4 +1,4 @@
-//! QUIC sockets: address sharing on Linux.
+//! Checks that QUIC sockets share an address on Linux.
 #![cfg(target_os = "linux")]
 use graphite_meter_net::bind_udp;
 

@@ -46,7 +46,7 @@ test("widths fit the series and align to a fixed probe spacing", () => {
 
 test("a long page suspension skips empty time without inventing outcomes and keeps recent revisions", () => {
   const day = 24 * 60 * 60 * 1000;
-  // Narrow buckets, and buckets wider than the ten-second revision horizon (a day-long stage).
+  // The loop tries narrow buckets and buckets wider than the ten-second revision horizon (a day-long stage).
   for (const spanMs of [0, 86_400_000])
     for (const back of [day + 73, day + 12]) {
       const emitted: LatencyBucket[] = [];

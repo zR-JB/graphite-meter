@@ -10,7 +10,7 @@ fn text(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap()
 }
 
-/// The usage, as this binary names itself.
+/// Builds the usage as this binary names itself.
 fn usage() -> String {
     let golden = include_str!("usage.txt");
     golden.replacen("graphite-meter-client", CLIENT, 1)

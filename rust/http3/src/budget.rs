@@ -1,11 +1,11 @@
-//! Layer state charged to the application's shared budget, the one noq charges its buffers to.
+//! Charges layer state to the application's shared budget, the one noq charges its buffers to.
 use noq::SharedBudget;
 use std::sync::Arc;
 
-/// The budget the server charges; the client has none.
+/// The server charges this budget. The client has none.
 pub type Budget = Option<Arc<dyn SharedBudget>>;
 
-/// Bytes held against the budget until dropped; without a budget every charge succeeds.
+/// Holds bytes against the budget until dropped. Without a budget every charge succeeds.
 pub(crate) struct Charge {
     budget: Budget,
     bytes: usize,

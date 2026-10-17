@@ -24,7 +24,7 @@ const bucket = (startT: number, lo: number, hi: number, median = (lo + hi) / 2):
 });
 
 test("reply bars join whole buckets to a bar's pitch, and a live bar only grows as its buckets close", () => {
-  // 40 s over 400 px: a 400 ms pitch joins pairs of 200 ms buckets on the first bucket's grid.
+  // Over 40 s on 400 px a 400 ms pitch joins pairs of 200 ms buckets on the first bucket's grid.
   const buckets = [bucket(1000, 10, 15), bucket(1200, 11, 14), bucket(1400, 12, 17), bucket(1600, 13, 16)];
   const bars = (list: LatencyBucket[]) =>
     replyBars(list, "latency", 0, 40_000, 400).map(({ lo, hi, t0, t1 }) => [lo, hi, t0, t1]);
@@ -225,7 +225,7 @@ test("shown together, the latency card reads the server latency is shown for, he
   } as unknown as Omit<Evidence, "idle">;
   const live = summary(121, 40);
   const shown = (focus: string, lens = "") => shownEvidence({ details, lens, focus, run, idle: live });
-  // Latency shown for the far server: its result and its own replies, never the run's near headline.
+  // Latency shown for the far server reads its result and its own replies, never the run's near headline.
   expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
   expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
   expect([shown("near").latency, shown("near").idle?.probeCount]).toEqual([near.latency as never, 12]);

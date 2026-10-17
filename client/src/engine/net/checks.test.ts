@@ -10,7 +10,7 @@ let net: ReturnType<typeof fakeNet> | undefined;
 afterEach(() => net?.restore());
 
 /** Discovers a server offering `throughput` and `latency`, whose probes answer as `probe` says, then `run`s its check
-    of `choice`: what it returned or the words its row shows, and when it settled. */
+    of `choice`. It yields what the check returned or the words its row shows, and when it settled. */
 async function check<P>(
   run: (context: CheckContext, known: Discovery, selection: Selection, signal: AbortSignal) => Promise<P>,
   choice: string,

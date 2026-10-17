@@ -1,4 +1,4 @@
-//! Current-thread runtimes that keep each connection's tasks, and its buffers, on one thread.
+//! Runs current-thread runtimes that keep each connection's tasks, and its buffers, on one thread.
 use std::{
     io,
     sync::atomic::{AtomicUsize, Ordering},
@@ -8,11 +8,11 @@ use tokio::{
     sync::watch,
 };
 
-/// How much lower than the caller's threads a pool runs its pinned ones on Linux, in nice steps.
+/// A pool runs its pinned threads this many nice steps below the caller's threads on Linux.
 const PINNED_NICE: i32 = 5;
 
-/// Pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and a probing pool's
-/// latency runtime preempt them; their threads end with the pool.
+/// Holds pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and a probing
+/// pool's latency runtime preempt them. Their threads end with the pool.
 #[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
@@ -22,12 +22,12 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// One pinned runtime per worker of `runtime`, none for one worker; a current-thread runtime is refused.
+    /// Spawns one pinned runtime per worker of `runtime`, none for one worker, and refuses a current-thread runtime.
     pub fn beside(runtime: &Handle) -> io::Result<Self> {
         Self::spawn(runtime, false)
     }
 
-    /// `beside`, plus a runtime of its own for latency probes and their channels.
+    /// Spawns what `beside` does, plus a runtime of its own for latency probes and their channels.
     pub fn probing(runtime: &Handle) -> io::Result<Self> {
         Self::spawn(runtime, true)
     }
@@ -65,7 +65,7 @@ impl Pool {
         Self::default()
     }
 
-    /// The runtimes in turn, or the caller's when the pool has none.
+    /// Hands out the runtimes in turn, or the caller's when the pool has none.
     pub fn next(&self) -> Handle {
         let turn = self.turn.fetch_add(1, Ordering::Relaxed);
         match self.runtimes.get(turn % self.runtimes.len().max(1)) {
@@ -78,13 +78,13 @@ impl Pool {
         &self.runtimes
     }
 
-    /// The latency runtime, or the caller's in a pool without one.
+    /// Hands out the latency runtime, or the caller's in a pool without one.
     pub fn latency(&self) -> Handle {
         self.latency.clone().unwrap_or_else(Handle::current)
     }
 }
 
-/// Lowers the calling thread's priority by `PINNED_NICE`; raising nice needs no privilege, and failing leaves it.
+/// Lowers the calling thread's priority by `PINNED_NICE`. Raising nice needs no privilege, and failing leaves it.
 fn lower_priority() {
     cfg_select! {
         target_os = "linux" => {

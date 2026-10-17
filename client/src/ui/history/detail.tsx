@@ -1,13 +1,13 @@
 // One saved result as the console showed it: the console's cards and latency lanes in the result's own unit tier, then
-// each server, how it was reached, its probe outcomes and the builds that measured it.
+// one server at a time, how it was reached, its probe outcomes and the builds that measured it.
 import type { App } from "../../app/app";
 import type { HistoryRecord } from "../../app/history/records";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { movedBytes } from "../../engine/run/result";
+import { movedBytes, type ServerMeasurementSummary } from "../../engine/run/result";
 import { STAGES } from "../../engine/run/schedule";
-import type { Role } from "../../engine/types";
+import type { Role, ServerIdentity } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
-import { computed, signal } from "../../lib/signal";
+import { computed, effect, signal, untrack } from "../../lib/signal";
 import { fmtBytes, fmtCount, fmtCounted, fmtDuration, fmtLatency, fmtRate } from "../../view/format";
 import { throughputScales } from "../../view/scales";
 import {
@@ -168,58 +168,54 @@ export function ResultDetail(props: {
     </div>
   );
 
-  const servers = run.selection.map((server) => {
-    const measured = run.servers.find((entry) => entry.server.id === server.id);
-    const failure = run.failures.find((entry) => entry.serverId === server.id);
-    const ip = measured?.throughput.clientIpVersion;
-    return (
-      <section class="group">
-        <div class="group-head">
-          <h3>{multiple ? server.name : "Server"}</h3>
-        </div>
-        <dl class="kv" ref={tipGroup}>
-          {!multiple && fact("Name", server.name)}
-          {server.location && fact("Location", server.location)}
-          {server.url && fact("Address", server.url)}
-          {failure && (
-            <div>
-              <dt>Status</dt>
-              <dd class="status">
-                <span class="status-dot inline" data-tone="err" />
-                {reasonLabel(failure.reason)}
-              </dd>
-            </div>
-          )}
-          {ip && fact("IP family", `IPv${ip}`)}
-          {multiple && [
-            fact(STAGE.download.short, () => fmtRate(measured?.download?.reportedBytesPerSec, units())),
-            fact(STAGE.upload.short, () => fmtRate(measured?.upload?.reportedBytesPerSec, units())),
-            fact(STAGE.latency.short, fmtLatency(measured?.latency?.reportedMs)),
-          ]}
-          {pathFact(
-            "throughput",
-            measured
-              ? path(
-                  "throughput",
-                  measured.throughput.transport,
-                  measured.throughput.protocol,
-                  measured.throughput.browserProtocol,
-                )
-              : UNMEASURED,
-          )}
-          {pathFact(
-            "latency",
-            measured?.latencyTarget ? path("latency", measured.latencyTarget.transport) : UNMEASURED,
-          )}
-        </dl>
-      </section>
-    );
+  // The facts follow the lens, or the latency server, until another server is picked here.
+  const followed = computed(() => lens() || run.latencyFocus);
+  const inspected = signal<string | null>(null);
+  effect(() => {
+    followed();
+    untrack(() => inspected.set(null));
   });
+  const shown = computed(() => {
+    const find = (id: string | null) => run.selection.find((server) => server.id === id);
+    return find(inspected()) ?? find(followed()) ?? run.selection[0];
+  });
+  const measured = computed(() => run.servers.find(({ server }) => server.id === shown()?.id));
+  const serverFacts = (server: ServerIdentity, entry: ServerMeasurementSummary | undefined) => {
+    const failure = run.failures.find(({ serverId }) => serverId === server.id);
+    const ip = entry?.throughput.clientIpVersion;
+    return [
+      fact("Name", server.name),
+      server.location && fact("Location", server.location),
+      server.url && fact("Address", server.url),
+      failure && (
+        <div>
+          <dt>Status</dt>
+          <dd class="status">
+            <span class="status-dot inline" data-tone="err" />
+            {reasonLabel(failure.reason)}
+          </dd>
+        </div>
+      ),
+      ip && fact("IP family", `IPv${ip}`),
+      multiple && [
+        fact(STAGE.download.short, () => fmtRate(entry?.download?.reportedBytesPerSec, units())),
+        fact(STAGE.upload.short, () => fmtRate(entry?.upload?.reportedBytesPerSec, units())),
+        fact(STAGE.latency.short, fmtLatency(entry?.latency?.reportedMs)),
+      ],
+      pathFact(
+        "throughput",
+        entry
+          ? path("throughput", entry.throughput.transport, entry.throughput.protocol, entry.throughput.browserProtocol)
+          : UNMEASURED,
+      ),
+      pathFact("latency", entry?.latencyTarget ? path("latency", entry.latencyTarget.transport) : UNMEASURED),
+    ];
+  };
 
   return (
     <article class="result-detail" aria-labelledby={title} aria-keyshortcuts="ArrowUp ArrowDown" tabindex="-1">
       <header class="sheet-head detail-head page-fill">
-        <button class="btn btn-quiet back" type="button" aria-label="Back to results" onclick={props.onClose}>
+        <button class="btn btn-quiet back" type="button" ref={tip(() => "Back to results")} onclick={props.onClose}>
           <span aria-hidden="true">←</span>
           Results
         </button>
@@ -301,7 +297,28 @@ export function ResultDetail(props: {
               </div>
             )}
           </Show>
-          {servers}
+          <section class="group">
+            <h3>Test server</h3>
+            <dl class="kv" ref={tipGroup}>
+              {multiple && (
+                <div>
+                  <dt>Server</dt>
+                  <dd>
+                    <ServerScope
+                      label="Server"
+                      servers={() => run.selection}
+                      value={() => shown()?.id ?? ""}
+                      onChange={(id) => guard(() => inspected.set(id))}
+                    />
+                  </dd>
+                </div>
+              )}
+              {() => {
+                const server = shown();
+                return server && serverFacts(server, measured());
+              }}
+            </dl>
+          </section>
           <Show when={() => accounting().length > 0}>
             {() => (
               <section class="group">
@@ -343,7 +360,10 @@ export function ResultDetail(props: {
             <h3>Build</h3>
             <dl class="kv">
               {record.build && fact("Client", record.build)}
-              {record.engine && fact("Server", record.engine)}
+              {() => {
+                const version = measured()?.engineVersion;
+                return version && fact("Server", version);
+              }}
             </dl>
           </section>
         </div>

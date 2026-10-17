@@ -1,8 +1,5 @@
 // Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
 // was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
-// A write whose count could not be read when it was queued takes the last count this tab read and knows to be current,
-// else a count read later while no tab has changed History since; failing both, it is refused rather than brought back
-// after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
@@ -11,7 +8,7 @@ const RETRY_MS = 15_000;
 /** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
 const MAX_QUEUED = 8;
 const RETRYING = "Could not save this result locally. Future writes will be retried.";
-const UNORDERED = "Could not save this result: History could not be read when it finished.";
+const UNORDERED = "Could not save this result: History did not answer when it finished.";
 
 interface HistorySaving {
   /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until

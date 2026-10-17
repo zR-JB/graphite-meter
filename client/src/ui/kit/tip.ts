@@ -169,7 +169,9 @@ function show(node: HTMLElement, entry: Entry, pinned = false, keyboard = false)
   setAnchors(node, [...names.filter((each) => !TIP_ANCHOR.test(each)), `--${id}`]);
   if (instant) bubble.dataset.show = "true";
   const describedBy = node.getAttribute("aria-describedby");
-  node.setAttribute("aria-describedby", describedBy ? `${describedBy} ${id}` : id);
+  // A tip that only repeats the name would be read twice.
+  if (entry.text.peek() !== node.ariaLabel)
+    node.setAttribute("aria-describedby", describedBy ? `${describedBy} ${id}` : id);
   // A pinned tip takes the tap or click that closes it, so it never lands on what lies beneath.
   if (pinned) {
     bubble.style.pointerEvents = "auto";

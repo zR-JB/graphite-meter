@@ -1,14 +1,14 @@
-//! Download payloads: one random block that every download repeats.
+//! Serves download payloads from one random block that every download repeats.
 
 use super::{Meter, Transfer};
 use crate::limits::{Budget, Lease};
 use bytes::Bytes;
 use std::sync::Arc;
 
-/// The block's size, also the largest chunk a source hands out.
+/// The block is this large, as is the largest chunk a source hands out.
 pub const BLOCK_BYTES: usize = 256 << 10;
 
-/// The shared payload block, charged to the budget once for the server's lifetime.
+/// The shared payload block is charged to the budget once for the server's lifetime.
 #[derive(Debug)]
 pub struct Block {
     bytes: Bytes,
@@ -17,7 +17,7 @@ pub struct Block {
 }
 
 impl Block {
-    /// Random bytes, so that no hop compresses a download; `meter` counts what sources hand out.
+    /// Fills the block with random bytes, so that no hop compresses a download. `meter` counts what sources hand out.
     pub fn new(budget: &Budget, meter: Meter) -> Result<Self, String> {
         let lease = budget
             .lease(BLOCK_BYTES)
@@ -27,7 +27,7 @@ impl Block {
         Ok(Self { bytes: bytes.into(), meter, _lease: lease })
     }
 
-    /// A source of `bytes` payload bytes, one running transfer of the meter while any of its clones lives.
+    /// Opens a source of `bytes` payload bytes, one running transfer of the meter while any of its clones lives.
     pub fn source(&self, bytes: u64) -> DownloadSource {
         let transfer = (bytes > 0).then(|| self.meter.open()).flatten();
         DownloadSource { block: self.bytes.clone(), remaining: bytes, transfer }
@@ -38,7 +38,7 @@ impl Block {
     }
 }
 
-/// One download's remaining payload, handed out as slices of the block without copying.
+/// A source hands out one download's remaining payload as slices of the block without copying.
 #[derive(Debug, Clone)]
 pub struct DownloadSource {
     block: Bytes,
@@ -47,7 +47,7 @@ pub struct DownloadSource {
 }
 
 impl DownloadSource {
-    /// The next chunk of at most `max` bytes; `None` once the payload is sent.
+    /// Takes the next chunk of at most `max` bytes, or `None` once the payload is sent.
     pub fn next(&mut self, max: usize) -> Option<Bytes> {
         let chunk = self.peek(max)?;
         self.remaining -= chunk.len() as u64;
@@ -55,7 +55,7 @@ impl DownloadSource {
         Some(chunk)
     }
 
-    /// The next chunk of at most `max` bytes without taking it.
+    /// Shows the next chunk of at most `max` bytes without taking it.
     pub fn peek(&self, max: usize) -> Option<Bytes> {
         let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
         let length = remaining.min(max).min(self.block.len());

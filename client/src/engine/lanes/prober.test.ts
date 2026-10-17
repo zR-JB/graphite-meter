@@ -3,11 +3,11 @@ import type { ProbeReport } from "../../protocol/messages";
 import type { ProbeOutcome } from "../types";
 import { Prober } from "./prober";
 
-/** A probe's fate: a reply after so many ms, none, a send that throws, a write that never confirms, or one that
-    confirms and is answered after so many ms. */
+/** A probe meets one of these fates. It gets a reply after so many ms, gets none, throws on send, never confirms its
+    write, or confirms it and is answered after so many ms. */
 type Fate = number | "lost" | "unsent" | "unconfirmed" | { confirmed: number; reply: number };
 
-/** A bus on a fake clock. At one instant replies run before the timer. */
+/** Builds a bus on a fake clock. At one instant replies run before the timer. */
 function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) => Fate) {
   const clock = { now: 0, due: null as number | null, dials: 0, wakes: 0 };
   const sent: number[] = [];
@@ -33,12 +33,13 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
         if (kind === "unconfirmed") return new Promise<void>(() => {});
         if (typeof kind === "object") {
           replies.push({ id, at: clock.now + kind.reply });
-          // A thenable the clock settles in step with replies and timers.
+          // The clock settles this thenable in step with replies and timers.
           return {
             then: (confirm: () => void) => void confirms.push({ at: clock.now + kind.confirmed, confirm }),
           } as unknown as Promise<void>;
         }
         if (kind !== "lost") replies.push({ id, at: clock.now + kind });
+        return;
       },
       hangUp() {},
       post(report) {
@@ -94,7 +95,7 @@ test("a fixed cadence spaces sends from the actual sends: a fast reply never pul
     expect(b.sent.length, `${cadence} ms`).toBe(sends);
     expect(b.sent.every((at, i) => !i || at - b.sent[i - 1]! >= cadence)).toBe(true);
   }
-  // A full window skips a turn; the overdue probe goes when a reply frees the slot.
+  // A full window skips a turn. The overdue probe goes when a reply frees the slot.
   const slow = opened(bus(80, 1, () => 200));
   slow.run(1_000);
   expect(slow.sent).toEqual([0, 200, 400, 600, 800, 1_000]);
@@ -115,10 +116,10 @@ test("a new pace spaces the next send from the last one, and the probe in flight
 });
 
 test("a reply-driven chain steps on its latest probe, its backup covers a late reply, and a full window sleeps", () => {
-  // The backup waits 250 ms before any reply; after a 10 ms one, 10 + 4 × 5 = 30 ms.
+  // The backup waits 250 ms before any reply, and 10 + 4 × 5 = 30 ms after a 10 ms one.
   const late = opened(bus(null, 4, (id) => (id === 1 ? 100 : 10)));
   late.run(115);
-  // Probe 1 is late, so its backup sends probe 2 at 40; its own reply at 110 steps nothing.
+  // Probe 1 is late, so its backup sends probe 2 at 40. Its own reply at 110 steps nothing.
   expect(late.sent).toEqual([0, 10, 40, 50, 60, 70, 80, 90, 100, 110]);
   late.run(180);
   expect(late.outcomes().map(({ rttMs }) => rttMs)).toEqual([10, 10, 10, 10, 10, 10, 10, 100, ...Array(8).fill(10)]);
@@ -137,7 +138,7 @@ test("a reply-driven chain steps on its latest probe, its backup covers a late r
 test("deadlines are fixed at send; a late reply stays a timeout yet teaches the estimator; handling pairs only when possible", () => {
   const b = opened(bus(1_000, 16, (id) => (id === 2 ? "lost" : 300)));
   b.run(2_010);
-  // The 250 ms deadline times probe 0 out; its late reply lifts the next deadline to 300 + 4 × 150 ms.
+  // The 250 ms deadline times probe 0 out. Its late reply lifts the next deadline to 300 + 4 × 150 ms.
   for (const reply of ["PONG,2", "PONG,2,1,2", "PONG,2,20000000", "PONG,2,0"]) b.prober.frame(reply, 2_010);
   b.run(2_100);
   expect(b.outcomes()).toEqual([
@@ -145,7 +146,7 @@ test("deadlines are fixed at send; a late reply stays a timeout yet teaches the 
     { rttMs: 300, timedOut: false, observedAt: 1_300, inWindow: true },
     { rttMs: 10, timedOut: false, observedAt: 2_010, inWindow: true },
   ]);
-  // 20 ms of handling cannot fit a 10 ms reply: the reply stays, the pair is dropped, never clamped.
+  // 20 ms of handling cannot fit a 10 ms reply, so the reply stays and the pair is dropped, never clamped.
   expect(b.of("outcomes").flatMap((report) => report.outcomes.map(({ handlingMs }) => handlingMs))).toEqual([
     null,
     0,
@@ -170,7 +171,7 @@ test("a window's end drains its probes to their own deadlines outside it while t
     { rttMs: 100, timedOut: false, observedAt: 120, inWindow: false },
     { rttMs: 250, timedOut: true, observedAt: 290, inWindow: false },
   ]);
-  // A write still unconfirmed at its deadline never left: a send failure, not a timeout.
+  // A write still unconfirmed at its deadline never left, so it is a send failure, not a timeout.
   expect(b.of("interrupted")).toEqual([{ type: "interrupted", count: 1, reason: "send-failed" }]);
   // Between windows the bus keeps its cadence, and nothing it sends enters a population.
   expect(b.sent.filter((at) => at > 65 && at <= 400)).toHaveLength(17);
@@ -233,7 +234,7 @@ test("a freeze leaves the probes in flight across it unresolved, whether its lat
     const b = opened(bus(80, 16, () => 200));
     b.run(1_000);
     const answered = b.outcomes().length;
-    // The worker freezes for 3 s; its timer and the replies to the two probes in flight run once it thaws.
+    // The worker freezes for 3 s. Its timer and the replies to the two probes in flight run once it thaws.
     b.clock.now = b.clock.due = 4_000;
     for (const reply of b.replies) reply.at = replyFirst ? 4_000 : 4_001;
     b.run(4_500);
@@ -270,7 +271,7 @@ test("a write the browser never confirms gives up its place at its deadline as a
 });
 
 test("a write confirmed late still counts its reply when that comes before the deadline", () => {
-  // Replies that fix the deadline near 7 s, as under bufferbloat, before the slow writes start.
+  // The first replies fix the deadline near 7 s, as under bufferbloat, before the slow writes start.
   const slow = opened(bus(1_000, 1, (id) => (id < 6 ? 6_000 : { confirmed: 3_200, reply: 3_600 })));
   slow.run(60_000);
   expect(slow.of("interrupted")).toEqual([]);
@@ -280,7 +281,7 @@ test("a write confirmed late still counts its reply when that comes before the d
 });
 
 test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wakes only to probe and report", () => {
-  /** How long after its observation each outcome crossed. */
+  /** Measures how long after its observation each outcome crossed. */
   const lags = ({ reports, stamps }: ReturnType<typeof bus>) =>
     reports.flatMap((report, i) =>
       report.type === "outcomes" ? report.outcomes.map(({ observedAt }) => stamps[i]![0] - observedAt) : [],
@@ -297,7 +298,7 @@ test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wak
   expect(dense.of("drained")).toHaveLength(1);
   const idle = opened(bus(1_000, 2, () => 1));
   idle.run(10_000);
-  // A lone reply waits for the batch, never past it; each second one wake sends and one reports.
+  // A lone reply waits for the batch, never past it. Each second one wake sends and one reports.
   expect(lags(idle)).toEqual(Array(10).fill(50));
   expect(idle.clock.wakes).toBeLessThanOrEqual(21);
 });

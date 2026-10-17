@@ -4,7 +4,7 @@ import { cp, readdir, rm } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
-import { themeScript } from "./auth/build";
+import { minified, themeScript, withoutPrefixedIs } from "./auth/build";
 import { TRUSTED_TYPES_POLICY } from "./src/lib/trusted";
 
 const env = process.env;
@@ -56,19 +56,10 @@ const app = await Bun.build({
 });
 const entry = app.outputs.find((output) => output.kind === "entry-point")!;
 const styles = app.outputs.filter((output) => output.path.endsWith(".css"));
-// Every browser the app supports has :is(); the prefixed copies Bun adds beside it would outrank it in Chrome.
-for (const output of styles) {
-  const css = await Bun.file(output.path).text();
-  await Bun.write(output.path, css.replace(/(?<=^|[{}])[^{}@]*:-(?:webkit|moz)-any\([^{}]*\{[^{}]*\}/g, ""));
-}
+for (const output of styles) await Bun.write(output.path, withoutPrefixedIs(await Bun.file(output.path).text()));
 
 // The server hashes the shell's one inline script and style into its content security policy and inserts its meta
 // tags before its one </head>.
-const inline = async (code: string, loader: "js" | "css") => {
-  const path = `/inline.${loader}`;
-  const result = await Bun.build({ entrypoints: [path], files: { [path]: code }, minify: true });
-  return (await result.outputs[0]!.text()).trim();
-};
 // <!-- theme --> takes the pre-paint theme script the sign-in pages run too.
 const theme = await themeScript();
 let shell = (await Bun.file(join(root, "index.html")).text()).replace(
@@ -77,8 +68,8 @@ let shell = (await Bun.file(join(root, "index.html")).text()).replace(
 );
 for (const tag of ["style", "script"] as const) {
   const [block, code] = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(shell) ?? [];
-  const minified = block && `<${tag}>${await inline(code!, tag === "style" ? "css" : "js")}</${tag}>`;
-  if (minified) shell = shell.replace(block, () => minified);
+  const inline = block && `<${tag}>${await minified(`/inline.${tag === "style" ? "css" : "js"}`, code!)}</${tag}>`;
+  if (inline) shell = shell.replace(block, () => inline);
 }
 const bundle = [
   ...styles.map((output) => `<link rel="stylesheet" href="${asset(output.path)}">`),

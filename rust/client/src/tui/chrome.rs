@@ -1,4 +1,4 @@
-//! What the terminal shows beyond the frame: title (OSC 2), progress bar (OSC 9;4) and links over drawn text (OSC 8).
+//! Drives the terminal beyond the frame, its title (OSC 2), progress bar (OSC 9;4) and links over drawn text (OSC 8).
 use crate::text::{self, Line, Profile};
 use std::io::Write;
 
@@ -13,13 +13,13 @@ pub struct Chrome {
 pub enum Progress {
     #[default]
     None,
-    /// Under way without a known share.
+    /// The bar is under way without a known share.
     Busy,
-    /// The percentage done.
+    /// The bar shows this percentage done.
     Share(u8),
 }
 
-/// `text` drawn from `column` of `row`, both from zero, linking to `url`.
+/// Links `text`, drawn from `column` of `row`, both from zero, to `url`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Link {
     pub row: u16,
@@ -29,13 +29,13 @@ pub struct Link {
 }
 
 impl Progress {
-    /// What clears the bar.
+    /// Clears the bar.
     pub const CLEAR: &[u8] = b"\x1b]9;4;0\x07";
 }
 
 impl Chrome {
-    /// The sequences that change what `shown` set, or set everything but an absent bar; links are rewritten once
-    /// `redrawn` cells may cover them.
+    /// Emits the sequences that change what `shown` set, or set everything but an absent bar. Links are rewritten
+    /// once `redrawn` cells may cover them.
     pub fn bytes(&self, shown: Option<&Self>, redrawn: bool, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {
@@ -61,7 +61,7 @@ impl Chrome {
     }
 }
 
-/// Whether the terminal draws the progress bar of OSC 9;4; elsewhere it may print the sequence as text.
+/// Tells whether the terminal draws the progress bar of OSC 9;4. Elsewhere it may print the sequence as text.
 pub fn progress(var: impl Fn(&str) -> Option<String>) -> bool {
     let program = var("TERM_PROGRAM").unwrap_or_default();
     let version = || {

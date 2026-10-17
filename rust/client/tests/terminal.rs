@@ -1,4 +1,4 @@
-//! The binary in a terminal, driven through a pseudo-terminal by `terminal.py` against a peer that never answers.
+//! Drives the binary in a pseudo-terminal through `terminal.py` against a peer that never answers.
 #![cfg(unix)]
 use std::{io::ErrorKind, net::TcpListener, path::Path, process::Command};
 
@@ -7,17 +7,17 @@ const DRIVER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/terminal.py");
 
 struct Session {
     status: i64,
-    /// How many of the mode's keys were sent.
+    /// Counts the mode's keys that were sent.
     keys: i64,
-    /// What the client wrote to the terminal.
+    /// The client wrote this to the terminal.
     text: String,
-    /// Seconds from the termination to the exit, in the signals mode.
+    /// Measures seconds from the termination to the exit, in the signals mode.
     exited: Option<f64>,
     /// The terminal echoes and reads lines again after the exit.
     restored: bool,
 }
 
-/// The client's session in `mode`; none without python3, which CI must have.
+/// Drives the client's session in `mode`, none without python3, which CI must have.
 fn drive(mode: &str) -> Option<Session> {
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = silent.local_addr().unwrap().port().to_string();
@@ -49,7 +49,7 @@ fn drive(mode: &str) -> Option<Session> {
     })
 }
 
-/// What the client wrote after leaving the alternate screen.
+/// Picks what the client wrote after leaving the alternate screen.
 fn after_restore(session: &Session) -> &str {
     let (_, after) = session
         .text

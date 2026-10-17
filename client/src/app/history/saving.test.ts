@@ -300,7 +300,7 @@ test("a write whose clear count could not be read never comes back after a clear
   expect(history.writes).toEqual([]);
   expect([...history.rows.keys()]).toEqual([]);
   expect([saver.pending(), saver.unsaved()]).toEqual([false, true]);
-  expect(saver.warning()).toContain("could not be read");
+  expect(saver.warning()).toContain("did not answer");
 });
 
 test("a write whose clear count could not be read takes the count this tab last read and knows to be current", async () => {

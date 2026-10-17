@@ -134,6 +134,7 @@ export class Receiver {
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
+        // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
         void this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true }).then(
           (response) => release(response),
           () => {},

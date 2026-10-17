@@ -68,7 +68,7 @@
         font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
       }
     }
-    /* A narrow sheet stacks every stepper row and the units rows alike, so no row wraps where its neighbour does not. */
+    /* A narrow sheet stacks every stepper row and the units rows alike, so no row wraps where its neighbor does not. */
     @container settings (max-width: 320px) {
       & .stage-row:has(.stepper) {
         flex-flow: column nowrap;

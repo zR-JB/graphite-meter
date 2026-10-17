@@ -7,7 +7,7 @@ import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transf
 
 /** Evidence must span this long on the client clock and on every receiver clock. */
 export const MIN_EVIDENCE_MS = 800;
-const PEAK_WINDOW_MS = 500;
+export const PEAK_WINDOW_MS = 500;
 /** Recent intervals a result keeps; older ones only count. */
 const INTERVAL_LIMIT = 128;
 const COMBINED = "";
@@ -36,7 +36,7 @@ export interface ComponentWindow {
   endResponseMs?: number;
 }
 
-export interface AggregateWindow {
+interface AggregateWindow {
   startMs: number;
   endMs: number;
   down: ComponentWindow[] | null;

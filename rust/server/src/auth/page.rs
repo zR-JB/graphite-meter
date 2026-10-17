@@ -37,7 +37,7 @@ impl Login<'_> {
             _ => "",
         };
         if !status.is_empty() {
-            main += &format!("<p class=\"notice\" data-tone=\"neutral\" role=\"status\">{status}</p>\n");
+            main += &format!("<p class=\"notice\" data-tone=\"neutral\" role=\"status\">{status}</p>");
         }
         let (tone, alert) = match self.error {
             "" => ("", String::new()),
@@ -58,26 +58,26 @@ impl Login<'_> {
         let mistyped = self.error == "password";
         if !alert.is_empty() {
             let id = if mistyped { " id=\"password-error\"" } else { "" };
-            main += &format!("<p class=\"notice\"{id} data-tone=\"{tone}\" role=\"alert\">{alert}</p>\n");
+            main += &format!("<p class=\"notice\"{id} data-tone=\"{tone}\" role=\"alert\">{alert}</p>");
         }
         let fields = format!(
-            "<input type=\"hidden\" name=\"csrf\" value=\"{}\">\n<input type=\"hidden\" name=\"challenge\" value=\"{}\">",
+            "<input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"challenge\" value=\"{}\">",
             escape(self.csrf),
             escape(self.challenge.unwrap_or_default()),
         );
         if self.oidc {
             let disabled = if self.oidc_ready { "" } else { " disabled" };
             main += &format!(
-                "<form method=\"post\" action=\"{}\">\n{fields}\n<button type=\"submit\"{disabled}>Continue with \
-                 {provider}</button>\n</form>\n",
+                "<form method=\"post\" action=\"{}\">{fields}<button type=\"submit\"{disabled}>Continue with \
+                 {provider}</button></form>",
                 AuthRoute::OidcStart.path()
             );
             if !self.oidc_ready && self.error != "provider" {
-                main += &format!("<p class=\"notice\" data-tone=\"neutral\">{unavailable}</p>\n");
+                main += &format!("<p class=\"notice\" data-tone=\"neutral\">{unavailable}</p>");
             }
         }
         if self.oidc && self.password {
-            main += "<div class=\"separator\">or</div>\n";
+            main += "<div class=\"separator\">or</div>";
         }
         if self.password {
             let invalid = if mistyped {
@@ -89,19 +89,16 @@ impl Login<'_> {
             let autofocus = if self.oidc && self.oidc_ready { "" } else { " autofocus" };
             // The username field names the one account for password managers; the server ignores it.
             main += &format!(
-                r#"<form method="post" action="{action}">
-{fields}
-<input class="sr-only" name="username" type="text" value="operator" autocomplete="username" readonly tabindex="-1" aria-hidden="true">
-<div class="field">
-<label for="password">Operator password</label>
-<div class="entry">
-<input id="password" name="password" type="password"{invalid} maxlength="1024" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false"{autofocus} required>
-<button class="reveal" type="button" data-reveal="password" aria-label="Show password" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path class="strike" d="M4 4l16 16"/></svg></button>
-</div>
-</div>
-<button type="submit">Sign in</button>
-</form>
-"#,
+                "<form method=\"post\" action=\"{action}\">{fields}<input class=\"sr-only\" name=\"username\" \
+                 type=\"text\" value=\"operator\" autocomplete=\"username\" readonly tabindex=\"-1\" \
+                 aria-hidden=\"true\"><div class=\"field\"><label for=\"password\">Operator password</label><div \
+                 class=\"entry\"><input id=\"password\" name=\"password\" type=\"password\"{invalid} \
+                 maxlength=\"1024\" autocomplete=\"current-password\" autocapitalize=\"none\" autocorrect=\"off\" \
+                 spellcheck=\"false\"{autofocus} required><button class=\"reveal\" type=\"button\" \
+                 data-reveal=\"password\" aria-label=\"Show password\" aria-pressed=\"false\" hidden><svg \
+                 viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 \
+                 12 18.5 2.5 12 2.5 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/><path class=\"strike\" \
+                 d=\"M4 4l16 16\"/></svg></button></div></div><button type=\"submit\">Sign in</button></form>",
                 action = AuthRoute::Password.path()
             );
         }
@@ -110,11 +107,10 @@ impl Login<'_> {
 }
 
 /// The locked meter above the sign-in form.
-const FACE: &str = r#"<div class="face" aria-hidden="true"><svg viewBox="0 0 120 104"><path class="ticks" d="M23.94 96.06L21.11 98.89M9.98 69.95L6.06 70.73M12.88 40.48L9.19 38.95M31.67 17.60L29.44 14.27M60 9L60 5M88.33 17.60L90.56 14.27M107.12 40.48L110.81 38.95M110.02 69.95L113.94 70.73M96.06 96.06L98.89 98.89"/><path class="track" d="M28.89 91.11A44 44 0 1 1 91.11 91.11"/><path class="sweep" d="M28.89 91.11A44 44 0 1 1 91.11 91.11" pathLength="1"/><g class="needle"><circle cx="28.89" cy="91.11" r="5"/></g><path class="lock" d="M54 55v-5a6 6 0 0 1 12 0v5M51.5 55h17v12h-17z"/></svg></div>
-<h1>Sign in</h1>
-<p>This measurement server is private.</p>
-<p class="host" data-host></p>
-"#;
+const FACE: &str = concat!(
+    r#"<div class="face" aria-hidden="true"><svg viewBox="0 0 120 104"><path class="ticks" d="M23.94 96.06L21.11 98.89M9.98 69.95L6.06 70.73M12.88 40.48L9.19 38.95M31.67 17.60L29.44 14.27M60 9L60 5M88.33 17.60L90.56 14.27M107.12 40.48L110.81 38.95M110.02 69.95L113.94 70.73M96.06 96.06L98.89 98.89"/><path class="track" d="M28.89 91.11A44 44 0 1 1 91.11 91.11"/><path class="sweep" d="M28.89 91.11A44 44 0 1 1 91.11 91.11" pathLength="1"/><g class="needle"><circle cx="28.89" cy="91.11" r="5"/></g><path class="lock" d="M54 55v-5a6 6 0 0 1 12 0v5M51.5 55h17v12h-17z"/></svg></div>"#,
+    r#"<h1>Sign in</h1><p>This measurement server is private.</p><p class="host" data-host></p>"#,
+);
 
 /// The approval page: an approval to confirm, a refusal, or a login at its client limit.
 pub(super) enum Cli<'a> {
@@ -140,14 +136,14 @@ impl Cli<'_> {
                     Refused::Busy => "Too many approvals are open. Try again from the client in a few minutes.",
                     Refused::Link => "This approval link is not valid. Start sign-in again from the client.",
                 };
-                ("Approval unavailable", format!("<h1>Approval unavailable</h1>\n<p>{why}</p>\n"))
+                ("Approval unavailable", format!("<h1>Approval unavailable</h1><p>{why}</p>"))
             }
             Self::Capacity { limit } => (
                 "Client limit reached",
                 format!(
-                    "<h1>Client limit reached</h1>\n<p>This sign-in already has {limit} approved clients, the most it \
-                     can have.</p>\n<p>Renewing the sign-in ends their access and any tests they are running.</p>\n\
-                     <p><a href=\"{}\">Renew this sign-in</a>, then choose Sign in again on the site that asked.</p>\n",
+                    "<h1>Client limit reached</h1><p>This sign-in already has {limit} approved clients, the most it \
+                     can have.</p><p>Renewing the sign-in ends their access and any tests they are running.</p>\
+                     <p><a href=\"{}\">Renew this sign-in</a>, then choose Sign in again on the site that asked.</p>",
                     AuthRoute::Login.path()
                 ),
             ),
@@ -157,8 +153,8 @@ impl Cli<'_> {
                         "Approve browser client",
                         format!(
                             "<p>Approve only a site you opened yourself. The site below can then run tests as you \
-                             until you sign out or this sign-in expires.</p>\n<p class=\"origin\"><strong>{}</strong>\
-                             </p>\n<p>Confirm that this code matches the code on that site.</p>",
+                             until you sign out or this sign-in expires.</p><p class=\"origin\"><strong>{}</strong>\
+                             </p><p>Confirm that this code matches the code on that site.</p>",
                             escape(origin)
                         ),
                         AuthRoute::BrowserApprove,
@@ -166,16 +162,16 @@ impl Cli<'_> {
                     None => (
                         "Approve terminal client",
                         "<p>Approve only a terminal you started yourself. It can then run tests as you until you sign \
-                         out or this sign-in expires.</p>\n<p>Confirm that this code matches the code in your \
+                         out or this sign-in expires.</p><p>Confirm that this code matches the code in your \
                          terminal.</p>"
                             .into(),
                         AuthRoute::CliApprove,
                     ),
                 };
                 let main = format!(
-                    "<h1>{title}</h1>\n{intro}\n<code class=\"code\">{}</code>\n<form method=\"post\" action=\"{}\">\n\
-                     <input type=\"hidden\" name=\"csrf\" value=\"{}\">\n<input type=\"hidden\" name=\"challenge\" \
-                     value=\"{}\">\n<button type=\"submit\">Approve this client</button>\n</form>\n",
+                    "<h1>{title}</h1>{intro}<code class=\"code\">{}</code><form method=\"post\" action=\"{}\">\
+                     <input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"challenge\" \
+                     value=\"{}\"><button type=\"submit\">Approve this client</button></form>",
                     escape(code),
                     action.path(),
                     escape(csrf),
@@ -194,7 +190,7 @@ pub(super) fn cli_done(browser: bool) -> String {
         true => ("Browser client approved", "The site you approved can now run tests as you."),
         false => ("Terminal client approved", "Your terminal can now run tests as you."),
     };
-    let main = format!("<h1>{title}</h1>\n<p>{text} You can close this tab and return to it.</p>\n");
+    let main = format!("<h1>{title}</h1><p>{text} You can close this tab and return to it.</p>");
     page(title, "", "card completion", &main, false)
 }
 
@@ -205,34 +201,20 @@ pub(super) fn continuing(challenge: Option<&Challenge>, opening: bool) -> String
         Some(challenge) => (escape(&challenge.page()), "the approval page"),
         None => ("/".into(), "Graphite&nbsp;Meter"),
     };
-    let head = format!("<meta http-equiv=\"refresh\" content=\"0; url={next}\">\n");
-    let main = format!("<h1>{title}</h1>\n<p>Taking you to {place}…</p>\n<p><a href=\"{next}\">Continue</a></p>\n");
+    let head = format!("<meta http-equiv=\"refresh\" content=\"0; url={next}\">");
+    let main = format!("<h1>{title}</h1><p>Taking you to {place}…</p><p><a href=\"{next}\">Continue</a></p>");
     page(title, &head, "card completion", &main, false)
 }
 
 /// A whole page: `title` before the product name, `head` and `main` markup, and the pending script beside forms.
 fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String {
-    let pending = if forms { format!("<script>{PENDING}</script>\n") } else { String::new() };
+    let pending = if forms { format!("<script>{PENDING}</script>") } else { String::new() };
     format!(
-        r##"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-{ICON}
-{head}<title>{title} · Graphite Meter</title>
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1013">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f1f2f5">
-<script>{THEME}</script>
-<style>{STYLES}</style>
-</head>
-<body>
-<main class="{class}">
-{BRAND}
-{main}</main>
-{pending}</body>
-</html>
-"##
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
+         content=\"width=device-width,initial-scale=1\">{ICON}{head}<title>{title} · Graphite Meter</title><meta \
+         name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"#0d1013\"><meta \
+         name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f1f2f5\"><script>{THEME}</script>\
+         <style>{STYLES}</style></head><body><main class=\"{class}\">{BRAND}{main}</main>{pending}</body></html>"
     )
 }
 

@@ -85,6 +85,8 @@ async function churnSurfaces(cycles: number) {
   }
 }
 
+const CYCLES = 5;
+
 for (const width of [1600, 1000, 390]) {
   test.chrome(
     `rapid surface reversals release resources at ${width}px, including during a run`,
@@ -124,17 +126,24 @@ for (const width of [1600, 1000, 390]) {
       const started = Date.now();
       await runButton(page, "Run again").click();
       await expect(phase(page, "download")).toHaveCount(1);
-      // Each cycle must answer within the harness deadline; the complete batch
-      // can exceed it on a CPU-throttled CI runner without a stalled page.
-      for (let cycle = 0; cycle < 10; cycle++) await page.evaluate(churnSurfaces, 1);
+      // One cycle per evaluate stays within the harness deadline on a throttled CI runner.
+      const complete = () => page.evaluate(() => !!document.querySelector('#console[data-phase="complete"]'));
+      for (let cycle = 0; cycle < 10 && !(await complete()); cycle++) await page.evaluate(churnSurfaces, 1);
       const saved = await savedResult(page, started, 30_000);
       expect(saved.result.outcome).toBe("complete");
-      for (let cycle = 0; cycle < 10; cycle++) await page.evaluate(churnSurfaces, 1);
-      await page.evaluate(settled);
-      await page.cdp("HeapProfiler.collectGarbage");
-      const after = await page.cdp("Memory.getDOMCounters");
-      expect(after.nodes - before.nodes).toBeLessThan(100);
-      expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(10);
+      const counted = async () => {
+        await page.evaluate(settled);
+        await page.cdp("HeapProfiler.collectGarbage");
+        return page.cdp("Memory.getDOMCounters");
+      };
+      const finished = await counted();
+      for (let cycle = 0; cycle < CYCLES; cycle++) await page.evaluate(churnSurfaces, 1);
+      const after = await counted();
+      expect(finished.nodes - before.nodes).toBeLessThan(100);
+      expect(finished.jsEventListeners - before.jsEventListeners).toBeLessThan(10);
+      // A leak grows with each cycle; a settled page measures the same after any number of them.
+      expect(after.nodes - finished.nodes).toBeLessThan(2 * CYCLES);
+      expect(after.jsEventListeners - finished.jsEventListeners).toBeLessThan(CYCLES);
       expect(await page.evaluate(() => (window as any).surfaceFrames.size)).toBe(0);
       expect(
         await page.evaluate(() => document.querySelectorAll("dialog[open], :popover-open:not(.tooltip)").length),
@@ -143,9 +152,8 @@ for (const width of [1600, 1000, 390]) {
         await page.evaluate(() => !!document.activeElement?.isConnected && !document.activeElement.closest("[inert]")),
       ).toBe(true);
     },
-    // Twenty complete surface cycles under CPU throttling can exceed the
-    // ordinary test timeout when CI runs other browser files concurrently.
-    { monitorDisplay: false, timeout: 180_000 },
+    // Surface cycles under CPU throttling can exceed the ordinary test timeout beside other browser files.
+    { monitorDisplay: false, timeout: 120_000 },
   );
 }
 
@@ -330,7 +338,6 @@ test.chrome("a live stage keeps its open tooltip through progress and phase chan
     config: { duration: { ...baseConfig.duration, downloadMs: 2_500 } },
   });
   await ready(page);
-  const started = Date.now();
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1);
   const chip = page.locator('.stage-track [data-tone="download"][role="switch"]');
@@ -347,7 +354,6 @@ test.chrome("a live stage keeps its open tooltip through progress and phase chan
   const id = await tip.getAttribute("id");
   await expect(phase(page, "upload")).toHaveCount(1, { timeout: 10_000 });
   expect(await tip.getAttribute("id")).toBe(id);
-  await savedResult(page, started, 20_000);
   await page.cdp("Input.dispatchMouseEvent", {
     type: "mouseMoved",
     x: 0,

@@ -1,13 +1,13 @@
-// A finger drags a floating sheet out by its edge; released, it carries the finger's speed into the spring, to rest
+// A finger drags a floating sheet out by its edge. Released, it carries the finger's speed into the spring, to rest
 // or out. A mouse never drags a sheet.
 import { animate } from "../../lib/frame";
 import { reducedMotion, spring } from "../../lib/motion";
 
 export type Edge = "bottom" | "left" | "right";
 
-/** Inside this radius a finger taps; past it the sheet follows from where the finger left it, so it never jumps. */
+/** Inside this radius a finger taps. Past it the sheet follows from where the finger left it, so it never jumps. */
 const SLOP_PX = 10;
-/** The finger's speed is read over its last moves; one held still this long before lifting has none. */
+/** The finger's speed is read over its last moves. One held still this long before lifting has none. */
 const VELOCITY_WINDOW_MS = 100;
 const HELD_MS = 60;
 /** Released, the sheet leaves when its offset plus this long at the finger's speed passes a share of its size, so a
@@ -25,15 +25,15 @@ const rubber = (offset: number) => (offset >= 0 ? offset : -GIVE_PX * (1 - 1 / (
 interface Gesture {
   id: number;
   edge: Edge;
-  /** How far out the sheet goes to be hidden. */
+  /** The sheet goes this far out to be hidden. */
   size: number;
   startX: number;
   startY: number;
-  /** The finger's place along the dismissing direction where the drag took hold; null within the slop. */
+  /** The finger's place along the dismissing direction where the drag took hold, or null within the slop. */
   origin: number | null;
   from: number;
   samples: { t: number; p: number }[];
-  /** Where the finger landed in the content; null on the sheet's head or handle, which always drag. */
+  /** Records where the finger landed in the content. The sheet's head or handle, which always drag, leave null. */
   content: Element | null;
 }
 
@@ -41,8 +41,8 @@ interface Gesture {
     scrim with it. */
 export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () => void): () => void {
   const host = sheet.parentElement ?? sheet;
-  // Any box from the finger up to the sheet scrolled from its top, whichever scrolls in this layout: the content's
-  // body, or the sheet itself on a short screen.
+  // Checks every box from the finger up to the sheet for a scroll from its top, since what scrolls depends on the
+  // layout, the content's body or the sheet itself on a short screen.
   const scrolledAbove = (from: Element) => {
     for (let node: Element | null = from; node; node = node === sheet ? null : node.parentElement)
       if (node.scrollTop > 0) return true;
@@ -52,7 +52,7 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
   let stop: (() => void) | null = null;
   let gesture: Gesture | null = null;
 
-  // Its closed place in CSS: its height, or its width and the gap its closed transform clears.
+  // The closed place in CSS is its height, or its width and the gap its closed transform clears.
   const extent = (at: Edge) =>
     at === "bottom"
       ? sheet.offsetHeight
@@ -79,7 +79,7 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
   };
 
   function start(event: TouchEvent) {
-    // A second finger is a pinch, not a drag: the sheet goes back to rest and the browser zooms.
+    // A second finger is a pinch, not a drag, so the sheet goes back to rest and the browser zooms.
     if (event.touches.length > 1) {
       if (gesture) settle(gesture, false, event.timeStamp);
       return;
@@ -138,7 +138,7 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
     settle(current, event.type === "touchend", event.timeStamp);
   }
 
-  /** Lets go of a drag: lifted, out of view when its offset and speed carry it far enough; else back to rest. */
+  /** Lets go of a drag. Lifted, the sheet leaves when offset and speed carry it far enough, else it returns to rest. */
   function settle(current: Gesture, lifted: boolean, time: number) {
     gesture = null;
     if (current.origin === null) return;

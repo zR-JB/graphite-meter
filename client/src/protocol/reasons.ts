@@ -1,4 +1,4 @@
-// The seven reasons any failure carries (api/failurereasons.txt), with the words every view shows for them.
+// Names the seven reasons any failure carries (api/failurereasons.txt), with the words every view shows for them.
 export const FAILURE_REASONS = {
   "preparation-failed": "Could not prepare the connection",
   "connection-lost": "Connection lost",

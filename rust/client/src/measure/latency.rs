@@ -1,4 +1,4 @@
-//! One latency population's accounting, and the probe deadline (`docs/MEASUREMENTS.md`, `api/latency.testvectors.json`).
+//! Tracks a latency population and the probe deadline (`docs/MEASUREMENTS.md`, `api/latency.testvectors.json`).
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -8,10 +8,10 @@ const DEADLINE_FLOOR: Duration = Duration::from_millis(250);
 const DEADLINE_CEILING: Duration = Duration::from_secs(10);
 const MIN_RTTVAR: Duration = Duration::from_millis(1);
 
-/// What became of one probe.
+/// Says what became of one probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOutcome {
-    /// A matched reply after `rtt`, with the server's own handling time.
+    /// A reply matched after `rtt` and carried the server's own handling time.
     Reply {
         rtt: Duration,
         handling: Duration,
@@ -23,12 +23,12 @@ pub enum ProbeOutcome {
     SendFailed,
 }
 
-/// The replies, timeouts and continuity of one server's probes in one stage.
+/// Tracks the replies, timeouts and continuity of one server's probes in one stage.
 #[derive(Debug, Clone, Default)]
 pub struct Latency {
-    /// Replies by round trip rounded to the microsecond.
+    /// Counts replies by round trip rounded to the microsecond.
     rtts: BTreeMap<Duration, usize>,
-    /// The counts; `summary()` adds the statistics.
+    /// Holds the counts only. `summary()` adds the statistics.
     counts: Summary,
     previous: Option<Duration>,
     variation: Duration,
@@ -37,7 +37,7 @@ pub struct Latency {
     handling: Duration,
 }
 
-/// A population's statistics.
+/// Holds a population's statistics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub replies: usize,
@@ -52,7 +52,7 @@ pub struct Summary {
     pub spread: Option<Spread>,
 }
 
-/// What a box plot draws of the replies: the fastest, the 10th and 90th percentiles and the slowest.
+/// A box plot draws the fastest reply, the 10th and 90th percentiles and the slowest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Spread {
     pub min: Duration,
@@ -61,7 +61,7 @@ pub struct Spread {
     pub max: Duration,
 }
 
-/// Mean raw round trip and server handling over the same replies.
+/// Averages the raw round trip and the server handling over the same replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
     pub pairs: usize,
@@ -95,7 +95,7 @@ impl Latency {
         }
     }
 
-    /// A reconnect or stage boundary: the next reply has no predecessor to vary from.
+    /// After a reconnect or stage boundary the next reply has no predecessor to vary from.
     pub fn break_continuity(&mut self) {
         self.previous = None;
     }
@@ -103,7 +103,7 @@ impl Latency {
     pub fn summary(&self) -> Summary {
         let (replies, pairs) = (self.counts.replies, self.counts.jitter_pairs);
         let percentile = |share: usize| (share * replies).div_ceil(100).max(1);
-        // The two middle replies of an even count, the one middle reply twice of an odd one.
+        // An even count takes its two middle replies, an odd one its single middle reply twice.
         let middle = (replies.div_ceil(2), replies / 2 + 1);
         let ranks = [1, percentile(10), middle.0, middle.1, percentile(90), percentile(95), replies];
         let ranked = (replies > 0).then(|| self.ranked(ranks));
@@ -121,7 +121,7 @@ impl Latency {
         }
     }
 
-    /// The replies of the 1-based `ranks`, which ascend, in round-trip order: one walk over the histogram.
+    /// Finds the replies at the ascending 1-based `ranks` of round-trip order in one walk over the histogram.
     fn ranked<const N: usize>(&self, ranks: [usize; N]) -> [Duration; N] {
         debug_assert!(ranks.is_sorted(), "{ranks:?}");
         let (mut found, mut next, mut seen) = ([Duration::ZERO; N], 0, 0);
@@ -140,7 +140,7 @@ impl Latency {
 }
 
 impl Summary {
-    /// Timeouts among resolved probes; none without a resolved probe.
+    /// Returns the share of timeouts among resolved probes, or none without a resolved probe.
     pub fn timeout_ratio(&self) -> Option<f64> {
         let resolved = self.replies + self.timeouts;
         (resolved > 0).then(|| self.timeouts as f64 / resolved as f64)
@@ -152,7 +152,7 @@ fn mean(sum: Duration, count: usize) -> Duration {
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
-/// A population as its stage leaves it; `complete` unless it failed or the stage stopped.
+/// Captures a population as its stage leaves it. It is `complete` unless it failed or the stage stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Population {
     pub summary: Summary,
@@ -160,23 +160,23 @@ pub struct Population {
 }
 
 impl Population {
-    /// The median a view shows: none without a reply, or for an incomplete population of too few outcomes.
+    /// Returns the median a view shows, none without a reply or for an incomplete population of too few outcomes.
     pub fn median(&self) -> Option<Duration> {
         let counted = self.complete || self.summary.replies + self.summary.timeouts >= FAILED_MEDIAN_OUTCOMES;
         self.summary.p50.filter(|_| counted)
     }
 }
 
-/// Loaded median minus idle median in milliseconds; negative values stay.
+/// Subtracts the idle median from the loaded one in milliseconds. Negative values stay.
 pub fn added(loaded: Option<Duration>, idle: Option<Duration>) -> Option<f64> {
     let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
     Some(ms(loaded?) - ms(idle?))
 }
 
-/// A probe's deadline, SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms–10 s (RFC 6298), learnt from every reply.
+/// A probe's deadline is SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms–10 s (RFC 6298), learnt from every reply.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Deadline {
-    /// SRTT and RTTVAR once a reply arrived.
+    /// Holds SRTT and RTTVAR once a reply arrived.
     estimate: Option<(Duration, Duration)>,
 }
 
@@ -212,7 +212,7 @@ mod tests {
     fn one_walk_finds_every_rank_a_sorted_list_does() {
         for count in 1..=40_u64 {
             let mut latency = Latency::default();
-            // Repeated round trips in scrambled order.
+            // The round trips repeat in scrambled order.
             let mut rtts: Vec<_> = (0..count).map(|index| ms(1 + (index * 7919) % 13)).collect();
             for &rtt in &rtts {
                 latency.record(ProbeOutcome::Reply { rtt, handling: Duration::ZERO });

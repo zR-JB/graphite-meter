@@ -1,4 +1,4 @@
-//! The settings sheet's rows: what each shows and says, grouped as the browser's settings are.
+//! Lays out the settings sheet's rows, what each shows and says, grouped as the browser's settings are.
 use super::{
     App, Overlay, Target,
     frame::Entry,
@@ -13,7 +13,7 @@ use crate::{
 use graphite_meter_proto::catalog::MAX_SELECTED;
 use std::time::Duration;
 
-/// A settings row.
+/// A settings row is one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
     Address,
@@ -33,7 +33,7 @@ pub enum Row {
     Reset,
 }
 
-/// Every row in order: the heading of the group it starts, the row, its label and what the sheet's foot says of it.
+/// Each row in order carries the heading of the group it starts, the row, its label and what the sheet's foot says.
 #[rustfmt::skip]
 const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
     (Some("Server"), Row::Address, "Server address",
@@ -60,7 +60,7 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
 ];
 
 impl Row {
-    /// The row's label and what the sheet's foot says of it.
+    /// Gives the row's label and what the sheet's foot says of it.
     fn text(self) -> (&'static str, &'static str) {
         let row = ROWS.iter().find(|(_, row, ..)| *row == self);
         row.map(|(.., label, help)| (*label, *help)).unwrap_or_default()
@@ -71,7 +71,7 @@ impl Row {
     }
 }
 
-/// The settings sheet's focused row, and whether the chooser opens once the check in progress ends.
+/// Tracks the settings sheet's focused row, and whether the chooser opens once the check in progress ends.
 #[derive(Debug, Default)]
 pub struct Setup {
     pub row: usize,
@@ -97,7 +97,7 @@ impl App {
         self.resetting(false);
     }
 
-    /// Whether a reset awaits its confirmation, setting it to `awaits`.
+    /// Sets whether a reset awaits its confirmation to `awaits` and returns what it was.
     pub(super) fn resetting(&mut self, awaits: bool) -> bool {
         match &mut self.overlay {
             Overlay::Settings { resetting, .. } => std::mem::replace(resetting, awaits),
@@ -116,7 +116,7 @@ impl App {
         }
     }
 
-    /// A row's value as the sheet shows it, greyed while it does nothing.
+    /// Shows a row's value as the sheet does, greyed while it does nothing.
     fn value(&self, row: Row) -> Line {
         let (config, palette) = (&self.config, &self.palette);
         let mut inert = false;
@@ -161,7 +161,7 @@ impl App {
         }
     }
 
-    /// A switch: on in ink, off as a quiet ring.
+    /// A switch shows on in ink and off as a quiet ring.
     pub(super) fn switch_mark(&self, on: bool) -> Line {
         match on {
             true => Line::styled("● on ", self.palette.accent),
@@ -169,7 +169,7 @@ impl App {
         }
     }
 
-    /// The sheet's entries and the focused row's index among them.
+    /// Lists the sheet's entries and the focused row's index among them.
     pub(super) fn settings_entries(&self) -> (Vec<Entry>, usize) {
         let (mut entries, mut focus) = (Vec::new(), 0);
         for (index, &(heading, row, label, _)) in ROWS.iter().enumerate() {
@@ -193,7 +193,7 @@ impl App {
         (entries, focus)
     }
 
-    /// What the sheet's foot says: the editor's error, or what the focused row does.
+    /// The sheet's foot says the editor's error, or what the focused row does.
     pub(super) fn settings_footer(&self) -> Vec<Line> {
         if let Some(error) = self.editor().and_then(|editor| editor.error.clone()) {
             return vec![Line::styled(error, self.palette.warn)];
@@ -227,7 +227,7 @@ impl App {
         vec![Line::styled(help, self.palette.muted)]
     }
 
-    /// The selected servers' names and how many are ready.
+    /// Names the selected servers and says how many are ready.
     fn selection(&self) -> String {
         let names: Vec<_> = self.view.servers.iter().map(|server| server.name.as_str()).collect();
         let (servers, ready) = (names.len(), self.ready().len());
@@ -243,7 +243,7 @@ impl App {
         }
     }
 
-    /// How long the configured stages take with their warmups.
+    /// Sums how long the configured stages take with their warmups.
     pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
         let total: Duration = plan.iter().map(|(_, duration)| *duration + self.config.warmup).sum();
