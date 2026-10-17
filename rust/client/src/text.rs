@@ -148,33 +148,27 @@ pub fn width(text: &str) -> usize {
     text.width()
 }
 
-/// `parts` joined by ` · ` while a line holds `cells`.
+/// `parts` joined by ` · ` while a line holds `cells`; one empty line for none.
 pub fn wrap(parts: &[String], cells: usize) -> Vec<String> {
-    let mut lines = vec![String::new()];
-    for part in parts {
-        let line = lines.last_mut().expect("one line at least");
-        if line.is_empty() {
-            line.clone_from(part);
-        } else if width(line) + 3 + width(part) <= cells {
-            line.push_str(" · ");
-            line.push_str(part);
-        } else {
-            lines.push(part.clone());
-        }
-    }
-    lines
+    let lines = joined(parts.iter().map(String::as_str), " · ", cells);
+    if lines.is_empty() { vec![String::new()] } else { lines }
 }
 
 /// `text`'s words filled into lines of at most `cells`; a longer word takes a line of its own.
 pub fn fill(text: &str, cells: usize) -> Vec<String> {
+    joined(text.split_whitespace(), " ", cells)
+}
+
+fn joined<'a>(parts: impl Iterator<Item = &'a str>, separator: &str, cells: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
-    for word in text.split_whitespace() {
+    for part in parts {
         match lines.last_mut() {
-            Some(line) if width(line) + 1 + width(word) <= cells => {
-                line.push(' ');
-                line.push_str(word);
+            Some(line) if line.is_empty() => line.push_str(part),
+            Some(line) if width(line) + width(separator) + width(part) <= cells => {
+                line.push_str(separator);
+                line.push_str(part);
             }
-            _ => lines.push(word.to_owned()),
+            _ => lines.push(part.to_owned()),
         }
     }
     lines
@@ -213,4 +207,17 @@ fn sgr(style: Style, profile: Profile) -> Option<String> {
     let codes = [bold, color(style.fg, 30), color(style.bg, 40)];
     let codes: Vec<_> = codes.into_iter().flatten().collect();
     (!codes.is_empty()).then(|| codes.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parts_join_while_they_fit_and_an_empty_line_takes_no_separator() {
+        let parts = |parts: &[&str]| parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>();
+        assert_eq!(wrap(&parts(&["", "a", "bb"]), 6), ["a · bb"]);
+        assert_eq!(wrap(&parts(&["aaa", "bbb"]), 8), ["aaa", "bbb"]);
+        assert_eq!(wrap(&[], 8), [""]);
+    }
 }

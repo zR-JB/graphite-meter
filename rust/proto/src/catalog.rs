@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use std::{collections::HashSet, fmt, sync::Arc};
 
 /// A catalog holds at most this many servers, `self` included.
-pub const MAX_SERVERS: usize = 32;
+const MAX_SERVERS: usize = 32;
 /// A selection holds at most this many servers.
 pub const MAX_SELECTED: usize = 4;
 /// An entry names at most this many additional origins.
-pub const MAX_ADDITIONAL_ORIGINS: usize = 32;
+const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
 /// A catalog server ID: 1–64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -25,6 +25,8 @@ impl Serialize for ServerId {
     }
 }
 
+const OWN: &str = "self";
+
 impl ServerId {
     pub fn parse(text: &str) -> Option<Self> {
         let id_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
@@ -33,7 +35,7 @@ impl ServerId {
 
     /// `self`: the server that serves the catalog.
     pub fn own() -> Self {
-        Self("self".into())
+        Self(OWN.into())
     }
 
     pub fn as_str(&self) -> &str {
@@ -156,7 +158,7 @@ impl ServerCatalog {
             let id = entry.id.clone();
             match entry.received(&servers) {
                 Ok(entry) => servers.push(entry),
-                Err(error) if id == "self" => return Err(refused(error)),
+                Err(error) if id == OWN => return Err(refused(error)),
                 Err(error) => rejected.push(Rejected { id, error }),
             }
         }

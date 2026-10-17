@@ -35,18 +35,18 @@ impl SendRequest {
 
     /// Opens a request stream and sends the head, within the server's field section limit.
     pub async fn send_request(&self, request: http::Request<()>) -> Result<RequestStream, Error> {
-        if self.0.going_away() {
-            return Err(Error::GoingAway);
-        }
         self.open(request.into_parts().0, None).await
     }
 
-    /// Sends a request head; `protocol` makes it an extended CONNECT.
+    /// Sends a request head unless the server sent GOAWAY; `protocol` makes it an extended CONNECT.
     pub(crate) async fn open(
         &self,
         parts: http::request::Parts,
         protocol: Option<&str>,
     ) -> Result<RequestStream, Error> {
+        if self.0.going_away() {
+            return Err(Error::GoingAway);
+        }
         let head = fields::encode_request(&parts, protocol, self.0.peer_field_limit()).map_err(|_| Error::Refused)?;
         let charges = stream::charges(&self.0.budget).ok_or(Error::Refused)?;
         let (send, recv) = self.0.quic.open_bi().await?;

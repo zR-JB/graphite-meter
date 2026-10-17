@@ -107,7 +107,7 @@ mod tests {
             let attempt = Attempt { started: start + ms(started), moved };
             retry.after(fault, attempt, start + ms(now))
         };
-        let lost = || Fault::Lost("reset".into());
+        let lost = || Fault::Lost;
         assert_eq!(after(lost(), 0, false, 10).unwrap(), QUICK_FAILURE);
         assert_eq!(after(lost(), 500, false, 1500).unwrap(), Duration::ZERO);
         assert_eq!(after(lost(), 1500, true, 2500).unwrap(), Duration::ZERO, "moving bytes is not failing");

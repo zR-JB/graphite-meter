@@ -1,7 +1,12 @@
 //! Why a server refused an upload (`api/uploadrefusals.txt`, `api/uploadrefusalreasons.txt`).
 
 use crate::reason::FailureReason;
-use http::StatusCode;
+use http::{HeaderName, StatusCode};
+
+/// Names an upload refusal.
+pub const UPLOAD_REFUSAL_HEADER: HeaderName = HeaderName::from_static("x-graphite-upload-refusal");
+/// Marks, with `required`, a refusal that a sign-in would lift.
+pub const SIGN_IN_HEADER: HeaderName = HeaderName::from_static("graphite-meter-auth");
 
 table! {
     /// Why a server refused an upload: its name, exact message, HTTP status and the failure it ends a stage with.

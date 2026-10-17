@@ -22,17 +22,17 @@ use std::{
 use tokio::{sync::Notify, time::Instant};
 
 /// Aggregates the server holds at once, finished ones until their retention ends.
-pub const MAX_LIVE: usize = 1000;
+const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
-pub const MAX_PER_CLIENT: usize = 32;
+const MAX_PER_CLIENT: usize = 32;
 /// An ID creates state for this long after it was minted.
-pub const ID_LIFETIME: Duration = Duration::from_mins(2);
-const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_secs() * 1_000_000_000;
+const ID_LIFETIME: Duration = Duration::from_mins(2);
+const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_nanos() as u64;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
-pub const RETENTION: Duration = ID_LIFETIME;
+const RETENTION: Duration = ID_LIFETIME;
 /// Retention is swept at most this often.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
-const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_secs() * 1_000_000_000;
+const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_nanos() as u64;
 
 const ID_PREFIX: &str = "gmu_";
 /// An ID signs its issue time and 16 random bytes.
@@ -211,7 +211,7 @@ impl Entries {
 
 /// How a request reaches an aggregate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Access {
+enum Reach {
     /// A data lane, which may create the aggregate.
     Join,
     /// A progress reader, which may create it.
@@ -252,7 +252,7 @@ impl Uploads {
         lane: Lane,
         transfer: Option<Arc<Transfer>>,
     ) -> Result<UploadSink, UploadRefusal> {
-        let aggregate = self.access(id, owner, Access::Join)?;
+        let aggregate = self.reach(id, owner, Reach::Join)?;
         Ok(UploadSink::new(aggregate, lane, transfer))
     }
 
@@ -262,7 +262,7 @@ impl Uploads {
 
     /// Attaches the progress feed, replacing the previous reader's.
     pub fn subscribe(&self, id: &str, owner: Option<&ClientKeys>) -> Result<ProgressFeed, UploadRefusal> {
-        let aggregate = self.access(id, owner, Access::Watch)?;
+        let aggregate = self.reach(id, owner, Reach::Watch)?;
         let reader = {
             let mut life = aggregate.life();
             life.reader += 1;
@@ -272,14 +272,29 @@ impl Uploads {
         Ok(ProgressFeed::new(self.clone(), aggregate, reader))
     }
 
+    /// Whether `subscribe` would attach the feed, creating and replacing nothing.
+    pub fn watchable(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
+        let narrowest = owner
+            .and_then(ClientKeys::narrowest)
+            .ok_or(UploadRefusal::OwnerMismatch)?;
+        let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
+        let entries = self.entries();
+        match entries.live.get(&id) {
+            Some(entry) if entry.aggregate.owner != narrowest => Err(UploadRefusal::OwnerMismatch),
+            Some(_) => Ok(()),
+            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => Err(UploadRefusal::Invalid),
+            None => Ok(()),
+        }
+    }
+
     /// An existing aggregate's counters, without refreshing its retention.
     pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, UploadRefusal> {
-        Ok(self.access(id, owner, Access::Read)?.counters())
+        Ok(self.reach(id, owner, Reach::Read)?.counters())
     }
 
     /// Finalizes an aggregate: it takes no new lane, and its feed completes once its lanes drain.
     pub fn finish(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
-        let aggregate = self.access(id, owner, Access::Read)?;
+        let aggregate = self.reach(id, owner, Reach::Read)?;
         let mut life = aggregate.life();
         if life.phase == Phase::Open {
             life.phase = Phase::Finished;
@@ -296,9 +311,9 @@ impl Uploads {
         }
     }
 
-    fn access(&self, id: &str, owner: Option<&ClientKeys>, access: Access) -> Result<Arc<Aggregate>, UploadRefusal> {
+    fn reach(&self, id: &str, owner: Option<&ClientKeys>, reach: Reach) -> Result<Arc<Aggregate>, UploadRefusal> {
         let narrowest = owner.and_then(ClientKeys::narrowest);
-        if access != Access::Read && narrowest.is_none() {
+        if reach != Reach::Read && narrowest.is_none() {
             return Err(UploadRefusal::OwnerMismatch);
         }
         let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
@@ -307,7 +322,7 @@ impl Uploads {
             if narrowest.as_ref() != Some(&entry.aggregate.owner) {
                 return Err(UploadRefusal::OwnerMismatch);
             }
-            if access == Access::Join {
+            if reach == Reach::Join {
                 entry.aggregate.join()?;
             }
             return Ok(entry.aggregate.clone());
@@ -315,7 +330,7 @@ impl Uploads {
         let (Some(keys), Some(owner)) = (owner, narrowest) else {
             return Err(UploadRefusal::Invalid);
         };
-        if access == Access::Read || entries.tombstones.contains_key(&id) || !self.valid(&id) {
+        if reach == Reach::Read || entries.tombstones.contains_key(&id) || !self.valid(&id) {
             return Err(UploadRefusal::Invalid);
         }
         let capacity = self.capacity(&mut entries, keys)?;
@@ -325,7 +340,7 @@ impl Uploads {
             bytes: AtomicU64::new(0),
             first: OnceLock::new(),
             life: Mutex::new(Life {
-                lanes: usize::from(access == Access::Join),
+                lanes: usize::from(reach == Reach::Join),
                 touched: Instant::now(),
                 phase: Phase::Open,
                 reader: 0,

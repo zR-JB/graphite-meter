@@ -105,7 +105,7 @@ impl App {
         let document = serde_json::to_vec(&catalog).expect("catalogs serialize");
         let refused = match catalog.validate() {
             Err(error) => Some(error.to_string()),
-            Ok(()) if document.len() > MAX_CATALOG_BYTES => Some("it exceeds 64 KiB".into()),
+            Ok(()) if document.len() > MAX_CATALOG_BYTES => Some(format!("it exceeds {} KiB", MAX_CATALOG_BYTES >> 10)),
             Ok(()) => None,
         };
         match refused {
@@ -133,7 +133,7 @@ impl App {
         }
     }
 
-    /// `GET` attaches the upload's progress feed and `DELETE` finalizes it; `HEAD` claims nothing.
+    /// `GET` attaches the upload's progress feed, `HEAD` answers its head without claiming it, `DELETE` finalizes it.
     pub(super) fn progress<B>(
         &self,
         request: &Request<B>,
@@ -141,21 +141,31 @@ impl App {
         connection: &Connection,
         exchange: Exchange,
     ) -> Result<Response<Body>, Response<Body>> {
-        if request.method() == Method::HEAD {
-            return Ok(response::method_not_allowed("GET, DELETE"));
-        }
-        let lane = self.admit(peer, connection, exchange, false)?;
         let (id, owner) = (query::get(request.uri().query(), "id").unwrap_or_default(), peer.keys());
-        let attached = match *request.method() {
-            Method::DELETE => self.uploads.finish(&id, owner.as_ref()).map(|()| None),
-            _ => self.uploads.subscribe(&id, owner.as_ref()).map(Some),
+        let body = match *request.method() {
+            Method::HEAD => {
+                self.uploads
+                    .watchable(&id, owner.as_ref())
+                    .map_err(response::upload_refusal)?;
+                Body::empty()
+            }
+            Method::DELETE => {
+                let _lane = self.admit(peer, connection, exchange, false)?;
+                self.uploads
+                    .finish(&id, owner.as_ref())
+                    .map_err(response::upload_refusal)?;
+                return Ok(response::empty(StatusCode::NO_CONTENT));
+            }
+            _ => {
+                let lane = self.admit(peer, connection, exchange, false)?;
+                let feed = self
+                    .uploads
+                    .subscribe(&id, owner.as_ref())
+                    .map_err(response::upload_refusal)?;
+                Body::feed(feed).with_lane(lane)
+            }
         };
-        let feed = match attached {
-            Ok(Some(feed)) => feed,
-            Ok(None) => return Ok(response::empty(StatusCode::NO_CONTENT)),
-            Err(refusal) => return Err(response::upload_refusal(refusal)),
-        };
-        let mut response = Response::new(Body::feed(feed).with_lane(lane));
+        let mut response = Response::new(body);
         let headers = response.headers_mut();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-ndjson"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));

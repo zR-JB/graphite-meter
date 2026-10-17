@@ -14,7 +14,10 @@ use crate::{
     peer::{ClientKey, ClientKeys, Peer},
     transport::body::Body,
 };
-use graphite_meter_proto::approval::{challenge, verification_code};
+use graphite_meter_proto::{
+    approval::{challenge, verification_code},
+    route::AuthRoute,
+};
 use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use serde::Deserialize;
 use serde_json::json;
@@ -50,6 +53,16 @@ impl Challenge {
     pub(super) fn as_str(&self) -> &str {
         &self.text
     }
+
+    /// The approval page's path and query.
+    pub(super) fn page(&self) -> String {
+        format!("{}?challenge={}", AuthRoute::Cli.path(), self.text)
+    }
+
+    /// The sign-in page's path and query that lead on to the approval page.
+    pub(super) fn sign_in(&self) -> String {
+        format!("{}?challenge={}", AuthRoute::Login.path(), self.text)
+    }
 }
 
 /// An approval of one challenge: pending, then the grant it issued while that lasts.
@@ -61,8 +74,7 @@ pub(super) struct Approval {
     pub deadline: Instant,
 }
 
-/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by that login, or the grant
-/// it issued.
+/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by it, or its grant.
 #[derive(Clone)]
 enum Stage {
     Open,
@@ -109,7 +121,7 @@ impl Approval {
     }
 }
 
-/// Room for one more approval: within its login's eight, and within the server bounds and the client's share.
+/// Room for one more approval: within its login's grants, the server bounds and the client's share.
 struct Room {
     login: bool,
     shared: bool,
@@ -166,10 +178,10 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     if let Some((Some(origin), ..)) = &found {
         let origin = origin.header().to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", challenge.as_str()), ("client_origin", origin)]);
-        return redirect(&format!("/auth/browser?{query}"));
+        return redirect(&format!("{}?{query}", AuthRoute::Browser.path()));
     }
     let Some(lease) = lease else {
-        return redirect(&format!("/login?challenge={}", challenge.as_str()));
+        return redirect(&challenge.sign_in());
     };
     let Some(keys) = peer.keys() else { return refused(Refused::Busy) };
     match found {
@@ -223,10 +235,9 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     }
     let Some(lease) = login else {
         drop(state);
-        let opening = page::Continue { challenge: Some(challenge.as_str()), opening: true };
         return match cross_site_navigation(headers) {
-            true => response::html(opening.render()),
-            false => redirect(&format!("/login?challenge={}", challenge.as_str())),
+            true => response::html(page::continuing(Some(&challenge), true)),
+            false => redirect(&challenge.sign_in()),
         };
     };
     match approval.stage {
@@ -274,7 +285,7 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     drop(state);
     auth.security.count(Counter::CliApproval);
     crate::log!(Info, "auth", "sign-in approved for a {}", if browser { "browser" } else { "terminal" });
-    response::html(page::CliDone { browser }.render())
+    response::html(page::cli_done(browser))
 }
 
 /// `POST /auth/{cli,browser}/token`: the grant for an approved challenge's verifier; a browser's from its origin.
@@ -303,7 +314,7 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     answer
 }
 
-/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again for 30 s.
+/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again briefly.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Response<Body> {
     let (Some(challenge), credentials) = (Challenge::of(verifier), credentials()) else {
         return pending();
@@ -379,9 +390,7 @@ fn approval_page(
     let Some(login) = auth.store.view(lease.login()) else {
         return refused(Refused::Link);
     };
-    let browser_origin = origin
-        .and_then(|origin| origin.header().to_str().ok())
-        .unwrap_or_default();
+    let browser_origin = origin.and_then(|origin| origin.header().to_str().ok());
     let csrf = login.csrf.as_str();
     let page = page::Cli::Approval {
         code: &challenge.code,
@@ -392,22 +401,19 @@ fn approval_page(
     response::html(page.render())
 }
 
-graphite_meter_proto::table! {
-    /// Why the approval page refuses: a link it cannot approve, or bounds spent for now.
-    enum Refused {
-        name.0: &'static str,
-    } {
-        Link => ("link",),
-        Busy => ("busy",),
-    }
+/// Why the approval page refuses: a link it cannot approve, or bounds spent for now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Refused {
+    Link,
+    Busy,
 }
 
 fn refused(refused: Refused) -> Response<Body> {
-    let page = page::Cli::Refused(refused.name()).render();
+    let page = page::Cli::Refused(refused).render();
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 
-/// The page of a login holding its eight grants.
+/// The page of a login holding all its grants.
 fn capacity() -> Response<Body> {
     let page = page::Cli::Capacity { limit: MAX_LOGIN_GRANTS }.render();
     with_status(StatusCode::TOO_MANY_REQUESTS, response::html(page))

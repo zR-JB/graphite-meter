@@ -26,11 +26,10 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::runtime::Handle;
-use tokio_util::sync::CancellationToken;
 
 /// The most endpoints: their reservations stay a small part of the default budget on hosts with many cores.
 const MAX_SHARDS: usize = 16;
-const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
+pub(crate) const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
 
 /// HTTP/3's endpoints on one port and what their connections share.
 pub struct Endpoints {
@@ -43,10 +42,8 @@ pub struct Endpoints {
 /// What binding needs; `fits` refuses endpoint bytes the budget does not cover beside every connection's floor.
 pub struct Binding<'a, F> {
     pub app: &'a Arc<App>,
-    pub limits: &'a Limits,
     pub certificates: &'a Arc<Certificates>,
     pub fits: F,
-    pub shutdown: &'a CancellationToken,
 }
 
 impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
@@ -75,7 +72,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     fn single(&self, address: SocketAddr, runtime: Handle) -> Result<Endpoints, String> {
         let udp = Udp::bind(address, 1, &runtime)?;
         let config = noq::EndpointConfig::default();
-        let bytes = udp.bytes(&config, 1, self.limits)?;
+        let bytes = udp.bytes(&config, 1, &self.app.config().limits)?;
         (self.fits)(bytes)?;
         let http3 = self.http3(1)?;
         let listener = self.endpoint(config, &http3.config, (udp.socket, udp.quic), bytes, runtime, None)?;
@@ -88,7 +85,12 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let first = Udp::bind(address, runtimes.len(), &runtimes[0])?;
         // The others join the port the first bound; it stands for them until they exist.
         let address = first.socket.local_addr().map_err(|error| error.to_string())?;
-        let total = |shards| first.bytes(&config, shards, self.limits).ok()?.checked_mul(shards);
+        let total = |shards| {
+            first
+                .bytes(&config, shards, &self.app.config().limits)
+                .ok()?
+                .checked_mul(shards)
+        };
         let fitting = (2..=runtimes.len())
             .rev()
             .find(|&shards| total(shards).is_some_and(|total| (self.fits)(total).is_ok()));
@@ -101,7 +103,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         }
         let each = sockets
             .iter()
-            .map(|udp| udp.bytes(&config, shards, self.limits))
+            .map(|udp| udp.bytes(&config, shards, &self.app.config().limits))
             .collect::<Result<Vec<_>, _>>()?;
         let bytes = each
             .iter()
@@ -131,8 +133,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Some(Endpoints { listeners, http3, bytes }))
     }
 
-    /// An endpoint built on `runtime`, whose socket holds `bytes` of the budget until it and its senders drop; its
-    /// connections hold a share of `shard`'s count.
+    /// An endpoint on `runtime`, its socket holding `bytes` of the budget till dropped; `shard` counts its connections.
     fn endpoint(
         &self,
         endpoint: noq::EndpointConfig,
@@ -156,18 +157,17 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         let crypto = QuicServerConfig::try_from(self.certificates.server_config(b"h3"));
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto.map_err(|error| error.to_string())?));
         config
-            .max_incoming(self.limits.connections.get().div_ceil(shards))
+            .max_incoming(self.app.config().limits.connections.get().div_ceil(shards))
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
-        let mut transport = budget::transport(self.limits)?;
+        let mut transport = budget::transport(&self.app.config().limits)?;
         transport.shared_budget(Some(self.app.budget().noq()));
         config.transport_config(Arc::new(transport));
         Ok(Http3 {
             app: self.app.clone(),
             config,
             certificates: self.certificates.clone(),
-            max_requests: budget::max_requests(self.limits)? as usize,
-            shutdown: self.shutdown.clone(),
+            max_requests: budget::max_requests(&self.app.config().limits)? as usize,
         })
     }
 }

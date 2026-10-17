@@ -13,10 +13,10 @@ pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
 /// What a check says of a server no connection reached.
-pub const UNREACHABLE: &str = "Server could not be reached";
+pub const UNREACHABLE: &str = "Could not reach this test server";
 
 use conn::{Answer, Failed};
-use graphite_meter_net::{Connector, Pool, Proxy, Verify};
+use graphite_meter_net::{Connector, Pool, Proxy, Verify, lock};
 use graphite_meter_proto::{
     discovery::{IpFamily, Probe, Protocol},
     lane::LaneEnding,
@@ -28,7 +28,7 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode, Version, header};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, MutexGuard, PoisonError,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -233,11 +233,6 @@ impl Client {
         }
         fault
     }
-}
-
-/// Locks `mutex` past a panic elsewhere, which left its state whole.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Idle HTTP/1.1 connections kept per origin and protocol.

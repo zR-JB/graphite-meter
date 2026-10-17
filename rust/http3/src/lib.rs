@@ -18,7 +18,7 @@ pub mod webtransport;
 pub use {
     budget::Budget,
     code::Code,
-    driver::CONNECTION_BYTES,
+    driver::{CONNECTION_BYTES, CONNECTION_IDLE},
     error::Error,
     stream::{RecvHalf, RequestStream, SendHalf},
 };

@@ -137,23 +137,32 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() ->
     Ok(())
 }
 
-/// Control data on a CONNECT stream is bounded to 1 MiB in at most 1024 chunks.
+/// A CONNECT stream carries at most 64 KiB after its head, counting every frame on the wire.
 #[tokio::test]
 async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
-    let grease = |length: usize| frame(0x00, &frame(0x21, &vec![0; length]));
-    // A DATA frame split across packets counts once per part.
-    for (data, bounded) in [(grease(1).repeat(1025), true), (grease(512 * 1024), false), (grease(1024 * 1024), true)] {
+    let close = close_capsule(7, "bye");
+    let fill = 64 * 1024 - close.len();
+    // A reserved frame type, its 4-byte length and the payload.
+    let reserved = |wire: usize| frame(0x21, &vec![0; wire - 5]);
+    let grease = frame(0x00, &frame(0x21, &vec![0; fill]));
+    let rows = [
+        (reserved(fill), false),
+        (reserved(fill + 1), true),
+        (frame(0x00, &[]).repeat(fill / 2 + 1), true),
+        (grease, true),
+    ];
+    for (data, bounded) in rows {
         let Served { peers, mut outcomes, .. } = pair(DRAFT02).await?.sessions(until_closed);
         peers.get().await?;
         let (mut connect, _response) = peers.connect().await?;
-        connect.write_all(&data).await?;
+        let written = connect.write_all(&[data, close.clone()].concat()).await;
         if bounded {
             assert_eq!(outcomes.recv().await, Some(Err(Error::Protocol(Code::H3_EXCESSIVE_LOAD))));
             assert_eq!(stopped(&connect).await, Some(Code::H3_EXCESSIVE_LOAD));
         } else {
-            connect.write_all(&close_capsule(7, "bye")).await?;
+            written?;
             let close = SessionClose { code: 7, reason: "bye".into() };
-            assert_eq!(outcomes.recv().await, Some(Ok(close)), "{} bytes", data.len());
+            assert_eq!(outcomes.recv().await, Some(Ok(close)));
         }
     }
     Ok(())
@@ -301,6 +310,6 @@ async fn a_lane_waiting_for_stream_credit_ends_with_its_session() -> Result<(), 
     yields().await;
     connect.write_all(&close_capsule(7, "bye")).await?;
     let outcome = tokio::time::timeout(Duration::from_secs(5), outcomes.recv()).await?;
-    assert_eq!(outcome, Some(Some(Error::Refused)));
+    assert_eq!(outcome, Some(Some(Error::SessionEnded)));
     Ok(())
 }

@@ -13,7 +13,7 @@ use graphite_meter_proto::{
     origin::Origin,
     route::Route,
 };
-use graphite_meter_testkit::{Identity, Scratch};
+use graphite_meter_testkit::{Identity, Scratch, read_head};
 use http::Method;
 use serde_json::Value;
 use std::{
@@ -28,7 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
     sync::mpsc,
 };
@@ -97,14 +97,6 @@ fn peer(
         }
     });
     received
-}
-
-async fn read_head(stream: &mut Box<dyn Stream>) -> Option<String> {
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        head.push(stream.read_u8().await.ok()?);
-    }
-    String::from_utf8(head).ok()
 }
 
 #[tokio::test]

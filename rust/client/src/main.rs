@@ -67,8 +67,7 @@ fn fail(error: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Shows the interface when `interactive`, else runs `config` once; prints the finished report to stdout. `kept` is
-/// the server remembered for later starts, if any.
+/// The interface when `interactive`, else one run of `config` and its report; `kept` is the remembered server.
 fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::probing(runtime.handle())?);
@@ -140,8 +139,7 @@ async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
     }
 }
 
-/// Each interrupt's and termination's status as it arrives; with `at_once`, a second exits at once with its own after
-/// putting back a terminal the background query left raw.
+/// Each interrupt's and termination's status; with `at_once`, a second exits at once, the terminal put back first.
 fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     let (caught, signals) = mpsc::unbounded_channel();
     let mut stopping = false;
@@ -186,7 +184,6 @@ fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     Ok(signals)
 }
 
-/// Prints the notices.
 fn legal() -> ExitCode {
     match NOTICES.report() {
         Some(report) => written(report),

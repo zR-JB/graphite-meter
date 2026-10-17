@@ -194,9 +194,14 @@ async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_do
     let frames = connection.quic.stats().frame_rx.stream;
     let (_probe, mut probe) = connection.open("GET", "/probe").await;
     // The reply's first bytes show its exchange began before the clock moves.
-    while connection.quic.stats().frame_rx.stream == frames {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
+    let began = async {
+        while connection.quic.stats().frame_rx.stream == frames {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), began)
+        .await
+        .expect("the reply begins");
     pass(Duration::from_secs(14)).await;
     assert_eq!(connection.resets(), 0, "the exchange runs until its bound");
     pass(Duration::from_secs(1)).await;

@@ -27,7 +27,7 @@ pub struct Body {
 
 /// What bounds writing a reply; the app bounds every reply it hands a transport.
 #[derive(Clone)]
-pub enum Bound {
+enum Bound {
     /// The reply aborts unless written by then: an unadmitted exchange's deadline, or an admitted one's last answer's.
     Until(Instant),
     /// Admitted work: written bytes are the lane's movement, its finish follows delivery, other endings abort.

@@ -1,12 +1,12 @@
 //! HTTP/3 requests: bounded until admitted, bodies fund the window, 16 KiB paced reply frames, CONNECT to WebTransport.
 
-use super::budget::Window;
+use super::budget::QuicWindow;
 use crate::{
     app::{App, Connection, Outcome},
     exchange::{Exchange, Watch},
     transport::{
         body::{Aborted, Body, ReplyBound, Sink, pump, within},
-        webtransport::{self, ANSWER_BOUND},
+        webtransport,
         window::{Funding, Incoming},
     },
 };
@@ -39,13 +39,13 @@ const PACE: Duration = Duration::from_millis(1);
 pub(super) struct Requests {
     app: Arc<App>,
     connection: Connection,
-    window: Arc<Window>,
+    window: Arc<QuicWindow>,
     quic: noq::Connection,
     large: Arc<AtomicUsize>,
 }
 
 impl Requests {
-    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<Window>, quic: noq::Connection) -> Self {
+    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<QuicWindow>, quic: noq::Connection) -> Self {
         Self { app, connection, window, quic, large: Arc::default() }
     }
 
@@ -82,7 +82,7 @@ impl Requests {
                 .size_hint()
                 .upper()
                 .is_some_and(|bytes| bytes > LARGE_REPLY_BYTES);
-        let mut reply = Reply {
+        let mut reply = H3Reply {
             send,
             large: large.then(|| Large::new(&self.large, &self.quic)),
             stopped: None,
@@ -90,7 +90,7 @@ impl Requests {
         let _ = pump(&mut reply, response, bodiless).await;
     }
 
-    /// A CONNECT: its WebTransport session, or the app's answer within `ANSWER_BOUND`.
+    /// A CONNECT: its WebTransport session, or the app's answer within the reply's bound.
     async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange, watch: &Watch) {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
@@ -104,8 +104,8 @@ impl Requests {
             }
             Outcome::Response(response) => {
                 let (send, _recv) = stream.split();
-                let mut reply = Reply { send, large: None, stopped: None };
-                let _ = tokio::time::timeout(ANSWER_BOUND, pump(&mut reply, response, false)).await;
+                let mut reply = H3Reply { send, large: None, stopped: None };
+                let _ = pump(&mut reply, response, false).await;
             }
             Outcome::WebSocket(..) | Outcome::Abort => {}
         }
@@ -115,14 +115,14 @@ impl Requests {
 type Stopped = Pin<Box<dyn Future<Output = Result<Option<Code>, http3::Error>> + Send>>;
 
 /// An HTTP/3 stream's reply.
-struct Reply {
+struct H3Reply {
     send: SendHalf,
     large: Option<Large>,
     /// The peer's STOP_SENDING, watched while the body waits.
     stopped: Option<Stopped>,
 }
 
-impl Sink for Reply {
+impl Sink for H3Reply {
     async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
         within(bound, self.send.send_response(Response::from_parts(head, ()))).await?;
         if end {

@@ -139,7 +139,10 @@ async fn only_an_admitted_upload_opens_the_connection_window() {
     let (id, before) = (h2.server.upload_id().await, super::quic::settled(&h2.server.budget).await);
     let (answer, mut upload) = refused.open("POST", &format!("/upload?id={id}")).await;
     assert_eq!(answer.await.unwrap().status(), 429, "the client's share is held");
-    assert!(!window_opens(&mut upload, Duration::from_millis(500)).await);
+    upload.send_data(Bytes::from_static(b"x"), false).unwrap();
+    upload.reserve_capacity(4 << 20);
+    // A round trip after the data: any grant it drew is in by the probe's answer.
+    refused.get("GET", "/probe").await;
     assert!(upload.capacity() < 65_535, "an unadmitted upload keeps the default window");
     let held = super::quic::settled(&h2.server.budget).await.saturating_sub(before);
     assert!(held < 1 << 20, "{held} bytes of credit without an admitted upload");

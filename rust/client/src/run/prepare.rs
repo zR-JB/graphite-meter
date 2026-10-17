@@ -1,4 +1,4 @@
-//! Path checks: the catalog at `--url`, each selected server's preflight, then throughput and latency paths, in 12 s.
+//! Path checks: the catalog at `--url`, each selected server's preflight, then throughput and latency paths, by one deadline.
 use super::select;
 use crate::{
     config::{Config, PrepKey},
@@ -78,7 +78,7 @@ impl Prepared {
         Event::Prepared { servers, catalog }
     }
 
-    /// Whether a run with `key` may take this check: every server prepared, the key equal and at most 30 s old.
+    /// Whether a run with `key` may take this check: every server prepared, the key equal and the check fresh.
     pub fn reusable(&self, key: &PrepKey, now: Instant) -> bool {
         let fresh = now.saturating_duration_since(self.at) <= REUSE;
         fresh && self.key == *key && self.servers.iter().all(|server| server.path.is_ok())
@@ -190,7 +190,7 @@ async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(Thr
     Ok((ThroughputPath { protocol, ..path.clone() }, ip_family))
 }
 
-/// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats after 750 ms.
+/// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats unanswered.
 async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, Fault> {
     let wait = match path.transport {
         LatencyTransport::WebTransport => DATAGRAM_REPLY,

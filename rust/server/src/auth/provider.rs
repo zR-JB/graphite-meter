@@ -97,7 +97,8 @@ async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Resul
     tokio::join!(exchange, driver).0
 }
 
-fn media(headers: &HeaderMap) -> String {
+/// The Content-Type's media type, lowercase and without parameters.
+pub(super) fn media(headers: &HeaderMap) -> String {
     let value = headers.get(header::CONTENT_TYPE).and_then(|value| value.to_str().ok());
     let media = value.unwrap_or_default().split(';').next().unwrap_or_default();
     media.trim().to_ascii_lowercase()

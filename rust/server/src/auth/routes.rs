@@ -6,7 +6,7 @@ use super::{
     oidc::{self, Oidc},
     page,
     password::{Password, Verdict},
-    policy::{AuthRoute, Cookie, cookie, cookie_lease},
+    policy::{Cookie, auth_route, cookie, cookie_lease},
     protect,
     store::{MintRefusal, random},
 };
@@ -20,7 +20,7 @@ use crate::{
 use bytes::{Buf, BufMut};
 use graphite_meter_proto::{
     origin::{Origin, Scheme},
-    route::{Kind, Route},
+    route::{AuthRoute, Kind, Route},
 };
 use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header, request::Parts};
 use serde::Serialize;
@@ -53,20 +53,20 @@ pub(super) async fn handle<B: http_body::Body>(
         &Method::HEAD => Method::GET,
         method => method.clone(),
     };
-    let route = AuthRoute::find(method.as_str(), request.uri().path());
+    let route = auth_route(method.as_str(), request.uri().path());
     let lease = peer.auth().filter(|lease| lease.via() == &Via::Cookie);
     let from_public = request.headers().get(header::ORIGIN) == Some(&auth.policy.origin);
-    let oidc = auth.sign_in.oidc();
-    let mut answer = match (route, auth.sign_in.password(), oidc) {
-        (Some(AuthRoute::LoginPage), ..) => login_page(auth, &request),
+    let oidc = auth.sign_in.oidc.as_deref();
+    let mut answer = match (route, auth.sign_in.password.as_ref(), oidc) {
+        (Some(AuthRoute::Login), ..) => login_page(auth, &request),
         (Some(AuthRoute::Password), Some(password), _) => sign_in(auth, password, request, peer).await,
         (Some(AuthRoute::OidcStart), _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
         (Some(AuthRoute::OidcCallback), _, Some(provider)) => {
             oidc::callback(auth, provider, request.into_parts().0, deadline, peer).await
         }
         (Some(AuthRoute::Session), ..) => session(auth, lease),
-        (Some(AuthRoute::CliPage), ..) => approval::cli_page(auth, &request, peer),
-        (Some(AuthRoute::BrowserPage), ..) => approval::browser_page(auth, &request, peer),
+        (Some(AuthRoute::Cli), ..) => approval::cli_page(auth, &request, peer),
+        (Some(AuthRoute::Browser), ..) => approval::browser_page(auth, &request, peer),
         (Some(route @ (AuthRoute::CliApprove | AuthRoute::BrowserApprove)), ..) => {
             let form = form(request).await.1.filter(|_| from_public);
             approval::approve(auth, lease, form, route == AuthRoute::BrowserApprove)
@@ -79,12 +79,10 @@ pub(super) async fn handle<B: http_body::Body>(
             response::status(StatusCode::NOT_FOUND)
         }
     };
-    protect(answer.headers_mut(), true);
-    if let Some(provider) = oidc.and_then(Oidc::provider)
-        && matches!(route, Some(AuthRoute::LoginPage | AuthRoute::OidcStart))
-    {
-        page::allow_form_action(answer.headers_mut(), &provider.origin);
-    }
+    let forms = oidc
+        .and_then(Oidc::provider)
+        .filter(|_| matches!(route, Some(AuthRoute::Login | AuthRoute::OidcStart)));
+    protect(answer.headers_mut(), true, forms.as_ref().map(|provider| provider.origin.as_str()));
     answer
 }
 
@@ -109,27 +107,19 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
     }
 }
 
-/// The sign-in page; its form proves a fresh token the login cookie holds for ten minutes.
+/// The sign-in page; its form proves a fresh token the login cookie holds.
 fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     let read = |name| query::get(request.uri().query(), name).unwrap_or_default();
-    let (challenge, error, reason) = (Challenge::parse(&read("challenge")), read("error"), read("reason"));
-    let notice = match error.as_str() {
-        notice @ ("" | "provider" | "busy" | "stale" | "throttled" | "password" | "proxy") => notice,
-        _ => "failed",
-    };
-    let status = match reason.as_str() {
-        status @ ("expired" | "renew" | "signed_out") => status,
-        _ => "",
-    };
+    let challenge = Challenge::parse(&read("challenge"));
     let csrf = random::<32>();
-    let oidc = auth.sign_in.oidc();
+    let oidc = auth.sign_in.oidc.as_deref();
     let page = page::Login {
         csrf: &csrf,
         provider: &auth.provider,
         challenge: challenge.as_ref().map(Challenge::as_str),
-        notice,
-        status,
-        password: auth.sign_in.password().is_some(),
+        error: &read("error"),
+        reason: &read("reason"),
+        password: auth.sign_in.password.is_some(),
         oidc: oidc.is_some(),
         oidc_ready: oidc.and_then(Oidc::provider).is_some(),
     }
@@ -167,7 +157,7 @@ async fn sign_in<B: http_body::Body>(
         Verdict::Busy => return rejected(auth, Reason::VerifierBusy, challenge.as_ref()),
     }
     let target = match &challenge {
-        Some(challenge) => format!("/auth/cli?challenge={}", challenge.as_str()),
+        Some(challenge) => challenge.page(),
         None => "/".into(),
     };
     let identity = Identity {
@@ -225,8 +215,8 @@ pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challe
     auth.security.refused(reason);
     let notice = reason.notice();
     redirect(&match challenge {
-        Some(challenge) => format!("/login?challenge={}&error={notice}", challenge.as_str()),
-        None => format!("/login?error={notice}"),
+        Some(challenge) => format!("{}&error={notice}", challenge.sign_in()),
+        None => format!("{}?error={notice}", AuthRoute::Login.path()),
     })
 }
 
@@ -266,7 +256,7 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Re
         return response::empty(StatusCode::FORBIDDEN);
     }
     auth.security.count(Counter::Logout);
-    let mut answer = redirect("/login?reason=signed_out");
+    let mut answer = redirect(&format!("{}?reason=signed_out", AuthRoute::Login.path()));
     for cookie in [Cookie::Session, Cookie::Login, Cookie::Csrf] {
         clear_cookie(&mut answer, cookie);
     }
@@ -301,13 +291,10 @@ pub(super) fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
     found.map_or("", |(_, value)| value.as_str())
 }
 
-/// The request's head, and its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
+/// The request's head, and its bounded URL-encoded form body with unique, well-formed fields.
 pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Option<Form>) {
     let (head, body) = request.into_parts();
-    let content_type = head.headers.get(header::CONTENT_TYPE);
-    let media = content_type.and_then(|media| media.to_str().ok());
-    let media = media.unwrap_or_default().split(';').next().unwrap_or_default().trim();
-    if !media.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+    if super::provider::media(&head.headers) != "application/x-www-form-urlencoded" {
         return (head, None);
     }
     let bytes = self::body(body).await;
@@ -315,7 +302,7 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
     (head, form)
 }
 
-/// A request body of at most 4 KiB, in one allocation zeroized when dropped.
+/// A bounded request body, in one allocation zeroized when dropped.
 pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
     let mut body = pin!(body);
     let mut bytes = Zeroizing::new(Vec::with_capacity(FORM_BYTES));
