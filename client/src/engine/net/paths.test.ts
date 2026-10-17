@@ -120,7 +120,7 @@ test("Automatic ranks by mechanism, then origin, never by the order of advertise
     "https://meter.example:3::wt",
     "https://meter.example",
   ]);
-  // A proxy's negotiated "." ranks by the protocol its preflight used; a tie goes to the discovery origin.
+  // A proxy's negotiated "." ranks by the protocol its preflight used. A tie goes to the discovery origin.
   const proxy = [h(".", "negotiated"), h("https://proxy.example:8443", "http3")];
   for (const [protocol, first] of [
     ["h2", "https://proxy.example"],

@@ -1,5 +1,5 @@
-//! WebTransport uploads: client streams and datagrams into one aggregate beside HTTP, the progress feed on a server
-//! stream and receive credit.
+//! Tests WebTransport uploads, with client streams and datagrams into one aggregate beside HTTP, the progress feed on
+//! a server stream and receive credit.
 
 use super::{
     http3::{Connection, H3, transport},
@@ -18,7 +18,7 @@ pub(super) struct Feed {
 }
 
 impl Feed {
-    /// The next stream the server opens in `session`.
+    /// Accepts the next stream the server opens in `session`.
     pub(super) async fn of(session: &Session) -> Self {
         Self {
             stream: session.accept_uni().await.unwrap(),
@@ -26,7 +26,7 @@ impl Feed {
         }
     }
 
-    /// The next record, past heartbeats; `None` at the stream's end.
+    /// Reads the next record, past heartbeats, or `None` at the stream's end.
     pub(super) async fn next(&mut self) -> Option<Record> {
         loop {
             if let Some(end) = self.buffered.iter().position(|&byte| byte == b'\n') {
@@ -42,7 +42,7 @@ impl Feed {
         }
     }
 
-    /// The next record past `progress` ones.
+    /// Reads the next record past `progress` ones.
     async fn after_progress(&mut self) -> Option<Record> {
         loop {
             match self.next().await {
@@ -60,7 +60,7 @@ pub(super) fn refused(record: Option<Record>) -> String {
     }
 }
 
-/// A client stream that sent `bytes` bytes.
+/// Opens a client stream that has sent `bytes` bytes.
 async fn lane(session: &Session, bytes: usize) -> SendStream {
     let mut stream = session.open_uni().await.unwrap();
     stream.write_all(&vec![1; bytes]).await.unwrap();

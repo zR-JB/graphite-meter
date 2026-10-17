@@ -1,7 +1,7 @@
-// The one frame clock: everything that moves per frame paints from a single requestAnimationFrame loop, which runs
-// only while something moves and the page is visible.
+// Runs the one frame clock. Everything that moves per frame paints from a single requestAnimationFrame loop, which
+// runs only while something moves and the page is visible.
 
-/** Monotonic page milliseconds, the timeline frame timestamps share. */
+/** Monotonic page milliseconds, the timeline that frame timestamps share. */
 export const pageMs = (): number => performance.now();
 
 /** Paints one frame at `now` and returns whether it still moves. */
@@ -21,7 +21,7 @@ function request(): void {
 
 function frame(now: number): void {
   pending = 0;
-  // A painter added during this frame starts with the next one; one that throws stops alone.
+  // A painter added during this frame starts with the next one. One that throws stops alone.
   order.length = 0;
   for (const paint of painters) order.push(paint);
   for (const paint of order) {

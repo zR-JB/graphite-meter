@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Shared control-plane boundaries: the GitHub CLI, JSON decoding, paths and key material."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
@@ -139,7 +137,7 @@ def runner_path(name: str) -> Path:
 
 
 def append_output(**values: object) -> None:
-    with runner_path("GITHUB_OUTPUT").open("a", encoding="utf-8") as handle:
+    with runner_path("GITHUB_OUTPUT").open("a") as handle:
         for key, value in values.items():
             if "\n" in (text := str(value)) or "\r" in text:
                 raise ValueError(f"output {key!r} must be single-line")
@@ -147,7 +145,7 @@ def append_output(**values: object) -> None:
 
 
 def append_summary(text: str) -> None:
-    with runner_path("GITHUB_STEP_SUMMARY").open("a", encoding="utf-8") as handle:
+    with runner_path("GITHUB_STEP_SUMMARY").open("a") as handle:
         handle.write(text.rstrip() + "\n")
 
 

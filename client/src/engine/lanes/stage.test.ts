@@ -25,8 +25,8 @@ const SESSION: SessionTarget = {
 };
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
-/** One server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order; its
-    latency bus is `bus`. */
+/** Opens one server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order.
+    Its latency bus is `bus`. */
 function stage(
   activity: Activity,
   auth: Partial<ServerAuth> = {},
@@ -105,7 +105,7 @@ test("readiness waits for the gating lanes; a lane's failure keeps its reason; o
   expect(failed.error).toMatchObject({ reason: "protocol-error", message: "down stream 0 failed: HTTP 400" });
   expect(refused.lanes().every(({ terminated }) => terminated)).toBe(true);
 
-  // The mint gives up at 3 s; its sign-in check answers 2.9 s later, long after the stage's 3.5 s.
+  // The mint gives up at 3 s. Its sign-in check answers 2.9 s later, long after the stage's 3.5 s.
   const hung = stage(
     { stage: "upload", transfer: ["up"], loadedLatency: false },
     {
@@ -154,7 +154,7 @@ test("one download outage stalls once, checks the sign-in once, and resumes only
     bytes(lane, 1);
     lane.report({ type: "broken", detail: "TypeError: network error" });
   }
-  // The outage lasts 2.5 s: every reopening breaks again.
+  // The outage lasts 2.5 s, so every reopening breaks again.
   for (let round = 0; round < 8; round++) {
     await elapse(300);
     for (const lane of lanes) {
@@ -211,14 +211,14 @@ test("a flush resolves once every lane answered what it counted by the cutoff, a
     void answer.then((value) => (read = value));
     const at = performance.timeOrigin + cutoff;
     expect(lanes.map(({ commands }) => commands.at(-1))).toEqual(Array(3).fill({ type: "flush", at }));
-    // Each lane's report after the cutoff is in its answer's total; the one that never answers counts on.
+    // Each lane's report after the cutoff is in its answer's total. The one that never answers counts on.
     for (const lane of lanes) bytes(lane, 1);
     for (const lane of lanes.slice(0, answering)) lane.report({ type: "flushed", total: 1_000, at });
     await elapse(300);
     expect(flushed.at).toBe(answering === 3 ? 0 : 250);
     // A lane that never answered counted on to the flush's end, where the counts then stand.
     expect(read).toBe(answering === 3 ? cutoff : cutoff + 250);
-    // A lane that answered counts nothing more: its later bytes lie past the boundary.
+    // A lane that answered counts nothing more, since its later bytes lie past the boundary.
     for (const lane of lanes) bytes(lane, 1);
     expect(flushing.events.filter(([type]) => type === "download")).toHaveLength(answering + 2 * (3 - answering));
   }
@@ -234,8 +234,8 @@ test("lanes answering a flush at different times each count what they had by the
   const cutoff = performance.now();
   const answer = outcome(flushing.resources.flush(cutoff));
   const at = performance.timeOrigin + cutoff;
-  // The first answers at once; the second's report sent before the cutoff arrives after it, and its answer 200 ms
-  // later; the third had counted 400 more bytes by the cutoff, and had counted more by the time it answered.
+  // The first answers at once. The second's report sent before the cutoff arrives after it, and its answer 200 ms
+  // later. The third had counted 400 more bytes by the cutoff, and had counted more by the time it answered.
   lanes[0]!.report({ type: "flushed", total: 1_000, at });
   bytes(lanes[1]!, 1);
   await elapse(200);
@@ -298,7 +298,7 @@ test("one latency bus serves the server's run: a later stage adopts and re-paces
   expect(finished).toEqual({ at: 0 });
   expect(probe!.terminated).toBe(false);
 
-  // The loaded stage dials nothing: its transfers never race a handshake.
+  // The loaded stage dials nothing, so its transfers never race a handshake.
   const loaded = stage({ stage: "download", transfer: ["down"], loadedLatency: true }, {}, FETCH, bus);
   const discarded = outcome(loaded.resources.prepare(new AbortController().signal));
   expect(loaded.probes()).toEqual([]);

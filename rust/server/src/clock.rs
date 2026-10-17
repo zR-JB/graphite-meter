@@ -1,14 +1,14 @@
-//! UTC calendar time to the second: RFC 3339 for logs and documents, HTTP dates for cookies, certificate dates.
+//! Handles UTC calendar time to the second as RFC 3339 for logs and documents, HTTP cookie dates and certificate dates.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Such as `2026-10-06T14:31:02Z`.
+/// Formats a time such as `2026-10-06T14:31:02Z`.
 pub fn rfc3339(time: SystemTime) -> String {
     let [year, month, day, hour, minute, second] = fields(time);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
-/// Such as `Tue, 06 Oct 2026 14:31:02 GMT`.
+/// Formats a time such as `Tue, 06 Oct 2026 14:31:02 GMT`.
 pub fn http_date(time: SystemTime) -> String {
     const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -18,7 +18,7 @@ pub fn http_date(time: SystemTime) -> String {
     format!("{weekday}, {day:02} {month} {year:04} {hour:02}:{minute:02}:{second:02} GMT")
 }
 
-/// The time of a proleptic Gregorian date and time of day; `None` for an impossible one or one before 1970.
+/// Converts a proleptic Gregorian date and time of day. An impossible one, or one before 1970, gives `None`.
 pub fn utc([year, month, day, hour, minute, second]: [u64; 6]) -> Option<SystemTime> {
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let month_days = match month {

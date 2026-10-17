@@ -1,11 +1,11 @@
-// Bounds connection checks at once, overall and per origin for selected servers; background work runs only on an idle
-// origin and never fills the pool.
+// Bounds the connection checks running at once, overall and per origin for selected servers. Background work runs
+// only on an idle origin and never fills the pool.
 const TOTAL = 8;
 const PER_ORIGIN = 2;
 const BACKGROUND = 4;
 
 export interface Limiter {
-  /** Resolves with the slot's release once a check may start; `priority` is 0 for a selected server and is read
+  /** Resolves with the slot's release once a check may start. `priority` is 0 for a selected server and is read
       again on every drain, so a server selected meanwhile moves ahead. Aborting while queued rejects. */
   acquire(origin: string, priority: () => number, signal: AbortSignal): Promise<() => void>;
   /** Starts what now fits, after priorities changed. */

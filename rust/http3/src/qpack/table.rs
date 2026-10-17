@@ -1,4 +1,4 @@
-//! The QPACK static table (RFC 9204 Appendix A).
+//! Holds the QPACK static table (RFC 9204 Appendix A).
 
 /// An entry's index is its position.
 pub(super) const STATIC: [(&str, &str); 99] = [
@@ -109,7 +109,7 @@ pub(super) enum Match {
     None,
 }
 
-/// The first entry with this field, else the first with this name.
+/// Finds the first entry with this field, else the first with this name.
 pub(super) fn find(name: &[u8], value: &[u8]) -> Match {
     let mut named = None;
     for (index, &(entry, entry_value)) in STATIC.iter().enumerate() {

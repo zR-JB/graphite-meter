@@ -1,6 +1,6 @@
-// Per-server credentials: none, the page's own sign-in, or a measurement grant a peer approved. Requests they
-// authorize stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and never in a URL,
-// and a grant ends by the monotonic clock or the wall clock, whichever runs out first.
+// Holds per-server credentials, which are none, the page's own sign-in, or a measurement grant a peer approved. The
+// requests they authorize stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and
+// never in a URL. A grant ends by the monotonic clock or the wall clock, whichever runs out first.
 import { grant as grantDocument, readJSON, release, signInMarker, type CatalogEntry } from "../../protocol/documents";
 import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
 import { delay } from "../run/clock";
@@ -9,7 +9,7 @@ import { CheckError } from "./checks";
 import { endedCheck, ENDED_CHECK_MS, type PageConfig, type PageSession } from "./page";
 import { allowsOrigin } from "./paths";
 
-/** A measurement grant, held in memory only: its bearer token and when its parent login ends. */
+/** A measurement grant is held in memory only, as its bearer token and when its parent login ends. */
 export interface Grant {
   token: string;
   /** Monotonic page ms. */
@@ -49,7 +49,7 @@ function credentials(
     },
     ticket(origin, route) {
       const socket = route.startsWith("/ws/");
-      // A WebSocket carries the page's own cookie; WebTransport carries neither cookie nor header, only a ticket.
+      // A WebSocket carries the page's own cookie. WebTransport carries neither cookie nor header, only a ticket.
       if (kind === "public" || (kind === "session" && socket)) return null;
       const url = `${origin}${socket ? ROUTES.wsSession : ROUTES.wtSession}?target=${encodeURIComponent(origin + route)}`;
       return { url, request: request(url, "POST") };
@@ -93,7 +93,7 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
   let revoked = false;
   const left = () => Math.min(grant.deadline - now(), grant.expires - Date.now());
   const over = () => revoked || left() <= 0;
-  // A broken stream is how a withdrawn grant first shows: the grant's own request is refused with the marker.
+  // A withdrawn grant first shows as a broken stream, and the grant's own request is then refused with the marker.
   const withdrawn = endedCheck(() =>
     fetch(`${entry.url}${ROUTES.probe}`, {
       cache: "no-store",
@@ -120,19 +120,15 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
   );
 }
 
-/** The page's own server rides the page's sign-in when there is one; every other server starts public. */
+/** The page's own server rides the page's sign-in when there is one. Every other server starts public. */
 export const initialAuth = (entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth =>
   entry.id === "self" && entry.url === page.origin && page.auth ? sessionAuth(entry, page, session) : publicAuth(entry);
 
-const base64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+const base64url = (bytes: Uint8Array) => bytes.toBase64({ alphabet: "base64url", omitPadding: true });
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-/** The approval's public challenge, and the comparison code both pages show: RFC 4648 base32 of the first five
-    bytes of the verifier's SHA-256, eight characters. */
+/** Derives the approval's public challenge and the comparison code both pages show, which is RFC 4648 base32 of the
+    first five bytes of the verifier's SHA-256, eight characters. */
 export async function approvalChallenge(verifier: string): Promise<{ challenge: string; code: string }> {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
   let code = "";
@@ -146,8 +142,8 @@ export async function approvalChallenge(verifier: string): Promise<{ challenge: 
   return { challenge: base64url(hash), code };
 }
 
-/** A fresh approval for `entry`: the page to open, the code to compare, and the verifier, which never leaves this
-    page except in the exchange's body. */
+/** Begins a fresh approval for `entry`, with the page to open, the code to compare, and the verifier, which never
+    leaves this page except in the exchange's body. */
 export async function beginApproval(
   entry: CatalogEntry,
   page: PageConfig,
@@ -174,7 +170,7 @@ const EXCHANGE_TIMEOUT_MS = 5_000;
 
 /** Polls the peer's verifier-bound exchange until the user approves, within the approval's lifetime. A network
     failure, a slow answer or a failing hop is retried in the next round, which the server answers with the grant it
-    already issued; a refusal is final. */
+    already issued. A refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,

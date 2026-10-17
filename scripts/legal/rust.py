@@ -11,7 +11,6 @@ the release's third-party source offer and the SOURCE.txt that names it. --devel
 dependency review but no platform record, so any host builds them; they say they are unreviewed, and so does the
 executable (legal/README.md).
 """
-from __future__ import annotations
 
 import argparse
 import gzip

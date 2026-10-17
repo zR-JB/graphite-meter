@@ -10,10 +10,11 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin, Scheme},
     text::{quote, safe},
 };
+use jiff::tz::TimeZone;
 use std::{collections::HashMap, num::NonZero};
 use zeroize::Zeroizing;
 
-pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, String> {
+pub(super) fn config(settings: Settings, outbound: Outbound, log_zone: Option<TimeZone>) -> Result<Config, String> {
     let mut catalog = settings.catalog.clone();
     catalog.servers[0].name.clone_from(&settings.name);
     catalog.servers[0].location.clone_from(&settings.location);
@@ -44,6 +45,7 @@ pub(super) fn config(settings: Settings, outbound: Outbound) -> Result<Config, S
         auth,
         catalog,
         outbound,
+        log_zone,
     })
 }
 

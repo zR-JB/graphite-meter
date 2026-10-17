@@ -1,4 +1,4 @@
-//! The one accept-and-drain loop: connection holds, accept retries, pinned-runtime connections, shutdown drain.
+//! Accepts connections under holds, retries failed accepts, serves each on a pinned runtime and drains at shutdown.
 
 use crate::{limits::Hold, log};
 use futures_util::FutureExt;
@@ -17,17 +17,17 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const RETRY_FIRST: Duration = Duration::from_millis(5);
 const RETRY_LAST: Duration = Duration::from_secs(1);
 
-/// A socket connections are accepted from.
+/// Accepts connections from one socket.
 pub trait Listen {
     type Connection: Send + 'static;
 
-    /// The next connection, or `None` for an attempt the listener answered itself, such as with a Retry.
+    /// Yields the next connection, or `None` for an attempt the listener answered itself, such as with a Retry.
     fn accept(&mut self) -> impl Future<Output = io::Result<Option<(Self::Connection, SocketAddr)>>> + Send;
 
-    /// The socket in accept failure lines, such as `tcp [::]:7246`.
+    /// Names the socket in accept failure lines, such as `tcp [::]:7246`.
     fn name(&self) -> String;
 
-    /// What closes the connections left once the drain ended; the listener stopped before.
+    /// Closes the connections left once the drain ended, after the listener itself stopped.
     fn closer(&self) -> impl Future<Output = ()> + Send + 'static {
         async {}
     }
@@ -46,7 +46,7 @@ impl Listen for TcpListener {
     }
 }
 
-/// Accepts until `shutdown`, then closes the listener at once and drains; ends early if the socket stops listening.
+/// Accepts until `shutdown`, then closes the listener at once and drains. It ends early if the socket stops listening.
 pub async fn serve<L, F>(
     mut listener: L,
     runtime: impl Fn() -> Handle,
@@ -130,7 +130,7 @@ mod tests {
         task::JoinHandle,
     };
 
-    /// A loop on a fresh local listener whose connections run `serve`, holding shares of `quota`, on pinned runtimes
+    /// Starts a loop on a fresh local listener. Its connections run `serve` under shares of `quota` on pinned runtimes
     /// beside a multi-thread test runtime.
     async fn start<F>(
         quota: Quota,
@@ -208,7 +208,7 @@ mod tests {
         let mut started_rx = started_rx;
         started_rx.recv().await.unwrap();
         shutdown.cancel();
-        // Connections the closing backlog took are reset; once it closed, they are refused.
+        // The closing backlog resets the connections it took, and once it closed they are refused.
         let refused = async {
             while TcpStream::connect(address)
                 .await
@@ -228,7 +228,7 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    /// A listener whose accepts fail `failures` times, recording when each was tried.
+    /// Fails `failures` accepts and records when each was tried.
     struct Failing {
         failures: usize,
         tried: Arc<std::sync::Mutex<Vec<tokio::time::Instant>>>,
@@ -251,7 +251,7 @@ mod tests {
         }
     }
 
-    /// A listener flooded with attempts it answers itself, each ready at once.
+    /// Answers a flood of attempts itself, each ready at once.
     struct Flooded;
 
     impl Listen for Flooded {

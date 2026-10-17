@@ -1,15 +1,16 @@
-//! Log lines with a UTC time, level, topic and source, and limits for lines peers or load can repeat.
+//! Log lines with a time, level, topic and source, and limits for lines peers or load can repeat.
 //!
 //! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
 //! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
 //! uses one word for one meaning: `failed` (an operation did not complete), `refused` (the server declined),
 //! `unavailable` (a dependency did not answer), `missing`, `ready`.
 
+use jiff::{Timestamp, tz::TimeZone};
 use std::{
     fmt::{self, Write as _},
     io::{IsTerminal, Write},
     sync::{
-        LazyLock, Mutex,
+        LazyLock, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender, TrySendError},
     },
@@ -145,8 +146,35 @@ fn emit(line: &str) {
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
 }
 
+static ZONE: OnceLock<TimeZone> = OnceLock::new();
+
+pub fn show_in(zone: TimeZone) {
+    let _ = ZONE.set(zone);
+}
+
 fn now() -> String {
-    crate::clock::rfc3339(SystemTime::now())
+    stamp(SystemTime::now(), ZONE.get())
+}
+
+/// RFC 3339 to the second in `zone` with the offset in effect then, or in UTC with `Z` without one or out of its range.
+fn stamp(time: SystemTime, zone: Option<&TimeZone>) -> String {
+    zone.and_then(|zone| {
+        let at = Timestamp::try_from(time).ok()?;
+        let (local, offset) = (zone.to_datetime(at), zone.to_offset(at).seconds());
+        let (sign, minutes) = (if offset < 0 { '-' } else { '+' }, offset.unsigned_abs() / 60);
+        Some(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{sign}{:02}:{:02}",
+            local.year(),
+            local.month(),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            minutes / 60,
+            minutes % 60
+        ))
+    })
+    .unwrap_or_else(|| crate::clock::rfc3339(time))
 }
 
 /// Topics are padded to the longest, `admission:`, so messages start in one column.
@@ -352,5 +380,24 @@ mod tests {
         assert_eq!(paced.admit_at(PEERS, at(61)), None, "no slot while every peer's minute runs");
         assert_eq!(paced.admit_at(PEERS, at(90)), Some(0), "the slot of the peer whose minute ended");
         assert_eq!(crate::lock(&paced.0).len(), PEERS);
+    }
+
+    #[test]
+    fn times_carry_the_zone_offset_in_effect_and_fall_back_to_utc() {
+        let berlin = jiff::tz::TimeZoneDatabase::bundled().get("Europe/Berlin").unwrap();
+        let utc = |fields| crate::clock::utc(fields).unwrap();
+        for (fields, local) in [
+            ([2026, 1, 15, 12, 0, 0], "2026-01-15T13:00:00+01:00"),
+            ([2026, 7, 15, 12, 0, 0], "2026-07-15T14:00:00+02:00"),
+            ([2026, 3, 29, 0, 59, 59], "2026-03-29T01:59:59+01:00"),
+            ([2026, 3, 29, 1, 0, 0], "2026-03-29T03:00:00+02:00"),
+            ([2026, 10, 25, 0, 59, 59], "2026-10-25T02:59:59+02:00"),
+            ([2026, 10, 25, 1, 0, 0], "2026-10-25T02:00:00+01:00"),
+        ] {
+            assert_eq!(stamp(utc(fields), Some(&berlin)), local);
+        }
+        assert_eq!(stamp(utc([2026, 1, 15, 12, 0, 0]), None), "2026-01-15T12:00:00Z");
+        let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(400_000_000_000);
+        assert_eq!(stamp(beyond, Some(&berlin)), crate::clock::rfc3339(beyond));
     }
 }

@@ -1,4 +1,4 @@
-//! The view a run's events reduce to: its latency server across a departure.
+//! Reduces a run's events to the view and follows its latency server across a departure.
 use graphite_meter_client::{
     events::{Event, View},
     measure::latency::{Population, Summary},
@@ -14,7 +14,7 @@ fn id(text: &str) -> ServerId {
     ServerId::parse(text).unwrap()
 }
 
-/// A server's share of `stage`, with a latency median when `median` is given.
+/// Builds a server's share of `stage`, with a latency median when `median` is given.
 fn server(name: &str, left: bool, median: Option<Duration>) -> ServerResult {
     let summary = Summary { replies: 5, p50: median, ..Summary::default() };
     let latency = Some(Population { summary, complete: median.is_some() });
@@ -37,8 +37,8 @@ fn stage(stage: Stage) -> Event {
     Event::StageStarted(StagePlan { stage, members: Vec::new(), duration: SECOND, latency: None })
 }
 
-/// A view of a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s; `c` had no path.
-/// The failures its result records, `a`'s announced a second earlier.
+/// Views a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s and `c` had no path.
+/// Returns the failures its result records, `a`'s announced a second earlier.
 fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
     let (at, mut view) = (Instant::now(), View::default());
     let plan = vec![(Stage::Latency, SECOND), (Stage::Download, SECOND)];

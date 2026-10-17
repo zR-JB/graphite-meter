@@ -1,14 +1,14 @@
-// The wire-rate estimate (docs/MEASUREMENTS.md): payload throughput times a modeled protocol overhead at a
+// Estimates the wire rate (docs/MEASUREMENTS.md) as payload throughput times a modeled protocol overhead at a
 // 1,500 B MTU. The terminal client shares its multipliers (api/wirerate.testvectors.json).
 
 type Framing = "http3-data" | "webtransport-stream" | "webtransport-datagram";
 type WireTransport = "http1-clear" | "https-tls" | "http2" | "http3-quic";
 type FactorKey = "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
 
-/** The model a result keeps beside its headline, as history saves it. */
+/** A result keeps this model beside its headline, as history saves it. */
 export interface WireModel {
   componentCount?: number;
-  /** One row per header layer: its share of the payload in percent, weighted by bytes over all components. */
+  /** Holds one row per header layer with its share of the payload in percent, weighted by bytes over all components. */
   factors: { key: FactorKey; label: string; contributionPct: number }[];
   transport: WireTransport;
   transportSource: "detected" | "fallback";
@@ -19,7 +19,7 @@ export interface WireModel {
   totalMultiplier: number;
 }
 
-/** A measured path: the browser-observed protocol (or the WebTransport kind) and the probe's IP family. */
+/** Describes a measured path by the browser-observed protocol (or the WebTransport kind) and the probe's IP family. */
 export interface WirePath {
   protocol: "http1" | "http2" | "http3" | "negotiated" | undefined;
   secure: boolean;
@@ -44,7 +44,7 @@ const FRAMING_LABEL: Record<Framing, string> = {
   "webtransport-datagram": "WebTransport QUIC datagrams",
 };
 
-/** One path's model; its factors are unweighted. */
+/** Models one path. Its factors are unweighted. */
 export function pathModel(path: WirePath): WireModel {
   const framing: Framing | null =
     path.transport === "webtransport-datagram"
@@ -90,7 +90,7 @@ export function pathModel(path: WirePath): WireModel {
   };
 }
 
-/** Several components (servers, or both directions) as one model, each weighted by its measured bytes. */
+/** Combines several components (servers, or both directions) into one model, each weighted by its measured bytes. */
 export function combinedModel(components: readonly { bytesPerSec: number; path: WirePath }[]): WireModel | null {
   const measured = components.reduce((sum, { bytesPerSec }) => sum + bytesPerSec, 0);
   if (!components.length) return null;

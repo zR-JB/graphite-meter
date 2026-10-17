@@ -1,4 +1,4 @@
-//! The browser app on UI listeners: embedded files, index meta tags, the browser's notice and the page policy.
+//! Tests the browser app on UI listeners, embedded files, index meta tags, the browser's notice and the page policy.
 
 use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -27,7 +27,7 @@ static FILES: &[Asset] = &[
 
 const REPORT: &str = "project\nrust crates\nbrowser notice\n";
 
-/// The report with the browser's notice as its suffix.
+/// Builds the report with the browser's notice as its suffix.
 fn notices() -> &'static Notices {
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(REPORT.as_bytes(), 9).leak();
     let browser = REPORT.len() - "browser notice\n".len();

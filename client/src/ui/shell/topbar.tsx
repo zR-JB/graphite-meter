@@ -1,5 +1,5 @@
-// The top bar: start over, the Settings key, the connection, the way back to a live run, the account, History,
-// Details and the theme, with the last three moving into "More controls" as the bar narrows (container queries).
+// The top bar holds start over, the Settings key, the connection, the way back to a live run, the account, History,
+// Details and the theme. The last three move into "More controls" as the bar narrows (container queries).
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, onCleanup } from "../../lib/signal";

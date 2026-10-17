@@ -1,6 +1,6 @@
-// One server's resources for one stage: its download and upload carriers, the upload receiver and the probe channel,
-// with the readiness, stalls and failure latch that stand between them and the run. A failure or a sign-in that ends
-// the stage reaches the run once: as prepare()'s rejection while that runs, as an event after.
+// Holds one server's resources for one stage, its download and upload carriers, the upload receiver and the probe
+// channel, with the readiness, stalls and failure latch that stand between them and the run. A failure or a sign-in
+// that ends the stage reaches the run once, as prepare()'s rejection while that runs and as an event after.
 import { readJSON, release, uploadSession } from "../../protocol/documents";
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
@@ -32,7 +32,7 @@ import { abortable, delay } from "../run/clock";
 const READY_MS = ESTABLISH_MS + 500;
 /** Large enough that a stage ends by aborting a download, not by fetching it again. */
 const DOWNLOAD_BYTES = 64 * 1024 ** 3;
-/** Probes in flight at most; a loaded stage shares the link with its transfer, so its window stays small. */
+/** Bounds the probes in flight. A loaded stage shares the link with its transfer, so its window stays small. */
 const IN_FLIGHT = { fixed: 16, replyDriven: 4, loaded: 2 };
 /** One sign-in check answers every break this long after it started, so an outage is not checked per reopening. */
 const SIGN_IN_CHECK_MS = 3_000;
@@ -41,10 +41,10 @@ export const openStage: OpenStage = (setup) => new Stage(setup);
 
 class Stage implements StageResources {
   readonly #setup: StageSetup;
-  /** Released: nothing reaches the run any more. */
+  /** Nothing reaches the run once the stage is released. */
   readonly #released = new AbortController();
   #measuring = false;
-  /** Throughput failed or its sign-in ended: its carriers are gone for good. */
+  /** Throughput failed or its sign-in ended, so its carriers are gone for good. */
   #throughputEnded = false;
   #latencyEnded = false;
   #down: Carrier | null = null;
@@ -77,7 +77,7 @@ class Stage implements StageResources {
         ]),
       ]);
       const probing = this.#probes && this.#until(() => this.#probesReady || this.#latencyEnded, budget);
-      // Loaded latency never holds throughput back; its channel reports its own stall.
+      // Loaded latency never holds throughput back. Its channel reports its own stall.
       if (probing)
         await Promise.race([
           failed,
@@ -147,8 +147,8 @@ class Stage implements StageResources {
     this.#releaseThroughput();
   }
 
-  /** Why the stage is not ready: the caller's abort as such, a failure as reported, and a lapsed budget as busy when
-      a lane or the feed is still refused as busy. */
+  /** Explains why the stage is not ready. The caller's abort passes as such, a failure as reported, and a lapsed
+      budget as busy when a lane or the feed is still refused as busy. */
   #unready(error: unknown, signal: AbortSignal): unknown {
     if (signal.aborted) return signal.reason;
     if (!(error instanceof DOMException && error.name === "TimeoutError")) return error;
@@ -224,7 +224,7 @@ class Stage implements StageResources {
       });
     } catch (cause) {
       if (cause instanceof SignInRequired || signal.aborted) throw cause;
-      // A broken request may be the sign-in or grant ending; the check, too, ends with the budget.
+      // A broken request may be the sign-in or grant ending. The check, too, ends with the budget.
       if (await abortable(this.#signedOut(), signal)) throw new SignInRequired(server);
       throw new Error("upload session could not be established", { cause });
     }
@@ -238,7 +238,7 @@ class Stage implements StageResources {
     return uploadId;
   }
 
-  /** One direction's carrier, opening its lanes now; none once throughput ended. */
+  /** Opens one direction's carrier and its lanes now, or none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
     if (this.#throughputEnded) return null;
     const { server, streams, uploadLanes, gating, seed } = this.#setup;
@@ -288,8 +288,8 @@ class Stage implements StageResources {
     return new Carrier(plan, this.#carrierHost(direction));
   }
 
-  /** A request's credentials, read afresh at every opening, which runs from timers too: a grant that ended asks for
-      sign-in, any other refusal fails the stage. */
+  /** Reads a request's credentials afresh at every opening, which runs from timers too. A grant that ended asks for
+      sign-in, and any other refusal fails the stage. */
   #signedIn<T>(build: () => T): T | null {
     try {
       return build();
@@ -312,8 +312,8 @@ class Stage implements StageResources {
         if (!this.#throughputEnded) events.uploadHint(lane, bytes, elapsedMs);
       },
       record: (record) => this.#receiver?.record(record),
-      // Only a lane that reopened proves a download moves again: bytes a lane read before its own break arrive after
-      // another lane's.
+      // Only a lane that reopened proves a download moves again, since bytes a lane read before its own break arrive
+      // after another lane's.
       delivered: () => {
         this.#notify();
         if (direction === "down") this.#progress("down");
@@ -335,7 +335,7 @@ class Stage implements StageResources {
     signIn: () => this.#signIn("throughput"),
   };
 
-  /** Settles a lane's or the feed's ending: a sign-in, a rotation the run decides, a failure, or a stall and a
+  /** Settles a lane's or the feed's ending as a sign-in, a rotation the run decides, a failure, or a stall and a
       reopen after `delayMs`. A broken one also checks the sign-in or grant meanwhile, which can take longer than the
       run's silence rule. */
   async #reopen(
@@ -367,7 +367,7 @@ class Stage implements StageResources {
     return !signal.aborted && !this.#throughputEnded;
   }
 
-  /** Whether the sign-in or grant ended; a revocation mid-outage still shows within one more check. */
+  /** Asks whether the sign-in or grant ended. A revocation mid-outage still shows within one more check. */
   #signedOut(): Promise<boolean> {
     const at = this.#setup.now();
     if (this.#signInCheck && at - this.#signInCheck.at < SIGN_IN_CHECK_MS) return this.#signInCheck.ended;
@@ -376,7 +376,7 @@ class Stage implements StageResources {
     return ended;
   }
 
-  /** The stage stalls while any direction does, once; a rotation reaches the run even then. */
+  /** The stage stalls once while any direction does. A rotation reaches the run even then. */
   #stall(direction: Direction, stall: Stall): void {
     if (!this.#measuring || (this.#stalls[direction] && !stall.rotate)) return;
     const quiet = !this.#stalls.down && !this.#stalls.up;
@@ -384,7 +384,7 @@ class Stage implements StageResources {
     if (quiet || stall.rotate) this.#setup.events.stalled(stall);
   }
 
-  /** Recovery clears its direction's stall: a download lane delivering since it reopened, or receiver growth. */
+  /** A download lane delivering since it reopened, or receiver growth, clears its direction's stall. */
   #progress(direction: Direction): void {
     if (!this.#stalls[direction]) return;
     this.#stalls[direction] = false;

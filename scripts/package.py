@@ -8,7 +8,6 @@ the builder's own system and architecture is run to check its version and alloca
 reproducible: fixed times, owners and modes. --check builds nothing: it runs the client built for this machine out
 of its archive in DIR; scripts/ci/assets.py verifies every archive and the source offer as a release does.
 """
-from __future__ import annotations
 
 import argparse
 import gzip

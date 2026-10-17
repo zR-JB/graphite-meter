@@ -1,4 +1,4 @@
-//! The WebSocket bus: the upgrade handshake, then PINGs answered over a lane until it ends.
+//! Runs the WebSocket bus, which answers the upgrade handshake and then PINGs over a lane until it ends.
 
 use super::body::Body;
 use crate::{engine::reflect, lane::Lane};
@@ -18,12 +18,12 @@ use tokio_tungstenite::{
     },
 };
 
-/// A bus message holds at most this many bytes; a valid PING has at most 15.
+/// A bus message holds at most this many bytes. A valid PING has at most 15.
 const MAX_MESSAGE_BYTES: usize = 2048;
-/// The close handshake, so that an unresponsive peer cannot hold its admission.
+/// The close handshake has this long, so that an unresponsive peer cannot hold its admission.
 const CLOSE_BOUND: Duration = Duration::from_secs(5);
 
-/// The `101` accepting an upgrade, or its refusal: a missing upgrade before the method, the method before the key.
+/// Accepts an upgrade with a `101` or refuses it, checking a missing upgrade before the method and that before the key.
 pub fn handshake<B>(request: &Request<B>) -> Result<Response<Body>, Response<Body>> {
     // Token lists may spread over repeated headers, which tungstenite expects as one value each.
     let mut normalized = Request::new(());

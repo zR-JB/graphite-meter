@@ -1,5 +1,5 @@
-// Fakes for driving a real run: page time that moves only when a test says so, and servers whose lanes report at a
-// fixed rate. Tests of the run and of the views' model share them.
+// Provides fakes for driving a real run, page time that moves only when a test says so and servers whose lanes report
+// at a fixed rate. Tests of the run and of the views' model share them.
 import type {
   Checkpoint,
   Discovery,
@@ -19,7 +19,7 @@ interface Timer {
   fn: () => void;
 }
 
-/** Page time that moves only when a test says so; promise continuations settle before each timer. */
+/** Page time moves only when a test says so. Promise continuations settle before each timer. */
 export class FakeClock implements Clock {
   t = 0;
   #timers: Timer[] = [];
@@ -80,7 +80,7 @@ export interface Peer {
   /** The lanes report what they counted but had not reported yet, and may answer the time their count stands at. */
   flush?(events: StageEvents, cutoff: number): void | number | Promise<void | number>;
   receives?: false;
-  /** Whether the server's sign-in or grant has ended, as its auth check answers. */
+  /** The server's auth check answers this when asked whether its sign-in or grant has ended. */
   signedOut?: boolean;
 }
 

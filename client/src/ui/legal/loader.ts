@@ -1,9 +1,9 @@
-// The server's legal notices (legal/about.json beside the page): the project's license and the third-party
-// software it ships. A load that succeeded is kept for the page's life; a failed one is tried again when asked.
+// Loads the server's legal notices (legal/about.json beside the page), the project's license and the third-party
+// software it ships. A load that succeeded is kept for the page's life. A failed one is tried again when asked.
 import { array, boolean, DecodeError, object, string, type Decoded, type Decoder } from "../../lib/decode";
 import { displayText, readJSON } from "../../protocol/documents";
 
-/** A link the page may follow: http(s), absolute or relative to the page. */
+/** Decodes a link the page may follow, http(s), absolute or relative to the page. */
 const href: Decoder<string> = (value, path = "") => {
   const text = string(1, 2048)(value, path);
   const resolved = URL.parse(text, document.baseURI);
@@ -40,7 +40,7 @@ export type LegalComponent = About["components"][number];
 
 /** A server that never answers fails the load, so Retry is offered rather than "Loading" for good. */
 const LOAD_MS = 10_000;
-/** The server lists every crate it links, about 50 KiB of notices; this leaves room for many more. */
+/** The server lists every crate it links, about 50 KiB of notices. This leaves room for many more. */
 const MAX_ABOUT_BYTES = 1024 * 1024;
 
 async function fetchAbout(): Promise<About> {

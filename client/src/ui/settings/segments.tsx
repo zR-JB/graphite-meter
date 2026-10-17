@@ -1,10 +1,10 @@
-// A choice of one among a few equal segments; the pressed one carries the thumb.
+// Chooses one among a few equal segments. The pressed one carries the thumb.
 import { tip } from "../kit/tip";
 
 export interface Segment<T extends string> {
   value: T;
   label: string;
-  /** The accessible name, when the word alone is too short. */
+  /** Replaces the accessible name when the word alone is too short. */
   name?: string;
   tip?: () => string;
 }

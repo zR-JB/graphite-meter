@@ -1,4 +1,4 @@
-//! Sign-in approvals over the app: the browser page, approval and verifier exchanges bound to their origin.
+//! Tests sign-in approvals over the app, with the browser page, approval and verifier exchanges bound to their origin.
 
 use super::{
     auth::{BROWSER, auth_app, login, public, signed, store, tls},
@@ -33,7 +33,7 @@ async fn approve(app: &App, path: &str, login: &NewLogin, challenge: &str) -> Re
     tls(app, request).await
 }
 
-/// A token exchange at `path` for `verifier`, from `origin` when given.
+/// Posts a token exchange at `path` for `verifier`, from `origin` when given.
 async fn exchange(app: &App, path: &str, origin: Option<&str>, document: &str) -> Response<Body> {
     let mut request = public("POST", path).header("content-type", "application/json");
     if let Some(origin) = origin {
@@ -118,7 +118,7 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     assert_eq!(grant.browser().map(BrowserOrigin::header), Some(&HeaderValue::from_static(BROWSER)));
 }
 
-/// An exchange whose answer was lost is asked again: the same verifier and origin get the same grant for 30 s, which
+/// An exchange whose answer was lost is asked again. The same verifier and origin get the same grant for 30 s, which
 /// spends one of the login's eight once, and a clear refusal after.
 #[tokio::test]
 async fn a_repeated_exchange_returns_the_same_grant_briefly() {

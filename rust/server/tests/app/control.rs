@@ -1,4 +1,4 @@
-//! Discovery, the probe, downloads, handler limits and socket tickets.
+//! Tests discovery, the probe, downloads, handler limits and socket tickets.
 
 use super::*;
 use graphite_meter_proto::{

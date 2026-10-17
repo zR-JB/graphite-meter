@@ -1,4 +1,4 @@
-//! The trust store for server certificates, loaded once on first use.
+//! Loads the trust store for server certificates once on first use.
 use crate::crypto::{CONFIGS, Verify, provider};
 use rustls::{
     CertificateError, DigitallySignedStruct, OtherError, RootCertStore, SignatureScheme,
@@ -20,7 +20,7 @@ use std::{
 };
 use tokio::sync::OnceCell;
 
-/// Linux distributions' root bundles, of which the first that reads counts.
+/// Linux distributions keep their root bundles here. The first that reads counts.
 #[cfg(target_os = "linux")]
 const FILES: &[&str] = &[
     "/etc/ssl/certs/ca-certificates.crt",
@@ -30,13 +30,13 @@ const FILES: &[&str] = &[
     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
     "/etc/ssl/cert.pem",
 ];
-/// Linux root directories, every file of which counts.
+/// Linux keeps root directories here. Every file in them counts.
 #[cfg(target_os = "linux")]
 const DIRECTORIES: &[&str] = &["/etc/ssl/certs", "/etc/pki/tls/certs"];
 
 type Reason = Arc<dyn Error + Send + Sync>;
 
-/// Roots to verify against: those `SSL_CERT_FILE` and `SSL_CERT_DIR` name, else the system's, loaded on first use.
+/// Holds the roots to verify against, loaded on first use from `SSL_CERT_FILE` and `SSL_CERT_DIR` or else the system.
 pub struct Trust {
     file: Option<OsString>,
     directories: Option<OsString>,
@@ -45,7 +45,7 @@ pub struct Trust {
 }
 
 impl Trust {
-    /// The roots `lookup`'s `SSL_CERT_FILE` and `SSL_CERT_DIR` name; empty values are unset.
+    /// Takes the roots `lookup`'s `SSL_CERT_FILE` and `SSL_CERT_DIR` name. Empty values are unset.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         let set = |name| lookup(name).filter(|value| !value.is_empty());
         Self {
@@ -56,7 +56,7 @@ impl Trust {
         }
     }
 
-    /// The process's roots, shared by every client that verifies against them.
+    /// Shares the process's roots among every client that verifies against them.
     pub fn system() -> Arc<Self> {
         static SYSTEM: LazyLock<Arc<Trust>> =
             LazyLock::new(|| Arc::new(Trust::from_lookup(|name| std::env::var_os(name))));
@@ -74,7 +74,7 @@ impl fmt::Debug for Trust {
     }
 }
 
-/// The verifier for `verify`; trusted roots load once off-thread; an unreadable store fails connections only.
+/// Builds the verifier for `verify`. Trusted roots load once off-thread. An unreadable store fails connections only.
 pub(crate) async fn verifier(verify: &Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
     let Verify::Trusted(trust) = verify else {
         return Ok(Arc::new(Verifier::Insecure));
@@ -87,7 +87,7 @@ pub(crate) async fn verifier(verify: &Verify) -> Result<Arc<dyn ServerCertVerifi
         .cloned()
 }
 
-/// A verifier that refuses every certificate for `reason`.
+/// Builds a verifier that refuses every certificate for `reason`.
 pub(crate) fn refusing(reason: impl Error + Send + Sync + 'static) -> Arc<dyn ServerCertVerifier> {
     Arc::new(Verifier::Empty(Some(Arc::new(reason))))
 }
@@ -97,7 +97,7 @@ fn system(locations: Locations) -> Arc<dyn ServerCertVerifier> {
     Arc::new(Verifier::load(&locations.or(FILES, DIRECTORIES)))
 }
 
-/// The platform verifier, or only the roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name when either is set.
+/// Uses the platform verifier, or only the roots `SSL_CERT_FILE` and `SSL_CERT_DIR` name when either is set.
 #[cfg(not(target_os = "linux"))]
 fn system(locations: Locations) -> Arc<dyn ServerCertVerifier> {
     if !locations.files.is_empty() || !locations.directories.is_empty() {
@@ -109,14 +109,14 @@ fn system(locations: Locations) -> Arc<dyn ServerCertVerifier> {
     }
 }
 
-/// Where roots load from: the first file of `files` that reads, and every file in `directories`.
+/// Roots load from the first file of `files` that reads and from every file in `directories`.
 struct Locations {
     files: Vec<PathBuf>,
     directories: Vec<PathBuf>,
 }
 
 impl Locations {
-    /// `SSL_CERT_FILE`'s file and `SSL_CERT_DIR`'s path list.
+    /// Takes `SSL_CERT_FILE`'s file and `SSL_CERT_DIR`'s path list.
     fn new(file: Option<OsString>, directories: Option<OsString>) -> Self {
         Self {
             files: file.into_iter().map(PathBuf::from).collect(),
@@ -136,7 +136,7 @@ impl Locations {
         self
     }
 
-    /// The roots, each once, and the first failure other than a missing path, which matters only when none loaded.
+    /// Reads each root once and keeps the first failure other than a missing path, which matters only when none loaded.
     fn roots(&self) -> (Vec<CertificateDer<'static>>, Option<io::Error>) {
         let mut failure = None;
         let mut keep = |error: io::Error| {
@@ -166,7 +166,7 @@ impl Locations {
     }
 }
 
-/// Adds the roots in `data` that `roots` lacks; Debian's bundle also lies in its directory, once more behind links.
+/// Adds the roots in `data` that `roots` lacks. Debian's bundle also lies in its directory, once more behind links.
 fn add(roots: &mut Vec<CertificateDer<'static>>, data: &[u8]) {
     for root in certificates(data) {
         if !roots.contains(&root) {
@@ -175,13 +175,13 @@ fn add(roots: &mut Vec<CertificateDer<'static>>, data: &[u8]) {
     }
 }
 
-/// A link to a bare file name, as c_rehash's hash links are, skipped so each root loads once.
+/// Spots a link to a bare file name, as c_rehash's hash links are. The caller skips it so each root loads once.
 fn same_directory_link(entry: &fs::DirEntry, path: &Path) -> bool {
     entry.file_type().is_ok_and(|kind| kind.is_symlink())
         && fs::read_link(path).is_ok_and(|target| target.components().count() == 1)
 }
 
-/// Every CERTIFICATE block that parses, each read from its own BEGIN line so a cut block loses no other.
+/// Yields every CERTIFICATE block that parses, each read from its own BEGIN line so a cut block loses no other.
 fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + '_ {
     const BEGIN: &[u8] = b"\n-----BEGIN ";
     let mut rest = data;
@@ -195,15 +195,15 @@ fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + 
     blocks.flat_map(|block| CertificateDer::pem_slice_iter(block).filter_map(Result::ok))
 }
 
-/// How server certificates are checked; handshake signatures are checked in every case.
+/// Says how server certificates are checked. Handshake signatures are checked in every case.
 #[derive(Debug)]
 enum Verifier {
-    /// webpki over the loaded roots, taking a leaf that is itself a trusted root as its own chain.
+    /// webpki checks against the loaded roots and takes a leaf that is itself a trusted root as its own chain.
     Roots {
         webpki: Arc<WebPkiServerVerifier>,
         roots: Vec<CertificateDer<'static>>,
     },
-    /// No root loaded: every certificate fails, with the reason the store could not be read if one is known.
+    /// Every certificate fails because no root loaded, with the reason the store could not be read if one is known.
     Empty(Option<Reason>),
     /// Every certificate passes.
     Insecure,

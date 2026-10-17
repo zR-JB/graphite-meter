@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Trust predicates shared by stable releases and main or PR prereleases."""
 
-from __future__ import annotations
-
 import os
 import re
 import subprocess

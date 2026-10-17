@@ -1,7 +1,7 @@
-// Glitch-free push-pull signals: a write marks readers stale, a read recomputes lazily, effects flush once per batch,
-// owners before the effects they own. Effects own what they create while running (effects, cleanups) and dispose it
-// before each rerun. An exception in one effect is reported and never stops the others; a computed keeps the one it
-// threw and throws it to every reader until a source changes.
+// Implements glitch-free push-pull signals. A write marks readers stale, a read recomputes lazily, and effects flush
+// once per batch, owners before the effects they own. Effects own what they create while running (effects, cleanups)
+// and dispose it before each rerun. An exception in one effect is reported and never stops the others. A computed
+// keeps the one it threw and throws it to every reader until a source changes.
 
 const CLEAN = 0;
 const CHECK = 1;
@@ -10,9 +10,9 @@ type State = typeof CLEAN | typeof CHECK | typeof DIRTY;
 
 interface Owner {
   owned: (() => void)[] | null;
-  /** How deep in the ownership tree: owners run before what they own. */
+  /** The depth in the ownership tree. Owners run before what they own. */
   depth: number;
-  /** Disposed for good: a cleanup registered later runs at once. */
+  /** Disposed for good, so a cleanup registered later runs at once. */
   disposed: boolean;
 }
 
@@ -79,7 +79,7 @@ function refresh(node: Node): void {
     node.state = CLEAN;
     return;
   }
-  // Clean before it runs, so a write it causes to its own sources marks it stale again.
+  // The node is clean before it runs, so a write it causes to its own sources marks it stale again.
   node.state = CLEAN;
   run(node);
 }
@@ -107,7 +107,7 @@ function run(node: Node): void {
       node.sources = [];
     }
   }
-  // A changed value settles the readers that were checking it; one reading it right now already has it.
+  // A changed value settles the readers that were checking it. One reading it right now already has it.
   if (!node.effect && (node.failure || failed || !Object.is(previous, node.value)))
     for (const observer of node.observers) if (observer.state === CHECK) observer.state = DIRTY;
 }
@@ -127,7 +127,7 @@ function unobserve(source: Node, observer: Node): void {
 function dispose(target: Owner): void {
   const owned = target.owned;
   target.owned = null;
-  // A cleanup that throws is reported; the ones after it still run.
+  // A cleanup that throws is reported. The ones after it still run.
   if (owned)
     for (let i = owned.length - 1; i >= 0; i--)
       try {
@@ -164,7 +164,7 @@ function flush(): void {
   }
 }
 
-/** A readable signal: call it to read and subscribe, `peek()` to read without subscribing. */
+/** A readable signal. Call it to read and subscribe, `peek()` to read without subscribing. */
 export interface Read<T> {
   (): T;
   peek(): T;
@@ -190,7 +190,7 @@ export function onCleanup(fn: () => void): void {
   else if (owner) (owner.owned ??= []).push(fn);
 }
 
-/** Runs `fn` now and again whenever a signal it read changes; returns its disposer. */
+/** Runs `fn` now and again whenever a signal it read changes. Returns its disposer. */
 export function effect(fn: () => void): () => void {
   // An owner already gone starts nothing.
   if (owner?.disposed) return () => {};
@@ -213,7 +213,7 @@ export function effect(fn: () => void): () => void {
   return disposer;
 }
 
-/** Runs `fn` as an owner of its own: effects and cleanups it creates live until the returned disposer runs. */
+/** Runs `fn` as an owner of its own, so effects and cleanups it creates live until the returned disposer runs. */
 export function scope<T>(fn: () => T): [T, () => void] {
   const root: Owner = { owned: null, depth: owner ? owner.depth + 1 : 0, disposed: false };
   const outer = owner;

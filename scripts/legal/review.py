@@ -1,5 +1,4 @@
 """Explicit approval and fingerprint policy, independent of package managers."""
-from __future__ import annotations
 
 import os
 from dataclasses import replace

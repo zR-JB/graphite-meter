@@ -1,4 +1,4 @@
-//! The stream and datagram limits each role's QUIC transport grants its peer.
+//! Checks the stream and datagram limits each role's QUIC transport grants its peer.
 use graphite_meter_net::quic::{client_transport, server_transport};
 use graphite_meter_testkit::Identity;
 use std::{
@@ -9,7 +9,7 @@ use std::{
 
 const REQUESTS: u32 = 7;
 
-/// The stream `open` makes at once, as it does within the peer's limit.
+/// Polls `open` once, which yields a stream at once within the peer's limit.
 fn open<T>(open: impl Future<Output = Result<T, noq::ConnectionError>>) -> Option<T> {
     match pin!(open).poll(&mut Context::from_waker(Waker::noop())) {
         Poll::Ready(opened) => opened.ok(),

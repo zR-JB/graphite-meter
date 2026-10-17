@@ -47,6 +47,8 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_H2_PUBLIC_ORIGIN=https://speed.example:7248
 # Environment=GM_H3_PUBLIC_ORIGIN=https://speed.example:7249
 # Environment=GM_VERBOSE=1
+# Log times in this zone instead of UTC:
+# Environment=TZ=Europe/Berlin
 
 # Authentication, off by default. When enabled it gates every UI asset,
 # discovery request, probe, transfer, progress stream, and WebSocket. The lines

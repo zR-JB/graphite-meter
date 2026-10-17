@@ -1,6 +1,6 @@
 // Where focus may go: a late completion never moves focus the user already moved, and never into hidden surfaces.
 
-/** Connected, visible, interactive, and outside inert or hidden surfaces. */
+/** Holds when the target is connected, visible, interactive, and outside inert or hidden surfaces. */
 export function canFocus(target: Element | null | undefined): target is HTMLElement {
   return (
     target instanceof HTMLElement &&
@@ -11,7 +11,7 @@ export function canFocus(target: Element | null | undefined): target is HTMLElem
   );
 }
 
-/** Whether something other than the page itself holds focus. */
+/** Tells whether something other than the page itself holds focus. */
 export function hasFocus(): boolean {
   const active = document.activeElement;
   return active !== document.body && active !== document.documentElement && canFocus(active);

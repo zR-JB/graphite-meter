@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Enforce GitHub Actions trust boundaries and keep key material out of Git."""
 
-from __future__ import annotations
-
 import re
 import subprocess
 import tomllib
@@ -107,7 +105,7 @@ FORBIDDEN = {
 
 
 def read(root: Path, name: str) -> str:
-    return (root / name).read_text(encoding="utf-8")
+    return (root / name).read_text()
 
 
 def files(root: Path) -> list[str]:
@@ -140,7 +138,7 @@ def check_actions(root: Path) -> None:
     mise = f"version: {pin('tools.mise', root)}"
     for path in paths:
         name = str(path.relative_to(github))
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text()
         if floating := re.findall(r"runs-on: (\S+-latest)", text):
             fail(f"{name} must pin its runner image, not {floating[0]}")
         if name != "workflows/release.yml":
@@ -187,7 +185,7 @@ def check_workflows(root: Path) -> None:
     if names != TRIGGERS.keys():
         fail(f"unreviewed workflow set: {sorted(names ^ TRIGGERS.keys())}")
     for name, expected in TRIGGERS.items():
-        text = (workflows / name).read_text(encoding="utf-8")
+        text = (workflows / name).read_text()
         block = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", text)
         triggers = set(re.findall(r"(?m)^  ([a-z_]+):", block.group(1) if block else ""))
         if triggers != expected:
@@ -200,7 +198,7 @@ def check_workflows(root: Path) -> None:
             actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
-    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    release = (workflows / "release.yml").read_text()
     publish = "needs.verify.outputs.publish == 'true'"
     for job in JOB.split(release.split("\njobs:\n", 1)[1]):
         secrets = set(re.findall(r"secrets\.(\w+)", job))
@@ -213,7 +211,7 @@ def check_workflows(root: Path) -> None:
         if ("uses: actions/upload-artifact@" in step
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
-    request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    request = (workflows / "release-request.yml").read_text()
     # release.py binds the request's artifact to its one job by this name.
     if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
         fail(f"release-request.yml must run one job named {BUILD_JOB!r}, as release.py expects")
@@ -233,7 +231,7 @@ def check_workflows(root: Path) -> None:
         fail("release-request.yml: the first image build must declare no-cache")
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
-        for step in STEP.split((workflows / name).read_text(encoding="utf-8")):
+        for step in STEP.split((workflows / name).read_text()):
             if "setup-project" in step and "cache: 'false'" not in step:
                 fail(f"{name} must disable every cache")
     for step in STEP.split(read(root, ".github/actions/setup-project/action.yml")):
@@ -273,7 +271,7 @@ def check_development_notices(root: Path) -> None:
     """Nothing CI or a release runs builds with unreviewed development notices: no workflow, image build, mise
     task, scripts/*.sh or Python driver they reach starts the collector's --development mode or a local build."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
-    texts = [path.read_text(encoding="utf-8")
+    texts = [path.read_text()
              for path in sorted([*(root / ".github").rglob("*.y*ml"), root / "container/Dockerfile"])]
     reached = set(NAMING)
     while texts:

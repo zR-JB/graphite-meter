@@ -420,7 +420,7 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
           new RegExp(
             `^${pattern
               .split("*")
-              .map((part) => part.replace(/[\\^$.+?()[\]{}|/-]/g, "\\$&"))
+              .map((part) => RegExp.escape(part))
               .join(".*")}$`,
           ),
       );

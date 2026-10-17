@@ -1,4 +1,4 @@
-//! Sessions over the app: one-use socket tickets, sign-out and the upload ownership a login decides.
+//! Tests sessions over the app, with one-use socket tickets, sign-out and the upload ownership a login decides.
 
 use super::{
     auth::{BROWSER, PUBLIC, auth_app, bearer, login, public, signed, store, tls},

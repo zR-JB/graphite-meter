@@ -121,7 +121,7 @@ test("result arcs lie longest first, need both lanes for a combined value, and r
 });
 
 test("heads stay whole beads apart, and lie over a close higher one cut out or halved", () => {
-  // A 72 px ring with 8 px heads: 18 px apart along the ring is the stacking distance, 8 px the split one.
+  // On a 72 px ring with 8 px heads, 18 px apart along the ring is the stacking distance and 8 px the split one.
   expect(beadKinds([1, 0.5, 0], 72, 8)).toEqual(["bead", "bead", "bead"]);
   expect(beadKinds([0.6, 0.5, 0.46], 72, 8)).toEqual(["bead", "bead", "stacked"]);
   expect(beadKinds([0.5, 0.5, 0.49], 72, 8)).toEqual(["bead", "split", "split"]);
@@ -136,7 +136,7 @@ test("a result sweeps the rest of the ring and each bead pops as the front reach
   expect(reachMs(0.3, 0.4, 540)).toBe(0);
   expect(reachMs(1, 0, 900)).toBe(900);
   expect(reachMs(1, 1, 360)).toBe(0);
-  // Ease-out cubic: the front covers seven eighths of the way in half the time.
+  // With the ease-out cubic the front covers seven eighths of the way in half the time.
   expect(reachMs(0.875, 0, 900)).toBeCloseTo(450, 6);
 });
 
@@ -153,7 +153,7 @@ test("the needle rises, follows, glides across a rescale, drains, and leaves the
   needle.update(shown("b"), 700);
   expect(needle.moving(800)).toBe(true);
   expect(needle.angle(700 + 360, 90)).toBe(90);
-  // The value ends: it drains to zero, lit until it gets there.
+  // When the value ends it drains to zero, lit until it gets there.
   needle.update({ visible: false, hold: false, motion: true, course: "b" }, 2_000);
   expect(needle.lit(false, true)).toBe(true);
   expect(needle.angle(2_000 + DRAIN_MS / 2, null)).toBeCloseTo(45, 6);
@@ -177,7 +177,7 @@ test("the needle rises, follows, glides across a rescale, drains, and leaves the
   const before = rising.angle(272, 200);
   rising.update(shown("b"), 272);
   expect(rising.angle(288, 100) - before).toBeGreaterThan(5);
-  // A stage whose value arrives while the last stage's still drains turns the needle round: it never jumps.
+  // A stage whose value arrives while the last stage's still drains turns the needle round, so it never jumps.
   const handing = new Needle();
   handing.update(shown("a"), 0);
   handing.angle(RISE_MS, 60);
