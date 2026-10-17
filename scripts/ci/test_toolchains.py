@@ -52,9 +52,9 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path = root / "mise.toml"
         original = path.read_text()
         for pattern, replacement, error in (
-            (r"python:3\.14\.\d+-slim", "python:3.13.1-slim", "images.python must use the tools.python"),
-            (r"rust:1\.99\.0-bookworm", "rust:1.98.0-bookworm", "images.rust must use the rust/rust-toolchain"),
-            (r"rust:1\.99\.0-bookworm@sha256:[0-9a-f]+", "rust:1.99.0-bookworm", "exact version or image digest"),
+            (r"python:[\d.]+-slim", "python:3.13.1-slim", "images.python must use the tools.python"),
+            (r"rust:[\d.]+-trixie", "rust:1.0.0-trixie", "images.rust must use the rust/rust-toolchain"),
+            (r"(rust:[\d.]+-trixie)@sha256:[0-9a-f]+", r"\1", "exact version or image digest"),
         ):
             with self.subTest(replacement=replacement):
                 path.write_text(re.sub(pattern, replacement, original))

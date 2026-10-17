@@ -37,7 +37,7 @@ class RustWorkspaceTests(unittest.TestCase):
             ('"windows/amd64" = "x86_64-pc-windows-gnu"\n', "", "tui must list"),
             ('server = ["linux/amd64", "linux/arm64"]', "server = []", "server must list"),
             ('members = ["proto",', 'members = ["crates/*", "proto",', "plain directory names"),
-            ('"legal/rust-platform-debian-bookworm.json"', '"../platform.json"', "JSON file in legal/"),
+            ('"legal/rust-platform-debian-trixie.json"', '"../platform.json"', "JSON file in legal/"),
         ):
             with self.subTest(new=new, error=error):
                 self.assertIn(old, original)

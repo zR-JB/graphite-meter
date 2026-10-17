@@ -34,8 +34,8 @@ PIN_PATTERNS = {
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
         "buildkit": r"docker\.io/moby/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
         "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
-        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-bookworm@sha256:[0-9a-f]{64}",
-        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-bookworm@sha256:[0-9a-f]{64}",
+        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-trixie@sha256:[0-9a-f]{64}",
+        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-trixie@sha256:[0-9a-f]{64}",
     },
 }
 
@@ -90,7 +90,7 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
 
 
 def image_version(image: str) -> str:
-    """The release in an image tag such as `python:3.14.7-slim-bookworm@sha256:...`."""
+    """The release in an image tag such as `python:3.15.0-slim-trixie@sha256:...`."""
     return image.split(":")[1].split("@")[0].split("-")[0]
 
 

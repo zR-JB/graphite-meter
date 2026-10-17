@@ -6,7 +6,7 @@ resolver = "3"
 [workspace.metadata.graphite-meter]
 tui = ["linux/amd64", "linux/arm64", "windows/amd64"]
 server = ["linux/amd64", "linux/arm64"]
-platform-record = "legal/rust-platform-debian-bookworm.json"
+platform-record = "legal/rust-platform-debian-trixie.json"
 
 [workspace.metadata.graphite-meter.targets]
 "linux/amd64" = "x86_64-unknown-linux-musl"

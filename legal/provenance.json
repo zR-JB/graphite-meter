@@ -83,7 +83,7 @@
     "name": "ca-certificates",
     "version": "builder package",
     "upstream": "https://salsa.debian.org/debian/ca-certificates",
-    "upstreamRevision": "rust:1.99.0-bookworm builder package metadata; verified 2026-10-16",
+    "upstreamRevision": "rust:1.99.0-trixie builder package metadata; verified 2026-10-17",
     "licenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
     "modified": false,
     "artifactScopes": ["container"],
