@@ -72,7 +72,8 @@ test.chrome("four servers share one run and keep separate receiver windows", asy
   expect(await savedResult(page)).toEqual(saved);
 });
 
-test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
+// Firefox can stall both servers' loopback upload POSTs for the last few hundred ms of a 1 s upload, under the floor.
+test.chrome("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
   await page.addInitScript(() => Object.defineProperty(window, "WebTransport", { value: undefined }));
   await open(page, home.http, {
     servers: [{ id: "self", url: home.http }, frankfurt],

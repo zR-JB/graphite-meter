@@ -188,9 +188,13 @@ function show(node: HTMLElement, entry: Entry, pinned = false, keyboard = false)
       if (open === current && bubble.isConnected) place(current);
     }),
   );
-  bubble.showPopover();
-  place(current);
-  if (!instant) nextFrame(() => bubble.setAttribute("data-show", "true"));
+  // A tip asked for inside another popover's show steps would throw there, so it shows in the next task.
+  setTimeout(() => {
+    if (open !== current || !bubble.isConnected) return;
+    bubble.showPopover();
+    place(current);
+    if (!instant) nextFrame(() => bubble.setAttribute("data-show", "true"));
+  });
   listen(true);
 }
 
