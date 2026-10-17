@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "3895f0099d3d5ce447d6a43e67313e8224d4217c",
+    "rev": "2aba4e49f5c73f43ed23c40677ec96508842aa3c",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "a7b4b96ba1e22ba5f7820336250e4249ffe36e504c5db16fc9a97d391f34c430",
+    "diffSha256": "1d3ec8a1d3e50c537f3220f4290ff83f446645c4224a8447e860cc0f6ab1e471",
     "modifiedPackages": [
       "noq",
       "noq-proto",
@@ -98,7 +98,13 @@
       {"subject": "fix(proto): apply RFC 9000 §12.4 packet-type rules to CONNECTION_CLOSE (#823)", "purpose": "Rejects an application CONNECTION_CLOSE in Initial or Handshake packets and accepts it in 0-RTT, per RFC 9000 §12.4.", "origin": "n0-computer/noq#823 5fecec88f4835bcf62050c37a2b7ab3e882059fe"},
       {"subject": "proto: reject transport parameters with a mismatched length", "purpose": "Rejects a transport parameter whose value does not fill its declared length, so no parameter can be smuggled inside another.", "origin": "quinn-rs/quinn#2832 621e38abbccdfe8d664d50b517fccec3316fe658"},
       {"subject": "proto: accept nonminimal integer transport parameters", "purpose": "Accepts integer transport parameters that are not minimally encoded, as RFC 9000 §16 allows.", "origin": "quinn-rs/quinn#2925 48854d48635875d259a95973cc0575db8c1792a4"},
-      {"subject": "Reject Retry packets bearing a SCID that matches the initial DCID", "purpose": "Discards a Retry whose source CID equals the client's first destination CID, as RFC 9000 §17.2.5.2 requires.", "origin": "quinn-rs/quinn#2891 74b6a84ee31fe30974aa12bc208ba5c9b68cdda2"}
+      {"subject": "Reject Retry packets bearing a SCID that matches the initial DCID", "purpose": "Discards a Retry whose source CID equals the client's first destination CID, as RFC 9000 §17.2.5.2 requires.", "origin": "quinn-rs/quinn#2891 74b6a84ee31fe30974aa12bc208ba5c9b68cdda2"},
+      {"subject": "proto: avoid panic on high minimum ACK delay", "purpose": "Lets a peer's min_ack_delay above the RTT bound win instead of panicking in clamp when choosing the ACK frequency max_ack_delay.", "origin": "quinn-rs/quinn#2868 6912dad55028a47e652e915bcc6caf2a40575b06"},
+      {"subject": "proto: make the min_ack_delay length test need the length check", "purpose": "Gives the min_ack_delay length test bytes that only the post-match length check rejects.", "origin": "graphite-meter"},
+      {"subject": "fix(proto): Report time threshold losses correctly in qlog (#827)", "purpose": "Reports a packet lost by time threshold as such in qlog instead of always as reordering.", "origin": "n0-computer/noq#827 475b14225955c3376a83fbdf2a15aaca5ab2daa2"},
+      {"subject": "udp: handle receive errors before truncation flags", "purpose": "Stops recv_single spinning when MSG_TRUNC stays set from a previous datagram and the socket then returns EAGAIN.", "origin": "quinn-rs/quinn#2906 462865a6c33039c26076f7077c7cd7e2f997b9cd"},
+      {"subject": "proto: keep close reason on stateless reset once draining", "purpose": "Keeps the peer's close reason when a stateless reset ends draining, instead of reporting Reset or a second ConnectionLost.", "origin": "quinn-rs/quinn#2911 7616e6b2782722f3ce4a1b181ef08817d7f545e4"},
+      {"subject": "fix: potential CID leak in connect()", "purpose": "Releases the local CID when TLS refuses a connect, so it no longer routes to a reused connection handle.", "origin": "quinn-rs/quinn#2877 1feb371a5f7c3c912611080a1ec10a43c7c16d7f"}
     ],
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
