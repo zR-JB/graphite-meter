@@ -88,9 +88,11 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3", *, remote: bool,
               predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
               arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
-              stage: tuple[str, str | None] = STAGE, labels: Mapping[str, str] | None = None) -> str:
-    """Write the OCI layout BuildKit exports for two labelled images of `files`, each with its `arch_files`, and
-    provenance of building `stage`, a Dockerfile and target; return the digest of its image index."""
+              stage: tuple[str, str | None] = STAGE, arch_labels: Mapping[str, Mapping[str, str]] | None = None,
+              edit: Callable[[bytes], bytes] = lambda data: data) -> str:
+    """Write the OCI layout BuildKit exports for two labelled images of `files`, each with its `arch_files` and
+    `arch_labels`, and provenance of building `stage`, a Dockerfile and target, with `edit` applied to each JSON
+    blob; return the digest of its image index."""
     blobs: dict[str, bytes] = {}
 
     def add(data: bytes, media: str, **extra: JsonValue) -> JsonObject:
@@ -99,7 +101,7 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
         return {"mediaType": media, "digest": digest, "size": len(data), **extra}
 
     def add_json(value: JsonValue, media: str, **extra: JsonValue) -> JsonObject:
-        return add(json.dumps(value).encode(), media, **extra)
+        return add(edit(json.dumps(value).encode()), media, **extra)
 
     def layer(contents: Mapping[str, bytes]) -> JsonObject:
         data = io.BytesIO()
@@ -110,13 +112,14 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
                 archive.addfile(info, io.BytesIO(payload))
         return add(data.getvalue(), "application/vnd.oci.image.layer.v1.tar+gzip")
 
-    values: JsonObject = {"org.opencontainers.image.source": f"https://github.com/{repository}",
-                          "org.opencontainers.image.revision": revision,
-                          "org.opencontainers.image.version": version,
-                          "org.opencontainers.image.licenses": "AGPL-3.0-or-later", **(labels or {})}
+    labels = {"org.opencontainers.image.source": f"https://github.com/{repository}",
+              "org.opencontainers.image.revision": revision,
+              "org.opencontainers.image.version": version,
+              "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}
     images = {arch: add_json({
         "schemaVersion": 2, "mediaType": MANIFEST_TYPE,
-        "config": add_json({"architecture": arch, "os": "linux", "config": {"Labels": values}}, CONFIG_TYPE),
+        "config": add_json({"architecture": arch, "os": "linux", "config": {
+            "Labels": labels | dict((arch_labels or {}).get(arch, {}))}}, CONFIG_TYPE),
         "layers": [layer({**files, **(arch_files or {}).get(arch, {})})],
     }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in ("amd64", "arm64")}
 

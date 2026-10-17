@@ -27,22 +27,35 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
+CONFIG_TYPE = "application/vnd.oci.image.config.v1+json"
+LAYER_TYPE = "application/vnd.oci.image.layer.v1.tar+gzip"
+STATEMENT_TYPE = "application/vnd.in-toto+json"
+# The fields the OCI spec gives each document; publication may read any other as one of them or reject it.
+FIELDS = {
+    INDEX_TYPE: {"schemaVersion", "mediaType", "artifactType", "manifests", "subject", "annotations"},
+    MANIFEST_TYPE: {"schemaVersion", "mediaType", "artifactType", "config", "layers", "subject", "annotations"},
+}
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
 LAYER_LIMIT = 256 * 1024 * 1024
-# Where the image keeps its server, its third-party notices and its SOURCE.txt.
 SERVER, NOTICES = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
 SOURCE = "usr/share/licenses/graphite-meter/SOURCE.txt"
+FILE_LIMITS = {SERVER: LAYER_LIMIT, NOTICES: LAYER_LIMIT, SOURCE: BLOB_LIMIT}
 # Opens an unreviewed development build's notices; its executable carries it too (rust/legal/src/lib.rs).
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
-# The Dockerfile and target that build the image.
 STAGE = ("container/Dockerfile", "server")
+
+
+def document(value: JsonObject, media: str, context: str) -> JsonObject:
+    """`value` as a schemaVersion 2 OCI `media` document with only the fields the spec gives it."""
+    if int_field(value, "schemaVersion", context) != 2 or value.get("mediaType") != media \
+            or not value.keys() <= FIELDS[media]:
+        fail(f"{context} must be a schemaVersion 2 {media} with only its fields, not {sorted(value)}")
+    return value
 
 
 def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dict[str, JsonObject]]:
     """Return the provenance manifests, exactly one linked to each runnable image, and the images by architecture."""
-    if index.get("schemaVersion") != 2 or index.get("mediaType") != INDEX_TYPE:
-        fail(f"OCI index must be a schemaVersion 2 {INDEX_TYPE}")
     runnable: dict[str, JsonObject] = {}
     attested: list[str] = []
     attestations: list[JsonObject] = []
@@ -51,9 +64,6 @@ def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dic
         manifest = expect_object(value, context)
         platform = object_field(manifest, "platform", context)
         system, arch = str_field(platform, "os", context), str_field(platform, "architecture", context)
-        if DIGEST_RE.fullmatch(str_field(manifest, "digest", context)) is None \
-                or manifest.get("mediaType") != MANIFEST_TYPE:
-            fail(f"{context} must be an OCI manifest with a sha256 digest")
         if system == "linux" and arch in PLATFORMS and arch not in runnable:
             runnable[arch] = manifest
         elif (system, arch) == ("unknown", "unknown"):
@@ -66,16 +76,16 @@ def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dic
             fail(f"unexpected or duplicate OCI platform {system}/{arch}")
     if runnable.keys() != PLATFORMS:
         fail(f"OCI archive needs linux/amd64 and linux/arm64, got {sorted(runnable)}")
-    if sorted(attested) != sorted(str(image["digest"]) for image in runnable.values()):
+    if sorted(attested) != sorted(str_field(image, "digest", "OCI image") for image in runnable.values()):
         fail("OCI archive needs one provenance attestation per image")
     return attestations, dict(sorted(runnable.items()))
 
 
-def member(archive: tarfile.TarFile, descriptor: JsonObject, limit: int) -> bytes:
-    """The blob a descriptor names, after checking its presence, size and digest."""
+def member(archive: tarfile.TarFile, descriptor: JsonObject, media: str, limit: int) -> bytes:
+    """The `media` blob a descriptor names, after checking its presence, size and digest."""
     digest = str_field(descriptor, "digest", "OCI descriptor")
-    if DIGEST_RE.fullmatch(digest) is None:
-        fail(f"OCI descriptor digest {digest!r} is not a sha256 digest")
+    if DIGEST_RE.fullmatch(digest) is None or descriptor.get("mediaType") != media:
+        fail(f"OCI descriptor {digest!r} must name a {media} by its sha256 digest")
     try:
         entry = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
     except KeyError:
@@ -90,10 +100,12 @@ def member(archive: tarfile.TarFile, descriptor: JsonObject, limit: int) -> byte
     return data
 
 
-def blob(archive: tarfile.TarFile, descriptor: JsonObject) -> JsonObject:
-    """A JSON blob of the OCI layout after checking its size and digest."""
+def blob(archive: tarfile.TarFile, descriptor: JsonObject, media: str) -> JsonObject:
+    """A JSON `media` blob of the OCI layout after checking its size and digest."""
     digest = str(descriptor.get("digest"))
-    return expect_object(decode_json(member(archive, descriptor, BLOB_LIMIT).decode(errors="replace"), digest), digest)
+    value = expect_object(decode_json(member(archive, descriptor, media, BLOB_LIMIT).decode(errors="replace"), digest),
+                          digest)
+    return document(value, media, digest) if media in FIELDS else value
 
 
 def layers(manifest: JsonObject, context: str) -> list[JsonObject]:
@@ -103,22 +115,21 @@ def layers(manifest: JsonObject, context: str) -> list[JsonObject]:
 def check_image_files(archive: tarfile.TarFile, manifest: JsonObject, image: str) -> tuple[str, bytes]:
     """The image ships the server and its notices, and no copy is a development build's; return its last
     SOURCE.txt, or nothing, and its last server."""
-    found = {SERVER: 0, NOTICES: 0}
-    source = server = b""
+    shipped: dict[str, bytes] = {}
     for layer in layers(manifest, image):
-        with tarfile.open(fileobj=io.BytesIO(member(archive, layer, LAYER_LIMIT))) as files:
+        with tarfile.open(fileobj=io.BytesIO(member(archive, layer, LAYER_TYPE, LAYER_LIMIT)), mode="r:gz") as files:
             for entry in files:
                 name = entry.name.removeprefix("./").removeprefix("/")
-                if name == SOURCE and (handle := files.extractfile(entry)) is not None:
-                    source = handle.read(BLOB_LIMIT)
-                if name in found and (handle := files.extractfile(entry)) is not None:
-                    found[name] += 1
-                    if DEVELOPMENT.encode() in (data := handle.read()):
-                        fail(f"image {image} ships an unreviewed development build's {name}")
-                    server = data if name == SERVER else server
-    if missing := sorted(name for name, count in found.items() if count == 0):
+                if name not in FILE_LIMITS or (handle := files.extractfile(entry)) is None:
+                    continue
+                if len(data := handle.read(FILE_LIMITS[name] + 1)) > FILE_LIMITS[name]:
+                    fail(f"image {image} ships {name} beyond {FILE_LIMITS[name]} bytes")
+                if name != SOURCE and DEVELOPMENT.encode() in data:
+                    fail(f"image {image} ships an unreviewed development build's {name}")
+                shipped[name] = data
+    if missing := sorted({SERVER, NOTICES} - shipped.keys()):
         fail(f"image {image} lacks {missing}")
-    return source.decode(errors="replace"), server
+    return shipped.get(SOURCE, b"").decode(errors="replace"), shipped[SERVER]
 
 
 def source_commit(statement: JsonObject, repository: str) -> str:
@@ -152,11 +163,11 @@ def source_commit(statement: JsonObject, repository: str) -> str:
 
 def provenance_sources(archive: tarfile.TarFile, attestation: JsonObject, repository: str) -> set[str]:
     """Return the commits that the SLSA statements in `attestation` say BuildKit built."""
-    manifest = blob(archive, attestation)
-    member(archive, object_field(manifest, "config", "attestation"), BLOB_LIMIT)
+    manifest = blob(archive, attestation, MANIFEST_TYPE)
+    member(archive, object_field(manifest, "config", "attestation"), CONFIG_TYPE, BLOB_LIMIT)
     sources = set()
     for layer in layers(manifest, "attestation"):
-        statement = blob(archive, layer)
+        statement = blob(archive, layer, STATEMENT_TYPE)
         if object_field(layer, "annotations", "attestation").get("in-toto.io/predicate-type") == SLSA:
             sources.add(source_commit(statement, repository))
     if not sources:
@@ -184,16 +195,17 @@ def verify(version: str, revision: str, archive: Path,
             layout = tar.extractfile(entry) if entry.isfile() and entry.size <= BLOB_LIMIT else None
             if layout is None:
                 fail("OCI index.json is not a bounded regular file")
-            top = expect_object(decode_json(layout.read().decode(errors="replace"), "index.json"), "index.json")
+            top = document(expect_object(decode_json(layout.read().decode(errors="replace"), "index.json"),
+                                         "index.json"), INDEX_TYPE, "index.json")
             listed = expect_array(top.get("manifests"), "index.json manifests")
             if len(listed) != 1:
                 fail("OCI index.json must list exactly one image index")
             index = expect_object(listed[0], "index.json")
-            attestations, images = validate_index_descriptors(blob(tar, index))
+            attestations, images = validate_index_descriptors(blob(tar, index, INDEX_TYPE))
             sources = set().union(*(provenance_sources(tar, item, repository) for item in attestations))
             for arch, image in images.items():
-                manifest = blob(tar, image)
-                config = object_field(blob(tar, object_field(manifest, "config", arch)), "config", arch)
+                manifest = blob(tar, image, MANIFEST_TYPE)
+                config = object_field(blob(tar, object_field(manifest, "config", arch), CONFIG_TYPE), "config", arch)
                 for key, value in labels.items():
                     if (found := object_field(config, "Labels", arch).get(key)) != value:
                         fail(f"OCI label {key} for linux/{arch} is {found!r}; expected {value!r}")

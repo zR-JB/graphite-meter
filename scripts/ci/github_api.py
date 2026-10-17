@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import NoReturn, TypeAlias, cast
@@ -59,10 +60,18 @@ def query(path: str, **params: str | int) -> str:
     return f"{path}?{urlencode(params)}"
 
 
+def distinct_keys(pairs: list[tuple[str, JsonValue]]) -> JsonObject:
+    # Case-insensitive decoders bind every case variant of a key to one field, so variants must not coexist.
+    folded = Counter(key.casefold() for key, _ in pairs)
+    if repeated := sorted(key for key, _ in pairs if folded[key.casefold()] > 1):
+        raise ValueError(f"keys {repeated} repeat ignoring case")
+    return dict(pairs)
+
+
 def decode_json(text: str, context: str) -> JsonValue:
     try:
-        return cast(JsonValue, json.loads(text))
-    except json.JSONDecodeError as exc:
+        return cast(JsonValue, json.loads(text, object_pairs_hook=distinct_keys))
+    except ValueError as exc:
         raise ControlPlaneError(f"{context} is not valid JSON: {exc}") from exc
 
 
