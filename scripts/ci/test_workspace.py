@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,9 +29,9 @@ class RustWorkspaceTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
-        shutil.copytree(ROOT / "rust", root / "rust", ignore=shutil.ignore_patterns("target"))
         manifest = root / "rust/Cargo.toml"
-        original = manifest.read_text()
+        manifest.parent.mkdir()
+        original = (ROOT / "rust/Cargo.toml").read_text()
         for old, new, error in (
             ('"windows/amd64" = "x86_64-pc-windows-gnu"', '"windows/amd64" = "$(touch x)"', "tui must list"),
             ('"windows/amd64" = "x86_64-pc-windows-gnu"\n', "", "tui must list"),

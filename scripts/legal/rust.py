@@ -198,7 +198,7 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     scopes["container"] = [component for component in add_provenance(ROOT, scopes["server/browser"],
                                                                       state.provenance, "container")
                            if component_key(component) not in shipped]
-    prepare_scopes(scopes, browser_reviews, "check")
+    prepare_scopes(scopes, browser_reviews)
     state.browser = scopes["server/browser"]
     staged = build.out / "browser-assets"
     stage_browser(assets, staged)
