@@ -9,8 +9,6 @@ out of TUI_EXPORT and the source offer merged from every build's part in both Bu
 the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
 """
 
-from __future__ import annotations
-
 import argparse
 import gzip
 import hashlib
@@ -192,7 +190,7 @@ def text(path: Path, name: str) -> str:
 
 def repository(root: Path = ROOT) -> str:
     """legal/project.json's repository, which every SOURCE.txt names."""
-    project = expect_object(decode_json((root / "legal/project.json").read_text(encoding="utf-8"), "project.json"),
+    project = expect_object(decode_json((root / "legal/project.json").read_text(), "project.json"),
                             "project.json")
     return str_field(project, "repository", "project.json")
 
@@ -330,7 +328,7 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
     if path.stat().st_size > OCI_LIMIT:
         fail(f"{OCI} exceeds {OCI_LIMIT} bytes")
     digest = file_sha256(path)
-    if (directory / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
+    if (directory / f"{OCI}.sha256").read_text() != f"{digest}  {OCI}\n":
         fail(f"{OCI} does not match its checksum")
     server = load().server
 
@@ -366,7 +364,7 @@ def command_stage() -> None:
     version, out = release_version(env("VERSION")), runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(runner_path("OCI_ARCHIVE"), confined_path(out / OCI, out))
-    (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n", encoding="utf-8")
+    (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n")
     if not prerelease(version):
         stage_assets(version, runner_path("SERVER_EXPORT"), runner_path("TUI_EXPORT"), out)
     print(f"staged {sorted(staged_files(version))}")

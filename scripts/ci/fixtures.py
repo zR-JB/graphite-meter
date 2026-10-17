@@ -1,7 +1,5 @@
 """Fake boundaries for control-plane tests: the GitHub API, Git and the release files."""
 
-from __future__ import annotations
-
 import hashlib
 import io
 import json

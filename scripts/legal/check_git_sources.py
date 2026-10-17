@@ -7,7 +7,6 @@ upstream tag and checks that the tag is the record's base, that rev is on the br
 from base, and that the change set matches diffSha256, stays inside the reviewed paths and consists
 of the recorded commits.
 """
-from __future__ import annotations
 
 import argparse
 import hashlib
@@ -93,8 +92,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--verify", action="store_true", help="fetch each fork and upstream and verify its change set")
     args = parser.parse_args()
-    forks = json.loads((ROOT / "legal/rust-forks.json").read_text(encoding="utf-8"))
-    errors = check_lock(forks, tomllib.loads((ROOT / "rust/Cargo.lock").read_text(encoding="utf-8")))
+    forks = json.loads((ROOT / "legal/rust-forks.json").read_text())
+    errors = check_lock(forks, tomllib.loads((ROOT / "rust/Cargo.lock").read_text()))
     if args.verify:
         with tempfile.TemporaryDirectory() as scratch:
             for index, fork in enumerate(forks):

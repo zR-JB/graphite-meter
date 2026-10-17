@@ -1,5 +1,4 @@
 """Run the publication against a fake `gh api`, Docker and Skopeo."""
-from __future__ import annotations
 
 import contextlib
 import copy

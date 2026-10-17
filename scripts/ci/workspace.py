@@ -5,8 +5,6 @@
     python3 scripts/ci/workspace.py target {tui,server} PLATFORM
 """
 
-from __future__ import annotations
-
 import argparse
 import re
 import tomllib
@@ -37,7 +35,7 @@ class Workspace:
 
 def load(root: Path = ROOT) -> Workspace:
     rust = root / "rust"
-    workspace = tomllib.loads((rust / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]
+    workspace = tomllib.loads((rust / "Cargo.toml").read_text())["workspace"]
     config = workspace["metadata"]["graphite-meter"]
     members = tuple(workspace["members"])
     if invalid := [member for member in members if not isinstance(member, str) or MEMBER.fullmatch(member) is None]:

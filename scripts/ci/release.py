@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate release requests, then authorize stable releases and main or PR prereleases."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -183,7 +181,7 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     if (downloaded := {path.name for path in request_dir.iterdir()}) != {candidate.name}:
         gh.fail(f"downloaded artifacts are {sorted(downloaded)}; expected {candidate.name}")
     path = candidate / "request.json"
-    request = gh.expect_object(gh.decode_json(path.read_text(encoding="utf-8"), path.name), path.name)
+    request = gh.expect_object(gh.decode_json(path.read_text(), path.name), path.name)
     if set(request) != REQUEST_KEYS:
         gh.fail(f"request.json keys are {sorted(request)}; expected {sorted(REQUEST_KEYS)}")
     trusted: gh.JsonObject = {"schemaVersion": 4, "repository": repository, "requestRunId": run_id,
@@ -250,7 +248,7 @@ def write_checksums(directory: Path) -> None:
     """Write checksums.txt, as sha256sum lists them, for every other file in `directory`."""
     names = sorted(path.name for path in directory.iterdir() if path.name != "checksums.txt")
     listing = "".join(f"{gh.file_sha256(directory / name)}  {name}\n" for name in names)
-    (directory / "checksums.txt").write_text(listing, encoding="utf-8")
+    (directory / "checksums.txt").write_text(listing)
 
 
 def command_verify() -> None:
