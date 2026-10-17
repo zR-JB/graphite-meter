@@ -4,10 +4,14 @@
 chosen throughput and latency paths, idle and loaded latency, receiver-timed throughput. It has an interactive
 console and a report mode for scripts.
 
+<div align="center">
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/terminal-dark.png">
-  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way with 0.4 ms idle latency and 2.7 ms added under load">
+  <img src="assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
 </picture>
+
+</div>
 
 ## Install
 
