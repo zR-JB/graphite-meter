@@ -207,7 +207,7 @@ python3 -m scripts.build --package graphite-meter-client --profile release --ver
 
 # The pinned builder of container/Dockerfile needs an amd64 host; it cross-compiles arm64.
 [tasks.container-build]
-description = "Build the server image with Docker or Podman on an amd64 host"
+description = "Build the server image with Docker or Podman on an amd64 host (PROFILE=ci skips LTO and PGO)"
 usage = 'arg "[tag]" default="graphite-meter:latest"'
 run = '''
 #!/usr/bin/env sh
@@ -215,7 +215,7 @@ set -eu
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
 # One VERSION stamps the server, the browser app and SOURCE.txt.
-"$engine" build -f container/Dockerfile --target server -t "$usage_tag" \
+"$engine" build -f container/Dockerfile --target server -t "$usage_tag" --build-arg PROFILE="${PROFILE:-release}" \
   --build-arg VERSION="${VERSION:-0.0.0-dev}" --build-arg GM_CLIENT_REVISION="$revision" \
   --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
 '''
@@ -229,14 +229,15 @@ run = [
 ]
 
 [tasks.tui-package]
-description = "Build the terminal client archives and their source offers in the pinned builder (PROFILE=ci skips LTO and PGO)"
+description = "Build the terminal client archives and their source offers in the pinned builder (PROFILE=ci skips LTO and PGO, TUI_PLATFORM builds one)"
 usage = 'arg "[version]" default="development"'
 run = '''
 #!/usr/bin/env sh
 set -eu
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 "$engine" build -f container/Dockerfile --target tui-artifacts --build-arg VERSION="$usage_version" \
-  --build-arg PROFILE="${PROFILE:-release}" --output "type=local,dest=${RELEASE_DIST:-dist}" .
+  --build-arg PROFILE="${PROFILE:-release}" --build-arg TUI_PLATFORM="${TUI_PLATFORM:-}" \
+  --output "type=local,dest=${RELEASE_DIST:-dist}" .
 '''
 
 [tasks.e2e-server]

@@ -4,7 +4,8 @@ Workflow YAML owns events, jobs, permissions and environments; `mise` owns pinne
 Standard-library, type-checked Python in this directory owns trust decisions, GitHub JSON validation and artifact
 verification. `publish.sh` holds the Skopeo registry writes and `release.py publish` the GitHub Release;
 `test_release_transaction.py` runs both against a stateful fake GitHub, Docker and Skopeo, and `fixtures.py` fakes
-the GitHub API, the checked-out commit and the container engine, so trust tests run the real commands.
+the GitHub API and the checked-out commit and writes release files as the builds export them, so trust tests run the
+real commands.
 
 ```sh
 mise run workflow-check    # jactionlint, zizmor, workflow_policy.py, tool pins
@@ -20,11 +21,12 @@ checks job alone; every other change, and every push to main, runs every job:
 |---|---|
 | Checks | workflow policy, tooling tests, Gitleaks, the browser client's checks |
 | Rust checks | `rust-check`, `check_git_sources --verify`, the delayed-download gate, `rust-check-targets` |
-| Rust checks on Windows | the client, net and legal crates' tests; a server build check |
+| Rust checks on Windows | the client, net and legal crates' tests |
+| E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
 | Image | the linux/amd64 + linux/arm64 image with the ci profile (no LTO or PGO) and its server source offers; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
-| Client archives | the Linux and Windows client archives in the pinned builder with the ci profile (no LTO or PGO); the amd64 client runs out of its archive |
-| Release staging | `assets.py stage` and `assets.py check` on the two jobs above, as a release does |
-| Browser E2E | Chrome in four shards and Firefox in three against the image's server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
+| Client archive | one runner per TUI platform builds its archive in the pinned builder with the ci profile; the amd64 client runs out of its archive |
+| Release staging | `assets.py stage` and `assets.py check` on the image and the client archives, as a release does |
+| Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
 toolchain and `Cargo.lock`; only CI writes caches. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with
@@ -74,7 +76,8 @@ snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal t
 one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose source is
 the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's server and
 notices must be the reviewed build its source offer names, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`.
-Skopeo copies every blob inside a network-less container whose only mount is the read-only archive. The untrusted
+Verification reads the archive as data and checks every blob the index reaches against its descriptor's size and
+digest; Skopeo runs only to publish. The untrusted
 build writes the provenance, so it shows which source was built but does not authenticate it. Build arguments carry no
 secrets because max provenance records them.
 
@@ -114,5 +117,5 @@ The hook refuses commits to `main` and whitespace errors, and scans the index wi
 selects the mise checks for the staged paths, counting both sides of a rename: `api/`, `mise.toml` and `mise.lock`
 select the full `check`; workflows, `.githooks/`, scripts, the container files and `legal/` select `workflow-check`
 and `pipeline-test`; `client/` and the sign-in assets it generates (`rust/server/src/auth/assets/`) select
-`client-ci`. CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree with the
-client's frozen dependencies.
+`client-ci`. CI runs the Rust checks. The checks run on the exact staged tree in a disposable worktree, which installs
+the client's frozen dependencies only for the client's checks.

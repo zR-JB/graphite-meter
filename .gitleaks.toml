@@ -1,0 +1,7 @@
+# The WebSocket tests use RFC 6455's sample nonce, which is not a secret.
+[extend]
+useDefault = true
+
+[[allowlists]]
+regexTarget = "match"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']

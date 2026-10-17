@@ -15,15 +15,11 @@ def file_kind(name: str) -> str:
     return "notice" if Path(name).name.upper().startswith(notices) else "license"
 
 
-def read_legal_files(root: Path, *, recursive: bool = True) -> list[LegalFile]:
-    candidates: list[Path] = []
-    if recursive:
-        def fail(error: OSError) -> None:
-            raise error
-        for directory, _, names in os.walk(root, onerror=fail):
-            candidates.extend(Path(directory) / name for name in names)
-    else:
-        candidates = [path for path in root.iterdir() if not path.is_dir()]
+def read_legal_files(root: Path) -> list[LegalFile]:
+    def fail(error: OSError) -> None:
+        raise error
+
+    candidates = [Path(directory) / name for directory, _, names in os.walk(root, onerror=fail) for name in names]
     files: list[LegalFile] = []
     for path in candidates:
         upper = path.name.upper()
@@ -38,15 +34,15 @@ def read_legal_files(root: Path, *, recursive: bool = True) -> list[LegalFile]:
 
 
 def find_review(ecosystem: str, name: str, reviews: list[Review]) -> Review | None:
-    return next((review for review in reviews if (review.ecosystem, review.name) == (ecosystem, name)), None)
+    """The last review of an identity, which wins."""
+    return next((review for review in reversed(reviews) if (review.ecosystem, review.name) == (ecosystem, name)), None)
 
 
 def validate_review(component: Component, reviews: list[Review]) -> None:
     expression = component.declaredLicenseExpression.upper()
     if not expression or "UNKNOWN" in expression or "NOASSERTION" in expression or expression == "UNLICENSED":
         raise LegalError(f"component {component.name} has missing or unknown licensing information")
-    # Match the original approval lookup: the last record for an identity wins.
-    review = {(item.ecosystem, item.name): item for item in reviews}.get((component.ecosystem, component.name))
+    review = find_review(component.ecosystem, component.name, reviews)
     if review is None:
         raise LegalError(f"LEGAL REVIEW REQUIRED: new component has no review record: {component.name}")
     if review.reviewDecision != "approved":
@@ -169,16 +165,14 @@ def add_provenance(repo: Path, components: list[Component], entries: list[Proven
     return sort_components(result)
 
 
-def prepare_scopes(scopes: dict[str, list[Component]], reviews: list[Review], mode: str) -> None:
+def prepare_scopes(scopes: dict[str, list[Component]], reviews: list[Review]) -> None:
+    """Require every component's review and select the license its review selects."""
     for scope, components in scopes.items():
         for component in components:
             try:
                 validate_review(component, reviews)
             except LegalError as error:
-                if mode not in ("review-template", "review-audit"):
-                    raise LegalError(f"{scope}: {error}") from error
-        scopes[scope] = []
-        for component in components:
-            review = find_review(component.ecosystem, component.name, reviews)
-            selected = review.selectedLicenseExpression if review else component.selectedLicenseExpression
-            scopes[scope].append(replace(component, selectedLicenseExpression=selected))
+                raise LegalError(f"{scope}: {error}") from error
+        scopes[scope] = [replace(component, selectedLicenseExpression=review.selectedLicenseExpression)
+                         for component in components
+                         if (review := find_review(component.ecosystem, component.name, reviews)) is not None]
