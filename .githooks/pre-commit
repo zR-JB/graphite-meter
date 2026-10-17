@@ -29,7 +29,9 @@ cd "$staged"
 git read-tree "$tree"
 git checkout-index --all --force
 export MISE_TRUSTED_CONFIG_PATHS="$staged"
-mise run client-install
+case " $checks " in
+    *" client-ci "* | *" check "*) mise run client-install ;;
+esac
 for check in $checks; do
     mise run "$check"
 done

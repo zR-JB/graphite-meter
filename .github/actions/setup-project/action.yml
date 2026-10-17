@@ -82,14 +82,7 @@ runs:
       shell: bash
       run: |
         printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
-        printf 'bun=%s\n' "$(python3 scripts/ci/toolchains.py get runtime.bun)" >> "$GITHUB_OUTPUT"
-
-    - name: Show Bun version
-      if: inputs.bun == 'true'
-      shell: bash
-      run: |
-        bun --version
-        bun --revision
+        printf 'bun=%s\n' "$(python3 scripts/ci/toolchains.py get tools.bun)" >> "$GITHUB_OUTPUT"
 
     - name: Cache Bun packages
       if: inputs.client-deps == 'true' && inputs.cache == 'true'

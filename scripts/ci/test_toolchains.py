@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from toolchains import ROOT, check, check_rust_manifest, literal_updates, load_pins, runtime_pins
+from toolchains import ROOT, check, check_rust_manifest, literal_updates, load_pins
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -26,7 +26,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
         root = self.copy_pins()
         check(root)
         path, lock = root / "mise.toml", root / "mise.lock"
-        old = runtime_pins(root)["bun"]
+        old = load_pins(root)["tools"]["bun"]
         major, minor, patch = old.split(".")
         new = f"{major}.{minor}.{int(patch) + 1}"
         path.write_text(path.read_text().replace(f'bun = "{old}"', f'bun = "{new}"'))
