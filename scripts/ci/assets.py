@@ -2,7 +2,7 @@
 """Stage the image, the client archives and the one source offer of a release, and verify them as the release does.
 
     python3 scripts/ci/assets.py stage   # VERSION, OCI_ARCHIVE, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
-    python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, SKOPEO_IMAGE, STAGED_DIR, SERVER_PROFILE
+    python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, SKOPEO_IMAGE, STAGED_DIR, PROFILE
 
 Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, the client archives
 out of TUI_EXPORT and the source offer merged from every build's part in both BuildKit exports. Verification reads
@@ -222,7 +222,7 @@ def offer_files(path: Path, top: str) -> tuple[list[str], dict[str, bytes]]:
     return files, kept
 
 
-def verify_offer(path: Path, version: str, server_profile: str, root: Path = ROOT) -> dict[str, str]:
+def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> dict[str, str]:
     """Check the source offer and return each build's notices. Under its own directory it holds, for exactly the
     release's builds, reviewed notices and an inventory against this checkout's Cargo.lock, the source of every
     inventoried crate and browser package, and otherwise only files equal to this checkout's."""
@@ -254,7 +254,6 @@ def verify_offer(path: Path, version: str, server_profile: str, root: Path = ROO
     for build, (package, _, target) in expected.items():
         where = f"{path.name} builds/{build}"
         inventory = expect_object(decode_json(kept_text(f"{top}/builds/{build}/inventory.json"), where), where)
-        profile = server_profile if package == SERVER else "release"
         identity = {"package": package, "target": target, "profile": profile, "cargoLockSha256": lock}
         if int_field(inventory, "schemaVersion", where) != 1 or any(
                 inventory.get(key) != value for key, value in identity.items()):
@@ -350,12 +349,12 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
     return digest, verify_oci.verify(version, revision, path, check_files)
 
 
-def verify(version: str, revision: str, staged: Path, server_profile: str = "release",
+def verify(version: str, revision: str, staged: Path, profile: str = "release",
            root: Path = ROOT) -> tuple[str, str]:
     """Verify the staged release files; return the image archive's SHA-256 and manifest digest."""
     notices: dict[str, str] = {}
     if not prerelease(version):
-        notices = verify_offer(staged / offer_name(version), version, server_profile, root)
+        notices = verify_offer(staged / offer_name(version), version, profile, root)
         for platform, target in load().tui.items():
             verify_client(staged, version, platform, target, notices[build_name(CLIENT, platform)], root)
     return verify_image(staged, version, revision, notices, root)
@@ -373,8 +372,8 @@ def command_stage() -> None:
 
 def command_check() -> None:
     version = release_version(env("VERSION"))
-    if (profile := env("SERVER_PROFILE")) not in PROFILES:
-        fail(f"SERVER_PROFILE must be one of {', '.join(PROFILES)}")
+    if (profile := env("PROFILE")) not in PROFILES:
+        fail(f"PROFILE must be one of {', '.join(PROFILES)}")
     staged = runner_path("STAGED_DIR")
     exact_files(staged, staged_files(version))
     verify(version, env_sha("REVISION"), staged, profile)

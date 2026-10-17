@@ -163,7 +163,7 @@ jobs:
           - name: Set up pinned Buildx
             uses: ./.github/actions/setup-buildx
       # The OCI archive builds each architecture's server once; the loaded images and the source offers reuse its
-      # layers. The ci profile leaves out LTO, and the checks job checks the browser app.
+      # layers. The ci profile leaves out LTO and PGO, and the checks job checks the browser app.
       - name: Build the amd64 and arm64 server image with reviewed notices and export its source offers
         run: |
           build() {
@@ -221,10 +221,11 @@ jobs:
       - id: buildx
         name: Set up pinned Buildx
         uses: ./.github/actions/setup-buildx
-      # The release build itself: release profile, no CI cache, the release request's BuildKit.
+      # The release build with the ci profile, as the image's: no LTO or PGO, no CI cache, the release request's BuildKit.
       - name: Build the Linux and Windows client archives and source offers in the pinned builder
         env:
           BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          PROFILE: ci
           RELEASE_DIST: ${{ runner.temp }}/tui
         run: mise run tui-package "$VERSION"
       - name: Run the amd64 client out of its archive on the runner
@@ -272,12 +273,11 @@ jobs:
           TUI_EXPORT: ${{ runner.temp }}/tui
           OUT_DIR: ${{ runner.temp }}/staged
         run: python3 scripts/ci/assets.py stage
-      # The image's server uses the ci profile; the client archives are release builds.
       - name: Verify the image, the client archives and the source offer as the release does
         env:
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}
-          SERVER_PROFILE: ci
+          PROFILE: ci
           STAGED_DIR: ${{ runner.temp }}/staged
         run: SKOPEO_IMAGE=$(python3 scripts/ci/toolchains.py get images.skopeo) python3 scripts/ci/assets.py check
 
@@ -287,8 +287,8 @@ jobs:
     timeout-minutes: 20
     needs: [plan, image]
     if: needs.plan.outputs.code == 'true'
-    # The surface-reversal file runs its widths serially under CPU throttling, so Chrome takes four runners; tests
-    # that need the DevTools Protocol run in Chrome only.
+    # The surface-reversal file runs its widths serially under CPU throttling, so it takes a Chrome runner of its own;
+    # tests that need the DevTools Protocol run in Chrome only.
     strategy:
       fail-fast: false
       matrix:
@@ -297,7 +297,9 @@ jobs:
           - {browser: chrome, group: heavy}
           - {browser: chrome, group: rest-1}
           - {browser: chrome, group: rest-2}
-          - {browser: firefox, group: all}
+          - {browser: firefox, group: heavy}
+          - {browser: firefox, group: rest-1}
+          - {browser: firefox, group: rest-2}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
