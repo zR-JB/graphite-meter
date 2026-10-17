@@ -108,7 +108,7 @@ export const STAGE_STATE = {
 } as const satisfies Record<StageState, Word>;
 
 /** A stage the next run includes but the shown run did not run, as its chip names it. */
-export const NEXT_RUN = { label: "Next run", tone: null } as const satisfies Word;
+export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Word;
 
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
@@ -148,9 +148,9 @@ export const LATENCY = {
 /** Each stage's latency population, as the lanes and issue lines name it. */
 export const POPULATION = {
   latency: LATENCY.idle.short,
-  download: "Loaded down",
-  upload: "Loaded up",
-  bidirectional: "Loaded bi-dir",
+  download: "Loaded download",
+  upload: "Loaded upload",
+  bidirectional: "Loaded bidirectional",
 } as const satisfies Record<Stage, string>;
 
 /** Each role's connection to a server, as Settings, Details and History name it. */
@@ -248,14 +248,16 @@ export function allServersLabel(total: number, stayed: number, measured: number)
   return shown < total ? `${shown} of ${total} servers` : `All ${total} servers`;
 }
 
-const LIST = new Intl.ListFormat("en-GB", { type: "conjunction" });
+/** Words joined with commas and a last "and", no serial comma: "Latency, Download and Upload". */
+export const listed = (words: readonly string[]) =>
+  words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 
 /** Why Start is refused when planned stages outlast the shortest stage limit of the selected servers; "" when none
     does. */
 export function stageLimitError(config: TestConfig, limit: { ms: number; server: string | null }): string {
   const over = STAGES.filter((stage) => planned(config, stage) && config.duration[`${stage}Ms`] > limit.ms);
   if (!limit.server || !over.length) return "";
-  const stages = LIST.format(over.map((stage) => STAGE[stage].label));
+  const stages = listed(over.map((stage) => STAGE[stage].label));
   return `${limit.server} allows stages up to ${fmtDuration(limit.ms, 0)}; shorten the ${stages} stage${over.length > 1 ? "s" : ""}.`;
 }
 
@@ -326,14 +328,14 @@ export const TIP = {
     "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
   gaugeMax: "Maximum\nFixes the chart ceiling\nThe gauge rounds up to a 1, 2, 5 step",
-  saveResults: "Save results\nKeeps the newest 2,000 runs in this browser\nNothing is uploaded",
-  idleCadence: `Idle latency cadence\nReply: the next probe leaves on each reply\n${SPACINGS}`,
-  loadedCadence: `Loaded latency cadence\nProbes during transfers, start to start\n${SPACINGS}`,
+  saveResults: "Save results\nKeeps the newest 2,000 results in this browser\nNothing is uploaded",
+  idleCadence: `Idle probe interval\nReply: the next probe leaves on each reply\n${SPACINGS}`,
+  loadedCadence: `Loaded probe interval\nProbes during transfers, start to start\n${SPACINGS}`,
   skipLoadedLatency: "Skip loaded latency\nWith the Latency stage off, transfers send no probes",
   forcedStreams:
-    "Streams\nParallel connections per server and direction\nForced opens the exact count, past browser limits",
+    "Streams\nParallel streams per server and direction\nAn exact count opens that many, past browser limits",
   forcedStreamCount:
-    "Streams per server and direction\nOpens exactly this many\nWebTransport carries at most 16 per session",
+    "Streams per direction\nOpens exactly this many per server\nWebTransport carries at most 16 per session",
   autoStreamCount:
     "HTTP/1.1 stream limit\nParallel HTTP/1.1 requests per direction\nHTTP/2 and HTTP/3 choose their own",
   datagramThroughput:
@@ -344,7 +346,7 @@ export const TIP = {
   serverLoad: "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   client: "Client\nThis page's build of the browser client",
   serverInstance: "Server\nEngine version; the instance changes on restart",
-  pretestLatency: "Pre-test latency\nMedian round trip of the path check\nThe shown server's sizes the warmup",
+  pathCheckRoundTrip: "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
 } as const;
 
 export const preflightNote = (ms: string) =>

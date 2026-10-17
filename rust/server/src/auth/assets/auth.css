@@ -28,6 +28,7 @@
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-hover: 100ms;
+  --dur-pulse: 1100ms;
   --transition-control: background-color var(--dur-hover) var(--ease-out), border-color var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out), box-shadow var(--dur-hover) var(--ease-out), opacity var(--dur-hover) var(--ease-out);
   --space-1: 4px;
   --space-2: 8px;
@@ -101,6 +102,50 @@
   :root {
     --text-soft: var(--text-muted);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after, ::backdrop {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+[hidden]:not([hidden="until-found"]) {
+  display: none !important;
+}
+.notice {
+  --tone: var(--text-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--tone-line);
+  border-radius: var(--r-chrome);
+  background: var(--tone-wash);
+  color: var(--text);
+  font: var(--role-caption);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+[data-tone] {
+  --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
+  --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
+  --tone-ink: light-dark( color-mix(in oklab, var(--tone) 70%, var(--text)), color-mix(in oklab, var(--tone) 80%, var(--text)) );
+}
+[data-tone="neutral"] {
+  --tone: var(--text-soft);
+}
+[data-tone="warn"] {
+  --tone: var(--warn);
+}
+[data-tone="err"] {
+  --tone: var(--err);
 }
 *,
 ::before,
@@ -227,15 +272,15 @@ p {
   display: none;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .card:has(form[data-busy]) .face .sweep {
-    animation: sweep 1100ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  .card:has(form[aria-busy]) .face .sweep {
+    animation: sweep var(--dur-pulse) cubic-bezier(0.45, 0, 0.25, 1) infinite;
   }
-  .card:has(form[data-busy]) .face .needle {
-    animation: needle 1100ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  .card:has(form[aria-busy]) .face .needle {
+    animation: needle var(--dur-pulse) cubic-bezier(0.45, 0, 0.25, 1) infinite;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .card:has(form[data-busy]) .face .sweep {
+  .card:has(form[aria-busy]) .face .sweep {
     opacity: 0.6;
     stroke-dashoffset: 0;
   }
@@ -297,50 +342,23 @@ a {
   text-decoration: none;
   transition: var(--transition-control);
 }
-.notice {
-  --tone: var(--text-soft);
-  --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
-  --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: var(--hairline) solid var(--tone-line);
-  border-radius: var(--r-chrome);
-  background: var(--tone-wash);
-  color: var(--text);
-  font: var(--role-caption);
-}
-[data-tone="warn"] {
-  --tone: var(--warn);
-}
-[data-tone="err"] {
-  --tone: var(--err);
-}
 .card > .notice {
   margin-inline: 0;
 }
 .notice + .notice {
   margin-top: var(--space-2);
 }
-.code,
-.card > p:has(> strong:only-child) {
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--r-chrome);
-  background: var(--surface-1);
-}
-.code,
-.card > p:has(> strong:only-child) {
+.card > :is(.code, .origin) {
   display: flex;
   align-items: center;
   min-height: var(--row-h);
   margin-inline: 0;
   padding: 7px var(--row-inset);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--r-chrome);
+  background: var(--surface-1);
   color: var(--text);
   overflow-wrap: anywhere;
-}
-.card > p:has(> strong:only-child) strong {
-  font-weight: var(--w-normal);
 }
 .code {
   font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
@@ -416,7 +434,7 @@ form {
 }
 .reveal {
   position: absolute;
-  inset: 4px 4px 4px auto;
+  inset: var(--space-1) var(--space-1) var(--space-1) auto;
   display: grid;
   place-items: center;
   width: var(--control-h);
@@ -489,8 +507,8 @@ button[type="submit"] {
   }
 }
 .completion a,
-form:not([data-busy]) button[type="submit"]:disabled,
-form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button[type="submit"] {
+button[type="submit"]:disabled,
+form:has(button:enabled) ~ .separator ~ form button[type="submit"] {
   --label: var(--text-muted);
   --line: var(--border);
   background: var(--surface-2);
@@ -498,7 +516,7 @@ form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button[type="subm
 }
 @media (hover: hover) {
   .completion a:hover,
-  form:is([data-busy], :has(button:enabled)) ~ .separator ~ form button[type="submit"]:hover:enabled {
+  form:has(button:enabled) ~ .separator ~ form button[type="submit"]:hover:enabled {
     --label: var(--text);
     --line: var(--border-strong);
   }
@@ -515,18 +533,17 @@ button:disabled {
     border: 1px solid;
   }
 }
-form[data-busy] button[type="submit"] {
+form[aria-busy] button[type="submit"] {
   color: transparent;
-  opacity: 1;
   cursor: progress;
 }
-form[data-busy] button[type="submit"]::after {
+form[aria-busy] button[type="submit"]::after {
   content: "";
   position: absolute;
-  inset: 50% auto auto 50%;
+  inset: 0;
   width: 18px;
   height: 18px;
-  margin: -9px 0 0 -9px;
+  margin: auto;
   border: 2px solid color-mix(in oklab, var(--label) 35%, transparent);
   border-top-color: var(--label);
   border-radius: var(--r-full);
@@ -538,16 +555,16 @@ form[data-busy] button[type="submit"]::after {
   }
 }
 @media (min-height: 561px) {
-  .card:has(> .face) form[data-busy] button[type="submit"] {
+  .card:has(> .face) form[aria-busy] button[type="submit"] {
     color: var(--label);
     opacity: 0.6;
   }
-  .card:has(> .face) form[data-busy] button[type="submit"]::after {
+  .card:has(> .face) form[aria-busy] button[type="submit"]::after {
     content: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  form[data-busy] button[type="submit"]::after {
+  form[aria-busy] button[type="submit"]::after {
     animation: none;
     border-top-color: transparent;
     border-right-color: transparent;
@@ -571,20 +588,4 @@ form[data-busy] button[type="submit"]::after {
   flex: 1;
   height: var(--hairline);
   background: var(--border);
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    transition-duration: 0.001ms !important;
-  }
 }

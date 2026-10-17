@@ -1,4 +1,4 @@
-// About & legal: the project's licence and warranty, and every third-party component the server ships with where it
+// About & legal: the project's license and warranty, and every third-party component the server ships with where it
 // comes from. The notices load on first open and their rows are kept across closes.
 import "./legal.css";
 import { Show } from "../../lib/dom";
@@ -167,7 +167,7 @@ export function LegalDialog(props: { open: Read<boolean>; invoker: () => HTMLEle
         {() =>
           about() ? null : failed() ? (
             <div class="legal-status" role="alert">
-              <p>Unable to load legal notices.</p>
+              <p>Could not load legal notices.</p>
               <button class="btn" type="button" onclick={retry}>
                 Retry
               </button>

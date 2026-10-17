@@ -1,5 +1,6 @@
 // One HTTP fetch lane (api/upload.md): a download loop counting what it reads, or an upload loop of sized POSTs that
 // the server counts. Its owner reopens it after an ending and stops it by termination.
+import { release } from "../../protocol/documents";
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
 import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
 import { downloadRefused, lost, refused } from "../lanes/endings";
@@ -49,7 +50,7 @@ async function download({
     try {
       const response = await fetch(url, init);
       if (!response.ok || !response.body) {
-        response.body?.cancel().catch(ignore);
+        release(response);
         reports.flush();
         return { type: "ended", ending: downloadRefused(response) };
       }

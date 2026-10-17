@@ -1,14 +1,15 @@
 // The application, wired once at boot: preferences, the servers and their checks, the run, History saving, and the
 // idle latency the console shows between runs. Views read its signals and call its methods.
-import { planStreams } from "../engine/net/budget";
+import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
-import { createServers } from "../engine/net/servers";
+import { createServers, stageLimit } from "../engine/net/servers";
 import { openProbeChannel } from "../engine/lanes/probes";
 import { openStage } from "../engine/lanes/stage";
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { adaptWarmup, totalMs } from "../engine/run/schedule";
 import { pageMs } from "../lib/frame";
 import { computed, effect, signal, untrack, type Read } from "../lib/signal";
+import { AUTH_ROUTES } from "../protocol/routes";
 import { historyRecord } from "./history/records";
 import { HistoryRepository } from "./history/repository";
 import { createHistorySaving } from "./history/saving";
@@ -17,9 +18,8 @@ import { createRun } from "./run";
 import { IDLE_LIMIT, idleBucket, upsertLatency } from "./series";
 import { stageLimitError } from "../view/words";
 
-/** Ending for a lapsed login waits this long for the result to reach History. */
+/** Ending for a lapsed sign-in waits this long for the result to reach History. */
 const SIGN_OUT_SAVE_MS = 3_000;
-const SAVE_POLL_MS = 50;
 
 export type App = ReturnType<typeof createApp>;
 
@@ -41,7 +41,7 @@ export function createApp() {
   const saver = createHistorySaving(history, saving, window);
 
   const booted = signal(false);
-  /** A lapsed login is being left: nothing checks or probes against it any more. */
+  /** A lapsed sign-in is being left: nothing checks or probes against it any more. */
   const leaving = signal(false);
   const visible = signal(document.visibilityState === "visible");
   const online = signal(navigator.onLine);
@@ -51,15 +51,15 @@ export function createApp() {
     idle.buckets.length = 0;
     idle.version.set(idle.version.peek() + 1);
   };
-  let busy = () => false;
+  /** Whether a test runs or starts, bound once the run exists: the servers it needs are made first. */
+  const busy = signal<() => boolean>(() => false);
 
   const servers = createServers({
     page,
     session,
     config: preferences.config,
     setTransports: (transports) => preferences.set({ config: { ...preferences.config.peek(), transports } }),
-    // Nothing reads the run before boot, which comes after it exists.
-    active: computed(() => booted() && visible() && !leaving() && !busy()),
+    active: computed(() => booted() && visible() && !leaving() && !busy()()),
     online,
     latencyPin,
     openProbeChannel,
@@ -93,9 +93,7 @@ export function createApp() {
     async prepare(signal, config) {
       const ready = await servers.prepare(signal);
       // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
-      let limit = { ms: Number.POSITIVE_INFINITY, server: null as string | null };
-      for (const { server, discovery } of ready.servers)
-        if (discovery.maxStageMs < limit.ms) limit = { ms: discovery.maxStageMs, server: server.name };
+      const limit = stageLimit(ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })));
       const refused = stageLimitError(config, limit);
       if (refused) throw new Error(refused);
       return ready;
@@ -112,7 +110,7 @@ export function createApp() {
         ]),
       ),
   });
-  busy = computed(() => run.running() || run.preparing());
+  busy.set(computed(() => run.running() || run.preparing()));
   const plannedMs = computed(() => {
     const plan = run.running() ? run.plan() : null;
     const rttMs = servers.views().get(servers.latencyServer() ?? "")?.latency.path?.rttMs ?? 0;
@@ -135,13 +133,20 @@ export function createApp() {
   window.addEventListener("offline", onOnline);
 
   const signingOut = signal(false);
-  /** Waits, at most a few seconds, until no run is live and the result shown is saved. */
-  const settled = async () => {
-    const deadline = pageMs() + SIGN_OUT_SAVE_MS;
-    while ((run.running.peek() || saver.pending.peek()) && pageMs() < deadline)
-      await new Promise((resolve) => setTimeout(resolve, SAVE_POLL_MS));
-  };
-  // A lapsed login ends the run, keeps what it can, and leaves for sign-in once.
+  /** Resolves, within a few seconds, once no run is live and the result shown is saved. */
+  const settled = () =>
+    new Promise<void>((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        stop();
+        resolve();
+      };
+      const timer = setTimeout(finish, SIGN_OUT_SAVE_MS);
+      const stop = effect(() => {
+        if (!run.running() && !saver.pending()) queueMicrotask(finish);
+      });
+    });
+  // A lapsed sign-in ends the run, keeps what it can, and leaves for sign-in once.
   const stopSessionEnd = effect(() => {
     const reason = session.ended();
     if (!reason || signingOut.peek()) return;
@@ -152,7 +157,7 @@ export function createApp() {
     });
     void settled().then(() => {
       dispose();
-      location.replace(`/login?reason=${reason}`);
+      location.replace(`${AUTH_ROUTES.login}?reason=${encodeURIComponent(reason)}`);
     });
   });
 
@@ -190,16 +195,16 @@ export function createApp() {
       booted.set(true);
       void servers.load();
     },
-    /** Before the sign-out form leaves: a running test ends as a lapsed login ends it, the result's write gets its few
-        seconds, and the login the form ends is no reason to leave for sign-in. */
+    /** Before the sign-out form leaves: a running test ends as a lapsed sign-in ends it, the result's write gets its
+        few seconds, and the sign-in the form ends is no reason to leave for sign-in. */
     async signOut(): Promise<void> {
       signingOut.set(true);
       run.end("sign-in-required", "Signed out during the test");
       await settled();
     },
-    /** Leaving for sign-out or an ended login, which unload no longer asks about. */
+    /** Leaving for sign-out or an ended sign-in, which unload no longer asks about. */
     signingOut: signingOut as Read<boolean>,
-    /** A sign-out given up: the page goes on, and an ended login leaves for sign-in again. */
+    /** A sign-out given up: the page goes on, and an ended sign-in leaves for sign-in again. */
     stay(): void {
       signingOut.set(false);
     },

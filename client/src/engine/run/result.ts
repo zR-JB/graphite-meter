@@ -1,12 +1,12 @@
 // What a finished run reports and the rules that judge it: stage statuses, the outcome, and the coherence a saved
-// result must hold. History keeps these shapes (schema 5) and older builds read them back, so they stay as they are.
+// result must hold. History keeps these shapes as its schema 5.
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
-import { directions, sufficient, type Interval, type ThroughputResult } from "../measure/aggregate";
+import { coveredMs, directions, sufficient, type Interval, type ThroughputResult } from "../measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
 import type { WireModel } from "../measure/overhead";
 import { minCoverage } from "../measure/stability";
 import type { HttpProtocol, ServerIdentity } from "../types";
-import { STAGES, type Stage, type TransferStage } from "./schedule";
+import { STAGES, type Stage } from "./schedule";
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
 export type Outcome = "complete" | "partial" | "incomplete";
@@ -24,7 +24,7 @@ export interface ServerFailure {
 }
 
 /** A run-level transfer headline with its wire estimate. */
-export type StageThroughput = ThroughputResult & { wire: WireModel | null };
+type StageThroughput = ThroughputResult & { wire: WireModel | null };
 
 export interface StageResults {
   latency: LatencyResult | null;
@@ -61,7 +61,7 @@ export interface ServerMeasurementSummary {
 }
 
 export interface MultiServerResult {
-  /** The run's servers in catalogue order, then those that failed their start check. */
+  /** The run's servers in catalog order, then those that failed their start check. */
   selection: ServerIdentity[];
   /** Servers still in the run. */
   participants: string[];
@@ -108,12 +108,6 @@ export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
 /** The bytes every server moved, both directions. */
 export const movedBytes = (result: MultiServerResult) =>
   result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
-
-/** From the stage's first kept interval to its last, gaps between them included. */
-export function coveredMs(intervals: readonly Interval[], stage: TransferStage): number {
-  const spans = intervals.filter((interval) => interval.stage === stage);
-  return spans.length ? spans.at(-1)!.endMs - spans[0]!.startMs : 0;
-}
 
 /** Invariants a saved result holds; the run downgrades one that breaks them to incomplete. */
 export function incoherence(result: RunResult, plans: StagePlans): string[] {

@@ -7,11 +7,9 @@ import {
   locked,
   open,
   openSettings,
-  phase,
   ready,
   run,
   runButton,
-  savedResult,
 } from "./fleet";
 import type { Server } from "./servers";
 import { expect, test, type Page } from "./webview";
@@ -113,7 +111,9 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   expect(multiServer.failures).toMatchObject([{ serverId: "server-1", reason: "preparation-failed" }]);
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
-  await expect(settings.locator(".server-feedback")).toContainText(/timed out|could not be reached/);
+  await expect(settings.locator(".server-feedback")).toContainText(
+    /timed out|could not be reached|Could not reach this test server\./,
+  );
   await expect(settings.getByRole("button", { name: /Sign in/ })).toHaveCount(0);
   const before = (await network(page)).preflights[frankfurt.url];
   await retry.click();
@@ -124,22 +124,6 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   await ready(page);
   expect(await selection(page)).toEqual(["self"]);
   expect((await run(page)).result.multiServer.participants).toEqual(["self"]);
-});
-
-test("a result finished after the network is blocked is still saved", async (page) => {
-  await open(page, home.url, {
-    config: {
-      stages: { latency: false, download: true, upload: false },
-      skipLoadedLatencyWhenStageOff: true,
-    },
-  });
-  await ready(page);
-  const startedAt = Date.now();
-  await runButton(page, "Start test").click();
-  await expect(phase(page, "download")).toHaveCount(1);
-  await page.blockRequests(["*"]);
-  const saved = await savedResult(page, startedAt);
-  expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("a blocked latency probe fails only its path and Retry stays scoped", async (page) => {

@@ -3,18 +3,20 @@
 // latency server keeps an idle monitor.
 import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import type { CatalogEntry } from "../../protocol/documents";
-import type {
-  Discovery,
-  LatencyPath,
-  OpenProbeChannel,
-  PreparedServer,
-  ProbeChannel,
-  ProbeChannelEvents,
-  ProbeOutcome,
-  Role,
-  ServerAuth,
-  ServerIdentity,
-  ThroughputPath,
+import {
+  identityOf,
+  ROLES,
+  type Discovery,
+  type LatencyPath,
+  type OpenProbeChannel,
+  type PreparedServer,
+  type ProbeChannel,
+  type ProbeChannelEvents,
+  type ProbeOutcome,
+  type Role,
+  type ServerAuth,
+  type ServerIdentity,
+  type ThroughputPath,
 } from "../types";
 import {
   checkLatency,
@@ -40,30 +42,26 @@ const MONITORED_MS = 60_000;
 const DISCOVERY_BUDGET_MS = 5_000;
 const ROLE_BUDGET_MS = 12_000;
 const IDLE_INTERVAL_MS = 1_000;
-const ROLES = ["throughput", "latency"] as const;
 const OFFLINE = "This device is offline";
-const CAPABILITY = "Receiver checkpoint support is required for uploads. Upgrade this measurement server.";
-/** Failed checks back off from 5 s, doubling up to a minute. */
 const backoffMs = (attempts: number) => Math.min(60_000, 5_000 * 2 ** (attempts - 1));
 
 export type Readiness = "unchecked" | "checking" | "verified" | "sign-in" | "failed";
 
-export interface RoleView<P> {
+interface RoleView<P> {
   /** The saved choice this role answers. */
   selection: string;
   state: "unchecked" | "checking" | "verified" | "failed";
-  /** Kept through a capability failure, so its probe evidence stays inspectable. */
   path: P | null;
   message: string | null;
 }
 
 export interface ServerView {
-  /** The catalogue entry, named as its discovery names it. */
+  /** The catalog entry, named as its discovery names it. */
   server: ServerIdentity;
   discovery: Discovery | null;
   readiness: Readiness;
   message: string | null;
-  /** A reason no connection check can clear: sign-in or a missing server capability. */
+  /** A reason no connection check can clear: a sign-in. */
   blocked: string | null;
   throughput: RoleView<ThroughputPath>;
   latency: RoleView<LatencyPath>;
@@ -77,7 +75,7 @@ export interface ServerView {
   connectivity: "connected" | "offline" | null;
 }
 
-export interface CheckOptions {
+interface CheckOptions {
   /** Retry: re-read discovery and redo the role checks (all, or only `role`), whatever their backoff. */
   force?: boolean;
   role?: Role;
@@ -100,7 +98,6 @@ export interface ConnectionEnv {
   latencyServer: Read<string | null>;
   selections: Record<Role, Read<Selection>>;
   latencyNeeded: Read<boolean>;
-  checkpoints: Read<boolean>;
   idleLatency(id: string, outcomes: readonly ProbeOutcome[]): void;
   now(): number;
 }
@@ -178,10 +175,7 @@ function connect(
     const known = discovery();
     return known ? known.server.location : entry.location;
   });
-  const identity = computed((): ServerIdentity => {
-    const where = location();
-    return { id: entry.id, url: entry.url, name: name(), ...(where ? { location: where } : {}) };
-  });
+  const identity = computed(() => identityOf({ ...entry, name: name(), location: location() }));
 
   const validPath = <P extends ThroughputPath | LatencyPath>(role: Role, check: RoleCheck<P>) =>
     computed((): P | null => {
@@ -205,8 +199,7 @@ function connect(
 
   /** The paths a run may use, verified at or after `since`; null while anything stands in the way. */
   function paths(since: number): Pick<PreparedServer, "throughput" | "latency"> | null {
-    const known = discovery();
-    if (!selected() || !known || fault() || (env.checkpoints() && !known.uploadCheckpoint)) return null;
+    if (!selected() || !discovery() || fault()) return null;
     const throughputPath = valid.throughput();
     if (!throughputPath || throughputPath.verifiedAt < since) return null;
     if (!env.latencyNeeded()) return { throughput: throughputPath, latency: null };
@@ -220,8 +213,7 @@ function connect(
 
   // What falls due, in page ms; Infinity for nothing, or for what waits on the user.
   const roleDue = (role: Role): number => {
-    if (!required(role) || roles[role].task() || (role === "throughput" ? valid.throughput() : valid.latency()))
-      return Infinity;
+    if (!required(role) || roles[role].task() || valid[role]()) return Infinity;
     return failureHere(role)?.due ?? 0;
   };
   const discoveryDue = computed((): number => {
@@ -233,9 +225,11 @@ function connect(
     if (!selected()) return known.readAt + FRESH_MS;
     return known.readAt + (watchedPath() ? MONITORED_MS : LIVENESS_MS);
   });
+  const signedOut = () => auth.left() <= 0 && !fault.peek()?.failure.signIn;
   const dueAt = computed((): number => {
     let at = discoveryDue();
-    if (auth.deadline !== null && !fault()?.failure.signIn) at = Math.min(at, auth.deadline);
+    // A grant's end falls due on the page clock; its wall-clock end is caught where anything is checked.
+    if (!fault()?.failure.signIn) at = Math.min(at, now() + auth.left());
     if (discovery() && !fault() && !discovering()) for (const role of ROLES) at = Math.min(at, roleDue(role));
     return at;
   });
@@ -350,7 +344,7 @@ function connect(
 
   function probe(role: Role, owner?: AbortSignal): Promise<void> {
     const running = roles[role].task.peek();
-    if (running && !running.abort.signal.aborted) return running.promise;
+    if (running) return running.promise;
     const known = discovery.peek()!;
     const selection = env.selections[role].peek();
     return role === "throughput"
@@ -363,6 +357,7 @@ function connect(
 
   async function check({ force = false, since, role, signal: owner }: CheckOptions = {}): Promise<void> {
     if (disposed) return;
+    if (signedOut()) return requireSignIn();
     const fresh = since !== undefined;
     const forced = (each: Role) => force && (!role || each === role);
     batch(() =>
@@ -377,7 +372,7 @@ function connect(
     const reread = force || (fresh ? !failed || failed.failure.retry === "retryable" : discoveryDue.peek() <= now());
     // A selected server's own re-read keeps showing what it knew, without a checking flash.
     const quiet = !force && !fresh && selected.peek() && (discovery.peek() !== null || failed !== null);
-    if (running && !running.abort.signal.aborted) await running.promise;
+    if (running) await running.promise;
     else if (reread) await rediscover(quiet, owner);
     if (disposed || owner?.aborted || !selected.peek() || fault.peek() || !discovery.peek()) return;
     const at = now();
@@ -386,7 +381,7 @@ function connect(
       untrack(() => {
         if (!required(each)) return false;
         if (forced(each) || roles[each].task()) return true;
-        const path = each === "throughput" ? valid.throughput() : valid.latency();
+        const path = valid[each]();
         if (path) return (force || fresh) && path.verifiedAt < stale;
         const failure = failureHere(each);
         // Retrying one role leaves another role's failure alone.
@@ -417,6 +412,7 @@ function connect(
   }
 
   function resume(): void {
+    if (signedOut()) return requireSignIn();
     const reset = (each: Fault): Fault =>
       each.failure.retry === "retryable" ? { ...each, attempts: 0, due: 0 } : each;
     batch(() => {
@@ -480,8 +476,7 @@ function connect(
       const wait = Math.ceil(at - now());
       if (wait > 0) return void (timer = setTimeout(fire, wait));
       armed = false;
-      if (auth.deadline !== null && now() >= auth.deadline && !fault.peek()?.failure.signIn) requireSignIn();
-      else void check();
+      void check();
     };
     // What is due already starts before the page paints, so a row never flashes its unchecked state.
     if (at <= now()) queueMicrotask(fire);
@@ -563,14 +558,12 @@ function connect(
     const words = (failure: Failure) => (isOffline && !failure.signIn ? OFFLINE : failure.message);
     // What stands before any path: the discovery's failure.
     const standing = failed ? words(failed.failure) : null;
-    const capability = selected() && known && env.checkpoints() && !known.uploadCheckpoint ? CAPABILITY : null;
     const shown = <P>(role: Role, path: P | null): RoleView<P> => {
       const selection = selectionText(env.selections[role]());
       const needed = required(role);
       if (needed && loud()) return { selection, state: "checking", path: null, message: null };
       if (needed && standing) return { selection, state: "failed", path: null, message: standing };
       if (needed && busy[role]()) return { selection, state: "checking", path: null, message: null };
-      if (path && role === "throughput" && capability) return { selection, state: "failed", path, message: capability };
       if (path) return { selection, state: "verified", path, message: null };
       const failure = needed ? failureHere(role) : null;
       if (failure) return { selection, state: "failed", path: null, message: words(failure.failure) };
@@ -579,7 +572,7 @@ function connect(
     const throughputView = shown("throughput", valid.throughput());
     const latencyView = shown("latency", valid.latency());
     const roleViews = ROLES.filter(required).map((role) => (role === "throughput" ? throughputView : latencyView));
-    const message = standing ?? capability ?? roleViews.find((each) => each.message)?.message ?? null;
+    const message = standing ?? roleViews.find((each) => each.message)?.message ?? null;
     const signIn =
       !!failed?.failure.signIn ||
       ROLES.some((role) => required(role) && !busy[role]() && failureHere(role)?.failure.signIn);
@@ -590,7 +583,7 @@ function connect(
       discovery: known,
       readiness: signIn ? "sign-in" : message ? "failed" : checking ? "checking" : ready ? "verified" : "unchecked",
       message,
-      blocked: message && (signIn || message === capability) ? message : null,
+      blocked: signIn ? message : null,
       throughput: throughputView,
       latency: latencyView,
       ready,
@@ -607,7 +600,7 @@ function connect(
     check,
     prepared: (since) =>
       untrack(() => {
-        if (auth.deadline !== null && now() >= auth.deadline) return null;
+        if (auth.left() <= 0) return null;
         const ready = paths(since);
         return ready && { server: identity(), auth, discovery: discovery()!, ...ready };
       }),

@@ -1,8 +1,7 @@
-// The browser's own settings in localStorage "graphite-meter:v1": the next run's test settings and display
-// preferences. The key and its shape are shared with the pre-paint script and the sign-in pages, and settings saved
-// by earlier releases read unchanged.
+// The browser's own settings in localStorage "graphite-meter:v1": the next test's settings and display preferences.
+// The key and its shape are shared with the pre-paint script and the sign-in pages.
 import { STORAGE_KEY } from "../../auth/theme";
-import { normalizeStreamCount } from "../engine/net/budget";
+import { normalizeStreamCount } from "../engine/net/streams";
 import { CADENCE_MS, type PingCadence, type TestConfig } from "../engine/types";
 import { batch, signal, type Read, type Signal } from "../lib/signal";
 import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
@@ -51,7 +50,7 @@ export const HISTORY_SPLIT = 0.42;
 export const HISTORY_COLUMNS = ["download", "upload", "bidirectional", "idle", "loaded"] as const;
 export type HistoryColumn = (typeof HISTORY_COLUMNS)[number];
 export type Theme = "dark" | "light" | "auto";
-export type HistoryPreference = "default" | "enabled" | "disabled";
+type HistoryPreference = "default" | "enabled" | "disabled";
 
 /** In the order they are stored. */
 export interface Preferences {
@@ -82,7 +81,7 @@ const positive = <T>(value: unknown, fallback: T): number | T =>
   typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : fallback;
 const CADENCES = Object.keys(CADENCE_MS) as PingCadence[];
 
-/** Each stored field sanitised on its own: anything unreadable falls back to its default, unknown keys go. */
+/** Each stored field sanitized on its own: anything unreadable falls back to its default, unknown keys go. */
 export function readPreferences(stored: unknown): Preferences {
   const saved = record(stored);
   const config = record(saved.config);
@@ -165,9 +164,8 @@ function read(storage: Storage | null): unknown {
 }
 
 /** Loads the preferences, saves changes once edits pause and before the page goes, and follows the History
-    choices other tabs make. A save rewrites only the fields this tab changed over what is stored, so two tabs keep
-    each other's changes to other fields (the test settings are one field); the first save also normalises what is
-    stored. */
+    choices other tabs make. A save rewrites only the fields this tab changed over what is stored, read afresh, so two
+    tabs keep each other's changes to other fields (the test settings are one field); loading writes nothing. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,
@@ -178,20 +176,18 @@ export function createPreferences(
     [K in keyof Preferences]: Signal<Preferences[K]>;
   };
   let dirty = new Set<keyof Preferences>();
-  let normalised = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const save = () => {
     clearTimeout(timer);
     timer = undefined;
-    if (!dirty.size && normalised) return;
+    if (!dirty.size) return;
     const merged = readPreferences(read(storage)) as unknown as Record<string, unknown>;
     for (const key of dirty) merged[key] = signals[key].peek();
     // A refused write keeps its fields dirty, so the next save carries them.
     try {
       storage?.setItem(STORAGE_KEY, JSON.stringify(merged));
       dirty = new Set();
-      normalised = true;
     } catch {}
   };
   const schedule = () => {
@@ -220,7 +216,6 @@ export function createPreferences(
   target.addEventListener("storage", follow as EventListener);
   target.addEventListener("pagehide", save);
   target.addEventListener("visibilitychange", hidden);
-  schedule();
   return {
     ...signals,
     set(patch) {

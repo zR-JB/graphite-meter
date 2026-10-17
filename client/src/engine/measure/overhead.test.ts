@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { json } from "../../protocol/pins.testutil";
 import { combinedModel, pathModel } from "./overhead";
 
-test("the wire multipliers the terminal clients share", async () => {
+test("the wire multipliers the terminal client shares", async () => {
   for (const { scheme, transport, protocol, ipVersion, multiplier } of (await json("wirerate.testvectors.json")).cases)
     expect(pathModel({ protocol, secure: scheme === "https", ipVersion, transport }).totalMultiplier).toBeCloseTo(
       multiplier,

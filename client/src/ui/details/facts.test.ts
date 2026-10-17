@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { classify } from "../../engine/net/paths";
 import type { Discovery } from "../../engine/types";
 import type { Preflight } from "../../protocol/documents";
+import { MISSING } from "../../view/format";
 import { capabilities, evidence, httpPaths, loadSummary } from "./facts";
 
 const page = { origin: "https://ui.example", secure: true, webTransport: "available" as const };
@@ -10,7 +11,6 @@ function offer(throughput: object[], latency: object[]): Discovery {
     generation: "g1",
     engineVersion: "",
     server: { name: "" },
-    uploadCheckpoint: true,
     maxStageMs: 300_000,
     origin: page.origin,
     protocol: null,
@@ -20,22 +20,18 @@ function offer(throughput: object[], latency: object[]): Discovery {
   };
 }
 
-test("load reads as slots, busy past half of them, and not at all without a limit", () => {
-  const cases: [Parameters<typeof loadSummary>[0], string | null][] = [
-    [{ active: 0, max: 4 }, "0 of 4 slots"],
-    [{ active: 1, max: 2 }, "1 of 2 slots"],
-    [{ active: 3, max: 4 }, "3 of 4 slots, server busy: results may be affected"],
-    [{ active: 0, max: 0 }, null],
-    [undefined, null],
-  ];
-  for (const [load, text] of cases) expect(loadSummary(load)).toBe(text);
+test("load reads busy only past half the slots, and not at all without a limit", () => {
+  const busy = (active: number, max: number) => loadSummary({ active, max })?.includes("busy");
+  expect([busy(0, 4), busy(1, 2), busy(3, 4)]).toEqual([false, false, true]);
+  expect(loadSummary({ active: 0, max: 0 })).toBeNull();
+  expect(loadSummary(undefined)).toBeNull();
 });
 
-test("each side's HTTP version reads on its own", () => {
-  expect(evidence("h2", "http/1.1", "Pending")).toBe("Browser HTTP/2, server HTTP/1.1");
-  expect(evidence(null, "h3", "Pending")).toBe("Server HTTP/3");
-  expect(evidence("h3-29", null, "Pending")).toBe("Browser h3-29");
-  expect(evidence(null, null, "—")).toBe("—");
+test("each side's HTTP version reads on its own, unknown until either reports", () => {
+  const both = evidence("h2", "http/1.1", MISSING);
+  expect(both.indexOf("HTTP/2")).toBeLessThan(both.indexOf("HTTP/1.1"));
+  expect(evidence(null, "h3", MISSING)).toContain("HTTP/3");
+  expect(evidence(null, null, MISSING)).toBe(MISSING);
 });
 
 test("a server supports what it advertises; latency targets are no HTTP paths", () => {

@@ -1,7 +1,5 @@
-// One direction's carrier for a stage: N fetch lanes, a worker each, or one WebTransport session worker carrying N
-// streams. A worker lives as long as its carrier: a lane that ends reopens on it once the stage has settled what the
-// ending means, so a session's unspent ticket survives its redials. The carrier is ready when enough lanes delivered
-// since they last opened.
+// One direction's carrier for a stage: fetch lanes, a worker each, or one WebTransport session worker. A worker lives
+// as long as its carrier, so a lane that ends reopens on it and a session's unspent ticket survives its redials.
 import type {
   FeedRecord,
   Flushed,
@@ -12,9 +10,8 @@ import type {
 } from "../../protocol/messages";
 import { workerScript } from "../../lib/trusted";
 import type { Ending } from "../types";
+import { delay, fromEpoch } from "../run/clock";
 import { Backoff, lost } from "./endings";
-import { fromEpoch } from "../run/clock";
-import { delay } from "./wait";
 
 /** A stopping session gets this long to finalize and acknowledge. */
 const STOP_GRACE_MS = 2_500;
@@ -116,11 +113,12 @@ export class Carrier {
   }
 
   /** Resolves once every lane answered the download bytes it had counted by `cutoff` (page time), within 250 ms,
-      with the latest page time those counts stand at (the cutoff, unless a lane no longer kept it), or null when none
-      answered. A lane that answered counts nothing more; one that did not counts on. */
+      with the latest page time those counts stand at: the cutoff, unless a lane no longer kept it, or now for a lane
+      that did not answer and counts on. Null without lanes. The rate a boundary there reads never overstates. */
   async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;
+    const standsAt = (at: number) => (latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, at));
     const answers = this.#lanes.map(
       (lane) =>
         new Promise<void>((resolve) => {
@@ -129,7 +127,7 @@ export class Carrier {
             lane.cut = true;
             lane.held = null;
             if (total > lane.counted) this.#count(lane, total - lane.counted);
-            latest = Math.max(latest ?? Number.NEGATIVE_INFINITY, fromEpoch(at));
+            standsAt(fromEpoch(at));
             resolve();
           };
           lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + cutoff });
@@ -138,7 +136,10 @@ export class Carrier {
     await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
     answered.abort();
     for (const lane of this.#lanes) {
-      if (lane.held) this.#count(lane, lane.held);
+      if (lane.flushed) {
+        if (lane.held) this.#count(lane, lane.held);
+        standsAt(performance.now());
+      }
       lane.held = lane.flushed = null;
     }
     return latest;

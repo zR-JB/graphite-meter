@@ -35,9 +35,6 @@
     margin-top: var(--space-4);
   }
 
-  .more-menu {
-    width: min(236px, calc(100vw - 16px));
-  }
   .more-control.danger .more-menu {
     & button {
       color: var(--err);
@@ -86,7 +83,7 @@
     background: var(--track);
     transition: var(--transition-control);
   }
-  /* Centred on the track whatever its edge rounds to, 3 px from the end it rests at. */
+  /* Centered on the track whatever its edge rounds to, 3 px from the end it rests at. */
   .switch-knob {
     position: absolute;
     top: 50%;
@@ -95,7 +92,7 @@
     height: 16px;
     border-radius: var(--r-full);
     background: var(--surface-1);
-    box-shadow: 0 1px 3px color-mix(in oklab, var(--shade) 40%, transparent);
+    box-shadow: var(--elev-thumb);
     translate: 0 -50%;
     transition:
       translate var(--dur-graph) var(--ease-spring),
@@ -113,7 +110,7 @@
     flex: 0 1 auto;
     min-width: 0;
   }
-  /* Forced colours keep the edge but drop fills; system colours draw the knob and the on state. */
+  /* Forced colors keep the edge but drop fills; system colors draw the knob and the on state. */
   @media (forced-colors: active) {
     .switch-knob {
       background: CanvasText;
@@ -137,8 +134,8 @@
     color: var(--text-soft);
 
     & svg {
-      width: 14px;
-      height: 14px;
+      width: var(--icon-sm);
+      height: var(--icon-sm);
     }
   }
   .server-scope {

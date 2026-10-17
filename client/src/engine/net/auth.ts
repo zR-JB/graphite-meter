@@ -1,11 +1,12 @@
-// Per-server credentials: none, the page's own login, or a measurement grant a peer approved. Requests they authorize
-// stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and never in a URL, and every
-// lifetime is a monotonic deadline, a grant's also a wall-clock one.
-import { grant as grantDocument, readJSON, type CatalogEntry } from "../../protocol/documents";
-import { ROUTES } from "../../protocol/routes";
-import { SignInRequired, type RequestRecipe, type ServerAuth, type ServerIdentity } from "../types";
-import { CheckError, delay } from "./checks";
-import { signInMarker, type PageConfig, type PageSession } from "./page";
+// Per-server credentials: none, the page's own sign-in, or a measurement grant a peer approved. Requests they
+// authorize stay on the server's allowed destinations, a grant only on its issuer's HTTPS hostname and never in a URL,
+// and a grant ends by the monotonic clock or the wall clock, whichever runs out first.
+import { grant as grantDocument, readJSON, release, signInMarker, type CatalogEntry } from "../../protocol/documents";
+import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
+import { delay } from "../run/clock";
+import { identityOf, SignInRequired, type RequestRecipe, type ServerAuth } from "../types";
+import { CheckError } from "./checks";
+import { endedCheck, ENDED_CHECK_MS, type PageConfig, type PageSession } from "./page";
 import { allowsOrigin } from "./paths";
 
 /** A measurement grant, held in memory only: its bearer token and when its parent login ends. */
@@ -18,23 +19,10 @@ export interface Grant {
   maximumLifetimeMs: number;
 }
 
-/** How long `grant` has left, by whichever clock says less. */
-export const grantLeft = (grant: Grant, now: () => number): number =>
-  Math.min(grant.deadline - now(), grant.expires - Date.now());
-
-const ENDED_CHECK_MS = 3_000;
-
-const identityOf = (entry: CatalogEntry): ServerIdentity => ({
-  id: entry.id,
-  url: entry.url,
-  name: entry.name,
-  ...(entry.location ? { location: entry.location } : {}),
-});
-
 function credentials(
   entry: CatalogEntry,
   kind: ServerAuth["kind"],
-  deadline: number | null,
+  left: ServerAuth["left"],
   recipe: (target: URL, method: string) => RequestRecipe,
   ended: ServerAuth["ended"],
   refused: () => void,
@@ -46,7 +34,7 @@ function credentials(
   };
   return {
     kind,
-    deadline,
+    left,
     request,
     async fetch(url, init = {}) {
       const { headers, credentials, redirect } = request(url, init.method ?? "GET");
@@ -55,7 +43,7 @@ function credentials(
       // Checkpoints and session control must stay responsive during bulk transfers.
       const response = await fetch(url, { priority: "high", ...init, headers: merged, credentials, redirect });
       if (init.signal?.aborted || !signInMarker(response)) return response;
-      await response.body?.cancel().catch(() => {});
+      await release(response);
       refused();
       throw new SignInRequired(identityOf(entry));
     },
@@ -70,22 +58,24 @@ function credentials(
   };
 }
 
-export const publicAuth = (entry: CatalogEntry): ServerAuth =>
+const forever = () => Infinity;
+
+const publicAuth = (entry: CatalogEntry): ServerAuth =>
   credentials(
     entry,
     "public",
-    null,
+    forever,
     () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     async () => false,
     () => {},
   );
 
-export function sessionAuth(entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth {
+function sessionAuth(entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth {
   const host = new URL(page.origin).hostname;
   return credentials(
     entry,
     "session",
-    null,
+    forever,
     (target, method) => {
       // The page's cookies and CSRF token reach only its own secure hostname, never an additional origin.
       if (target.origin !== page.origin && (target.protocol !== "https:" || target.hostname !== host))
@@ -101,28 +91,22 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
   const issuer = new URL(entry.url).hostname;
   const authorization = { Authorization: `Bearer ${grant.token}` };
   let revoked = false;
-  let checking: Promise<boolean> | null = null;
-  const over = () => revoked || grantLeft(grant, now) <= 0;
+  const left = () => Math.min(grant.deadline - now(), grant.expires - Date.now());
+  const over = () => revoked || left() <= 0;
   // A broken stream is how a withdrawn grant first shows: the grant's own request is refused with the marker.
-  async function check(): Promise<boolean> {
-    try {
-      const response = await fetch(`${entry.url}${ROUTES.probe}`, {
-        cache: "no-store",
-        credentials: "omit",
-        redirect: "error",
-        headers: authorization,
-        signal: AbortSignal.timeout(ENDED_CHECK_MS),
-      });
-      response.body?.cancel().catch(() => {});
-      return (revoked ||= signInMarker(response));
-    } catch {
-      return false;
-    }
-  }
+  const withdrawn = endedCheck(() =>
+    fetch(`${entry.url}${ROUTES.probe}`, {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      headers: authorization,
+      signal: AbortSignal.timeout(ENDED_CHECK_MS),
+    }),
+  );
   return credentials(
     entry,
     "grant",
-    grant.deadline,
+    left,
     (target) => {
       if (target.protocol !== "https:") throw new CheckError("Measurement grants require HTTPS", "impossible");
       // The issuer accepts its grant only on its own hostname, never on an additional origin.
@@ -131,17 +115,12 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
       if (over()) throw new SignInRequired(identityOf(entry));
       return { headers: { ...authorization }, credentials: "omit", redirect: "error" };
     },
-    async (signal) => {
-      if (over()) return true;
-      if (signal?.aborted) return false;
-      checking ??= check().finally(() => (checking = null));
-      return (await checking) && !signal?.aborted;
-    },
+    async (signal) => over() || (revoked ||= await withdrawn(signal)),
     () => (revoked = true),
   );
 }
 
-/** The page's own server rides the page's login when there is one; every other server starts public. */
+/** The page's own server rides the page's sign-in when there is one; every other server starts public. */
 export const initialAuth = (entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth =>
   entry.id === "self" && entry.url === page.origin && page.auth ? sessionAuth(entry, page, session) : publicAuth(entry);
 
@@ -174,16 +153,16 @@ export async function beginApproval(
   page: PageConfig,
 ): Promise<{ url: string; code: string; verifier: string }> {
   if (!page.secure || !entry.url.startsWith("https://"))
-    throw new Error("Open this interface over HTTPS to authorize a remote server");
+    throw new Error("Open this interface over HTTPS to sign in to a remote server.");
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const { challenge, code } = await approvalChallenge(verifier);
   const query = new URLSearchParams({ challenge, client_origin: page.origin });
-  return { url: `${entry.url}/auth/browser?${query}`, code, verifier };
+  return { url: `${entry.url}${AUTH_ROUTES.browser}?${query}`, code, verifier };
 }
 
 export class ApprovalLimitError extends Error {
   constructor() {
-    super("This server login has reached its limit of authorized clients.");
+    super("This server's sign-in has reached its limit of authorized clients.");
   }
 }
 
@@ -195,7 +174,7 @@ const EXCHANGE_TIMEOUT_MS = 5_000;
 
 /** Polls the peer's verifier-bound exchange until the user approves, within the approval's lifetime. A network
     failure, a slow answer or a failing hop is retried in the next round, which the server answers with the grant it
-    already issued for 30 s; a refusal is final. */
+    already issued; a refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,
@@ -206,7 +185,7 @@ export async function exchangeGrant(
   while (now() < deadline) {
     signal.throwIfAborted();
     const [sentAt, sentWall] = [now(), Date.now()];
-    const response = await fetch(`${entry.url}/auth/browser/token`, {
+    const response = await fetch(`${entry.url}${AUTH_ROUTES.browserToken}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ verifier }),
@@ -224,19 +203,20 @@ export async function exchangeGrant(
         answer = grantDocument(await readJSON(response));
       } catch (cause) {
         signal.throwIfAborted();
-        throw new Error("Invalid measurement grant", { cause });
+        throw new Error("Could not read the measurement grant.", { cause });
       }
       signal.throwIfAborted();
-      if (!answer.remainingMs || answer.remainingMs > MAX_GRANT_MS) throw new Error("Invalid measurement grant");
+      if (!answer.remainingMs || answer.remainingMs > MAX_GRANT_MS)
+        throw new Error("Could not read the measurement grant.");
       const { token, remainingMs, maximumLifetimeMs } = answer;
       return { token, deadline: sentAt + remainingMs, expires: sentWall + remainingMs, maximumLifetimeMs };
     }
     if (response) {
-      response.body?.cancel().catch(() => {});
+      release(response);
       if (response.status === 429) throw new ApprovalLimitError();
       if (response.status === 410) throw new Error("The approval's answer was lost on the way. Sign in again.");
       if (response.status !== 202 && response.status !== 408 && response.status < 500)
-        throw new Error(`Approval exchange returned HTTP ${response.status}`);
+        throw new Error(`Could not finish the sign-in (HTTP ${response.status}).`);
     }
     await delay(POLL_MS, signal);
   }

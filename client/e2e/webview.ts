@@ -338,18 +338,23 @@ export class Page {
   readonly errors: string[] = [];
   readonly console: string[] = [];
   private driver: Promise<Driver> | undefined;
+  private closed = false;
   constructor(private readonly options: { monitorDisplay?: boolean } = {}) {}
   private init() {
-    this.driver ??= within(
-      "preparing the page",
-      (async () => {
-        const driver = await openDriver({
-          console: (type, line) => {
-            this.console.push(`${type}: ${line}`);
-            if (type === "error") this.errors.push(`console.error: ${line}`);
-          },
-          exception: (text) => this.errors.push(text),
-        });
+    if (this.closed) return Promise.reject(new Error("the page is closed"));
+    this.driver ??= this.prepare();
+    return this.driver;
+  }
+  private prepare() {
+    const opening = (async () => {
+      const driver = await openDriver({
+        console: (type, line) => {
+          this.console.push(`${type}: ${line}`);
+          if (type === "error") this.errors.push(`console.error: ${line}`);
+        },
+        exception: (text) => this.errors.push(text),
+      });
+      try {
         for (const guard of [
           reportPolicyViolations,
           recordClicks,
@@ -357,10 +362,21 @@ export class Page {
           recordStorage,
         ])
           await driver.addInitScript(`(${guard})()`);
-        return driver;
-      })(),
+      } catch (error) {
+        await driver.close().catch(() => {});
+        throw error;
+      }
+      return driver;
+    })();
+    const prepared = within("preparing the page", opening);
+    // A driver that opens after its bound has passed belongs to no test.
+    prepared.catch(() =>
+      opening.then(
+        (driver) => driver.close(),
+        () => {},
+      ),
     );
-    return this.driver;
+    return prepared;
   }
   locator(value: string, options: { hasText?: Name } = {}) {
     return new Locator(this, []).locator(value, options);
@@ -507,9 +523,9 @@ export class Page {
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
-    if (!this.driver) return;
-    const driver = await this.driver;
-    await within("leaving the page", driver.close(), 5_000).catch(() => {});
+    this.closed = true;
+    const driver = await this.driver?.catch(() => undefined);
+    if (driver) await within("leaving the page", driver.close(), 5_000).catch(() => {});
   }
 }
 
@@ -559,7 +575,6 @@ export const expect: any = Object.assign(
   { poll },
 );
 
-/** `chrome` marks a test that needs the DevTools Protocol; other browsers skip it. */
 type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;

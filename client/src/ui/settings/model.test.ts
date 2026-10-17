@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_CONFIG, DURATION_PRESETS } from "../../app/preferences";
+import { DURATION_PRESETS } from "../../app/preferences";
 import { fmtStageTime, parseDuration } from "../../view/format";
-import { parseCount, presetOf, stageStepMs, stepOnGrid, typedValue, type Direction } from "./model";
+import { parseCount, presetOf, PRESETS, stageStepMs, stepOnGrid, typedValue, type Direction } from "./model";
 
 const S = 1_000;
 const MIN = 60 * S;
@@ -49,7 +49,8 @@ test("typed text rounds to what the field shows, then meets its limits, last", (
 });
 
 test("a preset is pressed only while all five times match it", () => {
-  expect(presetOf(DEFAULT_CONFIG.duration)).toBe("medium");
-  expect(presetOf(DURATION_PRESETS.long)).toBe("long");
-  expect(presetOf({ ...DURATION_PRESETS.short, warmupMs: 700 })).toBeNull();
+  for (const preset of PRESETS) {
+    expect(presetOf({ ...DURATION_PRESETS[preset] })).toBe(preset);
+    expect(presetOf({ ...DURATION_PRESETS[preset], warmupMs: DURATION_PRESETS[preset].warmupMs + 1 })).toBeNull();
+  }
 });

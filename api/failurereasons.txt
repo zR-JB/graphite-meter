@@ -8,7 +8,7 @@
 #
 # Read by rust/proto/tests/codes.rs and client/src/view/words.test.ts.
 
-preparation-failed | Couldn't prepare the connection
+preparation-failed | Could not prepare the connection
 connection-lost | Connection lost
 timeout | Stopped delivering data
 sign-in-required | Sign-in required

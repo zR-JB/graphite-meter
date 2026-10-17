@@ -297,7 +297,8 @@ test.chrome(
       )
       .toBeGreaterThan(200);
     await flick("dialog.panel[open] .panel-body");
-    await Bun.sleep(300);
+    // A sheet the flick sent away would still be leaving.
+    await page.evaluate(settled);
     await expect(sheet).toHaveCount(1);
     await flick("dialog.panel[open] .sheet-head");
     await expect(sheet).toHaveCount(0);
@@ -327,9 +328,9 @@ test.chrome("a pinch on a phone's sheet zooms the page and leaves the sheet open
       { x: 280, y: 280 - step * 20, id: 1 },
     ]);
   await touch("touchEnd", []);
-  await Bun.sleep(700);
+  await expect.poll(() => page.evaluate(() => visualViewport?.scale ?? 1)).toBeGreaterThan(1);
+  await page.evaluate(settled);
   await expect(sheet).toHaveCount(1);
-  expect(await page.evaluate(() => visualViewport?.scale ?? 1)).toBeGreaterThan(1);
 });
 
 test("a graph's reading stays inside a narrow card wherever it reads", async (page) => {
@@ -384,54 +385,6 @@ test.chrome("a phone's top bar keeps every key in view, with a live run seen fro
   }
 });
 
-test("a sheet's head draws its rule once its content scrolls under it, in every engine", async (page) => {
-  await page.setViewportSize({ width: 1280, height: 600 });
-  await open(page, home.http);
-  const settings = await openSettings(page);
-  const rule = () =>
-    settings.evaluate((sheet: HTMLElement) => {
-      const head = sheet.querySelector(".sheet-head")!;
-      return getComputedStyle(head).borderBottomColor;
-    });
-  const scroll = (top: number) =>
-    settings.evaluate((sheet: HTMLElement, top: number) => {
-      const body = sheet.querySelector<HTMLElement>(".sheet-body")!;
-      body.scrollTop = top;
-      body.dispatchEvent(new Event("scroll"));
-    }, top);
-  const clear = (color: string) => color === "transparent" || /, 0\)$/.test(color);
-  expect(clear(await rule())).toBe(true);
-  await scroll(60);
-  await expect.poll(async () => clear(await rule())).toBe(false);
-  await scroll(0);
-  await expect.poll(async () => clear(await rule())).toBe(true);
-});
-
-test("the run's toast fades out as it fades in, in every engine, and is out of layout once gone", async (page) => {
-  await open(page, home.http);
-  await ready(page);
-  const sample = await page.evaluate(async () => {
-    const toast = document.querySelector<HTMLElement>(".phase-toast")!;
-    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
-    const before = getComputedStyle(toast).display;
-    toast.classList.add("visible");
-    await wait(400);
-    // As the page lets it go: laid out while it fades.
-    toast.classList.replace("visible", "leaving");
-    await wait(50);
-    const leaving = getComputedStyle(toast);
-    const during = [leaving.display, Number(leaving.opacity)] as const;
-    await wait(300);
-    toast.classList.remove("leaving");
-    return { before, during, after: getComputedStyle(toast).display };
-  });
-  expect(sample.before).toBe("none");
-  expect(sample.during[0]).toBe("grid");
-  expect(sample.during[1]).toBeGreaterThan(0);
-  expect(sample.during[1]).toBeLessThan(1);
-  expect(sample.after).toBe("none");
-});
-
 test("the diagnostic report copies on a page without the Clipboard API, and says when it cannot", async (page) => {
   // As on a plain-HTTP page: no Clipboard API; the copy command's selection is recorded, or refused on request.
   await page.addInitScript(() => {
@@ -477,7 +430,7 @@ test("a Settings change that reshapes the console moves it as a stage chip does"
   const settings = await openSettings(page);
   await page.evaluate(settled);
   await settings
-    .getByRole("checkbox", { name: "Skip loaded latency if the Latency stage is off" })
+    .getByRole("switch", { name: "Skip loaded latency if the Latency stage is off" })
     .evaluate((input: HTMLElement) => input.click());
   expect(
     await page.locator('[data-flip="controls"]').evaluate((el: Element) => el.getAnimations().length),

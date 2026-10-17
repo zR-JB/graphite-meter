@@ -20,7 +20,7 @@ export function stageStepMs(ms: number, direction: Direction): number {
 export const stepOnGrid = (value: number, size: number, direction: Direction) =>
   direction > 0 ? Math.floor(value / size) * size + size : Math.ceil(value / size) * size - size;
 
-export interface Field {
+interface Field {
   min: number;
   max: number;
   format(value: number): string;

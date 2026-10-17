@@ -9,12 +9,14 @@ export function tipGroup(list: HTMLElement): void {
   // Explained words inside a group leave the tab order to it (tip.ts).
   list.dataset.tipGroup = "";
   const facts = () => [...list.querySelectorAll<HTMLElement>("[data-tip][tabindex]")];
+  // Exactly one stop, whichever facts come, go or gain or lose their tab index (tip.ts); only a change writes.
   const settle = () => {
     const found = facts();
-    if (found[0] && !found.some((fact) => fact.tabIndex === 0)) found[0].tabIndex = 0;
+    const stop = found.find((fact) => fact.tabIndex === 0) ?? found[0];
+    for (const fact of found) if ((fact === stop) !== (fact.tabIndex === 0)) fact.tabIndex = fact === stop ? 0 : -1;
   };
   const observer = new MutationObserver(settle);
-  observer.observe(list, { childList: true, subtree: true });
+  observer.observe(list, { childList: true, subtree: true, attributeFilter: ["tabindex"] });
   onCleanup(() => observer.disconnect());
   // After each fact has taken its place in the group.
   queueMicrotask(settle);

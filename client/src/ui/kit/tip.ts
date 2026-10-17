@@ -1,6 +1,5 @@
-// Tooltips by delegation: one set of document listeners finds the explained element under the pointer or the
-// keyboard focus, and one bubble shows at a time. An element asks for a tip with `ref={tip(() => text)}`.
-// A hand at rest opens a tip, a sweep never does; jargon and facts answer a tap or click; a long press asks a control.
+// Tooltips by delegation, one bubble at a time: `ref={tip(() => text)}`. A hand at rest opens a tip, a sweep never
+// does; jargon and facts answer a tap or click; a long press asks a control.
 import { nextFrame, pageMs } from "../../lib/frame";
 import { computed, effect, onCleanup, scope, signal, type Read } from "../../lib/signal";
 
@@ -187,9 +186,13 @@ function show(node: HTMLElement, entry: Entry, pinned = false, keyboard = false)
       if (open === current && bubble.isConnected) place(current);
     }),
   );
-  bubble.showPopover();
-  place(current);
-  if (!instant) nextFrame(() => bubble.setAttribute("data-show", "true"));
+  // A tip asked for inside another popover's show steps would throw there, so it shows in the next task.
+  setTimeout(() => {
+    if (open !== current || !bubble.isConnected) return;
+    bubble.showPopover();
+    place(current);
+    if (!instant) nextFrame(() => bubble.setAttribute("data-show", "true"));
+  });
   listen(true);
 }
 

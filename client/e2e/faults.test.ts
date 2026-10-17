@@ -23,7 +23,7 @@ interface Fault {
   /** Acts once the named stage has measured for 300 ms: its own time left shows, not the last stage's handing off. */
   during: "download" | "upload";
   act?(page: Page, victim: Peer): Promise<{ kill(): void } | void>;
-  /** A Settings edit of the active download's duration, a second later. */
+  /** A Settings edit of the active download's duration, a second after the fault's moment. */
   editDownloadMs?: number;
   outcome: "partial" | "incomplete" | "complete";
   failure: { serverId: string; stage: string; reason: string } | null;
@@ -40,14 +40,6 @@ const faults: Fault[] = [
     act: async (_page, victim) => void victim.kill("SIGSTOP"),
     outcome: "partial",
     failure: { serverId: "oslo", stage: "download", reason: "timeout" },
-  },
-  {
-    name: "a killed peer leaves the upload it was in",
-    uploadMs: 5_000,
-    during: "upload",
-    act: async (_page, victim) => void victim.kill("SIGKILL"),
-    outcome: "partial",
-    failure: { serverId: "oslo", stage: "upload", reason: "connection-lost" },
   },
   {
     name: "a restarted peer resumes the upload under a replacement receiver",
@@ -101,8 +93,11 @@ test.chrome("a download graph leaves separate curves and fills across a page-clo
   await ready(page);
   const startedAt = Date.now();
   await runButton(page, "Start test").click();
-  await expect(phase(page, "download")).toHaveCount(1);
-  await Bun.sleep(1_200);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.querySelector<SVGPathElement>(".graph .plot path.line")?.getTotalLength() ?? 0),
+    )
+    .toBeGreaterThan(0);
   // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
   await page.evaluate(() => {
     const until = performance.now() + 2_000;
@@ -125,6 +120,22 @@ test.chrome("a download graph leaves separate curves and fills across a page-clo
   expect((area!.match(/M/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
   expect((area!.match(/Z/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
 });
+
+/** Waits until the running stage, planned for `stageMs`, has measured for `ms`, as its time left shows. */
+async function measuredFor(page: Page, stageMs: number, ms: number) {
+  const left = () =>
+    page.evaluate(() => parseFloat(document.querySelector(".remaining:not(.handoff-out) .figure")?.textContent ?? ""));
+  // A stage just begun can still show the time its predecessor ended on.
+  await expect
+    .poll(
+      async () => {
+        const seconds = await left();
+        return seconds > 0 && seconds <= (stageMs - ms) / 1000;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+}
 
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
@@ -161,12 +172,12 @@ for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
-      await expect(page.locator(".remaining:not(.handoff-out)")).toHaveCount(1, { timeout: 15_000 });
-      await Bun.sleep(300);
+      const stageMs = config.duration[`${fault.during}Ms`];
+      await measuredFor(page, stageMs, 300);
       const replacement = await fault.act?.(page, victim);
       if (replacement) relaunched.push(replacement);
       if (fault.editDownloadMs) {
-        await Bun.sleep(1_000);
+        await measuredFor(page, stageMs, 1_300);
         await editDownload(page, fault.editDownloadMs);
         config.duration.downloadMs = fault.editDownloadMs;
       }

@@ -27,6 +27,17 @@ async function boot<Command>(module: string, globals: Partial<Record<(typeof GLO
   return { posted, send: (data: Command) => port({ data }), types: () => posted.map(({ type }) => type) };
 }
 
+/** Lets every pending microtask run, and a task posted before this one. */
+const task = () =>
+  new Promise<void>((resolve) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => {
+      port1.close();
+      resolve();
+    };
+    port2.postMessage(null);
+  });
+
 /** A controllable stream of byte chunks or NDJSON lines. */
 function source() {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -267,7 +278,8 @@ const datagrams = async (epoch: number) => {
 test("a datagram download counts every byte", async () => {
   const { session, transport } = await datagrams(0);
   for (let i = 0; i < 1_600; i++) transport.datagram(1_200);
-  for (let turn = 0; turn < 10_000; turn++) await null;
+  // The fake clock stands still, so the loop reads every datagram without yielding.
+  await task();
   session.send({ type: "flush", at: performance.timeOrigin + performance.now() });
   const counted = session.posted.flatMap((report) => (report.type === "bytes" ? [report.bytes as number] : []));
   expect(counted.reduce((sum, bytes) => sum + bytes, 0)).toBe(1_600 * 1_200);
@@ -288,19 +300,19 @@ test("a final flush counts the datagrams read by its cutoff and none after, howe
 });
 
 test("a slow datagram download reports each datagram as it arrives", async () => {
-  // Real time: the loop yields a task between datagrams, a message and then a timer.
-  jest.useRealTimers();
-  // Its own epoch: an earlier test's loop may still post into the shared port on real time.
+  // Its own epoch: an earlier test's loop may still post into the shared port.
   const { session, transport } = await datagrams(7);
   const reported = () => session.posted.filter((report) => report.type === "bytes" && report.epoch === 7).length;
   // Five datagrams a second, each well past the report window.
-  await Bun.sleep(200);
+  await elapse(200);
   transport.datagram(1_200);
-  await Bun.sleep(20);
+  await elapse(0);
   expect(reported()).toBe(1);
-  await Bun.sleep(180);
+  // The loop yields a task between datagrams: a message, then a timer.
+  await task();
+  await elapse(180);
   transport.datagram(1_200);
-  await Bun.sleep(20);
+  await elapse(0);
   expect(reported()).toBe(2);
 });
 

@@ -1,5 +1,5 @@
-// Saved results: the schema 5 record each finished run becomes, stored rows of any schema read back, and their order.
-// Rows saved by earlier releases read back by the same rules.
+// Saved results: the schema 5 record each finished run becomes, how History reads and orders stored rows, and the one
+// upgrade that brings rows earlier releases saved to this build's form.
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";
@@ -82,6 +82,14 @@ const nullable =
   (check: Check): Check =>
   (value) =>
     value == null || check(value);
+const orNull =
+  (check: Check): Check =>
+  (value) =>
+    value === null || check(value);
+const among =
+  (values: readonly unknown[]): Check =>
+  (value) =>
+    values.includes(value);
 const list =
   (check: Check): Check =>
   (value) =>
@@ -91,71 +99,89 @@ const shape = (fields: Record<string, Check>): Check => {
   return (value) => isObject(value) && checks.every(([key, check]) => check(value[key]));
 };
 const perStage = (check: Check) => shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
+const STATUSES: readonly StageStatus[] = ["complete", "partial", "failed", "not-run"];
+const PROTOCOLS: readonly HttpProtocol[] = ["http1", "http2", "http3", "negotiated"];
 
-const rate = nullable(
-  shape({
-    reportedBytesPerSec: finite,
-    totalBytes: finite,
-    stabilityPct: finite,
-    wire: nullable(
-      shape({
-        totalMultiplier: finite,
-        mtuBytes: finite,
-        factors: list(shape({ label: text, contributionPct: finite })),
-      }),
-    ),
-  }),
-);
-const measured = {
-  latency: nullable(shape({ reportedMs: finite })),
-  latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
-  addedLatency: nullable(
-    shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
-  ),
-  download: rate,
-  upload: rate,
-  bidirectional: nullable(shape({ down: rate, up: rate })),
-};
-const readable = shape({
-  schemaVersion: (value) => value === 5,
-  id: text,
-  // Any time a Date holds.
-  completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
-  build: text,
-  engine: text,
-  result: shape({
-    ...measured,
-    outcome: (value) => value === "complete" || value === "partial" || value === "incomplete",
-    stages: isObject,
-    durationMs: finite,
-    multiServer: shape({
-      latencyFocus: text,
-      selection: list(shape({ id: text, name: text, url: text })),
-      servers: list(
+/** The fields History's views dereference, as this build saves them, or (`upgraded` false) as any release did. */
+function recordShape(upgraded: boolean): Check {
+  const rate = nullable(
+    shape({
+      reportedBytesPerSec: finite,
+      ...(upgraded ? { peakBytesPerSec: finite } : {}),
+      totalBytes: finite,
+      stabilityPct: finite,
+      wire: nullable(
         shape({
-          ...measured,
-          server: shape({ id: text }),
-          throughput: shape({ transport: text }),
-          latencyTarget: nullable(shape({ transport: text })),
-          totalBytes: shape({ down: finite, up: finite }),
-          stages: isObject,
+          totalMultiplier: finite,
+          mtuBytes: finite,
+          factors: list(shape({ label: text, contributionPct: finite })),
         }),
       ),
-      failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
     }),
-  }),
-});
+  );
+  const measured = {
+    latency: nullable(shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) })),
+    latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
+    addedLatency: nullable(
+      shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
+    ),
+    download: rate,
+    upload: rate,
+    bidirectional: nullable(shape({ down: rate, up: rate })),
+  };
+  const stages = upgraded ? perStage(among(STATUSES)) : isObject;
+  return shape({
+    schemaVersion: (value) => value === 5,
+    id: text,
+    // Any time a Date holds.
+    completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
+    build: text,
+    engine: text,
+    result: shape({
+      ...measured,
+      outcome: among(["complete", "partial", "incomplete"] satisfies Outcome[]),
+      stages,
+      durationMs: finite,
+      multiServer: shape({
+        latencyFocus: text,
+        selection: list(shape({ id: text, name: text, url: text })),
+        servers: list(
+          shape({
+            ...measured,
+            server: shape({ id: text }),
+            throughput: shape({ transport: text, ...(upgraded ? { protocol: among(PROTOCOLS) } : {}) }),
+            latencyTarget: nullable(shape({ transport: text })),
+            totalBytes: shape({ down: finite, up: finite }),
+            stages,
+          }),
+        ),
+        failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
+      }),
+    }),
+  });
+}
+const readable = recordShape(true);
+const stored = recordShape(false);
 
-/** A stored row as this build's types declare it, schema 4 lifted, or null when History cannot read it. */
+/** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  if (!isObject(value) || !plain(value)) return null;
-  const record = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
-  return readable(record) ? current(record as HistoryRecord) : null;
+  return isObject(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
 }
 
-const STATUSES: readonly string[] = ["complete", "partial", "failed", "not-run"] satisfies StageStatus[];
+/** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
+    either, and it is then left as stored. */
+export function upgradeRecord(value: unknown): HistoryRecord | null {
+  if (!isObject(value) || !plain(value)) return null;
+  try {
+    const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
+    return stored(saved) ? readHistoryRecord(current(saved as HistoryRecord)) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Schema 4 kept the version as the browser names it; a version never recorded was the browser's to negotiate.
-const PROTOCOLS: Record<string, HttpProtocol> = {
+const NAMED: Record<string, HttpProtocol> = {
   http1: "http1",
   "http/1.1": "http1",
   http2: "http2",
@@ -201,8 +227,8 @@ function current({ result, ...record }: HistoryRecord): HistoryRecord {
           ...server,
           throughput: {
             ...server.throughput,
-            protocol: Object.hasOwn(PROTOCOLS, server.throughput.protocol)
-              ? PROTOCOLS[server.throughput.protocol]!
+            protocol: Object.hasOwn(NAMED, server.throughput.protocol)
+              ? NAMED[server.throughput.protocol]!
               : "negotiated",
           },
           latency: latency(server.latency),
@@ -220,8 +246,7 @@ function current({ result, ...record }: HistoryRecord): HistoryRecord {
   };
 }
 
-/** Schema 4 as older builds saved it: one server's stages side by side, or with a result per server. It is only
-    ever read, never rewritten. */
+/** Schema 4 as older builds saved it: one server's stages side by side, or with a result per server. */
 interface Schema4 {
   id: string;
   completedAt: number;

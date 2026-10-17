@@ -10,6 +10,7 @@ import {
   recentCompletion,
   sortHistory,
   historyEntry,
+  upgradeRecord,
   type HistoryRecord,
   type HistorySort,
 } from "./records";
@@ -203,6 +204,12 @@ test("a stored row is readable only when every field History dereferences holds,
     ["result.multiServer.failures.0.serverId", null, false],
     ["result.multiServer.failures.0.stage", "warmup", false],
     ["result.multiServer.failures.0.reason", 5, false],
+    // What an upgrade brings to this build's form is read only in that form.
+    ["result.download.peakBytesPerSec", null, false],
+    ["result.latency.stabilityPct", undefined, false],
+    ["result.stages.download", "aborted", false],
+    [`${server}.stages.latency`, "running", false],
+    [`${server}.throughput.protocol`, "h2", false],
     // Plain data: bounded text, lists, objects and depth, finite numbers, nothing else.
     ["engine", "x".repeat(2_048), true],
     ["engine", "x".repeat(2_049), false],
@@ -225,7 +232,7 @@ test("a stored row is readable only when every field History dereferences holds,
   for (const value of [null, "record", [full]]) expect(readHistoryRecord(value)).toBeNull();
 });
 
-test("an older build's row reads as this build's types declare it, and stays as stored", () => {
+test("an older build's row upgrades to this build's form, and the row itself stays as stored", () => {
   const server = "result.multiServer.servers.0";
   const cases: [string, unknown, unknown][] = [
     // Older builds saved no peak without a 500 ms window.
@@ -252,7 +259,7 @@ test("an older build's row reads as this build's types declare it, and stays as 
   for (const [path, stored, read] of cases) {
     const row = altered(full, path, stored);
     const before = structuredClone(row);
-    expect(readHistoryRecord(row), `${path} = ${stored}`).toEqual(altered(full, path, read) as HistoryRecord);
+    expect(upgradeRecord(row), `${path} = ${stored}`).toEqual(altered(full, path, read) as HistoryRecord);
     expect(row, path).toEqual(before);
   }
 });
@@ -364,7 +371,7 @@ const lifted = (changes: object = {}, entry: object = {}, server: object = home)
   };
 };
 
-test("a schema 4 row reads as schema 5 with its servers, without its grade or failures, and stays as stored", () => {
+test("a schema 4 row upgrades to schema 5 with its servers, without its grade or failures", () => {
   const bidirectional = { status: "partial", down: { ...download4, reportedBytesPerSec: 2_000 }, up: download4 };
   const saved = { ...full.result.multiServer, servers: [{ ...full.result.multiServer.servers[0]!, stages: {} }] };
   const cases: [string, unknown, unknown][] = [
@@ -416,11 +423,10 @@ test("a schema 4 row reads as schema 5 with its servers, without its grade or fa
     ],
   ];
   for (const [name, row, expected] of cases) {
-    const stored = structuredClone(row);
-    expect(readHistoryRecord(row) as unknown, name).toEqual(expected);
-    expect(row, name).toEqual(stored);
+    expect(readHistoryRecord(row), name).toBeNull();
+    expect(upgradeRecord(row) as unknown, name).toEqual(expected);
   }
-  // A row no build wrote is unreadable, never a throw that would end the whole list read.
+  // A row no build wrote is left as it is, never a throw that would end the whole upgrade.
   const broken: [string, unknown][] = [
     ["stages.latency", null],
     ["stages.latency.lanes", null],
@@ -436,7 +442,24 @@ test("a schema 4 row reads as schema 5 with its servers, without its grade or fa
     ["wireEstimates.breakdown", null],
     ["multiServer", { servers: {} }],
   ];
-  for (const [path, value] of broken) expect(readHistoryRecord(altered(flat, path, value)), path).toBeNull();
+  for (const [path, value] of broken) expect(upgradeRecord(altered(flat, path, value)), path).toBeNull();
+});
+
+test("a row no release could read stays unreadable rather than upgraded into made-up stages or rates", () => {
+  const server = "result.multiServer.servers.0";
+  const rows = [
+    ...["x", 7, [], null].map((stages) => altered(full, "result.stages", stages)),
+    ...["h2", 7, []].map((bidirectional) => altered(full, "result.bidirectional", bidirectional)),
+    ...["x", 7, []].map((stages) => altered(full, `${server}.stages`, stages)),
+    ...["h2", 7].map((throughput) => altered(full, `${server}.throughput`, throughput)),
+    ...["x", 7, []].map((stages) => altered(flat, "stages", stages)),
+    ...["x", 7].map((transport) => altered(flat, "transport", transport)),
+    altered(flat, "stages.download", 7),
+    altered(flat, "transport.latency", "websocket"),
+    altered(flat, "wireEstimates.breakdown", "x"),
+    altered(flat, "stages.latency.lanes", []),
+  ];
+  for (const row of rows) expect(upgradeRecord(row), JSON.stringify(row).slice(0, 200)).toBeNull();
 });
 
 test("History sorts missing values last, equal ones newest first, each field in its natural direction", () => {

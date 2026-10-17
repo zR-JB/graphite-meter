@@ -4,13 +4,14 @@ import { signal, type Read } from "../../lib/signal";
 import { Icon, type IconName } from "./icon";
 import { tip } from "./tip";
 
-export interface MenuItem {
+interface MenuItem {
   title: Read<string> | string;
   detail?: string;
   icon: IconName | Read<IconName>;
   /** Names the item for styling and tests (`data-more`). */
   name?: string;
-  current?: Read<string | false>;
+  /** Whether the surface the item toggles is open: the item is a checkbox. */
+  checked?: Read<boolean>;
   hidden?: Read<boolean>;
   run(invoker: HTMLButtonElement): void;
 }
@@ -23,7 +24,7 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
   let last = false;
   const trigger = (
     <button
-      class="btn btn-icon btn-quiet more-trigger"
+      class="btn btn-icon btn-quiet"
       type="button"
       aria-label={props.label}
       aria-haspopup="menu"
@@ -44,7 +45,7 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
     </button>
   ) as HTMLButtonElement;
   const items = () =>
-    [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')].filter((item) =>
+    [...menu.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')].filter((item) =>
       item.checkVisibility(),
     );
   const focus = (list: HTMLButtonElement[], index: number) => {
@@ -98,11 +99,11 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
       {props.items.map((item) => (
         <button
           type="button"
-          role="menuitem"
+          role={item.checked ? "menuitemcheckbox" : "menuitem"}
           tabindex="-1"
           data-more={item.name}
           hidden={item.hidden}
-          aria-current={item.current}
+          aria-checked={item.checked && (() => String(item.checked!()))}
           onclick={() => {
             menu.hidePopover();
             item.run(trigger);

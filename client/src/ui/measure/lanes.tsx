@@ -1,7 +1,4 @@
-// The latency lanes: one ruled row per stage's probe population, its median, jitter, timeouts and added latency in
-// figures and its spread as a box plot on one shared axis. Each row's plot is marks placed by percentages of the
-// axis, so a resize moves them in layout alone; a mark that glides between summaries rewrites its own place and
-// nothing else.
+// The latency lanes: a row per probe population, its figures and its spread as a box plot on one shared axis.
 import type { App } from "../../app/app";
 import type { AddedLatency, LatencySummary } from "../../engine/measure/latency";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -12,6 +9,7 @@ import { fmtAddedMs, fmtLatency, fmtMs, fmtTick, MISSING } from "../../view/form
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
+import { tipGroup } from "../kit/rove";
 import { ServerScope } from "../kit/scope";
 import { clip, term, tip, warmTips } from "../kit/tip";
 import { LANES } from "./copy";
@@ -49,7 +47,7 @@ export interface LaneInput {
 }
 
 /** What stands beside the title: why the idle stage failed, a choice of whose latency to show, or whose it is. */
-export type LanesHead =
+type LanesHead =
   | { kind: "none" }
   | { kind: "failure"; text: string }
   | { kind: "picker"; node: Node }
@@ -98,13 +96,7 @@ export function LatencyProfileView(props: {
   );
   const head = computed(() => props.head?.() ?? NONE);
   const lanes = (
-    <div
-      class="lanes"
-      data-latency-profile=""
-      data-variant={live ? "bare" : "compact"}
-      role="group"
-      aria-label={LANES.group}
-    />
+    <div class="lanes" data-variant={live ? "bare" : "compact"} role="group" aria-label={LANES.group} ref={tipGroup} />
   ) as HTMLElement;
   const seen = live ? inView(lanes, false) : () => false;
   const motion = computed(() => seen() && !reducedMotion());
@@ -214,6 +206,8 @@ function Lane(props: {
     const now = reading();
     return now?.stage === stage && shown()[now.metric] !== null ? now.metric : null;
   });
+  // Focus reads the median first; the slider rests there between readings.
+  const resting = computed(() => selected() ?? (shown().center !== null ? "center" : (metrics()[0] ?? null)));
   const pct = (ms: number) => Math.min(100, Math.max(0, (ms / props.axis()) * 100));
   const overflow = computed(() => (shown().max ?? 0) > props.axis());
 
@@ -228,13 +222,13 @@ function Lane(props: {
       aria-disabled={() => (metrics().length ? undefined : "true")}
       aria-valuemin="0"
       aria-valuemax={() => Math.max(0, metrics().length - 1)}
-      aria-valuenow={() => Math.max(0, selected() ? metrics().indexOf(selected()!) : 0)}
+      aria-valuenow={() => {
+        const at = resting();
+        return at ? metrics().indexOf(at) : 0;
+      }}
       aria-valuetext={() => {
-        const metric = selected();
-        const value = metric && shown()[metric];
-        return metric && value != null
-          ? `${metricLabel(metric)} ${fmtMs(value)} milliseconds, ${metricMeaning(metric)}`
-          : undefined;
+        const metric = resting();
+        return metric ? `${metricLabel(metric)} ${fmtMs(shown()[metric])} ms, ${metricMeaning(metric)}` : undefined;
       }}
       {...scrub(
         (event) => {
@@ -256,7 +250,7 @@ function Lane(props: {
       onfocus={(event) => {
         if (!event.currentTarget.matches(":focus-visible")) return;
         props.keyboard.set(stage);
-        const first = shown().center !== null ? "center" : (metrics()[0] ?? null);
+        const first = resting();
         if (first) reading.set({ stage, metric: first });
       }}
       onblur={() => {
@@ -269,17 +263,15 @@ function Lane(props: {
           reading.set(null);
           return;
         }
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || !metrics().length) return;
-        event.preventDefault();
         const metric = stepMetric(shown(), selected(), event.key);
-        if (metric) reading.set({ stage, metric });
+        if (!metric) return;
+        event.preventDefault();
+        reading.set({ stage, metric });
       }}
     />
   ) as HTMLElement;
   const size = measure({ track }).track;
-  // The row's plot as marks placed by percentages of the axis: a resize moves them in layout with no
-  // script, and a glide rewrites only its marks' own places. Marks paint in this order; each is in the plot while it
-  // has a value.
+  // Marks placed by percentages of the axis, so a resize moves them in layout; they paint in this order.
   const art = (<span class="lane-art" aria-hidden="true" />) as HTMLElement;
   const mark = (name: string) => Object.assign(document.createElement("i"), { className: name });
   const range = mark("range");
@@ -320,7 +312,7 @@ function Lane(props: {
     }
     wake();
   });
-  const present$ = (node: HTMLElement, on: boolean) => {
+  const attach = (node: HTMLElement, on: boolean) => {
     if (on === node.isConnected) return;
     if (!on) return node.remove();
     const later = order.slice(order.indexOf(node) + 1).find((each) => each.isConnected);
@@ -343,26 +335,26 @@ function Lane(props: {
     const min = at("min");
     const max = at("max");
     const whisker = min !== null && max !== null;
-    present$(range, whisker);
+    attach(range, whisker);
     if (whisker) place(range, min, max - min);
     const over = whisker && overflow.peek();
-    present$(reach, over);
+    attach(reach, over);
     if (over) place(reach, max);
     const p10 = at("p10");
     const p90 = at("p90");
     const box = p10 !== null && p90 !== null;
-    present$(band, box);
+    attach(band, box);
     if (box) place(band, p10, p90 - p10);
     // Under the box, clear of the whisker: a bracket from the idle median to a loaded median, what the load added.
     const base = props.idle();
     const centre = at("center");
     const from = base !== null && props.several() && (values.center ?? 0) > base ? pct(base) : null;
-    present$(span, from !== null && centre !== null);
+    attach(span, from !== null && centre !== null);
     if (from !== null && centre !== null) place(span, from, centre - from);
-    present$(center, centre !== null);
+    attach(center, centre !== null);
     if (centre !== null) place(center, centre);
     const latest = props.live ? at("current") : null;
-    present$(current, latest !== null);
+    attach(current, latest !== null);
     if (latest !== null) place(current, latest);
     return moving;
   }
@@ -379,9 +371,7 @@ function Lane(props: {
   const ratio = computed(() => timeoutShare(summary()));
   const timeouts = computed(() => fmtTimeouts(ratio()));
   const timeoutsHelp = computed(() => timeoutsTip(label, summary()));
-  const addedText = computed(() =>
-    stage === "latency" ? LANES.baseline : plus() === null ? MISSING : `${fmtAddedMs(plus())} ms`,
-  );
+  const addedText = computed(() => (stage === "latency" ? "" : plus() === null ? MISSING : `${fmtAddedMs(plus())} ms`));
   return (
     <div
       class="lane"
@@ -390,12 +380,11 @@ function Lane(props: {
       data-active={() => (lane().active ? "true" : "false")}
     >
       <span class="lane-name">
-        <span class="mark tone-icon" aria-hidden="true">
+        <span class="tone-icon" aria-hidden="true">
           <Icon name={STAGE[stage].icon} />
         </span>
         <span
           class={() => (lane().failure ? "lane-label failed" : "lane-label")}
-          tabindex="-1"
           ref={tip(() => (lane().failure ? `${label}\n${lane().failure}` : ""))}
         >
           {label}
@@ -403,7 +392,6 @@ function Lane(props: {
       </span>
       <strong
         class={() => (shown().center === null ? "lane-median quiet" : "lane-median")}
-        tabindex="-1"
         ref={tip(() => {
           const timing = summary()?.reflectorTiming;
           return timing ? `${TIP.latencyMedian}\n${serverHandling(timing)}` : TIP.latencyMedian;
@@ -411,22 +399,14 @@ function Lane(props: {
       >
         {median}
       </strong>
-      <em
-        class={() => (summary()?.jitterMs == null ? "lane-jitter quiet" : "lane-jitter")}
-        tabindex="-1"
-        ref={tip(() => TIP.jitter)}
-      >
+      <em class={() => (summary()?.jitterMs == null ? "lane-jitter quiet" : "lane-jitter")} ref={tip(() => TIP.jitter)}>
         {jitter}
       </em>
       {/* Missing replies brighten the figure and mark it as a term that explains them; only many of them warn. */}
       <Show
         when={noted}
         fallback={() => (
-          <em
-            class={() => (ratio() === null ? "lane-timeouts quiet" : "lane-timeouts")}
-            tabindex="-1"
-            ref={tip(timeoutsHelp)}
-          >
+          <em class={() => (ratio() === null ? "lane-timeouts quiet" : "lane-timeouts")} ref={tip(timeoutsHelp)}>
             {timeouts}
           </em>
         )}
@@ -434,7 +414,6 @@ function Lane(props: {
         {() => (
           <em
             class={() => ((ratio() ?? 0) >= TIMEOUTS_WARN ? "lane-timeouts noted many" : "lane-timeouts noted")}
-            tabindex="-1"
             ref={term(timeoutsHelp)}
           >
             {timeouts}
@@ -444,8 +423,7 @@ function Lane(props: {
       {track}
       <span
         class={() => (plus() === null ? "lane-added quiet" : "lane-added")}
-        tabindex="-1"
-        ref={tip(() => TIP.addedLatency)}
+        ref={tip(() => (stage === "latency" ? "" : TIP.addedLatency))}
       >
         {addedText}
       </span>

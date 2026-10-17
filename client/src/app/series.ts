@@ -1,6 +1,6 @@
 // The series a run's charts draw, bounded in size: latency buckets per server and the live throughput samples.
 // Compaction merges by time bins per line, so it never hides a peak, a dip or a line's ends.
-import type { Direction } from "../engine/measure/aggregate";
+import type { Direction } from "../engine/types";
 import { REVISION_MS, SERIES_LIMIT, type LatencyBucket } from "../engine/measure/buckets";
 import type { TransferStage } from "../engine/run/schedule";
 
@@ -67,10 +67,10 @@ export function appendThroughput(history: ThroughputSample[], sample: Throughput
 }
 
 /** Keeps each line's first, last and per-bin extremes. */
-export function compactThroughput(history: ThroughputSample[], spanMs: number, limit = SERIES_LIMIT): void {
+function compactThroughput(history: ThroughputSample[], spanMs: number): void {
   const unique: ThroughputSample[] = [];
   for (const sample of history) upsertSample(unique, sample);
-  history.splice(0, history.length, ...compact(unique, limit, sampleLine, sampleTime, extremes, spanMs, 4));
+  history.splice(0, history.length, ...compact(unique, SERIES_LIMIT, sampleLine, sampleTime, extremes, spanMs, 4));
 }
 
 /** Only the equal-time tail can hold the same line's sample. */

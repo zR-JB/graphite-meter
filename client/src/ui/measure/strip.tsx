@@ -1,9 +1,6 @@
-// A card's strip: the stage's rate over time and its reply track underneath, one bar per closed bucket. Each is an SVG
-// sized by its attributes and laid out alone. While its stage runs the rate's leading edge follows the frame clock:
-// a frame rewrites the newest two curve segments and the head's dot, nothing else. A reading answers a pointer at
-// once, a finger on a sideways drag or a tap, and the keyboard bin by bin.
+// A card's strip: the stage's rate over time over its reply track, one bar per closed bucket, read by pointer or keys.
 import type { ThroughputSample } from "../../app/series";
-import type { Direction } from "../../engine/measure/aggregate";
+import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { Stage, TransferStage } from "../../engine/run/schedule";
 import { computed, effect, signal } from "../../lib/signal";
@@ -59,6 +56,7 @@ interface Row {
 }
 
 let strips = 0;
+const STEP: Partial<Record<string, number>> = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
 
 const shown = (mark: SVGElement, visible: boolean) => setAttr(mark, "visibility", visible ? "visible" : "hidden");
 const fixed = (value: number) => (Math.round(value * 100) / 100).toString();
@@ -145,10 +143,13 @@ export function StageGraph(props: StripProps): HTMLElement {
   const at = signal<number | null>(null);
   let keyboard = false;
   const x = (t: number) => Math.min(width(), Math.max(0, ((t - props.start()) / (props.span() || 1)) * width()));
+  /** A reply's height on a track `h` px tall, inside a 1.5 px margin. */
+  const trackY = (ms: number, h: number) =>
+    h - 1.5 - Math.min(1, Math.max(0, ms / (props.latencyTop() || 1))) * (h - 3);
+  const time = (when: number) => fmtDuration(Math.max(0, when - props.start()), 1);
   const reading = computed(() => {
     const t = at();
     if (t === null || !hasData()) return null;
-    const time = (when: number) => fmtDuration(Math.max(0, when - props.start()), 1);
     const reply = (bar: ReplyBar): Row => ({
       label: STAGE.latency.label,
       value: bar.lo < bar.hi ? fmtLatencyRange(bar.lo, bar.hi) : fmtLatency(bar.lo),
@@ -195,7 +196,9 @@ export function StageGraph(props: StripProps): HTMLElement {
       aria-valuenow={() => (at() === null ? Math.round(props.span()) : Math.round(at()! - props.start()))}
       aria-valuetext={() => {
         const now = reading();
-        return now ? `${now.time}: ${now.rows.map((row) => `${row.label} ${row.value}`).join(", ")}` : undefined;
+        return now
+          ? `${now.time}: ${now.rows.map((row) => `${row.label} ${row.value}`).join(", ")}`
+          : time(props.start() + props.span());
       }}
       {...scrub(
         (event) => {
@@ -241,8 +244,9 @@ export function StageGraph(props: StripProps): HTMLElement {
     if (!times.length) return false;
     const now = at.peek();
     const index = now === null ? times.length : nearestIndex(times.length, (i) => times[i]!, now);
-    const next = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: times.length - 1 }[key];
-    if (next === undefined) return false;
+    const delta = STEP[key];
+    const next = key === "Home" ? 0 : key === "End" ? times.length - 1 : delta === undefined ? null : index + delta;
+    if (next === null) return false;
     at.set(times[Math.min(times.length - 1, Math.max(0, next))]!);
     return true;
   }
@@ -266,7 +270,7 @@ export function StageGraph(props: StripProps): HTMLElement {
   effect(() => {
     const h = sizes.track().height;
     const top = props.latencyTop() || 1;
-    const y = (ms: number) => h - 1.5 - Math.min(1, Math.max(0, ms / top)) * (h - 3);
+    const y = (ms: number) => trackY(ms, h);
     const baseline = props.baseline();
     const medianY = baseline === null ? "" : fixed(y(baseline));
     if (medianY !== medianAt) {
@@ -312,9 +316,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     }
   });
 
-  // The readout: a small plate beside the cursor inside the strip, on a side it fits, else centred within the strip,
-  // and in the half of the plot the curve leaves free, so it never covers what it reads or the card's own figures. It glides from reading to
-  // reading; its rows are fixed nodes whose text a new reading rewrites.
+  // The readout: a plate beside the cursor on a side it fits, in the half of the plot the curve leaves free.
   const keys: Row["key"][] = [...dirs.map((_, index): Row["key"] => (index ? "second" : "line")), "reply"];
   const readout = (
     <span class="inspect-card readout" aria-hidden="true">
@@ -390,8 +392,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     shown(replyMark, !!bar);
     if (!bar) return;
     const th = sizes.track().height;
-    const top = props.latencyTop() || 1;
-    const y = (ms: number) => th - 1.5 - Math.min(1, Math.max(0, ms / top)) * (th - 3);
+    const y = (ms: number) => trackY(ms, th);
     const at = String(Math.round(x(bar.t)));
     const low = y(bar.lo);
     setAttr(replyMark, "x1", at);

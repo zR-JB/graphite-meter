@@ -87,29 +87,25 @@
   /* A result kept on show while the next is read dims, on its entry fade, unless the read is quick. */
   .detail-pane[inert] {
     opacity: 0.55;
-    transition-delay: 120ms;
+    transition-delay: var(--dur-hover);
   }
-  @container history (min-width: 821px) {
-    /* The list keeps its share of the width; at any width both panes keep their minimum. */
-    .has-detail {
-      grid-template-columns: clamp(360px, calc(var(--split) * 100%), calc(100% - 460px)) minmax(0, 1fr);
-    }
-    .has-detail > .history-list {
+  /* Wide enough (history.tsx), a result opens beside the list, which keeps its share of the width. */
+  .has-detail[data-beside] {
+    grid-template-columns: var(--list) minmax(0, 1fr);
+    & > .history-list {
       visibility: visible;
     }
-    .workspace-body > .detail-pane {
+    & > .detail-pane {
       grid-area: 1 / 2;
       border-left: var(--hairline) solid var(--border);
     }
-    .has-detail > .resize-handle {
+    & > .resize-handle {
       display: block;
     }
   }
-  /* The result replaces the list here, and the list's view control goes with it. */
-  @container history (max-width: 820px) {
-    .history-workspace:has(.has-detail) .history-head .view-control {
-      display: none;
-    }
+  /* Otherwise the result replaces the list, and the list's view control goes with it. */
+  .history-workspace:has(.has-detail:not([data-beside])) .history-head .view-control {
+    display: none;
   }
   @container history (max-width: 560px) {
     .history-head .head-facts {
@@ -121,9 +117,6 @@
     }
   }
 
-  .history-list {
-    container: history-list / inline-size;
-  }
   /* The time takes the slack first and the value columns the rest, so the table fills the list at any width. Value
      columns never shrink below their content: the rows fold first. */
   .history-table {
@@ -211,7 +204,7 @@
         opacity var(--dur-hover) var(--ease-out),
         rotate var(--dur-hover) var(--ease-out);
     }
-    /* Date's mark follows its word, centred on its line. */
+    /* Date's mark follows its word, centered on its line. */
     & > button:first-child i {
       position: static;
       margin: calc((1.3em - 5px) / 2) 0 0 2px;
@@ -233,7 +226,7 @@
       animation-range: 0 var(--space-3);
     }
   }
-  /* One label line tall, so the glyph centres on its word above the unit. */
+  /* One label line tall, so the glyph centers on its word above the unit. */
   .head-icon {
     display: grid;
     flex: none;
@@ -358,13 +351,11 @@
     color: var(--text-soft);
     font-size: var(--type-sm);
   }
-  /* Where bars have the room, every row's value is as wide, so a column's bars share their zero end. */
-  @container history-list (min-width: 901px) {
-    .metric {
-      grid-template-columns: minmax(0, 4.5rem) minmax(4.5rem, auto);
-      & .bar {
-        display: block;
-      }
+  /* Where bars have the room (list.tsx), every row's value is as wide, so a column's bars share their zero end. */
+  .history-list[data-bars] .metric {
+    grid-template-columns: minmax(0, 4.5rem) minmax(4.5rem, auto);
+    & .bar {
+      display: block;
     }
   }
 
@@ -415,16 +406,11 @@
 
   .view-trigger .layout-icon {
     color: var(--brand-strong);
-    & svg {
-      width: 15px;
-      height: 15px;
-    }
   }
   /* As tall as the room beside its key allows, less its margins, so the order control stays in view. */
   .view-popover {
     display: grid;
     gap: var(--space-1);
-    width: min(240px, calc(100vw - 2 * var(--space-4)));
     max-height: calc(100% - 12px);
     padding: var(--space-2);
     overflow-y: auto;
@@ -505,11 +491,11 @@
       grid-template-columns: minmax(0, 1fr);
     }
   }
-  @container history (max-width: 820px) {
-    .result-detail .back {
+  .workspace-body:not([data-beside]) .result-detail {
+    & .back {
       display: inline-flex;
     }
-    .result-detail .fold {
+    & .fold {
       display: none;
     }
   }

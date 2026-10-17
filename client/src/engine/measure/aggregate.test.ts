@@ -6,7 +6,7 @@ import { stabilityPct } from "./stability";
 const reported = (result: ThroughputResult | null) =>
   result && { bytesPerSec: result.reportedBytesPerSec, peakBytesPerSec: result.peakBytesPerSec };
 
-test("the coordinated throughput the terminal clients share", async () => {
+test("the coordinated throughput the terminal client shares", async () => {
   for (const vector of await json("aggregation.testvectors.json")) {
     const aggregate = new Aggregate();
     aggregate.begin(vector.stage, vector.participants, vector.boundaries[0].atMs);

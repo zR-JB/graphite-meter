@@ -1,6 +1,5 @@
-// The saved results one visit to History lists, as entries small enough to keep 2,000: read once as it opens, kept
-// current by this tab's changes as they land, and read again quietly on another tab's. The open result alone is read
-// whole, even past the newest 2,000. Leaving stops a read still under way.
+// The saved results one visit to History lists, as small entries kept current by this tab's changes and read again
+// on another tab's; the open result alone is read whole.
 import { historyEntry, type HistoryRecord } from "../../app/history/records";
 import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";

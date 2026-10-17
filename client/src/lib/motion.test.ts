@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { nextFrame } from "./frame";
-import { Glide, Handoff, spring } from "./motion";
+import { Glide, handoff, spring } from "./motion";
+import { scope, signal } from "./signal";
 
 test("a sample glides in over the interval between samples, from where the value is", () => {
   const value = new Glide();
@@ -73,26 +74,29 @@ test("a hand-off never shows a key held shorter than its fade-out and follows a 
   withFrames((frame) => {
     let now = 0;
     const tick = () => frame((now += 16));
-    const view = new Handoff({ phase: "latency", ms: 1 }, (v) => v.phase);
+    const value = signal({ phase: "latency", ms: 1 });
+    const [view, dispose] = scope(() => handoff(value, (v) => v.phase));
     const shown = new Set<string>();
-    view.set({ phase: "warmup", ms: 1 });
+    value.set({ phase: "warmup", ms: 1 });
     tick();
-    view.set({ phase: "download", ms: 1 });
+    value.set({ phase: "download", ms: 1 });
     for (let i = 0; i < 30; i++) {
       tick();
       shown.add(view.shown().phase);
     }
     expect([...shown]).toEqual(["latency", "download"]);
     expect(view.out()).toBe(false);
-    view.set({ phase: "download", ms: 2 });
+    value.set({ phase: "download", ms: 2 });
     expect(view.shown().ms).toBe(2);
+    dispose();
   }));
 
 test("disposing stops a hand-off where it is", () =>
   withFrames((frame) => {
-    const view = new Handoff("old", (v) => v);
-    view.set("new");
-    view.dispose();
+    const value = signal("old");
+    const [view, dispose] = scope(() => handoff(value, (v) => v));
+    value.set("new");
+    dispose();
     frame(1_000);
     expect([view.shown(), view.out()]).toEqual(["old", true]);
   }));

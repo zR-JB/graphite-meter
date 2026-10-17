@@ -9,7 +9,7 @@ import { expect, settled, type Page } from "./webview";
 /** The History database: the contract this suite holds the client to, written out on its own. */
 export const HISTORY_DB = {
   name: "graphite-meter",
-  version: 2,
+  version: 3,
   resultsStore: "results",
   resultKeyPath: "id",
   completedAtIndex: "completedAt",
@@ -155,7 +155,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
   // History views have no stage track; the live view must show what was saved.
   for (const stage of STAGES) {
     const status = record!.result.stages[stage];
-    const name = new RegExp(`^${STAGE[stage].short} stage`);
+    const name = new RegExp(`^${STAGE[stage].label} stage`);
     const track = page.getByRole("switch", { name });
     if (status !== "not-run" && (await track.state()).length)
       await expect(track).toHaveAttribute("class", new RegExp(`\\bchip--${status}\\b`));

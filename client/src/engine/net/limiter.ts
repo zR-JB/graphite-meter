@@ -1,5 +1,5 @@
-// Bounds connection checks: 8 at once, 2 per origin for selected servers; background work runs only on an idle origin
-// and never fills the pool.
+// Bounds connection checks at once, overall and per origin for selected servers; background work runs only on an idle
+// origin and never fills the pool.
 const TOTAL = 8;
 const PER_ORIGIN = 2;
 const BACKGROUND = 4;

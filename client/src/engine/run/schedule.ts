@@ -1,4 +1,5 @@
 // The run's timeline: for each planned stage a warmup then its measured window, on the run's active clock.
+import type { Direction } from "../types";
 
 export const STAGES = ["latency", "download", "upload", "bidirectional"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -14,7 +15,7 @@ export interface Plan {
 /** What a stage's warmup and window both exercise; the window reuses its warmup's connections. */
 export interface Activity {
   stage: Stage;
-  transfer: ("down" | "up")[];
+  transfer: Direction[];
   loadedLatency: boolean;
 }
 

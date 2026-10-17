@@ -16,6 +16,7 @@ export function Switch(props: {
       <input
         class="sr-only"
         type="checkbox"
+        role="switch"
         aria-describedby={described}
         checked={props.checked}
         disabled={() => props.disabled?.() ?? false}

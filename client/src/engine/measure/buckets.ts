@@ -1,6 +1,7 @@
 // Latency presentation: one server's probe outcomes grouped into time buckets on the run's timeline. Results never
 // read them; a late outcome may still revise the buckets of the last ten seconds.
 import type { Stage } from "../run/schedule";
+import { midpointMedian, nearestRank } from "./latency";
 
 /** Points a presented series keeps. */
 export const SERIES_LIMIT = 1_200;
@@ -138,14 +139,15 @@ export class LatencyBuckets {
   #summary(bucket: Open, endT: number): LatencyBucket {
     const rtts = bucket.rtts.sort((a, b) => a - b);
     const n = rtts.length;
+    const at = (rank: number) => rtts[rank]!;
     return {
       phase: this.#phase,
       continuityId: this.#continuity,
       startT: bucket.startT,
       endT,
-      medianRttMs: n ? (n % 2 ? rtts[n >> 1]! : (rtts[(n >> 1) - 1]! + rtts[n >> 1]!) / 2) : null,
+      medianRttMs: n ? midpointMedian(n, at) : null,
       minRttMs: n ? rtts[0]! : null,
-      p95RttMs: n ? rtts[Math.min(n - 1, Math.max(0, Math.ceil(0.95 * n) - 1))]! : null,
+      p95RttMs: n ? at(nearestRank(0.95, n)) : null,
       maxRttMs: n ? rtts[n - 1]! : null,
       pingCount: bucket.pings,
       timeoutCount: bucket.timeouts,

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { fakeNet, MARKER, page as publicPage, type Answer } from "./fakes";
+import { fakeNet, MARKER, page as publicPage, type Answer } from "./fakes.testutil";
 import { CoverageError, createPageSession } from "./page";
 
 const page = { ...publicPage, auth: true };
@@ -23,15 +23,11 @@ const lifetime = (remainingMs: number, maximumLifetimeMs = 3_600_000): Answer =>
 });
 
 test("a login must cover the planned test: renew when it ends too soon, refuse what it cannot last", async () => {
-  const unreadable = "Could not verify the session lifetime.";
+  const unreadable = "Could not verify the sign-in.";
   for (const [answer, outcome, ended] of [
     [lifetime(60_000), 60_000, null],
     [lifetime(59_999), "Sign in again before starting this long test.", "renew"],
-    [
-      lifetime(59_999, 59_999),
-      "This test is longer than the maximum session lifetime. Shorten it before starting.",
-      null,
-    ],
+    [lifetime(59_999, 59_999), "This test is longer than a sign-in can last. Shorten it before starting.", null],
     [{ status: 500 }, unreadable, null],
     [
       { body: { name: "Ada", provider: "password", csrf: "a+b", remainingMs: 2, maximumLifetimeMs: 1 } },

@@ -1,8 +1,8 @@
-// The wire-rate estimate (docs/MEASUREMENTS.md): payload throughput times a modelled protocol overhead at a
-// 1,500 B MTU. The terminal clients share its multipliers (api/wirerate.testvectors.json).
+// The wire-rate estimate (docs/MEASUREMENTS.md): payload throughput times a modeled protocol overhead at a
+// 1,500 B MTU. The terminal client shares its multipliers (api/wirerate.testvectors.json).
 
-export type Framing = "http3-data" | "webtransport-stream" | "webtransport-datagram";
-export type WireTransport = "http1-clear" | "https-tls" | "http2" | "http3-quic";
+type Framing = "http3-data" | "webtransport-stream" | "webtransport-datagram";
+type WireTransport = "http1-clear" | "https-tls" | "http2" | "http3-quic";
 type FactorKey = "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
 
 /** The model a result keeps beside its headline, as history saves it. */

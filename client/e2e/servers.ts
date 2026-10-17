@@ -1,5 +1,7 @@
+import { closeSync, openSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 export const host = "127.0.0.1";
 export const logs = resolve("test-results/servers");
@@ -18,18 +20,22 @@ export interface Launch {
   key: string;
 }
 
-// Below the Linux ephemeral range; each test process draws from its own slice.
-const SLICE = 750;
-const base = 20_000 + (process.pid % 16) * SLICE;
-const taken = new Set<number>();
+// Below the Linux ephemeral range, so no outgoing connection takes a port before its server binds it. The suite's
+// processes share one TMPDIR, where an exclusive reservation file gives each port to one of them.
+const FIRST_PORT = 20_000;
+const PORTS = 12_000;
 async function freePort(): Promise<number> {
   for (;;) {
-    const port = base + Math.floor(Math.random() * SLICE);
-    if (taken.has(port)) continue;
+    const port = FIRST_PORT + Math.floor(Math.random() * PORTS);
+    try {
+      closeSync(openSync(join(tmpdir(), `gm-port-${port}`), "wx"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw error;
+    }
     try {
       Bun.listen({ hostname: host, port, socket: { data() {} } }).stop(true);
       (await Bun.udpSocket({ hostname: host, port })).close();
-      taken.add(port);
       return port;
     } catch {}
   }
@@ -90,6 +96,7 @@ export async function launch({ bin, cert, key }: Launch, server: Server, env: Re
     if (status > 0 && status < 500) return child;
     if (Date.now() > deadline) {
       child.kill();
+      await child.exited;
       throw new Error(`${server.name} did not become ready`);
     }
     await Bun.sleep(50);

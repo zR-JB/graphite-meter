@@ -50,7 +50,7 @@ function path(role: Role, transport: string, protocol?: string, browserProtocol?
     value: transportLabel(transport, role) ?? "Not recorded",
     aside:
       observed && server && observed !== server && protocol !== "negotiated"
-        ? `${observed}, endpoint ${server}`
+        ? `${observed}, server ${server}`
         : observed || server || "",
   };
 }
@@ -320,15 +320,16 @@ export function ResultDetail(props: {
                   <For each={accounting} by={({ stage }) => stage}>
                     {(row) => {
                       const counts = computed(() => probeCounts(row().summary));
+                      // The visible counts leave out zeros; the spoken ones name every outcome.
                       return (
-                        <div
-                          data-tone={row().stage}
-                          aria-label={() => `${POPULATION[row().stage]}: ${counts().spoken}`}
-                        >
+                        <div data-tone={row().stage}>
                           <dt>{POPULATION[row().stage]}</dt>
                           <dd>
-                            {() => counts().shown}
-                            {() => row().summary.accountingComplete === false && <span class="aside">Partial</span>}
+                            <span aria-hidden="true">
+                              {() => counts().shown}
+                              {() => row().summary.accountingComplete === false && <span class="aside">Partial</span>}
+                            </span>
+                            <span class="sr-only">{() => counts().spoken}</span>
                           </dd>
                         </div>
                       );

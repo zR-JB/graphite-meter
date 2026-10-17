@@ -1,4 +1,4 @@
-// Builds the browser app into dist/ for the servers to embed: content-hashed bundles under assets/, the shell, the
+// Builds the browser app into dist/ for the server to embed: content-hashed bundles under assets/, the shell, the
 // shared public files, version.json and precompressed copies. Workers are bundled first so the app can name them.
 import { cp, readdir, rm } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -62,7 +62,7 @@ for (const output of styles) {
   await Bun.write(output.path, css.replace(/(?<=^|[{}])[^{}@]*:-(?:webkit|moz)-any\([^{}]*\{[^{}]*\}/g, ""));
 }
 
-// The servers hash the shell's one inline script and style into their content security policy and insert their meta
+// The server hashes the shell's one inline script and style into its content security policy and inserts its meta
 // tags before its one </head>.
 const inline = async (code: string, loader: "js" | "css") => {
   const path = `/inline.${loader}`;
@@ -122,7 +122,7 @@ if (env.GM_LEGAL_SCAN_OUT) {
 
 console.log(`built ${profile} ${clientVersion} into ${relative(process.cwd(), outdir) || "."}`);
 
-/** The contract both servers rely on (Go's embed, Rust's asset scan): checked here, where the shell is built. */
+/** The contract the server's asset scan relies on: checked here, where the shell is built. */
 function validate(html: string, names: string[]): void {
   const count = (needle: string) => html.split(needle).length - 1;
   const problems = [
@@ -133,7 +133,7 @@ function validate(html: string, names: string[]): void {
     (count("graphite-meter-trusted-types") !== 1 ||
       !html.includes(`<meta name="graphite-meter-trusted-types" content="${TRUSTED_TYPES_POLICY}"`)) &&
       `the shell needs one Trusted Types marker naming ${TRUSTED_TYPES_POLICY}`,
-    /graphite-meter-(auth|result-history-default)/.test(html) && "the shell must not carry the servers' meta tags",
+    /graphite-meter-(auth|result-history-default)/.test(html) && "the shell must not carry the server's meta tags",
     ...names.map((name) => {
       const parts = name.split(/[\\/]/);
       if (parts.some((part) => !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(part) || part.includes("..")))

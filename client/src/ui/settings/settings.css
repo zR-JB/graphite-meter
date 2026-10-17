@@ -42,26 +42,12 @@
         margin-inline-start: auto;
       }
     }
-    /* A field drawn around a number and its unit. */
     & .field-unit {
       display: flex;
       flex-wrap: wrap;
       align-content: center;
       align-items: baseline;
       width: 7rem;
-      height: var(--control-h);
-      padding-inline: 10px;
-      border: 1px solid var(--field-edge);
-      border-radius: var(--r-chrome);
-      background: var(--surface-1);
-      transition: var(--transition-control);
-      &:has(input:focus-visible) {
-        border-color: var(--brand-line);
-        box-shadow: var(--ring-halo);
-      }
-      @media (pointer: coarse) {
-        height: var(--hit);
-      }
       & input {
         flex: 1;
         width: 0;
@@ -330,7 +316,7 @@
       gap: 2px;
       transition: flex-grow var(--dur-graph) var(--ease-out);
     }
-    /* The hues are data, so forced colours keep them. */
+    /* The hues are data, so forced colors keep them. */
     & .strip-bar {
       height: 4px;
       margin-bottom: 6px;

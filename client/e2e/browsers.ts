@@ -125,16 +125,16 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
 
 // WebDriver's names for the keys the suite presses.
 const KEYS: Record<string, string> = {
-  Escape: "",
-  Tab: "",
-  Enter: "",
-  Backspace: "",
-  ArrowLeft: "",
-  ArrowUp: "",
-  ArrowRight: "",
-  ArrowDown: "",
-  Home: "",
-  End: "",
+  Escape: "\uE00C",
+  Tab: "\uE004",
+  Enter: "\uE007",
+  Backspace: "\uE003",
+  ArrowLeft: "\uE012",
+  ArrowUp: "\uE013",
+  ArrowRight: "\uE014",
+  ArrowDown: "\uE015",
+  Home: "\uE011",
+  End: "\uE010",
 };
 
 // Firefox logs a refused or failed request as an error; Chrome tells pages' console listeners nothing, and the app
@@ -177,7 +177,9 @@ function launchFirefox(): Promise<Bidi> {
     );
     process.on("exit", () => {
       child.kill();
-      rmSync(profile, { recursive: true, force: true });
+      try {
+        rmSync(profile, { recursive: true, force: true });
+      } catch {}
     });
     const reader = child.stderr.getReader();
     let banner = "";
@@ -200,6 +202,12 @@ function launchFirefox(): Promise<Bidi> {
     let id = 0;
     const pending = new Map<number, PromiseWithResolvers<any>>();
     const listeners = new Set<(method: string, params: any) => void>();
+    let closed: Error | undefined;
+    socket.onclose = () => {
+      closed = new Error("Firefox closed its WebDriver BiDi session");
+      for (const call of pending.values()) call.reject(closed);
+      pending.clear();
+    };
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(String(data));
       const call = pending.get(message.id);
@@ -211,6 +219,7 @@ function launchFirefox(): Promise<Bidi> {
     };
     const bidi: Bidi = {
       send(method, params = {}) {
+        if (closed) return Promise.reject(closed);
         const call = Promise.withResolvers<any>();
         pending.set(++id, call);
         socket.send(JSON.stringify({ id, method, params }));

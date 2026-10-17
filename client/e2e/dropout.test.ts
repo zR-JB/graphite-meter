@@ -33,7 +33,8 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
     expect(saved.result.outcome).toBe("partial");
     expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
     const failure = saved.result.multiServer.failures.find((candidate) => candidate.scope === "throughput");
-    expect(failure?.serverId).toBe("oslo");
+    expect(failure).toMatchObject({ serverId: "oslo", stage: "download", reason: "connection-lost" });
+    await expect(page.locator(".gauge-hint")).toContainText("Download");
     const later = saved.result.multiServer.intervals.filter(
       (interval) => interval.reason === "dropout" || interval.stage !== "download",
     );

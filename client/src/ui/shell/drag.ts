@@ -1,6 +1,5 @@
-// A finger drags a floating sheet out by its edge: an upright phone's bottom sheet down, a side flyout towards its
-// side. The sheet follows the finger and, released, carries the finger's speed into the console's spring, to rest or
-// out; a touch while it springs catches it where it is. A mouse never drags a sheet.
+// A finger drags a floating sheet out by its edge; released, it carries the finger's speed into the spring, to rest
+// or out. A mouse never drags a sheet.
 import { animate } from "../../lib/frame";
 import { reducedMotion, spring } from "../../lib/motion";
 

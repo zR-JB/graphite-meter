@@ -2,17 +2,20 @@
 // data from this page, each within its budget. A failure carries the words its row shows, chosen where it happens,
 // and whether time alone can clear it.
 import {
-  DEFAULT_STAGE_LIMIT_MS,
   preflight,
   probe as probeDocument,
   readJSON,
+  release,
   safeDetail,
   socketTicket,
   type CatalogEntry,
   type Probe,
 } from "../../protocol/documents";
 import { ROUTES } from "../../protocol/routes";
+import { midpointMedian } from "../measure/latency";
+import { abortable, delay } from "../run/clock";
 import {
+  identityOf,
   SignInRequired,
   type Discovery,
   type LatencyPath,
@@ -107,21 +110,6 @@ export function failureOf(error: unknown, name: string): Failure {
   };
 }
 
-export function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
-
 /** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal; its own deadline reads "Connection
     check timed out". */
 export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>) {
@@ -129,13 +117,7 @@ export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (sign
   const deadline = AbortSignal.timeout(ms);
   const signal = AbortSignal.any([owner, deadline]);
   try {
-    return await new Promise<T>((resolve, reject) => {
-      const abort = () => reject(signal.reason);
-      signal.addEventListener("abort", abort, { once: true });
-      run(signal)
-        .then(resolve, reject)
-        .finally(() => signal.removeEventListener("abort", abort));
-    });
+    return await abortable(run(signal), signal);
   } catch (error) {
     if (!owner.aborted && deadline.aborted)
       throw new CheckError("Connection check timed out", "retryable", { cause: error });
@@ -187,8 +169,6 @@ function watchProtocol(url: string) {
   };
 }
 
-const release = (response: Response) => response.body?.cancel().catch(() => {});
-
 async function decoded<T>(response: Response, decode: (value: unknown) => T, message: string): Promise<T> {
   try {
     return decode(await readJSON(response));
@@ -222,7 +202,7 @@ async function refusal(response: Response): Promise<string> {
   return line && `: ${line}`;
 }
 
-/** A failure after the request left: the page login gets its one expiry check, then the failure is worded. */
+/** A failure after the request left: the page's sign-in gets its one expiry check, then the failure is worded. */
 async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, unreachable: string): Promise<never> {
   signal.throwIfAborted();
   if (auth.kind === "session" && !signsIn(error)) await auth.ended(signal);
@@ -232,7 +212,7 @@ async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, un
   });
 }
 
-/** One GET /preflight, decoded, held to the catalogue entry's origins and classified for this page; no probe, socket
+/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no probe, socket
     or other side effect. A browser policy refuses it before any request. */
 export async function discover(context: CheckContext, signal: AbortSignal): Promise<Discovery> {
   const { entry, auth, page, now } = context;
@@ -257,15 +237,14 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
         (t) => t.baseUrl !== "." && !allowsOrigin(entry, t.baseUrl),
       )
     )
-      throw new CheckError(`${entry.name} advertised an origin outside its catalog entry`, "retryable");
+      throw new CheckError(`${entry.name} advertised an origin it may not use`, "retryable");
     const protocol = await timing.read(signal);
     return {
       generation: document.generation,
       engineVersion: document.engineVersion,
       server: document.server,
-      uploadCheckpoint: capabilities.uploadCheckpoint === true,
-      maxStageMs: capabilities.maxStageMs ?? DEFAULT_STAGE_LIMIT_MS,
-      // Redirects are refused, so the answer came from the catalogue's origin, which "." names.
+      maxStageMs: capabilities.maxStageMs,
+      // Redirects are refused, so the answer came from the catalog's origin, which "." names.
       origin: entry.url,
       protocol,
       readAt: now(),
@@ -495,8 +474,8 @@ export async function checkLatency(
 
 type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
 
-/** Opens the bus at the preparation cadence: it must answer within 3.5 s, then up to five replies are collected for
-    at most 1.5 s; their median, or null without one, and the bus, still open, with the events it reports to. */
+/** Opens the bus at the preparation cadence: once it answers, replies are collected for a moment; their median, or
+    null without one, and the bus, still open, with the events it reports to. */
 function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortSignal): Promise<Collected> {
   if (signal.aborted) return Promise.reject(signal.reason);
   const { promise, resolve, reject } = Promise.withResolvers<Collected>();
@@ -504,6 +483,8 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
   let channel: ProbeChannel | null = null;
   let collecting = false;
   let done = false;
+  /** The median, once collected; handed over with the channel once that exists. */
+  let collected = null as { rttMs: number | null } | null;
   const finish = (error?: unknown) => {
     if (done) return;
     done = true;
@@ -514,13 +495,8 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
       return reject(error);
     }
     const sorted = rtts.toSorted((a, b) => a - b);
-    const middle = sorted.length >> 1;
-    const rttMs = !sorted.length
-      ? null
-      : sorted.length % 2
-        ? sorted[middle]!
-        : (sorted[middle - 1]! + sorted[middle]!) / 2;
-    resolve({ rttMs, channel: channel!, events });
+    collected = { rttMs: sorted.length ? midpointMedian(sorted.length, (rank) => sorted[rank]!) : null };
+    if (channel) resolve({ ...collected, channel, events });
   };
   const abort = () => finish(signal.reason);
   let timer = setTimeout(
@@ -543,14 +519,16 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
     interrupted() {},
     stalled() {},
     resumed() {},
-    signInRequired: () => finish(new SignInRequired({ id: entry.id, url: entry.url, name: entry.name })),
+    signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };
   try {
     channel = context.openProbeChannel({ target, auth, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 }, events);
-    if (done) channel.dispose();
-    else channel.measure();
   } catch (error) {
     finish(new CheckError("Latency channel did not open", "retryable", { cause: error }));
+    return promise;
   }
+  if (collected) resolve({ ...collected, channel, events });
+  else if (done) channel.dispose();
+  else channel.measure();
   return promise;
 }

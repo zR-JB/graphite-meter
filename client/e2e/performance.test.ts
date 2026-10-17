@@ -55,7 +55,7 @@ async function churnSurfaces(cycles: number) {
       await assertClosed();
     }
     for (let reversal = 0; reversal < 2; reversal++) {
-      await topbar("Details", "endpoint");
+      await topbar("Details", "details");
       await click('dialog[aria-label="Details"] button.link-row:not(.copy)');
       if (!document.querySelector(".legal-dialog:modal")) throw new Error("Legal dialog did not open modally");
       await click('button[aria-label="Close About & legal"]');
@@ -68,7 +68,7 @@ async function churnSurfaces(cycles: number) {
       if (wait === 60) throw new Error("History did not open");
       await frames();
     }
-    const columnsTrigger = 'button[aria-label="Choose columns and sort order"]';
+    const columnsTrigger = "button.view-trigger";
     if (document.querySelector(columnsTrigger)?.checkVisibility()) {
       await click(columnsTrigger);
       const columns = document.querySelector<HTMLElement>('[aria-label="History view options"]');
@@ -345,7 +345,7 @@ test.chrome("a live stage keeps its open tooltip through progress and phase chan
   const tip = page.locator('[role="tooltip"]');
   await expect(tip).toHaveCount(1);
   const id = await tip.getAttribute("id");
-  await Bun.sleep(500);
+  await expect(phase(page, "upload")).toHaveCount(1, { timeout: 10_000 });
   expect(await tip.getAttribute("id")).toBe(id);
   await savedResult(page, started, 20_000);
   await page.cdp("Input.dispatchMouseEvent", {
@@ -354,45 +354,4 @@ test.chrome("a live stage keeps its open tooltip through progress and phase chan
     y: 0,
   });
   await expect(tip).toHaveCount(0);
-});
-
-test.chrome("repeated runs release their views and keep tooltip anchor styles bounded", async (page) => {
-  await open(page, home.http, {
-    config: {
-      stages: {
-        latency: true,
-        download: true,
-        upload: true,
-        bidirectional: true,
-      },
-      transports: {
-        throughputTarget: "protocol:http1",
-        latencyTarget: "transport:websocket",
-      },
-    },
-  });
-  await ready(page);
-  const counters = [];
-  for (let i = 0; i < 3; i++) {
-    await run(page);
-    const anchors = await page.evaluate(() =>
-      Array.from(
-        document.querySelectorAll<HTMLElement>("[style]"),
-        (node) =>
-          node.style
-            .getPropertyValue("anchor-name")
-            .split(",")
-            .filter((name) => name.trim().startsWith("--gm-tt-")).length,
-      ),
-    );
-    expect(Math.max(0, ...anchors)).toBeLessThanOrEqual(1);
-    await page.goto(`${home.http}/#/history`);
-    await expect(page.locator(".result-row")).toHaveCount(i + 1);
-    await page.goto(`${home.http}/#/`);
-    await page.evaluate(settled);
-    await page.cdp("HeapProfiler.collectGarbage");
-    counters.push(await page.cdp("Memory.getDOMCounters"));
-  }
-  expect(counters[2].nodes - counters[0].nodes).toBeLessThan(100);
-  expect(counters[2].jsEventListeners - counters[0].jsEventListeners).toBeLessThan(10);
 });

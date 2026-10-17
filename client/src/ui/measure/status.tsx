@@ -1,15 +1,14 @@
-// What the run says outside the instrument: the status strip's word and figures, the toast for failures, issues and
-// stalls, and the connection dot in the top bar.
+// What the run says outside the instrument: the status strip, the toast and the connection dot.
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
-import { needsPings } from "../../engine/net/budget";
+import { needsPings } from "../../engine/net/streams";
 import { movedBytes } from "../../engine/run/result";
 import { activities } from "../../engine/run/schedule";
 import { Show } from "../../lib/dom";
 import { handoff } from "../../lib/motion";
 import { computed, effect, onCleanup, signal, untrack } from "../../lib/signal";
 import { fmtBytes, fmtCounted, fmtDuration, fmtMs } from "../../view/format";
-import { CONNECTIVITY, PHASE, reasonLabel, statusLabel, type Connectivity, type Tone } from "../../view/words";
+import { CONNECTIVITY, OUTCOME, PHASE, reasonLabel, statusLabel, type Connectivity, type Tone } from "../../view/words";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
 import { tip } from "../kit/tip";
@@ -19,8 +18,8 @@ import { TOAST } from "./copy";
 import { liveOf } from "./live";
 import { Figure, painter, setText } from "./paint";
 
-/** The word cell is as wide as the widest word a run passes through, so the figures stay where they are. */
-const SIZER = statusLabel("checking", "idle", undefined);
+/** The word cell is as wide as the widest word it can say, so the figures stay where they are. */
+const WORDS = [...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).map((outcome) => outcome.label)])];
 
 /** The strip's facts, left to right: the run's word, the time since it started, the bytes it moved, the time its
     stage has left, and the build. Each figure sits in a cell as wide as its longest value, so a counting figure never
@@ -72,9 +71,11 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   return (
     <>
       <span class="label-cell">
-        <span class="sizer" aria-hidden="true">
-          {SIZER}
-        </span>
+        {WORDS.map((word) => (
+          <span class="sizer" aria-hidden="true">
+            {word}
+          </span>
+        ))}
         <span
           class={() => (label.out() ? "label handoff handoff-out" : "label handoff")}
           ref={tip(() => (refused() ? run.startError() || app.blocker() : ""))}
@@ -105,8 +106,8 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
 
 /** A toast lingers for its reading time, then goes; not motion. */
 const LINGER_MS = 3_200;
-/** It is laid out this long after it goes, for its fade (--dur-slide) to run. */
-const LEAVE_MS = 200;
+/** Its fade as it goes, while it stays laid out. */
+const LEAVE_MS = 150;
 
 /** Only failures, issues, stalls and a result History could not save: the status strip already names every phase.
     A stall shows while it lasts, and an unsaved result's warning after any toast, for as long as it is unsaved. */
@@ -204,6 +205,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
     </div>
   ) as HTMLElement;
   element.style.setProperty("--linger", `${LINGER_MS}ms`);
+  element.style.setProperty("--leave", `${LEAVE_MS}ms`);
   return element;
 }
 
@@ -211,7 +213,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
 const STALE_MS = 3_000;
 const WINDOW_MS = 4_000;
 
-/** The probes of the last 4 s of evidence: what the dot judges and states. */
+/** The probes of the last WINDOW_MS of evidence: what the dot judges and states. */
 function recentProbes(buckets: readonly LatencyBucket[]) {
   const latest = buckets.at(-1);
   const recent = latest
@@ -288,7 +290,7 @@ export function ConnectivityIndicator(props: { app: App; shell: Shell }): Node {
       !run.running() && servers.selectionState() === "failed"
         ? `${selected.filter((id) => servers.views().get(id)?.readiness === "verified").length} of ${fmtCounted(selected.length, "server")} ready`
         : "",
-      median === null ? "" : `Median ${fmtMs(median)} ms, last 4 s of probes`,
+      median === null ? "" : `Median ${fmtMs(median)} ms, last ${fmtDuration(WINDOW_MS, 0)} of probes`,
       probes ? `${timeouts} of ${fmtCounted(probes, "probe")} timed out` : "No probes yet",
     ].filter(Boolean);
   });

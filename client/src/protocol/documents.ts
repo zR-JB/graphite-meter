@@ -4,8 +4,14 @@ import { array, DecodeError, integer, object, oneOf, string, type Decoded, type 
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TARGETS = 32;
-export const DEFAULT_STAGE_LIMIT_MS = 300_000;
 export const MAX_STAGE_LIMIT_MS = 86_400_000;
+
+/** Lets go of a body nobody reads. */
+export const release = (response: Response) => response.body?.cancel().catch(() => {});
+
+/** Only HTTP 403 with this marker means a sign-in or grant has ended; other refusals and failures are not evidence. */
+export const signInMarker = (response: Response) =>
+  response.status === 403 && response.headers.get("Graphite-Meter-Auth") === "required";
 
 /** One JSON document of at most `maxBytes` (64 KiB unless named) of strict UTF-8, decoded bytes counted as they
     stream; the body is always released. */
@@ -36,15 +42,17 @@ export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): P
   }
 }
 
-// Controls and bidirectional overrides could disguise a server's displayed identity.
-const UNSAFE_TEXT = /[\p{Cc}؜‎‏‪-‮⁦-⁩]/u;
+// Controls and direction formatting could disguise a server's displayed identity; the same set as
+// rust/proto/src/text.rs.
+const UNSAFE_TEXT = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 /** Text a view shows: bounded, and refused when it carries controls or direction overrides. */
 export const displayText =
   (max: number, min = 0): Decoder<string> =>
   (value, path = "") => {
     const text = string(min, max)(value, path);
-    if (UNSAFE_TEXT.test(text)) throw new DecodeError(`${path} must not contain control characters`);
+    if (UNSAFE_TEXT.test(text))
+      throw new DecodeError(`${path} must not contain control or direction formatting characters`);
     return text;
   };
 
@@ -98,20 +106,15 @@ export const preflight = object({
   server: object({ name: displayText(256) }, { location: displayText(256) }),
   engineVersion: displayText(256),
   generation: string(1, 256),
-  capabilities: object(
-    {
-      throughput: targets({
-        transport: mechanism("fetch-stream", "webtransport", "webtransport-datagram"),
-        protocol: mechanism("http1", "http2", "http3", "negotiated"),
-      }),
-      latency: targets({ transport: mechanism("websocket", "webtransport") }),
-    },
-    {
-      // Any value but true reads as false; a stage limit out of range refuses the document.
-      uploadCheckpoint: (value: unknown) => value === true,
-      maxStageMs: integer(1_000, MAX_STAGE_LIMIT_MS),
-    },
-  ),
+  capabilities: object({
+    throughput: targets({
+      transport: mechanism("fetch-stream", "webtransport", "webtransport-datagram"),
+      protocol: mechanism("http1", "http2", "http3", "negotiated"),
+    }),
+    latency: targets({ transport: mechanism("websocket", "webtransport") }),
+    uploadCheckpoint: oneOf(true),
+    maxStageMs: integer(1_000, MAX_STAGE_LIMIT_MS),
+  }),
 });
 export type Preflight = Decoded<typeof preflight>;
 
@@ -128,13 +131,10 @@ export type Probe = Decoded<typeof probe>;
 
 export const uploadSession = object({ uploadId: string(1, 8192) });
 
-/** A receiver's counters; anything else is no checkpoint at all, not an error. */
-export const checkpoint = object({ bytes: integer(), nanos: integer() });
-
 /** A single-use socket ticket; authentication off answers an empty token. */
 export const socketTicket = object({ token: string(0, 8192), expires: integer() });
 
-/** How long a login or grant has left, within its maximum lifetime. */
+/** How long a sign-in or grant has left, within its maximum lifetime. */
 const lifetime =
   <T extends object>(fields: Decoder<T>): Decoder<T & { remainingMs: number; maximumLifetimeMs: number }> =>
   (value, path = "") => {
@@ -143,7 +143,7 @@ const lifetime =
     return { ...fields(value, path), ...decoded };
   };
 
-/** The page's own login (GET /auth/session). */
+/** The page's own sign-in (GET /auth/session). */
 export const session = lifetime(object({ name: string(0, 8192), provider: string(1, 8192), csrf: string(1, 8192) }));
 
 /** A peer's measurement grant (POST /auth/browser/token). */
@@ -183,7 +183,7 @@ export interface Catalog {
   defaultSelection: string[];
 }
 
-/** The originating server's catalogue: `self` first, unique IDs and origins, 1–4 default IDs. Any violation refuses
+/** The originating server's catalog: `self` first, unique IDs and origins, 1–4 default IDs. Any violation refuses
     the whole document. */
 export function catalog(value: unknown, pageOrigin: string): Catalog {
   const document = object({
@@ -219,6 +219,6 @@ export function catalog(value: unknown, pageOrigin: string): Catalog {
   });
   const selection = document.defaultSelection;
   if (new Set(selection).size !== selection.length || selection.some((id) => !ids.has(id)))
-    throw new DecodeError("the default selection must name one to four catalogue servers");
+    throw new DecodeError("the default selection must name one to four catalog servers");
   return { servers, defaultSelection: selection };
 }

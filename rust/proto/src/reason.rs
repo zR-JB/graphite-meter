@@ -6,7 +6,7 @@ table! {
         key.0: &'static str,
         label.1: &'static str,
     } {
-        PreparationFailed => ("preparation-failed", "Couldn't prepare the connection"),
+        PreparationFailed => ("preparation-failed", "Could not prepare the connection"),
         ConnectionLost => ("connection-lost", "Connection lost"),
         Timeout => ("timeout", "Stopped delivering data"),
         SignInRequired => ("sign-in-required", "Sign-in required"),

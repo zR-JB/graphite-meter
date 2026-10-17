@@ -14,7 +14,7 @@ const GLIDE_MAX_MS = 400;
 /** After a pause this long the next sample reuses the previous glide rather than stretching over the pause. */
 const SAMPLE_GAP_MS = 2_000;
 
-export interface Sample {
+interface Sample {
   /** Units per ms the value keeps moving after the sample, stopping at `max`. */
   rate?: number;
   max?: number;
@@ -83,12 +83,15 @@ export class Glide {
   }
 }
 
-export const HANDOFF_OUT_MS = 90;
+/** A hand-off's fade-out; the stylesheet's .handoff-out reads it as --dur-handoff-out. */
+export const HANDOFF_OUT_MS = 70;
+if (typeof document !== "undefined")
+  document.documentElement.style.setProperty("--dur-handoff-out", `${HANDOFF_OUT_MS}ms`);
 
 /** A keyed view: a new key fades the shown view out (`out`) and swaps it in once the fade-out ran; a key held
     shorter than that never shows; the same key updates in place; a view with nothing to fade out (`outMs` 0) swaps
     in the same frame. The fades themselves are CSS (.handoff). */
-export class Handoff<T> {
+class Handoff<T> {
   readonly #shown: Signal<T>;
   readonly #out = signal(false);
   #key: unknown;
@@ -116,20 +119,21 @@ export class Handoff<T> {
   set(value: T): void {
     this.#latest = value;
     const hidden = typeof document !== "undefined" && document.hidden;
-    if (this.keyOf(value) === this.#key || still.peek() || hidden) return this.#swap();
-    const shown = this.#shown.peek();
-    if ((typeof this.outMs === "function" ? this.outMs(shown) : this.outMs) <= 0) return this.#swap();
+    if (this.keyOf(value) === this.#key || still.peek() || hidden || this.#fadeMs() <= 0) return this.#swap();
     this.#out.set(true);
     let start: number | null = null;
     this.#stop ??= animate((now) => {
       start ??= now;
-      const shown = this.#shown.peek();
-      if (now - start < (typeof this.outMs === "function" ? this.outMs(shown) : this.outMs) && !still.peek())
-        return true;
+      if (now - start < this.#fadeMs() && !still.peek()) return true;
       this.#stop = null;
       this.#swap();
       return false;
     });
+  }
+
+  /** How long the shown view fades out. */
+  #fadeMs(): number {
+    return typeof this.outMs === "function" ? this.outMs(this.#shown.peek()) : this.outMs;
   }
 
   #swap(): void {

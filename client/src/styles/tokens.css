@@ -1,5 +1,5 @@
-/* The design tokens (docs/DESIGN.md). Every colour is one light-dark() pair, so a theme switch changes only
-   color-scheme. Copies outside this file: the shell's first-paint canvas and text (index.html). */
+/* The design tokens (docs/DESIGN.md). Every color is one light-dark() pair, so a theme switch changes only
+   color-scheme. The one copy outside this file: the canvas in index.html's theme-color metas. */
 @layer reset, tokens, base, primitives, components, utilities, overrides;
 
 /* Unmodified upstream IBM Plex subsets, self-hosted so the meter renders offline. */
@@ -87,7 +87,7 @@
   inherits: false;
   initial-value: 0;
 }
-/* The running stage's hue lighting the console; a typed colour, so a stage change glides between hues. */
+/* The running stage's hue lighting the console; a typed color, so a stage change glides between hues. */
 @property --ambient {
   syntax: "<color>";
   inherits: true;
@@ -138,7 +138,6 @@
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-settle: cubic-bezier(0.22, 1.2, 0.36, 1);
     --dur-hover: 100ms;
-    --dur-handoff-out: 70ms;
     --dur-handoff-in: 150ms;
     /* A stage event travels as one wave: chip, dial, lanes, card, a beat apart. */
     --dur-stage: 380ms;
@@ -254,13 +253,14 @@
 
     /* Only what floats casts a shadow; panels and keys are flat fills with a hairline. */
     --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-    /* The colour of every shadow. */
+    /* The color of every shadow. */
     --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
     --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
     --elev-recess: inset 0 1px 2px color-mix(in oklab, var(--shade) 6%, transparent);
+    /* A thumb or knob raised a step off its track. */
+    --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35));
     --elev-tooltip:
-      0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35)),
-      0 8px 20px -6px light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
+      var(--elev-thumb), 0 8px 20px -6px light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
     --elev-float:
       0 2px 6px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
       0 20px 48px -16px light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));
@@ -289,11 +289,6 @@
   @media (min-resolution: 3dppx) {
     :root {
       --hairline: calc(1px / 3);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    :root {
-      --dur-sheet: 0ms;
     }
   }
   @media (max-width: 1023px) {

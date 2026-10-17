@@ -10,7 +10,6 @@ export interface Shell {
   shown(panel: Panel): boolean;
   /** `invoker` takes focus back when the surface closes, if it can still take it. */
   toggle(panel: Panel, invoker?: HTMLElement | null): void;
-  open(panel: Panel, invoker?: HTMLElement | null): void;
   close(panel: Panel): void;
   /** The History workspace: the list, or one result in it; `null` from an open result steps back to the list. */
   history(id: string | null, invoker?: HTMLElement | null): void;

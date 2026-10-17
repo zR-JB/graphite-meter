@@ -1,7 +1,5 @@
-// A changed figure rolls like a counter: the old text leaves as the new one arrives, upward while its rank grows. When
-// the words between the figures stay, as in 10 s to 11 s or 1 min 30 s to 1 min 45 s, only the figures that changed
-// roll and the words hold still; a new shape, 59 s to 1 min, rolls whole. A change that lands while the last still
-// rolls, a key held or pressed fast, ends that roll and swaps at once, so each value of a run of changes reads crisply.
+// A changed figure rolls like a counter, upward while its rank grows: only the changed figures when the words between
+// them stay, else the whole text. A change during a roll ends it and swaps at once.
 import { pageMs } from "../../lib/frame";
 import { reducedMotion } from "../../lib/motion";
 import { effect, untrack } from "../../lib/signal";
@@ -54,6 +52,8 @@ function hurried(box: Element): boolean {
 /** Rolls `old` out and `next` in, both already in place; `old` is removed once it has left. */
 function roll(box: Element, old: HTMLElement, next: HTMLElement, direction: number): void {
   rolled.set(box, pageMs());
+  // Read once: the leaving text is only drawn.
+  old.setAttribute("aria-hidden", "true");
   const offset = (side: number) => `0 ${side * direction * ROLL_PX}px`;
   const leaving = old.animate(
     [

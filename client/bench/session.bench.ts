@@ -1,7 +1,7 @@
 import { home, open, ready, run, runButton, savedResult } from "../e2e/fleet";
 import { expect, settled, test } from "../e2e/webview";
 
-test("one page stays responsive through repeated runs and History visits", async (page) => {
+test.chrome("one page stays responsive through repeated runs and History visits", async (page) => {
   await page.addInitScript(() => {
     const pending = new Set<number>();
     const raf = window.requestAnimationFrame.bind(window);
@@ -77,7 +77,7 @@ test("one page stays responsive through repeated runs and History visits", async
     await page.goto(`${home.http}/#/history`);
     await expect(page.locator(".result-row")).toHaveCount(i + 1);
     await page.goto(`${home.http}/#/`);
-    await Bun.sleep(1000);
+    await page.evaluate(settled);
     await page.cdp("HeapProfiler.collectGarbage");
     const counters = await page.cdp("Memory.getDOMCounters");
     const heap = await page.cdp("Runtime.getHeapUsage");

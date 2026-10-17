@@ -1,12 +1,5 @@
-// The servers a test runs on, for the app layer: the operator's catalogue, the selection and its saved choice, each
+// The servers a test runs on, for the app layer: the operator's catalog, the selection and its saved choice, each
 // server's credentials and connection, the approval that grants a peer, and what Start runs on.
-//
-// `createServers(env)` returns signals the UI reads (catalogue, loading, loadError, selected, unresolved, views,
-// approval, selectionState, blocker, stageLimit, streamPlanError, streams, latencyServer, metadataLoading) and the
-// methods the app calls: load() at boot and retryCatalogue(); apply(ids); signIn(id) inside the click and
-// cancelSignIn(); retry(id?, role?); showMetadata(open) with Settings; authorize(requiredMs, signal) then
-// prepare(signal) at Start, and fits(totalMs) for a live change; recheck(failure) after a run; resume() when the page
-// shows again; dispose().
 import { object, string } from "../../lib/decode";
 import { batch, computed, effect, signal, untrack, type Read } from "../../lib/signal";
 import {
@@ -15,37 +8,32 @@ import {
   displayText,
   MAX_STAGE_LIMIT_MS,
   readJSON,
+  release,
   type Catalog,
   type CatalogEntry,
 } from "../../protocol/documents";
-import { ROUTES } from "../../protocol/routes";
-import { activities as stageActivities, planned } from "../run/schedule";
+import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
+import { activities as stageActivities } from "../run/schedule";
 import type { DroppedServer } from "../run/run";
-import type {
-  FailureReason,
-  OpenProbeChannel,
-  PreparedServer,
-  ProbeOutcome,
-  Role,
-  ServerAuth,
-  TestConfig,
-} from "../types";
 import {
-  ApprovalLimitError,
-  beginApproval,
-  exchangeGrant,
-  grantAuth,
-  grantLeft,
-  initialAuth,
-  type Grant,
-} from "./auth";
-import { describeStreams, needsPings, planError, type PlanServer } from "./budget";
+  ROLES,
+  type Discovery,
+  type FailureReason,
+  type OpenProbeChannel,
+  type PreparedServer,
+  type ProbeOutcome,
+  type Role,
+  type ServerAuth,
+  type TestConfig,
+} from "../types";
+import { ApprovalLimitError, beginApproval, exchangeGrant, grantAuth, initialAuth, type Grant } from "./auth";
 import { createConnection, FRESH_MS, type Connection, type ConnectionEnv, type ServerView } from "./connection";
 import { createLimiter } from "./limiter";
 import { CoverageError, type PageConfig, type PageSession } from "./page";
 import { allowsOrigin, parseSelection, portable, selectionText } from "./paths";
+import { describeStreams, needsPings, planError, type PlanServer } from "./streams";
 
-export interface ServersEnv {
+interface ServersEnv {
   page: PageConfig;
   session: PageSession;
   /** The saved test settings, which the app owns. */
@@ -64,7 +52,7 @@ export interface ServersEnv {
 }
 
 /** A saved selection row: an ID bound to the origin it named, so an ID never silently moves to another server. */
-export interface SavedServer {
+interface SavedServer {
   id: string;
   url: string;
 }
@@ -77,17 +65,17 @@ export type Approval =
   | { state: "waiting"; id: string; url: string; code: string }
   /** The approval ended without a grant; its challenge is spent. */
   | { state: "failed"; id: string }
-  /** The remote login holds all its grants: it must be renewed there first. */
+  /** The remote sign-in holds all its grants: it must be renewed there first. */
   | { state: "limit"; id: string; renewUrl: string }
-  /** The grant ends before the planned test, and so would another: grants end with the remote login. */
+  /** The grant ends before the planned test, and so would another: grants end with the remote sign-in. */
   | { state: "renew"; id: string; renewUrl: string };
 
 export interface Servers {
-  catalogue: Read<Catalog | null>;
+  catalog: Read<Catalog | null>;
   loading: Read<boolean>;
-  /** Why the latest catalogue load failed, or "". */
+  /** Why the latest catalog load failed, or "". */
   loadError: Read<string>;
-  /** In catalogue order. */
+  /** In catalog order. */
   selected: Read<readonly string[]>;
   /** Saved rows whose server changed: the user must choose again. */
   unresolved: Read<readonly SavedServer[]>;
@@ -106,20 +94,20 @@ export interface Servers {
   latencyServer: Read<string | null>;
   metadataLoading: Read<boolean>;
   load(): Promise<void>;
-  retryCatalogue(): Promise<void>;
-  /** False when the selection cannot change now; throws for a set that is not one to four catalogue servers. */
+  retryCatalog(): Promise<void>;
+  /** False when the selection cannot change now; throws for a set that is not one to four catalog servers. */
   apply(ids: readonly string[]): boolean;
   /** Call from the click itself: the sign-in window must open within the user's activation. */
   signIn(id: string): void;
   cancelSignIn(): void;
   retry(id?: string, role?: Role): Promise<void>;
   showMetadata(open: boolean): void;
-  /** The page's login and every selected grant must cover `requiredMs`; a CoverageError carries the words to show. */
+  /** The page's sign-in and every selected grant must cover `requiredMs`; a CoverageError carries the words to show. */
   authorize(requiredMs: number, signal: AbortSignal): Promise<void>;
   /** Re-reads every selected server's discovery and re-checks stale paths: what Start runs on, the servers left out
       with their reason, and whose latency leads. An AbortError means a reload or an approval replaced a connection. */
   prepare(signal: AbortSignal): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
-  /** Whether a run lasting `totalMs` from now ends before every login `authorize` checked. */
+  /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
   /** A run failed on one server, or with null as a whole: a refused sign-in is required again, other failures send
       the failed paths back to be checked. */
@@ -131,20 +119,19 @@ export interface Servers {
 const IDLE: Approval = { state: "idle" };
 const SAVED_KEY = "graphite-meter:server-selection:v1";
 export const MAX_SELECTED = 4;
-const CATALOGUE_TIMEOUT_MS = 5_000;
-const ROLES: readonly Role[] = ["throughput", "latency"];
+const CATALOG_TIMEOUT_MS = 5_000;
 export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
 
 const savedRow = object({ id: displayText(64, 1), url: string(1, 2048) });
 
-/** `ids` in catalogue order. */
-const inCatalogueOrder = (catalog: Catalog, ids: readonly string[]) =>
+/** `ids` in catalog order. */
+const inCatalogOrder = (catalog: Catalog, ids: readonly string[]) =>
   catalog.servers.filter((entry) => ids.includes(entry.id)).map((entry) => entry.id);
 
-/** The saved choice against the current catalogue. A row counts only while its ID keeps its origin, else it waits
+/** The saved choice against the current catalog. A row counts only while its ID keeps its origin, else it waits
     for the user; no choice, or anything malformed, means the operator's defaults. */
 export function reconcile(catalog: Catalog, saved: unknown): { ids: string[]; unresolved: SavedServer[] } {
-  const defaults = { ids: inCatalogueOrder(catalog, catalog.defaultSelection), unresolved: [] };
+  const defaults = { ids: inCatalogOrder(catalog, catalog.defaultSelection), unresolved: [] };
   if (!Array.isArray(saved) || saved.length < 1 || saved.length > MAX_SELECTED) return defaults;
   const origins = new Map(catalog.servers.map((entry) => [entry.id, entry.url]));
   const seen = new Set<string>();
@@ -164,7 +151,7 @@ export function reconcile(catalog: Catalog, saved: unknown): { ids: string[]; un
     if (origins.get(id) === url) ids.push(id);
     else unresolved.push({ id, url });
   }
-  return { ids: inCatalogueOrder(catalog, ids), unresolved };
+  return { ids: inCatalogOrder(catalog, ids), unresolved };
 }
 
 function readSaved(): unknown {
@@ -216,10 +203,18 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
   };
 }
 
+/** The longest stage every one of `servers` admits, and the server that sets it. */
+export function stageLimit(servers: readonly { name: string; discovery: Discovery | null }[]) {
+  let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
+  for (const { name, discovery } of servers)
+    if (discovery && discovery.maxStageMs < limit.ms) limit = { ms: discovery.maxStageMs, server: name };
+  return limit;
+}
+
 export function createServers(env: ServersEnv): Servers {
   const { page, config, now } = env;
-  const catalogue = signal<Catalog | null>(null);
-  // The app loads the catalogue as it boots: until the first answer it is loading, never missing.
+  const catalog = signal<Catalog | null>(null);
+  // The app loads the catalog as it boots: until the first answer it is loading, never missing.
   const loading = signal(true);
   const loadError = signal("");
   const selected = signal<readonly string[]>([]);
@@ -227,14 +222,14 @@ export function createServers(env: ServersEnv): Servers {
   const connections = signal<ReadonlyMap<string, Connection>>(new Map());
   const approval = signal(IDLE);
   const metadata = signal(false);
-  // Grants outlive a catalogue reload while their server keeps its ID and origin; reloading the page drops them.
+  // Grants outlive a catalog reload while their server keeps its ID and origin; reloading the page drops them.
   const grants = new Map<string, { url: string; grant: Grant; auth: ServerAuth }>();
   const limiter = createLimiter();
   const lifetime = new AbortController();
   let loadRequest: AbortController | null = null;
   let flow: AbortController | null = null;
-  /** The earliest monotonic end of the logins the last start authorized; null when none ends. */
-  let budget: number | null = null;
+  /** The earliest monotonic end of the sign-ins the last start authorized; null when none ends. */
+  let signInEnd: number | null = null;
 
   const choice = (role: Role) => {
     const text = computed(() => config().transports[TRANSPORT_KEY[role]]);
@@ -243,7 +238,6 @@ export function createServers(env: ServersEnv): Servers {
   const selections = { throughput: choice("throughput"), latency: choice("latency") };
   const activities = computed(() => stageActivities(config()));
   const latencyNeeded = computed(() => activities().some(needsPings));
-  const checkpoints = computed(() => planned(config(), "upload") || planned(config(), "bidirectional"));
   const representative = computed(() => selected()[0] ?? null);
   const latencyServer = computed(() => {
     const pin = env.latencyPin();
@@ -272,7 +266,6 @@ export function createServers(env: ServersEnv): Servers {
     latencyServer,
     selections,
     latencyNeeded,
-    checkpoints,
     idleLatency: env.idleLatency,
     now,
   };
@@ -309,7 +302,7 @@ export function createServers(env: ServersEnv): Servers {
       for (const connection of connections.peek().values()) connection.dispose();
       for (const [id, held] of grants)
         if (next.servers.find((entry) => entry.id === id)?.url !== held.url) grants.delete(id);
-      catalogue.set(next);
+      catalog.set(next);
       selected.set(ids);
       unresolved.set(rows);
       loadError.set("");
@@ -328,17 +321,17 @@ export function createServers(env: ServersEnv): Servers {
       loading.set(true);
     });
     try {
-      const signal = AbortSignal.any([request.signal, lifetime.signal, AbortSignal.timeout(CATALOGUE_TIMEOUT_MS)]);
+      const signal = AbortSignal.any([request.signal, lifetime.signal, AbortSignal.timeout(CATALOG_TIMEOUT_MS)]);
       const response = await env.session.fetch(ROUTES.servers, { cache: "no-store", signal });
       if (!response.ok) {
-        response.body?.cancel().catch(() => {});
-        throw new Error(`the catalogue answered HTTP ${response.status}`);
+        release(response);
+        throw new Error(`the catalog answered HTTP ${response.status}`);
       }
       const next = catalogDocument(await readJSON(response), page.origin);
       signal.throwIfAborted();
       install(next);
     } catch {
-      if (loadRequest === request && !lifetime.signal.aborted) loadError.set("Could not load the server catalog");
+      if (loadRequest === request && !lifetime.signal.aborted) loadError.set("Could not load test servers.");
     } finally {
       if (loadRequest === request) {
         loadRequest = null;
@@ -347,7 +340,7 @@ export function createServers(env: ServersEnv): Servers {
     }
   }
 
-  /** A catalogue that failed to load is read again as the network or the page comes back. */
+  /** A catalog that failed to load is read again as the network or the page comes back. */
   const reloadFailed = () => {
     if (loadError.peek() && !loading.peek() && env.active.peek()) void load();
   };
@@ -365,7 +358,7 @@ export function createServers(env: ServersEnv): Servers {
   }
 
   function apply(ids: readonly string[]): boolean {
-    const known = catalogue.peek();
+    const known = catalog.peek();
     if (!known || loading.peek() || !env.active.peek()) return false;
     if (
       ids.length < 1 ||
@@ -373,8 +366,8 @@ export function createServers(env: ServersEnv): Servers {
       new Set(ids).size !== ids.length ||
       ids.some((id) => !known.servers.some((entry) => entry.id === id))
     )
-      throw new Error("Select one to four catalog servers");
-    const next = inCatalogueOrder(known, ids);
+      throw new Error("Select one to four test servers.");
+    const next = inCatalogOrder(known, ids);
     const previous = selected.peek();
     batch(() => {
       if (next.length !== previous.length || next.some((id, i) => id !== previous[i])) travel(ROLES);
@@ -395,7 +388,7 @@ export function createServers(env: ServersEnv): Servers {
   }
 
   function signIn(id: string): void {
-    const entry = catalogue.peek()?.servers.find((each) => each.id === id);
+    const entry = catalog.peek()?.servers.find((each) => each.id === id);
     if (!entry || !selected.peek().includes(id) || loading.peek() || !env.active.peek()) return;
     cancelSignIn();
     const abort = new AbortController();
@@ -415,7 +408,7 @@ export function createServers(env: ServersEnv): Servers {
       approval.set({ state: "waiting", id: entry.id, url, code });
       popup.navigate(url);
       const grant = await exchangeGrant(entry, verifier, signal, now);
-      if (flow !== abort || catalogue.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url) return;
+      if (flow !== abort || catalog.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url) return;
       grants.set(entry.id, { url: entry.url, grant, auth: grantAuth(entry, grant, now) });
       // Approval owns the grant exchange; the new connection owns every later path error.
       const granted = connect(entry);
@@ -432,9 +425,9 @@ export function createServers(env: ServersEnv): Servers {
       connections
         .peek()
         .get(entry.id)
-        ?.requireSignIn(cause instanceof Error ? cause.message : "Approval failed");
+        ?.requireSignIn(cause instanceof Error ? cause.message : "Could not finish the sign-in.");
       if (cause instanceof ApprovalLimitError)
-        approval.set({ state: "limit", id: entry.id, renewUrl: `${entry.url}/login` });
+        approval.set({ state: "limit", id: entry.id, renewUrl: `${entry.url}${AUTH_ROUTES.login}` });
       else approval.set(shown ? { state: "failed", id: entry.id } : IDLE);
     } finally {
       popup.close();
@@ -445,7 +438,7 @@ export function createServers(env: ServersEnv): Servers {
   const chosenConnections = () => selected.peek().flatMap((id) => connections.peek().get(id) ?? []);
 
   async function authorize(requiredMs: number, signal: AbortSignal): Promise<void> {
-    budget = null;
+    signInEnd = null;
     if (approval.peek().state === "renew") approval.set(IDLE);
     let earliest = await env.session.coverage(requiredMs, signal);
     for (const connection of chosenConnections()) {
@@ -455,21 +448,22 @@ export function createServers(env: ServersEnv): Servers {
       const { name } = connection.view.peek().server;
       if (requiredMs > held.grant.maximumLifetimeMs)
         throw new CoverageError(`${name}: this test is longer than its sign-in can last. Shorten it before starting.`);
-      const left = grantLeft(held.grant, now);
+      const left = held.auth.left();
       // A grant that ended while the page slept is the sign-in its own timer would have asked for.
       if (left <= 0) {
         connection.requireSignIn();
         continue;
       }
       if (left < requiredMs) {
-        if (!flow) approval.set({ state: "renew", id: entry.id, renewUrl: `${entry.url}/login?reason=renew` });
+        if (!flow)
+          approval.set({ state: "renew", id: entry.id, renewUrl: `${entry.url}${AUTH_ROUTES.login}?reason=renew` });
         throw new CoverageError(
-          `${name}: its sign-in ends before this test would. Renew the login there, or shorten the test.`,
+          `${name}: its sign-in ends before this test would. Sign in there again, or shorten the test.`,
         );
       }
       earliest = Math.min(earliest ?? Infinity, now() + left);
     }
-    budget = earliest;
+    signInEnd = earliest;
   }
 
   async function prepare(signal: AbortSignal) {
@@ -498,7 +492,7 @@ export function createServers(env: ServersEnv): Servers {
   }
 
   return {
-    catalogue,
+    catalog,
     loading,
     loadError,
     selected,
@@ -514,20 +508,16 @@ export function createServers(env: ServersEnv): Servers {
       return states.every((state) => state === "verified") ? "verified" : "unchecked";
     }),
     blocker: computed(() => {
-      if (!catalogue()) return loading() ? "" : "Open Settings to retry loading the server list.";
+      if (!catalog()) return loading() ? "" : "Open Settings to load the test servers again.";
       if (unresolved().length || !selected().length)
-        return "The saved selection changed. Open Settings to choose the servers to test.";
+        return "The saved selection changed. Open Settings to choose the test servers.";
       const blocked = selectedViews().find((view) => view.blocked);
       if (!blocked?.blocked) return "";
       return selected().length > 1 ? `${blocked.server.name}: ${blocked.blocked}` : blocked.blocked;
     }),
-    stageLimit: computed(() => {
-      let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
-      for (const view of selectedViews())
-        if (view.discovery && view.discovery.maxStageMs < limit.ms)
-          limit = { ms: view.discovery.maxStageMs, server: view.server.name };
-      return limit;
-    }),
+    stageLimit: computed(() =>
+      stageLimit(selectedViews().map(({ server, discovery }) => ({ name: server.name, discovery }))),
+    ),
     streamPlanError: computed(() => {
       const servers = selectedViews().map((view) => (view.ready ? planServer(view) : null));
       return servers.every((server) => server !== null) ? planError(config(), servers) : "";
@@ -540,7 +530,7 @@ export function createServers(env: ServersEnv): Servers {
     latencyServer,
     metadataLoading: computed(() => [...views().values()].some((view) => view.metadataChecking)),
     load,
-    async retryCatalogue() {
+    async retryCatalog() {
       if (!env.active.peek()) return;
       await load();
       if (!loadError.peek()) await retry();
@@ -550,11 +540,11 @@ export function createServers(env: ServersEnv): Servers {
     cancelSignIn,
     retry,
     showMetadata(open) {
-      if (!open || (catalogue.peek() && env.active.peek())) metadata.set(open);
+      if (!open || (catalog.peek() && env.active.peek())) metadata.set(open);
     },
     authorize,
     prepare,
-    fits: (totalMs) => budget === null || now() + totalMs <= budget,
+    fits: (totalMs) => signInEnd === null || now() + totalMs <= signInEnd,
     recheck(failure) {
       if (!failure) {
         for (const connection of chosenConnections()) connection.invalidate(ROLES);

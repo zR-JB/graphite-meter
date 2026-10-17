@@ -1,6 +1,6 @@
 // A strip's pure rules: rate lanes binned to the plot's width, the monotone curve through the bins, and reply bars
 // that join whole buckets to a bar's pitch.
-import type { Direction } from "../../engine/measure/aggregate";
+import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { TransferStage } from "../../engine/run/schedule";
 import type { ThroughputSample } from "../../app/series";

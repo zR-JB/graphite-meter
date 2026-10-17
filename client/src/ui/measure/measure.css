@@ -1,20 +1,8 @@
-/* The instrument: the console body (dial, lanes, run key and chips, cards and strips), the status strip's facts, the
-   phase toast and the connection dot. What moves every frame is a transform, a text node in a fixed cell, a small
-   custom property or a canvas; the dial and the readouts never resize as their figures change. */
+/* The instrument: what moves every frame is a transform, a text node in a fixed cell or a small custom property, so
+   the dial and the readouts never resize as their figures change. */
 @layer components {
-  /* A stage's mark is an 18 px plate with a 10 px glyph wherever the instrument names a stage. */
-  :is(.gauge-panel, .latency-card, .result-summary) .tone-icon {
-    width: 18px;
-    height: 18px;
-    & :where(svg) {
-      width: 10px;
-      height: 10px;
-    }
-  }
-
-  /* The panel: stacked on a narrow panel, the dial beside the lanes on a wide one. Width classes come from the
-     measured box; every size the dial takes from the panel's width is a share of the instrument, resolved in the
-     layout that changes it, so a panel's slide sizes the dial in that layout and nothing after it lays it out again. */
+  /* Stacked on a narrow panel, the dial beside the lanes on a wide one; every size the dial takes is a share of the
+     instrument, so a panel's slide sizes it in the layout that changes it. */
   .gauge-panel {
     height: 100%;
   }
@@ -22,18 +10,11 @@
     --dial-height: clamp(320px, 40svh, 380px);
     display: grid;
     gap: var(--space-4);
-    grid-template:
-      "dial" var(--dial-height)
-      "controls" auto
-      "results" auto
-      "latency" auto
-      / minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--dial-height);
+    grid-template-areas: "dial" "controls" "results" "latency";
     &.no-lanes {
-      grid-template:
-        "dial" var(--dial-height)
-        "controls" auto
-        "results" auto
-        / minmax(0, 1fr);
+      grid-template-areas: "dial" "controls" "results";
     }
   }
   /* A tall screen's spare height goes into even air between the sections, not under the cards. */
@@ -41,11 +22,9 @@
     --dial-ratio: 0.86;
     min-height: 100%;
     align-content: space-evenly;
-    grid-template:
-      "dial latency" auto
-      "dial controls" auto
-      "results results" auto
-      / clamp(300px, 30%, 560px) minmax(0, 1fr);
+    grid-template-columns: clamp(300px, 30%, 560px) minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "dial latency" "dial controls" "results results";
     /* The dial is as tall as its ring wants, or as the lanes and the controls together, whichever is more. */
     & .dial {
       place-self: stretch;
@@ -57,11 +36,8 @@
     }
     &.no-lanes {
       --dial-ratio: 0.6;
-      grid-template:
-        "dial" auto
-        "controls" auto
-        "results" auto
-        / minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "dial" "controls" "results";
       & .dial {
         justify-self: center;
         width: clamp(360px, 48%, 720px);
@@ -74,11 +50,8 @@
   .wide.short .instrument.no-lanes {
     min-height: 0;
     align-content: start;
-    grid-template:
-      "dial latency" auto
-      "dial controls" auto
-      "dial results" auto
-      / clamp(240px, 38%, 360px) minmax(0, 1fr);
+    grid-template-columns: clamp(240px, 38%, 360px) minmax(0, 1fr);
+    grid-template-areas: "dial latency" "dial controls" "dial results";
     & .dial {
       position: sticky;
       top: var(--space-4);
@@ -178,12 +151,10 @@
     position: absolute;
     top: 0;
     left: 0;
-    max-width: none;
     overflow: visible;
     contain: size layout style;
   }
-  :is(.rotor, .start-cap, .live-head) svg,
-  .start-cap {
+  :is(.dial-art, .graph .art, .rotor svg, .start-cap, .live-head svg) {
     max-width: none;
   }
   /* The track takes a faint tint of the running stage from its warmup on. */
@@ -196,7 +167,7 @@
     stroke-opacity: 0.7;
   }
   .gauge-dial.motion .dial-art .track {
-    transition: stroke 379ms var(--ease-out-head);
+    transition: stroke var(--dur-stage) var(--ease-out-head);
   }
   /* The needle turns as squares; their empty corners must not widen a phone's page. */
   .live {
@@ -280,7 +251,6 @@
     height: 0;
     & svg {
       position: absolute;
-      max-width: none;
       overflow: visible;
     }
   }
@@ -319,25 +289,25 @@
     /* The result sweeps the ring once from where the needle stood; each bead pops as the front reaches it. A scale or
        unit change glides the arcs and beads, never replaying the sweep. */
     .result-arc {
-      transition: --fraction 360ms var(--ease-out);
+      transition: --fraction var(--rescale) var(--ease-out);
       animation: result-sweep var(--sweep-ms) cubic-bezier(0.33, 1, 0.68, 1) backwards;
     }
     .head.result {
-      transition: transform 360ms var(--ease-out);
+      transition: transform var(--rescale) var(--ease-out);
     }
     .bead {
       transform-box: fill-box;
       transform-origin: center;
-      animation: pop 400ms var(--ease-spring) var(--at) backwards;
+      animation: pop var(--dur-stage) var(--ease-spring) var(--at) backwards;
     }
     /* A new run rewinds the result: the arcs drain back to zero together and the beads drop off. */
     .result-layer.handoff-out {
       opacity: 1;
       & .result-arc {
-        animation: result-drain 160ms var(--ease-out) forwards;
+        animation: result-drain var(--drain) var(--ease-out) forwards;
       }
       & .bead {
-        animation: bead-out 120ms var(--ease-out) forwards;
+        animation: bead-out calc(0.75 * var(--drain)) var(--ease-out) forwards;
       }
     }
   }
@@ -415,8 +385,7 @@
       color: var(--text-soft);
     }
   }
-  /* A figure written every frame or sample: a box of fixed size whose text lays out alone in a contained box placed
-     over it. The box has no line of its own, so its baseline is its bottom edge; it sits as far below the line's
+  /* A figure written every frame (paint.ts): its box's baseline is its bottom edge, so it sits as far below the line's
      baseline as Plex Mono's baseline lies above the bottom of a line of --lh. */
   .figure {
     --lh: 1;
@@ -472,7 +441,7 @@
     font:
       var(--w-normal) clamp(var(--type-sm), var(--face-min) * 0.04, var(--type-lg)) / var(--type-md) var(--font-sans);
   }
-  /* Empty, it keeps its line, so "—" sits where the value arrives. */
+  /* Empty, it keeps its line, so the missing-value dash sits where the value arrives. */
   .gauge-unit {
     min-height: 1lh;
     margin-top: var(--space-1);
@@ -646,7 +615,8 @@
     font: 500 var(--type-md) / 1 var(--font-mono);
   }
   .lane-jitter,
-  .lane-timeouts {
+  .lane-timeouts,
+  .lane-added {
     margin-top: calc(var(--type-md) - var(--type-sm));
     color: var(--text-muted);
     font: 500 var(--type-sm) / 1 var(--font-mono);
@@ -664,9 +634,8 @@
     }
   }
   .lane-added {
-    margin-top: calc(var(--type-md) - var(--type-sm));
     color: var(--tone-ink);
-    font: 600 var(--type-sm) / 1 var(--font-mono);
+    font-weight: 600;
     &.quiet {
       color: var(--text-soft);
       font-weight: var(--w-normal);
@@ -917,36 +886,36 @@
     text-align: start;
     transition: var(--transition-control);
     /* One off stays operable, so it reads soft. */
-    &:not(.on) {
+    &.chip--off {
       border-color: var(--border-subtle);
       color: var(--text-soft);
     }
-    &:disabled {
+    &[aria-disabled="true"] {
       cursor: default;
     }
-    &.chip--disabled:disabled {
+    &.chip--off[aria-disabled="true"] {
       opacity: 0.5;
     }
     &:is(.chip--active, .chip--warmup, .chip--recovering) {
       border-color: color-mix(in oklab, var(--tone) 55%, var(--border));
     }
-    /* A press never moves what it presses: the chip's contents give and spring back. */
-    & > * {
-      transition: scale var(--dur-graph) var(--ease-spring);
-    }
   }
   @media (hover: hover) {
-    .chip:hover:not(:disabled) {
+    .chip:hover:not([aria-disabled="true"]) {
       border-color: var(--border-strong);
     }
   }
+  /* A press never moves what it presses: a key's contents give and spring back. */
+  :is(.chip, .run-button) > * {
+    transition: scale var(--dur-graph) var(--ease-spring);
+  }
   @media (prefers-reduced-motion: no-preference) {
-    .chip:active:not(:disabled) > * {
+    :is(.chip, .run-button):active:not([aria-disabled="true"]) > * {
       scale: 0.96;
       transition-duration: var(--dur-hover);
     }
     .chip-check {
-      animation: pop 380ms var(--ease-spring) backwards;
+      animation: pop var(--dur-stage) var(--ease-spring) backwards;
     }
   }
   .chip-bar {
@@ -973,7 +942,7 @@
     &.is-partial {
       background: repeating-linear-gradient(90deg, var(--tone) 0 6px, transparent 6px 9px);
     }
-    &.chip-fill--failed {
+    &.is-failed {
       background: var(--err);
       opacity: 0.45;
     }
@@ -981,14 +950,14 @@
       animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
     }
     /* A warmup scans the bar at an even pace, one pass leaving as the next enters, until the window opens. */
-    &.chip-fill--warmup {
+    &.is-warmup {
       width: 45%;
       background: color-mix(in oklab, var(--tone) 55%, transparent);
       animation: warmup-sweep 900ms linear infinite;
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .chip-fill.chip-fill--warmup {
+    .chip-fill.is-warmup {
       width: 100%;
       opacity: 0.55;
     }
@@ -1029,15 +998,13 @@
       height: 12px;
     }
   }
+  /* A word on a well, in the instrument's caps; a time is a bare figure. */
   .chip-tag {
     flex: none;
     padding: 2px 5px;
     border-radius: var(--r-well);
     background: var(--surface-inset);
-    color: var(--text-soft);
-    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
+    line-height: 1;
     white-space: nowrap;
     &[data-tone] {
       color: var(--tone-ink);
@@ -1048,8 +1015,6 @@
       color: var(--text-muted);
       font: var(--role-figure-sm);
       line-height: 1;
-      letter-spacing: 0;
-      text-transform: none;
     }
     & .short {
       display: none;
@@ -1118,15 +1083,8 @@
       color: var(--text);
     }
     &[aria-disabled="true"] {
-      opacity: 0.6;
+      opacity: 0.5;
       cursor: not-allowed;
-    }
-    & > * {
-      transition: scale var(--dur-graph) var(--ease-spring);
-    }
-    &:active:not([aria-disabled="true"]) > * {
-      scale: 0.975;
-      transition-duration: var(--dur-hover);
     }
     & .skin {
       position: absolute;
@@ -1207,6 +1165,7 @@
       gap: var(--space-2);
     }
   }
+  /* A card is a panel edged in its stage's hue. */
   .card {
     --card-edge: var(--border);
     position: relative;
@@ -1217,11 +1176,8 @@
     max-height: 300px;
     padding: 10px var(--space-4) var(--space-3);
     overflow: hidden;
-    border: var(--hairline) solid var(--card-edge);
+    border-color: var(--card-edge);
     border-top: 2px solid var(--tone);
-    border-radius: var(--r-surface);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
     transition:
       background-color var(--dur-hover) var(--ease-out),
       border-color var(--dur-hover) var(--ease-out),
@@ -1536,12 +1492,10 @@
     grid-template-columns: auto auto;
     align-items: baseline;
     justify-items: start;
-    column-gap: var(--space-2);
     row-gap: 0;
-    padding: 2px 7px;
     opacity: 0;
     transition:
-      translate 140ms var(--ease-out),
+      translate var(--dur-hover) var(--ease-out),
       opacity var(--dur-hover) var(--ease-out);
     &.shown {
       opacity: 1;
@@ -1581,17 +1535,11 @@
       }
     }
   }
-  .graph.replies .readout.low {
-    bottom: auto;
-  }
   /* The read marks: a dot on each curve and the read reply bar, drawn over the rest. */
   .graph .cursor-dot {
     fill: var(--surface-1);
     stroke: var(--tone);
     stroke-width: 2;
-    &.second {
-      stroke-dasharray: none;
-    }
   }
   .graph .reply-cursor {
     stroke-width: 4;
@@ -1614,11 +1562,10 @@
     opacity: 0;
     translate: 0 4px;
     pointer-events: none;
-    /* Shown, and while it fades out (status.tsx), it is laid out; else it is out of layout, so a stage that resizes
-       never positions it against its anchor. */
+    /* Laid out only while shown or fading, so a stage that resizes never positions it against its anchor. */
     transition:
-      opacity var(--dur-slide) var(--ease-out),
-      translate var(--dur-slide) var(--ease-out);
+      opacity var(--leave) var(--ease-out),
+      translate var(--leave) var(--ease-out);
     &:is(.visible, .leaving) {
       display: grid;
     }
@@ -1662,7 +1609,7 @@
       min-width: 0;
       max-width: none;
       &.stall {
-        animation: linger var(--dur-slide) var(--ease-out) var(--linger) forwards;
+        animation: linger var(--leave) var(--ease-out) var(--linger) forwards;
       }
     }
   }
