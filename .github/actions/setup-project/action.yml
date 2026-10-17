@@ -10,7 +10,7 @@ inputs:
     required: false
     default: 'false'
   client-deps:
-    description: Install every browser client's frozen dependencies
+    description: Install the browser client's frozen dependencies
     required: false
     default: 'false'
   rust:

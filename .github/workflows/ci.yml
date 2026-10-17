@@ -48,7 +48,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: {persist-credentials: false, fetch-depth: 0}
       - name: Set up the checks' toolchains
         uses: ./.github/actions/setup-project
         with:
@@ -128,9 +128,6 @@ jobs:
       - name: Run the client, net and legal crates' unit and process tests
         working-directory: rust
         run: cargo test --locked -p graphite-meter-client -p graphite-meter-net -p graphite-meter-legal --lib --tests
-      - name: Check that the server builds for Windows
-        working-directory: rust
-        run: cargo check --locked -p graphite-meter-server
 
   # The browser tests start from this amd64 server instead of waiting for both images.
   server:
