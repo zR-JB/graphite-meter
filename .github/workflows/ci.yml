@@ -382,7 +382,7 @@ jobs:
         run: chmod +x "$RUNNER_TEMP/image/graphite-meter-server"
       # Chrome for Testing is an unpacked archive without a setuid sandbox; the script runs it with --no-sandbox.
       - name: Check Chromium's HTTP/3, WebTransport and session close codes against the image's sharded server
-        if: matrix.group == 'heavy'
+        if: matrix.browser == 'chrome' && matrix.group == 'heavy'
         env:
           TMPDIR: ${{ runner.temp }}
         run: python3 rust/interop/browser.py --server image
