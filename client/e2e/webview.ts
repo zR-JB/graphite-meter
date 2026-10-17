@@ -488,7 +488,7 @@ export class Page {
         gauge: text(document.querySelector(".gauge-footer")),
         clicks: (window as any).clicks,
         pointer: (() => {
-          const { x, y, over } = (window as any).pointer ?? {};
+          const { x = -1, y = -1, over } = (window as any).pointer ?? {};
           const at = document.elementFromPoint(x, y);
           return {
             over,
