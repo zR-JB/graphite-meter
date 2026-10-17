@@ -96,6 +96,8 @@ EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 # Dispatch inputs, directly or through the event or context that carries them.
 INPUTS = re.compile(r"\binputs\b|\bgithub\.event\b(?!\.repository\.)|\bgithub\b(?![.\w])")
 STATUS = re.compile(r"\b(?:always|cancelled|failure|success)\s*\(")
+DETACHED = re.compile(r"(?<![&>|<])&(?![&>])|\bln\s|\b(?:nohup|setsid|disown)\b")
+UPLOAD = re.compile(r"python3 scripts/ci/assets\.py upload (?:request|image|client|bundle)")
 # Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
 SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|rust-toolchain(?:\.toml)?"
                           r"|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
@@ -104,7 +106,6 @@ SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|
 ECOSYSTEMS = {"Cargo.lock": "cargo", "bun.lock": "bun"}
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
-    # Builds import no cache or substitute stage and get no token; no job runs past a failure.
     "workflows/release-request.yml": (
         "allow-insecure-entitlement", "cache-from", "cache-to", "--build-context", "build-contexts", "GIT_AUTH_TOKEN",
         "GITHUB_TOKEN", "continue-on-error",
@@ -240,7 +241,7 @@ def check_workflows(root: Path) -> None:
         steps = [step for step in STEP.split(job) if step.strip()]
         for before, step in zip(steps, steps[1:]):
             if "uses: actions/upload-artifact@" in step and (
-                    "run: python3 scripts/ci/assets.py upload " not in before
+                    [UPLOAD.fullmatch(run.strip()) is not None for run in run_scripts(before)] != [True]
                     or "path: ${{ runner.temp }}/upload/\n" not in step):
                 fail("release-request.yml: every upload must directly follow assets.py upload and send its directory")
     if STATUS.search(request):
@@ -248,8 +249,15 @@ def check_workflows(root: Path) -> None:
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
-    for step in STEP.split(request.split("\njobs:", 1)[1]):
-        if PREPARE in step:
+    if any(DETACHED.search(run) for run in run_scripts(request)):
+        fail("release-request.yml: a run step must not background a command or create a link")
+    steps = STEP.split(request.split("\njobs:", 1)[1])
+    validators = [step for step in steps
+                  if [run.strip() for run in run_scripts(step)] == [PREPARE.removeprefix("run: ")]]
+    if len(validators) != 1:
+        fail("release-request.yml must run the request validator in exactly one step")
+    for step in steps:
+        if step is validators[0]:
             continue
         if any(INPUTS.search(expression) for expression in [*EXPRESSION.findall(step), *run_scripts(step, "if")]):
             fail("release-request.yml: dispatch inputs may reach only the request validator")
@@ -276,11 +284,15 @@ def check_image_script(text: str) -> None:
         if needle in text:
             fail(f"{IMAGE_SCRIPT} must not contain {needle}")
     code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    commands = code.replace("\\\n", " ").splitlines()
+    if DETACHED.search(code):
+        fail(f"{IMAGE_SCRIPT} must not background a command or create a link")
+    commands = [command.strip() for command in code.replace("\\\n", " ").splitlines()]
     archives = [command for command in commands if "type=oci" in command]
+    # Flags inside build() apply to every call, so only a call line may set provenance.
     provenance = {command: re.findall(r"--provenance[= ](\S+)", command) for command in commands}
-    if len(archives) != 1 or provenance[archives[0]] != ["mode=max"] or any(
-            values not in ([], ["false"]) for command, values in provenance.items() if command != archives[0]):
+    if len(archives) != 1 or not archives[0].startswith("build ") or provenance[archives[0]] != ["mode=max"] or any(
+            values and (values != ["false"] or not command.startswith("build "))
+            for command, values in provenance.items() if command != archives[0]):
         fail(f"{IMAGE_SCRIPT}: the one OCI archive export must record --provenance mode=max, every other build none")
 
 

