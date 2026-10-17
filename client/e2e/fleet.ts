@@ -3,13 +3,13 @@ import { incoherence, type StagePlans } from "../src/engine/run/result";
 import type { TestConfig as RunnerConfig } from "../src/engine/types";
 import { planned, STAGES } from "../src/engine/run/schedule";
 import { STAGE } from "../src/view/words";
-import { describe, launch, type Server } from "./servers";
+import { describe, freePort, host, launch, pace, type Server } from "./servers";
 import { expect, settled, type Page } from "./webview";
 
 /** The History database: the contract this suite holds the client to, written out on its own. */
 export const HISTORY_DB = {
   name: "graphite-meter",
-  version: 3,
+  version: 4,
   resultsStore: "results",
   resultKeyPath: "id",
   completedAtIndex: "completedAt",
@@ -31,18 +31,34 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-/** A server of its own; `env` may depend on it, such as a public URL for sign-in. */
+/** A server of its own; `env` may depend on it, such as a public URL for sign-in. A `paced` one serves its HTTPS
+    origin through a link of that many bytes per second each way. */
 export async function spawnPeer(
   name: string,
   env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
+  paced?: number,
 ) {
   const server = await describe(name.toLowerCase(), name);
-  const child = await launch(
-    JSON.parse(process.env.GM_E2E_LAUNCH!),
+  const port = paced ? await freePort() : 0;
+  const close = paced ? await pace(+new URL(server.url).port, port, paced) : () => {};
+  const listener: Record<string, string> = paced
+    ? { GM_H1_TLS_ADDR: `${host}:${port}`, GM_H1_TLS_PUBLIC_ORIGIN: server.url }
+    : {};
+  const child = await launch(JSON.parse(process.env.GM_E2E_LAUNCH!), server, {
+    ...listener,
+    ...(typeof env === "function" ? env(server) : env),
+  }).catch((error) => {
+    close();
+    throw error;
+  });
+  const kill = child.kill.bind(child);
+  return Object.assign(child, {
     server,
-    typeof env === "function" ? env(server) : env,
-  );
-  return Object.assign(child, { server });
+    kill: (signal?: NodeJS.Signals | number) => {
+      close();
+      kill(signal);
+    },
+  });
 }
 
 export const baseConfig = {
@@ -61,6 +77,10 @@ export const baseConfig = {
   adaptive: false,
   transferStreams: { mode: "forced", count: 1 },
 };
+/** The shortest tests that save a result, without and with a throughput card. */
+export const latencyOnly = { stages: { latency: true, download: false, upload: false, bidirectional: false } };
+export const downloadOnly = { stages: { latency: false, download: true, upload: false, bidirectional: false } };
+
 export interface Seed {
   servers?: Pick<Server, "id" | "url">[];
   config?: Partial<Record<keyof RunnerConfig, unknown>>;

@@ -1,6 +1,6 @@
-// What the engine's owners and its workers tell each other: a lane worker moves one HTTP fetch lane, a session worker
-// one WebTransport session, a probe worker one latency bus. Both sides are this code, so messages are typed, not
-// validated.
+// Types what the engine's owners and its workers tell each other. A lane worker moves one HTTP fetch lane, a session
+// worker one WebTransport session, a probe worker one latency bus. Both sides are this code, so messages are typed,
+// not validated.
 import type { ProgressRecord } from "./progress";
 import type { FailureReason } from "./reasons";
 
@@ -17,8 +17,8 @@ export interface TicketRecipe {
   request: RequestRecipe;
 }
 
-/** How a lane, feed or channel ended. `retry`: a reconnect may recover it; `rotate`: the server no longer knows the
-    upload id, so the run may replace the receiver once. */
+/** How a lane, feed or channel ended. With `retry` a reconnect may recover it. With `rotate` the server no longer knows
+    the upload id, so the run may replace the receiver once. */
 export interface Ending {
   reason: FailureReason;
   retry: boolean;
@@ -44,18 +44,18 @@ interface BytesReport {
   epoch: number;
 }
 
-/** A worker's terminal report: an ending classified from the server's answer, or a network break, which the owner
+/** A worker's terminal report is an ending classified from the server's answer, or a network break, which the owner
     classifies because a sign-in or grant that ended shows first as one. */
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
-/** A lane's answer to `flush`: its epoch's download total as counted by `at`. */
+/** A lane answers `flush` with its epoch's download total as counted by `at`. */
 export interface Flushed {
   type: "flushed";
   total: number;
   at: number;
 }
 
-/** A lane worker (re)opens with `download` or `upload` after its previous ending; it stops by termination. `flush`
+/** A lane worker (re)opens with `download` or `upload` after its previous ending. It stops by termination. `flush`
     reports the bytes counted so far, then answers `flushed` with the epoch's total as counted by its cutoff and the
     time that total stands at, both on epoch ms. */
 export type LaneCommand =
@@ -67,17 +67,17 @@ export type LaneCommand =
       streams: number;
       /** Upload lanes posting at once across the run's servers. */
       sharing: number;
-      /** The server's idle round trip, which sizes POSTs around their turnaround; null when unknown. */
+      /** The server's idle round trip, which sizes POSTs around their turnaround, or null when unknown. */
       rttMs: number | null;
     }
   | { type: "measure"; epoch: number }
   | { type: "flush"; at: number };
 
-/** `posted` is one completed upload POST, timed on the worker clock: presentation evidence, never a measurement. */
+/** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
 export type LaneReport = BytesReport | { type: "posted"; bytes: number; elapsedMs: number } | EndReport | Flushed;
 
-/** A session worker (re)dials with `download` or `upload` after its previous ending; `stop` finalizes an upload and
-    is acknowledged by `stopped` whatever ended the session; `flush` is a lane's. */
+/** A session worker (re)dials with `download` or `upload` after its previous ending. `stop` finalizes an upload and
+    is acknowledged by `stopped` whatever ended the session. `flush` is a lane's. */
 export type SessionCommand =
   | { type: "download"; url: string; ticket: TicketRecipe | null; datagrams: boolean; epoch: number }
   | {
@@ -93,7 +93,7 @@ export type SessionCommand =
   | { type: "flush"; at: number }
   | { type: "stop" };
 
-/** An upload session relays its feed's observations; a refusal record ends the session instead. */
+/** An upload session relays its feed's observations. A refusal record ends the session instead. */
 export type FeedRecord = Exclude<ProgressRecord, { type: "error" }>;
 export type SessionReport =
   | BytesReport
@@ -108,16 +108,16 @@ export type ProbeCommand =
       url: string;
       transport: "websocket" | "webtransport";
       ticket: TicketRecipe | null;
-      /** Start-to-start spacing in ms; null probes on each reply. */
+      /** Start-to-start spacing in ms. With null a probe leaves on each reply. */
       intervalMs: number | null;
       maxInFlight: number;
     }
   | { type: "measure" }
   | { type: "pace"; intervalMs: number | null; maxInFlight?: number }
-  /** Ends the measured window; `drained` acknowledges it once the window's probes resolved. */
+  /** Ends the measured window. `drained` acknowledges it once the window's probes resolved. */
   | { type: "stop" };
 
-/** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ; the owner translates them in place. */
+/** Outcomes cross with `observedAt` on epoch ms, since realm clocks differ. The owner translates them in place. */
 export type ProbeReport =
   | { type: "ready" }
   | { type: "outcomes"; outcomes: ProbeOutcome[] }

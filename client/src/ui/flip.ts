@@ -6,7 +6,7 @@ import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 type Axis = [offset: number, velocity: number];
 type Axes = { x: Axis; y: Axis; w: Axis };
 
-/** Neighbours have moved most of the way by then, so an arriving element appears into room already made. */
+/** Neighbors have moved most of the way by then, so an arriving element appears into room already made. */
 const ROOM_MS = 140;
 const STEPS = 30;
 

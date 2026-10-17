@@ -1,4 +1,4 @@
-// Values that move on the frame clock: glides that correct a value towards each sample, clocks that run at a rate,
+// Values that move on the frame clock: glides that correct a value toward each sample, clocks that run at a rate,
 // hand-offs between keyed views, and the damped spring every layout move uses. Reduced motion snaps them all.
 import { animate, pageMs } from "./frame";
 import { batch, effect, onCleanup, signal, untrack, type Read, type Signal } from "./signal";

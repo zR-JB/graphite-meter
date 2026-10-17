@@ -1,4 +1,4 @@
-//! When an upload raises its connection's receive window, and the request body that asks as it reads.
+//! Decides when an upload raises its connection's receive window, and wraps the request body that asks as it reads.
 
 use crate::{
     exchange::Watch,
@@ -18,7 +18,7 @@ use tokio::time::Instant;
 /// An upload refused a raised receive window asks again after this pause.
 pub(crate) const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
-/// Whether an upload reads at the raised window: asked at its first admitted read and after refusal pauses.
+/// Says whether an upload reads at the raised window, asked at its first admitted read and after refusal pauses.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Funding {
     /// A refusal holds the next ask until the instant.
@@ -45,14 +45,14 @@ impl Funding {
     }
 }
 
-/// A connection's receive window as its request bodies read it.
+/// Exposes a connection's receive window as its request bodies read it.
 pub(crate) trait ReceiveWindow: Send + Sync + 'static {
     type Stream: Send + Unpin;
     type Error;
 
     fn budget(&self) -> &Budget;
 
-    /// Whether an upload of `keys` reads at the raised window, raising it for the first.
+    /// Says whether an upload of `keys` reads at the raised window, raising it for the first.
     fn raise(&self, stream: &mut Self::Stream, keys: &ClientKeys) -> bool;
 
     /// An admitted upload began (`true`) or stopped reading on the connection, funded or not.
@@ -65,7 +65,7 @@ pub(crate) trait ReceiveWindow: Send + Sync + 'static {
     }
 }
 
-/// A request body, which raises its window as `Funding` rules once its exchange is admitted.
+/// Wraps a request body, which raises its window as `Funding` rules once its exchange is admitted.
 pub(crate) struct Incoming<W: ReceiveWindow> {
     stream: W::Stream,
     watch: Watch,

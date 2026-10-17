@@ -60,7 +60,7 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
 /// A check of a download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
-    e2e::config(&["-url", &url, "-stages", "download", "-download-duration", "1s"])
+    e2e::config(&["-url", &url, "-stages", "download", "-download-duration", "2s"])
 }
 
 /// The prompt an interactive check of `config` shows.

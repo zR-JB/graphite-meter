@@ -82,7 +82,7 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
   });
 }
 
-const GAP_MS = 1_500;
+export const GAP_MS = 1_500;
 
 /** One run's time. Run ms count from the start; active ms leave out page gaps: two reads more than 1.5 s apart
     while nothing holds the clock (a frozen or suspended page). Holds cover stage preparation and finalization, whose

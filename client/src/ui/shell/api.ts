@@ -22,4 +22,6 @@ export interface Shell {
   startOver(): void;
   /** Start or stop a test, asking first before a new one replaces a result whose save failed. */
   toggleRun(): void;
+  /** What the run key does now: Start, Stop, Cancel or Run again. */
+  readonly runWord: Read<string>;
 }

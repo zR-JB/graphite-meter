@@ -1,4 +1,4 @@
-//! The dial: a 270° braille ring on the browser's transfer curve and scale, its readout inside in heavy-line figures.
+//! The dial is a 270° braille ring on the browser's transfer curve and scale, its readout inside in heavy-line figures.
 use super::paint::{Canvas, Dots};
 use crate::{
     format::MISSING,
@@ -8,41 +8,41 @@ use crate::{
 use ratatui_core::layout::Rect;
 use std::cell::RefCell;
 
-/// A cell's width and height in pixels, as most monospace fonts draw them; the ring is round at this aspect.
+/// A cell is this wide and tall in pixels, as most monospace fonts draw it. The ring is round at this aspect.
 const CELL: (f64, f64) = (9.0, 20.0);
 /// The sweep starts at 225° and turns 270° clockwise.
 const START: f64 = 225.0;
 const TURN: f64 = 270.0;
-/// Columns kept clear at each side for the labels.
+/// Each side keeps this many columns clear for the labels.
 const MARGIN: u16 = 6;
-/// The ring's shares of its radius: an arc's band, the track's and a head's bead.
+/// An arc's band, the track and a head's bead take these shares of the ring's radius.
 const BAND: f64 = 0.08;
 const TRACK: f64 = 0.03;
 const BEAD: f64 = 0.16;
 
-/// One arc: how far it reaches, 0–1 of the sweep, in its color.
+/// One arc reaches this far, 0–1 of the sweep, in its color.
 pub struct Arc {
     pub to: f64,
     pub color: Color,
 }
 
 pub struct Dial {
-    /// Each drawn to its end, the shorter over the longer so every head shows.
+    /// Each arc is drawn to its end, the shorter over the longer so every head shows.
     pub arcs: Vec<Arc>,
     pub track: Color,
     pub ticks: [String; 5],
-    /// Over the figures: the stage's mark and name.
+    /// Shows the stage's mark and name over the figures.
     pub label: Line,
     pub value: String,
     pub unit: String,
-    /// Under the ring.
+    /// Sits under the ring.
     pub note: Line,
 }
 
-/// The smallest area a ring is drawn in; a smaller dial shows only its readout.
+/// A ring is drawn in at least this area. A smaller dial shows only its readout.
 pub const SMALLEST: (u16, u16) = (40, 14);
 
-/// The ring's geometry in one area, which only a resize changes: its centre, sizes and the dots within its reach.
+/// Keeps the ring's centre, sizes and the dots within its reach for one area. Only a resize changes them.
 pub struct Ring {
     area: Rect,
     cx: f64,
@@ -53,7 +53,7 @@ pub struct Ring {
     dots: Vec<RingDot>,
 }
 
-/// A dot within the ring's reach, in drawing order: where it is, its share of the sweep and what it may show.
+/// A dot within the ring's reach, in drawing order, knows where it is, its share of the sweep and what it may show.
 struct RingDot {
     x: isize,
     y: isize,
@@ -111,14 +111,14 @@ impl Ring {
         Self { area, cx, cy, radius, band, bead, dots }
     }
 
-    /// The point `reach` from the centre at `fraction` of the sweep.
+    /// Finds the point `reach` from the centre at `fraction` of the sweep.
     fn point(&self, fraction: f64, reach: f64) -> (f64, f64) {
         let angle = (START - fraction * TURN).to_radians();
         (self.cx + reach * angle.cos(), self.cy - reach * angle.sin())
     }
 }
 
-/// Draws `dial` across `area`: the ring when it fits, else the readout alone; `ring` keeps the area's geometry.
+/// Draws `dial` across `area`, the ring when it fits, else the readout alone. `ring` keeps the area's geometry.
 pub fn draw(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial, ring: &RefCell<Option<Ring>>) {
     if area.width < SMALLEST.0 || area.height < SMALLEST.1 {
         return readout(canvas, area, palette, dial);
@@ -160,7 +160,7 @@ pub fn draw(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial, rin
     }
     canvas.dots(&dots);
     let point = |fraction, reach| ring.point(fraction, reach);
-    // The labels sit beyond the ticks: the half's over the crown, the others beside their ticks.
+    // The labels sit beyond the ticks, the half's over the crown and the others beside their ticks.
     for (index, tick) in dial.ticks.iter().enumerate() {
         let (lx, ly) = point(index as f64 / 4.0, radius + band / 2.0 + radius * 0.17 + 4.0);
         let text = Line::styled(tick, palette.muted);
@@ -180,14 +180,14 @@ pub fn draw(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial, rin
     canvas.center(area.x, (area.y + under).min(area.bottom() - 1), area.width, &dial.note);
 }
 
-/// The readout without its ring, centred in `area`: the label, the figures, the unit and the note.
+/// Draws the readout without its ring, centred in `area`, as the label, the figures, the unit and the note.
 pub fn readout(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     let top = area.y + area.height.saturating_sub(7) / 2;
     stack(canvas, Rect::new(area.x, top, area.width, 7), palette, dial);
     canvas.center(area.x, (top + 7).min(area.bottom() - 1), area.width, &dial.note);
 }
 
-/// The label, the figures three rows tall and the unit, in seven rows.
+/// Stacks the label, the figures three rows tall and the unit in seven rows.
 fn stack(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     canvas.center(area.x, area.y, area.width, &dial.label);
     let rows = figures(&dial.value);
@@ -200,7 +200,7 @@ fn stack(canvas: &mut Canvas, area: Rect, palette: &Palette, dial: &Dial) {
     canvas.center(area.x, area.y + 6, area.width, &Line::styled(&dial.unit, palette.muted));
 }
 
-/// `text` in figures three rows tall drawn with heavy lines, a cell between them; characters without one are skipped.
+/// Draws `text` in figures three rows tall with heavy lines, a cell between them. Characters without one are skipped.
 pub fn figures(text: &str) -> [String; 3] {
     let glyph = |c| -> Option<[&str; 3]> {
         Some(match c {

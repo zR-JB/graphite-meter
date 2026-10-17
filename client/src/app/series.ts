@@ -1,4 +1,4 @@
-// The series a run's charts draw, bounded in size: latency buckets per server and the live throughput samples.
+// Holds the series a run's charts draw, latency buckets per server and the live throughput samples, bounded in size.
 // Compaction merges by time bins per line, so it never hides a peak, a dip or a line's ends.
 import type { Direction } from "../engine/types";
 import { REVISION_MS, SERIES_LIMIT, type LatencyBucket } from "../engine/measure/buckets";
@@ -15,7 +15,7 @@ export interface ThroughputSample {
   continuityId: number;
 }
 
-/** Between runs the idle monitor adds one bucket per probe; it keeps this many. */
+/** Between runs the idle monitor adds one bucket per probe. It keeps this many. */
 export const IDLE_LIMIT = 60;
 
 const bucketLine = (bucket: LatencyBucket) => `${bucket.phase}:${bucket.continuityId}`;
@@ -51,7 +51,7 @@ export function upsertLatency(history: LatencyBucket[], bucket: LatencyBucket, l
   else history.splice(at, 0, bucket);
   if (history.length <= limit) return;
   // Buckets a late outcome may still revise stay whole, so a revision replaces its bucket instead of adding to a
-  // merge; unless they alone fill the series.
+  // merge, unless they alone fill the series.
   const horizon = Math.max(...history.map((each) => each.endT)) - REVISION_MS;
   const open = history.filter((each) => each.endT >= horizon);
   const whole = open.length < limit ? open : [];
@@ -60,7 +60,7 @@ export function upsertLatency(history: LatencyBucket[], bucket: LatencyBucket, l
   history.splice(0, history.length, ...[...reduced, ...whole].sort((a, b) => a.startT - b.startT));
 }
 
-/** Appends a sample, replacing one of the same line at the same time; `spanMs` is the run's planned length. */
+/** Appends a sample, replacing one of the same line at the same time. `spanMs` is the run's planned length. */
 export function appendThroughput(history: ThroughputSample[], sample: ThroughputSample, spanMs: number): void {
   upsertSample(history, sample);
   if (history.length > SERIES_LIMIT) compactThroughput(history, spanMs);

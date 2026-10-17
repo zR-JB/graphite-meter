@@ -1,4 +1,4 @@
-//! The live rate the browser presents (`client/src/engine/measure/live.ts`, `api/liverate.testvectors.json`): a
+//! Mirrors the live rate the browser presents (`client/src/engine/measure/live.ts`, `api/liverate.testvectors.json`), a
 //! growing average that restarts on a confirmed shift.
 
 const MIN_WINDOW_MS: f64 = 800.0;
@@ -10,7 +10,7 @@ const UPSHIFT_MS: f64 = 500.0;
 /// Spans kept past this many merge in pairs from the oldest half, so a long stage holds a bounded history.
 const MAX_SPANS: usize = 4096;
 
-/// Bytes over a stretch of evidence, and all bytes up to its end.
+/// Holds the bytes over a stretch of evidence, and all bytes up to its end.
 #[derive(Debug, Clone, Copy, Default)]
 struct Span {
     start: f64,
@@ -26,7 +26,7 @@ struct Candidate {
     reference: f64,
 }
 
-/// A stage's presented rate from bytes over time; the first delivery only anchors it.
+/// Derives a stage's presented rate from bytes over time. The first delivery only anchors it.
 #[derive(Debug, Clone, Default)]
 pub struct LiveRate {
     anchored: bool,
@@ -40,14 +40,14 @@ pub struct LiveRate {
     presented: f64,
 }
 
-/// The presentation window: 85% of the current regime, never less than 800 ms.
+/// The presentation window spans 85% of the current regime, never less than 800 ms.
 fn window(age: f64) -> f64 {
     let age = if age.is_nan() { 0.0 } else { age.max(0.0) };
     age.min(MIN_WINDOW_MS.max(age * 0.85))
 }
 
 impl LiveRate {
-    /// The rate shown in bytes per second, once there is a positive one.
+    /// Returns the rate shown in bytes per second, once there is a positive one.
     pub fn presented(&self) -> Option<f64> {
         Some(self.presented).filter(|&rate| rate > 0.0)
     }
@@ -57,7 +57,7 @@ impl LiveRate {
         self.step(bytes, ms, MAX_SPANS)
     }
 
-    /// `observe`, coarsening once more than `kept` spans remain.
+    /// Runs `observe` and coarsens once more than `kept` spans remain.
     fn step(&mut self, bytes: f64, ms: f64, kept: usize) -> bool {
         if !ms.is_finite() || ms <= 0.0 {
             return false;
@@ -169,7 +169,7 @@ impl LiveRate {
 mod tests {
     use super::*;
 
-    /// The rate a stepped transfer presents, sampled every 250 ms, with spans coarsened past `limit`.
+    /// Samples the rate a stepped transfer presents every 250 ms, coarsening spans past `limit`.
     fn stepped(limit: usize) -> (Vec<f64>, usize) {
         let mut rate = LiveRate::default();
         let presented = (0..40_000)

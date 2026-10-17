@@ -1,6 +1,6 @@
-// One server's connection evidence between runs: its discovery and one check per path role, each a fact with its own
-// backoff, and the view Settings shows derived from those facts. One timer wakes whatever falls due next; the shown
-// latency server keeps an idle monitor.
+// Keeps one server's connection evidence between runs, its discovery and one check per path role, each a fact with
+// its own backoff, and derives the view Settings shows from those facts. One timer wakes whatever falls due next.
+// The shown latency server keeps an idle monitor.
 import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import type { CatalogEntry } from "../../protocol/documents";
 import {
@@ -32,12 +32,12 @@ import type { Limiter } from "./limiter";
 import type { PageConfig, PageSession } from "./page";
 import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 
-/** Start runs on evidence at most this old when it judged it; a reselected server keeps discovery this old. */
+/** Start runs on evidence at most this old when it judged it. A reselected server keeps discovery this old. */
 export const FRESH_MS = 120_000;
 /** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays ready. */
 const LIVENESS_MS = 5_000;
-/** A monitored one re-reads it this often: its bus proves liveness, not an unchanged generation, stage limit or
-    targets behind a proxy that holds the bus open. */
+/** A monitored one re-reads it this often, since its bus proves liveness, not an unchanged generation, stage limit
+    or targets behind a proxy that holds the bus open. */
 const MONITORED_MS = 60_000;
 const DISCOVERY_BUDGET_MS = 5_000;
 const ROLE_BUDGET_MS = 12_000;
@@ -61,7 +61,7 @@ export interface ServerView {
   discovery: Discovery | null;
   readiness: Readiness;
   message: string | null;
-  /** A reason no connection check can clear: a sign-in. */
+  /** A sign-in is a reason no connection check can clear. */
   blocked: string | null;
   throughput: RoleView<ThroughputPath>;
   latency: RoleView<LatencyPath>;
@@ -69,17 +69,17 @@ export interface ServerView {
   ready: boolean;
   /** Settings is discovering this unselected server. */
   metadataChecking: boolean;
-  /** An idle monitor probes this server's latency; its outcomes reach `idleLatency`. */
+  /** An idle monitor probes this server's latency. Its outcomes reach `idleLatency`. */
   idle: boolean;
-  /** What an idle monitor last said: replies flow, or its bus went quiet; null before one spoke. */
+  /** An idle monitor last said that replies flow or that its bus went quiet. Null before one spoke. */
   connectivity: "connected" | "offline" | null;
 }
 
 interface CheckOptions {
-  /** Retry: re-read discovery and redo the role checks (all, or only `role`), whatever their backoff. */
+  /** A retry re-reads discovery and redoes the role checks (all, or only `role`), whatever their backoff. */
   force?: boolean;
   role?: Role;
-  /** Start and resume: re-read discovery and re-check what failed or was verified before this page-ms instant. */
+  /** Start and resume re-read discovery and re-check what failed or was verified before this page-ms instant. */
   since?: number;
   signal?: AbortSignal;
 }
@@ -92,7 +92,7 @@ export interface ConnectionEnv {
   /** Checks and their timers may run. */
   active: Read<boolean>;
   online: Read<boolean>;
-  /** Settings is open: unselected servers are discovered for their names and limits. */
+  /** Settings is open, so unselected servers are discovered for their names and limits. */
   metadata: Read<boolean>;
   /** The server whose latency the console shows between runs. */
   latencyServer: Read<string | null>;
@@ -106,20 +106,20 @@ export interface Connection {
   readonly entry: CatalogEntry;
   readonly auth: ServerAuth;
   readonly view: Read<ServerView>;
-  /** Without options, does what has fallen due. Never rejects; outcomes land in the view. */
+  /** Without options, does what has fallen due. It never rejects, and outcomes land in the view. */
   check(options?: CheckOptions): Promise<void>;
   /** The server ready to run on evidence verified at or after `since` (page ms), or null. */
   prepared(since: number): PreparedServer | null;
   /** Verified roles become unchecked, e.g. after a run failed on them. */
   invalidate(roles: readonly Role[]): void;
   requireSignIn(message?: string): void;
-  /** The network or the page came back: retryable backoffs end and stale evidence is checked again. */
+  /** The network or the page came back, so retryable backoffs end and stale evidence is checked again. */
   resume(): void;
   dispose(): void;
 }
 
 type Task = { abort: AbortController; quiet: boolean; promise: Promise<void> };
-/** A failure and when to retry it; `due` is Infinity when only the user or a changed server can clear it. */
+/** A failure and when to retry it. `due` is Infinity when only the user or a changed server can clear it. */
 type Fault = { failure: Failure; attempts: number; due: number };
 type Outcome<P> =
   | { state: "none" }
@@ -149,7 +149,7 @@ function connect(
   const { now, page } = env;
   const context: CheckContext = { entry, auth, page, openProbeChannel: env.openProbeChannel, now };
   const discovery = signal<Discovery | null>(null);
-  /** The last discovery failure; kept through a loud re-read, which only hides it. */
+  /** The last discovery failure is kept through a loud re-read, which only hides it. */
   const fault = signal<Fault | null>(null);
   const discovering = signal<Task | null>(null);
   const connectivity = signal<ServerView["connectivity"]>(null);
@@ -165,8 +165,8 @@ function connect(
   /** The bus the latest latency check proved, for the idle monitor to take over. */
   let handed: CheckedBus | null = null;
 
-  // The browser's word is advisory: a link without a gateway reads offline and still reaches its server. It names
-  // a failure, and stops nothing.
+  // The browser's word is advisory, since a link without a gateway reads offline and still reaches its server. It
+  // names a failure, and stops nothing.
   const loopback = isLoopback(new URL(entry.url).hostname);
   const offline = computed(() => !loopback && !env.online());
   const required = (role: Role) => selected() && (role === "throughput" || env.latencyNeeded());
@@ -197,7 +197,7 @@ function connect(
       : null;
   };
 
-  /** The paths a run may use, verified at or after `since`; null while anything stands in the way. */
+  /** Gives the paths a run may use, verified at or after `since`, or null while anything stands in the way. */
   function paths(since: number): Pick<PreparedServer, "throughput" | "latency"> | null {
     if (!selected() || !discovery() || fault()) return null;
     const throughputPath = valid.throughput();
@@ -211,7 +211,7 @@ function connect(
     env.latencyServer() === entry.id && env.active() && required("latency") && !fault() ? valid.latency() : null,
   );
 
-  // What falls due, in page ms; Infinity for nothing, or for what waits on the user.
+  // These say what falls due, in page ms. Infinity means nothing, or what waits on the user.
   const roleDue = (role: Role): number => {
     if (!required(role) || roles[role].task() || valid[role]()) return Infinity;
     return failureHere(role)?.due ?? 0;
@@ -228,7 +228,7 @@ function connect(
   const signedOut = () => auth.left() <= 0 && !fault.peek()?.failure.signIn;
   const dueAt = computed((): number => {
     let at = discoveryDue();
-    // A grant's end falls due on the page clock; its wall-clock end is caught where anything is checked.
+    // A grant's end falls due on the page clock. Its wall-clock end is caught where anything is checked.
     if (!fault()?.failure.signIn) at = Math.min(at, now() + auth.left());
     if (discovery() && !fault() && !discovering()) for (const role of ROLES) at = Math.min(at, roleDue(role));
     return at;
@@ -256,8 +256,8 @@ function connect(
     return { failure, attempts, due: now() + backoffMs(attempts) };
   }
 
-  /** One check owning `slot`: it waits for a limiter slot, then runs within its budget; an outcome lands only while
-      the check is still current. */
+  /** Runs one check owning `slot`. It waits for a limiter slot, then runs within its budget. An outcome lands only
+      while the check is still current. */
   function job<T>(
     slot: Signal<Task | null>,
     quiet: boolean,
@@ -304,7 +304,7 @@ function connect(
         const same = previous?.generation === next.generation;
         // A restarted server answers for its new generation; checks against the old one are moot.
         if (previous && !same) eachRole((check) => cancel(check.task));
-        // Automatic ranks by the hop first seen for a generation: a late or upgraded one never moves its head.
+        // Automatic ranks by the hop first seen for a generation, so a late or upgraded one never moves its head.
         discovery.set(same && previous.protocol !== null ? { ...next, protocol: previous.protocol } : next);
         fault.set(null);
       },
@@ -328,7 +328,7 @@ function connect(
       run,
       ({ path, bus }) => {
         check.outcome.set({ state: "verified", path });
-        // The idle monitor takes over the bus that proved its path, in this flush; no other bus outlives its check.
+        // The idle monitor takes over the bus that proved its path, in this flush. No other bus outlives its check.
         if (bus && watchedPath.peek() === path) handed = bus;
         else bus?.dispose();
       },
@@ -426,7 +426,7 @@ function connect(
     if (selected.peek() && !watchedPath.peek() && env.active.peek()) void check({ since: now() - FRESH_MS });
   }
 
-  // A changed choice cancels only its own role's check; the old outcome stays, answering the old choice.
+  // A changed choice cancels only its own role's check. The old outcome stays, answering the old choice.
   for (const role of ROLES) {
     const intent = computed(() => (required(role) ? selectionText(env.selections[role]()) : null));
     effect(() => {
@@ -472,7 +472,7 @@ function connect(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const fire = () => {
       if (!armed) return;
-      // A coarse page clock (Firefox's) can still read short of `at` when its timer fires: nothing is due yet.
+      // A coarse page clock (Firefox's) can still read short of `at` when its timer fires, so nothing is due yet.
       const wait = Math.ceil(at - now());
       if (wait > 0) return void (timer = setTimeout(fire, wait));
       armed = false;
@@ -511,7 +511,7 @@ function connect(
         if (outcomes.some(({ timedOut }) => !timedOut)) connectivity.set("connected");
       },
       interrupted() {},
-      // So is a bus that went quiet: a peer that died leaves Ready.
+      // A bus that went quiet is one too, since a peer that died leaves Ready.
       stalled() {
         if (current) connectivity.set("offline");
         lost();
@@ -533,7 +533,7 @@ function connect(
         { target: path.target, auth, intervalMs: IDLE_INTERVAL_MS, maxInFlight: 2 },
         events,
       );
-      // Every idle probe counts; there is no warmup.
+      // Every idle probe counts, as there is no warmup.
       channel.measure();
     } catch {
       lost();
@@ -556,7 +556,7 @@ function connect(
     // A failure other than a sign-in reads as the device's when it says it is offline.
     const isOffline = offline();
     const words = (failure: Failure) => (isOffline && !failure.signIn ? OFFLINE : failure.message);
-    // What stands before any path: the discovery's failure.
+    // The discovery's failure stands before any path.
     const standing = failed ? words(failed.failure) : null;
     const shown = <P>(role: Role, path: P | null): RoleView<P> => {
       const selection = selectionText(env.selections[role]());

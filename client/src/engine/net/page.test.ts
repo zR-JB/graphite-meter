@@ -44,7 +44,7 @@ test("a login must cover the planned test: renew when it ends too soon, refuse w
     await net!.advance(5_000);
     expect({ outcome: await covered, ended: session.ended.peek() }, JSON.stringify(answer)).toEqual({ outcome, ended });
   }
-  // A start cancelled while its coverage is read ends as an abort, never as a renewal.
+  // A start canceled while its coverage is read ends as an abort, never as a renewal.
   const session = signedIn(() => lifetime(1));
   const cancel = new AbortController();
   const covered = session.coverage(60_000, cancel.signal).catch((error: Error) => error.name);

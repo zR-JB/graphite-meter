@@ -5,7 +5,7 @@ import type { Ending } from "../types";
 
 /** A connection that has not answered by now is not going to; a dial's ticket and handshake share it. */
 export const ESTABLISH_MS = 3_000;
-const RESTART_MS = 300;
+export const RESTART_MS = 300;
 /** Busy refusals double the pause up to here, so a retry still lands inside the run's 1.5 s silence window. */
 const BUSY_RESTART_CAP_MS = 1_200;
 

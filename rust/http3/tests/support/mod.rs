@@ -1,4 +1,4 @@
-//! Loopback peers for the layer tests: our client against our server, and raw peers that send what a
+//! Builds loopback peers for the layer tests, our client against our server, and raw peers that send what a
 //! conforming peer never would. Deadlines run on tokio's paused clock.
 #![allow(dead_code)]
 
@@ -24,7 +24,7 @@ use tokio::{
 pub type TestError = Box<dyn std::error::Error + Send + Sync>;
 pub type Task = JoinHandle<Result<(), Error>>;
 
-/// The application budget the server's layer charges, with a limit tests move.
+/// The server's layer charges this application budget, whose limit tests move.
 #[derive(Debug)]
 pub struct Budget {
     pub used: AtomicUsize,
@@ -45,8 +45,8 @@ impl noq::SharedBudget for Budget {
     }
 }
 
-/// How the peers connect: the server budget's limit; the client's receive windows, unidirectional stream
-/// limit and reliable reset offer; and the SETTINGS a raw client sends, if it is raw.
+/// Sets how the peers connect, from the server budget's limit and the client's receive windows, unidirectional
+/// stream limit and reliable reset offer, to the SETTINGS a raw client sends, if it is raw.
 #[derive(Clone, Copy)]
 pub struct Setup {
     pub limit: usize,
@@ -127,7 +127,7 @@ pub async fn pair(setup: Setup) -> Result<Peers, TestError> {
     })
 }
 
-/// Peers whose server runs the layer; `stop` shuts it down, and `outcomes` carries what handlers report.
+/// The server of these peers runs the layer. `stop` shuts it down, and `outcomes` carries what handlers report.
 pub struct Served<T = ()> {
     pub peers: Peers,
     pub serving: Task,
@@ -173,20 +173,20 @@ impl Peers {
         Served { peers, serving, stop, outcomes: outcome }
     }
 
-    /// A raw CONNECT; a task reads its response stream so stream credit keeps flowing.
+    /// Sends a raw CONNECT. A task reads its response stream so stream credit keeps flowing.
     pub async fn connect(&self) -> Result<(noq::SendStream, JoinHandle<(Vec<u8>, Result<(), Code>)>), TestError> {
         let (send, mut recv) = self.bi(&connect_head()).await?;
         Ok((send, tokio::spawn(async move { raw_stream(&mut recv).await })))
     }
 
-    /// A raw client request stream that has sent `bytes`.
+    /// Opens a raw client request stream that has sent `bytes`.
     pub async fn bi(&self, bytes: &[u8]) -> Result<(noq::SendStream, noq::RecvStream), TestError> {
         let (mut send, recv) = self.client.open_bi().await?;
         send.write_all(bytes).await?;
         Ok((send, recv))
     }
 
-    /// A raw GET answered in full.
+    /// Sends a raw GET and waits for the full answer.
     pub async fn get(&self) -> Result<(), TestError> {
         let (mut send, mut recv) = self.bi(&request_head(&[])).await?;
         send.finish()?;
@@ -230,7 +230,7 @@ pub fn client(peers: &Peers) -> (Task, client::SendRequest) {
     (tokio::spawn(async move { driver.drive().await }), requests)
 }
 
-/// Our client's session at /wt, which the server accepts.
+/// Opens our client's session at /wt, which the server accepts.
 pub async fn accepted(requests: &client::SendRequest) -> Result<Session, TestError> {
     Ok(Session::connect(requests, get("/wt")).await?.expect("accepted").0)
 }
@@ -306,7 +306,7 @@ pub fn frame(kind: u64, payload: &[u8]) -> Vec<u8> {
     [varint(kind), varint(payload.len() as u64), payload.to_vec()].concat()
 }
 
-/// A static-only QPACK section of literal names and values, as an independent encoder writes it.
+/// Writes a static-only QPACK section of literal names and values, as an independent encoder would.
 pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
     fn integer(value: usize, bits: u32, pattern: u8, output: &mut Vec<u8>) {
         let max = (1 << bits) - 1;
@@ -331,7 +331,7 @@ pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
     section
 }
 
-/// A GET of / with `fields` in place of or after its own.
+/// Builds a GET of / with `fields` in place of or after its own.
 pub fn request_head(fields: &[(&str, &str)]) -> Vec<u8> {
     let head = [(":method", "GET"), (":scheme", "https"), (":authority", "localhost"), (":path", "/")];
     let mut all: Vec<_> = head
@@ -346,12 +346,12 @@ pub fn connect_head() -> Vec<u8> {
     request_head(&[(":method", "CONNECT"), (":protocol", "webtransport"), (":path", "/wt")])
 }
 
-/// A CLOSE_WEBTRANSPORT_SESSION capsule in a DATA frame; capsules are framed as frames are.
+/// Builds a CLOSE_WEBTRANSPORT_SESSION capsule in a DATA frame. Capsules are framed as frames are.
 pub fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
     frame(0x00, &frame(0x2843, &[&code.to_be_bytes()[..], reason.as_bytes()].concat()))
 }
 
-/// A control stream's type, then SETTINGS of `pairs`.
+/// Builds a control stream's type, then SETTINGS of `pairs`.
 pub fn control(pairs: &[(u64, u64)]) -> Vec<u8> {
     let payload: Vec<u8> = pairs
         .iter()
@@ -366,7 +366,7 @@ pub async fn uni(quic: &noq::Connection, bytes: &[u8]) -> Result<noq::SendStream
     Ok(stream)
 }
 
-/// A raw stream's bytes, and how it ended: FIN, a reset code, or the connection's end as code 0.
+/// Reads a raw stream's bytes and how it ended, by FIN, a reset code, or the connection's end as code 0.
 pub async fn raw_stream(recv: &mut noq::RecvStream) -> (Vec<u8>, Result<(), Code>) {
     let mut bytes = Vec::new();
     loop {
@@ -392,18 +392,18 @@ pub async fn stopped(send: &noq::SendStream) -> Option<Code> {
     send.stopped().await.expect("stream outcome").map(Code::from)
 }
 
-/// Whether STOP_SENDING has already arrived for a raw stream.
+/// Reports whether STOP_SENDING has already arrived for a raw stream.
 pub async fn stopped_yet(send: &noq::SendStream) -> bool {
     yields().await;
     std::future::poll_fn(|cx| Poll::Ready(std::pin::pin!(send.stopped()).poll(cx).is_ready())).await
 }
 
-/// The error this side reports for a connection it closed with `code`.
+/// This side reports this error for a connection it closed with `code`.
 pub fn closed(code: Code) -> Error {
     Error::Connection { local: true, code, reason: bytes::Bytes::new() }
 }
 
-/// The code a connection closed with, within 5 s.
+/// Waits up to 5 s for the code a connection closed with.
 pub async fn closed_with(quic: &noq::Connection) -> Code {
     match tokio::time::timeout(Duration::from_secs(5), quic.closed()).await {
         Ok(noq::ConnectionError::ApplicationClosed(close)) => close.error_code.into(),

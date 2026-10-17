@@ -1,4 +1,4 @@
-//! The server binary: `version`, `hash-password`, `--legal`, or the server configured by environment and flags.
+//! Runs the binary. It handles `version`, `hash-password` and `--legal`, or serves as the environment and flags say.
 
 use graphite_meter_net::Pool;
 use graphite_meter_server::{
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     status
 }
 
-/// Prints the notices; the status is 141 into a closed pipe on Unix.
+/// Prints the notices. The status is 141 into a closed pipe on Unix.
 fn legal() -> Result<u8, String> {
     let report = NOTICES.report().ok_or(
         "this build embeds no notices; mise run dev -- --legal builds the server with dependency notices \
@@ -83,7 +83,7 @@ fn serve(config: Config) -> Result<(), String> {
 fn hash_password() -> Result<(), String> {
     let stdin = io::stdin();
     let terminal = stdin.is_terminal();
-    // The unix arm's guard lives to the end of the function: cfg_select! expands an arm's statements in place.
+    // The unix arm's guard lives to the end of the function, as cfg_select! expands an arm's statements in place.
     cfg_select! {
         unix => {
             let _hidden = terminal
@@ -120,7 +120,7 @@ fn hash_password() -> Result<(), String> {
     Ok(())
 }
 
-/// A line of up to a password's bytes and its line break, without trailing line breaks.
+/// Reads a line of up to a password's bytes and its line break, and drops trailing line breaks.
 fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
     let mut line = Zeroizing::new(Vec::with_capacity(LINE_BYTES));
     input.by_ref().take(LINE_BYTES as u64).read_until(b'\n', &mut line)?;
@@ -131,7 +131,7 @@ fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
 
 const LINE_BYTES: usize = password::MAX_BYTES + 2;
 
-/// Terminal echo turned off until dropped.
+/// Turns terminal echo off until dropped.
 #[cfg(unix)]
 struct Hidden {
     terminal: io::Stdin,

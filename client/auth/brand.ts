@@ -6,11 +6,11 @@ const glyph = (hexagon: number, needle: number, hub: number) =>
   `stroke-linejoin="round"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="${needle}" ` +
   `stroke-linecap="round"/><circle cx="12" cy="12" r="${hub}" fill="currentColor"/>`;
 
-/** The auth pages' brand line; their stylesheet strokes the hexagon, and the needle takes the text colour. */
+/** The auth pages' brand line; their stylesheet strokes the hexagon, and the needle takes the text color. */
 export const BRAND_LINE = `<p class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true">${glyph(2, 2.2, 2.1)}</svg>Graphite Meter</p>`;
 
 /** The favicon from the `--phase-latency` and `--text` tokens' `light-dark()` pairs. The browser draws it apart from
-    any page, so each scheme's colours are baked in as sRGB, and its strokes are heavier to hold up at 16 px. */
+    any page, so each scheme's colors are baked in as sRGB, and its strokes are heavier to hold up at 16 px. */
 export function favicon(latency: string, text: string): string {
   const [hexagon, ink] = [schemes(latency), schemes(text)];
   const paint = (scheme: 0 | 1) => `svg{color:${ink[scheme]}}.hex{stroke:${hexagon[scheme]}}`;
@@ -20,7 +20,7 @@ export function favicon(latency: string, text: string): string {
   );
 }
 
-/** `light-dark(oklch(…), oklch(…))` as its two sRGB hex colours, clipped to the gamut. */
+/** `light-dark(oklch(…), oklch(…))` as its two sRGB hex colors, clipped to the gamut. */
 function schemes(token: string): [string, string] {
   const pair = [...token.matchAll(/oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)].map((lch) =>
     hex(Number(lch[1]), Number(lch[2]), Number(lch[3])),

@@ -56,6 +56,11 @@ export function orders(sort: HistorySort): { descending: boolean; label: string 
   ];
 }
 
+export function orderHeading(sort: HistorySort, descending: boolean): string {
+  const { label } = orders(sort).find((order) => order.descending === descending)!;
+  return `${SORT_LABEL[sort]}, ${label.toLowerCase()}`;
+}
+
 /** A column's one unit and the value that fills its bars. `tier` is null for latency and for rates never measured. */
 export interface Scale {
   tier: number | null;
@@ -104,13 +109,15 @@ const dateLabel = (time: number) => DATES.date.format(time);
 export interface Days {
   today: string;
   yesterday: string;
+  year: number;
 }
 export function daysAt(now: number): Days {
   const date = new Date(now);
   const today = date.toDateString();
+  const year = date.getFullYear();
   // The calendar day before, which a daylight-saving change can make 23 or 25 hours long.
   date.setDate(date.getDate() - 1);
-  return { today, yesterday: date.toDateString() };
+  return { today, yesterday: date.toDateString(), year };
 }
 
 /** Recent days, then months, so a sparse archive never gets a heading per result. */
@@ -199,13 +206,15 @@ function missing(entry: HistoryEntry, column: HistoryColumn): string {
 const notePhrase = (column: HistoryColumn, text: string) =>
   column === "idle" ? `${text} ms` : column === "loaded" ? `under ${text}` : `${text} added`;
 
-/** The words that follow the calendar: the heading, and in date order how the time reads. */
+/** The words that follow the calendar: in date order the heading and time; otherwise the day and time, or a date. */
 function dated(completedAt: number, byDay: boolean, days: Days): { heading: string; primary: string } {
   const time = DATES.time.format(completedAt);
-  if (!byDay) return { heading: "", primary: `${dateLabel(completedAt)}, ${time}` };
   const heading = dayHeading(completedAt, days);
   const recent = heading === "Today" || heading === "Yesterday";
-  return { heading, primary: recent ? time : `${DATES.day.format(completedAt)}, ${time}` };
+  if (byDay) return { heading, primary: recent ? time : `${DATES.day.format(completedAt)}, ${time}` };
+  if (!recent && new Date(completedAt).getFullYear() !== days.year)
+    return { heading: "", primary: dateLabel(completedAt) };
+  return { heading: "", primary: `${recent ? heading : DATES.day.format(completedAt)}, ${time}` };
 }
 
 function resultRow(entry: HistoryEntry, context: RowContext, days: Days): Row {

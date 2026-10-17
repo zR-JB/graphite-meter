@@ -1,4 +1,4 @@
-//! Sign-in budgets over a one-minute window: attempts per client address, and ceilings all clients share.
+//! Budgets sign-ins over a one-minute window, attempts per client address and ceilings all clients share.
 
 use crate::{
     lock, log,
@@ -16,7 +16,7 @@ const WINDOW: Duration = Duration::from_mins(1);
 /// An address table tracks at most this many keys.
 const MAX_KEYS: usize = 2048;
 
-/// Attempts per client: `limit` for its narrowest key, twice that for each wider one.
+/// Counts attempts per client, `limit` for its narrowest key and twice that for each wider one.
 pub(super) struct Attempts {
     name: &'static str,
     limit: usize,
@@ -77,7 +77,7 @@ impl Attempts {
     }
 }
 
-/// Events across all clients, such as wrong passwords; at `limit` in the window it refuses further attempts.
+/// Counts events across all clients, such as wrong passwords. At `limit` in the window it refuses further attempts.
 pub(super) struct Ceiling {
     name: &'static str,
     limit: usize,
@@ -96,7 +96,7 @@ impl Ceiling {
         window.0.push_back(now);
     }
 
-    /// Whether the window holds `limit` events, logged once a minute while it does.
+    /// Says whether the window holds `limit` events, logged once a minute while it does.
     fn engaged(&self) -> bool {
         let mut window = lock(&self.window);
         let now = Instant::now();
@@ -110,7 +110,7 @@ impl Ceiling {
     }
 }
 
-/// Whether `keys`' client holds its share of `limit`: `held` counts per key, each wider key holds twice the last.
+/// Tells if `keys`' client holds its share of `limit`. `held` counts per key, each wider key holding twice the last.
 pub(super) fn share_full(keys: &ClientKeys, limit: usize, held: impl Fn(&ClientKey) -> usize) -> bool {
     keys.iter().enumerate().any(|(wider, key)| held(&key) >= limit << wider)
 }

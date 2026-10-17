@@ -54,7 +54,6 @@
       font-size: var(--type-sm);
       & > .aside {
         margin: 0;
-        color: var(--text-soft);
       }
     }
     /* A link's place never wraps: it ends in an ellipsis instead. */

@@ -18,6 +18,10 @@ import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../m
 import { protocolFromNextHop } from "../net/paths";
 import {
   CADENCE_MS,
+  causes,
+  MAX_SELECTED,
+  SELECTION_REFUSED,
+  isNetworkFailure,
   ServerBusyError,
   SignInRequired,
   StageFailure,
@@ -25,6 +29,7 @@ import {
   type Direction,
   type OpenStage,
   type PreparedServer,
+  type Role,
   type ServerIdentity,
   type Stall,
   type StageEvents,
@@ -41,7 +46,6 @@ import {
   stageStatus,
   type MultiServerResult,
   type RunResult,
-  type Scope,
   type ServerFailure,
   type ServerMeasurementSummary,
   type StagePlans,
@@ -84,7 +88,7 @@ export type RunPlan = Pick<
   "stages" | "duration" | "skipLoadedLatencyWhenStageOff" | "pingCadence" | "loadedPingCadence" | "adaptive"
 >;
 /** What may change while a run is live. */
-export type LiveChange = Pick<RunPlan, "stages" | "duration" | "adaptive">;
+type LiveChange = Pick<RunPlan, "stages" | "duration" | "adaptive">;
 
 export interface DroppedServer {
   server: ServerIdentity;
@@ -104,7 +108,6 @@ export interface RunOptions {
   /** Lanes per server for a stage; throws when servers sharing an origin cannot all get theirs. */
   streams(servers: readonly PreparedServer[], activity: Activity): Map<string, StageLanes>;
   clock?: Clock;
-  online?: () => boolean;
 }
 
 export type Phase = "connecting" | "warmup" | Stage;
@@ -237,25 +240,13 @@ function recovering(stage: StageRun, seat: Seat, at: number): boolean {
   return !!seat.recovery && at - seat.progressAt[dir] >= QUIET_MS;
 }
 
-const NETWORK_FAILURE =
-  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
-
-function* causes(error: unknown): Generator<Error> {
-  const seen = new Set<unknown>();
-  for (; error instanceof Error && !seen.has(error); error = error.cause) {
-    seen.add(error);
-    yield error;
-  }
-}
-
 /** A busy server wins over a nested timeout; offline or a network failure is a lost connection. */
-function classify(cause: unknown, fallback: FailureReason, online: boolean): FailureReason {
+function classify(cause: unknown, fallback: FailureReason): FailureReason {
   const chain = [...causes(cause)];
   const known = chain.find((error) => error instanceof StageFailure);
   if (known) return known.reason;
   if (chain.some((error) => error instanceof ServerBusyError)) return "server-busy";
-  if (!online || chain.some((error) => error.name === "NetworkError" || NETWORK_FAILURE.test(error.message)))
-    return "connection-lost";
+  if (navigator.onLine === false || isNetworkFailure(cause)) return "connection-lost";
   if (chain.some((error) => error instanceof DOMException && error.name === "TimeoutError")) return "timeout";
   return fallback;
 }
@@ -266,7 +257,6 @@ export class Run {
   readonly #dropped: DroppedServer[];
   readonly #open: OpenStage;
   readonly #streams: RunOptions["streams"];
-  readonly #online: () => boolean;
   readonly #page: Clock;
   #clock!: RunClock;
   #handlers = new Set<(event: RunEvent) => void>();
@@ -300,8 +290,12 @@ export class Run {
   /** Throws when the plan has no stage or its servers cannot share their connections. */
   constructor(options: RunOptions) {
     const { servers } = options;
-    if (!servers.length || servers.length > 4 || new Set(servers.map(({ server }) => server.id)).size < servers.length)
-      throw new Error("Select one to four different servers");
+    if (
+      !servers.length ||
+      servers.length > MAX_SELECTED ||
+      new Set(servers.map(({ server }) => server.id)).size < servers.length
+    )
+      throw new Error(SELECTION_REFUSED);
     this.#servers = servers.map((prepared) => {
       const id = prepared.server.id;
       return {
@@ -319,7 +313,6 @@ export class Run {
     this.#dropped = options.dropped;
     this.#open = options.open;
     this.#streams = options.streams;
-    this.#online = options.online ?? (() => navigator.onLine !== false);
     this.#page = options.clock ?? pageClock;
     this.#validate(options.plan, this.#servers);
     this.#plan = options.plan;
@@ -556,7 +549,7 @@ export class Run {
         activity,
       );
     } catch (cause) {
-      const reason = classify(cause, "protocol-error", this.#online());
+      const reason = classify(cause, "protocol-error");
       const message = cause instanceof Error ? cause.message : "Could not prepare the stage";
       // What earlier stages measured stays, as when every server leaves.
       return this.#measured() ? this.end(reason, message) : this.#fail(reason, message);
@@ -600,8 +593,8 @@ export class Run {
         const error = signIn ?? result.reason;
         this.#remove(
           servers[index]!,
-          signIn ? "sign-in-required" : classify(result.reason, "preparation-failed", this.#online()),
-          error instanceof Error ? error.message : "Measurement preparation failed",
+          signIn ? "sign-in-required" : classify(result.reason, "preparation-failed"),
+          error instanceof Error ? error.message : "Could not prepare the stage",
         );
       });
       if (!this.#current(stage) || stage.phase !== "preparing") return;
@@ -1029,7 +1022,7 @@ export class Run {
     const survivors = this.#participants();
     if (!survivors.length) {
       if (!this.#measured())
-        return this.#fail(reason, `All selected servers failed. ${server.prepared.server.name}: ${message}`);
+        return this.#fail(reason, `All selected test servers failed. ${server.prepared.server.name}: ${message}`);
       // A sole server skips to its next stage; several that all fail end the run as incomplete.
       return this.#servers.length === 1
         ? this.#skip(stage)
@@ -1372,7 +1365,7 @@ export class Run {
         bytesPerSec: component.bytesPerSec,
         path: {
           protocol: protocolFromNextHop(browserProtocol) ?? undefined,
-          secure: target.origin.startsWith("https://"),
+          secure: target.tls,
           ipVersion: probe.clientIpVersion,
           transport: target.transport,
         },
@@ -1381,7 +1374,7 @@ export class Run {
     return paths.length ? combinedModel(paths) : null;
   }
 
-  #record(serverId: string, scope: Scope, reason: FailureReason, message: string, stage: Stage): ServerFailure | null {
+  #record(serverId: string, scope: Role, reason: FailureReason, message: string, stage: Stage): ServerFailure | null {
     if (this.#failures.some((f) => f.serverId === serverId && f.stage === stage && f.scope === scope)) return null;
     // Server-supplied detail is bounded and filtered before it can reach saved history.
     const failure = { serverId, stage, atMs: this.#clock.runMs(), scope, reason, message: safeDetail(message) };
@@ -1389,7 +1382,7 @@ export class Run {
     return failure;
   }
 
-  #failure(server: Participant, scope: Scope, reason: FailureReason, message: string): void {
+  #failure(server: Participant, scope: Role, reason: FailureReason, message: string): void {
     const stage = this.#stage?.activity.stage;
     const failure = stage && this.#record(server.id, scope, reason, message, stage);
     if (failure) this.#emit({ type: "failure", failure });
@@ -1476,6 +1469,7 @@ export class Run {
         : stageStatus(lanes(evidence, stage), this.#failed(stage, id));
     return {
       server: prepared.server,
+      engineVersion: prepared.discovery.engineVersion,
       throughput: {
         origin: throughput.target.origin,
         transport: throughput.target.transport,

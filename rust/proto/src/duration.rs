@@ -1,4 +1,4 @@
-//! Durations as flags and environment variables spell them: `800ms`, `10s`, `1m30s`, `1.5h`.
+//! Parses durations as flags and environment variables spell them, such as `800ms`, `10s`, `1m30s` or `1.5h`.
 
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ const FRACTION_DIGITS: usize = 20;
 const INVALID: &str = "use a duration such as 800ms, 10s or 1m30s";
 const TOO_LONG: &str = "duration too long";
 
-/// Parses `0` or numbers with units, such as `1h30m` or `1.5s`; fractions are exact to the nanosecond.
+/// Parses `0` or numbers with units, such as `1h30m` or `1.5s`. Fractions are exact to the nanosecond.
 pub fn parse(text: &str) -> Result<Duration, &'static str> {
     match text {
         "0" => return Ok(Duration::ZERO),
@@ -81,7 +81,7 @@ pub fn format(duration: Duration) -> String {
     }
 }
 
-/// `value / scale` in decimal, without trailing zeros in its fraction.
+/// Writes `value / scale` in decimal, without trailing zeros in its fraction.
 fn fixed(value: u128, scale: u128) -> String {
     let (whole, fraction) = (value / scale, value % scale);
     if fraction == 0 {

@@ -13,7 +13,7 @@ test("a route change moves the docks when the docked panels change, the panes wh
     ["#/settings", "#/?panels=settings,endpoint", true, true, DOCKS],
     // The order of two docked panels decides which closes first, not where they stand.
     ["#/?panels=settings,endpoint", "#/?panels=endpoint,settings", true, true, null],
-    // Where one panel fits, a route naming two shows its last: closing the hidden one moves nothing.
+    // Where one panel fits, a route naming two shows its last, so closing the hidden one moves nothing.
     ["#/?panels=settings,endpoint", "#/endpoint", true, false, null],
     ["#/settings", "#/endpoint", true, false, DOCKS],
     ["#/", "#/settings", false, false, null],
@@ -44,7 +44,7 @@ test("focus goes to an opened panel's title, back from a closed panel it was in,
     ["#/", "#/history", [], { wanted: "element" }, { to: "wanted" }],
     ["#/history", "#/", [], { wanted: "workspace" }, { to: "workspace" }],
     ["#/settings", "#/", [], { holder: "settings" }, { to: "invoker", panel: "settings" }],
-    // Focus elsewhere stays there; focus that fell to the page as the panel closed goes back to its invoker.
+    // Focus elsewhere stays there. Focus that fell to the page as the panel closed goes back to its invoker.
     ["#/settings", "#/", [], {}, null],
     ["#/settings", "#/", [], { focused: () => false }, { to: "invoker", panel: "settings" }],
     // Two docks collapsing into one close the first, which the layout already hid.

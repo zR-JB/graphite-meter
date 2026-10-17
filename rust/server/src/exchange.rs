@@ -1,4 +1,4 @@
-//! A request's time bound before admission, and what its transport sees of whether and for whom it was admitted.
+//! Bounds a request's time before admission and shows its transport whether, and for whom, it was admitted.
 
 use crate::{
     auth::AuthLease,
@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 /// Every exchange has this long in all, request and reply, until it is admitted.
 pub const EXCHANGE_BOUND: Duration = Duration::from_secs(15);
 
-/// A request before admission. Its bound never extends its connection's idle period.
+/// An exchange is a request before admission. Its bound never extends its connection's idle period.
 #[derive(Debug)]
 pub struct Exchange(Watch);
 
@@ -27,7 +27,7 @@ impl Exchange {
         Self::until(Instant::now() + EXCHANGE_BOUND)
     }
 
-    /// An exchange that began before its request was parsed, such as at the first byte of an HTTP/1 head.
+    /// Dates an exchange from before its request was parsed, such as from the first byte of an HTTP/1 head.
     pub fn until(deadline: Instant) -> Self {
         Self(Watch { deadline, admitted: Arc::default() })
     }
@@ -36,12 +36,12 @@ impl Exchange {
         self.0.deadline
     }
 
-    /// What the transport keeps of the exchange it hands to the app.
+    /// The transport keeps this of the exchange it hands to the app.
     pub fn watch(&self) -> Watch {
         self.0.clone()
     }
 
-    /// Admits `keys`' request as a lane holding `hold` for `lifetime`; it ends on `shutdown` or sign-in revocation.
+    /// Admits `keys`' request as a lane holding `hold` for `lifetime`. It ends on `shutdown` or sign-in revocation.
     pub fn admit(
         self,
         keys: ClientKeys,
@@ -56,7 +56,7 @@ impl Exchange {
     }
 }
 
-/// A transport's view of an exchange: its deadline, and whether and for whom it was admitted.
+/// A watch is a transport's view of an exchange. It shows the deadline and whether, and for whom, it was admitted.
 #[derive(Debug, Clone)]
 pub struct Watch {
     deadline: Instant,
@@ -68,12 +68,12 @@ impl Watch {
         self.deadline
     }
 
-    /// The admitted client's keys, which also fund its connection's receive window; `None` before admission.
+    /// Returns the admitted client's keys, which also fund its connection's receive window, or `None` before admission.
     pub fn admitted(&self) -> Option<&ClientKeys> {
         self.admitted.get()
     }
 
-    /// `served`, counted as admitted work on `work` once seen admitted, or `None` once the exchange expires unadmitted.
+    /// Awaits `served` as admitted work on `work` once seen admitted. `None` means the exchange expired unadmitted.
     pub async fn bounded<T>(&self, served: impl Future<Output = T>, work: &Work) -> Option<T> {
         let (mut served, mut guard) = (pin!(served), None);
         let counted = poll_fn(|cx| {
@@ -90,7 +90,7 @@ impl Watch {
         }
     }
 
-    /// Completes at the deadline unless the exchange was admitted by then; a lane bounds it after admission.
+    /// Completes at the deadline unless the exchange was admitted by then. A lane bounds it after admission.
     async fn expired(&self) {
         sleep_until(self.deadline).await;
         if self.admitted().is_some() {

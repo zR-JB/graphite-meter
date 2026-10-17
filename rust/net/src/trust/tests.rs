@@ -3,7 +3,7 @@ use graphite_meter_testkit::Identity;
 use rustls::CertificateError::{Expired, ExpiredContext};
 use std::time::Duration;
 
-/// A scratch directory whose paths tests pass around as text.
+/// Wraps a scratch directory whose paths tests pass around as text.
 struct Scratch(graphite_meter_testkit::Scratch);
 
 impl Scratch {
@@ -26,7 +26,7 @@ fn certificate() -> (String, CertificateDer<'static>) {
     (pem, der)
 }
 
-/// The locations a process with these variables reads, given default lists.
+/// Builds the locations a process with these variables reads, given default lists.
 fn locations(variables: &[(&str, &str)], files: &[&str], directories: &[&str]) -> Locations {
     let trust = Trust::from_lookup(|name| {
         variables

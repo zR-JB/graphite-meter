@@ -1,6 +1,6 @@
-// One latency bus to one server (api/wire.md): WebSocket text frames or WebTransport datagrams carrying PING and PONG.
-// The prober paces and resolves the probes; this worker owns the connections, each with its own controller so a
-// replaced one cannot act, and each dial's ticket and 3 s budget.
+// Carries one latency bus to one server (api/wire.md) over WebSocket text frames or WebTransport datagrams carrying
+// PING and PONG. The prober paces and resolves the probes. This worker owns the connections, each with its own
+// controller so a replaced one cannot act, and each dial's ticket and 3 s budget.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { Tickets, withToken } from "../lanes/dial";
 import { abortable } from "../run/clock";
@@ -9,7 +9,7 @@ import { Prober } from "../lanes/prober";
 
 type Start = Extract<ProbeCommand, { type: "start" }>;
 type Send = (text: string) => void | Promise<void>;
-/** How a connection ended: a detail for a reconnect, or null when the server revoked the sign-in. */
+/** Says how a connection ended, with a detail for a reconnect, or null when the server revoked the sign-in. */
 type End = (detail: string | null) => void;
 
 const tickets = new Tickets();
@@ -57,7 +57,7 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   let token = "";
   const end: End = (detail) => {
     if (own.signal.aborted) return;
-    // An answer, a refusal too, spent the ticket; a WebTransport dial ended at its budget may never have reached the
+    // An answer, a refusal too, spent the ticket. A WebTransport dial ended at its budget may never have reached the
     // server, while a WebSocket one always waits for the browser's answer.
     if (transport === "websocket" || !expired.aborted) tickets.spent(token);
     own.abort();
@@ -93,9 +93,9 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   }
 }
 
-/** A refused upgrade is invisible to script and closes as 1006; the owner asks whether the sign-in ended. The browser
-    bounds the handshake itself and may queue it behind another to the same host, where closing it would only delay
-    the next dial: a dial past its budget stays, reported as an outage. */
+/** A refused upgrade is invisible to script and closes as 1006, so the owner asks whether the sign-in ended. The
+    browser bounds the handshake itself and may queue it behind another to the same host, where closing it would only
+    delay the next dial. So a dial past its budget stays, reported as an outage. */
 function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End, opened: (write: Send) => void): void {
   const ws = new WebSocket(url);
   closed.addEventListener("abort", () => ws.close());

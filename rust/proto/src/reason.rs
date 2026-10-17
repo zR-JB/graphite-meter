@@ -1,7 +1,7 @@
-//! Why a server's stage failed (`api/failurereasons.txt`).
+//! Says why a server's stage failed (`api/failurereasons.txt`).
 
 table! {
-    /// Why a server's stage failed, with the label every view shows.
+    /// Says why a server's stage failed, with the label every view shows.
     pub enum FailureReason {
         key.0: &'static str,
         label.1: &'static str,
