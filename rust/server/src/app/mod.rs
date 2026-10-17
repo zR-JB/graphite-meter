@@ -149,7 +149,7 @@ impl App {
     /// A connection's share, keyed by its socket address; `None` refuses the connection.
     pub fn connection(&self, peer: IpAddr, transport: Transport) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
-        self.quotas.connection(&keys, transport)
+        self.quotas.connection(peer, &keys, transport)
     }
 
     /// Whether a QUIC handshake from `peer` needs Retry: a quarter of connections or budget used, or its source held.

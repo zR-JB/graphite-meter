@@ -222,6 +222,18 @@ struct Pace {
     held: u64,
 }
 
+impl Pace {
+    /// The lines held back since the last one written, when one may be written at `now`.
+    fn admit(&mut self, now: Instant) -> Option<u64> {
+        if self.next.is_some_and(|next| now < next) {
+            self.held += 1;
+            return None;
+        }
+        self.next = Some(now + INTERVAL);
+        Some(std::mem::take(&mut self.held))
+    }
+}
+
 impl RateLimited {
     /// `module` is the caller's `module_path!()`.
     pub const fn new(level: Level, topic: &'static str, what: &'static str, module: &'static str) -> Self {
@@ -235,7 +247,8 @@ impl RateLimited {
     }
 
     pub fn write(&self, message: fmt::Arguments<'_>) {
-        match self.admit(Instant::now()) {
+        let admitted = crate::lock(&self.state).admit(Instant::now());
+        match admitted {
             Some(0) => write(self.level, self.topic, self.module, message),
             Some(held) => write(
                 self.level,
@@ -246,16 +259,34 @@ impl RateLimited {
             None => {}
         }
     }
+}
 
-    /// The lines held back since the last one written, when one may be written at `now`.
-    fn admit(&self, now: Instant) -> Option<u64> {
-        let mut window = crate::lock(&self.state);
-        if window.next.is_some_and(|next| now < next) {
-            window.held += 1;
-            return None;
+const PEERS: usize = 64;
+
+/// A line each peer can cause, once a minute per peer for up to `PEERS` peers, past them held back uncounted.
+pub(crate) struct PerPeer<K>(Mutex<Vec<(K, Pace)>>);
+
+impl<K: PartialEq> PerPeer<K> {
+    pub(crate) const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    pub(crate) fn admit(&self, peer: K) -> Option<u64> {
+        self.admit_at(peer, Instant::now())
+    }
+
+    fn admit_at(&self, peer: K, now: Instant) -> Option<u64> {
+        let mut peers = crate::lock(&self.0);
+        if let Some((_, pace)) = peers.iter_mut().find(|(known, _)| *known == peer) {
+            return pace.admit(now);
         }
-        window.next = Some(now + INTERVAL);
-        Some(std::mem::take(&mut window.held))
+        if peers.len() == PEERS {
+            peers.retain(|(_, pace)| pace.next.is_some_and(|next| now < next));
+        }
+        (peers.len() < PEERS).then(|| {
+            peers.push((peer, Pace { next: Some(now + INTERVAL), held: 0 }));
+            0
+        })
     }
 }
 
@@ -303,5 +334,23 @@ mod tests {
             ""
         );
         assert_eq!(error, expected);
+    }
+
+    #[test]
+    fn each_peer_writes_once_a_minute_counting_the_lines_held_back_and_at_most_sixty_four_are_paced() {
+        let paced = PerPeer::new();
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        assert_eq!(paced.admit_at(0, at(0)), Some(0));
+        assert_eq!(paced.admit_at(0, at(30)), None);
+        assert_eq!(paced.admit_at(1, at(30)), Some(0), "each peer has its own minute");
+        assert_eq!(paced.admit_at(0, at(59)), None);
+        assert_eq!(paced.admit_at(0, at(60)), Some(2));
+        for peer in 2..PEERS {
+            assert_eq!(paced.admit_at(peer, at(61)), Some(0));
+        }
+        assert_eq!(paced.admit_at(PEERS, at(61)), None, "no slot while every peer's minute runs");
+        assert_eq!(paced.admit_at(PEERS, at(90)), Some(0), "the slot of the peer whose minute ended");
+        assert_eq!(crate::lock(&paced.0).len(), PEERS);
     }
 }
