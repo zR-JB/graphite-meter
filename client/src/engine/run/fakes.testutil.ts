@@ -1,7 +1,7 @@
 // Fakes for driving a real run: page time that moves only when a test says so, and servers whose lanes report at a
 // fixed rate. Tests of the run and of the views' model share them.
-import type { Checkpoint } from "../measure/aggregate";
 import type {
+  Checkpoint,
   Discovery,
   FetchTarget,
   PreparedServer,
@@ -73,15 +73,14 @@ export interface Peer {
   measure?(events: StageEvents, activity: Activity): void;
   finish?(events: StageEvents): void | Promise<void>;
   discard?(events: StageEvents, incomplete: boolean): void;
-  checkpoint?(): Promise<Checkpoint | null> | undefined;
+  checkpoint?(signal: AbortSignal): Promise<Checkpoint | null> | undefined;
   /** A measuring checkpoint answers the count at the moment it was asked, this long after. */
   checkpointLagMs?: number;
   replaceUpload?(signal: AbortSignal): Promise<void>;
-  /** The lanes report what they counted but had not reported yet. */
-  /** May answer with the clock time its count stands at. */
+  /** The lanes report what they counted but had not reported yet, and may answer the time their count stands at. */
   flush?(events: StageEvents, cutoff: number): void | number | Promise<void | number>;
   receives?: false;
-  /** Whether the server's login or grant has ended, as its auth check answers. */
+  /** Whether the server's sign-in or grant has ended, as its auth check answers. */
   signedOut?: boolean;
 }
 
@@ -156,10 +155,10 @@ export function resources(peer: Peer, setup: StageSetup, calls: string[], clock:
       peer.discard?.(events, incomplete);
     },
     // A receiver that is absent, or silent at this moment, answers no checkpoint either.
-    checkpoint() {
+    checkpoint(signal) {
       const answer = peer.receives === false || peer.silent?.(activity, clock.t - started, "up") ? null : receiver();
       return (
-        peer.checkpoint?.() ??
+        peer.checkpoint?.(signal) ??
         (measuring && peer.checkpointLagMs
           ? new Promise<Checkpoint | null>((resolve) => clock.after(peer.checkpointLagMs!, () => resolve(answer)))
           : Promise.resolve(answer))

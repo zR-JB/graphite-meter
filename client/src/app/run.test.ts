@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { Run } from "../engine/run/run";
-import { FakeClock, prepared, resources, type Peer } from "../engine/run/testkit";
+import { FakeClock, prepared, resources, type Peer } from "../engine/run/fakes.testutil";
 import type { TestConfig } from "../engine/types";
 import { computed, effect, signal } from "../lib/signal";
 import { createPreferences, DEFAULT_CONFIG } from "./preferences";
@@ -87,17 +87,6 @@ test("a start that prepares no server fails with words", async () => {
   expect([h.run.preparation(), h.run.startError()]).toEqual(["failed", "Connection check failed"]);
 });
 
-test("planning upload traffic mid-run needs receiver checkpoints, and a refusal changes nothing", async () => {
-  const h = setup(only({ download: true }, { downloadMs: 2_000 }));
-  h.run.toggle();
-  await h.clock.advance(500);
-  expect(h.run.toggleStage("bidirectional")).toBe(false);
-  expect(h.run.refusal()).toContain("Receiver checkpoint support is required for uploads");
-  expect(h.run.startError()).toBe("");
-  expect(h.preferences.config().stages.bidirectional).toBe(false);
-  expect(h.run.plan()?.stages.bidirectional).toBe(false);
-});
-
 test("a gauge-only change mid-run never reaches the run", async () => {
   const reconfigure = spyOn(Run.prototype, "reconfigure");
   try {
@@ -157,11 +146,12 @@ test("the gauge maximum changes while a start prepares, and the start goes on", 
 });
 
 test("a refusal speaks only for the change that caused it", async () => {
-  const h = setup(only({ download: true }, { downloadMs: 2_000 }));
+  const h = setup(only({ download: true }, { downloadMs: 2_000 }), { fits: () => false });
   h.run.toggle();
   await h.clock.advance(500);
-  expect(h.run.toggleStage("bidirectional")).toBe(false);
-  expect(h.run.refusal()).not.toBe("");
+  expect(h.run.configure({ duration: { ...h.preferences.config().duration, downloadMs: 4_000 } })).toBe(false);
+  expect(h.run.refusal()).toBe("This change would extend the test beyond the current sign-in.");
+  expect(h.run.plan()?.duration.downloadMs).toBe(2_000);
   expect(h.run.configure({ adaptive: true })).toBe(true);
   expect(h.run.refusal()).toBe("");
 });

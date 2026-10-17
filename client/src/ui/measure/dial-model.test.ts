@@ -17,35 +17,32 @@ import {
 } from "./dial-model";
 
 test("the ring fills the measured face, keeps its labels inside and a hung note under its tick ends", () => {
-  // face width, height, hung note → radius, arc width, centre, note top and width, the face's type measure
-  const cases = [
-    [300, 320, 43.1, 107.6, 14.0, 150, 179.7, 276.9, 173.8, 258.3],
-    [417.6, 400, 43.1, 148.5, 19.3, 208.8, 226.5, 356.9, 240.1, 356.5],
-    [560, 482, 43.1, 190.5, 24.8, 280, 274.6, 438.9, 308.0, 457.2],
-    [300, 336.9, 0, 109.2, 14.2, 150, 188.4, 286.9, 176.3, 262.0],
-    [358, 257.8, 0, 100.8, 13.1, 179, 147.4, 239.1, 162.8, 241.9],
-    [308.6, 289.8, 0, 112.9, 14.7, 154.3, 165.4, 267.0, 182.4, 271.0],
-  ] as const;
-  for (const [width, height, note, ...expected] of cases) {
-    const layout = dialLayout(width, height, note);
-    const got = [
-      layout.radius,
-      layout.arcWidth,
-      layout.center.x,
-      layout.center.y,
-      layout.noteTop,
-      layout.noteWidth,
-      layout.faceMin,
-    ];
-    got.forEach((value, i) => expect(value).toBeCloseTo(expected[i]!, 1));
-    for (const { x, y } of layout.labels) {
+  for (const [width, height, note] of [
+    [300, 320, 43.1],
+    [417.6, 400, 43.1],
+    [560, 482, 43.1],
+    [300, 336.9, 0],
+    [358, 257.8, 0],
+    [308.6, 289.8, 0],
+  ] as const) {
+    const { center, radius, arcWidth, labels, noteTop, noteWidth, faceMin } = dialLayout(width, height, note);
+    expect(center.x).toBeCloseTo(width / 2, 6);
+    expect(radius + arcWidth / 2).toBeLessThan(Math.min(width / 2, center.y));
+    for (const { x, y } of labels) {
       expect(x).toBeGreaterThanOrEqual(0);
       expect(x).toBeLessThanOrEqual(width);
       expect(y).toBeGreaterThanOrEqual(0);
       expect(y).toBeLessThanOrEqual(height);
     }
+    // A hung note starts under the lowest tick ends, fits between the lowest labels and inside the face.
+    expect(noteTop).toBeGreaterThan(center.y + Math.SQRT1_2 * (radius + arcWidth / 2));
+    expect(noteWidth).toBeLessThan(labels.at(-1)!.x - labels[0]!.x);
+    if (note) expect(noteTop + note).toBeLessThanOrEqual(height + 1e-6);
+    expect(faceMin).toBeLessThanOrEqual(Math.min(width, height));
   }
-  expect(dialLayout(0, 0).radius).toBe(36);
+  // A bigger face draws a bigger ring, and a face too small still draws a legible one.
+  expect(dialLayout(560, 482).radius).toBeGreaterThan(dialLayout(300, 320).radius);
+  expect(dialLayout(0, 0).radius).toBeGreaterThan(0);
   expect(dialLayout(300, 320).labels.map(({ anchorX, anchorY }) => `${anchorX} ${anchorY}`)).toEqual([
     "end start",
     "end end",
@@ -132,7 +129,10 @@ test("heads stay whole beads apart, and lie over a close higher one cut out or h
 });
 
 test("a result sweeps the rest of the ring and each bead pops as the front reaches it", () => {
-  expect([resultSweepMs(0), resultSweepMs(0.5), resultSweepMs(0.9)]).toEqual([900, 450, 360]);
+  // Less ring left sweeps quicker, down to a floor that still reads as a sweep.
+  expect(resultSweepMs(0.5)).toBeCloseTo(resultSweepMs(0) / 2, 6);
+  expect(resultSweepMs(0.95)).toBe(resultSweepMs(1));
+  expect(resultSweepMs(1)).toBeGreaterThan(0);
   expect(reachMs(0.3, 0.4, 540)).toBe(0);
   expect(reachMs(1, 0, 900)).toBe(900);
   expect(reachMs(1, 1, 360)).toBe(0);

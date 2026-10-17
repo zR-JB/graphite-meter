@@ -29,10 +29,10 @@ export function hostKind(host: string): string {
   return "name";
 }
 
-export interface ReportSources {
+interface ReportSources {
   /** The page's address, which relative server URLs resolve against. */
   page: string;
-  /** Every server the report can mention: the catalogue's, as discovery names them, and the run's. */
+  /** Every server the report can mention: the catalog's, as discovery names them, and the run's. */
   servers: readonly { id: string; url: string; name: string; location?: string }[];
   /** The addresses servers saw for this browser, scrubbed from free text too. */
   clientIps: readonly string[];
@@ -50,7 +50,7 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
     if (!hosts.has(key)) hosts.set(key, `server-${hosts.size + 1}`);
     return hosts.get(key)!;
   };
-  // A server listed twice (by the catalogue and as discovery names it) keeps its number.
+  // A server listed twice (by the catalog and as discovery names it) keeps its number.
   const ids = [...new Set(servers.map(({ id }) => id))];
   for (const server of servers) {
     const number = ids.indexOf(server.id) + 1;

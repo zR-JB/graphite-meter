@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { SERIES_LIMIT, type LatencyBucket } from "../engine/measure/buckets";
-import { compactThroughput, idleBucket, upsertLatency, type ThroughputSample } from "./series";
+import { appendThroughput, idleBucket, upsertLatency, type ThroughputSample } from "./series";
 
 const bucket = (startT: number, endT: number, rtt: number, continuityId = 0): LatencyBucket => ({
   ...idleBucket(startT, rtt, false),
@@ -47,13 +47,12 @@ test("throughput compaction keeps the peak, the dip and both ends", () => {
     stage: "download",
     continuityId: 0,
   });
-  const history = Array.from({ length: 100 }, (_, i) => rate(i * 10, 100));
-  history[40] = rate(400, 900);
-  history[60] = rate(600, 1);
-  compactThroughput(history, 0, 20);
-  expect(history.length).toBeLessThanOrEqual(20);
+  const history: ThroughputSample[] = [];
+  const last = 2 * SERIES_LIMIT;
+  for (let i = 0; i <= last; i++) appendThroughput(history, rate(i * 10, i === 400 ? 900 : i === 600 ? 1 : 100), 0);
+  expect(history.length).toBeLessThanOrEqual(SERIES_LIMIT);
   expect(history.map(({ bytesPerSec }) => bytesPerSec)).toEqual(expect.arrayContaining([900, 1]));
-  expect([history[0]!.t, history.at(-1)!.t]).toEqual([0, 990]);
+  expect([history[0]!.t, history.at(-1)!.t]).toEqual([0, last * 10]);
 });
 
 test("a late revision after compaction replaces its bucket instead of adding to a merge", () => {

@@ -1,10 +1,10 @@
 // One server's resources for one stage: its download and upload carriers, the upload receiver and the probe channel,
 // with the readiness, stalls and failure latch that stand between them and the run. A failure or a sign-in that ends
 // the stage reaches the run once: as prepare()'s rejection while that runs, as an event after.
-import { readJSON, uploadSession } from "../../protocol/documents";
+import { readJSON, release, uploadSession } from "../../protocol/documents";
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
-import { needsPings } from "../net/budget";
+import { needsPings } from "../net/streams";
 import {
   CADENCE_MS,
   ServerBusyError,
@@ -26,7 +26,7 @@ import { Carrier, type CarrierHost, type CarrierPlan } from "./carrier";
 import { ESTABLISH_MS, refused } from "./endings";
 import { openProbeChannel } from "./probes";
 import { Receiver, type ReceiverHost } from "./receiver";
-import { abortable, delay } from "./wait";
+import { abortable, delay } from "../run/clock";
 
 /** Readiness gets a dial's budget and a margin for the workers to report within it. */
 const READY_MS = ESTABLISH_MS + 500;
@@ -45,7 +45,7 @@ class Stage implements StageResources {
   readonly #released = new AbortController();
   #measuring = false;
   /** Throughput failed or its sign-in ended: its carriers are gone for good. */
-  #ended = false;
+  #throughputEnded = false;
   #latencyEnded = false;
   #down: Carrier | null = null;
   #up: Carrier | null = null;
@@ -112,7 +112,7 @@ class Stage implements StageResources {
   }
 
   async replaceUpload(signal: AbortSignal): Promise<void> {
-    if (!this.#receiver || this.#ended || this.#released.signal.aborted) return;
+    if (!this.#receiver || this.#throughputEnded || this.#released.signal.aborted) return;
     this.#receiver.close();
     this.#up?.release();
     this.#receiver = this.#up = null;
@@ -143,7 +143,7 @@ class Stage implements StageResources {
       this.#setup.bus.current = null;
     }
     this.#released.abort();
-    this.#ended = true;
+    this.#throughputEnded = true;
     this.#releaseThroughput();
   }
 
@@ -202,7 +202,7 @@ class Stage implements StageResources {
   async #prepareUpload(signal: AbortSignal): Promise<Receiver> {
     const { auth, throughput } = this.#setup.server;
     const id = await this.#mintUpload(signal);
-    if (this.#ended) throw new Error("throughput already ended");
+    if (this.#throughputEnded) throw new Error("throughput already ended");
     const carried = throughput.target.transport !== "fetch-stream";
     const receiver = new Receiver(this.#receiverHost, auth, throughput.fetch.origin, id, carried);
     this.#receiver = receiver;
@@ -224,12 +224,12 @@ class Stage implements StageResources {
       });
     } catch (cause) {
       if (cause instanceof SignInRequired || signal.aborted) throw cause;
-      // A broken request may be the login or grant ending; the check, too, ends with the budget.
+      // A broken request may be the sign-in or grant ending; the check, too, ends with the budget.
       if (await abortable(this.#signedOut(), signal)) throw new SignInRequired(server);
       throw new Error("upload session could not be established", { cause });
     }
     if (!response.ok) {
-      response.body?.cancel().catch(() => {});
+      release(response);
       if (refused(response).reason === "server-busy") throw new ServerBusyError("Server refused the upload as busy");
       throw new Error(`upload session returned HTTP ${response.status}`);
     }
@@ -240,7 +240,7 @@ class Stage implements StageResources {
 
   /** One direction's carrier, opening its lanes now; none once throughput ended. */
   #carrier(direction: Direction, receiver?: Receiver): Carrier | null {
-    if (this.#ended) return null;
+    if (this.#throughputEnded) return null;
     const { server, streams, uploadLanes, gating, seed } = this.#setup;
     const { auth } = server;
     const { target, fetch } = server.throughput;
@@ -304,12 +304,12 @@ class Stage implements StageResources {
     const { events } = this.#setup;
     return {
       bytes: (bytes) => {
-        if (this.#ended) return;
+        if (this.#throughputEnded) return;
         if (this.#measuring) events.download(bytes);
         else events.warmupDownload(bytes);
       },
       posted: (lane, bytes, elapsedMs) => {
-        if (!this.#ended) events.uploadHint(lane, bytes, elapsedMs);
+        if (!this.#throughputEnded) events.uploadHint(lane, bytes, elapsedMs);
       },
       record: (record) => this.#receiver?.record(record),
       // Only a lane that reopened proves a download moves again: bytes a lane read before its own break arrive after
@@ -326,7 +326,7 @@ class Stage implements StageResources {
   readonly #receiverHost: ReceiverHost = {
     now: () => this.#setup.now(),
     observed: (checkpoint, grew) => {
-      if (this.#ended) return;
+      if (this.#throughputEnded) return;
       if (this.#measuring) this.#setup.events.receiver(checkpoint);
       else this.#setup.events.warmupReceiver(checkpoint);
       if (grew) this.#progress("up");
@@ -336,8 +336,8 @@ class Stage implements StageResources {
   };
 
   /** Settles a lane's or the feed's ending: a sign-in, a rotation the run decides, a failure, or a stall and a
-      reopen after `delayMs`. A broken one also checks the login or grant meanwhile, which releases throughput if it
-      ended: a check can take seconds, longer than the run's silence rule. */
+      reopen after `delayMs`. A broken one also checks the sign-in or grant meanwhile, which can take longer than the
+      run's silence rule. */
   async #reopen(
     direction: Direction,
     label: string,
@@ -346,7 +346,7 @@ class Stage implements StageResources {
     delayMs: number,
     signal: AbortSignal,
   ): Promise<boolean> {
-    if (this.#ended || signal.aborted) return false;
+    if (this.#throughputEnded || signal.aborted) return false;
     if (ending.reason === "sign-in-required") {
       this.#signIn("throughput");
       return false;
@@ -364,10 +364,10 @@ class Stage implements StageResources {
     this.#stall(direction, stall);
     if (broken) void this.#signedOut().then((signedOut) => signedOut && this.#signIn("throughput"));
     await delay(delayMs, signal);
-    return !signal.aborted && !this.#ended;
+    return !signal.aborted && !this.#throughputEnded;
   }
 
-  /** Whether the login or grant ended; a revocation mid-outage still shows within one more check. */
+  /** Whether the sign-in or grant ended; a revocation mid-outage still shows within one more check. */
   #signedOut(): Promise<boolean> {
     const at = this.#setup.now();
     if (this.#signInCheck && at - this.#signInCheck.at < SIGN_IN_CHECK_MS) return this.#signInCheck.ended;
@@ -392,9 +392,9 @@ class Stage implements StageResources {
   }
 
   #signIn(role: Role): void {
-    if (this.#released.signal.aborted || (role === "throughput" ? this.#ended : this.#latencyEnded)) return;
+    if (this.#released.signal.aborted || (role === "throughput" ? this.#throughputEnded : this.#latencyEnded)) return;
     if (role === "throughput") {
-      this.#ended = true;
+      this.#throughputEnded = true;
       this.#releaseThroughput();
     } else this.#latencyEnded = true;
     this.#notify();
@@ -405,8 +405,8 @@ class Stage implements StageResources {
   }
 
   #fail(reason: FailureReason, message: string): void {
-    if (this.#released.signal.aborted || this.#ended) return;
-    this.#ended = true;
+    if (this.#released.signal.aborted || this.#throughputEnded) return;
+    this.#throughputEnded = true;
     this.#releaseThroughput();
     if (this.#unprepared) this.#unprepared(new StageFailure(reason, message));
     else this.#setup.events.failed(reason, message);

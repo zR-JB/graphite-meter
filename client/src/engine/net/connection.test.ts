@@ -2,9 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { effect, signal } from "../../lib/signal";
 import type { CatalogEntry } from "../../protocol/documents";
 import type { ProbeOutcome, ServerAuth } from "../types";
-import { grantAuth, publicAuth } from "./auth";
+import { grantAuth } from "./auth";
 import { createConnection, type ConnectionEnv } from "./connection";
-import { FakeBuses, fakeNet, h, page, preflight, PROBE, ws } from "./fakes";
+import { FakeBuses, fakeNet, h, page, preflight, PROBE, publicAuth, ws } from "./fakes.testutil";
 import { createLimiter } from "./limiter";
 import { createPageSession } from "./page";
 import { parseSelection } from "./paths";
@@ -36,7 +36,6 @@ function connect(
     latencyServer: signal(shown ? entry.id : null),
     selections: { throughput: signal(parseSelection("auto")), latency: signal(parseSelection("auto")) },
     latencyNeeded: signal(latency),
-    checkpoints: signal(false),
     idleLatency: (_: string, outcomes: readonly ProbeOutcome[]) => idle.push(...outcomes),
     now,
   } satisfies ConnectionEnv;

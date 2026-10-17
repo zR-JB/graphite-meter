@@ -11,7 +11,7 @@ function channel(ended: boolean) {
   const events: [keyof ProbeChannelEvents, ...unknown[]][] = [];
   const auth: ServerAuth = {
     kind: "grant",
-    deadline: null,
+    left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch: async () => new Response(null),
     ticket: (origin, route) => ({ url: `${origin}/ws/session?target=${route}`, request: auth.request("", "POST") }),

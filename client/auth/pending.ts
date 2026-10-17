@@ -6,19 +6,13 @@ type Page = Pick<
   "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
 >;
 
-// A native sign-in POST leaves a dead spinner: password verification is deliberately slow, and the browser freezes
-// animations the instant a navigation commits. These forms post with fetch, so a refusal swaps the card in place and a
-// success follows the redirect; any other form, such as a provider's sign-in, submits natively.
+// A native POST would freeze the busy animation for the whole deliberately slow password check; other forms, such as a
+// provider's sign-in, submit natively.
 const IN_PLACE = new Set(["/auth/password", "/auth/cli/approve", "/auth/browser/approve"]);
 /** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
 const SUBMIT_MS = 20_000;
 const UNREACHABLE = "Could not reach the server. Try again.";
 const UNANSWERED = "The server did not answer in time. Reload to see whether it went through, or try again.";
-
-/** A refusal redirects back to the page in view (same path, an error query); a success to another page. */
-export function leftThisPage(response: Pick<Response, "redirected" | "url">, here: Pick<Location, "pathname">) {
-  return response.redirected && new URL(response.url).pathname !== here.pathname;
-}
 
 export function install({
   document,
@@ -30,7 +24,7 @@ export function install({
   setTimeout,
   clearTimeout,
 }: Page): void {
-  // Filled from the address bar, so a visitor sees which server asks, and nothing is disclosed.
+  // From the address bar, so a visitor sees which server asks and the page discloses nothing.
   const wake = (root: ParentNode) => {
     for (const line of root.querySelectorAll("[data-host]")) line.textContent = location.host;
     for (const key of root.querySelectorAll<HTMLElement>("[data-reveal]")) key.hidden = false;
@@ -41,10 +35,16 @@ export function install({
     key.setAttribute("aria-pressed", String(shown));
     key.setAttribute("aria-label", shown ? "Hide password" : "Show password");
   };
+  // aria-disabled, not disabled: a disabled button would drop the focus it holds.
   const setBusy = (form: HTMLFormElement, busy: boolean) => {
-    if (busy) form.setAttribute("data-busy", "1");
-    else form.removeAttribute("data-busy");
-    for (const button of form.querySelectorAll("button")) button.disabled = busy;
+    const submit = form.querySelector("[type=submit]");
+    if (busy) {
+      form.setAttribute("aria-busy", "true");
+      submit?.setAttribute("aria-disabled", "true");
+    } else {
+      form.removeAttribute("aria-busy");
+      submit?.removeAttribute("aria-disabled");
+    }
   };
   // One fixed sentence above the form, which stays usable: nothing a failing hop answered is shown.
   const unreachable = (form: HTMLFormElement, text = UNREACHABLE) => {
@@ -80,7 +80,7 @@ export function install({
 
   document.addEventListener("submit", (event) => {
     const form = event.target as HTMLFormElement;
-    if (form.hasAttribute("data-busy")) {
+    if (form.hasAttribute("aria-busy")) {
       event.preventDefault();
       return;
     }
@@ -90,7 +90,7 @@ export function install({
     const action = new URL(form.action, location.href);
     if (action.origin !== location.origin || !IN_PLACE.has(action.pathname)) return;
     event.preventDefault();
-    // URL-encoded, not multipart: both servers read only that.
+    // URL-encoded, not multipart: the server reads only that.
     const body = new URLSearchParams();
     for (const [name, value] of new FormData(form)) if (typeof value === "string") body.append(name, value);
     // The answer's body counts against the same bound; nothing is posted again on its own.
@@ -98,9 +98,8 @@ export function install({
     const bound = setTimeout(() => answer.abort(), SUBMIT_MS);
     fetch(action, { method: "POST", body, credentials: "same-origin", redirect: "follow", signal: answer.signal })
       .then(async (response) => {
-        // The app document goes unparsed: DOMParser checks its inline styles against this page's strict CSP and
-        // logs a spurious violation.
-        if (leftThisPage(response, location)) {
+        // A success leaves this path and goes unparsed: parsing the app would report CSP violations for its styles.
+        if (response.redirected && new URL(response.url).pathname !== location.pathname) {
           location.assign(response.url);
           return;
         }

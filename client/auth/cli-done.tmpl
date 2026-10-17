@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <!-- icon -->
-    <title>Graphite Meter — Client approved</title>
+    <title>{{if .Browser}}Browser client approved{{else}}Terminal client approved{{end}} · Graphite Meter</title>
     {{template "theme"}}
     <style>{{.Styles}}</style>
   </head>
@@ -13,10 +13,10 @@
       <!-- brand -->
       {{if .Browser}}
       <h1>Browser client approved</h1>
-      <p>The site you approved can now run measurements as you. You can close this tab and return to it.</p>
+      <p>The site you approved can now run tests as you. You can close this tab and return to it.</p>
       {{else}}
       <h1>Terminal client approved</h1>
-      <p>Your terminal can now run measurements as you. You can close this tab and return to it.</p>
+      <p>Your terminal can now run tests as you. You can close this tab and return to it.</p>
       {{end}}
     </main>
   </body>

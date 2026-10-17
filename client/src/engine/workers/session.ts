@@ -1,10 +1,10 @@
-// One WebTransport session per direction (api/wire.md#webtransport-routes): server-opened download streams or a
-// datagram flood counted into one report window, or client upload streams or datagrams with the server's progress
-// feed relayed. The worker dials within one budget, ticket included, redials on its owner's command, and finalizes
-// an upload when it stops.
+// One WebTransport session per direction (api/wire.md#webtransport-routes): download streams or datagrams counted,
+// or upload streams or datagrams sent with the server's progress feed relayed; it finalizes an upload when it stops.
+import { release } from "../../protocol/documents";
 import type { EndReport, FeedRecord, SessionCommand, SessionReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
-import { aborted, Tickets, withToken } from "../lanes/dial";
+import { Tickets, withToken } from "../lanes/dial";
+import { abortable } from "../run/clock";
 import { CLOSE_GRACE_MS, ESTABLISH_MS, lost, refusal, sessionClosed } from "../lanes/endings";
 import { FINAL_GRACE_MS, readRecords } from "../lanes/records";
 
@@ -122,7 +122,7 @@ class Session {
     );
     try {
       // A black-holed handshake can leave `ready` and `closed` pending, so the budget ends the dial.
-      await Promise.race([transport.ready, aborted(budget)]);
+      await abortable(transport.ready, budget);
     } catch (error) {
       return this.#end(budget.aborted ? UNESTABLISHED : { type: "broken", detail: String(error) });
     } finally {
@@ -185,8 +185,7 @@ class Session {
   /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session; a feed that ends
       before it can be recovered by a fresh session, as the server reopens the feed. */
   async #follow(stream: ReadableStream<Uint8Array>): Promise<void> {
-    // Progress counts are cumulative, so a peer flooding them reaches the page as the newest every RECORD_MS rather
-    // than as a queue of messages; every other record goes at once, after the progress it follows.
+    // Progress counts are cumulative: a flood reaches the page as its newest; every other record goes at once.
     let held: FeedRecord | null = null;
     let sentAt = Number.NEGATIVE_INFINITY;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -271,7 +270,7 @@ class Session {
     try {
       const signal = AbortSignal.timeout(FINAL_GRACE_MS);
       const response = await fetch(url, { ...request, method: "DELETE", cache: "no-store", signal });
-      response.body?.cancel().catch(ignore);
+      release(response);
       if (!response.ok || !feeding) return;
     } catch {
       return;

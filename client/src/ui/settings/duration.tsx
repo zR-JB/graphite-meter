@@ -8,6 +8,7 @@ import { For, Show } from "../../lib/dom";
 import { computed, effect, type Read, type Signal } from "../../lib/signal";
 import { fmtDuration, fmtStageTime, parseDuration } from "../../view/format";
 import { PHASE, STAGE, TIP } from "../../view/words";
+import { announceChanges } from "../kit/announce";
 import { Roll } from "../kit/roll";
 import { Switch } from "../kit/switch";
 import { tip } from "../kit/tip";
@@ -53,8 +54,6 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
     return (
       <Stepper
         label={() => label}
-        noun="time"
-        verbs={["Shorten", "Lengthen"]}
         value={ms(key)}
         min={min}
         // A stage stays within what every selected server admits.
@@ -73,10 +72,11 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
       <span class="stage-name" data-tone={stage}>
         {STAGE[stage].label}
       </span>
-      {stepper(`${stage}Ms`, `${STAGE[stage].label} stage`)}
+      {stepper(`${stage}Ms`, `${STAGE[stage].label} stage time`)}
     </div>
   );
   const warmup = ms("warmupMs");
+  announceChanges(props.limitError);
   const strip = computed(() => (config().stages.bidirectional ? STRIP_BIDIRECTIONAL : STRIP));
 
   return (
@@ -140,7 +140,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
             when={() => mode() === "custom"}
             fallback={() => <Roll text={() => fmtStageTime(warmup())} rank={warmup} />}
           >
-            {() => stepper("warmupMs", "warmup")}
+            {() => stepper("warmupMs", `${PHASE.warmup} time`)}
           </Show>
         </div>
         <Switch
@@ -163,7 +163,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
       </div>
       <Show when={props.limitError}>
         {(text) => (
-          <p class="notice" data-tone="warn" role="status">
+          <p class="notice" data-tone="warn">
             {text}
           </p>
         )}

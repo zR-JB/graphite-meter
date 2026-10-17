@@ -1,4 +1,4 @@
-// Which advertised target a saved path choice names on one server: the origins a catalogue entry may use, selections,
+// Which advertised target a saved path choice names on one server: the origins a catalog entry may use, selections,
 // classification against this page's browser policy, Automatic's ranking and resolution, and portable choices.
 import type { CatalogEntry, Preflight } from "../../protocol/documents";
 import type {
@@ -26,28 +26,28 @@ export type Selection =
   | { kind: "transport"; transport: Transport }
   | { kind: "origin"; origin: string; mechanism: "" | "::wt" | "::wtdg" };
 
-const PROTOCOLS: readonly string[] = ["http1", "http2", "http3", "negotiated"];
-const TRANSPORTS: readonly string[] = ["fetch-stream", "websocket", "webtransport", "webtransport-datagram"];
-
 export const PROTOCOL_LABEL: Record<HttpProtocol, string> = {
   http1: "HTTP/1.1",
   http2: "HTTP/2",
   http3: "HTTP/3",
   negotiated: "Negotiated HTTP",
 };
+/** In the order pickers list them. */
 const TRANSPORT_LABEL: Record<Transport, string> = {
   "fetch-stream": "HTTP",
   websocket: "WebSocket",
   webtransport: "WebTransport",
   "webtransport-datagram": "WebTransport datagrams",
 };
+const PROTOCOLS: readonly string[] = Object.keys(PROTOCOL_LABEL);
+const TRANSPORTS = Object.keys(TRANSPORT_LABEL) as Transport[];
 
 export function parseSelection(text: string): Selection {
   if (text === "auto") return { kind: "auto" };
   const protocol = text.startsWith("protocol:") ? text.slice("protocol:".length) : "";
   if (PROTOCOLS.includes(protocol)) return { kind: "protocol", protocol: protocol as HttpProtocol };
   const transport = text.startsWith("transport:") ? text.slice("transport:".length) : "";
-  if (TRANSPORTS.includes(transport)) return { kind: "transport", transport: transport as Transport };
+  if ((TRANSPORTS as string[]).includes(transport)) return { kind: "transport", transport: transport as Transport };
   const mechanism = text.endsWith("::wtdg") ? "::wtdg" : text.endsWith("::wt") ? "::wt" : "";
   return { kind: "origin", origin: text.slice(0, text.length - mechanism.length), mechanism };
 }
@@ -104,8 +104,6 @@ export function originPolicy(origin: string, page: Pick<PageConfig, "origin" | "
   return null;
 }
 
-const PICKER_ORDER: readonly Transport[] = ["fetch-stream", "websocket", "webtransport", "webtransport-datagram"];
-
 function byOrigin<T extends Target>(
   advertised: readonly { baseUrl: string; transport: string; protocol?: string }[],
   discoveryOrigin: string,
@@ -125,7 +123,7 @@ function byOrigin<T extends Target>(
     else if (entry.targets[at]!.protocol === "negotiated") entry.targets[at] = next;
   }
   for (const entry of origins.values())
-    entry.targets.sort((a, b) => PICKER_ORDER.indexOf(a.transport) - PICKER_ORDER.indexOf(b.transport));
+    entry.targets.sort((a, b) => TRANSPORTS.indexOf(a.transport) - TRANSPORTS.indexOf(b.transport));
   return origins;
 }
 

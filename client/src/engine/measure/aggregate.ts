@@ -1,33 +1,16 @@
 // Coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers): intervals of fixed membership over common
 // boundaries, where downloads count client-consumed bytes on the client clock and uploads each receiver's bytes on
-// its own clock. The terminal clients share its vectors (api/aggregation.testvectors.json).
+// its own clock. The terminal client shares its vectors (api/aggregation.testvectors.json).
 import type { TransferStage } from "../run/schedule";
-import {
-  BUCKET_MS,
-  type Mark as SeriesMark,
-  RateBuckets,
-  SCORE_WINDOW_MS,
-  stillStable,
-  transferConfidence,
-} from "./stability";
-
-export type Direction = "down" | "up";
+import type { Checkpoint, Direction } from "../types";
+import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transferConfidence } from "./stability";
 
 /** Evidence must span this long on the client clock and on every receiver clock. */
-const MIN_EVIDENCE_MS = 800;
+export const MIN_EVIDENCE_MS = 800;
 const PEAK_WINDOW_MS = 500;
 /** Recent intervals a result keeps; older ones only count. */
 const INTERVAL_LIMIT = 128;
 const COMBINED = "";
-
-/** A receiver observation: an upload id's bytes and receiver nanoseconds, and when the client saw it. */
-export interface Checkpoint {
-  id: string;
-  bytes: number;
-  nanos: number;
-  requestedAtMs?: number;
-  receivedAtMs: number;
-}
 
 /** One instant across the participants: download counters and the latest receiver checkpoints. */
 export interface Boundary {
@@ -88,13 +71,13 @@ export interface ThroughputResult {
 }
 
 /** A stage direction's settled headline and the window it describes. */
-export interface Headline {
+interface Headline {
   result: ThroughputResult;
   window: AggregateWindow;
 }
 
 type Totals = Record<Direction, number>;
-type Series = Record<Direction, RateBuckets>;
+type Series = Record<Direction, RateSeries>;
 type Peaks = Map<string, Partial<Record<Direction, number>>>;
 
 /** Where a server last moved a direction: enough to end the interval there if it departs. */
@@ -103,8 +86,7 @@ interface Mark {
   full: AggregateWindow | null;
   headline: AggregateWindow | null;
   peaks: Peaks;
-  buckets: [RateBuckets, number, SeriesMark][];
-  stableAt: number | null;
+  series: [RateSeries, SeriesMark][];
 }
 
 /** A result kept from an interval the log let go: what a stage or a server measured stays measured. */
@@ -125,10 +107,8 @@ interface Open {
   quiet: Totals;
   /** Quiet time up to `stable`. */
   stableQuiet: Totals;
-  /** Where the steady stretch began, whose window each direction's total series opened then. */
-  stableAt: number | null;
   /** All directions together, for the early-finish score. */
-  combined: RateBuckets;
+  combined: RateSeries;
   total: Series;
   servers: Map<string, Series>;
   peakFrom: Boundary | null;
@@ -142,7 +122,7 @@ export const directions = (stage: TransferStage): Direction[] =>
 const rateOf = (window: AggregateWindow, dir: Direction) =>
   dir === "down" ? window.downBytesPerSec : window.upBytesPerSec;
 
-const series = (): Series => ({ down: new RateBuckets(), up: new RateBuckets() });
+const series = (): Series => ({ down: new RateSeries(), up: new RateSeries() });
 
 export class Aggregate {
   intervals: Interval[] = [];
@@ -200,8 +180,7 @@ export class Aggregate {
       wasStable: false,
       quiet: { down: 0, up: 0 },
       stableQuiet: { down: 0, up: 0 },
-      stableAt: null,
-      combined: new RateBuckets(SCORE_WINDOW_MS / BUCKET_MS),
+      combined: new RateSeries(SCORE_BUCKETS),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
       peakFrom: null,
@@ -226,8 +205,7 @@ export class Aggregate {
     }
     Object.assign(open.record, { endMs: end.boundary.atMs, full: end.full, headline: end.headline });
     open.peaks = end.peaks;
-    open.stableAt = end.stableAt;
-    for (const [buckets, count, mark] of end.buckets) buckets.truncate(count, mark);
+    for (const [rates, mark] of end.series) rates.restore(mark);
     if (!survivors.length) return;
     const latest = this.#latest;
     this.begin(stage, survivors, end.boundary.atMs, "dropout");
@@ -349,13 +327,13 @@ export class Aggregate {
 
   /** The early-finish score over the trailing four seconds of all directions together. */
   confidence() {
-    return transferConfidence(this.#open?.combined.rates ?? []);
+    return transferConfidence(this.#open?.combined.recent ?? []);
   }
 
   resetStability(): void {
     const open = this.#open;
     if (!open) return;
-    open.combined = new RateBuckets(SCORE_WINDOW_MS / BUCKET_MS);
+    open.combined = new RateSeries(SCORE_BUCKETS);
     open.wasStable = false;
     open.stable = null;
   }
@@ -368,17 +346,16 @@ export class Aggregate {
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     if (stable && !open.wasStable) {
       open.stableQuiet = { ...open.quiet };
-      open.stableAt = open.last?.atMs ?? open.record.startMs;
       for (const dir of directions(open.record.stage)) open.total[dir].openWindow();
     }
     open.wasStable = stable;
     return stable;
   }
 
-  /** Each direction's headline: the latest complete interval with enough evidence, and the window it came from.
-      `stable` prefers the steady window an early finish chose when it suffices for every direction, so the rate,
-      stability, quiet time and wire estimate of a stage describe one window, the one its interval keeps; the peak
-      spans the whole interval, never below the rate. */
+  /** Each direction's headline: the latest complete interval with enough evidence, and the window it came from,
+      which becomes that interval's headline. `stable` prefers the steady window an early finish chose when it
+      suffices for every direction, so the rate, stability, quiet time and wire estimate of a stage describe one
+      window; the peak spans the whole interval, never below the rate. */
   settle(stage: TransferStage, stable: boolean): Record<Direction, Headline | null> {
     const intervals = this.intervals.filter((interval) => interval.stage === stage);
     const dirs = directions(stage);
@@ -392,14 +369,14 @@ export class Aggregate {
         const rate = rateOf(window, dir);
         if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
-        const steadyWindow = open.stableAt === window.startMs && window.startMs !== record.startMs;
         return {
           window,
           result: {
             reportedBytesPerSec: rate,
             totalBytes: this.#stageTotal(stage, dir),
             peakBytesPerSec: Math.max(open.peaks.get(COMBINED)?.[dir] ?? 0, rate),
-            stabilityPct: open.total[dir].stability(steadyWindow),
+            // The steady window's moments opened where it began.
+            stabilityPct: open.total[dir].stability(window !== record.full),
             quietMs: window.quietMs?.[dir] ?? 0,
           },
         };
@@ -423,8 +400,7 @@ export class Aggregate {
 
   /** How long a stage's intervals span, from its first interval even past the interval limit. */
   coveredMs(stage: TransferStage): number {
-    const spans = this.intervals.filter((interval) => interval.stage === stage);
-    return spans.length ? spans.at(-1)!.endMs - (this.#evictedStart.get(stage) ?? spans[0]!.startMs) : 0;
+    return coveredMs(this.intervals, stage, this.#evictedStart.get(stage));
   }
 
   /** One server's share: the latest complete interval where its own component has enough evidence. */
@@ -492,14 +468,9 @@ export class Aggregate {
       full: record.full,
       headline: record.headline,
       peaks: new Map([...open.peaks].map(([id, peak]) => [id, { ...peak }])),
-      buckets: [open.total, ...open.servers.values()].flatMap((each) =>
-        directions(record.stage).map((dir): [RateBuckets, number, SeriesMark] => [
-          each[dir],
-          each[dir].buckets,
-          each[dir].mark,
-        ]),
+      series: [open.total, ...open.servers.values()].flatMap((each) =>
+        directions(record.stage).map((dir): [RateSeries, SeriesMark] => [each[dir], each[dir].mark]),
       ),
-      stableAt: open.stableAt,
     };
   }
 
@@ -521,6 +492,12 @@ export class Aggregate {
     for (const [server, totals] of this.#stageTotals.get(stage) ?? []) if (!id || server === id) sum += totals[dir];
     return sum;
   }
+}
+
+/** From a stage's first interval, or the start of the first one the log let go, to its last; gaps included. */
+export function coveredMs(intervals: readonly Interval[], stage: TransferStage, firstStart?: number): number {
+  const spans = intervals.filter((interval) => interval.stage === stage);
+  return spans.length ? spans.at(-1)!.endMs - (firstStart ?? spans[0]!.startMs) : 0;
 }
 
 const shortestMs = (window: AggregateWindow) =>

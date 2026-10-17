@@ -4,7 +4,7 @@ import { effect } from "../../lib/signal";
 import { serverLabel } from "../../view/words";
 import { Icon } from "./icon";
 
-export interface ScopeServer {
+interface ScopeServer {
   id: string;
   name: string;
   location?: string;

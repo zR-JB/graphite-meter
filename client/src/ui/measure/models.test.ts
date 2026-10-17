@@ -3,6 +3,8 @@ import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { LatencySummary } from "../../engine/measure/latency";
 import type { MultiServerResult } from "../../engine/run/result";
+import { MISSING } from "../../view/format";
+import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
 import { liveCard, serverIssues, settledCard, shownEvidence, type Evidence, type LiveEvidence } from "./cards-model";
 import { lanesAxisMs, nearestMetric, present, stepMetric, values } from "./lanes-model";
 import { Lane, monotoneTangents, replyBars } from "./strip-model";
@@ -120,16 +122,16 @@ const transfer = (bytesPerSec: number): ThroughputResult => ({
 const NOTHING: Evidence = { status: {}, download: null, upload: null, bidirectional: null, latency: null, idle: null };
 
 test("a card keeps the same facts from Start to its result, and a one-direction pair keeps its unit", () => {
-  const facts = (card: ReturnType<typeof settledCard>) => card.facts.map(({ label, value }) => `${label} ${value}`);
+  const facts = (card: ReturnType<typeof settledCard>) => card.facts.map(({ key, value }) => `${key} ${value}`);
   const download = settledCard("download", "partial", { ...NOTHING, download: transfer(50e6) }, BITS, true);
   expect([download.figure, download.unit, download.wire]).toEqual(["400.0", "Mbit/s", null]);
-  expect(facts(download)).toEqual(["Peak 440.0 Mbit/s", "Stability —", "Transferred 373.8 MB"]);
+  expect(facts(download)).toEqual(["peak 440.0 Mbit/s", `stability ${MISSING}`, "transferred 373.8 MB"]);
   const pending = liveCard("download", "upcoming", { own: false } as LiveEvidence, BITS);
-  expect(facts(pending)).toEqual(["Peak —", "Stability —", "Transferred —"]);
+  expect(facts(pending)).toEqual([`peak ${MISSING}`, `stability ${MISSING}`, `transferred ${MISSING}`]);
   expect([pending.status, pending.quiet, pending.word]).toEqual(["pending", true, null]);
   const lanes = { down: transfer(5e6), up: null, wire: null };
   const oneWay = settledCard("bidirectional", "failed", { ...NOTHING, bidirectional: lanes }, BITS, true);
-  expect([oneWay.figure, oneWay.pair, oneWay.unit]).toEqual(["—", { down: "40.00", up: "—" }, "Mbit/s"]);
+  expect([oneWay.figure, oneWay.pair, oneWay.unit]).toEqual([MISSING, { down: "40.00", up: MISSING }, "Mbit/s"]);
   const latency = settledCard(
     "latency",
     "complete",
@@ -138,7 +140,7 @@ test("a card keeps the same facts from Start to its result, and a one-direction 
     true,
   );
   expect([latency.figure, latency.unit, latency.jitter]).toEqual(["12.3", "ms", "0.8 ms"]);
-  expect(facts(latency)).toEqual(["Stability 94%", "Range 8.6–61.2 ms", "Replies 38", "Timeouts 5.0%"]);
+  expect(facts(latency)).toEqual(["stability 93.6%", "range 8.6–61.2 ms", "replies 38", "timeouts 5.0%"]);
 });
 
 test("a running card follows its own stage only, says when replies stop, and a stopped one keeps its last value", () => {
@@ -153,7 +155,12 @@ test("a running card follows its own stage only, says when replies stop, and a s
     ...extra,
   });
   const warming = liveCard("upload", "warmup", evidence({ own: false }), BITS);
-  expect([warming.status, warming.word?.label, warming.figure, warming.live]).toEqual(["active", "Running", "—", null]);
+  expect([warming.status, warming.word, warming.figure, warming.live]).toEqual([
+    "active",
+    STAGE_STATE.running,
+    MISSING,
+    null,
+  ]);
   const running = liveCard(
     "upload",
     "running",
@@ -161,13 +168,14 @@ test("a running card follows its own stage only, says when replies stop, and a s
     BITS,
   );
   expect([running.live, running.unit, running.spoken]).toEqual(["rate", "Mbit/s", "100.0 Mbit/s"]);
-  expect(running.facts.map(({ value }) => value)).toEqual(["16.00 Mbit/s", "—", "1.0 MB"]);
+  expect(running.facts.map(({ value }) => value)).toEqual(["16.00 Mbit/s", MISSING, "1.0 MB"]);
+  // Unanswered probes leave no figure to follow and are spoken in its place.
   const silent = liveCard("latency", "running", evidence({ lost: true }), BITS);
-  expect([silent.figure, silent.unit, silent.live, silent.spoken]).toEqual(["—", "timeout", null, "probe timeout"]);
+  expect([silent.figure, silent.live, !!silent.spoken]).toEqual([MISSING, null, true]);
   const stopped = liveCard("download", "stopped", evidence({ own: false, held: 25e6 }), BITS);
-  expect([stopped.status, stopped.figure, stopped.word?.label]).toEqual(["stopped", "200.0", "Stopped"]);
+  expect([stopped.status, stopped.figure, stopped.word]).toEqual(["stopped", "200.0", STAGE_STATE.stopped]);
   const pair = liveCard("bidirectional", "recovering", evidence({}), BITS);
-  expect([pair.status, pair.live, pair.word?.label]).toEqual(["recovering", "pair", "Recovering"]);
+  expect([pair.status, pair.live, pair.word]).toEqual(["recovering", "pair", STAGE_STATE.recovering]);
 });
 
 test("a server's issues name the stages each reason ended", () => {
@@ -187,8 +195,13 @@ test("a server's issues name the stages each reason ended", () => {
     ],
   } as unknown as MultiServerResult;
   expect(serverIssues(details, "a")).toEqual([
-    { server: "Oslo", stages: "Download, Loaded up", reason: "Stopped delivering data", throughput: ["download"] },
-    { server: "Oslo", stages: "Latency", reason: "Connection lost", throughput: [] },
+    {
+      server: "Oslo",
+      stages: `${STAGE.download.label}, ${POPULATION.upload}`,
+      reason: reasonLabel("timeout"),
+      throughput: ["download"],
+    },
+    { server: "Oslo", stages: STAGE.latency.label, reason: reasonLabel("connection-lost"), throughput: [] },
   ]);
 });
 

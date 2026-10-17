@@ -1,12 +1,9 @@
 // Rate buckets, steadiness and the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
 
-export const BUCKET_MS = 250;
+const BUCKET_MS = 250;
 /** The trailing window early finish scores. */
 export const SCORE_WINDOW_MS = 4_000;
-const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
-
-/** At most this many buckets in a series without a limit: past them pairs merge, so a day-long stage stays small. */
-const MAX_BUCKETS = 4_096;
+export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 
 /** Running statistics of 250 ms rates, updated one rate at a time (Welford): exact for any spread at any level. */
 interface Moments {
@@ -16,7 +13,7 @@ interface Moments {
   squares: number;
 }
 
-/** What `truncate` takes a series back to: its moments over every rate, and over the window open then. */
+/** What `restore` takes a series back to: its moments over every rate, and over the window open then. */
 export interface Mark {
   all: Moments;
   window: Moments | null;
@@ -24,43 +21,23 @@ export interface Mark {
 
 const fresh = (): Moments => ({ count: 0, mean: 0, squares: 0 });
 
-/** Byte and time evidence cut into fixed 250 ms rate buckets. Their spread is kept as running moments over every
-    rate and over a window opened at a point (a steady stretch), each centred on what it covers; the rates kept for
-    drawing are at most `limit` recent ones, or without a limit every bucket until MAX_BUCKETS of them merge in pairs
-    into buckets twice as long (17 minutes in), which the moments never see. */
-export class RateBuckets {
-  readonly rates: number[] = [];
-  /** 250 ms buckets per rate. */
-  width = 1;
+/** Byte and time evidence cut into fixed 250 ms rates: their spread as running moments over every rate and over a
+    window opened at a point (a steady stretch), and the latest `keep` rates themselves. */
+export class RateSeries {
+  /** The latest rates, at most `keep`. */
+  readonly recent: number[] = [];
   #bytes = 0;
   #ms = 0;
-  /** Base buckets gathered towards the next rate of `width` of them. */
-  #gathered = 0;
-  #gatheredRate = 0;
   #all = fresh();
   #window: Moments | null = null;
-  constructor(readonly limit = Infinity) {}
+  constructor(readonly keep = 0) {}
 
-  /** How long each rate spans. */
-  get bucketMs(): number {
-    return BUCKET_MS * this.width;
-  }
-
-  /** 250 ms buckets in the kept rates, the count `truncate` takes back to. */
-  get buckets(): number {
-    return this.rates.length * this.width;
-  }
-
-  /** The series now, as a mark `truncate` takes. */
   get mark(): Mark {
     return { all: { ...this.#all }, window: this.#window && { ...this.#window } };
   }
 
-  /** Takes the series back to an earlier mark: its kept rates to `buckets`, its moments to `mark`'s. */
-  truncate(buckets: number, mark?: Mark): void {
-    this.rates.length = Math.min(this.rates.length, Math.floor(buckets / this.width));
-    this.#gathered = this.#gatheredRate = 0;
-    if (!mark) return;
+  /** Takes the moments back to an earlier mark. */
+  restore(mark: Mark): void {
     this.#all = { ...mark.all };
     this.#window = mark.window && { ...mark.window };
   }
@@ -89,21 +66,12 @@ export class RateBuckets {
   #complete(rate: number): void {
     add(this.#all, rate);
     if (this.#window) add(this.#window, rate);
-    this.#gatheredRate += rate;
-    if (++this.#gathered < this.width) return;
-    this.rates.push(this.#gatheredRate / this.width);
-    this.#gathered = this.#gatheredRate = 0;
-    if (this.rates.length > this.limit) this.rates.shift();
-    if (this.rates.length === MAX_BUCKETS && this.limit === Infinity) this.#merge();
+    if (!this.keep) return;
+    this.recent.push(rate);
+    if (this.recent.length > this.keep) this.recent.shift();
   }
 
-  #merge(): void {
-    for (let i = 0; i < MAX_BUCKETS / 2; i++) this.rates[i] = (this.rates[2 * i]! + this.rates[2 * i + 1]!) / 2;
-    this.rates.length = MAX_BUCKETS / 2;
-    this.width *= 2;
-  }
-
-  /** stabilityPct of every 250 ms bucket, or of the open window's. */
+  /** stabilityPct of every 250 ms rate, or of the open window's. */
   stability(window = false): number {
     const m = window ? (this.#window ?? fresh()) : this.#all;
     if (m.count < 2 || !(m.mean > 0)) return 0;

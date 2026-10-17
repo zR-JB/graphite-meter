@@ -1,25 +1,11 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { SignInRequired, type RequestRecipe, type ServerAuth } from "../types";
-import {
-  approvalChallenge,
-  beginApproval,
-  exchangeGrant,
-  grantAuth,
-  initialAuth,
-  publicAuth,
-  sessionAuth,
-} from "./auth";
-import { fakeNet, MARKER, type Answer } from "./fakes";
+import { approvalChallenge, beginApproval, exchangeGrant, grantAuth, initialAuth } from "./auth";
+import { fakeNet, MARKER, page as publicPage, type Answer } from "./fakes.testutil";
 import { csrfHeaders, type PageConfig, type PageSession } from "./page";
 
-const page: PageConfig = {
-  origin: "https://meter.example",
-  secure: true,
-  auth: true,
-  historyDefault: false,
-  webTransport: "available",
-};
+const page: PageConfig = { ...publicPage, auth: true };
 const self: CatalogEntry = { id: "self", url: page.origin, name: "Meter", additionalOrigins: ["https://cdn.example"] };
 const peer: CatalogEntry = {
   id: "peer",
@@ -28,6 +14,8 @@ const peer: CatalogEntry = {
   additionalOrigins: ["https://cdn.example:8443"],
 };
 const session = { headers: (method: string) => csrfHeaders(method, "theme=dark; __Host-gm_csrf=a%2Bb") } as PageSession;
+const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, session);
+const sessionAuth = (entry: CatalogEntry, config: PageConfig, login: PageSession) => initialAuth(entry, config, login);
 const TOKEN = "t".repeat(43);
 /** A grant whose monotonic deadline is `deadline` and whose wall-clock expiry is `expires`. */
 const held = (deadline: number, expires = Infinity) => ({
@@ -134,7 +122,7 @@ test("the comparison code is base32 of the verifier hash's first five bytes, and
     [{ ...peer, url: "http://peer.example" }, page],
   ] as const)
     await expect(beginApproval(entry, browser)).rejects.toThrow(
-      "Open this interface over HTTPS to authorize a remote server",
+      "Open this interface over HTTPS to sign in to a remote server.",
     );
 });
 
@@ -200,7 +188,7 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
   const grant = (remainingMs: number, token = TOKEN): Answer => ({
     body: { token, remainingMs, maximumLifetimeMs: MAX },
   });
-  const invalid = "Invalid measurement grant";
+  const invalid = "Could not read the measurement grant.";
   for (const [answers, outcome] of [
     [
       [{ status: 202 }, "unreachable", { status: 503 }, grant(3_600_000)],
@@ -209,8 +197,8 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
     [[grant(0)], invalid],
     [[grant(8 * 3_600_000 + 1)], invalid],
     [[grant(3_600_000, "short")], invalid],
-    [[{ status: 429 }], "This server login has reached its limit of authorized clients."],
-    [[{ status: 400 }], "Approval exchange returned HTTP 400"],
+    [[{ status: 429 }], "This server's sign-in has reached its limit of authorized clients."],
+    [[{ status: 400 }], "Could not finish the sign-in (HTTP 400)."],
     [[{ status: 202 }], "Approval expired. Sign in again."],
   ] as const) {
     net?.restore();

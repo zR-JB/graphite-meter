@@ -10,25 +10,34 @@ test("a JSON body is read up to its bound and refused past it, 64 KiB unless nam
   expect(await readJSON(new Response(body), body.length)).toEqual(document);
 });
 
-test("the shared preflight and probe fixtures decode as Go and Rust read them", async () => {
+test("the shared preflight and probe fixtures decode", async () => {
   const golden = await json("preflight.golden.json");
   expect(preflight(golden)).toEqual(golden);
   const forward = await json("preflight.forward.golden.json");
-  const { throughput, latency } = preflight(forward.document).capabilities;
+  // The fixture predates the required stage limit.
+  const capabilities = { maxStageMs: 300_000, ...forward.document.capabilities };
+  const { throughput, latency } = preflight({ ...forward.document, capabilities }).capabilities;
   expect({ throughput, latency }).toEqual(forward.decoded);
   expect(probe(await json("probe.golden.json"))).toEqual(await json("probe.golden.json"));
 });
 
-test("a document with a malformed target, stage limit or text is refused whole", async () => {
+test("a document with a malformed target, capability, stage limit or text is refused whole", async () => {
   const golden = await json("preflight.golden.json");
+  const { maxStageMs, uploadCheckpoint, ...required } = golden.capabilities;
   const refused = [
     { ...golden, capabilities: { ...golden.capabilities, maxStageMs: 999 } },
+    { ...golden, capabilities: { ...required, maxStageMs } },
+    { ...golden, capabilities: { ...required, uploadCheckpoint } },
+    { ...golden, capabilities: { ...golden.capabilities, uploadCheckpoint: false } },
     { ...golden, capabilities: { ...golden.capabilities, latency: [{ baseUrl: ".", transport: "" }] } },
     {
       ...golden,
       capabilities: { ...golden.capabilities, latency: [{ baseUrl: "https://a.example/x", transport: "websocket" }] },
     },
-    { ...golden, server: { name: "evil‮txt" } },
+    ...["\u202e", "\u2066", "\u061c", "\u200f", "\u0007", "\u0085"].map((hidden) => ({
+      ...golden,
+      server: { name: `evil${hidden}txt` },
+    })),
     {
       ...golden,
       capabilities: { ...golden.capabilities, throughput: Array(33).fill(golden.capabilities.throughput[0]) },
@@ -37,7 +46,19 @@ test("a document with a malformed target, stage limit or text is refused whole",
   for (const document of refused) expect(() => preflight(document)).toThrow();
 });
 
-test("a catalogue binds unique IDs to canonical origins with self first", () => {
+test("a name in any script or emoji sequence is kept, as the terminal client keeps it", async () => {
+  const golden = await json("preflight.golden.json");
+  const names = [
+    "dev \u{1f468}\u200d\u{1f4bb}",
+    "\u0645\u06cc\u0632\u200c\u06a9\u0627\u0631",
+    "Lab\u00adnet",
+    "\ufeffHome",
+    "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} Glasgow",
+  ];
+  for (const name of names) expect(preflight({ ...golden, server: { ...golden.server, name } }).server.name).toBe(name);
+});
+
+test("a catalog binds unique IDs to canonical origins with self first", () => {
   const page = "https://meter.example";
   const parsed = catalog(
     {

@@ -2,7 +2,7 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { signal } from "../../lib/signal";
 import { catalog } from "../../protocol/documents";
 import type { TestConfig } from "../types";
-import { CONFIG, FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, ws, type Answer } from "./fakes";
+import { CONFIG, FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, ws, type Answer } from "./fakes.testutil";
 import { createPageSession } from "./page";
 import { createServers, reconcile } from "./servers";
 
@@ -15,7 +15,7 @@ afterEach(() => {
 
 const HOME = { servers: [{ id: "self", url: ".", name: "Home" }], defaultSelection: ["self"] };
 
-/** The page's servers on the fake network, whose catalogue and server answer as `route` says, once loaded. */
+/** The page's servers on the fake network, whose catalog and server answer as `route` says, once loaded. */
 async function load(
   route: (url: URL, init: RequestInit) => Answer,
   transports: Partial<TestConfig["transports"]> = {},
@@ -48,6 +48,26 @@ async function load(
   const readiness = (id = "self") => servers.views.peek().get(id)?.readiness;
   return { servers, config, active, online, prepare, readiness };
 }
+
+const PEER = "https://peer.example";
+
+/** Home and a peer that refuses requests without its grant, loaded; `token` answers the grant exchange. */
+const withPeer = (token: Answer) =>
+  load((url, init) => {
+    if (url.pathname === "/servers")
+      return {
+        body: {
+          servers: [...HOME.servers, { id: "peer", url: PEER, name: "Peer" }],
+          defaultSelection: ["self", "peer"],
+        },
+      };
+    if (url.pathname === "/auth/browser/token") return token;
+    if (url.origin === PEER && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    return url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")], [ws(".")]) }
+      : { body: PROBE, hop: "http/1.1" };
+  });
+const GRANT = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 28_800_000 };
 
 test("Start runs on what its checks verified however long they take, and never fails without a message", async () => {
   let probeMs = 0;
@@ -88,7 +108,7 @@ test("Start runs on what its checks verified however long they take, and never f
   });
 });
 
-test("a catalogue reload during Start supersedes it rather than running on closed connections", async () => {
+test("a catalog reload during Start supersedes it rather than running on closed connections", async () => {
   let preflightMs = 0;
   const { servers, active, prepare } = await load((url) =>
     url.pathname === "/servers"
@@ -106,7 +126,7 @@ test("a catalogue reload during Start supersedes it rather than running on close
   expect(await pending).toBe("AbortError");
 });
 
-test("a reloaded catalogue that no longer allows the chosen origin keeps the protocol it named", async () => {
+test("a reloaded catalog that no longer allows the chosen origin keeps the protocol it named", async () => {
   let additionalOrigins = ["https://fast.example"];
   const { servers, config } = await load(
     (url) =>
@@ -124,20 +144,7 @@ test("a reloaded catalogue that no longer allows the chosen origin keeps the pro
 });
 
 test("an approved peer checks its grant at once, even while the approving window hides this page", async () => {
-  const peer = "https://peer.example";
-  const catalogue = {
-    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
-    defaultSelection: ["self", "peer"],
-  };
-  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 3_600_000 };
-  const { servers, active, readiness } = await load((url, init) => {
-    if (url.pathname === "/servers") return { body: catalogue };
-    if (url.pathname === "/auth/browser/token") return { body: grant };
-    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
-    return url.pathname === "/preflight"
-      ? { body: preflight([h(".", "http1")], [ws(".")]) }
-      : { body: PROBE, hop: "http/1.1" };
-  });
+  const { servers, active, readiness } = await withPeer({ body: { ...GRANT, maximumLifetimeMs: 3_600_000 } });
   expect(readiness("peer")).toBe("sign-in");
   servers.signIn("peer");
   active.set(false);
@@ -148,7 +155,7 @@ test("an approved peer checks its grant at once, even while the approving window
   });
 });
 
-test("a catalogue that failed to load is read again as the network or the page comes back", async () => {
+test("a catalog that failed to load is read again as the network or the page comes back", async () => {
   let reachable = false;
   const { servers, online } = await load((url) =>
     !reachable
@@ -159,7 +166,7 @@ test("a catalogue that failed to load is read again as the network or the page c
           ? { body: preflight([h(".", "http1")]) }
           : { body: PROBE, hop: "http/1.1" },
   );
-  expect(servers.loadError.peek()).toBe("Could not load the server catalog");
+  expect(servers.loadError.peek()).toBe("Could not load test servers.");
   online.set(false);
   reachable = true;
   online.set(true);
@@ -168,7 +175,7 @@ test("a catalogue that failed to load is read again as the network or the page c
     error: "",
     selected: ["self"],
   });
-  // A loaded catalogue is never read again on its own.
+  // A loaded catalog is never read again on its own.
   const sent = net!.sent("/servers").length;
   online.set(false);
   online.set(true);
@@ -178,7 +185,7 @@ test("a catalogue that failed to load is read again as the network or the page c
 
   reachable = false;
   await servers.load();
-  expect(servers.loadError.peek()).toBe("Could not load the server catalog");
+  expect(servers.loadError.peek()).toBe("Could not load test servers.");
   reachable = true;
   servers.resume();
   await net!.advance(1_000);
@@ -186,19 +193,7 @@ test("a catalogue that failed to load is read again as the network or the page c
 });
 
 test("a failed approval keeps no link to its spent challenge, only the words of why", async () => {
-  const peer = "https://peer.example";
-  const catalogue = {
-    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
-    defaultSelection: ["self", "peer"],
-  };
-  const { servers } = await load((url, init) => {
-    if (url.pathname === "/servers") return { body: catalogue };
-    if (url.pathname === "/auth/browser/token") return { status: 410 };
-    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
-    return url.pathname === "/preflight"
-      ? { body: preflight([h(".", "http1")], [ws(".")]) }
-      : { body: PROBE, hop: "http/1.1" };
-  });
+  const { servers } = await withPeer({ status: 410 });
   servers.signIn("peer");
   await net!.advance(1_000);
   expect({ approval: servers.approval.peek(), message: servers.views.peek().get("peer")?.message }).toEqual({
@@ -250,20 +245,7 @@ test("a saved choice binds IDs to origins, prototype-named IDs included", () => 
 });
 
 test("a peer grant that ends before the test asks to renew its login, and the next Start checks again", async () => {
-  const peer = "https://peer.example";
-  const catalogue = {
-    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
-    defaultSelection: ["self", "peer"],
-  };
-  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 28_800_000 };
-  const { servers, readiness } = await load((url, init) => {
-    if (url.pathname === "/servers") return { body: catalogue };
-    if (url.pathname === "/auth/browser/token") return { body: grant };
-    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
-    return url.pathname === "/preflight"
-      ? { body: preflight([h(".", "http1")], [ws(".")]) }
-      : { body: PROBE, hop: "http/1.1" };
-  });
+  const { servers, readiness } = await withPeer({ body: GRANT });
   servers.signIn("peer");
   await net!.advance(2_000);
   const authorize = (ms: number) =>
@@ -273,10 +255,10 @@ test("a peer grant that ends before the test asks to renew its login, and the ne
     );
   // Another approval would end with the same login, so the words point at renewing it, and the peer stays checked.
   expect(await authorize(2 * 3_600_000)).toBe(
-    "Meter: its sign-in ends before this test would. Renew the login there, or shorten the test.",
+    "Meter: its sign-in ends before this test would. Sign in there again, or shorten the test.",
   );
   expect({ approval: servers.approval.peek(), readiness: readiness("peer") }).toEqual({
-    approval: { state: "renew", id: "peer", renewUrl: `${peer}/login?reason=renew` },
+    approval: { state: "renew", id: "peer", renewUrl: `${PEER}/login?reason=renew` },
     readiness: "verified",
   });
   expect(await authorize(1_800_000)).toBe("covered");
@@ -287,20 +269,7 @@ test("a peer grant that ends before the test asks to renew its login, and the ne
 });
 
 test("Start judges a peer grant by the wall clock too, which runs on while the page sleeps", async () => {
-  const peer = "https://peer.example";
-  const catalogue = {
-    servers: [...HOME.servers, { id: "peer", url: peer, name: "Peer" }],
-    defaultSelection: ["self", "peer"],
-  };
-  const grant = { token: "t".repeat(43), remainingMs: 3_600_000, maximumLifetimeMs: 28_800_000 };
-  const { servers, readiness } = await load((url, init) => {
-    if (url.pathname === "/servers") return { body: catalogue };
-    if (url.pathname === "/auth/browser/token") return { body: grant };
-    if (url.origin === peer && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
-    return url.pathname === "/preflight"
-      ? { body: preflight([h(".", "http1")], [ws(".")]) }
-      : { body: PROBE, hop: "http/1.1" };
-  });
+  const { servers, readiness } = await withPeer({ body: GRANT });
   servers.signIn("peer");
   await net!.advance(2_000);
   const authorize = (ms: number) =>
@@ -313,7 +282,7 @@ test("Start judges a peer grant by the wall clock too, which runs on while the p
     // 50 minutes asleep leave 10 of the grant's 60, though the paused page clock still counts 60.
     asleep(3_000_000);
     expect(await authorize(1_800_000)).toBe(
-      "Meter: its sign-in ends before this test would. Renew the login there, or shorten the test.",
+      "Meter: its sign-in ends before this test would. Sign in there again, or shorten the test.",
     );
     // Asleep past its end, the grant is the sign-in its own timer would have asked for, and Start runs without it.
     asleep(600_000);

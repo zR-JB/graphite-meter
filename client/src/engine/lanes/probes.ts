@@ -5,9 +5,8 @@ import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { workerScript } from "../../lib/trusted";
 import { ROUTES } from "../../protocol/routes";
 import { DEADLINE_CEILING_MS } from "../measure/latency";
-import { fromEpoch } from "../run/clock";
+import { delay, fromEpoch } from "../run/clock";
 import { SignInRequired, type LatencyBus, type ProbeChannelEvents, type ProbeChannelOptions } from "../types";
-import { delay } from "./wait";
 
 /** A draining worker gets its probes' longest deadline and this to acknowledge. */
 const STOP_MARGIN_MS = 250;
@@ -33,7 +32,7 @@ export function openProbeChannel(
     worker.terminate();
   };
   // Outcomes went down with the worker, so the population can no longer be complete.
-  const lost = () => {
+  const cutOff = () => {
     if (measured) events.incomplete?.();
     release();
   };
@@ -75,7 +74,7 @@ export function openProbeChannel(
     }
   };
   worker.onerror = ({ message }) => {
-    lost();
+    cutOff();
     events.stalled(`latency worker failed: ${message}`);
   };
 
@@ -114,14 +113,14 @@ export function openProbeChannel(
       const bound = AbortSignal.any([released.signal, acknowledged.signal]);
       const promise = delay(DEADLINE_CEILING_MS + STOP_MARGIN_MS, bound).then(() => {
         drain = null;
-        if (!bound.aborted) lost();
+        if (!bound.aborted) cutOff();
       });
       drain = { promise, acknowledged };
       return promise;
     },
     dispose(incomplete = false) {
       if (released.signal.aborted) return;
-      if (incomplete) lost();
+      if (incomplete) cutOff();
       else release();
     },
     adopt(next) {

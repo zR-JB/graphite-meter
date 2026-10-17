@@ -2,13 +2,14 @@
 // feed itself or a session relays them, pass one monotonic guard; checkpoints back them up on demand. Whoever carries
 // the feed finalizes the id once: the HTTP feed here, a session in its worker.
 import { DecodeError } from "../../lib/decode";
-import { checkpoint as counters, readJSON } from "../../protocol/documents";
+import { readJSON, release } from "../../protocol/documents";
 import type { FeedRecord } from "../../protocol/messages";
+import { checkpoint as counters } from "../../protocol/progress";
 import { ROUTES } from "../../protocol/routes";
 import { SignInRequired, type Checkpoint, type Ending, type ServerAuth } from "../types";
 import { Backoff, lost, refusal, refused } from "./endings";
 import { FINAL_GRACE_MS, readRecords } from "./records";
-import { abortable, delay } from "./wait";
+import { abortable, delay } from "../run/clock";
 
 /** One checkpoint request's bound, and the final checkpoint's whole window. */
 const CHECKPOINT_MS = 1_500;
@@ -16,8 +17,7 @@ const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
-/** The feed sends a line at least every second (a record every 100 ms once bytes arrive, a heartbeat before): an HTTP
-    feed silent for this many 250 ms checks, 1.25 to 1.5 s, is dead and reconnects. */
+/** The feed sends a line at least every second: an HTTP feed silent for this many quiet checks is dead and reconnects. */
 const SILENT_CHECKS = 6;
 
 export interface ReceiverHost {
@@ -121,8 +121,8 @@ export class Receiver {
     check();
   }
 
-  /** An ordinary checkpoint joins the one in flight; a final one issues fresh requests and retries a miss within
-      1.5 s. Either feeds the receiver like a record. */
+  /** An ordinary checkpoint joins the one in flight; a final one issues fresh requests and retries a miss within its
+      bound. Either feeds the receiver like a record. */
   checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     if (final) return this.#final(AbortSignal.any([signal, AbortSignal.timeout(CHECKPOINT_MS)]));
     this.#inFlight ??= this.#request().finally(() => (this.#inFlight = null));
@@ -135,14 +135,14 @@ export class Receiver {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
         void this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true }).then(
-          (response) => response.body?.cancel().catch(() => {}),
+          (response) => release(response),
           () => {},
         );
       else
         try {
           const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(FINAL_GRACE_MS)]);
           const response = await this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", signal });
-          response.body?.cancel().catch(() => {});
+          release(response);
           if (response.ok) await delay(FINAL_GRACE_MS, AbortSignal.any([this.#closed.signal, this.#complete.signal]));
         } catch {
           // Finalization is cleanup: the measured window already closed.
@@ -188,7 +188,7 @@ export class Receiver {
           signal: connection,
         });
         if (!response.ok || !response.body) {
-          response.body?.cancel().catch(() => {});
+          release(response);
           ending = refused(response, `progress returned HTTP ${response.status}`);
         } else {
           // Only an open feed promises its lines; opening one over a loaded uplink can take seconds.
@@ -237,7 +237,7 @@ export class Receiver {
     const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(CHECKPOINT_MS)]);
     const response = await this.#auth.fetch(this.#checkpoint, { method: "POST", cache: "no-store", signal });
     if (!response.ok) {
-      response.body?.cancel().catch(() => {});
+      release(response);
       return null;
     }
     let answer: { bytes: number; nanos: number };

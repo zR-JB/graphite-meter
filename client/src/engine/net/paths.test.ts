@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import type { Preflight } from "../../protocol/documents";
 import type { Discovery } from "../types";
-import { publicAuth } from "./auth";
 import { discover } from "./checks";
-import { FakeBuses, fakeNet, h, page, ws, wt } from "./fakes";
+import { FakeBuses, fakeNet, h, page, publicAuth, ws, wt } from "./fakes.testutil";
 import {
   candidates,
   classify,
@@ -29,7 +28,6 @@ function offer(
     generation,
     engineVersion: "",
     server: { name: "" },
-    uploadCheckpoint: true,
     maxStageMs: 300_000,
     origin,
     protocol,

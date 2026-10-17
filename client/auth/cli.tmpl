@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <!-- icon -->
-    <title>Graphite Meter — {{if .Refused}}Approval unavailable{{else if .BrowserCapacity}}Client limit reached{{else}}Approve client{{end}}</title>
+    <title>{{if .Refused}}Approval unavailable{{else if .BrowserCapacity}}Client limit reached{{else if .BrowserOrigin}}Approve browser client{{else}}Approve terminal client{{end}} · Graphite Meter</title>
     {{template "theme"}}
     <style>{{.Styles}}</style>
   </head>
@@ -21,18 +21,18 @@
       {{end}}
       {{else if .BrowserCapacity}}
       <h1>Client limit reached</h1>
-      <p>This login already has {{.ClientLimit}} approved clients, the most it can have.</p>
-      <p>Renewing the login ends their access and any measurements they are running.</p>
-      <p><a href="/login">Renew this login</a>, then choose Sign in again in the requesting interface.</p>
+      <p>This sign-in already has {{.ClientLimit}} approved clients, the most it can have.</p>
+      <p>Renewing the sign-in ends their access and any tests they are running.</p>
+      <p><a href="/login">Renew this sign-in</a>, then choose Sign in again on the site that asked.</p>
       {{else}}
       {{if .BrowserOrigin}}
       <h1>Approve browser client</h1>
-      <p>Approve only an interface you opened yourself. The site below can then run measurements as you until you sign out or this login expires.</p>
-      <p><strong>{{.BrowserOrigin}}</strong></p>
-      <p>Confirm that this code matches the code in that interface.</p>
+      <p>Approve only a site you opened yourself. The site below can then run tests as you until you sign out or this sign-in expires.</p>
+      <p class="origin"><strong>{{.BrowserOrigin}}</strong></p>
+      <p>Confirm that this code matches the code on that site.</p>
       {{else}}
       <h1>Approve terminal client</h1>
-      <p>Approve only a terminal you started yourself. It can then run measurements as you until you sign out or this login expires.</p>
+      <p>Approve only a terminal you started yourself. It can then run tests as you until you sign out or this sign-in expires.</p>
       <p>Confirm that this code matches the code in your terminal.</p>
       {{end}}
       <code class="code">{{.Code}}</code>

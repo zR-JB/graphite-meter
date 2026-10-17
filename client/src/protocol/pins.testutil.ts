@@ -1,4 +1,4 @@
-// Reads the shared contract fixtures in api/, which Go and Rust load too.
+// Reads the shared contract fixtures in api/, which the Rust side loads too.
 const api = new URL("../../../api/", import.meta.url);
 
 export const json = (name: string): Promise<any> => Bun.file(new URL(name, api)).json();

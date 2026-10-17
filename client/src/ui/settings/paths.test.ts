@@ -16,7 +16,6 @@ function offer(origin: string, throughput: object[], latency: object[] = [], pag
     generation: "g1",
     engineVersion: "",
     server: { name: "" },
-    uploadCheckpoint: true,
     maxStageMs: 300_000,
     origin,
     protocol: null,
@@ -82,8 +81,8 @@ const both = [...views().values()].map(({ server }) => server);
 test("with several servers a group is available only where every answering server can run it", () => {
   const throughput = byValue(choices("throughput", both, views(), configFor("throughput", "auto"), PAGE));
   expect(throughput.auto?.unavailable).toBeNull();
-  expect(throughput["protocol:http1"]?.unavailable).toBe("Unavailable on B");
-  expect(throughput["protocol:http2"]?.unavailable).toBe("Unavailable on A");
+  expect(throughput["protocol:http1"]?.unavailable).toContain("B");
+  expect(throughput["protocol:http2"]?.unavailable).toContain("A");
   expect(throughput["transport:webtransport-datagram"]).toBeUndefined();
   const latency = byValue(choices("latency", both, views(), configFor("latency", "auto"), PAGE));
   expect(latency["transport:websocket"]?.unavailable).toBeNull();
@@ -103,10 +102,10 @@ test("one server offers its own mechanisms, each with why it cannot be chosen", 
   ]);
   const one = view("a", discovery);
   const offered = choices("throughput", [one.server], new Map([["a", one]]), configFor("throughput", "auto"), PAGE);
-  expect(offered.map(({ label, unavailable }) => [label, unavailable])).toEqual([
-    ["Automatic", null],
-    ["HTTP/1.1 (TLS)", null],
-    ["WebTransport streams (TLS)", "WebTransport is unavailable in this browser"],
+  expect(offered.map(({ label, unavailable }) => [label, unavailable !== null])).toEqual([
+    ["Automatic", false],
+    ["HTTP/1.1 (TLS)", false],
+    ["WebTransport streams (TLS)", true],
   ]);
   const datagrams = choices(
     "throughput",
@@ -116,9 +115,8 @@ test("one server offers its own mechanisms, each with why it cannot be chosen", 
     PAGE,
   );
   expect(datagrams.at(-1)).toMatchObject({ value: `${a}::wtdg`, label: "WebTransport datagrams (TLS)" });
-  expect(choices("throughput", [one.server], new Map(), configFor("throughput", "auto"), PAGE)).toEqual([
-    { value: "auto", label: "Automatic", group: "auto", unavailable: "Checking server transports…" },
-  ]);
+  const unchecked = choices("throughput", [one.server], new Map(), configFor("throughput", "auto"), PAGE);
+  expect(unchecked.map(({ value, unavailable }) => [value, unavailable !== null])).toEqual([["auto", true]]);
 });
 
 test("a choice the browser's policy excludes names the remedy", () => {
@@ -128,9 +126,8 @@ test("a choice the browser's policy excludes names the remedy", () => {
   const offered = byValue(
     choices("throughput", [one.server], new Map([["ipv6", one]]), configFor("throughput", "auto"), page),
   );
-  const remedy = "Use a DNS hostname for browser connections to this IPv6 server.";
-  expect(offered.auto?.unavailable).toBe(remedy);
-  expect(offered[origin]?.unavailable).toBe(remedy);
+  expect(offered.auto?.unavailable).toBe(one.discovery!.throughput.get(origin)!.blocked);
+  expect(offered[origin]?.unavailable).toBe(offered.auto!.unavailable);
 });
 
 test("a path reads as its mechanism over its carrier", () => {

@@ -3,7 +3,7 @@ import { heapStats } from "bun:jsc";
 import { json } from "../../protocol/pins.testutil";
 import { LiveRates, RateEstimator } from "./live";
 
-test("the live rate the terminal clients share", async () => {
+test("the live rate the terminal client shares", async () => {
   for (const { name, steps } of (await json("liverate.testvectors.json")).cases) {
     const estimator = new RateEstimator();
     for (const [bytes, ms, presented, changed] of steps) {

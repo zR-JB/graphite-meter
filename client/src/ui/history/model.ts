@@ -1,6 +1,4 @@
-// History as data: its columns and their units, each row's words, the day groups, the archive's span, how many rows
-// show, and how a change to the archive lands in a list already read. Pure, so a 2,000-result archive is worked out
-// once per change and never in the DOM code.
+// History as data: columns and units, each row's words, day groups, the span, and how a change lands in a read list.
 import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistorySort } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
@@ -18,7 +16,7 @@ export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon:
   },
   upload: {
     ...STAGE.upload,
-    tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes don't count",
+    tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes do not count",
   },
   bidirectional: { ...STAGE.bidirectional, tip: "Bidirectional\nDownload and upload at once, added together" },
   idle: { ...LATENCY.idle, icon: STAGE.latency.icon, tip: TIP.latency },

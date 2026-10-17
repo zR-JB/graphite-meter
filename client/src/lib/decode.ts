@@ -33,7 +33,7 @@ export const boolean: Decoder<boolean> = (value, path = "") =>
   typeof value === "boolean" ? value : fail(path, "true or false");
 
 export const oneOf =
-  <const T extends readonly (string | number)[]>(...values: T): Decoder<T[number]> =>
+  <const T extends readonly (string | number | boolean)[]>(...values: T): Decoder<T[number]> =>
   (value, path = "") =>
     values.includes(value as T[number]) ? (value as T[number]) : fail(path, `one of ${values.join(", ")}`);
 

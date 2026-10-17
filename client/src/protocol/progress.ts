@@ -1,12 +1,13 @@
 // Upload receiver records (api/upload.md): one JSON object per NDJSON line; blank lines are heartbeats.
 import { integer, object, string, variant, type Decoded } from "../lib/decode";
 
-const counters = object({ bytes: integer(), nanos: integer() });
+/** A receiver's counters, from a feed record or a checkpoint. */
+export const checkpoint = object({ bytes: integer(), nanos: integer() });
 
 export const progressRecord = variant({
   ready: object({}),
-  progress: counters,
-  complete: counters,
+  progress: checkpoint,
+  complete: checkpoint,
   error: object({}, { code: string(), message: string() }),
 });
 

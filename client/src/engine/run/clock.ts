@@ -36,7 +36,7 @@ function timerWorker(): Worker | null {
 function after(ms: number, fn: () => void): () => void {
   const host = timerWorker();
   const id = ++nextId;
-  // The page timer backs the worker up: a worker whose script never loaded (the server went away) never answers.
+  // The page timer backs the worker up: one that failed to load or hung never answers.
   const backstop = setTimeout(() => {
     cancel();
     fn();
@@ -58,6 +58,30 @@ function after(ms: number, fn: () => void): () => void {
 
 export const pageClock: Clock = { now: pageMs, epoch: epochMs, after };
 
+/** Resolves after `ms` on the page's timers, or at once when `signal` aborts; the timer never outlives either. */
+export function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      cancel();
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const cancel = after(ms, done);
+    signal.addEventListener("abort", done);
+  });
+}
+
+/** `promise`, or its signal's reason as soon as that aborts; the operation still owns its cleanup. */
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort);
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
 const GAP_MS = 1_500;
 
 /** One run's time. Run ms count from the start; active ms leave out page gaps: two reads more than 1.5 s apart
@@ -66,19 +90,21 @@ const GAP_MS = 1_500;
 export class RunClock {
   readonly start: number;
   readonly startedAt: number;
+  readonly #clock: Clock;
   #read: number;
   #paused = 0;
   #gap = false;
   #held = false;
 
-  constructor(readonly clock: Clock) {
+  constructor(clock: Clock) {
+    this.#clock = clock;
     this.start = this.#read = clock.now();
     this.startedAt = clock.epoch();
   }
 
   /** Page ms now; notes a gap since the previous read. */
   read(): number {
-    const at = this.clock.now();
+    const at = this.#clock.now();
     if (!this.#held && at - this.#read > GAP_MS) {
       this.#paused += at - this.#read;
       this.#gap = true;
@@ -112,6 +138,6 @@ export class RunClock {
   /** Page ms now. */
   resume(): number {
     this.#held = false;
-    return (this.#read = this.clock.now());
+    return (this.#read = this.#clock.now());
   }
 }

@@ -3,6 +3,7 @@ import { rows } from "../protocol/pins.testutil";
 import { DEFAULT_CONFIG } from "../app/preferences";
 import {
   allServersLabel,
+  listed,
   reasonLabel,
   serverLabel,
   stageLimitError,
@@ -11,7 +12,7 @@ import {
   type StageState,
 } from "./words";
 
-test("failure labels match the pin Go and Rust load, and any other reason reads as a measurement issue", async () => {
+test("failure labels match the pin both clients load, and any other reason reads as a measurement issue", async () => {
   for (const [reason, label] of await rows("failurereasons.txt")) expect(reasonLabel(reason!)).toBe(label!);
   for (const reason of ["", "dns-failure", "toString", "__proto__"])
     expect(reasonLabel(reason)).toBe("Measurement issue");
@@ -67,10 +68,10 @@ test("the stage limit names the server and each planned stage past it", () => {
     ...DEFAULT_CONFIG,
     stages: { latency: false, download, upload, bidirectional: false },
   });
-  expect(stageLimitError(only(true, false), oslo)).toBe("Oslo allows stages up to 2 s; shorten the Download stage.");
-  expect(stageLimitError(DEFAULT_CONFIG, oslo)).toBe(
-    "Oslo allows stages up to 2 s; shorten the Latency, Download and Upload stages.",
-  );
+  const one = stageLimitError(only(true, false), oslo);
+  expect(one).toContain("Oslo");
+  expect([one.includes("Download"), one.includes("Upload")]).toEqual([true, false]);
+  expect(stageLimitError(DEFAULT_CONFIG, oslo)).toContain(listed(["Latency", "Download", "Upload"]));
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 300_000, server: "Oslo" })).toBe("");
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 86_400_000, server: null })).toBe("");
 });

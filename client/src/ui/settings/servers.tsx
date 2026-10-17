@@ -1,4 +1,4 @@
-// The Test servers checklist and what stands in its way: a catalogue that did not load, a saved selection that
+// The Test servers checklist and what stands in its way: a catalog that did not load, a saved selection that
 // changed, and each selected server's problem with its Retry or Sign in.
 import type { App } from "../../app/app";
 import { MAX_SELECTED, type Approval } from "../../engine/net/servers";
@@ -7,19 +7,18 @@ import { For, Show } from "../../lib/dom";
 import { computed, onCleanup, signal, type Read } from "../../lib/signal";
 import { fmtMs } from "../../view/format";
 import { preflightNote, READINESS, serverLabel, TIP } from "../../view/words";
+import { announceChanges } from "../kit/announce";
 import { clip, tip } from "../kit/tip";
-
-/** The most servers a test runs on. */
 
 export function ServerSelection(props: { app: App; locked: Read<boolean> }): Node {
   const { servers } = props.app;
   const { locked } = props;
-  const entries = computed(() => servers.catalogue()?.servers ?? []);
+  const entries = computed(() => servers.catalog()?.servers ?? []);
   const retrying = signal<ReadonlySet<string>>(new Set());
   const rows = new Map<string, HTMLLabelElement>();
   /** One server's view, which keeps its identity while another server's changes. */
   const viewOf = (id: string) => computed(() => servers.views().get(id));
-  /** As its discovery names it, else as the catalogue does. */
+  /** As its discovery names it, else as the catalog does. */
   const identity = (entry: Read<CatalogEntry>, view: ReturnType<typeof viewOf>) =>
     computed(() => view()?.server ?? entry());
 
@@ -145,8 +144,20 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     });
     const renew = computed(() => approval()?.state === "renew");
     const failed = computed(() => approval()?.state === "failed");
+    const message = computed(() =>
+      pending()
+        ? `Checking ${name()}…`
+        : renew()
+          ? "Its sign-in ends before the planned test would"
+          : failed()
+            ? (view()?.message ?? "Approval did not finish")
+            : signIn()
+              ? "Admits signed-in clients only"
+              : (view()?.message ?? ""),
+    );
+    announceChanges(message);
     return (
-      <div class="server-feedback" role="status">
+      <div class="server-feedback">
         <div>
           <strong>{name}</strong>
           {() => server().location && <small>{server().location}</small>}
@@ -154,22 +165,8 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
         <p class="feedback-message">
           {() => {
             // A retry's message rises in, and so does the outcome that replaces it.
-            const checking = pending();
-            return (
-              <span class="enter">
-                {() =>
-                  checking
-                    ? `Checking ${name()}…`
-                    : renew()
-                      ? "Its sign-in ends before the planned test would"
-                      : failed()
-                        ? (view()?.message ?? "Approval did not finish")
-                        : signIn()
-                          ? "Admits signed-in clients only"
-                          : (view()?.message ?? "")
-                }
-              </span>
-            );
+            pending();
+            return <span class="enter">{message}</span>;
           }}
         </p>
         {() =>
@@ -206,18 +203,17 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                 return (
                   <p>
                     <a href={current.renewUrl} target="_blank" rel="noopener noreferrer">
-                      Renew login at {name}
+                      Renew your sign-in at {name}
                     </a>
-                    .{current.state === "renew" ? " A sign-in here lasts only as long as that login." : ""} Renewing
-                    ends the other client connections authorized by that login. Then choose Sign in again here.
+                    .{current.state === "renew" ? " A sign-in here lasts only as long as that one." : ""} Renewing signs
+                    out the other clients that sign-in approved. Then choose Sign in again here.
                   </p>
                 );
               return (
                 current.state === "waiting" && (
                   <p class="approval-code">
-                    Compare this code with the sign-in page:{" "}
-                    <strong aria-label={`Verification code ${current.code}`}>{current.code}</strong> Approve only if
-                    both codes match.
+                    Compare this code with the sign-in page: <strong>{current.code}</strong> Approve only if both codes
+                    match.
                   </p>
                 )
               );
@@ -248,6 +244,8 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     );
   };
 
+  announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
+  announceChanges(() => (servers.catalog() || servers.loading() ? "" : "Could not load test servers."));
   return (
     <>
       <Show when={() => entries().length > 1}>
@@ -279,7 +277,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       </Show>
       <Show when={() => servers.unresolved().length > 0}>
         {() => (
-          <div class="selection-notice" role="status">
+          <div class="selection-notice">
             <p>The saved selection has changed</p>
             <button
               class="btn"
@@ -295,15 +293,15 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           </div>
         )}
       </Show>
-      <Show when={() => !servers.catalogue()}>
+      <Show when={() => !servers.catalog()}>
         {() => (
-          <div class="selection-notice" role="status">
-            <p>{() => (servers.loading() ? "Loading servers…" : "Could not load servers")}</p>
+          <div class="selection-notice">
+            <p>{() => (servers.loading() ? "Loading test servers…" : "Could not load test servers")}</p>
             <button
               class="btn"
               type="button"
               disabled={() => locked() || servers.loading()}
-              onclick={() => void servers.retryCatalogue()}
+              onclick={() => void servers.retryCatalog()}
             >
               Retry servers
             </button>

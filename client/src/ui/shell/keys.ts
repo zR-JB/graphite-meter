@@ -1,6 +1,4 @@
 // The keyboard's one map: Escape closes the topmost surface it reaches, and the shortcut keys act where they apply.
-// Pure, so the layering is decided in one place; the shell gathers the facts, runs the command, and draws the hints
-// and the tips' key names from the same bindings.
 import type { Panel } from "./navigation";
 
 export interface KeyFacts {

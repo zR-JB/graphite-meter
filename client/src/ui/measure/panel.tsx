@@ -1,6 +1,5 @@
-// The console body inside the measurement stage: the dial beside the latency lanes on a wide panel, stacked on a
-// narrow one, the run key over the stage chips, and the result cards. Its width classes come from its measured box:
-// as a size container it would restyle the whole instrument on every frame that changes a figure.
+// The console body: dial, lanes, run key, chips and cards. Its width classes come from its measured box, as a size
+// container would restyle the whole instrument on every frame that changes a figure.
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, effect } from "../../lib/signal";

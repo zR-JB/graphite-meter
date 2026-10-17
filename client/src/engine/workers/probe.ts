@@ -2,7 +2,8 @@
 // The prober paces and resolves the probes; this worker owns the connections, each with its own controller so a
 // replaced one cannot act, and each dial's ticket and 3 s budget.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
-import { aborted, Tickets, withToken } from "../lanes/dial";
+import { Tickets, withToken } from "../lanes/dial";
+import { abortable } from "../run/clock";
 import { CLOSE_GRACE_MS, ESTABLISH_MS, REVOKED } from "../lanes/endings";
 import { Prober } from "../lanes/prober";
 
@@ -132,7 +133,7 @@ function session(url: string, closed: AbortSignal, budget: AbortSignal, end: End
   let established = false;
   void (async () => {
     // A black-holed handshake can leave `ready` and `closed` pending, so the budget ends the dial.
-    await Promise.race([wt.ready, aborted(budget)]);
+    await abortable(wt.ready, budget);
     if (closed.aborted) return;
     established = true;
     const writer = wt.datagrams.writable.getWriter();

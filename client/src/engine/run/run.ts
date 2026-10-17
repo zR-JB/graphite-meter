@@ -5,10 +5,9 @@ import { safeDetail } from "../../protocol/documents";
 import type { FailureReason } from "../../protocol/reasons";
 import {
   Aggregate,
+  MIN_EVIDENCE_MS,
   type Boundary,
-  type Checkpoint,
   type ComponentWindow,
-  type Direction,
   type ThroughputResult,
 } from "../measure/aggregate";
 import { LatencyBuckets, type LatencyBucket } from "../measure/buckets";
@@ -16,11 +15,14 @@ import { ServerLatency, type LatencySummary } from "../measure/latency";
 import { LiveRates } from "../measure/live";
 import { combinedModel, type WireModel, type WirePath } from "../measure/overhead";
 import { EARLY_FINISH, mayFinishEarly, minCoverage, type Confidence } from "../measure/stability";
+import { protocolFromNextHop } from "../net/paths";
 import {
   CADENCE_MS,
   ServerBusyError,
   SignInRequired,
   StageFailure,
+  type Checkpoint,
+  type Direction,
   type OpenStage,
   type PreparedServer,
   type ServerIdentity,
@@ -91,7 +93,7 @@ export interface DroppedServer {
 }
 
 export interface RunOptions {
-  /** One to four servers, in catalogue order. */
+  /** One to four servers, in catalog order. */
   servers: PreparedServer[];
   /** The server whose idle latency the run reports; the first when it is not among them. */
   focus: string;
@@ -235,7 +237,6 @@ function recovering(stage: StageRun, seat: Seat, at: number): boolean {
   return !!seat.recovery && at - seat.progressAt[dir] >= QUIET_MS;
 }
 
-const HTTP: Record<string, WirePath["protocol"]> = { "http/1.1": "http1", h2: "http2", h3: "http3" };
 const NETWORK_FAILURE =
   /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
 
@@ -266,7 +267,7 @@ export class Run {
   readonly #open: OpenStage;
   readonly #streams: RunOptions["streams"];
   readonly #online: () => boolean;
-  readonly #time: Clock;
+  readonly #page: Clock;
   #clock!: RunClock;
   #handlers = new Set<(event: RunEvent) => void>();
   #state: "created" | "running" | "completed" | "aborted" | "failed" = "created";
@@ -319,7 +320,7 @@ export class Run {
     this.#open = options.open;
     this.#streams = options.streams;
     this.#online = options.online ?? (() => navigator.onLine !== false);
-    this.#time = options.clock ?? pageClock;
+    this.#page = options.clock ?? pageClock;
     this.#validate(options.plan, this.#servers);
     this.#plan = options.plan;
     this.#segments = timeline(options.plan);
@@ -337,7 +338,7 @@ export class Run {
   start(): void {
     if (this.#state !== "created") return;
     this.#state = "running";
-    this.#clock = new RunClock(this.#time);
+    this.#clock = new RunClock(this.#page);
     this.#tickAt = this.#clock.start;
     const first = this.#segments[0]!;
     this.#emit({ type: "phase", phase: "connecting", stage: first.activity.stage, t: 0, step: "preparing" });
@@ -446,6 +447,14 @@ export class Run {
     return this.#servers.filter((server) => !server.removed);
   }
 
+  #measured(): boolean {
+    return [...this.#stages.values()].some(({ measured }) => measured);
+  }
+
+  #cadence(activity: Activity) {
+    return activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence;
+  }
+
   /** Servers whose idle population is still running. */
   #latencyParticipants(): Participant[] {
     return this.#participants().filter((server) => server.prepared.latency && !server.latency.failed.has("latency"));
@@ -476,7 +485,7 @@ export class Run {
     // Buckets close on time without a later probe.
     for (const { buckets } of this.#servers)
       if (buckets.nextEnd !== null) ms = Math.min(ms, buckets.nextEnd - this.#elapsed);
-    this.#timer = this.#time.after(Math.max(1, ms), () => {
+    this.#timer = this.#page.after(Math.max(1, ms), () => {
       this.#timer = null;
       this.#tick();
       this.#arm();
@@ -547,10 +556,10 @@ export class Run {
         activity,
       );
     } catch (cause) {
-      return this.#fail(
-        classify(cause, "protocol-error", this.#online()),
-        cause instanceof Error ? cause.message : "Stage preparation failed",
-      );
+      const reason = classify(cause, "protocol-error", this.#online());
+      const message = cause instanceof Error ? cause.message : "Could not prepare the stage";
+      // What earlier stages measured stays, as when every server leaves.
+      return this.#measured() ? this.end(reason, message) : this.#fail(reason, message);
     }
     const stage: StageRun = {
       activity,
@@ -634,7 +643,7 @@ export class Run {
       activity,
       ...(stage.streams.get(server.id) ?? { streams: { down: 0, up: 0 } }),
       uploadLanes: [...stage.streams.values()].reduce((sum, lanes) => sum + lanes.streams.up, 0),
-      cadence: activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence,
+      cadence: this.#cadence(activity),
       seed: `r${Math.round(this.#clock.start)}`,
       events: this.#events(stage, seat),
       now: () => this.#clock.runMs(),
@@ -653,7 +662,7 @@ export class Run {
     stage.disturbed = false;
     const { activity } = stage;
     const shown = this.#shown!;
-    const cadence = activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence;
+    const cadence = this.#cadence(activity);
     const at = this.#clock.activeMs();
     for (const seat of seats) {
       seat.server.buckets.reset(
@@ -884,7 +893,7 @@ export class Run {
       if (this.#stalled) return 0;
       return this.#live.rate(dir) ?? (stage.phase === "warmup" ? this.#ramp(stage, dir, now) : null);
     };
-    const lanes = (id: string) =>
+    const uploadLanes = (id: string) =>
       this.#servers.find((server) => server.id === id)?.prepared.throughput.target.transport === "fetch-stream"
         ? (stage.streams.get(id)?.streams.up ?? 0)
         : 1;
@@ -899,7 +908,7 @@ export class Run {
         bytes: this.#bytes(),
         down: rate("down"),
         up: rate("up"),
-        bridgedUp: this.#stalled || !transfer.includes("up") ? null : this.#live.bridgedUpload(now, lanes),
+        bridgedUp: this.#stalled || !transfer.includes("up") ? null : this.#live.bridgedUpload(now, uploadLanes),
         stalled: this.#stalled,
         quietMs: this.#stalled && quietMs >= QUIET_MS ? quietMs : null,
         warmup: stage.phase === "warmup",
@@ -908,7 +917,7 @@ export class Run {
   }
 
   /** A warmup's rate before the live rate has its evidence: the average since the warmup began, which climbs as the
-      connections open; null until it spans RAMP_MS and moved bytes. */
+      connections open; null until it spans long enough and moved bytes. */
   #ramp(stage: StageRun, dir: Direction, now: number): number | null {
     const seats = active(stage);
     if (dir === "down") {
@@ -929,7 +938,6 @@ export class Run {
   #expire(stage: StageRun): void {
     const at = this.#clock.activeMs();
     for (const seat of active(stage)) {
-      if (seat.server.removed) continue;
       if (seat.latencyStall && at - seat.latencyStall.at >= LATENCY_RECOVERY_MS)
         this.#failLatency(stage, seat, seat.latencyStall.detail);
       if (stage.phase !== "measuring") continue;
@@ -1020,7 +1028,7 @@ export class Run {
     this.#updateStalled();
     const survivors = this.#participants();
     if (!survivors.length) {
-      if (![...this.#stages.values()].some(({ measured }) => measured))
+      if (!this.#measured())
         return this.#fail(reason, `All selected servers failed. ${server.prepared.server.name}: ${message}`);
       // A sole server skips to its next stage; several that all fail end the run as incomplete.
       return this.#servers.length === 1
@@ -1035,7 +1043,7 @@ export class Run {
     if (this.#boundary(stage)) this.#tick();
   }
 
-  /** A withdrawn login or grant first shows as a broken or silent stream, and checking it can take longer than the
+  /** A withdrawn sign-in or grant first shows as a broken or silent stream, and checking it can take longer than the
       silence rule: once the check says it ended, the server's failure in `stage` becomes a sign-in. */
   async #signedOut(server: Participant, stage: Stage): Promise<void> {
     if (!(await server.prepared.auth.ended().catch(() => false)) || this.#state !== "running") return;
@@ -1056,8 +1064,7 @@ export class Run {
     queueMicrotask(() => this.#tick());
   }
 
-  /** A page gap starts a new interval before any evidence after it applies, so no headline, early finish or live rate
-      spans it; true when one did. */
+  /** A page gap starts a new interval before any evidence after it applies; true when one did. */
   #resumeAfterGap(stage: StageRun): boolean {
     this.#clock.read();
     if (!this.#clock.takeGap() || stage.phase !== "measuring") return false;
@@ -1129,7 +1136,7 @@ export class Run {
       !seats.some((seat) => recovering(stage, seat, at)) &&
       mayFinishEarly({
         kind: latency ? "latency" : "transfer",
-        intervalMs: CADENCE_MS[this.#plan.pingCadence],
+        intervalMs: latency ? CADENCE_MS[this.#plan.pingCadence] : null,
         elapsedMs: this.#elapsed - segment.start,
         durationMs: segment.end - segment.start,
         confidence,
@@ -1185,6 +1192,8 @@ export class Run {
     await Promise.all(finishing.values());
     if (!this.#current(stage)) return;
     stage.phase = "settled";
+    // Readiness waits and checkpoints end with their stage.
+    stage.abort.abort();
     for (const { buckets } of this.#servers) buckets.flush(this.#elapsed);
     for (const seat of stage.seats.values()) {
       seat.recovery?.abort.abort();
@@ -1216,8 +1225,7 @@ export class Run {
     const upload = transfer.includes("up");
     const boundary = this.#snapshot(stage);
     const at = stage.closedAt;
-    // Judged as the window closed: a final checkpoint answered late over a full uplink must not make a server that
-    // was moving look silent.
+    // Judged as the window closed: a final checkpoint answered late must not make a server that was moving silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
     // Bytes lanes counted but had not reported yet still count. Every server's lanes answer what they had counted by
@@ -1226,14 +1234,11 @@ export class Run {
       ? (async () => {
           for (const seat of seats) seat.flushing = true;
           const cutoff = this.#clock.read();
-          let read: number | null = null;
-          await Promise.allSettled(
-            seats.map(async (seat) => {
-              const at = await seat.resources.flush(cutoff);
-              if (at !== null) read = Math.max(read ?? at, at);
-            }),
+          const answers = await Promise.allSettled(seats.map((seat) => seat.resources.flush(cutoff)));
+          const read = answers.flatMap((answer) =>
+            answer.status === "fulfilled" && answer.value !== null ? [answer.value] : [],
           );
-          const readMs = read === null ? this.#clock.runMs() : (read as number) - this.#clock.start;
+          const readMs = read.length ? Math.max(...read) - this.#clock.start : this.#clock.runMs();
           boundary.atMs = Math.max(boundary.atMs, readMs);
           for (const seat of seats) {
             seat.flushing = false;
@@ -1360,13 +1365,13 @@ export class Run {
     const paths: { bytesPerSec: number; path: WirePath }[] = [];
     for (const component of components) {
       const throughput = this.#servers.find(({ id }) => id === component.serverId)?.prepared.throughput;
-      if (!throughput || component.durationMs < 800) return null;
+      if (!throughput || component.durationMs < MIN_EVIDENCE_MS) return null;
       const { target, browserProtocol, probe } = throughput;
       if (target.transport === "fetch-stream" && !browserProtocol) return null;
       paths.push({
         bytesPerSec: component.bytesPerSec,
         path: {
-          protocol: browserProtocol ? HTTP[browserProtocol] : undefined,
+          protocol: protocolFromNextHop(browserProtocol) ?? undefined,
           secure: target.origin.startsWith("https://"),
           ipVersion: probe.clientIpVersion,
           transport: target.transport,

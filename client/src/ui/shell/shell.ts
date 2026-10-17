@@ -55,7 +55,7 @@ export function moves(current: Route, next: Route, docked: boolean, multiple: bo
   return from !== null && to !== null && from !== to ? ["history-list", "history-detail"] : null;
 }
 
-export type FocusMove = { to: "title" | "invoker"; panel: Panel } | { to: "wanted" | "workspace" } | null;
+type FocusMove = { to: "title" | "invoker"; panel: Panel } | { to: "wanted" | "workspace" } | null;
 
 /** Where focus goes once a route has rendered: an opened panel's title; nowhere new while the legal dialog opens (it
     focuses its own) or when asked to keep it; where it was asked to go; for a closed panel that held focus, or let it
@@ -391,7 +391,6 @@ export function createShell(app: App, layout: Layout) {
     layout,
     shown,
     toggle,
-    open: (panel, invoker) => untrack(() => open(panel, invoker)),
     close: (panel) => untrack(() => close(panel)),
     history: (id, invoker) => untrack(() => showHistory(id, invoker)),
     swapResult: (id) => untrack(() => swapResult(id)),

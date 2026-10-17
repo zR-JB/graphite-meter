@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistoryRecord } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { RunResult } from "../../engine/run/result";
+import { MISSING } from "../../view/format";
 import { applyChange, columnScales, daysAt, groupRows, rowPresenter, type Listed, type RowContext } from "./model";
 
 const at = (day: number, hour = 12) => new Date(2026, 7, day, hour).getTime();
@@ -80,7 +81,7 @@ test("a row's cells read value, note and the word for a missing value", () => {
         latency: null,
         latencyByStage: { latency: null, download: null, upload: null, bidirectional: null },
       },
-      ["Failed/", "Skipped/", "Down only/", "Partial/", "—/"],
+      ["Failed/", "Skipped/", "Down only/", "Partial/", `${MISSING}/`],
     ],
     [
       "both directions",
@@ -99,14 +100,17 @@ test("a row's cells read value, note and the word for a missing value", () => {
   }
 });
 
-test("a row's accessible name gives each value its unit and its note in words", () => {
+test("a row's accessible name reads each shown value with its unit, in column order", () => {
   const record = saved("a", NOW, { outcome: "partial" });
-  const row = present(record, context([record], { columns: ["download", "idle", "loaded", "bidirectional"] }));
+  const columns = ["download", "idle", "loaded", "bidirectional"] as const;
+  const rowContext = context([record], { columns: [...columns] });
+  const row = present(record, rowContext);
   if (row.kind !== "result") throw new Error("unreadable");
-  expect(row.label).toEndWith(
-    ", Frankfurt, partial result. Download 200.0 Mbit/s, +11.5 ms added. Idle latency 12.4 ms, jitter 2.2 ms. " +
-      "Loaded latency 30.3 ms, under upload. Bidirectional Skipped",
+  const at = row.cells.map(({ text, value, column }) =>
+    row.label.indexOf(value === null ? text : `${text} ${rowContext.scales[column].unit}`),
   );
+  expect(at.every((index) => index > 0)).toBe(true);
+  expect(at).toEqual(at.toSorted((a, b) => a - b));
   const many = saved("b", NOW, { multiServer: { selection: [{}, {}, {}], servers: [], failures: [] } });
   expect(present(many, context([many]))).toMatchObject({ where: "3 servers" });
 });

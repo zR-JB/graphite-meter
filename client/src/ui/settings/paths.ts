@@ -14,12 +14,12 @@ import type {
   TestConfig,
   ThroughputTarget,
 } from "../../engine/types";
-import { READINESS, TRANSPORT, transportLabel, type Word } from "../../view/words";
+import { listed, READINESS, TRANSPORT, transportLabel, type Word } from "../../view/words";
 
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 type Target = ThroughputTarget | LatencyTarget;
 /** What a description reads of a target; a run's summary carries no more. */
-export interface PathTarget {
+interface PathTarget {
   transport: string;
   origin: string;
   tls: boolean;
@@ -85,7 +85,7 @@ function unavailable(discovery: Discovery | null, role: Role, value: string, pag
   if (resolve(discovery, role, selection, page)) return null;
   if (resolve(discovery, role, selection, { ...page, webTransport: "available" }))
     return page.webTransport === "insecure-page"
-      ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address"
+      ? "Needs a secure page: reopen this page on its https:// address, where browsers offer WebTransport"
       : "WebTransport is unavailable in this browser";
   if (selection.kind === "auto")
     return role === "throughput"
@@ -158,14 +158,14 @@ export function choices(
     ];
     return rows.map((row) => ({ ...row, unavailable: unavailable(known, role, row.value, page) }));
   }
-  const listed = groups.some(([value]) => value === selected)
+  const offered = groups.some(([value]) => value === selected)
     ? groups
     : [...groups, [selected, "Selected origin"] as const];
   // A failed server's last discovery says nothing about today.
   const reachable = servers.filter((server) => views.get(server.id)?.readiness !== "failed");
   const counted = reachable.length ? reachable : servers;
-  const names = (list: readonly ServerIdentity[]) => list.map((server) => server.name).join(", ");
-  return listed.map(([value, label]) => {
+  const names = (list: readonly ServerIdentity[]) => listed(list.map((server) => server.name));
+  return offered.map(([value, label]) => {
     const missing = counted.filter((server) => !views.get(server.id)?.discovery);
     const lacking = counted.filter((server) => {
       const discovery = views.get(server.id)?.discovery;
@@ -187,7 +187,7 @@ export function choices(
   });
 }
 
-export type RoleState = ServerView["throughput"]["state"];
+type RoleState = ServerView["throughput"]["state"];
 
 /** The check line under a picker: one server's own state and words, or the worst of several and how many are
     ready; a failure's message stands in for its status word. Null when no server is left to state. */

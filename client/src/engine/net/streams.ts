@@ -15,7 +15,7 @@ const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {
   http3: { down: 1, up: 1 },
 };
 
-export type StreamPolicy = TestConfig["transferStreams"];
+type StreamPolicy = TestConfig["transferStreams"];
 
 /** What planning reads of a server's verified paths. */
 export interface PlanServer {
@@ -29,7 +29,7 @@ export interface Lanes {
   planned: number;
   gating: number;
 }
-export type StreamPlan = Map<string, Record<Direction, Lanes>>;
+type StreamPlan = Map<string, Record<Direction, Lanes>>;
 
 interface OriginBudget {
   /** What holds one of the origin's connections for the whole stage. */
@@ -147,7 +147,7 @@ export function describeStreams(
   if (transport === "webtransport-datagram") return { value: "Datagram flood", aside: "no streams" };
   if (policy.mode === "forced")
     return {
-      value: "Forced",
+      value: "Exact",
       aside:
         transport === "webtransport" && count > SESSION_MAX_LANES
           ? `${SESSION_MAX_LANES} per direction (capped from ${count} by the session)`

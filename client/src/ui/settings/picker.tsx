@@ -20,7 +20,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
   const options = computed(() => {
     const ids = servers.selected();
     const views = servers.views();
-    const chosen = (servers.catalogue()?.servers ?? []).filter((entry) => ids.includes(entry.id));
+    const chosen = (servers.catalog()?.servers ?? []).filter((entry) => ids.includes(entry.id));
     return choices(
       role,
       chosen.map((entry) => views.get(entry.id)?.server ?? entry),
@@ -131,7 +131,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
         </Show>
       </div>
       {/* Until the server list loads there is nothing to check or retry. */}
-      <Show when={() => !!servers.catalogue()}>
+      <Show when={() => !!servers.catalog()}>
         {() => (
           <div class="validation">
             <Show when={line}>

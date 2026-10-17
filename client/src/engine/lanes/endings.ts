@@ -1,5 +1,6 @@
 // How lanes, feeds and buses end, classified into the seven failure reasons, and how soon one may reopen. Pure: the
 // workers classify the answers they see, the owners decide what an ending means.
+import { signInMarker } from "../../protocol/documents";
 import type { Ending } from "../types";
 
 /** A connection that has not answered by now is not going to; a dial's ticket and handshake share it. */
@@ -27,8 +28,8 @@ const REFUSALS: Record<string, Disposition> = {
 export const lost = (detail: string): Ending => ({ ...LOST, detail });
 
 /** An upload refusal: its code decides; without one its status does, where a network-level or generic server failure
-    reconnects the same id. A bare 401 is not this server's (it marks an ended login, see `signInMarked`): a proxy's
-    challenge is an unexpected answer, never an ended session. A feed's error record has no status. */
+    reconnects the same id. A bare 401 is a proxy's challenge, an unexpected answer, never an ended sign-in. A feed's
+    error record has no status. */
 export function refusal(
   status: number | null,
   code: string | null | undefined,
@@ -46,11 +47,7 @@ export function refusal(
   return { ...disposition, detail, retryAfterMs };
 }
 
-/** Only the marker means a login or grant ended; a bare 401 or 403 does not (api/discovery.md). */
-const signInMarked = (response: Response) =>
-  response.status === 403 && response.headers.get("Graphite-Meter-Auth") === "required";
-
-/** Retry-After in whole positive seconds, as natively; a date or a fraction is ignored. */
+/** Retry-After in whole positive seconds; a date or a fraction is ignored. */
 const retryAfterMs = ({ headers }: Response) => {
   const seconds = headers.get("Retry-After") ?? "";
   return /^\d+$/.test(seconds) && +seconds > 0 ? +seconds * 1000 : undefined;
@@ -58,13 +55,13 @@ const retryAfterMs = ({ headers }: Response) => {
 
 /** A refused upload, progress feed or socket ticket. */
 export const refused = (response: Response, detail = `HTTP ${response.status}`): Ending =>
-  signInMarked(response)
+  signInMarker(response)
     ? { ...SIGN_IN, detail }
     : refusal(response.status, response.headers.get("X-Graphite-Upload-Refusal"), detail, retryAfterMs(response));
 
-/** Only an admission refusal reconnects a download; any other status is an unexpected answer, as natively. */
+/** Only an admission refusal reconnects a download; any other status is an unexpected answer. */
 export const downloadRefused = (response: Response): Ending => ({
-  ...(signInMarked(response) ? SIGN_IN : response.status === 429 || response.status === 503 ? BUSY : UNEXPECTED),
+  ...(signInMarker(response) ? SIGN_IN : response.status === 429 || response.status === 503 ? BUSY : UNEXPECTED),
   detail: `HTTP ${response.status}`,
   retryAfterMs: retryAfterMs(response),
 });

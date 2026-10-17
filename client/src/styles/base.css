@@ -82,7 +82,7 @@
   html,
   body {
     height: 100%;
-    /* The centre workspace scrolls; browser chrome changes resize the shell. */
+    /* The center workspace scrolls; browser chrome changes resize the shell. */
     overflow: clip;
     overscroll-behavior: none;
   }
@@ -137,8 +137,10 @@
     text-decoration: underline;
     text-underline-offset: 3px;
   }
+  /* A field, or a field drawn around a number and its unit. */
   select,
-  input:where([type="number"], [type="text"], [type="search"]) {
+  input:where([type="number"], [type="text"], [type="search"]),
+  .field-unit {
     width: 100%;
     min-width: 0;
     height: var(--control-h);
@@ -153,7 +155,8 @@
   }
   @media (pointer: coarse) {
     select,
-    input:where([type="number"], [type="text"], [type="search"]) {
+    input:where([type="number"], [type="text"], [type="search"]),
+    .field-unit {
       height: var(--hit);
     }
   }
@@ -239,7 +242,8 @@
     }
   }
   select:focus-visible,
-  input:where([type="number"], [type="text"], [type="search"]):focus-visible {
+  input:where([type="number"], [type="text"], [type="search"]):focus-visible,
+  .field-unit:has(input:focus-visible) {
     outline: none;
     border-color: var(--brand-line);
     box-shadow: var(--ring-halo);

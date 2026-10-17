@@ -1,7 +1,6 @@
 // One latency bus's probing, whatever carries it (docs/MEASUREMENTS.md#latency-probing): fixed or reply-driven pacing
 // within an in-flight window, RFC 6298 deadlines fixed at send, outcomes batched for the owner, reconnects with
-// backoff, and a drain to the probes' own deadlines at each window's end, while the bus probes on for the next one. One
-// timer serves all of it, armed only for what is due.
+// backoff, and a drain to the probes' own deadlines at each window's end. One timer serves it all.
 import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
 import { DEADLINE_FLOOR_MS, RttEstimator } from "../measure/latency";
@@ -19,7 +18,7 @@ const BACKUP_CEILING_MS = 1_000;
 const FROZEN_MS = 1_500;
 
 /** Time as the prober sees it, so tests can drive it. */
-export interface ProberClock {
+interface ProberClock {
   now(): number;
   /** Epoch ms at `now() === 0`: outcomes leave the realm on epoch time. */
   readonly origin: number;
@@ -29,7 +28,7 @@ export interface ProberClock {
 }
 
 /** The connection side: a dial is answered by opened(), closed() or signIn(), and may lapse() first. */
-export interface ProberIO {
+interface ProberIO {
   dial(): void;
   /** Sends on the open connection; throws or rejects when the browser could not send. */
   send(text: string): void | Promise<void>;
@@ -41,7 +40,7 @@ export interface ProberIO {
 interface Probe {
   sentAt: number;
   deadline: number;
-  /** A datagram's write resolves later; a probe that never left cannot time out. */
+  /** A datagram's write resolves later; one still unconfirmed at its deadline never left, so it cannot time out. */
   confirmed: boolean;
   /** Warmup probes never enter a population. */
   measured: boolean;
@@ -56,8 +55,7 @@ export class Prober {
   readonly #pending = new Map<number, Probe>();
   readonly #graveyard = new Map<number, number>();
   readonly #rtt = new RttEstimator();
-  /** RFC 6298's RTTVAR, which the reply-driven backup needs and the estimator keeps to its deadline. */
-  #rttvar = 0;
+  #pace: { intervalMs: number | null; maxInFlight: number };
   #nextId = 0;
   /** The latest probe: a reply-driven chain steps when it resolves. */
   #head = -1;
@@ -76,10 +74,12 @@ export class Prober {
   #timerAt = Infinity;
 
   constructor(
-    readonly options: { intervalMs: number | null; maxInFlight: number },
+    { intervalMs, maxInFlight }: { intervalMs: number | null; maxInFlight: number },
     readonly clock: ProberClock,
     readonly io: ProberIO,
-  ) {}
+  ) {
+    this.#pace = { intervalMs, maxInFlight };
+  }
 
   start(): void {
     this.io.dial();
@@ -140,14 +140,14 @@ export class Prober {
       const sentAt = this.#graveyard.get(reply.id);
       if (sentAt === undefined) return;
       this.#graveyard.delete(reply.id);
-      return this.#observe(at - sentAt);
+      return this.#rtt.observe(at - sentAt);
     }
     this.#pending.delete(reply.id);
     if (!this.#replied) this.io.post({ type: "ready" });
     this.#replied = true;
     const rttMs = at - probe.sentAt;
     // Every reply keeps the deadline accurate, a warmup or late one too.
-    this.#observe(rttMs);
+    this.#rtt.observe(rttMs);
     // A reply at or after its deadline cannot erase the timeout.
     const late = at >= probe.deadline;
     const handlingMs = reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
@@ -164,7 +164,7 @@ export class Prober {
   measure(): void {
     if (this.#state === "stopped") return;
     this.#measuring = true;
-    if (this.options.intervalMs === null) return;
+    if (this.#pace.intervalMs === null) return;
     this.#sentAt = -Infinity;
     const now = this.clock.now();
     this.#step(now, false);
@@ -173,8 +173,8 @@ export class Prober {
 
   /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain starting at once;
       probes in flight keep their deadlines. */
-  pace(intervalMs: number | null, maxInFlight = this.options.maxInFlight): void {
-    Object.assign(this.options, { intervalMs, maxInFlight });
+  pace(intervalMs: number | null, maxInFlight = this.#pace.maxInFlight): void {
+    this.#pace = { intervalMs, maxInFlight };
     this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
     this.wake();
   }
@@ -204,7 +204,7 @@ export class Prober {
     }
     this.#sweep(now);
     if (now >= this.#flushAt) this.#flush();
-    if (this.options.intervalMs !== null) this.#step(now, false);
+    if (this.#pace.intervalMs !== null) this.#step(now, false);
     else if (now >= this.#backupAt) this.#step(now, true);
     this.#settle(now);
   }
@@ -213,7 +213,7 @@ export class Prober {
       from the actual sends, never catching up; a reply-driven chain steps when its latest probe resolves or its
       backup fires, and sleeps while the window is full. */
   #step(now: number, chained: boolean): void {
-    const { intervalMs, maxInFlight } = this.options;
+    const { intervalMs, maxInFlight } = this.#pace;
     if (intervalMs === null) {
       if (!chained) return;
       this.#backupAt = Infinity;
@@ -268,34 +268,39 @@ export class Prober {
     this.#settle(this.clock.now());
   }
 
-  /** Resolves each confirmed probe against the deadline fixed when it was sent. */
+  /** Resolves each probe at the deadline fixed when it was sent: a timeout, or a send failure while its write is still
+      unconfirmed. */
   #sweep(now: number): void {
     let evicted = false;
     let head = false;
+    let unsent = 0;
     for (const [id, probe] of this.#pending) {
-      if (!probe.confirmed || now < probe.deadline) continue;
+      if (now < probe.deadline) continue;
       this.#pending.delete(id);
+      if (!probe.confirmed) {
+        if (probe.measured) unsent++;
+        evicted = head = true;
+        continue;
+      }
       this.#graveyard.set(id, probe.sentAt);
       if (this.#graveyard.size > GRAVEYARD_MAX) this.#graveyard.delete(this.#graveyard.keys().next().value!);
       if (probe.measured) this.#record(probe, probe.deadline, true, null);
       evicted = true;
       head ||= id === this.#head;
     }
-    // A timeout completes a chain step as a reply would.
+    if (unsent) {
+      this.#flush();
+      this.io.post({ type: "interrupted", count: unsent, reason: "send-failed" });
+    }
+    // A timeout completes a chain step as a reply would; a write given up wakes a chain its full window put to sleep.
     if (evicted) this.#step(now, head);
-  }
-
-  #observe(rttMs: number): void {
-    const srtt = this.#rtt.srttMs;
-    this.#rttvar = srtt === null ? rttMs / 2 : 0.75 * this.#rttvar + 0.25 * Math.abs(srtt - rttMs);
-    this.#rtt.observe(rttMs);
   }
 
   /** The RTO within 8 ms and 1 s, so a reply-driven chain covers a late reply well before its deadline. */
   #backupMs(): number {
     const srtt = this.#rtt.srttMs;
     if (srtt === null) return DEADLINE_FLOOR_MS;
-    return Math.min(BACKUP_CEILING_MS, Math.max(BACKUP_FLOOR_MS, srtt + 4 * Math.max(1, this.#rttvar)));
+    return Math.min(BACKUP_CEILING_MS, Math.max(BACKUP_FLOOR_MS, srtt + 4 * Math.max(1, this.#rtt.rttvarMs)));
   }
 
   #record(probe: Probe, observedAt: number, timedOut: boolean, handlingMs: number | null): void {
@@ -334,25 +339,17 @@ export class Prober {
     this.io.hangUp();
   }
 
-  /** The ended window's probes resolved, or their last deadline passed with a write still unconfirmed, which stays
-      unresolved. */
+  /** The ended window's probes all resolved, each by its deadline at the latest. */
   #drained(now: number): void {
     this.#sweep(now);
-    let unresolved = 0;
-    for (const [id, probe] of this.#pending)
-      if (probe.cutoff < Infinity) {
-        this.#pending.delete(id);
-        unresolved++;
-      }
     this.#flush();
-    if (unresolved) this.io.post({ type: "interrupted", count: unresolved, reason: "unresolved" });
     this.#draining = false;
     this.io.post({ type: "drained" });
   }
 
   /** Ends a drain at its window's last deadline, or once nothing of it is pending; otherwise arms the timer for the
-      earliest of the next send, a confirmed deadline, the batch flush, the drain's end and a reconnect. An armed timer
-      that fires earlier just re-arms. */
+      earliest of the next send, a deadline, the batch flush, the drain's end and a reconnect. An armed timer that
+      fires earlier just re-arms. */
   #settle(now: number): void {
     if (this.#state === "stopped") return;
     let drainAt = Infinity;
@@ -366,8 +363,8 @@ export class Prober {
       }
     }
     let at = Math.min(this.#flushAt, this.#reconnectAt, drainAt);
-    for (const probe of this.#pending.values()) if (probe.confirmed) at = Math.min(at, probe.deadline);
-    const { intervalMs, maxInFlight } = this.options;
+    for (const probe of this.#pending.values()) at = Math.min(at, probe.deadline);
+    const { intervalMs, maxInFlight } = this.#pace;
     // A backup due while the window is full puts the chain to sleep; a full cadence waits for a free slot.
     if (this.#state === "open")
       at = Math.min(

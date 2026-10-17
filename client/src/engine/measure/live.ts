@@ -1,6 +1,6 @@
-// The live rate a stage shows while it runs. Results never read it; the terminal clients share its vectors
+// The live rate a stage shows while it runs. Results never read it; the terminal client shares its vectors
 // (api/liverate.testvectors.json), so its arithmetic stays exactly as it is.
-import type { Checkpoint, Direction } from "./aggregate";
+import type { Checkpoint, Direction } from "../types";
 
 const MIN_WINDOW_MS = 800;
 /** A rate shows once this much evidence follows the delivery that anchored it. */

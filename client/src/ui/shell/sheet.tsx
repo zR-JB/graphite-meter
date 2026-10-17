@@ -1,7 +1,5 @@
-// A side sheet: one non-modal dialog in every layout. Docked it is a column beside the stage whose slide is the
-// console's layout move; below 1,200 px it flies over the stage behind a scrim; on an upright phone it rises from the
-// bottom. Closed, it is inert and stays displayed past its edge until its slide is over, then rests undisplayed with
-// its content kept.
+// A side sheet: one non-modal dialog docked beside the stage, flying over it, or rising from the bottom (shell.css).
+// Closed, it is inert and rests once its slide is over, its content kept.
 import { Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, untrack, type Read } from "../../lib/signal";
@@ -60,7 +58,7 @@ export function Sheet(props: {
         {() => (
           <Splitter
             edge={side === "left" ? "right" : "left"}
-            label={`Resize ${title} panel (arrow keys; Enter to reset)`}
+            label={`Resize ${title} panel`}
             value={computed(() => props.dock().column)}
             min={computed(() => DOCK.min)}
             max={computed(() => props.dock().max)}

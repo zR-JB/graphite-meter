@@ -1,12 +1,11 @@
-// The dial's pure rules: the ring and its labels in the measured face, the throughput transfer curve, the result
-// arcs and their beads, the result sweep's timing, and the needle's course from stage to stage.
+// The dial's pure rules: the ring's geometry, the rate curve, the result arcs and the needle's course.
 import type { TransferStage } from "../../engine/run/schedule";
 import { STAGE } from "../../view/words";
 
-/** The ring opens downward: 270° clockwise from the bottom left, angles from +x with y down. */
-export const ARC_START = 0.75 * Math.PI;
-export const ARC_SWEEP = 1.5 * Math.PI;
+/** The ring opens downward: clockwise from the bottom left, angles from +x with y down. */
 export const SWEEP_DEG = 270;
+export const ARC_START = 0.75 * Math.PI;
+export const ARC_SWEEP = (SWEEP_DEG * Math.PI) / 180;
 const TICKS = 8;
 /** The label fractions of the ring, in label order. */
 export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
@@ -18,8 +17,8 @@ const DROP = (1 - Math.SQRT1_2) / 2;
 const TICK_REACH = 1.145;
 const EPSILON = 1e-6;
 
-export type Anchor = "start" | "center" | "end";
-export interface Point {
+type Anchor = "start" | "center" | "end";
+interface Point {
   x: number;
   y: number;
 }
@@ -33,7 +32,7 @@ export interface DialLayout {
   headRadius: number;
   /** The whole ring, which the track and every result arc stroke. */
   track: string;
-  /** The nine tick marks as one path. */
+  /** The tick marks as one path. */
   ticks: string;
   labels: (Point & { anchorX: Anchor; anchorY: Anchor })[];
   /** Where a note hung under the ring starts: just under the tick ends. */
@@ -66,7 +65,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
   const arcWidth = Math.max(6, radius * 0.13);
   const tickInner = radius + arcWidth / 2 + 3;
   const tickOuter = tickInner + radius * 0.08;
-  // The 270° figure with its labels, centred in the face.
+  // The ring with its labels, centred in the face.
   const center = { x: width / 2, y: height / 2 + DROP * (tickOuter + LABEL_CLEARANCE) };
   const at = (angle: number, distance: number) => ({
     x: center.x + Math.cos(angle) * distance,
@@ -139,11 +138,10 @@ export interface ResultArc {
   dashed: boolean;
 }
 
-/** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
-    both lanes, and a zero lane is evidence. */
-/** What a result's arcs read: each transfer's reported rate. */
 type Rated = { reportedBytesPerSec: number } | null | undefined;
 
+/** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
+    both lanes, and a zero lane is evidence. */
 export function resultArcs(
   results: { download: Rated; upload: Rated; bidirectional: { down: Rated; up: Rated } | null } | null,
 ): ResultArc[] {
@@ -180,7 +178,7 @@ export const arcLabel = (arc: ResultArc) =>
     ? `${STAGE.bidirectional.label}, ${STAGE[arc.direction].label.toLowerCase()} only`
     : STAGE[arc.stage].label;
 
-export type Bead = "bead" | "stacked" | "split";
+type Bead = "bead" | "stacked" | "split";
 
 /** How each head sits on the ring, judged against the heads painted before it (the higher results): one nearly
     level with a neighbour shows only its trailing half, so the pair reads as one bead in both hues; one that
@@ -197,7 +195,7 @@ export function beadKinds(fractions: readonly number[], radius: number, headRadi
 const SWEEP_MS = 900;
 const SWEEP_MIN_MS = 360;
 
-/** A result sweeps the rest of the ring from where the needle stood, in its share of 0.9 s, never under 0.36 s. */
+/** A result sweeps the rest of the ring from where the needle stood, in its share of SWEEP_MS, never under the floor. */
 export const resultSweepMs = (from: number) => Math.max(SWEEP_MIN_MS, SWEEP_MS * (1 - from));
 
 /** When the sweep's ease-out-cubic front, setting off at `from`, reaches `fraction`: a bead pops then. */
@@ -206,12 +204,13 @@ export const reachMs = (fraction: number, from: number, sweepMs: number) =>
 
 export const RISE_MS = 520;
 export const DRAIN_MS = 300;
-const RESCALE_MS = 360;
+/** A scale change glides the needle and the result arcs alike. */
+export const RESCALE_MS = 360;
 /** Frames further apart than this leave the needle at rest between them. */
 const FRAME_GAP_MS = 50;
 
 /** What the needle is told when what the dial shows changes, not every frame. */
-export interface NeedleInput {
+interface NeedleInput {
   /** The dial shows a value the needle can point at. */
   visible: boolean;
   /** A run ending in a speed result: the needle waits where it stands for the result to take over. */
@@ -225,7 +224,7 @@ export interface NeedleInput {
 /** The needle's course. A stage's first value rises from zero, or turns the needle round from where the last stage's
     drain has taken it, at the speed it drains; within a stage the needle follows the live value, and a scale change
     glides it across; when the value ends it drains to zero, so one stage hands the ring to the next through zero. A
-    result takes over the ring where the needle stands. Angles are degrees of the 270° ring. */
+    result takes over the ring where the needle stands. Angles are degrees along the ring. */
 export class Needle {
   #from = 0;
   #at = 0;

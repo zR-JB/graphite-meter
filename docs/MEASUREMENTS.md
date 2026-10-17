@@ -174,7 +174,7 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 
 | Reason                  | Label                           | Typical cause                                                                                                                |
 | ----------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `preparation-failed`    | Couldn't prepare the connection | A path check or stage preparation failed without a better reason.                                                            |
+| `preparation-failed`    | Could not prepare the connection | A path check or stage preparation failed without a better reason.                                                            |
 | `connection-lost`       | Connection lost                 | Network error, offline device or server shutdown.                                                                            |
 | `timeout`               | Stopped delivering data         | A timed-out path, the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending.                  |
 | `sign-in-required`      | Sign-in required                | Sign-out or a revoked grant.                                                                                                 |

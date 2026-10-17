@@ -18,7 +18,7 @@ const target = Number(process.env.GM_PERF_TARGET_MS ?? 16.7);
 const tail = Number(process.env.GM_PERF_P99_MS ?? (cpu > 1 ? 33.4 : 16.7));
 const stall = Number(process.env.GM_PERF_MAX_MS ?? 50);
 for (const count of counts)
-  test(
+  test.chrome(
     `${count} servers keep frames and default adaptive results`,
     async (page) => {
       if (viewport)

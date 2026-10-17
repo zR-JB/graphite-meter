@@ -1,12 +1,10 @@
-// The instrument's live values, one set per app and shared by every surface that shows the run: the glided rates and
-// round trip, the stage and run clocks, the page's scales, each stage's state, the latency focus and the result lens.
-// The run model holds the facts; this holds how they move on screen.
+// The instrument's live values, one set per app: how the run model's facts move on screen.
 import type { App } from "../../app/app";
 import type { Preparation, ShownPhase } from "../../app/run";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { ServerIdentity } from "../../engine/types";
 import type { LatencySummary } from "../../engine/measure/latency";
-import { needsPings } from "../../engine/net/budget";
+import { needsPings } from "../../engine/net/streams";
 import type { Phase } from "../../engine/run/run";
 import { activities, planned, STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import { nextFrame, pageMs } from "../../lib/frame";
@@ -317,14 +315,14 @@ function createLive(app: App) {
     const own = run.preparation();
     return own === "idle" && run.phase() === "idle" && !servers.loading() && app.blocker() ? "blocked" : own;
   });
-  /** The servers the run indicates: its own selection, else the selected ones in catalogue order, named as their
-      discovery names them. */
+  /** The servers the run indicates: its own selection, else the selected ones in catalog order, as discovery names
+      them. */
   const indicated = computed<readonly ServerIdentity[]>(() => {
     const details = run.details();
     if (details) return details.selection;
     const views = servers.views();
     const selected = servers.selected();
-    return (servers.catalogue()?.servers ?? [])
+    return (servers.catalog()?.servers ?? [])
       .filter((entry) => selected.includes(entry.id))
       .map((entry) => views.get(entry.id)?.server ?? entry);
   });

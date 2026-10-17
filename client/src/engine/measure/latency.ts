@@ -1,5 +1,6 @@
 // Latency statistics (docs/MEASUREMENTS.md#latency-probing): one population per server and stage, exact nearest-rank
 // percentiles with a midpoint median, jitter over adjacent replies, and the RFC 6298 probe deadline.
+import type { ProbeOutcome } from "../../protocol/messages";
 import type { Stage, TransferStage } from "../run/schedule";
 import { SCORE_WINDOW_MS, type Confidence } from "./stability";
 
@@ -24,14 +25,14 @@ export interface LatencySummary {
   jitterMs: number | null;
 }
 
-export interface Outcome {
-  rttMs: number;
-  timedOut: boolean;
-  /** The server's handling time from the same reply, when it could be read exactly. */
-  handlingMs?: number | null;
-  /** A reply after the stage cutoff resolves its probe but stays out of RTT and jitter. */
-  inWindow?: boolean;
-}
+type Outcome = Pick<ProbeOutcome, "rttMs" | "timedOut" | "handlingMs" | "inWindow">;
+
+/** The 0-based nearest rank of percentile `p` among `n` sorted values. */
+export const nearestRank = (p: number, n: number) => Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
+
+/** The median of `n` sorted values read through `at`, the mean of the middle two for an even count. */
+export const midpointMedian = (n: number, at: (rank: number) => number) =>
+  n % 2 ? at(n >> 1) : (at((n >> 1) - 1) + at(n >> 1)) / 2;
 
 /** Distinct RTTs kept to the nanosecond; past them new ones keep four significant digits (0.01 %), so a day-long
     stage holds tens of thousands of values at most. */
@@ -68,10 +69,6 @@ export class Population {
     return this.#replies + this.#timeouts;
   }
 
-  get timeoutRatio(): number | null {
-    return this.count ? this.#timeouts / this.count : null;
-  }
-
   /** `continuity` changes when the channel reconnects, which breaks reply adjacency for jitter. */
   observe(outcome: Outcome, continuity = 0): void {
     this.#cached = undefined;
@@ -84,7 +81,7 @@ export class Population {
     }
     if (!(rttMs >= 0) || !Number.isFinite(rttMs)) return;
     this.#replies++;
-    if (outcome.inWindow === false) return;
+    if (!outcome.inWindow) return;
     const exact = Math.round(rttMs * 1e6);
     const ns = this.#counts.size < EXACT_VALUES ? exact : significant(exact);
     const seen = this.#counts.get(ns);
@@ -145,8 +142,7 @@ export class Population {
       }
       return keys[lo]! / 1e6;
     };
-    const nearest = (p: number) => (n ? at(Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))) : null);
-    const mid = n >> 1;
+    const nearest = (p: number) => (n ? at(nearestRank(p, n)) : null);
     const { count, raw, handling } = this.#timing;
     return (this.#cached = {
       ...(count && {
@@ -162,7 +158,7 @@ export class Population {
       maxMs: n ? at(n - 1) : null,
       meanMs: n ? this.#sum / n : null,
       p10Ms: nearest(0.1),
-      p50Ms: !n ? null : n % 2 ? at(mid) : (at(mid - 1) + at(mid)) / 2,
+      p50Ms: n ? midpointMedian(n, at) : null,
       p90Ms: nearest(0.9),
       p95Ms: nearest(0.95),
       jitterMs: this.#jitterPairs ? this.#jitterSum / this.#jitterPairs : null,
@@ -196,7 +192,7 @@ class IdleWindow {
   #scratch = new Float64Array(1024);
 
   observe(atMs: number, outcome: Outcome): void {
-    if (outcome.inWindow === false) return;
+    if (!outcome.inWindow) return;
     this.#times.push(atMs);
     this.#rtts.push(outcome.timedOut ? NaN : outcome.rttMs);
     while (this.#times[this.#head]! <= atMs - SCORE_WINDOW_MS) this.#head++;
@@ -281,6 +277,10 @@ export class RttEstimator {
 
   get srttMs(): number | null {
     return this.#seen ? this.#srtt : null;
+  }
+
+  get rttvarMs(): number {
+    return this.#rttvar;
   }
 
   /** SRTT + 4 × max(RTTVAR, 1 ms), within 250 ms and 10 s; 250 ms before the first reply. */

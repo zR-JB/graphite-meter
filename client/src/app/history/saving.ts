@@ -1,7 +1,8 @@
 // Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
 // was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
-// A write whose count could not be read when it was queued takes the last count this tab read and knows to be
-// current; with none, it is refused rather than given a later count, which would bring it back after a clear.
+// A write whose count could not be read when it was queued takes the last count this tab read and knows to be current,
+// else a count read later while no tab has changed History since; failing both, it is refused rather than brought back
+// after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
@@ -9,10 +10,10 @@ import { HistoryRefusal, type HistoryRepository } from "./repository";
 const RETRY_MS = 15_000;
 /** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
 const MAX_QUEUED = 8;
-const RETRYING = "Unable to save this result locally. Future writes will be retried.";
-const UNORDERED = "Unable to save this result: History could not be read when it finished.";
+const RETRYING = "Could not save this result locally. Future writes will be retried.";
+const UNORDERED = "Could not save this result: History could not be read when it finished.";
 
-export interface HistorySaving {
+interface HistorySaving {
   /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until
       withdrawn. */
   offer(record: HistoryRecord): void;
@@ -32,6 +33,8 @@ export interface HistorySaving {
 interface Entry {
   record: HistoryRecord;
   clears: Promise<number | null | HistoryRefusal>;
+  /** `changes` when it was queued. */
+  queuedAt: number;
 }
 
 export function createHistorySaving(
@@ -55,6 +58,8 @@ export function createHistorySaving(
   // The clear count as last read for a write, while nothing in another tab may have changed it since. Never read
   // for its own sake, so History opens its database only to save.
   let known: number | null = null;
+  /** Clears and other tabs' changes heard so far. */
+  let changes = 0;
   const read = () =>
     repository.clears().then((clears) => {
       known = clears;
@@ -79,6 +84,7 @@ export function createHistorySaving(
     queue.push({
       record,
       clears: read().catch((error) => (error instanceof HistoryRefusal ? error : known)),
+      queuedAt: changes,
     });
     pending.set(true);
     void drain();
@@ -101,11 +107,15 @@ export function createHistorySaving(
       while (!disposed && queue.length) {
         const entry = queue[0]!;
         try {
-          const clears = await entry.clears;
+          let clears = await entry.clears;
           if (clears instanceof HistoryRefusal) throw clears;
           if (clears === null) {
-            settle(entry, false, UNORDERED);
-            continue;
+            // A count read now is the one it was queued under while nothing has changed History since.
+            if (changes !== entry.queuedAt) {
+              settle(entry, false, UNORDERED);
+              continue;
+            }
+            clears = await read();
           }
           const written = await repository.put(entry.record, clears);
           if (disposed) return;
@@ -145,6 +155,7 @@ export function createHistorySaving(
     showUnsaved();
   };
   const stopWatching = repository.onChange((change) => {
+    if (change.type === "cleared" || change.type === "elsewhere") changes++;
     if (change.type === "cleared" && known !== null) known++;
     // Another tab may have cleared History: the count is known again at the next write's read.
     if (change.type === "elsewhere") known = null;
