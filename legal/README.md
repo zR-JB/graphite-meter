@@ -43,7 +43,7 @@ records of the crates that lack one.
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
 check lists the compiled crates with `cargo tree` over normal and build edges and requires an approved review for
 each, and every shipped target needs an approved platform record. The static x86_64 Linux server and client compile
-at most 143 and 150 crates, a dependency policy rather than a license requirement.
+at most 143 and 150 crates. That ceiling is a dependency policy rather than a license requirement.
 
 ## Updating pinned forks
 
@@ -62,23 +62,23 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
 
 `python3 -m scripts.legal.rust` collects a binary's notices around one real Cargo build of it, in three steps:
 
-1. **Prepare.** `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
+1. Prepare. `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
    build scripts and procedural macros included. Each needs its approved review or manual provenance; the target
    needs its approved platform record, whose missing notice texts are fetched from `rust-notice-sources.json` into
-   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_RUST_LEGAL_DIR`:
+   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_LEGAL_DIR`:
    `LEGAL.txt` (the `--legal` report) with its SHA-256 in `LEGAL.sha256`, `package.txt`, `target.txt`,
    `rustc-path.txt`, and `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the
    browser build in `browser-assets/` with its `legal/` files (the license, the notices and `about.json`, whose
    components link their source, upstream and changes) and, for a reviewed build, writes the image's
    `IMAGE_NOTICES.txt`.
-2. **Build and verify.** One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
+2. Build and verify. One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
    another package, target or compiler, or whose input copies differ. The collector then requires that the build
    compiled only prepared crates with unchanged legal files, linked only the record's native inputs, imported only its
    system libraries, embedded exactly `LEGAL.txt` and, for a reviewed build, carries
    `graphite-meter reviewed notices sha256:` with its SHA-256 in plain text, which release verification compares with
    the notices shipped beside the executable. It then writes `inventory.json` of the compiled crates and the server's
    browser packages.
-3. **Source offer.** A reviewed build writes its part of the release's one source offer,
+3. Source offer. A reviewed build writes its part of the release's one source offer,
    `graphite-meter_VERSION_third-party-source.tar.gz`: the compiled crates' and browser packages' sources under
    `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/`, the fork records and the manual
    material. Release staging merges the parts of every shipped build into that one archive. The build also writes the
@@ -86,7 +86,7 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    prerelease publishes no tag or source offer, so its `SOURCE.txt` names the repository.
 
 `--development` notices, which local builds (`scripts.build`, through `mise run dev`, `tui`, `server-build`,
-`tui-build` and `e2e`) embed, need the dependency reviews but no platform record, so any host builds them. Their
+`tui-build` and `e2e-server`) embed, need the dependency reviews but no platform record, so any host builds them. Their
 report and their executable carry `UNREVIEWED DEVELOPMENT BUILD`: such a build is not distributable. A reviewed
 build's executable must not carry the marker, the workflow policy keeps development builds out of everything CI and
 releases run, and release verification refuses an image or archive whose executable or notices carry it.
