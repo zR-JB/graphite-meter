@@ -1,6 +1,6 @@
 //! The crate's vocabulary: stages, directions, cadences, failures, stage results and the run's outcome.
 
-use crate::measure::{aggregate::Interval, aggregate::Rate, latency::Population};
+use crate::measure::{aggregate::Rate, latency::Population};
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::{
     ops::{Index, IndexMut},
@@ -147,9 +147,6 @@ pub struct StageResult {
     /// Every server that began the stage, in selection order.
     pub servers: Vec<ServerResult>,
     pub failures: Vec<ServerFailure>,
-    pub intervals: Vec<Interval>,
-    /// Older intervals the stage dropped.
-    pub omitted: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,5 +1,4 @@
-//! Drawing into a frame's buffer: tiles and plates, styled text, braille dots, a dimmed backdrop, and the regions a
-//! pointer can press.
+//! Drawing into a frame's buffer, and the regions a pointer can press.
 use super::Target;
 use crate::text::{Color, Line, Profile, Style};
 use graphite_meter_proto::text::safe;
@@ -33,14 +32,14 @@ impl<'a> Canvas<'a> {
         self.profile
     }
 
-    /// Fills `area` with a tile's colour from 256 colours on; with fewer the canvas stays flat.
+    /// Fills `area` with a tile's color from 256 colors on; with fewer the canvas stays flat.
     pub fn fill(&mut self, area: Rect, color: Color) {
         if self.profile >= Profile::Ansi256 {
             self.plate(area, Style { bg: Some(color), ..Style::default() });
         }
     }
 
-    /// Paints `area` in `style`'s background in every profile that has colour: a key's plate.
+    /// Paints `area` in `style`'s background in every profile that has color: a key's plate.
     pub fn plate(&mut self, area: Rect, style: Style) {
         let Some(bg) = paint(style.bg, self.profile) else { return };
         for (x, y) in cells(area.intersection(self.buffer.area)) {
@@ -48,15 +47,14 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Blanks `area`, its colours with it.
+    /// Blanks `area`, its colors with it.
     pub fn clear(&mut self, area: Rect) {
         for (x, y) in cells(area.intersection(self.buffer.area)) {
             self.buffer[(x, y)].reset();
         }
     }
 
-    /// Writes `line` from column `x` of row `y` in at most `width` cells, every unsafe character blanked; a span without
-    /// a background keeps the one under it. Returns the column after the text.
+    /// Writes `line` at `x`, `y` in at most `width` cells, unsafe characters blanked; the column after it.
     pub fn line(&mut self, x: u16, y: u16, width: u16, line: &Line) -> u16 {
         let area = self.buffer.area;
         if y < area.y || y >= area.bottom() || x >= area.right() {
@@ -90,7 +88,7 @@ impl<'a> Canvas<'a> {
         self.line(x + (width - shown) / 2, y, shown, line);
     }
 
-    /// Writes the cells `dots` lit as braille in their colours, over the backgrounds under them.
+    /// Writes the cells `dots` lit as braille in their colors, over the backgrounds under them.
     pub fn dots(&mut self, dots: &Dots) {
         let area = dots.area.intersection(self.buffer.area);
         for (x, y) in cells(area) {
@@ -111,8 +109,7 @@ impl<'a> Canvas<'a> {
         self.hits.push((area, target));
     }
 
-    /// Mixes the colours in `area` toward `canvas` by `share`, in full colour, text in the terminal's own colour taking
-    /// `soft`: the backdrop under a sheet.
+    /// The backdrop under a sheet: `area` mixed toward `canvas` by `share`, unstyled text taking `soft`.
     pub fn dim(&mut self, area: Rect, canvas: Color, soft: Color, share: f64) {
         if self.profile != Profile::TrueColor {
             return;
@@ -155,7 +152,7 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// `color` as `profile` writes it; the 16-colour profile writes indexed colours 0–15.
+/// `color` as `profile` writes it; the 16-color profile writes indexed colors 0–15.
 pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     let color = color?;
     let [_, red, green, blue] = color.rgb.to_be_bytes();
@@ -173,7 +170,7 @@ fn cells(area: Rect) -> impl Iterator<Item = (u16, u16)> {
 }
 
 /// Braille dots over an area, two across and four down a cell; a cell shows its highest rank's dots in that rank's
-/// first colour, so a mark drawn over a trace stays whole.
+/// first color, so a mark drawn over a trace stays whole.
 pub struct Dots {
     area: Rect,
     cells: Vec<(u8, Option<Color>, u8)>,

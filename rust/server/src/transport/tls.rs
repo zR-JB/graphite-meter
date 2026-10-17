@@ -2,10 +2,10 @@
 
 use super::PEER_FAILURES;
 use crate::{
-    config::{Config, TlsFiles, path_error},
+    clock,
+    config::{Config, TlsFiles, could_not},
     exchange::EXCHANGE_BOUND,
     log,
-    log::rfc3339,
 };
 use graphite_meter_proto::origin::{Host, Scheme};
 use rustls::{
@@ -22,14 +22,13 @@ use std::{
         Arc, PoisonError, RwLock,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufReader},
     time::{Instant, MissedTickBehavior, interval_at, timeout},
 };
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
-use tokio_util::sync::CancellationToken;
 
 /// Renewed files are read this often.
 const RENEWAL_CHECK: Duration = Duration::from_mins(1);
@@ -117,16 +116,12 @@ impl Certificates {
         self.handshake.load(Ordering::Relaxed)
     }
 
-    /// Re-reads the pair every minute on a blocking thread until `shutdown`.
-    pub async fn watch(self: Arc<Self>, shutdown: CancellationToken) {
+    /// Re-reads the pair every minute on a blocking thread.
+    pub async fn watch(self: Arc<Self>) {
         let mut ticks = interval_at(Instant::now() + RENEWAL_CHECK, RENEWAL_CHECK);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
-            tokio::select! {
-                biased;
-                () = shutdown.cancelled() => return,
-                _ = ticks.tick() => {}
-            }
+            ticks.tick().await;
             let certificates = self.clone();
             let reloaded = tokio::task::spawn_blocking(move || certificates.reload(SystemTime::now())).await;
             if let Ok(Err(error)) = reloaded {
@@ -135,8 +130,7 @@ impl Certificates {
         }
     }
 
-    /// A TLS 1.3 configuration offering `alpn`, serving the current pair; it follows the client's suite order only
-    /// with AES hardware, and otherwise picks ChaCha20-Poly1305 first, as Go's server does.
+    /// A TLS 1.3 configuration offering `alpn`, serving the current pair; without AES hardware ChaCha20-Poly1305 wins.
     pub fn server_config(self: &Arc<Self>, alpn: &[u8]) -> ServerConfig {
         let mut config = ServerConfig::builder_with_provider(graphite_meter_net::provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -170,21 +164,21 @@ where
         Ok(Err(error)) => error.to_string(),
         Err(_) => "timed out".into(),
     };
-    PEER_FAILURES.write(format_args!("TLS handshake failed from {peer}: {error}"));
+    PEER_FAILURES.write(format_args!("TLS handshake from {peer} failed: {error}"));
     None
 }
 
-/// The pair, checked as Go's server checks it, and when its leaf expires.
+/// The pair, its leaf current and covering `hosts`, and when that leaf expires.
 fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedKey, SystemTime), String> {
     let pair = pair(files).map_err(|error| format!("TLS certificate and key unusable: {error}"))?;
     let leaf = &pair.cert[0];
     let (not_before, not_after) =
         validity(leaf).ok_or("TLS certificate unreadable: its validity dates are malformed")?;
     if now < not_before {
-        return Err(format!("TLS certificate is not valid before {}", rfc3339(not_before)));
+        return Err(format!("TLS certificate is not valid before {}", clock::rfc3339(not_before)));
     }
     if now >= not_after {
-        return Err(format!("TLS certificate expired at {}", rfc3339(not_after)));
+        return Err(format!("TLS certificate expired at {}", clock::rfc3339(not_after)));
     }
     let parsed = ParsedCertificate::try_from(leaf).map_err(|error| format!("TLS certificate unreadable: {error}"))?;
     for host in hosts {
@@ -203,7 +197,7 @@ fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedK
 /// Both files read and paired before the leaf is checked.
 fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
     let read =
-        |path: &Path| std::fs::read(path).map_err(|error| path_error("open", &path.display().to_string(), &error));
+        |path: &Path| std::fs::read(path).map_err(|error| could_not(&format!("read {}", path.display()), &error));
     let (certificate, key) = (read(&files.cert)?, read(&files.key)?);
     let chain: Vec<_> = CertificateDer::pem_slice_iter(&certificate)
         .collect::<Result<_, _>>()
@@ -219,7 +213,7 @@ fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
 }
 
 fn log_loaded(expires: SystemTime, now: SystemTime) {
-    log!(Info, "tls", "certificate loaded: expires {}", rfc3339(expires));
+    log!(Info, "tls", "certificate loaded: expires {}", clock::rfc3339(expires));
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
         // Whole days from two days on, else whole hours.
@@ -308,25 +302,8 @@ fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
         _ => return None,
     };
     let [month, day, hour, minute, second] = [0, 2, 4, 6, 8].map(|at| number(&rest[at..at + 2]));
-    let (month, day, hour, minute, second) = (month?, day?, hour?, minute?, second?);
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = match month {
-        2 => 28 + u64::from(leap),
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    };
-    if rest[10] != b'Z' || !(1..=12).contains(&month) || !(1..=month_days).contains(&day) {
-        return None;
-    }
-    if hour > 23 || minute > 59 || second > 59 {
-        return None;
-    }
-    let year = year.checked_sub(u64::from(month <= 2))?;
-    let year_of_era = year % 400;
-    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-    let days = (year / 400) * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let seconds = days.checked_sub(719_468)? * 86_400 + hour * 3600 + minute * 60 + second;
-    Some(UNIX_EPOCH + Duration::from_secs(seconds))
+    (rest[10] == b'Z').then_some(())?;
+    clock::utc([year, month?, day?, hour?, minute?, second?])
 }
 
 #[cfg(test)]
@@ -335,16 +312,10 @@ mod tests {
 
     #[test]
     fn der_times_read_both_forms_and_refuse_impossible_dates() {
-        let at = |tag, text: &str| der_time(tag, text.as_bytes()).map(rfc3339);
-        assert_eq!(at(0x17, "261004235959Z").as_deref(), Some("2026-10-04T23:59:59Z"));
+        let at = |tag, text: &str| der_time(tag, text.as_bytes()).map(clock::rfc3339);
         assert_eq!(at(0x17, "491231235959Z").as_deref(), Some("2049-12-31T23:59:59Z"));
         assert_eq!(at(0x18, "20000229120000Z").as_deref(), Some("2000-02-29T12:00:00Z"));
-        for (tag, text) in [
-            (0x18, "21000229000000Z"),
-            (0x17, "261304000000Z"),
-            (0x17, "261004240000Z"),
-            (0x17, "2610042359590"),
-        ] {
+        for (tag, text) in [(0x18, "21000229000000Z"), (0x17, "2610042359590"), (0x18, "261004235959Z")] {
             assert_eq!(at(tag, text), None, "{text}");
         }
     }

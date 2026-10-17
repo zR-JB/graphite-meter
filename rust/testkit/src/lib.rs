@@ -1,10 +1,10 @@
-//! Test fixtures: TLS identities, a delaying, faulting relay and temporary directories.
+//! Test fixtures: TLS identities, a delaying, stalling relay and temporary directories.
 mod identity;
 mod link;
 mod scratch;
 
 pub use identity::Identity;
-pub use link::{Bottleneck, Fault, Link};
+pub use link::{Bottleneck, Link};
 pub use scratch::Scratch;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

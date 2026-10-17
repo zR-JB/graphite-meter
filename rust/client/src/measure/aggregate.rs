@@ -13,7 +13,7 @@ const MIN_EVIDENCE: Duration = Duration::from_millis(800);
 /// A peak window spans at least this much on every clock.
 const MIN_PEAK: Duration = Duration::from_millis(500);
 /// A stage keeps its latest this many intervals.
-pub const MAX_INTERVALS: usize = 128;
+const MAX_INTERVALS: usize = 128;
 
 /// One upload receiver's counters; a replacement receiver has a higher `id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,9 +177,10 @@ struct Ledger {
 #[derive(Debug)]
 pub struct Aggregate {
     stage: Stage,
-    /// The latest last, and how many older ones were dropped.
-    pub intervals: VecDeque<Interval>,
-    pub omitted: usize,
+    /// The latest last.
+    intervals: VecDeque<Interval>,
+    /// Every interval begun, the dropped ones too.
+    begun: usize,
     ledgers: Vec<Ledger>,
     open: Option<Open>,
     latest: Option<Boundary>,
@@ -204,7 +205,7 @@ impl Aggregate {
         let mut aggregate = Self {
             stage,
             intervals: VecDeque::new(),
-            omitted: 0,
+            begun: 0,
             ledgers,
             open: None,
             latest: None,
@@ -325,6 +326,16 @@ impl Aggregate {
         bytes.fold(0, u64::saturating_add)
     }
 
+    /// The intervals kept, the latest last.
+    pub fn intervals(&self) -> impl Iterator<Item = &Interval> {
+        self.intervals.iter()
+    }
+
+    /// How many intervals began, the dropped ones too.
+    pub fn begun(&self) -> usize {
+        self.begun
+    }
+
     /// Complete intervals with a window, the latest first.
     fn counted(&self) -> impl Iterator<Item = (&Interval, &Window)> {
         let complete = self.intervals.iter().rev().filter(|interval| interval.complete);
@@ -334,8 +345,8 @@ impl Aggregate {
     fn restart(&mut self, reason: Reason, participants: Vec<ServerId>, at: Instant) {
         if self.intervals.len() == MAX_INTERVALS {
             self.intervals.pop_front();
-            self.omitted += 1;
         }
+        self.begun += 1;
         let peaks = Peaks::default();
         let interval = Interval {
             reason,

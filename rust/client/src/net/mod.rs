@@ -200,7 +200,7 @@ impl Client {
 
     /// The fault an upload progress `error` record from `origin` means; a revoked grant is dropped.
     pub fn upload_error(&self, origin: &Origin, code: &str) -> Fault {
-        let Some(refusal) = UploadRefusal::from_name(code) else {
+        let Some(refusal) = UploadRefusal::find_by(UploadRefusal::name, code) else {
             return Fault::Malformed(format!("upload progress error {code}"));
         };
         let issuer = || self.issuer(origin);

@@ -5,7 +5,7 @@ use graphite_meter_client::{
     model::{Cadence, Stage},
     net::{Client, LatencyPath},
     run::{
-        engine::Probe,
+        engine::ProberEvent,
         probe::{Prober, Schedule},
     },
 };
@@ -31,9 +31,9 @@ fn pong(ping: Ping) -> Pong {
     Pong { id: ping.id, handling_nanos: 100 }
 }
 
-fn outcome(probe: Option<Probe>) -> ProbeOutcome {
+fn outcome(probe: Option<ProberEvent>) -> ProbeOutcome {
     match probe {
-        Some(Probe::Outcome { outcome, .. }) => outcome,
+        Some(ProberEvent::Outcome { outcome, .. }) => outcome,
         other => panic!("{other:?}"),
     }
 }
@@ -103,11 +103,11 @@ async fn a_reply_driven_prober_keeps_a_probe_in_flight_on_loopback() {
     let client = Client::new(false, Arc::new(Pool::inline()));
     let start = Instant::now();
     let mut prober = Prober::spawn(client, path, Stage::Latency, Cadence::ReplyDriven, CancellationToken::new());
-    tokio::time::sleep(ms(500)).await;
+    tokio::time::sleep(ms(200)).await;
     let rtts: Vec<_> = prober
         .drain()
         .filter_map(|probe| match probe {
-            Probe::Outcome { outcome: ProbeOutcome::Reply { rtt, .. }, .. } => Some(rtt),
+            ProberEvent::Outcome { outcome: ProbeOutcome::Reply { rtt, .. }, .. } => Some(rtt),
             _ => None,
         })
         .collect();

@@ -1,15 +1,18 @@
-//! The HTTPS listener and its certificate: TLS 1.3 only and startup checks.
+//! The HTTPS listener and its certificate: TLS 1.3 only, startup checks, validity and renewal.
 
 use super::*;
+use graphite_meter_server::{config::TlsFiles, transport::tls::Certificates};
 use graphite_meter_testkit::{Identity, Scratch};
 use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
-use std::{path::PathBuf, sync::Arc};
-use tokio_rustls::TlsConnector;
+use std::{path::PathBuf, sync::Arc, time::SystemTime};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// A certificate and key in `scratch` from `identity`.
 fn files(scratch: &Scratch, identity: &Identity) -> (PathBuf, PathBuf) {
-    let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
-    (cert, scratch.file("key.pem", &identity.key).unwrap())
+    let (cert, key) = (scratch.path().join("cert.pem"), scratch.path().join("key.pem"));
+    std::fs::write(&cert, &identity.certificate).unwrap();
+    std::fs::write(&key, &identity.key).unwrap();
+    (cert, key)
 }
 
 fn tls_env<'a>(cert: &'a str, key: &'a str) -> Vec<(&'static str, &'a str)> {
@@ -73,4 +76,42 @@ async fn startup_refuses_a_mismatched_pair_and_an_uncovered_public_host() {
     env.push(("GM_H1_TLS_PUBLIC_ORIGIN", "https://speed.example"));
     let refused = Server::bind(config(&env), pool()).await.err().unwrap();
     assert!(refused.starts_with("TLS certificate incompatible with speed.example: "), "{refused}");
+}
+
+/// Whether a client trusting only `trusted`'s CA completes a handshake with `acceptor`.
+async fn handshake(acceptor: &TlsAcceptor, trusted: &Identity) -> bool {
+    let (client, server) = tokio::io::duplex(64 << 10);
+    let connector = TlsConnector::from(Arc::new(trusted.client(&[b"http/1.1"])));
+    let name = ServerName::try_from("localhost").unwrap();
+    let (connected, _) = tokio::join!(connector.connect(name, client), acceptor.accept(server));
+    connected.is_ok()
+}
+
+#[tokio::test]
+async fn a_pair_outside_its_validity_is_refused_and_a_complete_renewal_is_served_in_place() {
+    let scratch = Scratch::new().unwrap();
+    let (first, renewed) = (Identity::generate().unwrap(), Identity::generate().unwrap());
+    let (cert, key) = files(&scratch, &first);
+    let files = TlsFiles { cert, key };
+    let fits = |_: usize| Ok::<(), String>(());
+    let (now, years) = (SystemTime::now(), Duration::from_secs(3 * 366 * 86_400));
+    let expired = Certificates::load(files.clone(), Vec::new(), now + years, fits).unwrap_err();
+    assert!(expired.starts_with("TLS certificate expired at "), "{expired}");
+    let early = Certificates::load(files.clone(), Vec::new(), now - years, fits).unwrap_err();
+    assert!(early.starts_with("TLS certificate is not valid before "), "{early}");
+
+    let certificates = Arc::new(Certificates::load(files, Vec::new(), now, fits).unwrap());
+    let acceptor = certificates.acceptor(b"http/1.1");
+    assert!(handshake(&acceptor, &first).await && !handshake(&acceptor, &renewed).await);
+    scratch.file("cert.pem", &renewed.certificate).unwrap();
+    let half = certificates.reload(now).unwrap_err();
+    assert!(half.ends_with("the private key does not match the certificate"), "{half}");
+    assert!(handshake(&acceptor, &first).await, "a half-written renewal keeps the current pair");
+    scratch.file("key.pem", &renewed.key).unwrap();
+    let refused = certificates.reload(now + years).unwrap_err();
+    assert!(refused.starts_with("TLS certificate expired at "), "{refused}");
+    assert_eq!(certificates.reload(now), Ok(true));
+    assert!(handshake(&acceptor, &renewed).await, "the running acceptor serves the renewal");
+    assert!(!handshake(&acceptor, &first).await);
+    assert_eq!(certificates.reload(now), Ok(false), "an unchanged pair");
 }

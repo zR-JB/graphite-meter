@@ -20,9 +20,3 @@ table! {
         Revoked => ("revoked", "authentication required", StatusCode::FORBIDDEN, FailureReason::SignInRequired),
     }
 }
-
-impl UploadRefusal {
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|refusal| refusal.name() == name)
-    }
-}

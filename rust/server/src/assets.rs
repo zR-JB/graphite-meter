@@ -10,8 +10,8 @@ use base64::{
 use bytes::Bytes;
 use graphite_meter_legal::{BROWSER_NOTICE, Notices};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
-use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::OnceLock};
+use ring::digest::{SHA256, digest};
+use std::collections::HashMap;
 
 /// One embedded file.
 pub struct Asset {
@@ -46,7 +46,7 @@ struct File {
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
-    notice_tag: OnceLock<HeaderValue>,
+    notice_tag: Option<HeaderValue>,
     /// The index with the server's meta tags.
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
@@ -56,7 +56,7 @@ pub struct Assets {
 }
 
 impl Assets {
-    /// The app and notices this build embeds; a build without `GM_RUST_ASSET_DIR` has no app.
+    /// The app and notices this build embeds; a build without `GM_ASSET_DIR` has no app.
     pub fn embedded(auth: bool, history_default: bool) -> Self {
         Self::new(EMBEDDED, &NOTICES, auth, history_default)
     }
@@ -101,7 +101,7 @@ impl Assets {
         Self {
             files,
             notices,
-            notice_tag: OnceLock::new(),
+            notice_tag: notices.browser().map(tag),
             index,
             inline,
             trusted_types,
@@ -122,8 +122,12 @@ impl Assets {
             ("text/html; charset=utf-8", "no-store", self.index.clone()?, None)
         } else if path.strip_prefix('/') == Some(BROWSER_NOTICE) {
             let bytes = self.notices.browser()?;
-            let tag = self.notice_tag.get_or_init(|| tag(bytes));
-            ("text/plain; charset=utf-8", "no-cache", Bytes::from_static(bytes), Some(tag))
+            (
+                "text/plain; charset=utf-8",
+                "no-cache",
+                Bytes::from_static(bytes),
+                self.notice_tag.as_ref(),
+            )
         } else {
             let name = path.strip_prefix('/')?;
             let file = self.files.get(name)?;
@@ -195,7 +199,7 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, content) = html.split_once(&format!("<{tag}>"))?;
     let (content, _) = content.split_once(&format!("</{tag}>"))?;
-    Some(STANDARD.encode(Sha256::digest(content.as_bytes())))
+    Some(STANDARD.encode(digest(&SHA256, content.as_bytes())))
 }
 
 /// The policy name the index's Trusted Types marker carries.
@@ -209,11 +213,11 @@ fn trusted_types_policy(html: &[u8]) -> Option<&str> {
 
 /// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
 fn tag(bytes: &[u8]) -> HeaderValue {
-    let tag = format!("\"{}\"", URL_SAFE_NO_PAD.encode(&Sha256::digest(bytes)[..12]));
+    let tag = format!("\"{}\"", URL_SAFE_NO_PAD.encode(&digest(&SHA256, bytes).as_ref()[..12]));
     HeaderValue::try_from(tag).expect("base64 is a valid header value")
 }
 
-/// Whether an Accept-Encoding header admits `coding` with a nonzero weight, read as Go's static handler reads it.
+/// Whether an Accept-Encoding header admits `coding`: listed without a zero weight; an unreadable weight admits it.
 fn accepts(header: &str, coding: &str) -> bool {
     header
         .split(',')
@@ -229,7 +233,7 @@ fn accepts(header: &str, coding: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether an If-None-Match header names `tag` or any representation, scanned as Go's `net/http` scans it.
+/// Whether an If-None-Match header names `tag` or `*`; scanning stops at the first malformed entity tag.
 fn none_match(mut header: &str, tag: Option<&HeaderValue>) -> bool {
     loop {
         header = header.trim_start_matches([' ', '\t', '\r', '\n', ',']);

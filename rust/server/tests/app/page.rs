@@ -5,7 +5,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use graphite_meter_legal::Notices;
 use graphite_meter_server::assets::{Asset, Assets};
 use http::{HeaderMap, StatusCode};
-use sha2::{Digest, Sha256};
+use ring::digest::{SHA256, digest};
 
 const INDEX: &str = "<html><head><style>html{background:#131518}</style><script>let theme='dark';</script></head>\
                      <body></body></html>";
@@ -46,7 +46,7 @@ async fn get(app: &App, method: &str, path: &str, headers: &[(&str, &str)]) -> R
 }
 
 fn sha256(text: &str) -> String {
-    STANDARD.encode(Sha256::digest(text.as_bytes()))
+    STANDARD.encode(digest(&SHA256, text.as_bytes()))
 }
 
 #[tokio::test]
@@ -112,6 +112,8 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     let script = get(Endpoint::H1Tls, "/assets/app-1a2b.js").await;
     assert_eq!(header(&script, "content-type"), Some("text/javascript; charset=utf-8"));
     assert_eq!(header(&script, "cache-control"), Some("public, max-age=31536000, immutable"));
+    // A worker runs under its own script's policy, so scripts carry the page's.
+    assert!(header(&script, "content-security-policy").is_some_and(|policy| policy.contains("connect-src")));
     assert_eq!(text(script).await, "export {};");
     let icon = get(Endpoint::H1Tls, "/favicon.svg").await;
     assert_eq!(
@@ -129,7 +131,6 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     ] {
         let response = get(Endpoint::H1Tls, path).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-        assert!(header(&response, "content-security-policy").is_some());
     }
     for endpoint in [Endpoint::H2, Endpoint::H3Companion, Endpoint::Quic] {
         let response = get(endpoint, "/").await;
@@ -186,7 +187,7 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
 }
 
 #[tokio::test]
-async fn the_page_connects_to_catalogue_servers_and_offered_targets() {
+async fn the_page_connects_to_catalog_servers_and_offered_targets() {
     let catalog = r#"{"servers": [
         {"id": "other", "url": "https://other.example", "name": "Other",
          "additionalOrigins": ["https://cdn.other.example:8443"]},

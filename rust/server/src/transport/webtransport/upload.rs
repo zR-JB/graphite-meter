@@ -8,10 +8,14 @@ use crate::{
     transport::window::FUNDING_RETRY,
 };
 use bytes::Bytes;
-use futures_util::{StreamExt, future::OptionFuture, stream::FuturesUnordered};
+use futures_util::{
+    FutureExt, StreamExt,
+    future::{Fuse, FusedFuture, OptionFuture},
+    stream::FuturesUnordered,
+};
 use graphite_meter_http3::webtransport::{RecvStream, Session};
 use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Record};
-use std::{future, mem, pin::pin, time::Duration};
+use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
 /// Client streams read at once; more are stopped.
@@ -52,10 +56,7 @@ impl Upload {
                 sleep(FUNDING_RETRY).await;
             }
         };
-        let mut background = pin!(async {
-            tokio::join!(funding, progress(session, feed));
-            future::pending::<()>().await;
-        });
+        let mut background = pin!(async { tokio::join!(funding, progress(session, feed)) }.fuse());
         // The session is one transfer however many streams it reads.
         let transfer = self.uploads.meter().open();
         let join = || {
@@ -64,14 +65,14 @@ impl Upload {
         };
         let mut datagrams = self.datagrams.then(|| join().ok()).flatten();
         let mut finalized = pin!(OptionFuture::from(datagrams.as_ref().map(UploadSink::finished)));
-        let (mut streams, mut refusals) = (FuturesUnordered::new(), FuturesUnordered::new());
+        let (mut streams, mut refusal) = (FuturesUnordered::new(), pin!(Fuse::terminated()));
         loop {
             tokio::select! {
-                () = &mut background => {}
+                _ = &mut background => {}
                 // A datagram lane has no FIN: it leaves once the upload is finalized.
                 _ = &mut finalized, if datagrams.is_some() => datagrams = None,
                 Some(()) = streams.next() => {}
-                Some(()) = refusals.next() => {}
+                () = &mut refusal => {}
                 datagram = session.read_datagram() => match (datagram, &mut datagrams) {
                     (Some(datagram), Some(sink)) => sink.record(datagram.len()),
                     (Some(_), None) => {}
@@ -83,7 +84,7 @@ impl Upload {
                     if streams.len() < MAX_STREAMS {
                         match join() {
                             Ok(sink) => streams.push(receive(stream, sink)),
-                            Err(refusal) if refusals.is_empty() => refusals.push(refuse(session, refusal)),
+                            Err(refused) if refusal.is_terminated() => refusal.set(refuse(session, refused).fuse()),
                             Err(_) => {}
                         }
                     }

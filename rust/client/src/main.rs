@@ -1,14 +1,12 @@
 //! The Graphite Meter native terminal client.
 
 use graphite_meter_client::{
-    INTERRUPTED, Interrupts, Reaction, TERMINATED, VERSION,
+    INTERRUPTED, TERMINATED, VERSION,
     config::{self, Config, Parsed, Refusal},
     events::View,
-    headless, report, status, text as styled,
-    tui::{
-        self,
-        theme::{self, Palette},
-    },
+    headless, report, status,
+    style::{self, Palette},
+    text as styled, tui,
 };
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{origin::Origin, text};
@@ -50,7 +48,7 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(USAGE_ERROR);
             }
-            return run(*config, kept).unwrap_or_else(|error| fail(&error.to_string()));
+            return run(*config, kept, interactive).unwrap_or_else(|error| fail(&error.to_string()));
         }
         Err(Refusal::Flag(error)) => {
             eprint!("{error}\n{}", usage());
@@ -69,14 +67,13 @@ fn fail(error: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Shows the interface on a terminal, else or with `-report` runs `config` once; prints the finished report to stdout.
-/// `kept` is the server remembered for later starts, if any.
-fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
+/// Shows the interface when `interactive`, else runs `config` once; prints the finished report to stdout. `kept` is
+/// the server remembered for later starts, if any.
+fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::probing(runtime.handle())?);
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
-        let interactive = terminal && !config.report;
         let signals = signals(!interactive)?;
         if interactive {
             let exit = tui::interactive(config, kept, pool, signals).await?;
@@ -87,19 +84,35 @@ fn run(config: Config, kept: Option<Origin>) -> io::Result<ExitCode> {
             return Ok(ExitCode::from(status));
         }
         let columns = columns(terminal);
-        let named = cfg_select! {
-            unix => match columns.is_some() && io::stdin().is_terminal() {
-                true => background(std::time::Duration::from_secs(2)).await,
-                false => None,
-            },
-            _ => None,
+        let asked = match columns.is_some() && io::stdin().is_terminal() {
+            true => Some(tokio::task::spawn_blocking(|| match style::Raw::enter() {
+                Ok(_raw) => style::ask(style::ANSWER),
+                Err(_) => style::Answer::default(),
+            })),
+            false => None,
         };
-        let (view, status) = headless(config, pool, first(signals)).await;
+        let answer = match asked {
+            Some(asked) => asked.await.unwrap_or_default(),
+            None => style::Answer::default(),
+        };
+        let stop = async {
+            match answer.interrupted {
+                true => INTERRUPTED,
+                false => first(signals).await,
+            }
+        };
+        let (view, status) = headless(config, pool, stop).await;
         if let Some(reason) = report::unreported(&view) {
             eprintln!("graphite-meter-client: {reason}");
             return Ok(ExitCode::from(status));
         }
-        print(&view, &named.map_or_else(|| Palette::new(true), Palette::over), columns, terminal, status)
+        print(
+            &view,
+            &answer.background.map_or_else(|| Palette::new(true), Palette::over),
+            columns,
+            terminal,
+            status,
+        )
     })
 }
 
@@ -113,7 +126,7 @@ fn columns(terminal: bool) -> Option<u16> {
 fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, status: u8) -> io::Result<ExitCode> {
     let width = columns.map_or(report::WIDTH, |columns| usize::from(columns).max(40));
     let lines = report::report(view, width, palette);
-    let (profile, mut out) = (theme::profile(terminal, |name| std::env::var(name).ok()), Vec::new());
+    let (profile, mut out) = (style::profile(terminal, |name| std::env::var(name).ok()), Vec::new());
     styled::write(&lines, profile, &mut out)?;
     let printed = graphite_meter_legal::print(io::stdout().lock(), &out)?;
     Ok(ExitCode::from(if printed == 0 { status } else { printed }))
@@ -127,13 +140,17 @@ async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
     }
 }
 
-/// Each interrupt's and termination's status as it arrives; with `at_once`, a second exits at once with its own.
+/// Each interrupt's and termination's status as it arrives; with `at_once`, a second exits at once with its own after
+/// putting back a terminal the background query left raw.
 fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     let (caught, signals) = mpsc::unbounded_channel();
-    let mut interrupts = Interrupts::default();
-    let mut interrupt = move |status: u8| match interrupts.on(status) {
-        Reaction::Exit(status) if at_once => std::process::exit(status.into()),
-        _ => drop(caught.send(status)),
+    let mut stopping = false;
+    let mut interrupt = move |status: u8| {
+        if std::mem::replace(&mut stopping, true) && at_once {
+            let _ = crossterm::terminal::disable_raw_mode();
+            std::process::exit(status.into());
+        }
+        let _ = caught.send(status);
     };
     #[cfg(unix)]
     {
@@ -186,37 +203,4 @@ fn written(bytes: &[u8]) -> ExitCode {
         Ok(status) => ExitCode::from(status),
         Err(error) => fail(&error.to_string()),
     }
-}
-
-/// Asks the terminal in raw mode for its background until the DA1 reply or `limit`, if answered.
-#[cfg(unix)]
-async fn background(limit: std::time::Duration) -> Option<theme::Background> {
-    use std::{
-        io::{Read, Write},
-        os::fd::AsFd,
-    };
-    let input = std::fs::File::from(std::io::stdin().as_fd().try_clone_to_owned().ok()?);
-    let input = tokio::io::unix::AsyncFd::with_interest(input, tokio::io::Interest::READABLE).ok()?;
-    crossterm::terminal::enable_raw_mode().ok()?;
-    let mut output = std::io::stdout();
-    let (mut answers, mut background) = (Vec::new(), None);
-    if output.write_all(theme::QUERY).and_then(|()| output.flush()).is_ok() {
-        let _ = tokio::time::timeout(limit, async {
-            let mut chunk = [0; 1024];
-            while answers.len() < 4096 {
-                let Ok(mut ready) = input.readable().await else { return };
-                let Ok(read @ 1..) = ready.get_inner().read(&mut chunk) else { return };
-                ready.clear_ready();
-                answers.extend_from_slice(&chunk[..read]);
-                let ended;
-                (background, ended) = theme::scan(&answers);
-                if ended {
-                    return;
-                }
-            }
-        })
-        .await;
-    }
-    let _ = crossterm::terminal::disable_raw_mode();
-    background
 }

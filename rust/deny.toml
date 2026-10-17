@@ -3,8 +3,6 @@ targets = [
   "x86_64-unknown-linux-gnu",
   "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
-  "x86_64-apple-darwin",
-  "aarch64-apple-darwin",
   "x86_64-pc-windows-gnu",
 ]
 exclude-dev = true
@@ -34,7 +32,7 @@ deny = [
   { crate = "p384", reason = "ring verifies ECDSA" },
   { crate = "ed25519-dalek", reason = "ring verifies Ed25519" },
   { crate = "aes-gcm", reason = "ring is the only crypto provider" },
-  { crate = "time", reason = "log timestamps use one first-party RFC 3339 formatter" },
+  { crate = "time", wrappers = ["rcgen", "yasna"], reason = "log timestamps use one first-party RFC 3339 formatter; test certificates only" },
   { crate = "chrono", reason = "no calendar dependency" },
   { crate = "x509-cert", reason = "certificate validity is read first-party; webpki parses the rest" },
   { crate = "aws-lc-rs", reason = "rustls with ring only" },

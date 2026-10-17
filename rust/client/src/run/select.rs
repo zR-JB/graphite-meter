@@ -2,13 +2,13 @@
 use super::prepare::ServerPath;
 use crate::{
     config::{Config, PathChoice},
+    format,
     model::Stage,
     net::{LatencyPath, ThroughputPath},
 };
 use graphite_meter_proto::{
     catalog::{Received, ServerEntry, ServerId},
     discovery::{LatencyTransport, Preflight, Protocol, ThroughputTarget, ThroughputTransport},
-    duration,
     origin::{BaseUrl, Origin},
     text::quote,
 };
@@ -21,11 +21,11 @@ pub struct Candidates {
     pub latency: Vec<LatencyPath>,
 }
 
-/// The selected entries in catalogue order: the `--server` IDs, else the operator's default.
+/// The selected entries in catalog order: the `--server` IDs, else the operator's default.
 pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a ServerEntry>, String> {
     let chosen = |id: &str| config.servers.iter().any(|server| server.as_str() == id);
     if let Some(left) = received.rejected.iter().find(|rejected| chosen(&rejected.id)) {
-        return Err(format!("the catalogue's server {} was left out: {}", quote(&left.id), left.error));
+        return Err(format!("test server {} is unusable: {}", quote(&left.id), left.error));
     }
     let catalog = &received.catalog;
     let ids = match config.servers.is_empty() {
@@ -35,11 +35,14 @@ pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a Se
     catalog.validate_selection(ids).map_err(|error| {
         let known = |id: &ServerId| catalog.servers.iter().any(|entry| entry.id == *id);
         let unknown = ids.iter().find(|id| !known(id));
-        unknown.map_or_else(|| error.to_string(), |id| format!("unknown or repeated server {}", quote(id.as_str())))
+        unknown.map_or_else(
+            || error.to_string(),
+            |id| format!("unknown or repeated test server {}", quote(id.as_str())),
+        )
     })?;
     let explicit = config.paths.throughput_origin.is_some() || config.paths.latency_origin.is_some();
     if explicit && ids.len() > 1 {
-        return Err("explicit origins need a single selected server; use Automatic origins for several".into());
+        return Err("explicit origins need a single test server; use automatic origins for several".into());
     }
     Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
@@ -53,7 +56,7 @@ pub fn candidates(
     latency: bool,
 ) -> Result<Candidates, String> {
     if !entry.approves(served, preflight) {
-        return Err(format!("server {} advertised an unapproved target origin", quote(entry.id.as_str())));
+        return Err(format!("test server {} offered an unapproved origin", quote(entry.id.as_str())));
     }
     let offered = &preflight.capabilities;
     let transports = choice.throughput_transport.map_or_else(
@@ -89,10 +92,20 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
     let Some((limit, name)) = limits.min_by_key(|(limit, _)| *limit) else {
         return Ok(());
     };
-    let Some((stage, _)) = plan.iter().find(|(_, duration)| *duration > limit) else {
-        return Ok(());
+    let over: Vec<_> = plan
+        .iter()
+        .filter(|(_, duration)| *duration > limit)
+        .map(|&(stage, _)| format::label(stage))
+        .collect();
+    let Some((last, others)) = over.split_last() else { return Ok(()) };
+    let (stages, plural) = match others {
+        [] => ((*last).to_owned(), ""),
+        others => (format!("{} and {last}", others.join(", ")), "s"),
     };
-    Err(format!("{name} allows stages up to {}; shorten the {} stage", short(limit), stage.name()))
+    Err(format!(
+        "{name} allows stages up to {}; shorten the {stages} stage{plural}.",
+        format::stage_time(limit)
+    ))
 }
 
 /// The paths that resolved, in order; the first refusal when none did.
@@ -124,10 +137,10 @@ fn pick<'a, T>(
     }
     match (wanted, others.as_slice()) {
         (None, [only]) => Ok(only),
-        (None, [_, _, ..]) => Err(format!("several {kind} targets are available; select an origin")),
+        (None, [_, _, ..]) => Err(format!("several {kind} origins are offered; select one")),
         _ => {
             let wanted = wanted.map_or_else(|| "auto".into(), Origin::to_string);
-            Err(format!("{kind} target {} unavailable", quote(&wanted)))
+            Err(format!("{kind} origin {} is not offered", quote(&wanted)))
         }
     }
 }
@@ -145,7 +158,8 @@ fn throughput_path(
 ) -> Result<ThroughputPath, String> {
     let protocol = match forced {
         Some(forced) if target.protocol != Protocol::Negotiated && target.protocol != forced => {
-            return Err(format!("endpoint is fixed to {}, cannot use {}", target.protocol.name(), forced.name()));
+            let (fixed, forced) = (format::protocol(Some(target.protocol)), format::protocol(Some(forced)));
+            return Err(format!("the origin is fixed to {fixed} and cannot use {forced}"));
         }
         forced => forced.unwrap_or(target.protocol),
     };
@@ -154,17 +168,6 @@ fn throughput_path(
     }
     let origin = target.base_url.resolve(served).clone();
     Ok(ThroughputPath { origin, transport: target.transport, protocol })
-}
-
-/// A stage limit as an operator writes it, such as `5m` or `1h30m`.
-fn short(limit: Duration) -> String {
-    let mut text = duration::format(limit);
-    for whole in ["m0s", "h0m"] {
-        if text.ends_with(whole) {
-            text.truncate(text.len() - 2);
-        }
-    }
-    text
 }
 
 #[cfg(test)]
@@ -180,7 +183,7 @@ mod tests {
     use graphite_meter_proto::{catalog::ServerCatalog, discovery::IpFamily, reason::FailureReason};
     use std::{ffi::OsString, sync::Arc, time::Instant};
 
-    const CATALOGUE: &str = r#"{"defaultSelection": ["b"], "servers": [
+    const CATALOG: &str = r#"{"defaultSelection": ["b"], "servers": [
         {"id": "self", "url": ".", "name": "Self"},
         {"id": "a", "url": "https://a.example/", "name": "A"},
         {"id": "b", "url": "https://b.example", "name": "B"},
@@ -194,21 +197,21 @@ mod tests {
     }
 
     fn selected(args: &str) -> Result<Vec<String>, String> {
-        let received = ServerCatalog::decode(CATALOGUE.as_bytes()).unwrap();
+        let received = ServerCatalog::decode(CATALOG.as_bytes()).unwrap();
         let servers = servers(&received, &config(args))?;
         Ok(servers.iter().map(|entry| entry.id.to_string()).collect())
     }
 
     #[test]
-    fn the_selection_is_the_server_ids_or_the_default_in_catalogue_order() {
+    fn the_selection_is_the_server_ids_or_the_default_in_catalog_order() {
         assert_eq!(selected("").unwrap(), ["b"]);
         assert_eq!(selected("-server b -server self").unwrap(), ["self", "b"]);
         assert_eq!(selected("-server b -server a -server self").unwrap(), ["self", "a", "b"]);
-        let unknown = "unknown or repeated server \"nowhere\"";
+        let unknown = "unknown or repeated test server \"nowhere\"";
         assert_eq!(selected("-server a -server nowhere").unwrap_err(), unknown);
-        let left = "the catalogue's server \"broken\" was left out: invalid catalogue origin";
+        let left = "test server \"broken\" is unusable: invalid catalog origin";
         assert_eq!(selected("-server broken").unwrap_err(), left);
-        let explicit = "explicit origins need a single selected server; use Automatic origins for several";
+        let explicit = "explicit origins need a single test server; use automatic origins for several";
         assert_eq!(selected("-server a -server b -latency-origin https://a.example").unwrap_err(), explicit);
         assert_eq!(selected("-throughput-origin https://b.example").unwrap(), ["b"]);
     }
@@ -222,7 +225,8 @@ mod tests {
         let throughput: Vec<_> = throughput.iter().copied().map(fetch).collect();
         let probe = |(base, transport)| json!({"baseUrl": base, "transport": transport});
         let latency: Vec<_> = latency.iter().copied().map(probe).collect();
-        let capabilities = json!({"throughput": throughput, "latency": latency});
+        let capabilities =
+            json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": latency});
         let document = json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
             "capabilities": capabilities});
         Preflight::decode(document.to_string().as_bytes()).unwrap()
@@ -276,16 +280,16 @@ mod tests {
         #[rustfmt::skip]
         let refusals = [
             ("-throughput-origin https://meter.example:7249 -throughput-protocol http2",
-                "endpoint is fixed to http3, cannot use http2"),
-            ("-throughput-origin https://other.example", "throughput target \"https://other.example\" unavailable"),
-            ("-latency-origin https://other.example", "latency target \"https://other.example\" unavailable"),
+                "the origin is fixed to HTTP/3 and cannot use HTTP/2"),
+            ("-throughput-origin https://other.example", "throughput origin \"https://other.example\" is not offered"),
+            ("-latency-origin https://other.example", "latency origin \"https://other.example\" is not offered"),
         ];
         for (args, refusal) in refusals {
             assert_eq!(paths(args, SERVED, &native, &own).unwrap_err(), refusal, "{args}");
         }
         let elsewhere = |args| paths(args, "https://meter.example", &native, &own);
         assert_eq!(elsewhere("-stages down -loaded-latency=false").unwrap(), "webtransport http3 7249");
-        let several = "several throughput targets are available; select an origin";
+        let several = "several throughput origins are offered; select one";
         assert_eq!(elsewhere("-throughput-transport fetch-stream").unwrap_err(), several);
     }
 
@@ -319,12 +323,12 @@ mod tests {
     fn a_run_reuses_a_whole_check_with_its_key_for_30_s() {
         let at = Instant::now();
         let client = Client::new(false, Arc::new(Pool::inline()));
-        let (key, catalogue) = (config("-server a -stages down").key(), Arc::new([]));
+        let (key, catalog) = (config("-server a -stages down").key(), Arc::new([]));
         let prepared = Prepared {
             key,
             at,
             client,
-            catalogue,
+            catalog,
             servers: vec![server("a", 30, None)],
         };
         let longer = config("-server a -stages down -download-duration 1m -warmup 2s").key();
@@ -339,5 +343,30 @@ mod tests {
             ..prepared
         };
         assert!(!failed.reusable(&longer, at));
+    }
+
+    #[test]
+    fn a_plan_past_the_shortest_stage_limit_names_every_stage_to_shorten() {
+        let servers = [
+            server("a", 300, None),
+            server("b", 30, None),
+            server("c", 1, Some(Failure::new(FailureReason::Timeout, "late"))),
+        ];
+        let plan = |download, upload| {
+            [
+                (Stage::Latency, Duration::from_secs(4)),
+                (Stage::Download, Duration::from_secs(download)),
+                (Stage::Upload, Duration::from_secs(upload)),
+            ]
+        };
+        assert_eq!(fit(&plan(30, 30), &servers), Ok(()));
+        assert_eq!(
+            fit(&plan(60, 10), &servers),
+            Err("B allows stages up to 30 s; shorten the Download stage.".into())
+        );
+        assert_eq!(
+            fit(&plan(60, 60), &servers),
+            Err("B allows stages up to 30 s; shorten the Download and Upload stages.".into())
+        );
     }
 }

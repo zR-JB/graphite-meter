@@ -1,18 +1,17 @@
-//! The console, the one screen before, during and after a run, as the browser's: the dial beside the latency lanes,
-//! the run key over the stage chips, and a card per stage across the bottom (`docs/DESIGN.md`, Terminal).
+//! The console, the one screen before, during and after a run (`docs/DESIGN.md`, Terminal).
 use super::{
     App, Target, chart,
     dial::{self, Arc, Dial},
     paint::Canvas,
     run::State,
-    theme::mix,
 };
 use crate::{
     config::Invalid,
     events::{Point, Running, Series},
-    measure::{format, latency::Summary, wire},
+    format::{self, MISSING, round_trip},
+    measure::{latency::Summary, wire},
     model::{Outcome, ServerFailure, Stage, StageResult, StageStatus},
-    report::vocabulary::{self as words, MISSING},
+    style::mix,
     text::{self, Line, Profile, Style},
 };
 use graphite_meter_proto::reason::FailureReason;
@@ -23,7 +22,7 @@ use std::{borrow::Cow, time::Duration};
 const WIDE: (u16, u16) = (110, 32);
 /// The browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
-const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
+pub(super) const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
 /// The run key's and the chips' widest.
 const CONTROLS: u16 = 64;
 /// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
@@ -58,19 +57,6 @@ pub fn ceil_step(v: f64, steps: &[f64]) -> f64 {
         .map(|step| step * decade)
         .find(|&step| step >= v)
         .unwrap_or(10.0 * decade)
-}
-
-/// The browser's tick label: bounded precision, no trailing zeros.
-pub fn gauge_tick(v: f64) -> String {
-    if v == 0.0 || v.is_nan() {
-        return "0".into();
-    }
-    let places = (2 - v.abs().log10().floor() as i32).clamp(0, 6) as usize;
-    let text = format!("{v:.places$}");
-    match text.contains('.') {
-        true => text.trim_end_matches('0').trim_end_matches('.').into(),
-        false => text,
-    }
 }
 
 pub fn icon(stage: Stage) -> &'static str {
@@ -149,8 +135,7 @@ impl App {
             self.cards(canvas, cards);
             return;
         }
-        // Stacked: the readout, the controls, the cards, and the lanes when room is left; the shortest area drops the
-        // gap under the readout.
+        // The shortest area drops the gap under the readout.
         let readout = Rect::new(area.x, area.y, area.width, 8);
         dial::readout(canvas, readout, &self.palette, &self.dial());
         let width = area.width.saturating_sub(4).min(CONTROLS);
@@ -242,7 +227,7 @@ impl App {
     /// The stages the chips show: the default three, and bidirectional while it is on or ran, in order.
     fn chip_stages(&self) -> Vec<Stage> {
         let planned = self.plan();
-        let stages = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional].into_iter();
+        let stages = Stage::ALL.iter().copied();
         let shown = |stage: &Stage| {
             *stage != Stage::Bidirectional || self.stage_on(*stage) || planned.iter().any(|(own, _)| own == stage)
         };
@@ -298,7 +283,7 @@ impl App {
         let mark = Line::styled(icon(stage), if on { palette.stage(stage) } else { palette.muted });
         let name = mark
             .and(" ", Style::default())
-            .and(words::label(stage), if on { palette.text } else { palette.muted });
+            .and(format::label(stage), if on { palette.text } else { palette.muted });
         let room = inner.saturating_sub(text::width(&text) as u16 + 1);
         canvas.line(area.x + 1, area.y + 1, room, &name.fit(usize::from(room)));
         canvas.right(area.x + 1, area.y + 1, inner, &Line::styled(text, style));
@@ -312,18 +297,18 @@ impl App {
         let palette = &self.palette;
         match state {
             State::Measuring => {
-                let elapsed = format!("{:.1}", self.elapsed().as_secs_f64());
-                let long = planned.map(|planned| format!("{elapsed} / {}", words::setting(planned)));
+                let elapsed = self.elapsed();
+                let long = planned.map(|planned| format::progress(elapsed, planned));
                 let fits =
-                    |long: &String| text::width(long) + text::width(words::label(stage)) + 5 <= usize::from(width);
-                (long.filter(fits).unwrap_or(format!("{elapsed} s")), palette.text)
+                    |long: &String| text::width(long) + text::width(format::label(stage)) + 5 <= usize::from(width);
+                (long.filter(fits).unwrap_or(format::duration(elapsed)), palette.text)
             }
             State::Warmup => ("Warmup".into(), palette.muted),
-            State::Ended(StageStatus::Complete) => ("✓".into(), palette.ok),
-            State::Ended(StageStatus::Partial) => ("Partial".into(), palette.warn),
-            State::Ended(StageStatus::Failed) => ("Failed".into(), Style { bold: false, ..palette.err }),
-            State::Ended(StageStatus::Stopped) => ("Stopped".into(), palette.muted),
-            State::Pending => (planned.map_or("Skipped".into(), words::setting), palette.muted),
+            State::Ended(status) => {
+                let (text, style) = self.ended(status);
+                (text.into(), style)
+            }
+            State::Pending => (planned.map_or("Skipped".into(), format::stage_time), palette.muted),
         }
     }
 
@@ -335,9 +320,7 @@ impl App {
         at >= head && at < head + 0.45 * f64::from(cells)
     }
 
-    /// The latency lanes in `area`: a rule and head in the latency hue, the column heads, a lane each `pitch` rows, and
-    /// the axis. A lane is its figures, a box plot (10th to 90th percentile, whiskers to the fastest and slowest, the
-    /// median a tick and the latest reply a mark under it while live) and the latency its load added.
+    /// The latency lanes in `area`, a lane each `pitch` rows: figures, a 10th to 90th percentile box plot and Added.
     fn lanes_area(&self, canvas: &mut Canvas, area: Rect, lanes: &[Lane], pitch: u16) {
         const LABEL: u16 = 15;
         const FIGURE: u16 = 10;
@@ -385,27 +368,27 @@ impl App {
             }
             let name = Line::styled(icon(lane.stage), palette.stage(lane.stage))
                 .and(" ", Style::default())
-                .and(words::compact_population(lane.stage), palette.text);
+                .and(format::compact_population(lane.stage), palette.text);
             canvas.line(area.x, y, LABEL, &name);
             let summary = lane.summary.filter(|summary| summary.replies + summary.timeouts > 0);
             let missing = || Line::styled(MISSING, palette.muted);
             let mut cells = vec![
                 summary
                     .and_then(|s| s.p50)
-                    .map_or_else(missing, |m| Line::styled(words::ms(m), palette.value)),
+                    .map_or_else(missing, |m| Line::styled(round_trip(m), palette.value)),
             ];
             if jitter {
                 let value = summary.and_then(|s| s.jitter.filter(|_| s.jitter_pairs > 0));
-                cells.push(value.map_or_else(missing, |jitter| Line::styled(words::ms(jitter), palette.text)));
+                cells.push(value.map_or_else(missing, |jitter| Line::styled(round_trip(jitter), palette.text)));
             }
             cells.push(summary.and_then(|s| s.timeout_ratio()).map_or_else(missing, |ratio| {
-                Line::styled(percent(ratio), if ratio >= 0.05 { palette.warn } else { palette.text })
+                Line::styled(format::percent(ratio), if ratio >= 0.05 { palette.warn } else { palette.text })
             }));
             for (column, cell) in cells.iter().enumerate() {
                 canvas.right(area.x + LABEL + column as u16 * FIGURE, y, FIGURE, cell);
             }
             let added = match (lane.stage, summary.and_then(|s| s.p50), idle) {
-                (Stage::Latency, Some(_), _) => Line::styled("Baseline", palette.stage(Stage::Latency)),
+                (Stage::Latency, ..) => Line::default(),
                 (stage, Some(median), Some(idle)) => {
                     Line::styled(format!("{} ms", format::added(ms(median) - ms(idle))), palette.stage(stage))
                 }
@@ -455,8 +438,8 @@ impl App {
         if plot_width >= 12 {
             let axis = area.y + 3 + lanes.len() as u16 * pitch;
             canvas.line(plot_x, axis, 1, &Line::styled("0", palette.muted));
-            canvas.center(plot_x, axis, plot_width, &Line::styled(gauge_tick(scale / 2.0), palette.muted));
-            let end = Line::styled(format!("{} ms", gauge_tick(scale)), palette.muted);
+            canvas.center(plot_x, axis, plot_width, &Line::styled(format::tick(scale / 2.0), palette.muted));
+            let end = Line::styled(format!("{} ms", format::tick(scale)), palette.muted);
             canvas.right(plot_x, axis, plot_width + 3, &end);
         }
     }
@@ -489,9 +472,7 @@ impl App {
         }
     }
 
-    /// The cards' tops: the rate charts' in bytes per second, shared, and the reply tracks' in milliseconds, the idle
-    /// one's its own and the loaded ones' shared, each the ladder step over 2.5× the 75th percentile of its replies'
-    /// slowest, so their bodies keep their shape.
+    /// The cards' tops; a reply track's is the ladder step over 2.5× its 75th percentile, so its body keeps its shape.
     fn scales(&self) -> Scales {
         let run = self.view.run.as_ref();
         let peak = run.map_or(0.0, |run| run.peak);
@@ -519,8 +500,7 @@ impl App {
         Scales { rate, idle: top(true), loaded: top(false) }
     }
 
-    /// One stage's card: a head washed in its hue while it runs and once done, its figure, a quiet line, its traces on
-    /// a field of its hue, and its facts. Its layout never changes, so nothing moves between Start and the result.
+    /// One stage's card, laid out alike before, during and after a run, so nothing moves between Start and the result.
     fn card(&self, canvas: &mut Canvas, area: Rect, stage: Stage, duration: Duration, scales: Scales) {
         let palette = &self.palette;
         let state = self.stage_state(stage);
@@ -534,14 +514,13 @@ impl App {
         canvas.fill(Rect::new(area.x, area.y, area.width, 1), head);
         let inner = area.width.saturating_sub(2);
         let mark = Line::styled(icon(stage), palette.stage(stage)).and(" ", Style::default());
-        canvas.line(area.x + 1, area.y, inner, &mark.and(words::label(stage), palette.heading));
-        let (status, style) = self.card_status(state);
+        canvas.line(area.x + 1, area.y, inner, &mark.and(format::label(stage), palette.heading));
+        let (status, style) = self.card_status(stage, state);
         canvas.right(area.x + 1, area.y, inner, &Line::styled(status, style));
         let run = self.view.run.as_ref();
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
         let unit = Unit::of(run.map_or(0.0, |run| run.peak));
-        // Head, figure, quiet line, the traces' field and the facts; a roomy card adds a row of air around them, and a
-        // short one gives up its traces, then the facts that do not fit.
+        // A short card gives up its traces, then the facts that do not fit.
         let roomy = u16::from(area.height >= 16);
         let mut y = area.y + 1 + roomy;
         for line in self.card_lines(stage, state, unit, inner) {
@@ -569,17 +548,32 @@ impl App {
         }
     }
 
-    /// The card's head end: what the stage is doing, or how it ended.
-    fn card_status(&self, state: State) -> (&'static str, Style) {
+    /// The card's head end: what the stage is doing, how it ended, or that a stopped test never reached it.
+    fn card_status(&self, stage: Stage, state: State) -> (&'static str, Style) {
         let palette = &self.palette;
+        let run = self
+            .view
+            .run
+            .as_ref()
+            .filter(|run| run.outcome == Some(Outcome::Stopped));
+        let planned = run.is_some_and(|run| run.plan.iter().any(|(own, _)| *own == stage));
         match state {
             State::Measuring => ("Running", palette.text),
-            State::Warmup => ("Warming up", palette.muted),
-            State::Ended(StageStatus::Complete) => ("✓", palette.ok),
-            State::Ended(StageStatus::Partial) => ("Partial", palette.warn),
-            State::Ended(StageStatus::Failed) => ("Failed", Style { bold: false, ..palette.err }),
-            State::Ended(StageStatus::Stopped) => ("Stopped", palette.muted),
+            State::Warmup => ("Warmup", palette.muted),
+            State::Ended(status) => self.ended(status),
+            State::Pending if planned => ("Not reached", palette.muted),
             State::Pending => ("", palette.muted),
+        }
+    }
+
+    /// An ended stage's mark: a check once complete, else its status in its tone.
+    fn ended(&self, status: StageStatus) -> (&'static str, Style) {
+        let (palette, label) = (&self.palette, format::status_label(status));
+        match status {
+            StageStatus::Complete => ("✓", palette.ok),
+            StageStatus::Partial => (label, palette.warn),
+            StageStatus::Failed => (label, Style { bold: false, ..palette.err }),
+            StageStatus::Stopped => (label, palette.muted),
         }
     }
 
@@ -595,7 +589,7 @@ impl App {
         let value = if stage.directions().is_empty() {
             let summary = self.population(stage);
             if let Some(jitter) = summary.and_then(|s| s.jitter.filter(|_| s.jitter_pairs > 0)) {
-                quiet = Line::styled("jitter ", palette.muted).and(words::ms(jitter), palette.text);
+                quiet = Line::styled("Jitter ", palette.muted).and(round_trip(jitter), palette.text);
             }
             let median = summary.and_then(|summary| summary.p50);
             let shown = median.or_else(|| self.latest().filter(|_| state == State::Measuring));
@@ -630,7 +624,7 @@ impl App {
         if let Some(result) = result.filter(|_| state == State::Ended(StageStatus::Complete)) {
             let mean = result.mean();
             if let Some(wire) = wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005) {
-                quiet = Line::styled("wire ", palette.muted)
+                quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
                 let overhead = format!("  +{:.1}%", (wire / mean - 1.0) * 100.0);
                 if quiet.width() + overhead.len() <= usize::from(width) {
@@ -640,13 +634,12 @@ impl App {
         }
         quiet = match state {
             State::Ended(status @ (StageStatus::Failed | StageStatus::Partial)) => {
-                let (fallback, style) = match status {
-                    StageStatus::Failed => ("Failed", Style { bold: false, ..palette.err }),
-                    _ => ("Partial", palette.warn),
-                };
+                let (fallback, style) = self.ended(status);
                 Line::styled(self.failure(stage).unwrap_or(fallback), style)
             }
-            State::Warmup => Line::styled(self.spinner(), palette.accent).and(" not counted yet", palette.muted),
+            State::Warmup => {
+                Line::styled(self.spinner(), palette.accent).and(" Warming up, not counted", palette.muted)
+            }
             _ => quiet,
         };
         [value, quiet]
@@ -664,30 +657,29 @@ impl App {
         Some(own.or_else(|| failures.next())?.failure.reason.label())
     }
 
-    /// The card's facts as label and value, "—" until known.
+    /// The card's facts as label and value, missing until known.
     fn facts(&self, stage: Stage, result: Option<&StageResult>, unit: Unit) -> Vec<(&'static str, String)> {
         let missing = || MISSING.to_owned();
         if stage.directions().is_empty() {
             let summary = self.population(stage);
             let range = summary
                 .and_then(|summary| summary.spread)
-                .map_or_else(missing, |spread| {
-                    let (low, high) = (spread.min.as_secs_f64() * 1e3, spread.max.as_secs_f64() * 1e3);
-                    format!("{}–{} ms", format::latency(low), format::ms(high))
-                });
-            let p95 = summary.and_then(|summary| summary.p95).map_or_else(missing, words::ms);
+                .map_or_else(missing, |spread| format::latency_range(spread.min, spread.max));
+            let p95 = summary.and_then(|summary| summary.p95).map_or_else(missing, round_trip);
             let replies = summary
                 .filter(|s| s.replies > 0)
-                .map_or_else(missing, |s| words::count(s.replies));
-            let timeouts = summary.and_then(|s| s.timeout_ratio()).map_or_else(missing, percent);
-            return vec![("Range", range), ("95th percentile", p95), ("Replies", replies), ("Timeouts", timeouts)];
+                .map_or_else(missing, |s| format::count(s.replies));
+            let timeouts = summary
+                .and_then(|s| s.timeout_ratio())
+                .map_or_else(missing, format::percent);
+            return vec![("Range", range), ("P95", p95), ("Replies", replies), ("Timeouts", timeouts)];
         }
         let measured = result.filter(|result| !result.measured.is_zero());
         let bytes = |direction| {
             let throughput = measured.and_then(|result: &StageResult| result.throughput[direction]);
             throughput.map_or_else(missing, |throughput| format::bytes(throughput.bytes))
         };
-        let duration = measured.map_or_else(missing, |result| words::clock(result.measured));
+        let duration = measured.map_or_else(missing, |result| format::duration(result.measured));
         match stage.directions() {
             [direction] => {
                 let rate = measured
@@ -752,11 +744,11 @@ impl App {
         let unit = Unit::of(peak);
         let gauge = gauge_ceiling(if peak > 0.0 { peak } else { 12.5e6 });
         let rate_ticks: [String; 5] =
-            std::array::from_fn(|i| gauge_tick(gauge_value(i as f64 / 4.0, gauge) * 8.0 / unit.divisor));
+            std::array::from_fn(|i| format::tick(gauge_value(i as f64 / 4.0, gauge) * 8.0 / unit.divisor));
         let ms_scale = self.live.rtt_scale.max(1.0);
-        let ms_ticks: [String; 5] = std::array::from_fn(|i| gauge_tick(i as f64 / 4.0 * ms_scale));
+        let ms_ticks: [String; 5] = std::array::from_fn(|i| format::tick(i as f64 / 4.0 * ms_scale));
         let label =
-            |stage: Stage| Line::styled(format!("{} {}", icon(stage), words::label(stage)), palette.stage(stage));
+            |stage: Stage| Line::styled(format!("{} {}", icon(stage), format::label(stage)), palette.stage(stage));
         let border = palette.border.fg.unwrap_or(palette.canvas());
         let muted = |text: &str| Line::styled(text, palette.muted);
         let at_rest = |ticks: [String; 5], note: Line| Dial {
@@ -789,7 +781,7 @@ impl App {
                 }]
             };
             if let Running::Warmup(_) = running {
-                let warming = at_rest(ticks, muted("Warming up; not counted"));
+                let warming = at_rest(ticks, muted("Warming up, not counted"));
                 return Dial { track, label: label(stage), arcs: needle(0.0), ..warming };
             }
             if stage == Stage::Latency {
@@ -861,7 +853,7 @@ impl App {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
         match run.and_then(|run| run.outcome) {
-            Some(Outcome::Stopped) => Line::styled("Stopped early", palette.muted),
+            Some(Outcome::Stopped) => Line::styled(format::outcome_label(Outcome::Stopped), palette.muted),
             Some(Outcome::Failed) => {
                 let error = run.and_then(|run| run.error.as_ref());
                 Line::styled(error.map_or("Nothing was measured", |error| error.text.as_str()), palette.warn)
@@ -904,12 +896,6 @@ fn lane_scale(lanes: &[Lane]) -> f64 {
     let p90 = |lane: &Lane| Some(lane.summary?.spread?.p90.as_secs_f64() * 1e3);
     let top = lanes.iter().filter_map(p90).fold(0.0, f64::max);
     ceil_step((top * 1.25).max(1.0), &LADDER)
-}
-
-/// A share of probes as the browser shows it: two decimals under 1%, one from there.
-fn percent(ratio: f64) -> String {
-    let places = if ratio > 0.0 && ratio < 0.01 { 2 } else { 1 };
-    format!("{:.places$}%", ratio * 100.0)
 }
 
 /// The series' points over `window` seconds.

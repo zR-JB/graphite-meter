@@ -1,6 +1,5 @@
 //! HTTP(S) origins, compared parsed, never as text: Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
 
-use crate::idna;
 use serde::{Serialize, Serializer};
 use std::{
     fmt,
@@ -88,20 +87,6 @@ impl Origin {
         }
     }
 
-    /// Parses an origin from a catalogue or preflight, its international host becoming the punycode Go dials.
-    pub fn parse_received(text: &str) -> Result<Self, OriginError> {
-        if text.is_ascii() {
-            return Self::parse(text);
-        }
-        if text.len() > MAX_ORIGIN_BYTES {
-            return Err(OriginError);
-        }
-        let (scheme, authority) = text.split_once("://").ok_or(OriginError)?;
-        let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
-        let host = idna::to_ascii(host).ok_or(OriginError)?;
-        Self::parse(&format!("{scheme}://{host}{port}"))
-    }
-
     /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
@@ -153,7 +138,7 @@ impl Serialize for Origin {
     }
 }
 
-/// A received target's `baseUrl` or catalogue `url`.
+/// A received target's `baseUrl` or catalog `url`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseUrl {
     /// `.`: the origin that served the document.
@@ -165,7 +150,7 @@ impl BaseUrl {
     pub fn parse(text: &str) -> Result<Self, OriginError> {
         match text {
             "." => Ok(Self::Served),
-            _ => Origin::parse_received(text).map(Self::Origin),
+            _ => Origin::parse(text).map(Self::Origin),
         }
     }
 

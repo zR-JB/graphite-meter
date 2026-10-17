@@ -541,7 +541,7 @@ impl Session {
     /// The fault the session ended with, once it ended.
     pub(super) fn ended(&self) -> Option<Fault> {
         Some(match self.session.closed().now_or_never()? {
-            Ok(SessionClose { code, .. }) => match LaneEnding::from_webtransport_code(code) {
+            Ok(SessionClose { code, .. }) => match LaneEnding::find_by(LaneEnding::webtransport_code, code) {
                 Some(ending) => self.client.ending(&self.origin, ending),
                 None => Fault::Lost(format!("WebTransport session closed with code {code}")),
             },

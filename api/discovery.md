@@ -36,7 +36,7 @@ IDs and canonical discovery origins are unique; saved choices bind both, so a ch
 origin is the origin serving the catalogue. Discovery may use other ports on the entry's hostname; other hosts need
 an exact `additionalOrigins` entry, which discovery cannot extend. Mixed-content and secure-context rules still
 apply. `maxStageMs` in preflight capabilities is the longest stage a client may plan against that server (1000 to
-86400000; absent means 300000, the limit before servers advertised one); a run uses the smallest among its servers
+86400000); a run uses the smallest among its servers
 and refuses a longer plan by naming the server. `uploadCheckpoint: true` in preflight advertises
 [receiver checkpoints](upload.md), which coordinated uploads
 require.

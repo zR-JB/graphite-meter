@@ -10,8 +10,7 @@ use base64::{
         general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
     },
 };
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+use ring::hmac;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -26,6 +25,8 @@ const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
 const DEVICE_LIFETIME: Duration = Duration::from_hours(30 * 24);
+/// The longest password.
+pub const MAX_BYTES: usize = 1024;
 
 /// Unpadded standard base64 that tolerates nonzero trailing bits.
 const RAW_STD: GeneralPurpose = GeneralPurpose::new(
@@ -37,7 +38,7 @@ const RAW_STD: GeneralPurpose = GeneralPurpose::new(
 
 /// The password rules: 1 to 1024 bytes without line breaks, not necessarily UTF-8.
 pub fn validate(password: &[u8]) -> Result<(), &'static str> {
-    if password.is_empty() || password.len() > 1024 {
+    if password.is_empty() || password.len() > MAX_BYTES {
         return Err("password must contain 1 to 1024 bytes");
     }
     if password.contains(&b'\r') || password.contains(&b'\n') {
@@ -116,18 +117,25 @@ pub(super) enum Verdict {
 /// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
 pub(super) struct Password {
     hash: Hash,
-    device: Hmac<Sha256>,
+    /// Derived from the configured hash: devices survive restarts, and a new password forgets them.
+    device: hmac::Key,
     slots: Arc<Semaphore>,
     attempts: Attempts,
     wrong: Ceiling,
 }
 
+/// The device-cookie key: an HMAC of a fixed label under the hash, so no other use of the hash shares the key.
+fn device_key(encoded: &str) -> hmac::Key {
+    let derived = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, encoded.as_bytes()), b"graphite-meter device cookie");
+    hmac::Key::new(hmac::HMAC_SHA256, derived.as_ref())
+}
+
 impl Password {
-    /// The sign-in `encoded`, the configured hash, allows; it signs device cookies, so a new password forgets devices.
+    /// The sign-in `encoded`, the configured hash, allows.
     pub fn new(encoded: &str) -> Result<Self, String> {
         Ok(Self {
             hash: Hash::parse(encoded)?,
-            device: Hmac::new_from_slice(encoded.as_bytes()).expect("HMAC takes keys of any length"),
+            device: device_key(encoded),
             slots: Arc::new(Semaphore::new(2)),
             attempts: Attempts::new("password-attempt", 5),
             wrong: Ceiling::new("password-attempt", 60),
@@ -165,8 +173,8 @@ impl Password {
         let expires = now + DEVICE_LIFETIME;
         let since_epoch = expires.duration_since(UNIX_EPOCH).unwrap_or_default();
         let seconds = since_epoch.as_secs().to_be_bytes();
-        let tag = self.device.clone().chain_update(seconds).finalize().into_bytes();
-        (URL_SAFE_NO_PAD.encode([&seconds[..], &tag[..]].concat()), expires)
+        let tag = hmac::sign(&self.device, &seconds);
+        (URL_SAFE_NO_PAD.encode([&seconds[..], tag.as_ref()].concat()), expires)
     }
 
     fn known(&self, cookie: &str) -> bool {
@@ -179,7 +187,7 @@ impl Password {
         };
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         let expires_at = u64::from_be_bytes(*expires);
-        now.as_secs() < expires_at && self.device.clone().chain_update(expires).verify_slice(tag).is_ok()
+        now.as_secs() < expires_at && hmac::verify(&self.device, expires, tag).is_ok()
     }
 }
 
@@ -193,7 +201,7 @@ mod tests {
         (STANDARD_NO_PAD.decode(fields[4]).unwrap(), STANDARD_NO_PAD.decode(fields[5]).unwrap())
     }
 
-    /// `api/password.testvectors.json`, which the Go server's hashes and refusals also follow.
+    /// `api/password.testvectors.json`: a pinned hash and the passwords refused and accepted.
     fn vectors() -> serde_json::Value {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -210,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn hashes_match_the_go_servers() {
+    fn hashes_follow_the_pinned_vectors() {
         let vectors = vectors();
         let secret = vectors["password"].as_str().unwrap().as_bytes();
         let (salt, expected) = key(vectors["hash"].as_str().unwrap());
@@ -228,17 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn a_device_cookie_is_known_under_its_password_until_it_expires_and_passes_the_shared_ceiling() {
+    fn a_device_cookie_outlives_a_restart_until_it_expires_or_the_password_changes_and_passes_the_shared_ceiling() {
         let vectors = vectors();
-        let go = vectors["hash"].as_str().unwrap();
-        let password = Password::new(go).unwrap();
+        let configured = vectors["hash"].as_str().unwrap();
+        let password = Password::new(configured).unwrap();
         let (cookie, expires) = password.device(SystemTime::now());
         assert!(expires > SystemTime::now() + DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(password.known(&cookie));
-        assert!(
-            !Password::new(&go.replace("9kVg", "8kVg")).unwrap().known(&cookie),
-            "another password's device"
-        );
+        assert!(Password::new(configured).unwrap().known(&cookie), "a restart keeps known devices");
+        let changed = configured.replacen("$9kV", "$8kV", 1);
+        assert!(!Password::new(&changed).unwrap().known(&cookie), "a new password forgets them");
         let (old, _) = password.device(SystemTime::now() - DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(!password.known(&old));
         let forged = format!("{}A{}", &cookie[..10], &cookie[11..]);

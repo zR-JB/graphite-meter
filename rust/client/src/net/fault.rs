@@ -1,5 +1,5 @@
 //! Failures typed where they arise: their reason, how a retry treats them, and the text a view shows.
-use crate::model::Failure;
+use crate::{model::Failure, text::capitalized};
 use graphite_meter_net::ConnectError;
 use graphite_meter_proto::{
     lane::LaneEnding, origin::Origin, reason::FailureReason, refusal::UploadRefusal, route::Route, text,
@@ -94,10 +94,13 @@ impl Fault {
         let retry_after = seconds
             .and_then(|value| value.parse().ok())
             .map(|seconds: u32| Duration::from_secs(seconds.into()));
-        Some(match header("x-graphite-upload-refusal").and_then(UploadRefusal::from_name) {
-            Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
-            None => Self::Status { status, from, retry_after },
-        })
+        Some(
+            match header("x-graphite-upload-refusal").and_then(|name| UploadRefusal::find_by(UploadRefusal::name, name))
+            {
+                Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
+                None => Self::Status { status, from, retry_after },
+            },
+        )
     }
 
     /// The fault an upload refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.
@@ -136,14 +139,16 @@ impl fmt::Display for Fault {
             Self::Connect(ConnectError::Proxy(unusable)) => {
                 formatter.write_str(&text::clean(&unusable.to_string(), 320))
             }
+            Self::Connect(other) => formatter.write_str(&text::clean(&format!("Could not connect: {other}"), 320)),
             Self::Status { status, from, .. } => write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from)),
             Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status().as_u16()),
-            Self::Ended(ending) => write!(formatter, "the server ended the lane: {}", ending.name()),
-            Self::SignIn(_) => formatter.write_str("authentication required"),
+            Self::Ended(ending) => write!(formatter, "The server ended the stream: {}", ending.name()),
+            Self::SignIn(_) => formatter.write_str(self.reason().label()),
             Self::Malformed(detail) => {
-                formatter.write_str(&text::clean(&format!("unexpected server response: {detail}"), 320))
+                formatter.write_str(&text::clean(&format!("Unexpected server response: {detail}"), 320))
             }
-            Self::Connect(_) | Self::Lost(_) | Self::TimedOut(_) => formatter.write_str(self.reason().label()),
+            Self::TimedOut(what) => write!(formatter, "{} timed out", capitalized(what)),
+            Self::Lost(_) => formatter.write_str(self.reason().label()),
         }
     }
 }
@@ -161,7 +166,7 @@ fn busy(status: StatusCode) -> bool {
 /// What a status text calls the request: a control request by name, any other by its path.
 fn source(route: Route) -> &'static str {
     match route {
-        Route::Servers => "server catalogue",
+        Route::Servers => "the test server list",
         Route::Preflight => "preflight",
         Route::Probe => "probe",
         Route::UploadCheckpoint => "receiver checkpoint",
@@ -173,11 +178,11 @@ fn source(route: Route) -> &'static str {
 
 fn untrusted(certificate: &CertificateError) -> String {
     match certificate {
-        CertificateError::UnknownIssuer => "certificate signed by unknown authority".into(),
+        CertificateError::UnknownIssuer => "its issuer is unknown".into(),
         CertificateError::Expired
         | CertificateError::ExpiredContext { .. }
         | CertificateError::NotValidYet
-        | CertificateError::NotValidYetContext { .. } => "certificate has expired or is not yet valid".into(),
+        | CertificateError::NotValidYetContext { .. } => "it has expired or is not valid yet".into(),
         CertificateError::Other(other) => text::clean(&other.0.to_string(), 200),
         other => text::clean(&other.to_string(), 200),
     }
@@ -215,9 +220,9 @@ mod tests {
             (500, &[], ProtocolError, Class::Redial, "HTTP 500 from upload session"),
             (204, &[], ProtocolError, Class::Final, "HTTP 204 from upload session"),
             (403, &[], ProtocolError, Class::Final, "HTTP 403 from upload session"),
-            (403, &AUTH, SignInRequired, Class::Final, "authentication required"),
-            (403, &[(REFUSAL, "revoked")], SignInRequired, Class::Final, "authentication required"),
-            (408, &[(REFUSAL, "idle")], Timeout, Class::Redial, "the server ended the lane: idle"),
+            (403, &AUTH, SignInRequired, Class::Final, "Sign-in required"),
+            (403, &[(REFUSAL, "revoked")], SignInRequired, Class::Final, "Sign-in required"),
+            (408, &[(REFUSAL, "idle")], Timeout, Class::Redial, "The server ended the stream: idle"),
             (503, &[(REFUSAL, "globalFull")], ServerBusy, busy(0), "HTTP 503 from upload session"),
             (400, &FULL, ServerBusy, busy(1), "HTTP 429 from upload session"),
             (400, &[(REFUSAL, "invalid")], ProtocolError, Class::Final, "unknown upload id (HTTP 400)"),
@@ -236,6 +241,24 @@ mod tests {
         assert_eq!(lane.unwrap().class(), Class::Final, "a lane's server error stands");
         let issuer = answer(403, &AUTH);
         assert_matches!(issuer, Some(Fault::SignIn(origin)) if origin.to_string() == "https://meter.example");
+    }
+
+    #[test]
+    fn timeouts_and_connections_never_opened_say_what_happened() {
+        let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused");
+        let unreachable = std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake timed out");
+        for (fault, text) in [
+            (Fault::TimedOut("receiver checkpoint"), "Receiver checkpoint timed out"),
+            (Fault::Connect(ConnectError::Io(refused)), "Could not connect: connection refused"),
+            (
+                Fault::Connect(ConnectError::Refused("proxy said no".into())),
+                "Could not connect: proxy said no",
+            ),
+            (Fault::Connect(ConnectError::Unreachable(unreachable)), super::super::UNREACHABLE),
+            (Fault::Lost("reset".into()), "Connection lost"),
+        ] {
+            assert_eq!(fault.to_string(), text, "{fault:?}");
+        }
     }
 
     #[test]

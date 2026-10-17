@@ -6,10 +6,9 @@ use super::{
     setup::Row,
 };
 use crate::{
-    config::{Config, MAX_STREAMS, server_origin},
-    report::vocabulary::CADENCES,
+    config::{CADENCES, Config, MAX_STREAMS, MAX_WARMUP, server_origin},
+    style::Palette,
     text::Line,
-    tui::theme::Palette,
 };
 use crossterm::event::KeyCode;
 use graphite_meter_proto::{
@@ -22,13 +21,12 @@ use unicode_width::UnicodeWidthChar;
 
 /// The most characters the editor holds.
 const MAX_TEXT: usize = 4096;
-const WARMUP: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4);
 
 impl App {
     /// Reacts to `action` on the focused row; a change to what a check depends on rechecks the paths.
     pub(super) fn settings_key(&mut self, action: Action, key: Key) -> Vec<Effect> {
         let (row, step) = (self.row(), key.step());
-        let resetting = std::mem::take(&mut self.setup.resetting);
+        let resetting = self.resetting(false);
         let before = self.config.key();
         match action {
             Action::Move => self.move_focus(step),
@@ -52,7 +50,8 @@ impl App {
     /// A click on row `index`: the first focuses it, a second does what space does.
     pub(super) fn click_row(&mut self, index: usize) -> Vec<Effect> {
         if self.setup.row != index {
-            (self.setup.row, self.setup.resetting) = (index, false);
+            self.setup.row = index;
+            self.resetting(false);
             return Vec::new();
         }
         self.settings_key(Action::Toggle, Key::Code(KeyCode::Null))
@@ -90,12 +89,12 @@ impl App {
                 self.config = Config { url, servers, ..Config::default() };
                 self.notify(Line::styled("Settings reset to their defaults.", self.palette.muted));
             }
-            Row::Reset => self.setup.resetting = true,
+            Row::Reset => _ = self.resetting(true),
             Row::Stage(_) | Row::Warmup => {
-                let value = span(&mut self.config, row).map(|(value, ..)| duration::format(*value));
+                let value = span(&mut self.config, row).map(|(value, _)| duration::format(*value));
                 self.edit(row, &value.unwrap_or_default());
             }
-            Row::Catalogue => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
+            Row::Address => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
             Row::Streams => {
                 let count = self.config.streams.shown().to_string();
                 self.edit(row, &count);
@@ -109,7 +108,7 @@ impl App {
 
     /// ←/→ on `row`: a duration steps, a switch turns on or off, anything else cycles.
     fn adjust(&mut self, row: Row, step: isize) {
-        if let Some((value, bounds, _)) = span(&mut self.config, row) {
+        if let Some((value, bounds)) = span(&mut self.config, row) {
             let unit = match value
                 .saturating_sub(Duration::from_nanos(u64::from(step < 0)))
                 .as_secs()
@@ -154,8 +153,8 @@ impl App {
             Row::IdleCadence | Row::LoadedCadence => {
                 let config = &mut self.config;
                 let cadence = if row == Row::IdleCadence { &mut config.ping } else { &mut config.loaded_ping };
-                let at = CADENCES.iter().position(|(preset, _)| preset == cadence);
-                *cadence = CADENCES[next(at, CADENCES.len())].0;
+                let at = CADENCES.iter().position(|(_, preset)| preset == cadence);
+                *cadence = CADENCES[next(at, CADENCES.len())].1;
             }
             Row::Streams => {
                 let streams = &mut self.config.streams;
@@ -167,36 +166,35 @@ impl App {
     }
 
     pub(super) fn edit(&mut self, row: Row, value: &str) {
-        self.editor = Some(Editor::new(row, value));
+        if let Overlay::Settings { editor, .. } = &mut self.overlay {
+            *editor = Some(Editor::new(row, value));
+        }
     }
 
     /// A key while typing: enter applies, esc cancels, others edit the text.
     pub(super) fn edit_key(&mut self, key: Key) -> Vec<Effect> {
-        if matches!(self.overlay, Overlay::Connect) && key == Key::Code(KeyCode::Tab) {
+        let connecting = matches!(self.overlay, Overlay::Connect(_));
+        if connecting && key == Key::Code(KeyCode::Tab) {
             return self.remember(!self.remembering);
         }
-        let Some(editor) = &mut self.editor else { return Vec::new() };
+        let Some(editor) = self.editor_mut() else { return Vec::new() };
         match keys::find(keys::EDIT, key, |_| true) {
             Some(Action::Abort) => return self.interrupt(),
-            Some(Action::Cancel) => {
-                self.editor = None;
-                if matches!(self.overlay, Overlay::Connect) {
-                    self.overlay = Overlay::None;
-                }
-            }
+            Some(Action::Cancel) if connecting => self.overlay = Overlay::None,
+            Some(Action::Cancel) => self.overlay = Overlay::SETTINGS,
             Some(Action::Apply) => {
                 let (row, text, before) = (editor.row, editor.text(), self.config.key());
                 match self.parse(row, text.trim()) {
                     // The address being connected stays open while its check runs, and closes once it prepared.
-                    Ok(()) if matches!(self.overlay, Overlay::Connect) => self.recheck = Some(self.now),
-                    Ok(()) => self.editor = None,
+                    Ok(()) if connecting => self.recheck = Some(self.now),
+                    Ok(()) => self.overlay = Overlay::SETTINGS,
                     Err(error) => {
-                        if let Some(editor) = &mut self.editor {
+                        if let Some(editor) = self.editor_mut() {
                             editor.error = Some(error);
                         }
                     }
                 }
-                if self.config.key() != before && !matches!(self.overlay, Overlay::Connect) {
+                if self.config.key() != before && !connecting {
                     self.recheck_soon();
                 }
             }
@@ -208,7 +206,7 @@ impl App {
     /// Applies `raw` to `row`, or says why it does not apply.
     fn parse(&mut self, row: Row, raw: &str) -> Result<(), String> {
         let config = &mut self.config;
-        if row == Row::Catalogue {
+        if row == Row::Address {
             let url = server_origin(raw)?;
             if config.url.as_ref() != Some(&url) {
                 config.servers.clear();
@@ -226,12 +224,12 @@ impl App {
                 .show(count.ok_or(format!("Streams must be a whole number from 1 to {MAX_STREAMS}."))?);
             return Ok(());
         }
-        let Some((value, bounds, range)) = span(config, row) else { return Ok(()) };
+        let Some((value, bounds)) = span(config, row) else { return Ok(()) };
         let seconds = raw.parse::<f64>();
         let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
-        let nanos = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
-        let parsed = u64::try_from(nanos).map_or(Duration::MAX, Duration::from_nanos);
+        let parsed = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
         if !bounds.contains(&parsed) {
+            let range = format!("{} to {}", duration::format(*bounds.start()), duration::format(*bounds.end()));
             return Err(format!("{} must be from {range}.", row.label()));
         }
         *value = parsed;
@@ -239,11 +237,11 @@ impl App {
     }
 }
 
-/// The duration `row` sets, the range it keeps to and that range in words.
-fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>, &'static str)> {
+/// The duration `row` sets and the range it keeps to.
+fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>)> {
     match row {
-        Row::Stage(stage) => Some((&mut config.durations[stage.index()], STAGE_LIMITS, "1 s to 24 h")),
-        Row::Warmup => Some((&mut config.warmup, WARMUP, "0 s to 4 s")),
+        Row::Stage(stage) => Some((&mut config.durations[stage.index()], STAGE_LIMITS)),
+        Row::Warmup => Some((&mut config.warmup, Duration::ZERO..=MAX_WARMUP)),
         _ => None,
     }
 }

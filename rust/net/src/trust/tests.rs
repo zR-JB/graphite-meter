@@ -28,13 +28,13 @@ fn certificate() -> (String, CertificateDer<'static>) {
 
 /// The locations a process with these variables reads, given default lists.
 fn locations(variables: &[(&str, &str)], files: &[&str], directories: &[&str]) -> Locations {
-    let lookup = |name: &str| {
+    let trust = Trust::from_lookup(|name| {
         variables
             .iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.into())
-    };
-    Locations::from_lookup(lookup, files, directories)
+    });
+    Locations::new(trust.file, trust.directories).or(files, directories)
 }
 
 fn roots(locations: &Locations) -> Vec<CertificateDer<'static>> {
@@ -96,7 +96,7 @@ fn a_trusted_root_serving_as_its_own_chain_still_expires() {
     let now = UnixTime::now();
     verify(&store, &ca, "localhost", now).unwrap();
     assert!(verify(&store, &ca, "other.test", now).is_err(), "its name still counts");
-    let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 10 * 86_400));
+    let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs() + 3 * 366 * 86_400));
     let expired = verify(&store, &ca, "localhost", later);
     assert!(
         matches!(expired, Err(rustls::Error::InvalidCertificate(Expired | ExpiredContext { .. }))),

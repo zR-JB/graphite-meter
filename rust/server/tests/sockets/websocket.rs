@@ -57,5 +57,6 @@ async fn a_quiet_bus_closes_idle_within_the_contract_bound() {
 async fn a_bus_closes_at_the_operation_lifetime() {
     let server = start(&[("GM_MAX_OPERATION_DURATION", "1s")]).await;
     let mut socket = bus(&server).await;
+    tokio::time::pause();
     assert_eq!(closed(&mut socket).await, (4002, "lifetime".into()));
 }

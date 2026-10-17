@@ -6,6 +6,7 @@
     "generation": "future-generation",
     "capabilities": {
       "uploadCheckpoint": true,
+      "maxStageMs": 300000,
       "futureCapability": { "enabled": true },
       "throughput": [
         { "baseUrl": "https://speed.example:7249", "transport": "fetch-stream", "protocol": "http3", "weight": 2 },

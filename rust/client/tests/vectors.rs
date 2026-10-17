@@ -1,9 +1,9 @@
 //! The shared measurement vectors in `api/`.
 
 use graphite_meter_client::{
+    format,
     measure::{
         aggregate::{Aggregate, Boundary, Fed, Rate, Reading, Receiver},
-        format,
         latency::{Deadline, Latency, ProbeOutcome},
         live::LiveRate,
         wire,
@@ -89,7 +89,7 @@ fn expected_window(value: &Value) -> Option<(u64, u64, Option<f64>, Option<f64>)
     ))
 }
 
-/// Rates compare exactly, as Go's vector test compares them.
+/// Rates compare exactly.
 #[test]
 fn aggregation() {
     let base = Instant::now();
@@ -131,11 +131,9 @@ fn aggregation() {
                 );
             }
         }
-        let (intervals, omitted) = (&aggregate.intervals, aggregate.omitted);
-        assert_eq!(omitted, 0);
         let expected = case["intervals"].as_array().unwrap();
-        assert_eq!(intervals.len(), expected.len(), "{name}");
-        for (interval, expected) in intervals.iter().zip(expected) {
+        assert_eq!(aggregate.begun(), expected.len(), "{name}");
+        for (interval, expected) in aggregate.intervals().zip(expected) {
             assert_eq!(interval.reason.name(), expected["reason"], "{name}");
             assert_eq!(interval.complete, expected["complete"], "{name}");
             let window = interval.window.as_ref().map(|window| {

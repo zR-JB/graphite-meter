@@ -1,15 +1,15 @@
-//! TCP dialing by Go's algorithm: the resolver's first family first, the other after a delay, a timeout and keep-alive.
+//! TCP dialing: the resolver's first family first, the other after a delay (RFC 8305), a timeout and keep-alive.
 use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 
-/// A second under Go's 10 s, so the client's 10 s control deadline never ends a dial.
+/// A second under the client's 10 s control deadline, so a dial ends with its own error first.
 const TIMEOUT: Duration = Duration::from_secs(9);
-/// Go's wait before the other address family joins.
+/// RFC 8305's recommended wait before the other address family joins.
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
-/// Go's least share of the remaining time for each address in a family.
+/// The least share of the remaining time for each address in a family, so one dead address leaves time for others.
 const MIN_SHARE: Duration = Duration::from_secs(2);
-/// Go's keep-alive idle time, probe interval and probe count.
+/// Keep-alive idle time, probe interval and probe count: a dead peer shows within 3 min of idling.
 const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(30);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
@@ -85,7 +85,7 @@ async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpSt
     Err(first.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address resolved")))
 }
 
-/// Go's partialDeadline: an equal part of `left` for each of `addresses`, but at least `MIN_SHARE` while it lasts.
+/// An equal part of `left` for each of `addresses`, but at least `MIN_SHARE` while it lasts.
 fn share(left: Duration, addresses: usize) -> Duration {
     let equal = left / u32::try_from(addresses).unwrap_or(u32::MAX);
     equal.max(MIN_SHARE.min(left))
@@ -107,23 +107,6 @@ mod tests {
     use std::net::Ipv4Addr;
     use tokio::{net::TcpListener, time::Instant};
 
-    async fn listener() -> (TcpListener, SocketAddr) {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let address = listener.local_addr().unwrap();
-        (listener, address)
-    }
-
-    /// An address whose full accept queue drops new handshakes, so a connect to it hangs.
-    #[cfg(target_os = "linux")]
-    fn silent() -> (socket2::Socket, std::net::TcpStream) {
-        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
-        socket.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into()).unwrap();
-        socket.listen(0).unwrap();
-        let address = socket.local_addr().unwrap().as_socket().unwrap();
-        let queued = std::net::TcpStream::connect(address).unwrap();
-        (socket, queued)
-    }
-
     #[test]
     fn the_first_address_picks_the_family_tried_first() {
         let [a, b, c, d]: [SocketAddr; 4] = ["192.0.2.1:1", "192.0.2.2:1", "[2001:db8::1]:1", "[2001:db8::2]:1"]
@@ -142,8 +125,25 @@ mod tests {
         }
     }
 
+    async fn listener() -> (TcpListener, SocketAddr) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        (listener, address)
+    }
+
+    /// An address whose full accept queue drops new handshakes, so a connect to it hangs.
     #[cfg(target_os = "linux")]
-    #[tokio::test]
+    fn silent() -> (socket2::Socket, std::net::TcpStream) {
+        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        socket.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into()).unwrap();
+        socket.listen(0).unwrap();
+        let address = socket.local_addr().unwrap().as_socket().unwrap();
+        let queued = std::net::TcpStream::connect(address).unwrap();
+        (socket, queued)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(start_paused = true)]
     async fn a_silent_primary_family_lets_the_fallback_in_after_the_delay() {
         let (_silent, queued) = silent();
         let (_open, live) = listener().await;
@@ -151,12 +151,13 @@ mod tests {
         let primaries = [queued.peer_addr().unwrap()];
         let stream = parallel(&primaries, &[live], Instant::now() + TIMEOUT).await.unwrap();
         assert_eq!(stream.peer_addr().unwrap(), live);
+        // Paused time may jump past the delay while the loopback connect is in flight.
         let elapsed = started.elapsed();
-        assert!((FALLBACK_DELAY..FALLBACK_DELAY * 4).contains(&elapsed), "{elapsed:?}");
+        assert!((FALLBACK_DELAY..TIMEOUT).contains(&elapsed), "{elapsed:?}");
     }
 
     #[tokio::test]
-    async fn dialled_connections_probe_idle_peers_as_go_does() {
+    async fn dialled_connections_probe_idle_peers() {
         let (_open, live) = listener().await;
         let stream = dial(&Host::Name("localhost".into()), live.port()).await.unwrap();
         let socket = socket2::SockRef::from(&stream);

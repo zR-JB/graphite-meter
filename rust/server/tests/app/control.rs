@@ -47,7 +47,7 @@ async fn the_preflight_matches_the_golden_document_with_a_fixed_generation() {
 }
 
 #[tokio::test]
-async fn servers_publishes_the_catalogue_with_self_approving_its_own_targets() {
+async fn servers_publishes_the_catalog_with_self_approving_its_own_targets() {
     let app = app(&[("GM_SERVER_CATALOG", r#"["https://other.example"]"#)]);
     let response = send(&app, Endpoint::H1, empty(request("GET", "/servers"))).await;
     assert_eq!(header(&response, "cache-control"), Some("no-store"));

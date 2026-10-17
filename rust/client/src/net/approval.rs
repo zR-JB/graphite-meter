@@ -45,8 +45,8 @@ pub enum Unapproved {
 /// Why `origin` refuses sign-in: it is not HTTPS, or TLS goes unverified.
 pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
     match () {
-        _ if insecure => Some("sign-in refuses Skip TLS verification (--insecure)"),
-        _ if origin.scheme == Scheme::Http => Some("authenticated operation requires an HTTPS -url"),
+        _ if insecure => Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure)."),
+        _ if origin.scheme == Scheme::Http => Some("Sign-in needs a server address that starts with https://."),
         _ => None,
     }
 }
@@ -67,20 +67,31 @@ impl Approval {
         }
     }
 
-    /// The grant once approved; polls outlast network failures until the deadline, which reports the last of them.
+    /// The grant once approved at `client`'s server.
     pub async fn grant(&self, client: &Client) -> Result<String, Unapproved> {
-        let (mut conn, mut unreachable) = (None, None);
+        let conn = &tokio::sync::Mutex::new(None);
+        self.wait(|| async move { self.poll(client, &mut *conn.lock().await).await })
+            .await
+    }
+
+    /// The grant `poll` brings, asked every second; polls outlast network failures until the deadline, which reports
+    /// the last of them.
+    pub async fn wait<F>(&self, mut poll: impl FnMut() -> F) -> Result<String, Unapproved>
+    where
+        F: Future<Output = Result<Option<String>, Fault>>,
+    {
+        let mut unreachable = None;
         loop {
             let next = Instant::now() + POLL;
-            let polled = timeout_at(self.deadline, self.poll(client, &mut conn)).await;
+            let polled = timeout_at(self.deadline, poll()).await;
             // A poll the deadline cuts short leaves the previous outcome.
             let cut = Instant::now() >= self.deadline;
             match polled {
                 Ok(Ok(Some(token))) => return Ok(token),
                 Ok(Ok(None)) => unreachable = None,
                 Ok(Err(fault @ Fault::Malformed(_))) => return Err(Unapproved::Failed(fault.failure())),
-                Ok(Err(fault)) if !cut => (conn, unreachable) = (None, Some(fault)),
-                _ => conn = None,
+                Ok(Err(fault)) if !cut => unreachable = Some(fault),
+                _ => {}
             }
             if cut || next >= self.deadline {
                 sleep_until(self.deadline).await;
@@ -90,7 +101,7 @@ impl Approval {
         }
     }
 
-    /// One token exchange: the grant, or none while the approval is pending.
+    /// One token exchange over `conn`, kept for the next while it stays usable: the grant, or none while pending.
     async fn poll(&self, client: &Client, conn: &mut Option<Conn>) -> Result<Option<String>, Fault> {
         let exchange = async {
             let mut ready = match conn.take().filter(Conn::usable) {
@@ -105,16 +116,16 @@ impl Approval {
             let document = answer.into_body().json(json::decode::<Value>).await;
             let grant = |document: Value| match document.get("token").and_then(Value::as_str) {
                 Some(grant) if token::valid(grant) => Ok(Some(grant.to_owned())),
-                _ => Err(Fault::Malformed("invalid client approval token".into())),
+                _ => Err(Fault::Malformed("invalid sign-in token".into())),
             };
             match status {
                 StatusCode::ACCEPTED => Ok(None),
                 StatusCode::OK => grant(document?),
-                status => Err(Fault::Malformed(format!("client approval returned HTTP {}", status.as_u16()))),
+                status => Err(Fault::Malformed(format!("sign-in answered HTTP {}", status.as_u16()))),
             }
         };
         let exchanged = timeout(CONTROL_TIMEOUT, exchange).await;
-        exchanged.unwrap_or(Err(Fault::TimedOut("approval response")))
+        exchanged.unwrap_or(Err(Fault::TimedOut("sign-in answer")))
     }
 
     fn head(&self, length: usize) -> Result<http::Request<()>, Fault> {

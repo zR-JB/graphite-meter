@@ -25,6 +25,11 @@ macro_rules! table {
             }
 
             $($(#[$cmeta])* pub const fn $column(self) -> $type { self.row().$index })+
+
+            /// The first variant whose `column` equals `value`.
+            pub fn find_by<V: PartialEq>(column: fn(Self) -> V, value: V) -> Option<Self> {
+                Self::ALL.iter().copied().find(|&variant| column(variant) == value)
+            }
         }
     };
 }
@@ -33,12 +38,6 @@ macro_rules! table {
 macro_rules! named {
     ($(#[$meta:meta])* pub enum $name:ident { $($variant:ident => $value:expr,)+ }) => {
         table! { $(#[$meta])* pub enum $name { name.0: &'static str, } { $($variant => ($value,),)+ } }
-
-        impl $name {
-            pub fn from_name(name: &str) -> Option<Self> {
-                Self::ALL.iter().copied().find(|known| known.name() == name)
-            }
-        }
 
         impl serde::Serialize for $name {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -49,7 +48,7 @@ macro_rules! named {
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let name = String::deserialize(deserializer)?;
-                Self::from_name(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown value {name:?}")))
+                Self::find_by(Self::name, &name).ok_or_else(|| serde::de::Error::custom(format!("unknown value {name:?}")))
             }
         }
     };
@@ -61,7 +60,6 @@ pub mod catalog;
 pub mod discovery;
 pub mod duration;
 pub mod flag;
-pub mod idna;
 pub mod json;
 pub mod lane;
 pub mod origin;

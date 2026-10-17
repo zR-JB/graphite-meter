@@ -23,8 +23,7 @@ impl Ping {
     pub const MAX_BYTES: usize = 15;
 
     pub fn encode(self) -> String {
-        let mut id = NumBuffer::new();
-        exact(&["PING,", self.id.format_into(&mut id)])
+        String::from_utf8_lossy(self.write(&mut [0; Self::MAX_BYTES])).into_owned()
     }
 
     /// The probe's bytes, written into `bytes` without allocating.
@@ -57,7 +56,7 @@ impl Ping {
 impl Pong {
     pub fn encode(self) -> String {
         let (mut id, mut nanos) = (NumBuffer::new(), NumBuffer::new());
-        exact(&["PONG,", self.id.format_into(&mut id), ",", self.handling_nanos.format_into(&mut nanos)])
+        ["PONG,", self.id.format_into(&mut id), ",", self.handling_nanos.format_into(&mut nanos)].concat()
     }
 
     /// Reads a reply; `None` for a malformed message, never a reply with an invented duration.
@@ -65,13 +64,6 @@ impl Pong {
         let (id, nanos) = from_utf8(message).ok()?.strip_prefix("PONG,")?.split_once(',')?;
         Some(Self { id: decimal(id, 10)?, handling_nanos: decimal(nanos, 20)? })
     }
-}
-
-/// `parts` in one allocation of exactly their length, which `Bytes` then takes without another.
-fn exact(parts: &[&str]) -> String {
-    let mut text = String::with_capacity(parts.iter().map(|part| part.len()).sum());
-    parts.iter().for_each(|part| text.push_str(part));
-    text
 }
 
 /// A field of digits only, at most `digits` of them, that fits `T`.

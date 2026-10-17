@@ -1,5 +1,4 @@
-//! The frame: the top bar, the console, a sheet or card over it on a dimmed backdrop, a notice in the bottom bar and the
-//! bottom bar, written into the terminal's buffer.
+//! The frame: the top bar, the console, a sheet or card over it on a dimmed backdrop, and the bottom bar.
 use super::{
     App, Overlay, SMALLEST, Target,
     chrome::{Chrome, Link},
@@ -11,9 +10,8 @@ use super::{
 use crate::{
     VERSION,
     events::{Check, Running},
-    measure::format,
+    format::{self, MISSING, round_trip},
     model::Stage,
-    report::vocabulary as words,
     text::{self, Line, Style, fill},
 };
 use ratatui_core::{buffer::Buffer, layout::Rect};
@@ -65,7 +63,7 @@ impl App {
             canvas.hits.clear();
             canvas.hit(body, Target::Backdrop);
             match &self.overlay {
-                Overlay::Settings => {
+                Overlay::Settings { .. } => {
                     let (entries, focus) = self.settings_entries();
                     let footer = self.settings_footer();
                     self.sheet(canvas, body, "Settings", &entries, Some(focus), footer);
@@ -84,7 +82,7 @@ impl App {
                     self.sheet(canvas, body, &title, &entries, Some(focus), Vec::new());
                 }
                 Overlay::SignIn(_) => links = self.sign_in_card(canvas, body),
-                Overlay::Connect => self.connect_card(canvas, body),
+                Overlay::Connect(_) => self.connect_card(canvas, body),
                 Overlay::None => {}
             }
         }
@@ -96,10 +94,7 @@ impl App {
     fn top_bar(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         canvas.fill(area, palette.surface);
-        let host = self.config.url.as_ref().map(|url| {
-            let text = url.to_string();
-            text.split_once("://").map_or(text.clone(), |(_, rest)| rest.to_owned())
-        });
+        let host = self.config.url.as_ref().map(format::authority);
         let brand = Line::styled("◆", palette.stage(Stage::Latency))
             .and(" Graphite Meter", palette.heading)
             .and("   ", Style::default())
@@ -132,7 +127,7 @@ impl App {
                 (dot(palette.warn), "Sign in".into(), palette.warn)
             }
             _ if matches!(self.view.check, Check::Failed(_)) || self.view.servers.iter().all(|s| s.path.is_err()) => {
-                let unreached = if self.view.servers.is_empty() { "Unreachable".into() } else { names };
+                let unreached = if self.view.servers.is_empty() { "Failed".into() } else { names };
                 (dot(Style { bold: false, ..palette.err }), unreached, palette.text)
             }
             _ => {
@@ -160,10 +155,10 @@ impl App {
                 Some(_) => run.elapsed,
                 None => run.at.map_or_default(|at| self.now.saturating_duration_since(at)),
             };
-            status = status.and(format!("   {}", words::clock(elapsed)), palette.text);
+            status = status.and(format!("   {}", format::duration(elapsed)), palette.text);
             status = status.and(format!("   {}", format::bytes(run.moved as u64)), palette.text);
             if let Some(left) = self.left() {
-                status = status.and(format!("   {} left", words::clock(left)), palette.muted);
+                status = status.and(format!("   {} left", format::duration(left)), palette.muted);
             }
         }
         canvas.line(area.x + 1, area.y, area.width.saturating_sub(2), &status);
@@ -194,7 +189,7 @@ impl App {
                 canvas.line(at.x + 2, at.y, width - 4, &text);
             }
             _ => {
-                let version = Line::styled(format!("native {VERSION}"), palette.muted);
+                let version = Line::styled(format!("Client {VERSION}"), palette.muted);
                 if free.1 > free.0 + version.width() as u16 + 2 {
                     canvas.line(x - version.width() as u16 - 3, area.y, version.width() as u16, &version);
                 }
@@ -210,13 +205,13 @@ impl App {
 
     /// The keys the bottom bar names for what is on top.
     fn bar_keys(&self) -> Vec<keys::Binding> {
-        if self.editor.is_some() {
+        if self.editor().is_some() {
             return keys::listed(keys::EDIT, |_| true);
         }
         let wanted: &[Action] = match &self.overlay {
-            Overlay::None | Overlay::Connect if self.running() => &[Action::Stop, Action::Details, Action::Help],
-            Overlay::None | Overlay::Connect => &[Action::Start, Action::Settings, Action::Details, Action::Help],
-            Overlay::Settings => &[Action::Move, Action::Adjust, Action::Toggle, Action::Open, Action::Close],
+            Overlay::None | Overlay::Connect(_) if self.running() => &[Action::Stop, Action::Details, Action::Help],
+            Overlay::None | Overlay::Connect(_) => &[Action::Start, Action::Settings, Action::Details, Action::Help],
+            Overlay::Settings { .. } => &[Action::Move, Action::Adjust, Action::Toggle, Action::Open, Action::Close],
             _ => &[
                 Action::Move,
                 Action::Scroll,
@@ -243,10 +238,10 @@ impl App {
         match run.map(|run| (run.outcome, &run.stage)) {
             _ if self.view.starting && self.stopping => ("Stopping", palette.muted),
             _ if self.view.starting => ("Checking paths", palette.muted),
-            Some((Some(outcome), _)) => (words::outcome_label(outcome), palette.outcome(outcome)),
+            Some((Some(outcome), _)) => (format::outcome_label(outcome), palette.outcome(outcome)),
             Some((None, _)) if self.stopping => ("Stopping", palette.muted),
             Some((None, Some(Running::Measuring { plan, .. }))) => {
-                (words::label(plan.stage), palette.stage(plan.stage))
+                (format::label(plan.stage), palette.stage(plan.stage))
             }
             Some((None, Some(Running::Warmup(_)))) => ("Warmup", palette.muted),
             Some((None, None)) => ("Checking paths", palette.muted),
@@ -261,8 +256,7 @@ impl App {
         }
     }
 
-    /// A sheet titled `title` at the right of `area`: its entries from the scroll on, the focused one lit, and
-    /// `footer` at its foot.
+    /// A sheet titled `title` at the right of `area`, scrolled to keep the `focus` entry shown.
     fn sheet(
         &mut self,
         canvas: &mut Canvas,
@@ -329,7 +323,7 @@ impl App {
         let shown = usize::from(bottom.saturating_sub(top));
         self.rows = shown;
         if let Some(line) = focused_line {
-            self.scroll = self.scroll.clamp((line + 1).saturating_sub(shown), line);
+            self.scroll = self.scroll.max((line + 1).saturating_sub(shown)).min(line);
         }
         self.scroll = self.scroll.min(lines.len().saturating_sub(shown));
         for (offset, (line, item)) in lines.iter().skip(self.scroll).take(shown).enumerate() {
@@ -383,14 +377,10 @@ impl App {
         canvas.line(inner.x, inner.y + 2, inner.width, &Line::styled(lead, palette.muted));
         let field = Rect::new(inner.x, inner.y + 4, inner.width, 1);
         canvas.fill(field, palette.raised);
-        if let Some(editor) = &self.editor {
+        if let Some(editor) = self.editor() {
             canvas.line(field.x + 1, field.y, field.width - 2, &editor.line(usize::from(field.width - 2), palette));
         }
-        let host = self.config.url.as_ref().map(|url| {
-            let text = url.to_string();
-            text.split_once("://").map_or(text.clone(), |(_, rest)| rest.to_owned())
-        });
-        let host = host.unwrap_or_default();
+        let host = self.config.url.as_ref().map(format::authority).unwrap_or_default();
         let failure = match &self.view.check {
             Check::Failed(failure) => Some(failure.text.clone()),
             _ if self.could_not_start() => {
@@ -400,7 +390,7 @@ impl App {
             _ => None,
         };
         let warn = |text: String| Line::styled(text, palette.warn);
-        let [said, next] = match (self.editor.as_ref().and_then(|editor| editor.error.clone()), failure) {
+        let [said, next] = match (self.editor().and_then(|editor| editor.error.clone()), failure) {
             (Some(error), _) => [Line::styled(error, Style { bold: false, ..palette.err }), Line::default()],
             _ if self.checking() && !host.is_empty() => [
                 Line::styled(self.spinner(), palette.accent).and(format!(" Checking {host}…"), palette.muted),
@@ -408,12 +398,12 @@ impl App {
             ],
             (None, Some(text)) => {
                 let said = match text == crate::net::UNREACHABLE {
-                    true => warn(format!("Couldn't reach {host}.")),
+                    true => warn(format!("Could not reach {host}.")),
                     false => warn(format!("{host}: {text}")),
                 };
                 [
                     said,
-                    Line::styled("Check the address and that the server is running; enter tries again.", palette.muted),
+                    Line::styled("Check the address and that the server is running; Enter tries again.", palette.muted),
                 ]
             }
             (None, None) => [Line::default(), Line::default()],
@@ -463,7 +453,7 @@ impl App {
         let waited = self.now.saturating_duration_since(sign_in.since);
         let left = prompt.deadline.into_std().saturating_duration_since(self.now);
         let left = std::time::Duration::from_secs(left.as_secs_f64().round() as u64);
-        let times = format!("waited {} · expires in {}", words::clock(waited), words::setting(left));
+        let times = format!("Waited {} · expires in {}", format::duration(waited), format::stage_time(left));
         canvas.line(inner.x, inner.y + 8, inner.width, &Line::styled(times, palette.muted));
         let mut links = Vec::new();
         for (index, part) in wrapped.into_iter().enumerate() {
@@ -492,7 +482,7 @@ impl App {
             entries.push(Entry::Heading(title.into()));
             for binding in table.iter().filter(|binding| binding.help.is_some()) {
                 let (key, does) = binding.help.unwrap_or_default();
-                let label = Line::styled(text::capitalised(does), self.palette.text);
+                let label = Line::styled(text::capitalized(does), self.palette.text);
                 entries.push(Entry::Item {
                     label,
                     value: Line::styled(key, self.palette.value),
@@ -502,7 +492,7 @@ impl App {
         }
         entries.push(Entry::Gap);
         entries.push(Entry::Text(Line::styled(
-            "Click the run key, a stage's chip or a key below to press it. Hold shift to select text with the mouse.",
+            "Click the run key, a stage's chip or a key below to press it. Hold Shift to select text with the mouse.",
             self.palette.muted,
         )));
         entries
@@ -517,15 +507,11 @@ impl App {
             target: None,
         };
         let mut entries = Vec::new();
-        let address = self
-            .config
-            .url
-            .as_ref()
-            .map_or(words::MISSING.into(), ToString::to_string);
+        let address = self.config.url.as_ref().map_or(MISSING.into(), ToString::to_string);
         for server in self.view.servers.iter() {
             entries.push(Entry::Heading(match self.several() {
                 true => server.name.clone(),
-                false => "Tested server".into(),
+                false => "Test server".into(),
             }));
             entries.push(item("Name", server.name.clone()));
             entries.push(item("Address", server.origin.to_string()));
@@ -535,15 +521,12 @@ impl App {
             entries.push(item("Status", self.readiness(server).label().into()));
             match &server.path {
                 Ok(paths) => {
-                    entries.push(item("Throughput path", words::throughput_path(&paths.throughput)));
-                    entries.push(item("Streams", words::streams(&self.config, &paths.throughput)));
-                    let latency = paths
-                        .latency
-                        .as_ref()
-                        .map_or(words::MISSING.into(), words::latency_path);
+                    entries.push(item("Throughput path", format::throughput_path(&paths.throughput)));
+                    entries.push(item("Streams", format::streams(&self.config, &paths.throughput)));
+                    let latency = paths.latency.as_ref().map_or(MISSING.into(), format::latency_path);
                     entries.push(item("Latency path", latency));
                     if let Some(rtt) = paths.idle_rtt {
-                        entries.push(item("Pre-test latency", words::ms(rtt)));
+                        entries.push(item("Path check round trip", round_trip(rtt)));
                     }
                     entries.push(item("IP family", format!("IPv{}", paths.ip_family.version())));
                 }
@@ -566,15 +549,15 @@ impl App {
                             .sum()
                     });
                     if rate > 0.0 {
-                        let label = format!("{} {}", icon(result.stage), words::label(result.stage));
+                        let label = format!("{} {}", icon(result.stage), format::label(result.stage));
                         entries.push(item(&label, format::rate(rate)));
                     }
                 }
             }
         }
         if self.view.servers.is_empty() {
-            entries.push(Entry::Heading("Tested server".into()));
-            entries.push(item("Address", address));
+            entries.push(Entry::Heading("Server".into()));
+            entries.push(item("Server address", address));
             entries.push(Entry::Text(Line::styled("Its test servers show here once it answers.", palette.muted)));
         }
         if let Some(run) = self.view.run.as_ref().filter(|run| !run.issues.is_empty()) {
@@ -582,29 +565,25 @@ impl App {
             for (stage, issue) in &run.issues {
                 let at = issue.at.saturating_duration_since(run.at.unwrap_or(issue.at));
                 let name = self.name(Some(&issue.server));
-                let label = format!("{} at {}", words::label(*stage), words::clock(at));
+                let label = format!("{} at {}", format::label(*stage), format::duration(at));
                 entries.push(item(&label, format!("{name}: {}", issue.failure.reason.label())));
             }
         }
-        if let Some(run) = &self.view.run {
-            let latency = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional]
-                .into_iter()
-                .filter_map(|stage| Some((stage, self.population(stage)?)))
-                .filter(|(_, summary)| summary.replies > 0)
-                .collect::<Vec<_>>();
-            if !latency.is_empty() {
-                entries.push(Entry::Heading(format!("Latency to {}", self.name(self.latency_server()))));
-                for (stage, summary) in latency {
-                    let median = summary.p50.map_or(words::MISSING.into(), words::ms);
-                    let p95 = summary.p95.map_or(words::MISSING.into(), words::ms);
-                    let value = format!("median {median}  p95 {p95}  {} replies", words::count(summary.replies));
-                    entries.push(item(words::compact_population(stage), value));
-                }
+        let latency = Stage::ALL
+            .iter()
+            .filter_map(|&stage| Some((stage, self.population(stage)?)));
+        let latency: Vec<_> = latency.filter(|(_, summary)| summary.replies > 0).collect();
+        if !latency.is_empty() {
+            entries.push(Entry::Heading(format!("Latency to {}", self.name(self.latency_server()))));
+            for (stage, summary) in latency {
+                let median = summary.p50.map_or(MISSING.into(), round_trip);
+                let p95 = summary.p95.map_or(MISSING.into(), round_trip);
+                let value = format!("Median {median} · P95 {p95} · {} replies", format::count(summary.replies));
+                entries.push(item(format::population(stage), value));
             }
-            let _ = run;
         }
         entries.push(Entry::Heading("Build".into()));
-        entries.push(item("Client", format!("native {VERSION}")));
+        entries.push(item("Client", VERSION.into()));
         entries
     }
 

@@ -1,4 +1,4 @@
-//! Query parameters as Go's `url.Values` reads them; transfer parameters clamped (`api/wire.md#webtransport-routes`).
+//! Query parameters and URL-encoded forms; transfer parameters clamped (`api/wire.md#webtransport-routes`).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
@@ -31,13 +31,13 @@ pub fn form(body: &str) -> Option<Vec<(String, String)>> {
     Some(fields)
 }
 
-/// Go's `url.Values.Encode` of `pairs`, which the caller sorts by name.
+/// `pairs` URL-encoded in their order.
 pub fn encode(pairs: &[(&str, &str)]) -> String {
     let pair = |(name, value): &(&str, &str)| format!("{}={}", escape(name), escape(value));
     pairs.iter().map(pair).collect::<Vec<_>>().join("&")
 }
 
-/// Go's `url.QueryEscape`: unreserved bytes stay, a space becomes `+`.
+/// Unreserved bytes stay, a space becomes `+`, every other byte is percent-encoded.
 pub fn escape(text: &str) -> String {
     const ESCAPED: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
     utf8_percent_encode(text, ESCAPED).to_string().replace("%20", "+")
@@ -68,18 +68,15 @@ fn decode(text: &str) -> Option<String> {
 
 /// `bytes=`: missing, non-numeric or negative reads as 25 MiB, and above 64 GiB as 64 GiB.
 pub fn transfer_bytes(query: Option<&str>) -> u64 {
-    match get(query, "bytes")
-        .and_then(|value| value.parse::<i64>().ok())
-        .map(u64::try_from)
-    {
-        Some(Ok(bytes)) => bytes.min(MAX_TRANSFER_BYTES),
+    match get(query, "bytes").as_deref().and_then(integer) {
+        Some(bytes) if bytes >= 0 => (bytes as u64).min(MAX_TRANSFER_BYTES),
         _ => DEFAULT_TRANSFER_BYTES,
     }
 }
 
 /// `streams=`: missing, non-numeric or below one reads as one, and above 16 as 16.
 pub fn streams(query: Option<&str>) -> usize {
-    let streams = get(query, "streams").and_then(|value| value.parse::<i64>().ok());
+    let streams = get(query, "streams").as_deref().and_then(integer);
     streams.map_or(1, |streams| streams.clamp(1, MAX_STREAMS as i64) as usize)
 }
 
@@ -87,9 +84,20 @@ pub fn streams(query: Option<&str>) -> usize {
 pub fn datagrams(query: Option<&str>) -> bool {
     let Some(value) = get(query, "datagrams") else { return false };
     let value = value.trim();
-    match value.parse::<i64>() {
-        Ok(number) => number != 0,
-        Err(_) => !["false", "off", "no"].iter().any(|no| value.eq_ignore_ascii_case(no)),
+    match integer(value) {
+        Some(number) => number != 0,
+        None => !["false", "off", "no"].iter().any(|no| value.eq_ignore_ascii_case(no)),
+    }
+}
+
+/// A signed decimal integer, saturated to the `i64` range.
+fn integer(text: &str) -> Option<i64> {
+    use std::num::IntErrorKind::{NegOverflow, PosOverflow};
+    match text.parse::<i64>() {
+        Ok(number) => Some(number),
+        Err(error) if *error.kind() == PosOverflow => Some(i64::MAX),
+        Err(error) if *error.kind() == NegOverflow => Some(i64::MIN),
+        Err(_) => None,
     }
 }
 
@@ -104,7 +112,8 @@ mod tests {
             (Some("bytes="), DEFAULT_TRANSFER_BYTES),
             (Some("bytes=ten"), DEFAULT_TRANSFER_BYTES),
             (Some("bytes=-1"), DEFAULT_TRANSFER_BYTES),
-            (Some("bytes=99999999999999999999"), DEFAULT_TRANSFER_BYTES),
+            (Some("bytes=-99999999999999999999"), DEFAULT_TRANSFER_BYTES),
+            (Some("bytes=99999999999999999999"), MAX_TRANSFER_BYTES),
             (Some("bytes=0"), 0),
             (Some("bytes=%2B7"), 7),
             (Some("bytes=68719476737"), MAX_TRANSFER_BYTES),
@@ -115,6 +124,7 @@ mod tests {
             assert_eq!(super::streams(query), streams, "{query:?}");
         }
         assert_eq!(streams(Some("streams=17")), MAX_STREAMS);
+        assert_eq!(streams(Some("streams=99999999999999999999")), MAX_STREAMS);
     }
 
     #[test]

@@ -10,14 +10,14 @@ fn text(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap()
 }
 
-/// Go's usage, captured from its client, as this binary names itself.
+/// The usage, as this binary names itself.
 fn usage() -> String {
     let golden = include_str!("usage.txt");
     golden.replacen("graphite-meter-client", CLIENT, 1)
 }
 
 #[test]
-fn help_prints_go_usage_to_stderr() {
+fn help_prints_the_usage_to_stderr() {
     for arg in ["-h", "-help", "--help"] {
         let output = client(&[arg]);
         assert_eq!(output.status.code(), Some(0));
@@ -27,11 +27,16 @@ fn help_prints_go_usage_to_stderr() {
 }
 
 #[test]
-fn a_flag_error_prints_go_message_and_usage() {
-    let cases: [(&[&str], &str); 3] = [
-        (&["-bogus"], "flag provided but not defined: -bogus"),
-        (&["-streams", "x"], "invalid value \"x\" for flag -streams: parse error"),
-        (&["-insecure=maybe"], "invalid boolean value \"maybe\" for -insecure: parse error"),
+fn a_flag_error_prints_its_message_and_the_usage() {
+    let cases: [(&[&str], &str); 5] = [
+        (&["-bogus"], "unknown option --bogus"),
+        (&["--streams", "x"], "invalid value \"x\" for --streams: use a whole number"),
+        (&["--streams", "-1"], "invalid value \"-1\" for --streams: use a whole number"),
+        (
+            &["--throughput-protocol", "h9"],
+            "invalid value \"h9\" for --throughput-protocol: use auto, http1, http2 or http3",
+        ),
+        (&["-insecure=maybe"], "invalid value \"maybe\" for --insecure: use true or false"),
     ];
     for (args, message) in cases {
         let output = client(args);

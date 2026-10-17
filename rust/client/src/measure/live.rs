@@ -7,6 +7,8 @@ const FAST_WINDOW_MS: f64 = 750.0;
 const REGIME_READY_MS: f64 = 2000.0;
 const DOWNSHIFT_MS: f64 = 750.0;
 const UPSHIFT_MS: f64 = 500.0;
+/// Spans kept past this many merge in pairs from the oldest half, so a long stage holds a bounded history.
+const MAX_SPANS: usize = 4096;
 
 /// Bytes over a stretch of evidence, and all bytes up to its end.
 #[derive(Debug, Clone, Copy, Default)]
@@ -52,6 +54,11 @@ impl LiveRate {
 
     /// Adds `bytes` measured over `ms` and reports whether a new regime was confirmed.
     pub fn observe(&mut self, bytes: f64, ms: f64) -> bool {
+        self.step(bytes, ms, MAX_SPANS)
+    }
+
+    /// `observe`, coarsening once more than `kept` spans remain.
+    fn step(&mut self, bytes: f64, ms: f64, kept: usize) -> bool {
         if !ms.is_finite() || ms <= 0.0 {
             return false;
         }
@@ -82,7 +89,34 @@ impl LiveRate {
             self.spans.drain(..self.head);
             self.head = 0;
         }
+        if self.spans.len() - self.head > kept {
+            self.coarsen();
+        }
         changed
+    }
+
+    /// Merges the older spans in pairs, all but the fast window and a pending regime change, as the browser does.
+    fn coarsen(&mut self) {
+        let candidate = self.candidate.map_or(f64::INFINITY, |candidate| candidate.start);
+        let fine = (self.evidence - 2.0 * FAST_WINDOW_MS).min(candidate);
+        let older = self.spans[self.head..]
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .take_while(|span| span.end <= fine)
+            .count()
+            * 2;
+        let merged: Vec<_> = self.spans[self.head..self.head + older]
+            .chunks(2)
+            .map(|pair| Span {
+                end: pair[1].end,
+                bytes: pair[0].bytes + pair[1].bytes,
+                total: pair[1].total,
+                ..pair[0]
+            })
+            .collect();
+        self.spans.splice(..self.head + older, merged);
+        self.head = 0;
     }
 
     fn recalculate(&mut self) {
@@ -128,5 +162,32 @@ impl LiveRate {
         }
         (self.regime_start, self.candidate) = (candidate.start, None);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rate a stepped transfer presents, sampled every 250 ms, with spans coarsened past `limit`.
+    fn stepped(limit: usize) -> (Vec<f64>, usize) {
+        let mut rate = LiveRate::default();
+        let presented = (0..40_000)
+            .map(|step| {
+                let bytes = [1000.0, 4000.0, 2500.0][step / 9000 % 3] + (step % 7) as f64;
+                rate.step(bytes, 250.0, limit);
+                rate.presented().unwrap_or_default()
+            })
+            .collect();
+        (presented, rate.spans.len() - rate.head)
+    }
+
+    #[test]
+    fn a_long_stage_keeps_a_bounded_history_and_presents_what_the_whole_history_would() {
+        let ((bounded, kept), (whole, _)) = (stepped(MAX_SPANS), stepped(usize::MAX));
+        assert!(kept <= MAX_SPANS, "{kept}");
+        for (step, (bounded, whole)) in bounded.iter().zip(&whole).enumerate() {
+            assert!((bounded - whole).abs() <= 1e-3 * whole.max(1.0), "step {step}: {bounded} != {whole}");
+        }
     }
 }

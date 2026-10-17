@@ -12,7 +12,7 @@ pub struct File {
     pub bytes: Vec<u8>,
 }
 
-/// The files under `root` by name; unreviewed builds omit Go's browser notices, reviewed ones serve the report's.
+/// The files under `root` by name; unreviewed builds omit the browser's notices, reviewed ones serve the report's.
 pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     let mut paths = Vec::new();
     collect(root, "", &mut paths)?;
@@ -132,7 +132,7 @@ mod tests {
             ("assets/app-1a2b.js.gz", "gzip"),
             ("fonts/plex.woff2", "font"),
             ("legal/about.json", "{}"),
-            ("legal/THIRD_PARTY_NOTICES.txt", "Go notices"),
+            ("legal/THIRD_PARTY_NOTICES.txt", "unreviewed notices"),
         ] {
             scratch.file(name, contents).unwrap();
         }

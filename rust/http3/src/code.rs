@@ -1,8 +1,8 @@
 //! Error codes: HTTP/3 (RFC 9114 §8.1), QPACK (RFC 9204 §6), HTTP datagrams and WebTransport.
 
-/// An application error code carried by RESET_STREAM, STOP_SENDING or CONNECTION_CLOSE.
+/// An application error code carried by RESET_STREAM, STOP_SENDING or CONNECTION_CLOSE; always a varint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Code(pub u64);
+pub struct Code(pub(crate) u64);
 
 impl Code {
     pub const H3_NO_ERROR: Self = Self(0x100);
@@ -24,33 +24,18 @@ impl Code {
     pub const H3_DATAGRAM_ERROR: Self = Self(0x33);
     pub const WT_BUFFERED_STREAM_REJECTED: Self = Self(0x3994bd84);
     pub const WT_SESSION_GONE: Self = Self(0x170d7b68);
+    /// WebTransport application code 0, which a cancelled lane resets with.
+    pub const WT_CANCELLED: Self = Self(0x52e4a40fa8db);
 }
 
-/// A WebTransport application error code. Firefox reads only 8 bits, so codes above 255 are unrepresentable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WtCode(pub u8);
-
-impl WtCode {
-    /// The draft's mapping skips one reserved codepoint every 0x1f.
-    pub fn to_http(self) -> Code {
-        let code = u64::from(self.0);
-        Code(0x52e4a40fa8db + code + code / 0x1e)
+impl From<noq::VarInt> for Code {
+    fn from(code: noq::VarInt) -> Self {
+        Self(code.into_inner())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn webtransport_application_codes_skip_the_reserved_codepoints() {
-        for (code, http) in [
-            (0, 0x52e4a40fa8db),
-            (0x1d, 0x52e4a40fa8f8),
-            (0x1e, 0x52e4a40fa8fa),
-            (0xff, 0x52e4a40fa9e2),
-        ] {
-            assert_eq!(WtCode(code).to_http(), Code(http));
-        }
+impl From<Code> for noq::VarInt {
+    fn from(code: Code) -> Self {
+        Self::from_u64(code.0).expect("codes are varints")
     }
 }

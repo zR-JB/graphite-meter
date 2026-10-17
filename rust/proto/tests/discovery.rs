@@ -1,7 +1,7 @@
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, ClientIpSource, DEFAULT_STAGE_LIMIT, IpFamily, LatencyTarget, LatencyTransport, Load,
-        NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
+        Capabilities, ClientIpSource, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol, Preflight,
+        Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
     },
     origin::BaseUrl,
     token::{self, SocketTicket},
@@ -58,7 +58,7 @@ fn preflight() -> Preflight {
         generation: "test-generation".into(),
         capabilities: Capabilities {
             upload_checkpoint: true,
-            max_stage_ms: Some(300_000),
+            max_stage_ms: 300_000,
             throughput: vec![
                 throughput("http://speed.example:7246", ThroughputTransport::FetchStream, Protocol::Http1),
                 throughput(tls, ThroughputTransport::FetchStream, Protocol::Http3),
@@ -159,7 +159,7 @@ fn metadata_holds_at_most_256_bytes_and_a_generation() {
 }
 
 #[test]
-fn stage_limits_range_from_a_second_to_a_day_and_default_to_five_minutes() {
+fn stage_limits_range_from_a_second_to_a_day_and_are_required() {
     let limits = [(999, false), (1000, true), (86_400_000, true), (0, false)];
     for (limit, valid) in limits {
         let decoded = preflight_with("/capabilities/maxStageMs", json!(limit));
@@ -169,9 +169,10 @@ fn stage_limits_range_from_a_second_to_a_day_and_default_to_five_minutes() {
         }
     }
     assert!(preflight_with("/capabilities/maxStageMs", json!(1000.5)).is_err());
-    let absent = Preflight::decode(&edited(preflight(), "/capabilities/maxStageMs", None)).unwrap();
-    assert_eq!(absent.capabilities.stage_limit(), DEFAULT_STAGE_LIMIT);
-    assert_eq!(DEFAULT_STAGE_LIMIT, Duration::from_secs(300));
+    for required in ["maxStageMs", "uploadCheckpoint"] {
+        let absent = edited(preflight(), &format!("/capabilities/{required}"), None);
+        assert!(Preflight::decode(&absent).is_err(), "{required}");
+    }
 }
 
 #[test]

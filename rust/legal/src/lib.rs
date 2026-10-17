@@ -56,7 +56,7 @@ impl Notices {
     }
 }
 
-/// Writes `report`, returning the exit status: 141 into a closed pipe on Unix, where Go dies of SIGPIPE, else 0.
+/// Writes `report`, returning the exit status: 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
 pub fn print(mut out: impl Write, report: &[u8]) -> io::Result<u8> {
     match out.write_all(report).and_then(|()| out.flush()) {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),

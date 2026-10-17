@@ -1,4 +1,4 @@
-//! Which proxy a target goes through, from the environment by Go's rules.
+//! Which proxy a target goes through, from the environment.
 use graphite_meter_net::Proxy;
 use graphite_meter_proto::origin::Origin;
 
@@ -22,15 +22,6 @@ fn via(proxy: &Proxy, target: &str) -> String {
 }
 
 #[test]
-fn all_proxy_is_never_read() {
-    let everything = from(&[("ALL_PROXY", "http://all.example:3128"), ("all_proxy", "http://all.example:3128")]);
-    assert_eq!(
-        (via(&everything, "http://meter.example"), via(&everything, "https://meter.example")),
-        ("-".into(), "-".into())
-    );
-}
-
-#[test]
 fn an_unusable_value_fails_each_request_it_would_carry_naming_the_variable() {
     let proxy = from(&[
         ("https_proxy", "ftp://proxy.example"),
@@ -47,30 +38,7 @@ fn an_unusable_value_fails_each_request_it_would_carry_naming_the_variable() {
 }
 
 #[test]
-fn under_cgi_http_proxy_fails_every_cleartext_request_and_https_proxy_still_applies() {
-    let proxy = from(&[
-        ("REQUEST_METHOD", "GET"),
-        ("HTTP_PROXY", "http://attacker.example"),
-        ("HTTPS_PROXY", "http://proxy.example:3128"),
-        ("NO_PROXY", "meter.example"),
-    ]);
-    let refused = "HTTP_PROXY is not a usable proxy: a CGI request's Proxy header can set it";
-    for target in [
-        "http://other.example",
-        "http://meter.example",
-        "http://127.0.0.1:8080",
-        "http://localhost",
-    ] {
-        assert_eq!(via(&proxy, target), refused, "{target}");
-    }
-    assert_eq!(via(&proxy, "https://other.example"), "http://proxy.example:3128");
-    assert_eq!(via(&proxy, "https://meter.example"), "-");
-    let no_proxy_set = from(&[("REQUEST_METHOD", "GET"), ("HTTPS_PROXY", "http://proxy.example:3128")]);
-    assert_eq!(via(&no_proxy_set, "http://other.example"), "-", "only a set HTTP_PROXY is refused");
-}
-
-#[test]
-fn no_proxy_and_loopback_bypass_by_go_s_rules() {
+fn no_proxy_and_loopback_bypass_the_proxy() {
     let no_proxy = concat!(
         "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 011.0.0.0/8, 192.0.2.7, ",
         "[2001:db8::1]:443, bad:port, ::ffff:198.51.100.1, ::ffff:203.0.113.0/120, [2001:db8::2], ",
@@ -97,8 +65,10 @@ fn no_proxy_and_loopback_bypass_by_go_s_rules() {
         ("https://[2001:db8::2]", false),
         ("https://[2001:db8::3]:8443", true),
         ("https://star.example", false),
-        ("https://xn--bcher-kva.example", true),
-        ("http://192.0.2.8:080", false),
+        ("https://xn--bcher-kva.example", false),
+        ("http://192.0.2.8", true),
+        ("https://padded.example:80", true),
+        ("https://bad", false),
         ("https://meter.example.", true),
     ] {
         assert_eq!(via(&proxy, target) == "-", bypassed, "{target}");

@@ -1,8 +1,7 @@
-//! The binary without the interface against canned peers: the second signal's policy, a protected server, and a run
-//! whose server refuses its download.
+//! The binary without the interface against canned peers: a protected server, and a run whose server refuses its
+//! download.
 #![cfg(unix)]
 
-use graphite_meter_client::{INTERRUPTED, Interrupts, Reaction, TERMINATED};
 use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -34,16 +33,6 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
         .unwrap();
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (output.status.code(), text(output.stdout), text(output.stderr))
-}
-
-#[test]
-fn the_first_signal_stops_and_a_second_exits_with_its_own_status_in_either_order() {
-    for (first, second) in [(INTERRUPTED, TERMINATED), (TERMINATED, INTERRUPTED)] {
-        let mut interrupts = Interrupts::default();
-        assert_eq!(interrupts.on(first), Reaction::Stop(first));
-        assert_eq!(interrupts.on(second), Reaction::Exit(second));
-        assert_eq!(interrupts.on(first), Reaction::Exit(first));
-    }
 }
 
 /// The path of the next request on `stream`, once its head arrived.
@@ -86,7 +75,7 @@ async fn a_protected_server_exits_1_asking_for_a_terminal() {
     assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
 }
 
-/// A server named A that answers its catalogue, preflight and probe, and refuses everything else.
+/// A server named A that answers its server catalog, preflight and probe, and refuses everything else.
 async fn refusing_downloads() -> String {
     let body = |path: &str| match path {
         "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,
@@ -111,7 +100,7 @@ async fn a_run_whose_server_left_ends_its_report_with_why() {
     assert_eq!((status, stderr.as_str()), (Some(1), ""), "{report}");
     assert!(report.starts_with("Graphite Meter  Failed  A · "), "{report}");
     assert!(
-        report.ends_with(" s\n\nall selected servers failed: HTTP 404 from /download\n"),
+        report.ends_with(" s\n\nAll selected test servers failed. A: HTTP 404 from /download\n"),
         "{report}"
     );
     assert_eq!(report.lines().count(), 3, "{report}");

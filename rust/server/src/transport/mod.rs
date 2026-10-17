@@ -21,7 +21,8 @@ use tokio::{io::BufReader, net::TcpStream};
 use tokio_rustls::server::TlsStream;
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
-pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(Level::Info, "peer", "peer connection failures");
+pub(crate) static PEER_FAILURES: RateLimited =
+    RateLimited::new(Level::Info, "peer", "peer connection failures", module_path!());
 
 /// Bytes a connection's socket moves before its task lets the other tasks on its pinned runtime run.
 const BURST_BYTES: usize = 256 << 10;

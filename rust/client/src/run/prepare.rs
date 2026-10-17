@@ -1,8 +1,9 @@
-//! Path checks: the catalogue at `--url`, each selected server's preflight, then throughput and latency paths, in 12 s.
+//! Path checks: the catalog at `--url`, each selected server's preflight, then throughput and latency paths, in 12 s.
 use super::select;
 use crate::{
     config::{Config, PrepKey},
     events::Event,
+    format,
     model::Failure,
     net::{Client, Fault, LatencyPath, Request, ThroughputPath},
 };
@@ -22,7 +23,7 @@ use std::{
 };
 use tokio::time::{self, timeout};
 
-/// How long a path check may take, the catalogue and every server included.
+/// How long a path check may take, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long a run may take its check's paths and connections.
 const REUSE: Duration = Duration::from_secs(30);
@@ -31,13 +32,13 @@ const VERIFY: Duration = Duration::from_secs(3);
 /// How long a datagram probe waits for its reply before another goes.
 const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
 
-/// A path check: its dependencies, start, network state, the catalogue and each selected server's paths.
+/// A path check: its dependencies, start, network state, the catalog and each selected server's paths.
 pub struct Prepared {
     pub key: PrepKey,
     pub at: Instant,
     pub client: Client,
-    pub catalogue: Arc<[ServerEntry]>,
-    /// In catalogue order.
+    pub catalog: Arc<[ServerEntry]>,
+    /// In catalog order.
     pub servers: Vec<ServerPath>,
 }
 
@@ -45,7 +46,7 @@ pub struct Prepared {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerPath {
     pub id: ServerId,
-    /// Its preflight's name, else its catalogue entry's; the location likewise.
+    /// Its preflight's name, else its catalog entry's; the location likewise.
     pub name: String,
     pub location: String,
     /// The origin its discovery came from, where it signs in.
@@ -73,8 +74,8 @@ pub struct Paths {
 impl Prepared {
     /// The event that tells viewers what this check found.
     pub fn event(&self) -> Event {
-        let (servers, catalogue) = (self.servers.clone().into(), self.catalogue.clone());
-        Event::Prepared { servers, catalogue }
+        let (servers, catalog) = (self.servers.clone().into(), self.catalog.clone());
+        Event::Prepared { servers, catalog }
     }
 
     /// Whether a run with `key` may take this check: every server prepared, the key equal and at most 30 s old.
@@ -90,8 +91,8 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
     let deadline = time::Instant::now() + PREPARATION_TIMEOUT;
     let url = config.url.as_ref().ok_or_else(|| refused(crate::config::NO_SERVER))?;
     let request = Request::new(Method::GET, url, Route::Servers);
-    let catalogue = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
-    let received = time::timeout_at(deadline, catalogue).await.map_err(|_| late())?;
+    let catalog = client.json(Protocol::Negotiated, request, ServerCatalog::decode);
+    let received = time::timeout_at(deadline, catalog).await.map_err(|_| late())?;
     let received = received.map_err(|fault| fault.failure())?;
     let selected = select::servers(&received, config).map_err(refused)?;
     let checks = selected.into_iter().map(|entry| async {
@@ -108,8 +109,8 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
         server
     });
     let servers = join_all(checks).await;
-    let catalogue = received.catalog.servers.into();
-    Ok(Prepared { key: config.key(), at, client, catalogue, servers })
+    let catalog = received.catalog.servers.into();
+    Ok(Prepared { key: config.key(), at, client, catalog, servers })
 }
 
 /// One server's preflight and path checks; its name and location follow its preflight.
@@ -132,7 +133,7 @@ async fn check(
     server.offered = Some(preflight.capabilities.clone());
     let candidates = select::candidates(&config.paths, entry, &served, &preflight, config.probes()).map_err(refused)?;
     if config.uploads() && !preflight.capabilities.upload_checkpoint {
-        return Err(refused("receiver checkpoint support is required; upgrade this measurement server"));
+        return Err(refused("this test server lacks receiver checkpoints; upgrade it"));
     }
     let bases = preflight.base_urls();
     let targets: Vec<_> = bases.map(|base| base.resolve(&served).clone()).collect();
@@ -224,5 +225,6 @@ fn refused(text: impl Into<String>) -> Failure {
 }
 
 fn late() -> Failure {
-    Failure::new(FailureReason::Timeout, "the path check did not finish within 12 seconds")
+    let text = format!("the path check did not finish within {}", format::stage_time(PREPARATION_TIMEOUT));
+    Failure::new(FailureReason::Timeout, text)
 }

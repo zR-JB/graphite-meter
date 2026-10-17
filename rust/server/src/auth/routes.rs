@@ -12,8 +12,8 @@ use super::{
 };
 use crate::{
     app::{query, response},
+    clock::{http_date, rfc3339},
     limits::Refusal,
-    log::{http_date, rfc3339},
     peer::Peer,
     transport::body::Body,
 };
@@ -97,7 +97,7 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
     let Some((origin, path)) = Origin::split(target.strip_suffix('#').unwrap_or(&target)).ok() else {
         return response::status(StatusCode::BAD_REQUEST);
     };
-    let route = Route::from_path(path).filter(|route| route.kind() == kind);
+    let route = Route::find_by(Route::path, path).filter(|route| route.kind() == kind);
     if route.is_none() || origin.scheme != Scheme::Https || origin.host != auth.policy.public.host {
         return response::status(StatusCode::BAD_REQUEST);
     }

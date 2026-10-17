@@ -9,8 +9,7 @@ use crate::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_proto::{refusal::UploadRefusal, upload::Counters};
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+use ring::hmac;
 use std::{
     collections::HashMap,
     fmt,
@@ -45,7 +44,7 @@ const ID_BYTES: usize = SIGNED_BYTES + 32;
 pub struct Uploads(Arc<Store>);
 
 struct Store {
-    key: [u8; 32],
+    key: hmac::Key,
     meter: Meter,
     clock: Clock,
     capacity: Quota,
@@ -226,7 +225,7 @@ impl Uploads {
     pub fn new(key: [u8; 32], meter: Meter) -> Self {
         let now = Instant::now();
         Self(Arc::new(Store {
-            key,
+            key: hmac::Key::new(hmac::HMAC_SHA256, &key),
             meter,
             clock: Clock(now),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
@@ -240,8 +239,8 @@ impl Uploads {
         let mut id = [0; ID_BYTES];
         id[..8].copy_from_slice(&self.0.clock.now().to_be_bytes());
         id[8..SIGNED_BYTES].copy_from_slice(&crate::random::<16>());
-        let tag = self.mac(&id[..SIGNED_BYTES]).finalize().into_bytes();
-        id[SIGNED_BYTES..].copy_from_slice(&tag);
+        let tag = hmac::sign(&self.0.key, &id[..SIGNED_BYTES]);
+        id[SIGNED_BYTES..].copy_from_slice(tag.as_ref());
         UploadId(id).to_string()
     }
 
@@ -365,18 +364,12 @@ impl Uploads {
     /// Whether this store minted `id` within its lifetime.
     fn valid(&self, UploadId(raw): &UploadId) -> bool {
         let (signed, tag) = raw.split_at(SIGNED_BYTES);
-        if self.mac(signed).verify_slice(tag).is_err() {
+        if hmac::verify(&self.0.key, signed, tag).is_err() {
             return false;
         }
         let issued = raw.first_chunk().map(|issued| u64::from_be_bytes(*issued));
         let age = issued.and_then(|issued| self.0.clock.now().checked_sub(issued));
         age.is_some_and(|age| age <= ID_LIFETIME_NANOS)
-    }
-
-    fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.0.key).expect("HMAC takes keys of any length");
-        mac.update(signed);
-        mac
     }
 }
 

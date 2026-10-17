@@ -40,9 +40,7 @@ fn messages_have_no_framing_and_unknown_frames_are_malformed() {
 }
 
 #[test]
-fn probe_ids_count_up_and_wrap_and_replies_echo_them() {
-    assert_eq!(Ping { id: 41 }.next(), Ping { id: 42 });
-    assert_eq!(Ping { id: u32::MAX }.next(), Ping { id: 0 });
+fn the_longest_probe_fits_and_replies_echo_its_id() {
     assert_eq!(
         Ping { id: u32::MAX }.write(&mut [0; Ping::MAX_BYTES]),
         b"PING,4294967295",

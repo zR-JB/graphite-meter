@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 bytes.workspace = true
 noq = { workspace = true, features = ["rustls-ring"] }
+rcgen.workspace = true
 rustls.workspace = true
 socket2.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }

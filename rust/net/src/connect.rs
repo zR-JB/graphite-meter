@@ -1,7 +1,7 @@
 //! Connections to HTTP(S) targets: direct, through a CONNECT tunnel, in absolute form or through SOCKS5.
 use crate::{
     Verify, client_config, dial,
-    proxy::{Proxy, UnusableProxy, Upstream},
+    proxy::{Login, Proxy, UnusableProxy, Upstream},
 };
 use graphite_meter_proto::{
     discovery::Protocol,
@@ -17,8 +17,10 @@ use tokio_rustls::TlsConnector;
 
 /// The longest CONNECT response head a proxy may send.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
-/// The longest a proxy may take past the TCP connect: Go's bound for CONNECT.
+/// The longest a proxy's handshake may take past the TCP connect.
 const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
+/// The longest the target's TLS handshake may take past the proxy.
+const TLS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
 pub const TLS_READ_BYTES: usize = 64 << 10;
@@ -59,7 +61,7 @@ impl fmt::Debug for RequestForm {
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
-    /// The target or proxy resolved or connected nowhere in the dial timeout, or the proxy handshake overran its bound.
+    /// The target or proxy resolved or connected nowhere in the dial timeout, or a handshake overran its bound.
     Unreachable(io::Error),
     /// The proxy refused the connection or broke its protocol.
     Refused(String),
@@ -121,13 +123,7 @@ impl Connector {
             Some(upstream) => {
                 let (host, port) = upstream.address();
                 let stream = reach(host, port).await?;
-                let handshake = self.through(upstream, stream, target, tls);
-                tokio::time::timeout(PROXY_TIMEOUT, handshake)
-                    .await
-                    .unwrap_or_else(|_| {
-                        let silent = io::Error::new(io::ErrorKind::TimedOut, "proxy handshake timed out");
-                        Err(ConnectError::Unreachable(silent))
-                    })?
+                bounded(PROXY_TIMEOUT, "proxy", self.through(upstream, stream, target, tls)).await?
             }
         };
         if !tls {
@@ -135,7 +131,7 @@ impl Connector {
         }
         let config = client_config(&self.verify, alpn).await;
         let stream = BufReader::with_capacity(TLS_READ_BYTES, stream);
-        let stream = secure(&TlsConnector::from(config), &target.host, stream).await?;
+        let stream = bounded(TLS_TIMEOUT, "TLS", secure(&TlsConnector::from(config), &target.host, stream)).await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
         Ok(Connection { stream: Box::new(stream), alpn, form })
     }
@@ -168,6 +164,17 @@ impl Connector {
             Ok((stream, RequestForm::Absolute { authorization: authorization.clone() }))
         }
     }
+}
+
+async fn bounded<T>(
+    limit: Duration,
+    what: &str,
+    handshake: impl Future<Output = Result<T, ConnectError>>,
+) -> Result<T, ConnectError> {
+    tokio::time::timeout(limit, handshake).await.unwrap_or_else(|_| {
+        let silent = io::Error::new(io::ErrorKind::TimedOut, format!("{what} handshake timed out"));
+        Err(ConnectError::Unreachable(silent))
+    })
 }
 
 async fn reach(host: &Host, port: u16) -> Result<TcpStream, ConnectError> {
@@ -230,22 +237,18 @@ async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError>
     Ok(String::from_utf8_lossy(&head).into_owned())
 }
 
-type Login = (Vec<u8>, Vec<u8>);
-
-/// Go's SOCKS5 CONNECT (RFC 1928, RFC 1929) on `stream` to `host`, offering username and password only with a login.
+/// A SOCKS5 CONNECT (RFC 1928, RFC 1929) on `stream` to `host`, offering username and password only with a login.
 async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port: u16) -> Result<(), ConnectError> {
     let greeting: &[u8] = if login.is_some() { &[5, 2, 0, 2] } else { &[5, 1, 0] };
     stream.write_all(greeting).await?;
     let mut reply = [0; 2];
     stream.read_exact(&mut reply).await?;
-    if reply[0] != 5 {
-        return Err(failed(format!("unexpected protocol version {}", reply[0])));
-    }
-    match (reply[1], login) {
-        (0, _) => {}
-        (0xff, _) => return Err(failed("no acceptable authentication methods")),
-        (2, Some(login)) => authenticate(stream, login).await?,
-        (method, _) => return Err(failed(format!("unsupported authentication method {method}"))),
+    match (reply, login) {
+        ([5, 0], _) => {}
+        ([5, 0xff], _) => return Err(failed("accepts none of the offered authentication methods")),
+        ([5, 2], Some(login)) => authenticate(stream, login).await?,
+        ([5, method], _) => return Err(failed(format!("asked for unsupported authentication method {method}"))),
+        _ => return Err(malformed()),
     }
     let address = match host {
         Host::Ip(ip) => match ip.to_canonical() {
@@ -253,7 +256,7 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
             IpAddr::V6(ip) => [&[4][..], &ip.octets()].concat(),
         },
         Host::Name(name) => {
-            let length = u8::try_from(name.len()).map_err(|_| failed("FQDN too long"))?;
+            let length = u8::try_from(name.len()).map_err(|_| failed("cannot carry a host name over 255 bytes"))?;
             [&[3, length][..], name.as_bytes()].concat()
         }
     };
@@ -263,15 +266,14 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
     stream.read_exact(&mut head).await?;
     match head {
         [5, 0, 0, _] => {}
-        [5, 0, ..] => return Err(failed("non-zero reserved field")),
-        [5, code, ..] => return Err(failed(format!("unknown error {}", reply_text(code)))),
-        [version, ..] => return Err(failed(format!("unexpected protocol version {version}"))),
+        [5, code, 0, _] => return Err(failed(format!("refused: {}", reply_text(code)))),
+        _ => return Err(malformed()),
     }
     let bound = match head[3] {
         1 => 4,
         4 => 16,
         3 => usize::from(stream.read_u8().await?),
-        other => return Err(failed(format!("unknown address type {other}"))),
+        _ => return Err(malformed()),
     };
     stream.read_exact(&mut vec![0; bound + 2]).await?;
     Ok(())
@@ -279,7 +281,9 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
 
 async fn authenticate(stream: &mut TcpStream, (user, password): &Login) -> Result<(), ConnectError> {
     let (Ok(user_length @ 1..), Ok(password_length)) = (u8::try_from(user.len()), u8::try_from(password.len())) else {
-        return Err(failed("invalid username/password"));
+        return Err(ConnectError::Refused(
+            "a SOCKS5 username has 1 to 255 bytes, a password at most 255".into(),
+        ));
     };
     let request = [&[1, user_length][..], user, &[password_length], password].concat();
     stream.write_all(&request).await?;
@@ -287,18 +291,22 @@ async fn authenticate(stream: &mut TcpStream, (user, password): &Login) -> Resul
     stream.read_exact(&mut reply).await?;
     match reply {
         [1, 0] => Ok(()),
-        [1, _] => Err(failed("username/password authentication failed")),
-        _ => Err(failed("invalid username/password version")),
+        [1, _] => Err(failed("refused the username and password")),
+        _ => Err(malformed()),
     }
 }
 
-fn failed(reason: impl std::fmt::Display) -> ConnectError {
-    ConnectError::Refused(format!("socks connect: {reason}"))
+fn failed(reason: impl fmt::Display) -> ConnectError {
+    ConnectError::Refused(format!("SOCKS5 proxy {reason}"))
+}
+
+fn malformed() -> ConnectError {
+    failed("sent a malformed reply")
 }
 
 fn reply_text(code: u8) -> String {
     let text = match code {
-        1 => "general SOCKS server failure",
+        1 => "general failure",
         2 => "connection not allowed by ruleset",
         3 => "network unreachable",
         4 => "host unreachable",
@@ -306,7 +314,7 @@ fn reply_text(code: u8) -> String {
         6 => "TTL expired",
         7 => "command not supported",
         8 => "address type not supported",
-        code => return format!("unknown code: {code}"),
+        code => return format!("code {code}"),
     };
     text.to_owned()
 }

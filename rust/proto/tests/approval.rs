@@ -13,10 +13,6 @@ fn both_pages_show_the_digest_start_in_base32() {
     assert_eq!(verification_code(&challenge("verifier")).as_deref(), Some("RDE6VZUO"));
     let rfc = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
     assert_eq!(verification_code(rfc).as_deref(), Some("CPJR5FQ2"));
-    assert_eq!(
-        verification_code("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cN").as_deref(),
-        Some("CPJR5FQ2")
-    );
 }
 
 #[test]
@@ -29,6 +25,7 @@ fn a_challenge_that_is_no_s256_digest_has_no_code() {
         format!("{digest}="),
         digest.replace('_', "/"),
         format!("{digest}{}", "A".repeat(30)),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cN".to_owned(),
     ] {
         assert_eq!(verification_code(&refused), None, "{refused}");
     }

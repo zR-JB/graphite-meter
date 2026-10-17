@@ -37,7 +37,7 @@ pub enum Loaded {
     Config(Box<Config>),
 }
 
-/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`, the message is Go's.
+/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`.
 pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -66,7 +66,7 @@ pub struct Config {
     pub max_buffer_bytes: usize,
     pub lifetimes: Lifetimes,
     pub auth: Option<Auth>,
-    /// The published catalogue: `self` first, carrying the server's name and location.
+    /// The published catalog: `self` first, carrying the server's name and location.
     pub catalog: ServerCatalog,
     pub outbound: Outbound,
 }
@@ -120,21 +120,42 @@ graphite_meter_proto::table! {
     }
 }
 
-impl ListenerKind {
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|kind| kind.name() == name)
-    }
-}
-
 /// An enabled listener.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listener {
     pub kind: ListenerKind,
-    /// The listen address, such as `:7246`, with its bound port once bound; HTTP/3 binds it for UDP and bootstrap TCP.
-    pub address: String,
+    /// With its bound port once bound; HTTP/3 binds it for UDP and bootstrap TCP.
+    pub address: ListenAddress,
     pub public_origin: Option<Origin>,
     /// Discovery offers it as a native target.
     pub advertised: bool,
+}
+
+/// `host:port`, an IPv6 host in brackets, or `:port` for every address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListenAddress {
+    pub host: Option<String>,
+    pub port: u16,
+}
+
+impl ListenAddress {
+    fn parse(text: &str) -> Option<Self> {
+        let (host, port) = text.rsplit_once(':')?;
+        let port = Some(port).filter(|port| port.bytes().all(|byte| byte.is_ascii_digit()))?;
+        let bracketed = host.starts_with('[') && host.ends_with(']');
+        let host = match host {
+            "" => None,
+            host if host.contains(':') && !bracketed => return None,
+            host => Some(host.to_owned()),
+        };
+        Some(Self { host, port: port.parse().ok()? })
+    }
+}
+
+impl fmt::Display for ListenAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}:{}", self.host.as_deref().unwrap_or_default(), self.port)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,7 +267,7 @@ impl Secret {
             Self::Inline(secret) => return Ok(Zeroizing::new(secret.trim().to_owned())),
             Self::File(path) => path,
         };
-        let failed = |operation, error| path_error(operation, &path.to_string_lossy(), &error);
+        let failed = |action, error| could_not(&format!("{action} {}", path.display()), &error);
         let mut bytes = Zeroizing::new(Vec::new());
         let file = File::open(path).map_err(|error| failed("open", error))?;
         file.take(limit + 1)
@@ -272,9 +293,9 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// Go's `os.PathError` text: the operation, the path and the system's message in lower case.
-pub(crate) fn path_error(operation: &str, path: &str, error: &std::io::Error) -> String {
+/// `could not {action}: {message}`, the system's message in lower case without its code.
+pub(crate) fn could_not(action: &str, error: &std::io::Error) -> String {
     let message = error.to_string().to_lowercase();
     let message = message.split(" (os error").next().unwrap_or_default();
-    format!("{operation} {path}: {message}")
+    format!("could not {action}: {message}")
 }

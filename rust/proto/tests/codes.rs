@@ -21,45 +21,6 @@ fn routes_equal_the_route_list_row_for_row() {
 }
 
 #[test]
-fn routes_match_whole_paths_only() {
-    for route in Route::ALL {
-        assert_eq!(Route::from_path(route.path()), Some(*route));
-    }
-    for path in [
-        "/preflight/",
-        "//preflight",
-        "/Preflight",
-        "/%70reflight",
-        "/preflight?x=1",
-        "/wt",
-        "/wt/",
-        "",
-        "/",
-    ] {
-        assert_eq!(Route::from_path(path), None, "{path}");
-    }
-}
-
-#[test]
-fn routes_dispatch_their_methods_and_leave_head_and_options_to_the_router() {
-    let methods: [(&[&str], &[&str]); 4] = [
-        (&["GET"], &["/preflight", "/probe", "/download", "/servers", "/ws/ping"]),
-        (
-            &["POST"],
-            &["/upload", "/upload/session", "/upload/checkpoint", "/wt/session", "/ws/session"],
-        ),
-        (&["GET", "DELETE"], &["/upload/progress"]),
-        (&["CONNECT"], &["/wt/download", "/wt/upload", "/wt/ping"]),
-    ];
-    for (methods, paths) in methods {
-        for path in paths {
-            assert_eq!(Route::from_path(path).map(Route::methods), Some(methods), "{path}");
-        }
-    }
-    assert_eq!(methods.iter().map(|(_, paths)| paths.len()).sum::<usize>(), Route::ALL.len());
-}
-
-#[test]
 fn failure_reasons_equal_their_list() {
     let reasons = table(FailureReason::ALL, |reason| vec![reason.key().into(), reason.label().into()]);
     assert_eq!(reasons, rows(include_str!("../../../api/failurereasons.txt")));
@@ -72,12 +33,6 @@ fn lane_endings_equal_their_list() {
         [vec![ending.name().into()], codes.into(), vec![ending.reason().into()]].concat()
     });
     assert_eq!(endings, rows(include_str!("../../../api/laneendings.txt")));
-    for ending in LaneEnding::ALL {
-        assert_eq!(LaneEnding::from_websocket_code(ending.websocket_code()), Some(*ending));
-        assert_eq!(LaneEnding::from_webtransport_code(ending.webtransport_code()), Some(*ending));
-    }
-    assert_eq!(LaneEnding::from_websocket_code(1006), None);
-    assert_eq!(LaneEnding::from_webtransport_code(5), None);
 }
 
 #[test]
@@ -98,7 +53,6 @@ fn upload_refusals_equal_their_list() {
         vec![refusal.name().into(), refusal.message().into(), refusal.status().as_u16().to_string()]
     });
     assert_eq!(refusals, rows(include_str!("../../../api/uploadrefusals.txt")));
-    assert_eq!(UploadRefusal::from_name("uploadAccessOK"), None, "not a refusal");
 }
 
 #[test]
@@ -110,4 +64,58 @@ fn each_upload_refusal_maps_by_name_to_one_failure_reason() {
         assert_eq!(refusal.failure_reason().key(), matching[0][1], "{refusal:?}");
     }
     assert_eq!(rows.len(), UploadRefusal::ALL.len());
+}
+
+#[test]
+fn routes_match_whole_paths_only() {
+    for path in [
+        "/preflight/",
+        "//preflight",
+        "/Preflight",
+        "/%70reflight",
+        "/preflight?x=1",
+        "/wt",
+        "/wt/",
+        "",
+        "/",
+    ] {
+        assert_eq!(Route::find_by(Route::path, path), None, "{path}");
+    }
+}
+
+#[test]
+fn routes_dispatch_their_methods_and_leave_head_and_options_to_the_router() {
+    let methods: [(&[&str], &[&str]); 4] = [
+        (&["GET"], &["/preflight", "/probe", "/download", "/servers", "/ws/ping"]),
+        (
+            &["POST"],
+            &["/upload", "/upload/session", "/upload/checkpoint", "/wt/session", "/ws/session"],
+        ),
+        (&["GET", "DELETE"], &["/upload/progress"]),
+        (&["CONNECT"], &["/wt/download", "/wt/upload", "/wt/ping"]),
+    ];
+    for (methods, paths) in methods {
+        for path in paths {
+            assert_eq!(Route::find_by(Route::path, *path).map(Route::methods), Some(methods), "{path}");
+        }
+    }
+    assert_eq!(methods.iter().map(|(_, paths)| paths.len()).sum::<usize>(), Route::ALL.len());
+}
+
+// find_by answers the first match, so every column a peer's value is looked up by must be unique.
+#[test]
+fn every_looked_up_column_is_unique() {
+    fn unique<T: Copy, V: PartialEq + std::fmt::Debug>(all: &[T], column: fn(T) -> V) {
+        let values: Vec<V> = all.iter().map(|&item| column(item)).collect();
+        for (index, value) in values.iter().enumerate() {
+            assert!(!values[..index].contains(value), "{value:?} repeats");
+        }
+    }
+    unique(Route::ALL, Route::path);
+    unique(Route::ALL, Route::name);
+    unique(LaneEnding::ALL, LaneEnding::websocket_code);
+    unique(LaneEnding::ALL, LaneEnding::webtransport_code);
+    unique(LaneEnding::ALL, LaneEnding::name);
+    unique(UploadRefusal::ALL, UploadRefusal::name);
+    unique(FailureReason::ALL, FailureReason::key);
 }

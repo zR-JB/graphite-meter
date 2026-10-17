@@ -9,7 +9,7 @@ use graphite_meter_server::{
     runtime::{self, Server},
 };
 use std::{
-    io::{self, BufRead, IsTerminal, Write},
+    io::{self, BufRead, IsTerminal, Read, Write},
     process::ExitCode,
 };
 use zeroize::Zeroizing;
@@ -31,7 +31,7 @@ fn main() -> ExitCode {
             Ok(status) => return ExitCode::from(status),
             Err(error) => Some(("legal", error)),
         },
-        [only] if only == "hash-password" => hash_password().err().map(|error| ("password", error)),
+        [only] if only == "hash-password" => hash_password().err().map(|error| ("auth", error)),
         _ => match config::load(|name| std::env::var_os(name), args, &mut io::stderr()) {
             Ok(Loaded::Help) => None,
             Ok(Loaded::Config(config)) => match runtime::check_budget(&config) {
@@ -61,7 +61,8 @@ fn legal() -> Result<u8, String> {
         "this build embeds no notices; mise run dev -- --legal builds the server with dependency notices \
          and prints them",
     )?;
-    graphite_meter_legal::print(io::stdout().lock(), report).map_err(|error| error.to_string())
+    graphite_meter_legal::print(io::stdout().lock(), report)
+        .map_err(|error| format!("could not print the notices: {error}"))
 }
 
 /// Runs the server until SIGINT or SIGTERM.
@@ -69,10 +70,11 @@ fn serve(config: Config) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|error| error.to_string())?;
-    let pool = Pool::beside(runtime.handle()).map_err(|error| format!("runtime threads: {error}"))?;
+        .map_err(|error| format!("could not start the runtime: {error}"))?;
+    let pool =
+        Pool::beside(runtime.handle()).map_err(|error| format!("could not start the runtime threads: {error}"))?;
     runtime.block_on(async {
-        let stop = runtime::stop_signal().map_err(|error| error.to_string())?;
+        let stop = runtime::stop_signal().map_err(|error| format!("could not watch for stop signals: {error}"))?;
         Server::bind(config, pool).await?.serve(stop).await
     })
 }
@@ -87,7 +89,7 @@ fn hash_password() -> Result<(), String> {
             let _hidden = terminal
                 .then(|| Hidden::new(io::stdin()))
                 .transpose()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| format!("could not hide the terminal input: {error}"))?;
         }
         _ => {
             if terminal {
@@ -106,8 +108,10 @@ fn hash_password() -> Result<(), String> {
         }
         Ok(line)
     };
-    let first = entry("Password: ").map_err(|error| error.to_string())?;
-    let second = entry("Confirm password: ").map_err(|error| error.to_string())?;
+    let unread = |error: io::Error| format!("could not read the password: {error}");
+    let first = entry("Password: ").map_err(unread)?;
+    password::validate(&first)?;
+    let second = entry("Confirm password: ").map_err(unread)?;
     if first != second {
         return Err("passwords do not match".into());
     }
@@ -116,14 +120,16 @@ fn hash_password() -> Result<(), String> {
     Ok(())
 }
 
-/// A line without its trailing line breaks.
+/// A line of up to a password's bytes and its line break, without trailing line breaks.
 fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut line = Zeroizing::new(Vec::new());
-    input.read_until(b'\n', &mut line)?;
+    let mut line = Zeroizing::new(Vec::with_capacity(LINE_BYTES));
+    input.by_ref().take(LINE_BYTES as u64).read_until(b'\n', &mut line)?;
     let last = line.iter().rposition(|byte| !matches!(byte, b'\r' | b'\n'));
     line.truncate(last.map_or(0, |last| last + 1));
     Ok(line)
 }
+
+const LINE_BYTES: usize = password::MAX_BYTES + 2;
 
 /// Terminal echo turned off until dropped.
 #[cfg(unix)]

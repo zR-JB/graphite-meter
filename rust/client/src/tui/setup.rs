@@ -5,16 +5,18 @@ use super::{
     paths::{LATENCY, THROUGHPUT},
 };
 use crate::{
+    config::{MAX_STREAMS, MAX_WARMUP},
+    format::{self, MISSING},
     model::Stage,
-    report::vocabulary as words,
     text::{Line, Style},
 };
+use graphite_meter_proto::catalog::MAX_SELECTED;
 use std::time::Duration;
 
 /// A settings row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
-    Catalogue,
+    Address,
     Remember,
     Servers,
     Throughput,
@@ -34,10 +36,11 @@ pub enum Row {
 /// Every row in order: the heading of the group it starts, the row, its label and what the sheet's foot says of it.
 #[rustfmt::skip]
 const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
-    (Some("Server"), Row::Catalogue, "Address",
-        "The Graphite Meter server to test, which lists its test servers. enter edits it; a pasted address works too."),
-    (None, Row::Remember, "Remember server", "Keeps the address on this computer, so the next start needs none. Off deletes it."),
-    (None, Row::Servers, "Test servers", "Measured at once; their speeds add up. enter picks up to 4."),
+    (Some("Server"), Row::Address, "Server address",
+        "The Graphite Meter server to test, which lists its test servers. Enter edits it; a pasted address works too."),
+    (None, Row::Remember, "Remember this server",
+        "Keeps the address on this computer, so the next start needs none. Off deletes it."),
+    (None, Row::Servers, "Test servers", "Measured at once; their speeds add up."),
     (None, Row::Throughput, "Throughput path", "How transfers reach the server."),
     (None, Row::Protocol, "HTTP version", "Where the path negotiates. ←→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."),
     (None, Row::Latency, "Latency path", "How probes travel."),
@@ -46,12 +49,12 @@ const ROWS: [(Option<&str>, Row, &str, &str); 18] = [
     (None, Row::Stage(Stage::Upload), "Upload", "Client to server, timed by the server as it receives."),
     (None, Row::Stage(Stage::Bidirectional), "Bidirectional", "Download and upload at once."),
     (None, Row::LoadedLatency, "Loaded latency", "Round trips during transfers: the latency the load adds."),
-    (Some("Advanced"), Row::Warmup, "Warmup",
-        "Ramp-up before each window, at least ten round trips. ←→ ±100 ms, from 0 ms to 4 s."),
-    (None, Row::IdleCadence, "Idle probe spacing", "How often idle latency is probed: on each reply, or every 80, 250 or 600 ms."),
-    (None, Row::LoadedCadence, "Loaded probe spacing", "How often latency is probed during transfers."),
+    (Some("Advanced"), Row::Warmup, "Warmup", "Opens the connections before each stage; at least 10 round trips"),
+    (None, Row::IdleCadence, "Idle probe interval",
+        "How often idle latency is probed: on each reply, or at a fixed interval."),
+    (None, Row::LoadedCadence, "Loaded probe interval", "How often latency is probed during transfers."),
     (None, Row::ForceStreams, "Exact stream count", "Off: each path picks its own. On: the count below everywhere."),
-    (None, Row::Streams, "HTTP/1.1 streams", "The most HTTP/1.1 connections per direction. ←→ ±1, from 1 to 14."),
+    (None, Row::Streams, "HTTP/1.1 stream limit", "The most HTTP/1.1 streams per direction."),
     (None, Row::Insecure, "Skip TLS verification", "Accepts any certificate. Unsafe, and sign-in is refused."),
     (None, Row::Reset, "Reset settings", "Restores the defaults; keeps the server and its test servers."),
 ];
@@ -68,11 +71,10 @@ impl Row {
     }
 }
 
-/// Where the settings sheet stands: its focused row, a reset awaiting confirmation, the chooser awaiting the check.
+/// The settings sheet's focused row, and whether the chooser opens once the check in progress ends.
 #[derive(Debug, Default)]
 pub struct Setup {
     pub row: usize,
-    pub resetting: bool,
     pub chooser: bool,
 }
 
@@ -86,13 +88,21 @@ impl App {
         if let Some(at) = row.and_then(|row| ROWS.iter().position(|(_, own, ..)| *own == row)) {
             self.setup.row = at;
         }
-        (self.overlay, self.editor, self.scroll) = (Overlay::Settings, None, 0);
+        (self.overlay, self.scroll) = (Overlay::SETTINGS, 0);
     }
 
     /// Moves the focus `step` rows.
     pub(super) fn move_focus(&mut self, step: isize) {
         self.setup.row = self.setup.row.saturating_add_signed(step).min(ROWS.len() - 1);
-        self.setup.resetting = false;
+        self.resetting(false);
+    }
+
+    /// Whether a reset awaits its confirmation, setting it to `awaits`.
+    pub(super) fn resetting(&mut self, awaits: bool) -> bool {
+        match &mut self.overlay {
+            Overlay::Settings { resetting, .. } => std::mem::replace(resetting, awaits),
+            _ => false,
+        }
     }
 
     pub(super) fn flag(&self, row: Row) -> Option<bool> {
@@ -111,12 +121,12 @@ impl App {
         let (config, palette) = (&self.config, &self.palette);
         let mut inert = false;
         let text = match row {
-            Row::Catalogue => config
+            Row::Address => config
                 .url
                 .as_ref()
                 .map_or_else(|| "none yet".into(), ToString::to_string),
             Row::Servers => {
-                inert = self.view.catalogue.len() < 2;
+                inert = self.view.catalog.len() < 2;
                 self.selection()
             }
             Row::Throughput => self.path_value(&THROUGHPUT),
@@ -124,19 +134,21 @@ impl App {
             Row::Protocol => match self.fixed_protocol() {
                 Some(fixed) => {
                     inert = true;
-                    words::protocol(Some(fixed)).into()
+                    format::protocol(Some(fixed)).into()
                 }
-                None => words::protocol(config.paths.protocol).into(),
+                None => format::protocol(config.paths.protocol).into(),
             },
             Row::Stage(stage) => {
                 inert = !config.stages.contains(&stage);
-                words::setting(config.duration(stage))
+                format::stage_time(config.duration(stage))
             }
-            Row::Warmup => words::setting(config.warmup),
-            Row::IdleCadence => words::cadence(config.ping),
-            Row::LoadedCadence => words::cadence(config.loaded_ping),
+            Row::Warmup => format::stage_time(config.warmup),
+            Row::IdleCadence => format::cadence(config.ping),
+            Row::LoadedCadence => format::cadence(config.loaded_ping),
             Row::Streams => config.streams.shown().to_string(),
-            Row::Reset if self.setup.resetting => return Line::styled("enter again resets", palette.warn),
+            Row::Reset if matches!(self.overlay, Overlay::Settings { resetting: true, .. }) => {
+                return Line::styled("Enter again resets", palette.warn);
+            }
             Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
         };
         let style = if inert { palette.muted } else { palette.value };
@@ -171,7 +183,7 @@ impl App {
                 Row::Streams if self.config.streams.forced.is_some() => "Streams per direction",
                 _ => label,
             };
-            let value = match &self.editor {
+            let value = match self.editor() {
                 Some(editor) if editor.row == row => editor.line(40, &self.palette),
                 _ => self.value(row),
             };
@@ -183,7 +195,7 @@ impl App {
 
     /// What the sheet's foot says: the editor's error, or what the focused row does.
     pub(super) fn settings_footer(&self) -> Vec<Line> {
-        if let Some(error) = self.editor.as_ref().and_then(|editor| editor.error.clone()) {
+        if let Some(error) = self.editor().and_then(|editor| editor.error.clone()) {
             return vec![Line::styled(error, self.palette.warn)];
         }
         let row = self.row();
@@ -200,8 +212,16 @@ impl App {
             Row::Protocol if self.fixed_protocol().is_some() => {
                 help = "Fixed by this path; pick another path to change it.".into()
             }
-            Row::Stage(_) => help.push_str(" ←→ steps its time, space switches it."),
-            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => help.push_str(" space switches it."),
+            Row::Servers => help.push_str(&format!(" Enter picks up to {MAX_SELECTED}.")),
+            Row::Stage(_) => help.push_str(" ←→ steps its time; Space switches it."),
+            Row::Warmup => {
+                help.push_str(&format!(", up to {}. Never counted. ←→ ±100 ms.", format::stage_time(MAX_WARMUP)));
+            }
+            Row::Streams if self.config.streams.forced.is_some() => {
+                help = format!("The streams every path opens per direction. ←→ ±1, from 1 to {MAX_STREAMS}.");
+            }
+            Row::Streams => help.push_str(&format!(" ←→ ±1, from 1 to {MAX_STREAMS}.")),
+            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => help.push_str(" Space switches it."),
             _ => {}
         }
         vec![Line::styled(help, self.palette.muted)]
@@ -218,7 +238,7 @@ impl App {
             _ => format!(" · {ready} of {servers} ready"),
         };
         match names.is_empty() {
-            true => words::MISSING.into(),
+            true => MISSING.into(),
             false => names.join(", ") + &summary,
         }
     }
@@ -227,6 +247,6 @@ impl App {
     pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
         let total: Duration = plan.iter().map(|(_, duration)| *duration + self.config.warmup).sum();
-        words::setting(Duration::from_secs(total.as_secs_f64().round() as u64))
+        format::stage_time(Duration::from_secs(total.as_secs_f64().round() as u64))
     }
 }

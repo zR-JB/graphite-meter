@@ -1,4 +1,4 @@
-use graphite_meter_proto::text::{clean, quote, safe, visible};
+use graphite_meter_proto::text::{clean, quote, safe};
 
 #[test]
 fn safe_text_has_no_controls_or_bidi_formatting() {
@@ -14,16 +14,6 @@ fn safe_text_has_no_controls_or_bidi_formatting() {
 }
 
 #[test]
-fn visible_text_also_has_no_invisible_formatting() {
-    for c in ['a', '\u{a0}', '😀', '\u{e000}'] {
-        assert!(visible(c), "{c:?}");
-    }
-    for c in ['\n', '\u{202e}', '\u{ad}', '\u{200b}', '\u{200d}', '\u{2060}', '\u{feff}'] {
-        assert!(!visible(c), "{c:?}");
-    }
-}
-
-#[test]
 fn cleaning_blanks_refused_characters_and_ends_long_text_in_an_ellipsis() {
     assert_eq!(clean("a\u{202e}b\nc", 10), "a b c");
     assert_eq!(clean("a\u{200b}b", 10), "a\u{200b}b");
@@ -34,20 +24,17 @@ fn cleaning_blanks_refused_characters_and_ends_long_text_in_an_ellipsis() {
 }
 
 #[test]
-fn quoting_escapes_as_go_does() {
-    // "@" stands for the backslash that begins each of Go's escapes.
+fn quoting_escapes_controls_bidi_formatting_quotes_and_backslashes() {
     for (text, quoted) in [
-        ("plain", "\"plain\""),
-        (
-            "x\u{1}y\u{202e}\"é\u{a0}\t\u{7f}\u{85}😀 \u{200b}",
-            "\"x@x01y@u202e@\"é@u00a0@t@x7f@u0085😀 @u200b\"",
-        ),
-        ("a\\b", "\"a@@b\""),
-        ("\u{ad}\u{feff}\u{e000}\u{f0000}\u{2028}", "\"@u00ad@ufeff@ue000@U000f0000@u2028\""),
-        ("\u{7}\u{8}\u{c}\n\r\u{b}", "\"@a@b@f@n@r@v\""),
-        ("日本", "\"日本\""),
-        ("א\u{10ffff}\u{fffd}", "\"א@U0010ffff\u{fffd}\""),
+        ("plain 日本 é", r#""plain 日本 é""#),
+        ("a\"b\\c", r#""a\"b\\c""#),
+        ("\t\n\r\0\u{1}\u{7f}\u{85}", r#""\t\n\r\0\u{1}\u{7f}\u{85}""#),
+        ("\u{61c}\u{200e}\u{202e}\u{2066}", r#""\u{61c}\u{200e}\u{202e}\u{2066}""#),
     ] {
-        assert_eq!(quote(text), quoted.replace('@', "\\"), "{text:?}");
+        assert_eq!(quote(text), quoted, "{text:?}");
     }
+    assert!(
+        quote("\u{200b}\u{feff}").chars().all(|c| c.is_ascii_graphic()),
+        "invisible characters escape too"
+    );
 }

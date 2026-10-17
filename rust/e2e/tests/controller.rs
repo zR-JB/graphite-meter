@@ -41,11 +41,15 @@ async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_with
     .await;
     let refused = |text| Failure::new(FailureReason::PreparationFailed, text);
     let checks = [
-        (&server.http1, &[][..], refused("authenticated operation requires an HTTPS -url")),
+        (
+            &server.http1,
+            &[][..],
+            refused("Sign-in needs a server address that starts with https://."),
+        ),
         (
             &server.http2,
             &["-insecure"],
-            refused("sign-in refuses Skip TLS verification (--insecure)"),
+            refused("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure)."),
         ),
     ];
     let (mut interactive, mut received) = controller(true);

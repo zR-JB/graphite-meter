@@ -63,15 +63,20 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
 
 /// The budget's usage once it held still for a while.
 pub(super) async fn settled(budget: &Budget) -> usize {
-    let mut last = budget.usage().used;
-    loop {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let used = budget.usage().used;
-        if used == last {
-            return used;
+    let settling = async {
+        let mut last = budget.usage().used;
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let used = budget.usage().used;
+            if used == last {
+                return used;
+            }
+            last = used;
         }
-        last = used;
-    }
+    };
+    tokio::time::timeout(Duration::from_secs(10), settling)
+        .await
+        .expect("the budget settles")
 }
 
 #[tokio::test]

@@ -59,7 +59,7 @@ impl Counters {
     }
 }
 
-/// A JSON number read as Go and the browser read it, then held to an exact integer counter.
+/// Any JSON number spelling of an exact integer counter, as the browser reads it.
 fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let number = f64::deserialize(deserializer)?;
     if !(0.0..=MAX_COUNTER as f64).contains(&number) || number.fract() != 0.0 {
@@ -78,7 +78,7 @@ pub enum Record {
     Progress(Counters),
     /// The final observation, after finalization and lane drain.
     Complete(Counters),
-    /// An explicit refusal; an empty field was absent, and decoding cleans both as Go does.
+    /// An explicit refusal; an empty field was absent, and decoding cleans both.
     Error {
         #[serde(skip_serializing_if = "String::is_empty")]
         message: String,
@@ -98,29 +98,37 @@ impl Record {
     /// Reads a record without its newline; a heartbeat, malformed or unknown record is no observation.
     pub fn decode(line: &[u8]) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
-        struct Type {
+        struct Sent {
             r#type: String,
-        }
-        #[derive(Deserialize)]
-        struct Detail {
+            #[serde(default, deserialize_with = "some_counter")]
+            bytes: Option<u64>,
+            #[serde(default, deserialize_with = "some_counter")]
+            nanos: Option<u64>,
             #[serde(default)]
             code: String,
             #[serde(default)]
             message: String,
         }
-        let Type { r#type } = json::decode(line)?;
+        let Sent { r#type, bytes, nanos, code, message } = json::decode(line)?;
+        let counters = || match (bytes, nanos) {
+            (Some(bytes), Some(nanos)) => Ok(Counters { bytes, nanos }),
+            _ => Err(serde_json::Error::custom("missing upload progress counter")),
+        };
         match r#type.as_str() {
             "ready" => Ok(Self::Ready),
-            "progress" => Ok(Self::Progress(serde_json::from_slice(line)?)),
-            "complete" => Ok(Self::Complete(serde_json::from_slice(line)?)),
-            "error" => {
-                let Detail { code, message } = serde_json::from_slice(line)?;
-                let (code, message) = (text::clean(&code, 64), text::clean(&message, 256));
-                Ok(Self::Error { code, message })
-            }
+            "progress" => Ok(Self::Progress(counters()?)),
+            "complete" => Ok(Self::Complete(counters()?)),
+            "error" => Ok(Self::Error {
+                code: text::clean(&code, 64),
+                message: text::clean(&message, 256),
+            }),
             _ => Err(serde_json::Error::custom("unknown upload progress record")),
         }
     }
+}
+
+fn some_counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    counter(deserializer).map(Some)
 }
 
 impl From<UploadRefusal> for Record {

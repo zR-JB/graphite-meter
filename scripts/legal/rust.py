@@ -4,7 +4,7 @@
 
 prepare: the crates the build may compile (a conservative superset that keeps build scripts and procedural
 macros), their reviewed notices, the platform's reviewed notices, and snapshots of the inputs these derive from,
-in the directory rust/legal's build side reads as GM_RUST_LEGAL_DIR. build_verify: one `cargo rustc` build
+in the directory rust/legal's build side reads as GM_LEGAL_DIR. build_verify: one `cargo rustc` build
 that embeds them, then checks that it compiled only prepared crates with unchanged notices, linked and imported
 only reviewed platform inputs, and embedded exactly the prepared report. source_offer: a reviewed build's part of
 the release's third-party source offer and the SOURCE.txt that names it. --development notices need every
@@ -229,11 +229,11 @@ def pgo_profile(target: str) -> Path:
 def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     """Build the binary once with the prepared notices and check what it compiled, linked and embedded."""
     rust = ROOT / "rust"
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GM_RUST_")}
-    environment |= {"CARGO_TARGET_DIR": str(build.target_dir or rust / "target"), "GM_RUST_LEGAL_DIR": str(build.out),
+    environment = {key: value for key, value in os.environ.items() if key not in ("GM_LEGAL_DIR", "GM_ASSET_DIR")}
+    environment |= {"CARGO_TARGET_DIR": str(build.target_dir or rust / "target"), "GM_LEGAL_DIR": str(build.out),
                     "GM_ENGINE_VERSION": build.version}
     if build.browser is not None:
-        environment["GM_RUST_ASSET_DIR"] = str(build.out / "browser-assets")
+        environment["GM_ASSET_DIR"] = str(build.out / "browser-assets")
     command = ["cargo", "rustc", "--locked", "--package", build.package, "--bin", build.package,
                "--profile", build.profile, "--message-format=json-render-diagnostics"]
     link_map = None
@@ -365,7 +365,7 @@ def parse(arguments: list[str] | None = None) -> tuple[Build, bool]:
     kind.add_argument("--development", action="store_true", help="unreviewed notices of a build for this host")
     parser.add_argument("--profile", choices=PROFILES, default="release")
     parser.add_argument("--version", default="development", help="the release version whose tag is the source")
-    parser.add_argument("--out", type=Path, required=True, help="GM_RUST_LEGAL_DIR, inside the checkout")
+    parser.add_argument("--out", type=Path, required=True, help="GM_LEGAL_DIR, inside the checkout")
     parser.add_argument("--browser-assets", type=Path, help="the server's production browser build")
     parser.add_argument("--browser-scan", type=Path, help="the module scan of that browser build")
     parser.add_argument("--review-template", action="store_true", help="print pending reviews and build nothing")

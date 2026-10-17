@@ -10,8 +10,8 @@ Build-time variables:
 | Variable | Meaning |
 |---|---|
 | `GM_ENGINE_VERSION` | The version the binaries report; the build tasks set it, plain `cargo build` leaves `0.0.0-dev`. |
-| `GM_RUST_LEGAL_DIR` | Reviewed notices to embed; without it a build embeds none. |
-| `GM_RUST_ASSET_DIR` | The browser app the server embeds; reviewed builds take it from the legal directory. |
+| `GM_LEGAL_DIR` | Reviewed notices to embed; without it a build embeds none. |
+| `GM_ASSET_DIR` | The browser app the server embeds; reviewed builds take it from the legal directory. |
 | `CC_<target>`, `CFLAGS_<target>` | musl cross compilers; flags a caller sets replace `.cargo/config.toml`'s `-DMI_DEFAULT_ALLOW_THP=0`. |
 
 Plain `cargo build` uses the unoptimized debug profile; compare performance only between equal optimized profiles.

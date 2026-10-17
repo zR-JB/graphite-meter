@@ -10,7 +10,7 @@ use graphite_meter_client::{
 use graphite_meter_e2e::{self as e2e, Server};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::{catalog::ServerId, origin::Origin, reason::FailureReason};
-use graphite_meter_testkit::{Fault, Link};
+use graphite_meter_testkit::Link;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
@@ -102,9 +102,11 @@ async fn completes(server: &Server, args: &[&str]) {
         _ => None,
     });
     assert_eq!(measuring.collect::<Vec<_>>(), Stage::ALL);
-    let replied =
-        |event: &Event| matches!(event, Event::Probes { probes, .. } if probes.iter().any(|probe| probe.rtt.is_some()));
-    assert!(events.iter().any(replied), "live round trips");
+    let replied = |event: &Event| match event {
+        Event::Probes { probes, latency, .. } => probes.iter().any(|probe| probe.rtt.is_some()) && latency.replies > 0,
+        _ => false,
+    };
+    assert!(events.iter().any(replied), "live round trips and the latency they add up to");
     let up = |event: &Event| matches!(event, Event::Sample { rates, .. } if rates.up.is_some_and(|rate| rate > 0.0));
     assert!(events.iter().any(up), "live upload rates");
 }
@@ -137,17 +139,17 @@ async fn a_run_completes_over_webtransport_with_datagram_latency() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial() {
     let (_relayed, link) = relayed().await;
-    let catalogue = format!(
+    let catalog = format!(
         r#"{{"servers": [{{"id": "relayed", "url": "http://{}", "name": "Relayed"}}]}}"#,
         link.address
     );
-    let server = Server::with(&[("GM_SERVER_CATALOG", &catalogue)]).await;
+    let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
     let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "6s"];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {
         if matches!(event, Event::Measuring(_)) {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            link.inject(Fault::Stall);
+            link.stall();
         }
     };
     let (outcome, events) = run(&config, stall).await;

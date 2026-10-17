@@ -2,7 +2,6 @@
 
 use crate::{limits::Hold, log};
 use futures_util::FutureExt;
-use graphite_meter_proto::duration;
 use std::{future::Future, io, net::SocketAddr, panic::AssertUnwindSafe, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -76,7 +75,7 @@ where
             Err(error) if error.kind() == io::ErrorKind::InvalidInput => break Err(error),
             Err(error) => {
                 delay = (delay * 2).clamp(RETRY_FIRST, RETRY_LAST);
-                let (name, retry) = (listener.name(), duration::format(delay));
+                let (name, retry) = (listener.name(), log::span(delay));
                 log!(Warn, "listen", "accept failed on {name}: {error}; retrying in {retry}");
                 tokio::select! {
                     () = shutdown.cancelled() => break Ok(()),
@@ -209,10 +208,18 @@ mod tests {
         let mut started_rx = started_rx;
         started_rx.recv().await.unwrap();
         shutdown.cancel();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Connections the closing backlog took are reset; once it closed, they are refused.
+        let refused = async {
+            while TcpStream::connect(address)
+                .await
+                .err()
+                .is_none_or(|error| error.kind() != io::ErrorKind::ConnectionRefused)
+            {}
+        };
+        timeout(Duration::from_secs(5), refused)
+            .await
+            .expect("the listener closes");
         assert!(!task.is_finished(), "the running connection drains");
-        let refused = TcpStream::connect(address).await.unwrap_err();
-        assert_eq!(refused.kind(), io::ErrorKind::ConnectionRefused);
         drop(TcpListener::bind(address).await.expect("the address is free again"));
         release.notify_one();
         let mut text = String::new();

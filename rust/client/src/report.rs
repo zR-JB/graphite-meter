@@ -1,22 +1,21 @@
 //! A finished run as the printed report, with each server's share and the run's issues when several servers ran.
-pub mod vocabulary;
-
 use crate::{
     events::{Run, View},
-    measure::{format, latency::Population},
+    format::{
+        self, MISSING, arrow, compact_stage, count, direction_label, label, outcome_label, population_label, round_trip,
+    },
+    measure::latency::{Population, Summary, added},
     model::{Direction, Outcome, Scope, ServerFailure, Stage, StageResult, StageStatus, Throughput},
+    net::approval::EXPIRED,
+    style::Palette,
     text::{Line, Style, wrap},
-    tui::theme::Palette,
 };
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::Duration;
-use vocabulary::*;
 
 /// The width of a report that does not reach a terminal.
 pub const WIDTH: usize = 100;
-const PARTIAL: &str = "Partial";
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
-const SIGNED_OUT: &str = "Sign-in expired";
 
 /// The report of the view's finished run; none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
@@ -31,7 +30,7 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
         blocks.extend([report.throughput(), latency, failures, report.notes(added)]);
     }
     if report.several() {
-        blocks.push(report.details(false));
+        blocks.push(report.details());
     }
     let error = run.error.as_ref();
     blocks.extend(error.map(|error| vec![Line::styled(&error.text, palette.err)]));
@@ -45,9 +44,9 @@ pub fn unreported(view: &View) -> Option<String> {
     let error = run.error.as_ref();
     let signed_out = error.filter(|error| error.reason == FailureReason::SignInRequired);
     Some(match (error, signed_out) {
-        _ if run.at.is_some() => return signed_out.map(|_| SIGNED_OUT.into()),
+        _ if run.at.is_some() => return signed_out.map(|_| EXPIRED.into()),
         (_, Some(error)) => error.text.clone(),
-        (Some(error), None) => format!("Test could not start: {}", error.text),
+        (Some(error), None) => format!("Test could not start. {}", crate::text::capitalized(&error.text)),
         (None, None) => "Test stopped before it started.".into(),
     })
 }
@@ -81,11 +80,11 @@ impl Report<'_> {
 
     /// What a planned stage shows without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
-        self.status(stage).map_or("Skipped", |status| match status {
+        let stopped = self.run.outcome == Some(Outcome::Stopped);
+        let skipped = if stopped { "Not reached" } else { "Skipped" };
+        self.status(stage).map_or(skipped, |status| match status {
             StageStatus::Complete => MISSING,
-            StageStatus::Partial => PARTIAL,
-            StageStatus::Failed => "Failed",
-            StageStatus::Stopped => "Stopped",
+            status => format::status_label(status),
         })
     }
 
@@ -99,10 +98,10 @@ impl Report<'_> {
     fn header(&self) -> Line {
         let mut facts = match self.view.servers.len() {
             0 => Vec::new(),
-            1 => vec![self.view.servers[0].name.clone()],
-            servers => vec![format!("{servers} servers")],
+            1 => vec![format::server(&self.view.servers[0].name, &self.view.servers[0].location)],
+            servers => vec![format!("{servers} test servers")],
         };
-        facts.push(clock(self.run.elapsed));
+        facts.push(format::duration(self.run.elapsed));
         let results = self.run.results.iter();
         let directions = results.flat_map(|result| [result.throughput.down, result.throughput.up]);
         let total: u64 = directions.flatten().map(|throughput| throughput.bytes).sum();
@@ -117,7 +116,7 @@ impl Report<'_> {
 
     /// Each planned direction's mean rate and facts.
     fn throughput(&self) -> Vec<Line> {
-        let palette = self.palette;
+        let (palette, partial) = (self.palette, format::status_label(StageStatus::Partial));
         let mut rows = Vec::new();
         for &(stage, _) in &self.run.plan {
             let hue = palette.stage(stage);
@@ -128,14 +127,14 @@ impl Report<'_> {
                 let result = self.result(stage).map(|result| (result, result.throughput[direction]));
                 let (value, facts) = match result {
                     Some((result, Some(throughput @ Throughput { rate: Some(rate), .. }))) => {
-                        let facts = throughput_facts(throughput, result.measured, direction, true);
+                        let facts = throughput_facts(throughput, result.measured, direction);
                         (Line::styled(format::rate(rate.mean), hue.bold()), facts)
                     }
                     Some((_, Some(_))) => (Line::styled(MISSING, palette.muted), Vec::new()),
                     _ => (Line::styled(self.unmeasured(stage), palette.muted), Vec::new()),
                 };
-                let partial = (self.status(stage) == Some(StageStatus::Partial)).then(|| PARTIAL.to_owned());
-                rows.push((named, value, [partial.into_iter().collect(), facts].concat()));
+                let partly = (self.status(stage) == Some(StageStatus::Partial)).then(|| partial.to_owned());
+                rows.push((named, value, [partly.into_iter().collect(), facts].concat()));
             }
         }
         let label_width = rows.iter().map(|row| row.0.width()).max().unwrap_or(0);
@@ -150,10 +149,10 @@ impl Report<'_> {
             let wrapped = wrap(&facts, self.width.saturating_sub(indent + 3).max(20));
             for (index, part) in wrapped.into_iter().enumerate() {
                 let line = if index == 0 { first.clone() } else { Line::plain(" ".repeat(indent)) };
-                lines.push(match part.strip_prefix(PARTIAL).filter(|_| index == 0) {
+                lines.push(match part.strip_prefix(partial).filter(|_| index == 0) {
                     Some(rest) => line
                         .and("   ", Style::default())
-                        .and(PARTIAL, palette.warn)
+                        .and(partial, palette.warn)
                         .and(rest, palette.muted),
                     None if part.is_empty() => line,
                     None => line.and("   ", Style::default()).and(part, palette.muted),
@@ -174,7 +173,7 @@ impl Report<'_> {
                 measured |= result.is_some_and(|result| result.throughput[direction].is_some());
                 failures.extend(result.and_then(|result| self.throughput_failure(result, direction)));
             }
-            let name = Line::styled(compact_population(stage), palette.stage(stage));
+            let name = Line::styled(format::population(stage), palette.stage(stage));
             let Some(population) = self.population(stage) else {
                 if stage == Stage::Latency {
                     rows.push(vec![name, Line::plain(self.unmeasured(stage))]);
@@ -193,7 +192,7 @@ impl Report<'_> {
         if !measured {
             return None;
         }
-        let mut headers = vec![heading, "Median", "Added", "P95", "Jitter", "Probe timeouts"];
+        let mut headers = vec![heading, "Median", "Added", "P95", "Jitter", "Timeouts"];
         for row in &mut rows {
             row.resize(headers.len(), Line::default());
             if !added_shown {
@@ -246,7 +245,8 @@ impl Report<'_> {
                 notes.extend(self.note(&population_label(stage), &facts));
             }
             if let Some(paired) = summary.timing {
-                let mut part = format!("{} {} of {}", compact_population(stage), ms(paired.handling), ms(paired.rtt));
+                let (handling, rtt) = (round_trip(paired.handling), round_trip(paired.rtt));
+                let mut part = format!("{} {handling} of {rtt}", format::population(stage));
                 if paired.pairs != summary.replies {
                     part.push_str(&format!(" ({} pairs)", count(paired.pairs)));
                 }
@@ -307,16 +307,9 @@ impl Report<'_> {
         }
         lines
     }
-}
 
-/// Per-server mean rates and latency medians, ✗ once left, and issues; `full` adds result facts and final intervals.
-pub fn details(view: &View, width: usize, palette: &Palette, full: bool) -> Vec<Line> {
-    let Some(run) = &view.run else { return Vec::new() };
-    Report { view, run, focus: run.focus.as_ref(), width, palette }.details(full)
-}
-
-impl Report<'_> {
-    fn details(&self, full: bool) -> Vec<Line> {
+    /// Per-server mean rates and latency medians, ✗ once left, and issues.
+    fn details(&self) -> Vec<Line> {
         let (palette, run) = (self.palette, self.run);
         let planned = run.plan.iter();
         let columns = planned.flat_map(|&(stage, _)| stage.directions().iter().map(move |&at| (stage, at)));
@@ -328,7 +321,7 @@ impl Report<'_> {
         let combined =
             |&(stage, direction): &_| rate(self.result(stage).and_then(|result| result.throughput[direction]));
         let all = columns.iter().map(combined);
-        let mut rates = vec![[vec![Line::plain("All servers")], all.collect()].concat()];
+        let mut rates = vec![[vec![Line::plain("All test servers")], all.collect()].concat()];
         let mut medians = Vec::new();
         for server in self.view.servers.iter() {
             let own = |stage: Stage| {
@@ -341,26 +334,21 @@ impl Report<'_> {
             rates.push([vec![Line::plain(format!("{}{mark}", server.name))], cells.collect()].concat());
             let median = |&(stage, _): &(Stage, Duration)| {
                 let median = own(stage).and_then(|own| own.latency?.median());
-                Line::plain(median.map_or(MISSING.into(), ms))
+                Line::plain(median.map_or(MISSING.into(), round_trip))
             };
             medians.push([vec![Line::plain(&server.name)], run.plan.iter().map(median).collect()].concat());
         }
         let labels = columns
             .iter()
             .map(|&(stage, direction)| direction_label(stage, direction));
-        let mut headers = vec!["Server".to_owned()];
+        let mut headers = vec!["Test server".to_owned()];
         headers.extend(labels);
         let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
-        let populations = run.plan.iter().map(|&(stage, _)| compact_population(stage));
-        let populations: Vec<&str> = std::iter::once("Server").chain(populations).collect();
+        let populations = run.plan.iter().map(|&(stage, _)| format::population(stage));
+        let populations: Vec<&str> = std::iter::once("Test server").chain(populations).collect();
         let mut lines = vec![Line::styled(self.notice(), palette.heading)];
-        let facts = if full { self.facts() } else { Vec::new() };
-        if !facts.is_empty() {
-            lines.extend(facts);
-            lines.push(Line::default());
-        }
         lines.extend(self.grid(&headers, rates));
-        lines.extend([Line::default(), Line::styled("Latency median by server", palette.heading)]);
+        lines.extend([Line::default(), Line::styled("Latency median by test server", palette.heading)]);
         lines.extend(self.grid(&populations, medians));
         if !run.issues.is_empty() {
             lines.extend([Line::default(), Line::styled("Issues", palette.heading)]);
@@ -368,66 +356,11 @@ impl Report<'_> {
         for (stage, issue) in &run.issues {
             let scope = if issue.scope == Scope::Latency { "latency" } else { "throughput" };
             let at = issue.at.saturating_duration_since(run.at.unwrap_or(issue.at));
-            let (name, stage, at) = (self.name(&issue.server), compact_stage(*stage), clock(at));
+            let (name, stage, at) = (self.name(&issue.server), compact_stage(*stage), format::duration(at));
             let reason = issue.failure.reason.label();
             lines.push(Line::plain(format!("{name} · {stage} {scope} · at {at} · {reason}")));
         }
-        if full && run.outcome.is_some() && run.results.iter().any(|result| !result.intervals.is_empty()) {
-            lines.extend(self.intervals());
-        }
         lines.into_iter().map(|line| line.fit(self.width)).collect()
-    }
-
-    /// Each measured direction's and latency population's facts, the server's timing, and what Added means.
-    fn facts(&self) -> Vec<Line> {
-        let Some((_, _, added)) = self.results("Latency") else { return Vec::new() };
-        let mut notes = Vec::new();
-        for &(stage, _) in &self.run.plan {
-            let result = self.result(stage);
-            let measured = result.map_or(Duration::ZERO, |result| result.measured);
-            for &direction in stage.directions() {
-                let throughput = result.and_then(|result| result.throughput[direction]);
-                let Some(throughput) = throughput.filter(|it| it.rate.is_some() || it.bytes > 0) else {
-                    continue;
-                };
-                let facts = throughput_facts(throughput, measured, direction, false);
-                notes.extend(self.note(&direction_label(stage, direction), &facts));
-            }
-            let Some(summary) = self.population(stage).map(|population| population.summary) else {
-                continue;
-            };
-            notes.extend(self.note(&population_label(stage), &latency_facts(summary, measured)));
-            if let Some(timing) = summary.timing {
-                let label = format!("Server timing ({} paired replies, means)", count(timing.pairs));
-                let facts = [format!("raw {}", ms(timing.rtt)), format!("handling {}", ms(timing.handling))];
-                notes.extend(self.note(&label, &facts));
-            }
-        }
-        notes.extend(added.then(|| Line::styled(ADDED_NOTE, self.palette.muted)));
-        notes
-    }
-
-    /// The aggregation intervals of every stage, and how many older ones each dropped.
-    fn intervals(&self) -> Vec<Line> {
-        let Some(origin) = self.run.at else { return Vec::new() };
-        let muted = self.palette.muted;
-        let mut lines = vec![Line::default(), Line::styled("Aggregation intervals", self.palette.heading)];
-        let offset = |at: std::time::Instant| at.saturating_duration_since(origin).as_secs_f64();
-        for result in &self.run.results {
-            for interval in &result.intervals {
-                let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();
-                let measured = interval.complete && interval.window.is_some();
-                let state = if measured { "measured window" } else { "incomplete evidence" };
-                let (start, end) = (offset(interval.start), offset(interval.end));
-                let span = format!("{} {start:.1}–{end:.1} s", compact_stage(result.stage));
-                let parts = [span, names.join(", "), state.into()].into_iter();
-                let parts: Vec<_> = parts.filter(|part| !part.is_empty()).collect();
-                lines.push(Line::styled(parts.join(" · "), muted));
-            }
-            let omitted = format!("{} older intervals omitted; byte totals retain the full run", result.omitted);
-            lines.extend((result.omitted > 0).then(|| Line::styled(omitted, muted)));
-        }
-        lines
     }
 
     /// The run's outcome with how many of its servers remain.
@@ -435,14 +368,58 @@ impl Report<'_> {
         let selected = self.view.servers.len();
         let servers = self.view.servers.iter();
         let remaining = servers.filter(|server| self.view.remains(&server.id)).count();
-        let outcome = self.run.outcome.map_or("Running", outcome_label);
-        match () {
-            _ if self.run.outcome.is_none() && remaining < selected => {
-                format!("{remaining} of {selected} servers remaining")
-            }
-            _ if self.run.outcome.is_none() => format!("All {selected} servers"),
-            _ if remaining < selected => format!("{outcome} · {remaining} of {selected} servers"),
-            _ => format!("{outcome} · all {selected} servers"),
+        let outcome = outcome_label(self.run.outcome.unwrap_or(Outcome::Failed));
+        match remaining < selected {
+            true => format!("{outcome} · {remaining} of {selected} test servers"),
+            false => format!("{outcome} · all {selected} test servers"),
         }
     }
+}
+
+/// Median, Added, P95, Jitter and Timeouts.
+fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<String> {
+    let (summary, median) = (population.summary, population.median());
+    let mut cells = vec![MISSING.to_owned(); 5];
+    if let Some(median) = median {
+        cells[0] = round_trip(median);
+        cells[1] = added(Some(median), idle).map_or(MISSING.into(), |added| format!("{} ms", format::added(added)));
+    }
+    if summary.replies > 0 {
+        cells[2] = summary.p95.map_or(MISSING.into(), round_trip);
+    }
+    if summary.jitter_pairs > 0 {
+        cells[3] = summary.jitter.map_or(MISSING.into(), round_trip);
+    }
+    if let Some(ratio) = summary.timeout_ratio() {
+        cells[4] = format!("{} / {}", count(summary.timeouts), count(summary.replies + summary.timeouts));
+        if ratio > 0.0 {
+            cells[4].push_str(&format!(" ({})", format::percent(ratio)));
+        }
+    }
+    cells
+}
+
+/// The peak without the mean's unit, bytes, the window and, for uploads, that the receiver timed it.
+fn throughput_facts(throughput: Throughput, measured: Duration, direction: Direction) -> Vec<String> {
+    let mut facts = Vec::new();
+    if let Some(rate) = throughput.rate.filter(|rate| rate.peak > 0.0) {
+        let (peak, mean) = (format::rate(rate.peak), format::rate(rate.mean));
+        let unit = mean
+            .rsplit_once(' ')
+            .map_or(String::new(), |(_, unit)| format!(" {unit}"));
+        facts.push(format!("peak {}", peak.strip_suffix(&unit).unwrap_or(&peak)));
+    }
+    facts.push(format::bytes(throughput.bytes));
+    facts.extend((!measured.is_zero()).then(|| format::duration(measured)));
+    facts.extend((direction == Direction::Up).then(|| "receiver-timed".to_owned()));
+    facts
+}
+
+/// Replies, the window, and the probes left unresolved or never sent.
+fn latency_facts(summary: Summary, measured: Duration) -> Vec<String> {
+    let mut facts = vec![format!("{} replies", count(summary.replies))];
+    facts.extend((!measured.is_zero()).then(|| format::duration(measured)));
+    facts.extend((summary.unresolved > 0).then(|| format!("{} unresolved", count(summary.unresolved))));
+    facts.extend((summary.send_failures > 0).then(|| format!("{} send failures", count(summary.send_failures))));
+    facts
 }

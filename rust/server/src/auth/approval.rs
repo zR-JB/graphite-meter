@@ -11,7 +11,6 @@ use crate::headers::{SEC_FETCH_DEST, SEC_FETCH_MODE, SEC_FETCH_SITE};
 use crate::{
     app::{finalize::Access, query, response},
     lock,
-    log::rfc3339,
     peer::{ClientKey, ClientKeys, Peer},
     transport::body::Body,
 };
@@ -19,10 +18,7 @@ use graphite_meter_proto::approval::{challenge, verification_code};
 use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use serde::Deserialize;
 use serde_json::json;
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
 const LIFETIME: Duration = Duration::from_mins(2);
@@ -101,6 +97,15 @@ impl Approval {
     /// Whether it issued the grant keyed `grant`.
     pub(super) fn became(&self, grant: &Digest) -> bool {
         matches!(&self.stage, Stage::Issued(issued) if issued.grant == *grant)
+    }
+
+    /// Drops an issued token whose replay window passed by `now`.
+    pub(super) fn forget_token(&mut self, now: Instant) {
+        if let Stage::Issued(issued) = &mut self.stage
+            && now >= issued.replay_until
+        {
+            issued.token = None;
+        }
     }
 }
 
@@ -303,7 +308,8 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
     let (Some(challenge), credentials) = (Challenge::of(verifier), credentials()) else {
         return pending();
     };
-    let mut state = lock(&auth.store.0);
+    let (mut state, now) = (lock(&auth.store.0), Instant::now());
+    state.sweep(now);
     let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
     let Some(stage) = approval.map(|approval| approval.stage.clone()) else {
         return pending();
@@ -314,14 +320,10 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
     let Some(expires) = state.login(&login.0).map(|login| login.expires) else {
         return pending();
     };
-    let now = Instant::now();
     let token = match stage {
         // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
-        Stage::Issued(Issued { token: Some(token), replay_until, .. }) if now < replay_until => token,
-        Stage::Issued(_) => {
-            forget_token(&mut state, &challenge, None);
-            return response::empty(StatusCode::GONE);
-        }
+        Stage::Issued(Issued { token: Some(token), .. }) => token,
+        Stage::Issued(_) => return response::empty(StatusCode::GONE),
         Stage::Open | Stage::Claimed(_) => {
             let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
             return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
@@ -337,19 +339,13 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
                 approval.deadline = approval.deadline.max(replay_until);
                 approval.stage = Stage::Issued(Issued { login, grant, token: Some(token.clone()), replay_until });
             }
-            // The token is kept for its window only, whether or not it is asked for again.
-            let (store, kept) = (Arc::clone(&auth.store.0), challenge.clone());
-            tokio::spawn(async move {
-                tokio::time::sleep(REPLAY).await;
-                forget_token(&mut lock(&store), &kept, Some(&grant));
-            });
             token
         }
     };
     drop(state);
     let remaining = expires.duration_since(SystemTime::now()).unwrap_or_default();
     response::json_of(&match origin {
-        None => json!({"token": token.as_str(), "expires": rfc3339(expires)}),
+        None => json!({"token": token.as_str(), "expires": crate::clock::rfc3339(expires)}),
         Some(_) => json!({
             "token": token.as_str(),
             "expires": expires.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
@@ -357,20 +353,6 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
             "maximumLifetimeMs": LOGIN_LIFETIME.as_millis(),
         }),
     })
-}
-
-/// Drops the token `challenge` issued, the grant keyed `grant` only when given: the challenge may have issued another.
-fn forget_token(state: &mut State, challenge: &Challenge, grant: Option<&Digest>) {
-    let issued = state
-        .approvals
-        .get_mut(challenge)
-        .and_then(|approval| match &mut approval.stage {
-            Stage::Issued(issued) => Some(issued),
-            Stage::Open | Stage::Claimed(_) | Stage::Approved(_) => None,
-        });
-    if let Some(issued) = issued.filter(|issued| grant.is_none_or(|grant| issued.grant == *grant)) {
-        issued.token = None;
-    }
 }
 
 /// A document navigation from another site, which reenters with the strictly same-site session cookie.

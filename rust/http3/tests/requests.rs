@@ -48,7 +48,7 @@ async fn requests_round_trip_and_bodiless_responses_may_declare_a_length() -> Re
     drop((send, recv));
     settled(&peers.budget).await;
     peers.client.close(0_u32.into(), b"done");
-    assert!(driver.await?.is_ok() && serving.await?.is_ok(), "a peer close code 0 is graceful");
+    assert!(driver.await?.is_ok() && serving.await?.is_ok(), "a peer's close code 0 is graceful");
     Ok(())
 }
 
@@ -129,14 +129,7 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
 /// Each role sends exactly its SETTINGS profile on the control stream it opens first.
 #[tokio::test]
 async fn each_role_sends_its_settings() -> Result<(), TestError> {
-    let server = [
-        (0x06, 4096),
-        (0x08, 1),
-        (0x33, 1),
-        (0x2b603742, 1),
-        (0x2c7cf000, 1),
-        (0x14e9cd29, (1 << 62) - 1),
-    ];
+    let server = [(0x06, 4096), (0x08, 1), (0x33, 1), (0x2b603742, 1), (0x2c7cf000, 1)];
     let client_settings = [(0x06, 32 * 1024), (0x33, 1), (0x2c7cf000, 1)];
     let Served { peers, .. } = pair(PLAIN).await?.serve(|_, _| async {});
     let mut received = vec![0; control(&server).len()];
@@ -170,7 +163,7 @@ async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
     // Our QPACK: :status 431 as a literal after the static :status name, :status 400 indexed.
     let status_431 = frame(0x01, &[0x00, 0x00, 0x5f, 0x09, 0x03, b'4', b'3', b'1']);
     let status_400 = frame(0x01, &[0x00, 0x00, 0xff, 0x04]);
-    let lane_cancelled = Code(0x52e4a40fa8db);
+    let lane_cancelled = Code::WT_CANCELLED;
     let message_error = Code::H3_MESSAGE_ERROR;
     let excess = [request_head(&[(":method", "POST"), ("content-length", "5")]), frame(0x00, b"abcdefgh")].concat();
     let cases = [
