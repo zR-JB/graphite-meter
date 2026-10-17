@@ -1,6 +1,7 @@
 // The dial: the ring, the needle that follows the running stage, the result that takes the ring over, the readout and
 // the note. Per frame the painter writes three transforms, a text node and a class.
 import type { App } from "../../app/app";
+import { CHECK_FAILED } from "../../engine/net/checks";
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { pageMs } from "../../lib/frame";
@@ -181,7 +182,7 @@ export function Dial(props: {
     const throughput = view?.throughput.state === "failed";
     const latency = live.latencyEnabled() && view?.latency.state === "failed";
     if (!throughput && !latency) return { status: PHASE["start-failed"], detail };
-    return { status: DIAL.checkFailed, detail: DIAL.unavailable(throughput, latency) };
+    return { status: CHECK_FAILED, detail: DIAL.unavailable(throughput, latency) };
   });
   const ending = computed(() => {
     if (phase() === "aborted") return { status: PHASE.stopped, tone: "", hint: DIAL.restart };

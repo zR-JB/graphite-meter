@@ -282,7 +282,7 @@ export class RttEstimator {
   }
 }
 
-export const DEADLINE_FLOOR_MS = 250;
+const DEADLINE_FLOOR_MS = 250;
 export const DEADLINE_CEILING_MS = 10_000;
 
 /** The idle headline: the latency stage's median, its jitter and their ratio as stability. */

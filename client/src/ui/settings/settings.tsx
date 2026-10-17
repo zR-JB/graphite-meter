@@ -176,7 +176,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           {edits.notice("connection")}
         </section>
 
-        <DurationGroup app={app} edits={edits} custom={custom} limitError={app.limitError} />
+        <DurationGroup app={app} edits={edits} custom={custom} />
 
         <section class="group">
           <h3>Display</h3>

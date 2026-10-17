@@ -5,7 +5,7 @@ import type { App } from "../../app/app";
 import type { Stage } from "../../engine/run/schedule";
 import type { TestConfig } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
-import { computed, effect, type Read, type Signal } from "../../lib/signal";
+import { computed, effect, type Signal } from "../../lib/signal";
 import { fmtDuration, fmtStageTime, parseDuration } from "../../view/format";
 import { PHASE, STAGE, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
@@ -26,7 +26,7 @@ const STRIP: readonly Stage[] = CUSTOM_STAGES;
 const STRIP_BIDIRECTIONAL: readonly Stage[] = [...CUSTOM_STAGES, "bidirectional"];
 const NAME = { short: "Short", medium: "Medium", long: "Long", custom: "Custom" } as const;
 
-export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<boolean>; limitError: Read<string> }) {
+export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<boolean> }) {
   const { app, edits, custom } = props;
   const config = app.preferences.config;
   const mode = computed((): Preset | "custom" => (custom() ? "custom" : (presetOf(config().duration) ?? "custom")));
@@ -76,7 +76,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
     </div>
   );
   const warmup = ms("warmupMs");
-  announceChanges(props.limitError);
+  announceChanges(props.app.limitError);
   const strip = computed(() => (config().stages.bidirectional ? STRIP_BIDIRECTIONAL : STRIP));
 
   return (
@@ -161,7 +161,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
           onToggle={(adaptive) => edits.edit("duration", () => app.run.configure({ adaptive }))}
         />
       </div>
-      <Show when={props.limitError}>
+      <Show when={props.app.limitError}>
         {(text) => (
           <p class="notice" data-tone="warn">
             {text}

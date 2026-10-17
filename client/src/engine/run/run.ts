@@ -294,7 +294,7 @@ export class Run {
       servers.length > MAX_SELECTED ||
       new Set(servers.map(({ server }) => server.id)).size < servers.length
     )
-      throw new Error("Select one to four different servers");
+      throw new Error(`Select 1 to ${MAX_SELECTED} different servers`);
     this.#servers = servers.map((prepared) => {
       const id = prepared.server.id;
       return {

@@ -367,7 +367,7 @@ export function createServers(env: ServersEnv): Servers {
       new Set(ids).size !== ids.length ||
       ids.some((id) => !known.servers.some((entry) => entry.id === id))
     )
-      throw new Error("Select one to four test servers.");
+      throw new Error(`Select 1 to ${MAX_SELECTED} test servers.`);
     const next = inCatalogOrder(known, ids);
     const previous = selected.peek();
     batch(() => {

@@ -22,9 +22,9 @@ Each layer imports only from the layers above it in this table; the composition 
 ## Compatibility
 
 Saved data and links from earlier releases keep working, so these are compatibility boundaries: `localStorage`
-`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at
-version 3 with schema-5 records (version 2 rows upgrade once), the BroadcastChannel `graphite-meter-history`, and the hash routes (the Details panel
-is `endpoint` in URLs). The page keeps the servers' shell contract: one `</head>`, one attribute-less inline script
+`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 3
+with schema-5 records (version 2 rows upgrade once), the BroadcastChannel `graphite-meter-history`, and the hash
+routes (the Details panel is `endpoint` in URLs). The page keeps the servers' shell contract: one `</head>`, one attribute-less inline script
 and style (hashed into the content security policy), one `graphite-meter-trusted-types` meta naming the Trusted Types
 policy `src/lib/trusted.ts` creates (the servers then require Trusted Types), `<div id="app">`, hashed assets under
 `/assets/`; `build.ts` checks it.
