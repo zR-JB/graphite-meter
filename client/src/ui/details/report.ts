@@ -45,11 +45,8 @@ interface ReportSources {
 export function diagnosticReport({ page, servers, clientIps, state }: ReportSources): string {
   const hosts = new Map<string, string>();
   const words = new Map<string, string>();
-  const alias = (hostname: string) => {
-    const key = hostname.toLowerCase();
-    if (!hosts.has(key)) hosts.set(key, `server-${hosts.size + 1}`);
-    return hosts.get(key)!;
-  };
+  const alias = (hostname: string) =>
+    hosts.getOrInsertComputed(hostname.toLowerCase(), () => `server-${hosts.size + 1}`);
   // A server listed twice (by the catalog and as discovery names it) keeps its number.
   const ids = [...new Set(servers.map(({ id }) => id))];
   for (const server of servers) {
@@ -64,10 +61,7 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   // Whole words, longest first, so an ID never rewrites part of another word or name.
   const known = [...words.keys()].sort((a, b) => b.length - a.length);
   const pattern = known.length
-    ? new RegExp(
-        `(?<![\\w.-])(?:${known.map((word) => word.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")).join("|")})(?![\\w-])`,
-        "g",
-      )
+    ? new RegExp(`(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`, "g")
     : null;
   const scrub = (text: string) => {
     const out = text.replace(URLISH, (url) => {

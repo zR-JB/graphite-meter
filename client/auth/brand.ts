@@ -44,9 +44,7 @@ function hex(lightness: number, chroma: number, hue: number): string {
   const encode = (value: number) => {
     const clipped = Math.min(1, Math.max(0, value));
     const gamma = clipped <= 0.0031308 ? 12.92 * clipped : 1.055 * clipped ** (1 / 2.4) - 0.055;
-    return Math.round(gamma * 255)
-      .toString(16)
-      .padStart(2, "0");
+    return Math.round(gamma * 255);
   };
-  return `#${linear.map(encode).join("")}`;
+  return `#${Uint8Array.from(linear, encode).toHex()}`;
 }

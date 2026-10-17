@@ -102,9 +102,8 @@ export function combinedModel(components: readonly { bytesPerSec: number; path: 
     wire += bytesPerSec * model.totalMultiplier;
     if (!(bytesPerSec > 0) || !(measured > 0)) return;
     for (const factor of model.factors) {
-      const row = rows.get(factor.label) ?? { ...factor, contributionPct: 0 };
+      const row = rows.getOrInsertComputed(factor.label, () => ({ ...factor, contributionPct: 0 }));
       row.contributionPct += (factor.contributionPct * bytesPerSec) / measured;
-      rows.set(factor.label, row);
     }
   });
   const first = models[components.findIndex(({ bytesPerSec }) => bytesPerSec > 0)] ?? models[0]!;

@@ -355,17 +355,16 @@ export function shapeSoFar(
   for (const sample of samples) {
     if (sample.stage !== stage || sample.t < start) continue;
     const second = Math.floor((sample.t - start) / 1000);
-    const lanes = seconds.get(second) ?? new Map<string, { sum: number; n: number }>();
-    seconds.set(second, lanes);
-    const cell = lanes.get(sample.dir) ?? { sum: 0, n: 0 };
-    lanes.set(sample.dir, cell);
+    const cell = seconds
+      .getOrInsertComputed(second, () => new Map())
+      .getOrInsertComputed(sample.dir, () => ({ sum: 0, n: 0 }));
     cell.sum += sample.bytesPerSec;
     cell.n++;
   }
   if (!seconds.size) return null;
   const rates = [...seconds.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([, lanes]) => [...lanes.values()].reduce((total, { sum, n }) => total + sum / n, 0));
+    .map(([, lanes]) => lanes.values().reduce((total, { sum, n }) => total + sum / n, 0));
   return { peak: Math.max(...rates), stability: rates.length >= 2 ? stabilityPct(rates) : null };
 }
 
@@ -382,13 +381,12 @@ export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
   const lines = new Map<string, { server: string; stages: string[]; reason: string; throughput: Stage[] }>();
   for (const failure of details.failures) {
     if (scope && failure.serverId !== scope) continue;
-    const key = `${failure.serverId} ${failure.reason}`;
-    let line = lines.get(key);
-    if (!line) {
-      const server = details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
-      line = { server, stages: [], reason: reasonLabel(failure.reason), throughput: [] };
-      lines.set(key, line);
-    }
+    const line = lines.getOrInsertComputed(`${failure.serverId} ${failure.reason}`, () => ({
+      server: details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server",
+      stages: [],
+      reason: reasonLabel(failure.reason),
+      throughput: [],
+    }));
     const latency = failure.scope === "latency";
     line.stages.push(latency && failure.stage !== "latency" ? POPULATION[failure.stage] : STAGE[failure.stage].label);
     if (!latency) line.throughput.push(failure.stage);
