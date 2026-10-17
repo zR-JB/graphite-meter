@@ -13,6 +13,7 @@
 # so each site carries its own table and this file keeps the tables identical.
 # Every route test loads THIS file as its fixture:
 #   Rust: rust/proto/tests/codes.rs (proto::route, the table the server mounts and the client requests)
+#         rust/server/tests/app/gate.rs (the routes the server mounts)
 #   TS:   client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES)
 #
 preflight | /preflight | http
