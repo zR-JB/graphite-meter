@@ -228,8 +228,8 @@ jobs:
           cache-image: 'false'
       - name: Set up pinned Buildx
         uses: ./.github/actions/setup-buildx
-      # The OCI archive builds each architecture's server once; the loaded images and the source offers reuse its
-      # layers. The ci profile leaves out LTO and PGO, and the checks job checks the browser app.
+      # One architecture at a time: two concurrent cargo builds here take longer than two in a row. The OCI archive
+      # and source offers reuse those layers; the ci profile leaves out LTO and PGO, the checks job checks the app.
       - name: Build the amd64 and arm64 server image with reviewed notices and export its source offers
         run: |
           build() {
@@ -240,13 +240,13 @@ jobs:
               --label "org.opencontainers.image.version=$VERSION" \
               --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" .
           }
-          mkdir -p "$RUNNER_TEMP/image"
-          build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
-            --output "type=oci,dest=$RUNNER_TEMP/image/graphite-meter.oci.tar"
           # Docker's image store cannot load the attestation manifests.
           for arch in amd64 arm64; do
             build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter:$arch"
           done
+          mkdir -p "$RUNNER_TEMP/image"
+          build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
+            --output "type=oci,dest=$RUNNER_TEMP/image/graphite-meter.oci.tar"
           build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
             --output "type=local,dest=$RUNNER_TEMP/image/server-export"
       # The arm64 image runs under emulation.
