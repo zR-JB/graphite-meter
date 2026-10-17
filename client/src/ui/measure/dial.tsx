@@ -308,7 +308,6 @@ export function Dial(props: {
     if (stage) needleLayer.style.setProperty("--accent", `var(--phase-${stage})`);
   });
 
-  // The figure is a box of fixed size laid out alone, so a new value lays out nothing around it.
   const number = new Figure("dial-figure", 5);
   number.set(MISSING);
   const value = (

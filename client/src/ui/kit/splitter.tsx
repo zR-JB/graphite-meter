@@ -1,5 +1,5 @@
 // A window splitter between a panel and its neighbor: drag it, or move it with the arrows in their own direction
-// (16 px, 48 px with Shift), Home and End for the limits, Enter or a double-click to reset.
+// (16 px, 48 px with Shift), Home and End for the limits, Enter, Space or a double-click to reset.
 import { onCleanup, type Read } from "../../lib/signal";
 
 let ids = 0;

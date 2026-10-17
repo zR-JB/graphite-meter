@@ -45,7 +45,7 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
     const times = DURATION_PRESETS[preset];
     const stages = config().stages.bidirectional ? STRIP_BIDIRECTIONAL : STRIP;
     const parts = [`${PHASE.warmup} ${fmtStageTime(times.warmupMs)}`];
-    for (const stage of stages) parts.push(`${STAGE[stage].short} ${fmtStageTime(times[`${stage}Ms`])}`);
+    for (const stage of stages) parts.push(`${STAGE[stage].label} ${fmtStageTime(times[`${stage}Ms`])}`);
     return `${NAME[preset]}\n${parts.join(" · ")}`;
   };
 

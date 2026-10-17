@@ -71,7 +71,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
   effect(() => setText(texts.num, figure()));
   effect(() => setText(texts.down, down()));
   effect(() => setText(texts.up, up()));
-  // While its stage runs a figure is a box of fixed size that the frame clock writes into, laid out alone.
+  // While its stage runs the frame clock writes the figures.
   const painted = computed(() => live() !== null);
   const lane = (dir: "download" | "upload", text: Text, box: Figure) => (
     <span class="pair" data-tone={dir}>
@@ -100,7 +100,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
     </span>
   );
   const word = computed(() => card().word);
-  // Every fact is a figure laid out alone; a running bidirectional stage's combined rate is painted on the frame clock.
+  // A running bidirectional stage's combined rate is painted on the frame clock.
   const facts = card.peek().facts.map((fact, index) => {
     const value = computed(() => card().facts[index]?.value ?? MISSING);
     const combined = computed(() => fact.key === "combined" && live() === "pair");

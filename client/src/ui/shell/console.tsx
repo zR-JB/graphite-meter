@@ -7,7 +7,7 @@ import { Show } from "../../lib/dom";
 import { nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, scope, type Read } from "../../lib/signal";
-import { RUN_ACTION, runAction, START_OVER } from "../../view/words";
+import { RUN_ACTION, START_OVER } from "../../view/words";
 import { LegalDialog } from "../legal/legal";
 import { Announcements } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
@@ -117,7 +117,7 @@ export function mountConsole(root: HTMLElement, app: App, views: Views): { shell
       measurement,
       <footer class="status" inert={ctl.flyout}>
         {views.status(shell)}
-        <ShortcutHints app={app} />
+        <ShortcutHints app={app} shell={shell} />
       </footer>,
       sheet(app, ctl, "details", "Details", () => views.details(shell)),
       views.toast(shell),
@@ -170,9 +170,9 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
 
 /** The keys the page answers, named in the strip while shortcuts are on; the run word's cell holds every run word,
     so a change never moves the strip. */
-function ShortcutHints(props: { app: App }): Node {
+function ShortcutHints(props: { app: App; shell: Shell }): Node {
   const { app } = props;
-  const current = computed(() => runAction(app.run.preparing(), app.run.running(), app.run.phase()));
+  const current = props.shell.runWord;
   return (
     <Show when={app.preferences.keyShortcuts}>
       {() => (

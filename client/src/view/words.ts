@@ -287,7 +287,7 @@ export const START_OVER = {
   },
   rerun: {
     title: "Replace this result?",
-    description: "It could not be saved; a new test replaces it.",
+    description: "History could not save it; a new test replaces it.",
     cancel: "Keep result",
     confirm: "Run again",
   },

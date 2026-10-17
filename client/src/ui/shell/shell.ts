@@ -4,6 +4,7 @@ import type { App } from "../../app/app";
 import type { Theme } from "../../app/preferences";
 import { reducedMotion } from "../../lib/motion";
 import { batch, computed, effect, onCleanup, signal, untrack, type Signal } from "../../lib/signal";
+import { runAction } from "../../view/words";
 import { flip } from "../flip";
 import { activeModal, canFocus, hasFocus, isEditable } from "../kit/focus";
 import type { Shell } from "./api";
@@ -89,6 +90,8 @@ export function focusMove(facts: {
 export type Controller = ReturnType<typeof createShell>;
 
 const NEXT_THEME: Record<Theme, Theme> = { light: "dark", dark: "auto", auto: "light" };
+/** How long a start may prepare before the run key says Cancel rather than Stop. */
+const CANCEL_AFTER_MS = 250;
 
 /** The shell for one console. Must run inside an owner: its listeners and effects go with it. */
 export function createShell(app: App, layout: Layout) {
@@ -388,6 +391,14 @@ export function createShell(app: App, layout: Layout) {
     delete root.dataset.pointer;
   });
 
+  // A start that is still preparing after a glance offers Cancel; a quick one goes straight to Stop.
+  const lingering = signal(false);
+  effect(() => {
+    if (!app.run.preparing()) return lingering.set(false);
+    const timer = setTimeout(() => lingering.set(true), CANCEL_AFTER_MS);
+    onCleanup(() => clearTimeout(timer));
+  });
+
   const shell: Shell = {
     route,
     layout,
@@ -400,6 +411,7 @@ export function createShell(app: App, layout: Layout) {
     legal: (invoker) => untrack(() => legal(invoker)),
     startOver: () => untrack(startOver),
     toggleRun: () => untrack(toggleRun),
+    runWord: computed(() => runAction(lingering(), app.run.running() || app.run.preparing(), app.run.phase())),
   };
 
   return {

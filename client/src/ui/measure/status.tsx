@@ -45,7 +45,6 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
     (view) => `${view.show}:${view.recovering}`,
   );
 
-  // Each figure is a box of fixed size laid out alone, at least seven figures wide.
   const elapsed = new Figure("readout", 7);
   const remaining = new Figure("readout", 7);
   const moved = new Figure("readout", 7);

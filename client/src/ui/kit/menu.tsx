@@ -2,7 +2,10 @@
 // or Escape return to the trigger.
 import { signal, type Read } from "../../lib/signal";
 import { Icon, type IconName } from "./icon";
+import { roveTo } from "./rove";
 import { tip } from "./tip";
+
+const VERTICAL: Record<string, number> = { ArrowDown: 1, ArrowUp: -1 };
 
 interface MenuItem {
   title: Read<string> | string;
@@ -80,16 +83,7 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
         }
         const list = items();
         const at = list.findIndex((item) => item === document.activeElement);
-        const to =
-          event.key === "ArrowDown"
-            ? (at + 1) % list.length
-            : event.key === "ArrowUp"
-              ? (at - 1 + list.length) % list.length
-              : event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? list.length - 1
-                  : -1;
+        const to = roveTo(event.key, at, list.length, VERTICAL);
         if (to < 0 || !list.length) return;
         event.preventDefault();
         event.stopPropagation();

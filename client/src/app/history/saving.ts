@@ -8,7 +8,7 @@ const RETRY_MS = 15_000;
 /** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
 const MAX_QUEUED = 8;
 const RETRYING = "Could not save this result locally. Future writes will be retried.";
-const UNORDERED = "Could not save this result: History could not be read when it finished.";
+const UNORDERED = "Could not save this result: History did not answer when it finished.";
 
 interface HistorySaving {
   /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until

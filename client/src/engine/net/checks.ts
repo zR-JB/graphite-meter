@@ -249,7 +249,7 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
     // A protected HTTPS server refuses another origin without CORS headers, which reads as a network failure.
     const hint =
       entry.url.startsWith("https:") && !page.secure ? ". If it requires sign-in, open this interface over HTTPS." : "";
-    return settled(error, auth, signal, `Server could not be reached${hint}`);
+    return settled(error, auth, signal, `Could not reach this test server${hint}`);
   } finally {
     timing.stop();
   }
@@ -265,7 +265,7 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
     const probe: Probe = await decoded(response, probeDocument, "Unexpected probe answer");
     return { probe, protocol: await timing.read(signal) };
   } catch (error) {
-    return settled(error, auth, signal, `${origin} could not be reached`);
+    return settled(error, auth, signal, `Could not reach ${origin}`);
   } finally {
     timing.stop();
   }

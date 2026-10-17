@@ -219,7 +219,7 @@ export function ResultDetail(props: {
   return (
     <article class="result-detail" aria-labelledby={title} aria-keyshortcuts="ArrowUp ArrowDown" tabindex="-1">
       <header class="sheet-head detail-head page-fill">
-        <button class="btn btn-quiet back" type="button" aria-label="Back to results" onclick={props.onClose}>
+        <button class="btn btn-quiet back" type="button" ref={tip(() => "Back to results")} onclick={props.onClose}>
           <span aria-hidden="true">←</span>
           Results
         </button>

@@ -149,7 +149,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       pending()
         ? `Checking ${name()}…`
         : renew()
-          ? "Its sign-in ends before the planned test would"
+          ? "Its sign-in ends before the planned test would."
           : failed()
             ? (view()?.message ?? "Approval did not finish")
             : signIn()
@@ -176,7 +176,9 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               class="btn"
               type="button"
               disabled={() => locked() || waiting()}
-              aria-label={() => `Sign in to ${name()}`}
+              aria-label={() =>
+                waiting() ? `Waiting for approval from ${name()}` : `Sign in${failed() ? " again" : ""} to ${name()}`
+              }
               // The sign-in window must open within this click.
               onclick={() => servers.signIn(id)}
             >
@@ -189,7 +191,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               disabled={locked}
               aria-disabled={() => String(pending())}
               aria-busy={() => String(pending())}
-              aria-label={() => `Retry ${name()}`}
+              aria-label={() => `${pending() ? READINESS.checking.label : "Retry"} ${name()}`}
               onclick={(event) => void retry(id, event.currentTarget)}
             >
               {() => (pending() ? READINESS.checking.label : "Retry")}
@@ -297,7 +299,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       <Show when={() => !servers.catalog()}>
         {() => (
           <div class="selection-notice">
-            <p>{() => (servers.loading() ? "Loading test servers…" : "Could not load test servers")}</p>
+            <p>{() => (servers.loading() ? "Loading test servers…" : "Could not load test servers.")}</p>
             <button
               class="btn"
               type="button"
