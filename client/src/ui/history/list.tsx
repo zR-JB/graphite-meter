@@ -1,5 +1,5 @@
-// The results list: heads that sort, rows grouped by day, pages of 50 added as they are asked for. A row is built once
-// per result from words worked out once per change, and the fold is decided from sizes the layout already has.
+// The results list: heads that sort, rows grouped by day or under their order, pages of 50 added as they are asked for.
+// A row is built once per result from words worked out once per change; the fold, from sizes the layout already has.
 import type { App } from "../../app/app";
 import {
   naturalDescending,
@@ -23,6 +23,7 @@ import {
   columnScales,
   daysAt,
   groupRows,
+  orderHeading,
   PAGE_ROWS,
   rowPresenter,
   SORT_LABEL,
@@ -111,6 +112,7 @@ export function ResultsList(props: {
       .map((entry) => row(entry, today));
   });
   const groups = computed(() => groupRows(visible()));
+  const ordering = computed(() => orderHeading(props.sort().by, props.sort().descending));
 
   // The open result's row, marked by one write per change of selection rather than a binding per row.
   const links = new Map<string, HTMLAnchorElement>();
@@ -257,6 +259,7 @@ export function ResultsList(props: {
   const table = (
     <div
       class="history-table"
+      data-sort={() => props.sort().by}
       onclick={(event) => {
         const row = (event.target as Element).closest<HTMLAnchorElement>("a.result-row");
         // A modified or secondary click follows the link: a new tab or window.
@@ -281,8 +284,17 @@ export function ResultsList(props: {
           const id = () => `history-day-${index()}`;
           return (
             <section class="group day">
-              {heading && <h3 id={id}>{heading}</h3>}
-              <ol aria-label={heading ? undefined : "Saved results"} aria-labelledby={heading ? id : undefined}>
+              {heading ? (
+                <h3 id={id}>{heading}</h3>
+              ) : (
+                <div class="group-head">
+                  <h3 id={id}>{ordering}</h3>
+                  <button class="btn btn-quiet by-date" type="button" onclick={() => props.setSort("date", true)}>
+                    Sort by date
+                  </button>
+                </div>
+              )}
+              <ol aria-labelledby={id}>
                 <For each={() => group().rows} by={(row) => row.id}>
                   {(row) => () => <RowView row={row()} />}
                 </For>

@@ -134,6 +134,21 @@ test("in date order rows group under Today, Yesterday, then their month; any oth
   expect(headings(false)).toEqual([["", 6]]);
 });
 
+test("out of date order a row's day leads its time, and only another year's date leaves the time out", () => {
+  const records = [at(28, 9), at(27, 23), at(3, 7), new Date(2025, 11, 31, 9).getTime()].map((time, i) =>
+    saved(String(i), time),
+  );
+  const time = (at: number) => new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
+  const day = (at: number) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(at);
+  const date = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+  expect(records.map((record) => present(record, context(records, { byDay: false })))).toMatchObject([
+    { heading: "", primary: `Today, ${time(at(28, 9))}` },
+    { heading: "", primary: `Yesterday, ${time(at(27, 23))}` },
+    { heading: "", primary: `${day(at(3, 7))}, ${time(at(3, 7))}` },
+    { heading: "", primary: date.format(records[3]!.completedAt) },
+  ]);
+});
+
 test("a heading that returns after another keeps its rows in their own group", () => {
   // A result dated after now (another clock) sorts before Today.
   const records = [saved("future", at(30)), saved("today", at(28)), saved("later", at(29))];
@@ -189,7 +204,7 @@ test("a row stays the same object across a day unless its day words change", () 
     expect(
       next.map((each, i) => each === first[i]),
       `${byDay}`,
-    ).toEqual(byDay ? [false, false, true] : [true, true, true]);
+    ).toEqual([false, false, true]);
     if (byDay) expect(next.map(({ heading }) => heading).slice(0, 1)).toEqual(["Yesterday"]);
   }
 });
@@ -200,7 +215,7 @@ test("Yesterday is the calendar day before, even after a 23-hour day", () => {
   try {
     // 00:30 on the day after the spring-forward change, which lasted 23 hours.
     const now = new Date(2026, 2, 9, 0, 30).getTime();
-    expect(daysAt(now)).toEqual({ today: "Mon Mar 09 2026", yesterday: "Sun Mar 08 2026" });
+    expect(daysAt(now)).toEqual({ today: "Mon Mar 09 2026", yesterday: "Sun Mar 08 2026", year: 2026 });
   } finally {
     process.env.TZ = zone;
   }

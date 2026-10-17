@@ -245,6 +245,20 @@ test("a closed Columns popover never takes a tap meant for a result", async (pag
   await expect(page.locator(".result-detail")).toBeVisible();
 });
 
+test("folded at phone width, another order names itself and Sort by date brings the days back", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1), record(2, Date.now())] });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await history(page);
+  const headings = () => page.locator(".history-table h3").all((els: Element[]) => els.map((el) => el.textContent));
+  await expect.poll(headings).toHaveLength(2);
+  const days = await headings();
+  await page.locator('.column-head button:has([data-tone="idle"])').click();
+  await expect.poll(headings).toEqual(["Idle latency, lowest first"]);
+  await page.getByRole("button", { name: "Sort by date", exact: true }).click();
+  await expect.poll(headings).toEqual(days);
+});
+
 test("Sort by is one tab stop whose arrows, Home and End choose the order", async (page) => {
   await fixturePage(page);
   await seed(page, { records: [record(1)] });
