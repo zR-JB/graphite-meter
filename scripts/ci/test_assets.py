@@ -120,20 +120,20 @@ class StagingTests(Scratch):
         self.assertEqual(find(export, {"a.tar.gz"})["a.tar.gz"].read_text(), "a")
 
     def test_the_commands_stage_into_and_check_from_runner_temp(self) -> None:
-        # CI builds its image with the ci profile and every build as 0.0.0-ci, which has no release tag.
+        # CI builds the image and the client archives with the ci profile, as 0.0.0-ci, which has no release tag.
         env: dict[str, str] = {}
         out = self.root
         for version, profile in (("0.0.0-ci", "ci"), ("1.2.3", "release")):
             exports, out = self.fresh(), self.fresh()
             oci = write_exports(exports, version, SHA, REPO, profile)
             self.stage(version, out, exports)
-            env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "REVISION": SHA, "SERVER_PROFILE": profile,
+            env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "REVISION": SHA, "PROFILE": profile,
                    "STAGED_DIR": str(out)} | engine(exports, REPO, version, SHA, oci)
             with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "check"]), \
                     patch("sys.stdout", io.StringIO()):
                 main()
         (out / "extra").write_text("x")
-        for change, error in (({"VERSION": "1.2.3/x"}, "not a release version"), ({"SERVER_PROFILE": "dev"}, "PROFILE"),
+        for change, error in (({"VERSION": "1.2.3/x"}, "not a release version"), ({"PROFILE": "dev"}, "PROFILE"),
                               ({"STAGED_DIR": "/etc"}, "outside"), ({}, "files are")):
             with (self.subTest(error=error), patch.dict(os.environ, env | change),
                   patch("sys.argv", ["assets.py", "check"]), self.assertRaisesRegex(SystemExit, error)):

@@ -21,10 +21,10 @@ checks job alone; every other change, and every push to main, runs every job:
 | Checks | workflow policy, tooling tests, Gitleaks, the browser client's checks |
 | Rust checks | `rust-check`, `check_git_sources --verify`, the delayed-download gate, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests; a server build check |
-| Image | the linux/amd64 + linux/arm64 image (ci profile) and its server source offers; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
-| Client archives | the Linux and Windows client archives with release settings in the pinned builder; the amd64 client runs out of its archive |
+| Image | the linux/amd64 + linux/arm64 image with the ci profile (no LTO or PGO) and its server source offers; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
+| Client archives | the Linux and Windows client archives in the pinned builder with the ci profile (no LTO or PGO); the amd64 client runs out of its archive |
 | Release staging | `assets.py stage` and `assets.py check` on the two jobs above, as a release does |
-| Browser E2E | Chrome in four shards and Firefox against the image's server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
+| Browser E2E | Chrome in four shards and Firefox in three against the image's server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
 toolchain and `Cargo.lock`; only CI writes caches. Setup installs the Rust release `rust/rust-toolchain.toml` pins with

@@ -56,8 +56,8 @@ class PackageTests(Scratch):
         output.mkdir()
         with patch.object(package, "collect", self.collect), \
                 patch.object(package, "host_platform", return_value="plan9/amd64"):
-            package.package("1.2.3", "linux/arm64", "aarch64-unknown-linux-musl", output)
-            package.package("1.2.3", "windows/amd64", "x86_64-pc-windows-gnu", output)
+            package.package("1.2.3", "release", "linux/arm64", "aarch64-unknown-linux-musl", output)
+            package.package("1.2.3", "release", "windows/amd64", "x86_64-pc-windows-gnu", output)
         self.assertEqual([(build.target, build.profile, build.version, build.development) for build in self.built],
                          [("aarch64-unknown-linux-musl", "release", "1.2.3", False),
                           ("x86_64-pc-windows-gnu", "release", "1.2.3", False)])
@@ -104,7 +104,7 @@ class PackageTests(Scratch):
                 patch.object(package, "probe", lambda path, _, name: probed.append((path.read_bytes(), name))):
             with patch.object(package, "host_platform", return_value="plan9/amd64"):
                 for platform_name, target in PLATFORMS:
-                    package.package("1.2.3", platform_name, target, output)
+                    package.package("1.2.3", "release", platform_name, target, output)
                 with self.assertRaisesRegex(LegalError, "no Rust TUI is built for plan9/amd64"):
                     package.check("1.2.3", output)
             for host, _ in PLATFORMS:
@@ -122,7 +122,7 @@ class PackageTests(Scratch):
                     patch("time.time", return_value=1_000_000_000.0 + number):
                 for platform_name, target in PLATFORMS:
                     (self.root / "LICENSE").touch()
-                    package.package("1.2.3", platform_name, target, output)
+                    package.package("1.2.3", "release", platform_name, target, output)
             archives.append({path.name: path.read_bytes() for path in output.iterdir()})
         self.assertEqual(archives[0], archives[1])
         # The gzip header's MTIME field.

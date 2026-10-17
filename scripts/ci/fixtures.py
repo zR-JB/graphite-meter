@@ -243,7 +243,7 @@ def write_client(directory: Path, version: str, platform: str, changes: Mapping[
 
 
 def write_exports(root: Path, version: str, revision: str, repository: str,
-                  server_profile: str = "release") -> JsonObject:
+                  profile: str = "release") -> JsonObject:
     """Write what the builds export into `root`: the OCI archive, server-export with each platform's source offer
     part and tui-export with the client archives and their parts; return the image's index. A prerelease's image,
     which BuildKit fetched from GitHub, names the repository."""
@@ -255,12 +255,12 @@ def write_exports(root: Path, version: str, revision: str, repository: str,
         build = build_name(SERVER, platform)
         (server / platform.replace("/", "_")).mkdir(parents=True)
         write_part(server / platform.replace("/", "_") / build_offer(SERVER, platform), version, SERVER, platform,
-                   server_profile)
+                   profile)
         files[platform.split("/")[1]] = {
             "usr/share/licenses/graphite-meter/SOURCE.txt": source_txt(REPOSITORY_URL, version, build, target).encode(),
             "graphite-meter": server_binary(platform)}
     for platform in workspace.tui:
-        write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform)
+        write_part(client / build_offer(CLIENT, platform), version, CLIENT, platform, profile)
         write_client(client, version, platform)
     return write_oci(root / OCI, repository, revision, remote=prerelease(version), arch_files=files)
 

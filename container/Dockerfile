@@ -3,9 +3,10 @@
 # Build from the repository root on an amd64 host; the builder cross-compiles arm64:
 #   mise run container-build          (target server: the image)
 #   mise run tui-package VERSION      (target tui-artifacts: the client archives)
-# Target server-artifacts exports the server's third-party source offer.
+# Target server-artifacts exports the server's third-party source offer. PROFILE=ci builds without LTO or PGO.
 ARG VERSION=0.0.0-dev
 ARG TARGETARCH
+ARG PROFILE=release
 
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS python
 
@@ -50,20 +51,28 @@ COPY scripts/ scripts/
 COPY legal/ legal/
 COPY rust/ rust/
 
-# A PGO profile per architecture, trained on that architecture's own code: amd64 natively, arm64 under QEMU.
-FROM rust-amd64 AS pgo-amd64
-ARG PROFILE=release
+# A release's PGO profile per architecture in /pgo, trained on that architecture's own code: amd64 natively, arm64
+# under QEMU. The ci profile trains none.
+FROM rust-amd64 AS pgo-amd64-release
 COPY --from=source / /src/
-RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/amd64)" --profile "$PROFILE"
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/amd64)" --profile release \
+    && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
 
-FROM rust-arm64 AS pgo-arm64
+FROM rust-arm64 AS pgo-arm64-release
 RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static=1:7.2+dfsg-7+deb12u18+b3 \
     && rm -rf /var/lib/apt/lists/*
-ARG PROFILE=release
 COPY --from=source / /src/
-RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/arm64)" --profile "$PROFILE" \
-        --runner qemu-aarch64-static
+RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/arm64)" --profile release \
+        --runner qemu-aarch64-static \
+    && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
 
+FROM rust-amd64 AS pgo-ci
+RUN mkdir /pgo
+FROM pgo-ci AS pgo-amd64-ci
+FROM pgo-ci AS pgo-arm64-ci
+
+FROM pgo-amd64-${PROFILE} AS pgo-amd64
+FROM pgo-arm64-${PROFILE} AS pgo-arm64
 FROM pgo-${TARGETARCH} AS pgo
 
 # The TUI archives for every TUI platform of the workspace metadata, each with its source offer; the Windows TUI uses
@@ -74,10 +83,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 COPY --from=source / /src/
-COPY --from=pgo-amd64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
-COPY --from=pgo-arm64 /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+COPY --from=pgo-amd64 /pgo/ /src/rust/target/pgo/
+COPY --from=pgo-arm64 /pgo/ /src/rust/target/pgo/
 ARG VERSION
-RUN python3 -m scripts.package "$VERSION" --output dist
+ARG PROFILE
+RUN python3 -m scripts.package "$VERSION" --profile "$PROFILE" --output dist
 
 FROM scratch AS tui-artifacts
 COPY --from=tui-build /src/dist/ /
@@ -100,9 +110,9 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 # The static musl server with reviewed notices and the browser app.
 FROM rust-${TARGETARCH} AS server-build
 ARG TARGETARCH
-ARG PROFILE=release
+ARG PROFILE
 COPY --from=source / /src/
-COPY --from=pgo /src/rust/target/pgo/*.profdata /src/rust/target/pgo/
+COPY --from=pgo /pgo/ /src/rust/target/pgo/
 COPY --from=browser /src/client/ /src/client/
 # The legal scan names the bundled packages at their paths in Bun's installation cache.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/

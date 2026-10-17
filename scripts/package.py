@@ -1,6 +1,6 @@
 """Client release archives, each with its build's part of the source offer.
 
-    python3 -m scripts.package VERSION [--output DIR] [--check]
+    python3 -m scripts.package VERSION [--profile {ci,release}] [--output DIR] [--check]
 
 Builds the client with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata. It runs in
 the pinned builder image (container/Dockerfile), which provides the toolchain and the cross compilers; a build for
@@ -28,7 +28,7 @@ from pathlib import Path
 from .ci.github_api import ControlPlaneError, confined_path, local_path
 from .ci.workspace import ROOT, VERSION, build_offer, load, tui_archive
 from .legal.model import LegalError
-from .legal.rust import Build, collect
+from .legal.rust import PROFILES, Build, collect
 
 
 def host_platform() -> str:
@@ -53,7 +53,7 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
             raise LegalError(f"the {platform_name} TUI has the wrong allocator THP setting: {verbose}")
 
 
-def package(version: str, platform_name: str, target: str, output: Path) -> None:
+def package(version: str, profile: str, platform_name: str, target: str, output: Path) -> None:
     """Build and write the archive and source offer part of one platform, replacing neither until both are
     complete."""
     archive, base, binary = tui_archive(version, platform_name)
@@ -64,7 +64,7 @@ def package(version: str, platform_name: str, target: str, output: Path) -> None
     with tempfile.TemporaryDirectory(prefix=".rust-notices-", dir=cargo) as notices, \
             tempfile.TemporaryDirectory(prefix=".rust-package-", dir=output) as staging:
         legal, stage = Path(notices), Path(staging)
-        executable = collect(Build("graphite-meter-client", target, "release", version, legal,
+        executable = collect(Build("graphite-meter-client", target, profile, version, legal,
                                    target_dir=cargo / "package" / target))
         if platform_name == host_platform():
             probe(executable, version, platform_name)
@@ -129,6 +129,7 @@ def check(version: str, output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("version")
+    parser.add_argument("--profile", choices=PROFILES, default="release")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--check", action="store_true", help="run this machine's TUI out of --output instead of building")
     args = parser.parse_args()
@@ -142,7 +143,8 @@ def main() -> None:
             return
         # Each platform builds in its own target directory, so their single-threaded LTO links run at once.
         with ThreadPoolExecutor() as pool:
-            builds = [pool.submit(package, args.version, name, target, output) for name, target in load().tui.items()]
+            builds = [pool.submit(package, args.version, args.profile, name, target, output)
+                      for name, target in load().tui.items()]
             for built in builds:
                 built.result()
     except (ControlPlaneError, LegalError, OSError, ValueError, KeyError, subprocess.CalledProcessError,
