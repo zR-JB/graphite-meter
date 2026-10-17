@@ -1,4 +1,4 @@
-//! The console, the one screen before, during and after a run (`docs/DESIGN.md`, Terminal).
+//! The console, the one screen before, during and after a run.
 use super::{
     App, Target, chart,
     dial::{self, Arc, Dial},
