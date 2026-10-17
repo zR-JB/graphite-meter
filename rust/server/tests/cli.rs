@@ -22,18 +22,33 @@ fn text(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).unwrap()
 }
 
-/// A serving server with `env` and its log's messages.
+/// A server serving HTTP/1.1 on a local port with `env`: the child, its address and its next log message.
 #[cfg(unix)]
-fn serving(env: &[(&str, &str)]) -> (std::process::Child, impl Iterator<Item = String> + Send + use<>) {
+fn listening(env: &[(&str, &str)]) -> (std::process::Child, String, impl Fn() -> String) {
     use std::io::{BufRead, BufReader};
     let mut child = Command::new(env!("CARGO_BIN_EXE_graphite-meter-server"))
         .env_clear()
+        .envs([("GM_H1_ADDR", "127.0.0.1:0"), ("TOKIO_WORKER_THREADS", "2")])
         .envs(env.iter().copied())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let lines = BufReader::new(child.stderr.take().unwrap()).lines();
-    (child, lines.map(|line| logged(&line.unwrap()).2.to_owned()))
+    let (sender, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        lines
+            .map(|line| sender.send(logged(&line.unwrap()).2.to_owned()))
+            .take_while(Result::is_ok)
+            .count()
+    });
+    let next = move || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
+    assert!(next().starts_with("serving as "));
+    let listen = next();
+    let (place, roles) = listen.split_once(' ').unwrap();
+    assert_eq!(roles.trim_start(), "HTTP/1.1  UI, discovery, probe, transfers, WebSockets");
+    assert_eq!(next(), "ready");
+    (child, place.strip_suffix("/tcp").unwrap().to_owned(), next)
 }
 
 /// Stops `child` with SIGTERM and expects exit 0.
@@ -160,18 +175,7 @@ fn transfers(message: &str) -> usize {
 #[test]
 fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     use std::io::Read;
-    let env = [("GM_H1_ADDR", "127.0.0.1:0"), ("GM_VERBOSE", "true"), ("TOKIO_WORKER_THREADS", "2")];
-    let (child, lines) = serving(&env);
-    let (sender, received) = std::sync::mpsc::channel();
-    std::thread::spawn(move || lines.map(|line| sender.send(line)).take_while(Result::is_ok).count());
-    let next = || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-    assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
-    assert!(next().starts_with("serving as "));
-    let listen = next();
-    let (place, roles) = listen.split_once(' ').unwrap();
-    assert_eq!(roles.trim_start(), "HTTP/1.1  UI, discovery, probe, transfers, WebSockets");
-    let address = place.strip_suffix("/tcp").unwrap();
-    assert_eq!(next(), "ready");
+    let (child, address, next) = listening(&[("GM_VERBOSE", "true")]);
     let mut download = std::net::TcpStream::connect(address).unwrap();
     download
         .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")
@@ -184,4 +188,26 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     assert!(reading.join().unwrap(), "the download ends with the server");
     let elapsed = stopping.elapsed();
     assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn connections_past_a_client_share_are_logged_once_a_minute_with_a_count() {
+    use std::io::Read;
+    let (child, address, next) = listening(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "1")]);
+    let mut held = std::net::TcpStream::connect(&address).unwrap();
+    held.write_all(b"GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").unwrap();
+    held.read_exact(&mut [0; 12]).unwrap();
+    for _ in 0..3 {
+        let mut refused = std::net::TcpStream::connect(&address).unwrap();
+        assert!(matches!(refused.read(&mut [0; 1]), Ok(0) | Err(_)), "closed unserved");
+    }
+    assert_eq!(
+        next(),
+        "connections from 127.0.0.1 refused: GM_MAX_CONNECTIONS_PER_CLIENT=1 reached, 1 since its last line; set \
+         GM_TRUSTED_PROXIES for a proxy, or raise the limit for clients sharing an address (limits)"
+    );
+    drop(held);
+    terminate(child);
+    assert!(next().starts_with("stop requested"), "the later refusals wait for the next minute");
 }

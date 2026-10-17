@@ -8,14 +8,21 @@ pub use quota::{Hold, Quota, QuotaUsage, Refusal};
 
 use crate::{
     config::Limits,
+    log,
+    log::{Level, PerPeer, RateLimited},
     peer::{ClientKey, ClientKeys},
 };
 use graphite_meter_net::quic::{RECEIVE_WINDOW, RECEIVE_WINDOW_FLOOR};
+use std::net::IpAddr;
 
 /// The QUIC connections one client address may hold within its connection share.
 pub const QUIC_PER_CLIENT: usize = 8;
 /// The receive credit a funded QUIC connection holds past its floor.
 pub const CONNECTION_CREDIT: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
+
+/// A refused connection is closed at accept, before any request could carry a status, so only the log tells.
+static CLIENT_REFUSALS: PerPeer<ClientKey> = PerPeer::new();
+static TOTAL_REFUSALS: RateLimited = RateLimited::new(Level::Warn, "admission", "refused connections", module_path!());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -47,13 +54,42 @@ impl Quotas {
         }
     }
 
-    /// A connection keyed by its socket address; a QUIC connection also takes one of the client's QUIC shares.
-    pub fn connection(&self, keys: &ClientKeys, transport: Transport) -> Option<Hold> {
-        let hold = self.connections.acquire(keys, 1).ok()?;
-        match transport {
-            Transport::Tcp => Some(hold),
-            Transport::Quic => Some(hold.join(self.quic.acquire(keys, 1).ok()?)),
+    /// A connection from `peer` keyed by `keys`; a QUIC connection also takes one of the client's QUIC shares.
+    pub fn connection(&self, peer: IpAddr, keys: &ClientKeys, transport: Transport) -> Option<Hold> {
+        let quic = match self.connections.acquire(keys, 1) {
+            Ok(hold) if transport == Transport::Tcp => return Some(hold),
+            Ok(hold) => match self.quic.acquire(keys, 1) {
+                Ok(quic) => return Some(hold.join(quic)),
+                Err(_) => true,
+            },
+            Err(Refusal::Client) => false,
+            Err(Refusal::Total) => {
+                TOTAL_REFUSALS.write(format_args!(
+                    "connection from {peer} refused: GM_MAX_CONNECTIONS={} reached; raise it within \
+                     GM_MAX_BUFFER_BYTES",
+                    self.limits.connections
+                ));
+                return None;
+            }
+        };
+        let held = CLIENT_REFUSALS.admit(keys.narrowest()?)?;
+        let (per_client, refused) = (self.limits.connections_per_client, held + 1);
+        if quic {
+            let share = per_client.get().min(QUIC_PER_CLIENT);
+            log!(
+                Warn,
+                "admission",
+                "QUIC connections from {peer} refused: {share} per client reached, {refused} since its last line"
+            );
+        } else {
+            log!(
+                Warn,
+                "admission",
+                "connections from {peer} refused: GM_MAX_CONNECTIONS_PER_CLIENT={per_client} reached, {refused} since \
+                 its last line; set GM_TRUSTED_PROXIES for a proxy, or raise the limit for clients sharing an address"
+            );
         }
+        None
     }
 
     /// Whether any key of a source holds a QUIC connection, so that its unvalidated handshakes need Retry.
@@ -145,21 +181,21 @@ mod tests {
     #[test]
     fn a_client_holds_eight_quic_connections_within_its_connection_share() {
         let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), None);
-        let source = client("192.0.2.1");
+        let (ip, source) = ("192.0.2.1".parse().unwrap(), client("192.0.2.1"));
         let quic: Vec<_> = (0..8)
-            .map(|_| quotas.connection(&source, Transport::Quic).unwrap())
+            .map(|_| quotas.connection(ip, &source, Transport::Quic).unwrap())
             .collect();
-        assert!(quotas.connection(&source, Transport::Quic).is_none());
+        assert!(quotas.connection(ip, &source, Transport::Quic).is_none());
         assert!(quotas.holds_quic(&source));
         let tcp: Vec<_> = (0..24)
-            .map(|_| quotas.connection(&source, Transport::Tcp).unwrap())
+            .map(|_| quotas.connection(ip, &source, Transport::Tcp).unwrap())
             .collect();
-        assert!(quotas.connection(&source, Transport::Tcp).is_none(), "32 connections in all");
+        assert!(quotas.connection(ip, &source, Transport::Tcp).is_none(), "32 connections in all");
         drop((quic, tcp));
         assert!(!quotas.holds_quic(&source));
         let proxy = ClientKeys::Exempt;
         let proxied: Vec<_> = (0..40)
-            .map(|_| quotas.connection(&proxy, Transport::Quic).unwrap())
+            .map(|_| quotas.connection(ip, &proxy, Transport::Quic).unwrap())
             .collect();
         assert_eq!(proxied.len(), 40, "a trusted proxy charges only the total");
     }
