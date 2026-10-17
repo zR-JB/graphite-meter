@@ -26,7 +26,7 @@ test.chrome("one page stays responsive through repeated runs and History visits"
         super(...args);
         stats.workers++;
       }
-      terminate() {
+      override terminate() {
         stats.workers--;
         super.terminate();
       }

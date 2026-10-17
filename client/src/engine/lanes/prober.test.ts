@@ -39,6 +39,7 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
           } as unknown as Promise<void>;
         }
         if (kind !== "lost") replies.push({ id, at: clock.now + kind });
+        return;
       },
       hangUp() {},
       post(report) {
