@@ -1,5 +1,4 @@
 """Legal data and JSON boundaries; source paths never enter shipped inventories."""
-from __future__ import annotations
 
 import hashlib
 import json

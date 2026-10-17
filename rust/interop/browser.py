@@ -8,8 +8,6 @@ threads. It runs the first of BROWSERS on PATH against the static musl server it
 against the server the CI image job exports, which the job downloads to TMPDIR/image/graphite-meter-server.
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import hashlib

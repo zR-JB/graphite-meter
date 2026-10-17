@@ -7,7 +7,6 @@ together with its module scan. It is rebuilt only when a browser input, the Bun 
 changes, or when its outputs no longer match their stamp. Cargo owns the binary's freshness: the notices keep unchanged
 files untouched.
 """
-from __future__ import annotations
 
 import argparse
 import json

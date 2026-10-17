@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Verify the release image's OCI archive as data: every blob, the platforms, provenance, notices and labels."""
 
-from __future__ import annotations
-
 import hashlib
 import io
 import posixpath

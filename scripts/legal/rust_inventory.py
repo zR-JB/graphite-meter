@@ -1,5 +1,4 @@
 """The crates a Rust binary build compiles and their reviewed notices, from Cargo's locked metadata."""
-from __future__ import annotations
 
 import json
 import subprocess

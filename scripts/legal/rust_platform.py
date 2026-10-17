@@ -5,7 +5,6 @@ executable imports and the notice texts beyond the Rust standard library's (`not
 standard-library texts are found in the sysroot by rule. `noticesSha256` hashes the canonical listing of every
 notice text; the pinned builder image and toolchain establish binary provenance separately.
 """
-from __future__ import annotations
 
 import os
 import re

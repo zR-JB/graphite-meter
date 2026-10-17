@@ -11,7 +11,6 @@ the release's third-party source offer and the SOURCE.txt that names it. --devel
 dependency review but no platform record, so any host builds them; they say they are unreviewed, and so does the
 executable (legal/README.md).
 """
-from __future__ import annotations
 
 import argparse
 import gzip
@@ -318,7 +317,7 @@ def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None
                 add_bytes(archive, f"{root}/builds/{name}/{file}", (build.out / file).read_bytes())
             add_bytes(archive, f"{root}/legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())
             # Entries can share a file, such as one license for two fonts; the archive holds it once.
-            for path in dict.fromkeys(path for entry in state.provenance for path in manual_files(entry)):
+            for path in dict.fromkeys(*manual_files(entry) for entry in state.provenance):
                 add_tree(archive, ROOT / path, f"{root}/{path}", ROOT / path)
     write_changed(build.out / "SOURCE.txt",
                   source_txt(Project.read(ROOT).repository, build.version, name, build.target).encode())
