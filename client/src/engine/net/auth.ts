@@ -124,11 +124,7 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
 export const initialAuth = (entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth =>
   entry.id === "self" && entry.url === page.origin && page.auth ? sessionAuth(entry, page, session) : publicAuth(entry);
 
-const base64url = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+const base64url = (bytes: Uint8Array) => bytes.toBase64({ alphabet: "base64url", omitPadding: true });
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 /** Derives the approval's public challenge and the comparison code both pages show, which is RFC 4648 base32 of the
