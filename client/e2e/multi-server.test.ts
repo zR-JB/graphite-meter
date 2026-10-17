@@ -28,7 +28,7 @@ test("four servers share one run and keep separate receiver windows", async (pag
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
-      // Eight transfers start at once, and a receiver's window opens only once every server has reported: in a
+      // Eight transfers start at once, and a receiver's window opens only once every server has reported. In a
       // 1 s stage the slowest left under the 800 ms evidence floor on a loaded runner.
       duration: { ...combined.duration, bidirectionalMs: 2000 },
     },
@@ -193,7 +193,7 @@ test("every server's latency is saved; the lens and the dial read the chosen ser
   await expect(latency).toContainText(frankfurt.name);
   await expect.poll(async () => (await dial()) === (await download())).toBe(true);
   const alone = await latencyCard();
-  // Every server together again, latency shown for the second: the card is the second's, headline and spread.
+  // With every server together again and latency shown for the second, the card is the second's, headline and spread.
   await lens.fill("");
   await picker.fill("server-1");
   await expect.poll(latencyCard).toBe(alone);

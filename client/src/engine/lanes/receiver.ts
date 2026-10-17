@@ -1,6 +1,6 @@
-// One upload id's receiver (api/upload.md): its feed's observations, whether the receiver follows the HTTP progress
-// feed itself or a session relays them, pass one monotonic guard; checkpoints back them up on demand. Whoever carries
-// the feed finalizes the id once: the HTTP feed here, a session in its worker.
+// Tracks one upload id's receiver (api/upload.md). Its feed's observations pass one monotonic guard, whether this
+// side follows the HTTP progress feed itself or a session relays them. Checkpoints back them up on demand. Whoever
+// carries the feed finalizes the id once, the HTTP feed here and a session in its worker.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release } from "../../protocol/documents";
 import type { FeedRecord } from "../../protocol/messages";
@@ -11,21 +11,21 @@ import { Backoff, lost, refusal, refused } from "./endings";
 import { FINAL_GRACE_MS, readRecords } from "./records";
 import { abortable, delay } from "../run/clock";
 
-/** One checkpoint request's bound, and the final checkpoint's whole window. */
+/** Bounds one checkpoint request, and the final checkpoint's whole window. */
 const CHECKPOINT_MS = 1_500;
 const FINAL_RETRY_MS = 100;
 const READY_POLL_MS = 50;
 /** A feed whose receiver time stood still this long is backed by a checkpoint. */
 const QUIET_MS = 250;
-/** The feed sends a line at least every second: an HTTP feed silent for this many quiet checks is dead and reconnects. */
+/** Feeds send a line at least every second. An HTTP feed silent for this many quiet checks is dead and reconnects. */
 const SILENT_CHECKS = 6;
 
 export interface ReceiverHost {
   /** Run ms. */
   now(): number;
-  /** An observation that passed the guard; `grew` when the receiver's bytes did. */
+  /** Takes an observation that passed the guard, with `grew` set when the receiver's bytes did. */
   observed(checkpoint: Checkpoint, grew: boolean): void;
-  /** Settles the HTTP feed's ending; true when it should reconnect, after `delayMs`. */
+  /** Settles the HTTP feed's ending. Returns true when it should reconnect, after `delayMs`. */
   ended(ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
   signIn(): void;
 }
@@ -63,12 +63,12 @@ export class Receiver {
     if (!carried) void this.#follow();
   }
 
-  /** The feed's DELETE, for a session that carries it. */
+  /** A session that carries the feed finalizes it with a DELETE here. */
   get feed(): string {
     return this.#feed;
   }
 
-  /** Refused as busy since the feed last opened. */
+  /** The feed was refused as busy since it last opened. */
   get busy(): boolean {
     return !!this.#backoff?.busy;
   }
@@ -78,7 +78,7 @@ export class Receiver {
     return abortable(this.#opened.promise, signal);
   }
 
-  /** An observation from the feed, whoever carries it. */
+  /** Takes an observation from the feed, whoever carries it. */
   record(record: FeedRecord): void {
     if (this.#closed.signal.aborted) return;
     if (record.type === "ready") {
@@ -109,7 +109,7 @@ export class Receiver {
     }
   }
 
-  /** While measuring over HTTP, a quiet feed is backed by same-receiver checkpoints; a failed one proves nothing. */
+  /** While measuring over HTTP, a quiet feed is backed by same-receiver checkpoints. A failed one proves nothing. */
   measure(): void {
     if (!this.#backoff) return;
     const check = () => {
@@ -121,7 +121,7 @@ export class Receiver {
     check();
   }
 
-  /** An ordinary checkpoint joins the one in flight; a final one issues fresh requests and retries a miss within its
+  /** An ordinary checkpoint joins the one in flight. A final one issues fresh requests and retries a miss within its
       bound. Either feeds the receiver like a record. */
   checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     if (final) return this.#final(AbortSignal.any([signal, AbortSignal.timeout(CHECKPOINT_MS)]));
@@ -130,7 +130,7 @@ export class Receiver {
   }
 
   /** Finalizes an HTTP feed's id, then waits a grace for the terminal record. A session finalizes its own id as it
-      stops; one it could not finalize (its worker died or never got its command) is backed up without waiting. */
+      stops. One it could not finalize (its worker died or never got its command) is backed up without waiting. */
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
@@ -145,7 +145,7 @@ export class Receiver {
           release(response);
           if (response.ok) await delay(FINAL_GRACE_MS, AbortSignal.any([this.#closed.signal, this.#complete.signal]));
         } catch {
-          // Finalization is cleanup: the measured window already closed.
+          // Finalization is cleanup, since the measured window already closed.
         }
     }
     this.close();
@@ -155,7 +155,7 @@ export class Receiver {
     this.#closed.abort();
   }
 
-  /** A regressing observation is stale: receiver bytes and time are only ever taken together. */
+  /** A regressing observation is stale, since receiver bytes and time are only ever taken together. */
   #observe(checkpoint: Checkpoint): boolean {
     const { bytes = 0, nanos = 0 } = this.#last ?? {};
     if (checkpoint.bytes < bytes || checkpoint.nanos < nanos) return false;
@@ -191,7 +191,7 @@ export class Receiver {
           release(response);
           ending = refused(response, `progress returned HTTP ${response.status}`);
         } else {
-          // Only an open feed promises its lines; opening one over a loaded uplink can take seconds.
+          // Only an open feed promises its lines. Opening one over a loaded uplink can take seconds.
           watch();
           const last = await readRecords(
             response.body,
@@ -229,8 +229,8 @@ export class Receiver {
     }
   }
 
-  /** One checkpoint; a refusal, a malformed answer or a closed receiver is none. An observation that overtook the
-      answer is newer, so it was taken after the request reached the receiver: it answers instead. */
+  /** Requests one checkpoint. A refusal, a malformed answer or a closed receiver is none. An observation that overtook
+      the answer is newer, so it was taken after the request reached the receiver, and it answers instead. */
   async #request(): Promise<Checkpoint | null> {
     if (this.#closed.signal.aborted) return null;
     const requestedAtMs = this.#host.now();

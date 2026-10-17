@@ -1,5 +1,5 @@
-// The Duration group: the planned length in total, presets over a strip of the stage times, each stage's and the
-// warmup's stepper in Custom, and the switches that shape the timeline.
+// The Duration group shows the planned length in total, presets over a strip of the stage times, each stage's and
+// the warmup's stepper in Custom, and the switches that shape the timeline.
 import { DURATION_LIMITS, DURATION_PRESETS } from "../../app/preferences";
 import type { App } from "../../app/app";
 import type { Stage } from "../../engine/run/schedule";
@@ -21,7 +21,7 @@ import { Unfold } from "./unfold";
 type DurationKey = keyof TestConfig["duration"];
 const WARMUP_STEP_MS = 100;
 const CUSTOM_STAGES = ["latency", "download", "upload"] as const;
-// Latency, Download and Upload always show; Bidirectional with its switch.
+// Latency, Download and Upload always show. Bidirectional shows with its switch.
 const STRIP: readonly Stage[] = CUSTOM_STAGES;
 const STRIP_BIDIRECTIONAL: readonly Stage[] = [...CUSTOM_STAGES, "bidirectional"];
 const NAME = { short: "Short", medium: "Medium", long: "Long", custom: "Custom" } as const;

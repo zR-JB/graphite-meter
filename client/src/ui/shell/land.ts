@@ -1,4 +1,4 @@
-// Content that stops rendering never advances its animations; what is still under way there lands at its end.
+// Content that stops rendering never advances its animations, so what is still under way there lands at its end.
 
 export function land(root: Element): void {
   for (const animation of root.getAnimations({ subtree: true })) {

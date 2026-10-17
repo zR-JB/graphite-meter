@@ -12,15 +12,15 @@ import {
 } from "./fleet";
 import { expect, settled, test } from "./webview";
 
-// Flush native dialog/popover events without waiting for CSS transitions: each
-// reversal should interrupt the preceding animation, just like rapid input.
+// Flushes native dialog/popover events without waiting for CSS transitions. Each reversal should interrupt the
+// preceding animation, just like rapid input.
 async function churnSurfaces(cycles: number) {
   const frames = async () => {
     for (let i = 0; i < 2; i++) await new Promise<void>((done) => requestAnimationFrame(() => done()));
   };
   const click = async (selector: string) => {
     const button = document.querySelector<HTMLButtonElement>(selector);
-    // A close that steps back through history lands in a later task; a control under the closing modal waits.
+    // A close that steps back through history lands in a later task, so a control under the closing modal waits.
     for (let wait = 0; button?.closest("[inert]") && wait < 30; wait++) await frames();
     if (!button || button.disabled || !button.checkVisibility())
       throw new Error(`Unavailable stress control: ${selector}`);
@@ -124,8 +124,8 @@ for (const width of [1600, 1000, 390]) {
       const started = Date.now();
       await runButton(page, "Run again").click();
       await expect(phase(page, "download")).toHaveCount(1);
-      // Each cycle must answer within the harness deadline; the complete batch
-      // can exceed it on a CPU-throttled CI runner without a stalled page.
+      // Each cycle must answer within the harness deadline. The complete batch can exceed it on a CPU-throttled CI
+      // runner without a stalled page.
       for (let cycle = 0; cycle < 10; cycle++) await page.evaluate(churnSurfaces, 1);
       const saved = await savedResult(page, started, 30_000);
       expect(saved.result.outcome).toBe("complete");
@@ -166,10 +166,10 @@ for (const width of [1000, 390]) {
       return { x, y, receivesInput: !!hit && node.contains(hit) };
     });
     expect(target.receivesInput).toBe(true);
-    // Bypass the locator's actionability retry: the first click must land while
-    // the closed sheet and scrim are still fading.
+    // The raw click bypasses the locator's actionability retry, because the first click must land while the closed
+    // sheet and scrim are still fading.
     await page.click(target.x, target.y);
-    // A stop before the run is under way cancels the start; one after it aborts the run.
+    // A stop before the run is under way cancels the start. One after it aborts the run.
     await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
     await runButton(page, "Stop test").click();
     await expect(phase(page, "aborted")).toHaveCount(1);
@@ -184,8 +184,8 @@ test("the measurement workspace's painters rest while History covers it mid-run 
     },
   });
   await ready(page);
-  // What the workspace's painters write over 30 frames: inline styles (the needle, the chips' bars) and the dial's,
-  // the chips' and the running card's figures; a card's facts, and the widths their figures grow to, follow samples.
+  // Over 30 frames the workspace's painters write inline styles (the needle, the chips' bars) and the dial's, the
+  // chips' and the running card's figures. A card's facts, and the widths their figures grow to, follow samples.
   const painted = () =>
     page.evaluate(async () => {
       let writes = 0;

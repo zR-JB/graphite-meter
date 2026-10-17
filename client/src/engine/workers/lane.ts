@@ -1,5 +1,5 @@
-// One HTTP fetch lane (api/upload.md): a download loop counting what it reads, or an upload loop of sized POSTs that
-// the server counts. Its owner reopens it after an ending and stops it by termination.
+// Runs one HTTP fetch lane (api/upload.md), either a download loop counting what it reads or an upload loop of sized
+// POSTs that the server counts. Its owner reopens it after an ending and stops it by termination.
 import { release } from "../../protocol/documents";
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
 import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
@@ -8,14 +8,14 @@ import { downloadRefused, lost, refused } from "../lanes/endings";
 const MIB = 1024 * 1024;
 /** A POST sends for at least this long, so per-request overhead stays small. */
 const TARGET_POST_MS = 500;
-/** Each POST's answer leaves its lane idle for about one round trip, which the receiver times as no bytes moving: a
-    POST sends for at least this many round trips, so its lane stays at least 90 % busy. */
+/** Each POST's answer leaves its lane idle for about one round trip, which the receiver times as no bytes moving. So
+    a POST sends for at least this many round trips, and its lane stays at least 90 % busy. */
 const TURNAROUNDS = 9;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
-/** An upload's answer is a short record; a peer that sends more is not kept waiting for. */
+/** An upload's answer is a short record. A peer that sends more is not kept waiting for. */
 const MAX_ANSWER_BYTES = 64 * 1024;
-/** A download asks for far more; a body that ends below this came from something else, such as a proxy's page. */
+/** A download asks for far more. A body that ends below this came from something else, such as a proxy's page. */
 const MIN_DOWNLOAD_BYTES = MIB;
 
 const post = (report: LaneReport) => postMessage(report);
@@ -59,7 +59,7 @@ async function download({
         read += bytes;
         reports.count(bytes);
       });
-      // Fetching again at once would spin as fast as the short answers come; the owner's backoff paces a reopen.
+      // Fetching again at once would spin as fast as the short answers come. The owner's backoff paces a reopen.
       if (read < MIN_DOWNLOAD_BYTES) {
         reports.flush();
         return { type: "ended", ending: lost("the download ended early") };
@@ -72,8 +72,8 @@ async function download({
   }
 }
 
-/** Reads an answer to its end without keeping it; false, and the rest cancelled, once it passes MAX_ANSWER_BYTES. A
-    failed read is the next request's to find. */
+/** Reads an answer to its end without keeping it. It returns false, with the rest cancelled, once the answer passes
+    MAX_ANSWER_BYTES. A failed read is the next request's to find. */
 async function drained(response: Response): Promise<boolean> {
   const reader = response.body?.getReader();
   if (!reader) return true;
@@ -108,7 +108,7 @@ async function upload({
     const startedAt = performance.now();
     try {
       const response = await fetch(url, { ...request, method: "POST", cache: "no-store", body: body.slice(0, bytes) });
-      // An unread echo pins the keep-alive connection the next POST needs; it is counted, never kept.
+      // An unread echo pins the keep-alive connection the next POST needs. It is counted, never kept.
       if (!(await drained(response))) return { type: "broken", detail: "the upload answer was too large" };
       if (!response.ok) return { type: "ended", ending: refused(response) };
       const elapsedMs = performance.now() - startedAt;

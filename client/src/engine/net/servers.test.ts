@@ -15,7 +15,7 @@ afterEach(() => {
 
 const HOME = { servers: [{ id: "self", url: ".", name: "Home" }], defaultSelection: ["self"] };
 
-/** The page's servers on the fake network, whose catalog and server answer as `route` says, once loaded. */
+/** Loads the page's servers on the fake network, whose catalog and server answer as `route` says. */
 async function load(
   route: (url: URL, init: RequestInit) => Answer,
   transports: Partial<TestConfig["transports"]> = {},
@@ -39,7 +39,7 @@ async function load(
   cleanups.push(servers.dispose);
   await servers.load();
   await net.advance(1_000);
-  /** Starts the run's preparation: its outcome once settled, or the name of the error that ended it. */
+  /** Starts the run's preparation and yields its outcome once settled, or the name of the error that ended it. */
   const prepare = () =>
     servers.prepare(new AbortController().signal).then(
       ({ servers, dropped }) => ({ servers: servers.map(({ server }) => server.id), dropped }),
@@ -51,7 +51,7 @@ async function load(
 
 const PEER = "https://peer.example";
 
-/** Home and a peer that refuses requests without its grant, loaded; `token` answers the grant exchange. */
+/** Loads Home and a peer that refuses requests without its grant. `token` answers the grant exchange. */
 const withPeer = (token: Answer) =>
   load((url, init) => {
     if (url.pathname === "/servers")
@@ -79,7 +79,7 @@ test("Start runs on what its checks verified however long they take, and never f
         : { body: PROBE, hop: "http/1.1", afterMs: probeMs },
   );
   expect(readiness()).toBe("verified");
-  // A run holds the checks; at 119 s it fails on latency, and Start follows while that path is checked for 1.5 s.
+  // A run holds the checks. At 119 s it fails on latency, and Start follows while that path is checked for 1.5 s.
   active.set(false);
   await net!.advance(118_000);
   servers.recheck({ serverId: "self", scope: "latency", reason: "timeout", message: "Latency probes timed out" });

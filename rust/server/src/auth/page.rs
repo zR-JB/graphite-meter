@@ -1,4 +1,4 @@
-//! The sign-in and approval pages from the assets `client/auth/build.ts` writes, and authentication answer headers.
+//! Builds sign-in and approval pages from the assets `client/auth/build.ts` writes and sets their answer headers.
 
 use http::{HeaderMap, HeaderValue, header};
 use std::{fmt::Write as _, sync::LazyLock};
@@ -11,7 +11,7 @@ static CLI: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("
 static CLI_DONE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/cli-done.tmpl")));
 static CONTINUE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/continue.tmpl")));
 
-/// The sign-in page.
+/// Renders the sign-in page.
 pub(super) struct Login<'a> {
     pub csrf: &'a str,
     pub provider: &'a str,
@@ -38,7 +38,7 @@ impl Login<'_> {
     }
 }
 
-/// The approval page: an approval to confirm, a refusal, or a login at its client limit.
+/// Renders the approval page with an approval to confirm, a refusal, or a login at its client limit.
 pub(super) enum Cli<'a> {
     Approval {
         code: &'a str,
@@ -69,7 +69,7 @@ impl Cli<'_> {
     }
 }
 
-/// An approval's confirmation, for a browser or a terminal.
+/// Renders an approval's confirmation, for a browser or a terminal.
 pub(super) struct CliDone {
     pub browser: bool,
 }
@@ -80,7 +80,7 @@ impl CliDone {
     }
 }
 
-/// The step back from a provider or another site to this one, opening the approval when `opening`.
+/// Renders the step back from a provider or another site to this one, opening the approval when `opening`.
 pub(super) struct Continue<'a> {
     pub challenge: Option<&'a str>,
     pub opening: bool,
@@ -92,7 +92,7 @@ impl Continue<'_> {
     }
 }
 
-/// A template flag: `"true"` or empty.
+/// A template flag is `"true"` or empty.
 fn flag(on: bool) -> &'static str {
     if on { "true" } else { "" }
 }
@@ -108,7 +108,7 @@ pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
     }
 }
 
-/// The headers of every authentication page and refusal, with HSTS once the request is known to be secure.
+/// Sets the headers of every authentication page and refusal, with HSTS once the request is known to be secure.
 pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use ring::digest::{SHA256, digest};
@@ -130,7 +130,7 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
 }
 
-/// A template's actions, each with the text after it; the first action is empty.
+/// Holds a template's actions, each with the text after it. The first action is empty.
 struct Template(Vec<(String, String)>);
 
 impl Template {
@@ -150,7 +150,7 @@ impl Template {
         Self(std::iter::once(first).chain(actions).collect())
     }
 
-    /// Template actions: `href`-escaped fields, theme and pending scripts, `if`/`else`/`end` on `not`/`and`/`eq`/`ne`.
+    /// Expands `href`-escaped fields, theme and pending scripts, and `if`/`else`/`end` on `not`/`and`/`eq`/`ne`.
     fn render(&self, fields: &[(&str, &str)]) -> String {
         let field = |name: &str| {
             let name = name.trim_start_matches('.');
@@ -200,7 +200,7 @@ impl Template {
     }
 }
 
-/// Whether a condition holds: a field or flag is true when nonempty.
+/// Says whether a condition holds. A field or flag is true when nonempty.
 fn condition<'a>(test: &'a str, field: &impl Fn(&'a str) -> &'a str) -> bool {
     fn value<'a>(words: &mut impl Iterator<Item = &'a str>, field: &impl Fn(&'a str) -> &'a str) -> &'a str {
         let flag = |on: bool| if on { "true" } else { "" };

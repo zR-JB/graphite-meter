@@ -1,5 +1,5 @@
-//! The binary without the interface against canned peers: a protected server, and a run whose server refuses its
-//! download.
+//! Runs the binary without the interface against canned peers, a protected server and a run whose server refuses
+//! its download.
 #![cfg(unix)]
 
 use std::{process::Stdio, time::Duration};
@@ -10,7 +10,7 @@ use tokio::{
     time::timeout,
 };
 
-/// A run of `stages` for a second each in report mode at `url`, without proxies.
+/// Prepares a run of `stages` for a second each in report mode at `url`, without proxies.
 fn client(url: &str, stages: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
     command.args(["--report", "-url", url, "-stages", stages]);
@@ -35,7 +35,7 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
     (output.status.code(), text(output.stdout), text(output.stderr))
 }
 
-/// The path of the next request on `stream`, once its head arrived.
+/// Reads the path of the next request on `stream`, once its head arrived.
 async fn path(stream: &mut TcpStream) -> Option<String> {
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
@@ -44,7 +44,7 @@ async fn path(stream: &mut TcpStream) -> Option<String> {
     String::from_utf8_lossy(&head).split(' ').nth(1).map(str::to_owned)
 }
 
-/// A peer at the returned URL answering each request by its path: a 200 JSON body, or `refusal`.
+/// Serves a peer at the returned URL that answers each request by its path with a 200 JSON body, or `refusal`.
 async fn peer(body: fn(&str) -> &'static str, refusal: &'static str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -75,7 +75,7 @@ async fn a_protected_server_exits_1_asking_for_a_terminal() {
     assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
 }
 
-/// A server named A that answers its server catalog, preflight and probe, and refuses everything else.
+/// Serves a server named A that answers its server catalog, preflight and probe, and refuses everything else.
 async fn refusing_downloads() -> String {
     let body = |path: &str| match path {
         "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,

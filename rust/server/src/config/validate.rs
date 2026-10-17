@@ -1,4 +1,4 @@
-//! Cross-field validation into a `Config`: catalog, authentication, limits, listeners, origins.
+//! Validates the catalog, authentication, limits, listeners and origins across fields into a `Config`.
 
 use super::{
     Auth, Config, Groups, Lifetimes, Limits, ListenAddress, Listener, ListenerKind, Methods, Oidc, Outbound,
@@ -92,7 +92,7 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     Ok((limits, lifetimes))
 }
 
-/// Each listener's address and public origin settings as given.
+/// Lists each listener's address and public origin settings as given.
 fn natives(settings: &Settings) -> [(ListenerKind, &str, &str); 4] {
     [
         (ListenerKind::H1, &settings.h1_addr, &settings.h1_public_origin),
@@ -109,7 +109,7 @@ fn advertised(settings: &Settings, kind: ListenerKind) -> bool {
     }
 }
 
-/// The enabled listeners; their public origins are checked with the other origins.
+/// Builds the enabled listeners. Their public origins are checked with the other origins.
 fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
     let natives = natives(settings);
     if settings.h1_addr.is_empty() {
@@ -218,7 +218,7 @@ fn public_lists(settings: &Settings) -> [(&'static str, &Vec<String>); 3] {
     ]
 }
 
-/// An enabled GM_AUTH_MODE.
+/// GM_AUTH_MODE is enabled as one of these.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AuthMode {
     Password,
@@ -251,7 +251,7 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
     Ok(Some(Auth { public_origin, methods, provider }))
 }
 
-/// Both exclusions first, then each method's sources, then the provider's settings.
+/// Checks both exclusions first, then each method's sources, then the provider's settings.
 fn methods(settings: &Settings, mode: AuthMode) -> Result<Methods, String> {
     let password = secret(&settings.auth_password_hash, &settings.auth_password_hash_file);
     let client_secret = secret(&settings.auth_oidc_client_secret, &settings.auth_oidc_client_secret_file);
@@ -309,7 +309,7 @@ fn secret(inline: &str, file: &str) -> Option<Secret> {
     }
 }
 
-/// An HTTPS URL with an ASCII host and path, and no credentials, query or fragment.
+/// Accepts an HTTPS URL with an ASCII host and path, and no credentials, query or fragment.
 fn https_issuer(issuer: &str) -> bool {
     Origin::split(issuer).is_ok_and(|(origin, rest)| origin.scheme == Scheme::Https && !rest.contains('?'))
 }

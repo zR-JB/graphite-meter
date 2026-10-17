@@ -1,4 +1,4 @@
-//! The terminal interface: the console and what opens over it, the `App` the event loop in `terminal` draws.
+//! Runs the terminal interface as the `App` the event loop in `terminal` draws, the console and what opens over it.
 mod chart;
 pub mod chrome;
 mod console;
@@ -41,22 +41,22 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How long settings rest before their paths are checked again.
+/// Settings rest this long before their paths are checked again.
 const RECHECK: Duration = Duration::from_millis(350);
-/// Animation repaints at 120 fps, so the needle and readouts glide on fast displays; input paints at once.
+/// Animation repaints at 120 fps, so the needle and readouts glide on fast displays. Input paints at once.
 const FRAME: Duration = Duration::from_micros(8_333);
-/// How long the spinner shows each of its glyphs.
+/// The spinner shows each of its glyphs this long.
 const SPIN: Duration = Duration::from_millis(80);
-/// How long a notice stays.
+/// A notice stays this long.
 const TOAST: Duration = Duration::from_millis(3200);
-/// The smallest terminal the interface draws in, in columns and rows.
+/// The interface draws in a terminal at least this large, in columns and rows.
 const SMALLEST: (u16, u16) = (60, 16);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// What opens over the console, with the state it keeps while open.
+/// Opens over the console with the state it keeps while open.
 enum Overlay {
     None,
-    /// The row being typed into, and whether a reset awaits its confirmation.
+    /// Holds the row being typed into, and whether a reset awaits its confirmation.
     Settings {
         editor: Option<Editor>,
         resetting: bool,
@@ -65,7 +65,7 @@ enum Overlay {
     Help,
     Chooser(Chooser),
     SignIn(SignIn),
-    /// The server's address, asked for at a first start or after its check could not reach it.
+    /// Asks for the server's address at a first start or after its check could not reach it.
     Connect(Editor),
 }
 
@@ -73,30 +73,30 @@ impl Overlay {
     const SETTINGS: Self = Self::Settings { editor: None, resetting: false };
 }
 
-/// What a press on a drawn region does.
+/// A press on a drawn region does one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// The run key: start, or stop while a run goes.
+    /// The run key starts, or stops while a run goes.
     Key,
-    /// A stage's chip: switches it on or off between runs.
+    /// A stage's chip switches it on or off between runs.
     Chip(Stage),
-    /// A key cap in a bar, which does what its key does.
+    /// A key cap in a bar does what its key does.
     Cap(Action),
-    /// The server in the top bar, which opens its settings.
+    /// The server in the top bar opens its settings.
     Server,
-    /// A settings row, and a chooser entry.
+    /// A settings row and a chooser entry each take a press, by index.
     Row(usize),
     Entry(usize),
-    /// The sign-in page's address.
+    /// The sign-in page's address opens in a browser.
     Link,
-    /// The connect card's switch that remembers the server for later starts.
+    /// The connect card's switch remembers the server for later starts.
     Remember,
-    /// A sheet's own ground, and the dimmed console around it, which closes it.
+    /// A sheet's own ground takes a press, and the dimmed console around it closes the sheet.
     Sheet,
     Backdrop,
 }
 
-/// What the interface asks of its loop.
+/// The interface asks these of its loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     Command(Box<Command>),
@@ -115,7 +115,7 @@ impl Effect {
     }
 }
 
-/// How the interface ended: what it showed, its palette, an interrupt's status, whether a finished report follows.
+/// The interface ended with what it showed, its palette, an interrupt's status and whether a finished report follows.
 pub struct Exit {
     pub view: View,
     pub palette: Palette,
@@ -123,56 +123,56 @@ pub struct Exit {
     pub report: bool,
 }
 
-/// A notice in the bottom bar until it lapses.
+/// Shows a notice in the bottom bar until it lapses.
 struct Toast {
     text: Line,
     until: Instant,
 }
 
-/// The interface's state; time enters through each call.
+/// Holds the interface's state. Time enters through each call.
 pub struct App {
     config: Config,
     view: View,
     profile: Profile,
     palette: Palette,
     overlay: Overlay,
-    /// Whether keys are a late OSC 11 answer, which starts as Alt+].
+    /// Set while keys are a late OSC 11 answer, which starts as Alt+].
     answering: bool,
     setup: Setup,
     live: run::Live,
     toast: Option<Toast>,
-    /// Whether a stop was asked for and the run has not ended yet.
+    /// Set while a stop was asked for and the run has not ended yet.
     stopping: bool,
-    /// Whether the interface quits once the run stops.
+    /// Set when the interface quits once the run stops.
     quitting: bool,
-    /// Whether ctrl+c or a signal arrived during a run.
+    /// Set when ctrl+c or a signal arrived during a run.
     interrupted: bool,
-    /// The status of the latest caught signal.
+    /// Holds the status of the latest caught signal.
     caught: Option<u8>,
-    /// When the paths are checked next.
+    /// The paths are checked next at this time.
     recheck: Option<Instant>,
-    /// What the latest operation prepared for.
+    /// The latest operation prepared for this key.
     asked: Option<PrepKey>,
-    /// Whether the server is kept for later starts: it was at start, or the user turned it on; and the one kept.
+    /// Set when the server is kept for later starts, from the start or by the user, along with the one kept.
     remembering: bool,
     kept: Option<Origin>,
-    /// A sheet's first shown line, and how many it shows.
+    /// A sheet shows from this line, and this many.
     scroll: usize,
     rows: usize,
-    /// The last frame's pressable regions, the topmost last, and the one the pointer rests on.
+    /// Lists the last frame's pressable regions, the topmost last, and the one the pointer rests on.
     hits: Vec<(Rect, Target)>,
     hover: Option<Target>,
-    /// The last frame's size.
+    /// The last frame took this area.
     area: Rect,
-    /// The dial's ring for the area it was last drawn in.
+    /// Caches the dial's ring for the area it was last drawn in.
     ring: RefCell<Option<dial::Ring>>,
     since: Instant,
     now: Instant,
 }
 
 impl App {
-    /// The console for `config` in `profile` and `palette`, with the server `kept` for later starts if one is; its first
-    /// tick checks the paths, or it asks for the server without one.
+    /// Builds the console for `config` in `profile` and `palette`, with the server `kept` for later starts if one is.
+    /// Its first tick checks the paths, or it asks for the server without one.
     pub fn new(config: Config, kept: Option<Origin>, (profile, palette): (Profile, Palette), now: Instant) -> Self {
         let mut app = Self {
             config,
@@ -231,7 +231,7 @@ impl App {
         self.overlay = Overlay::Connect(Editor::new(Row::Address, &address));
     }
 
-    /// The address or setting being typed.
+    /// Finds the address or setting being typed.
     fn editor(&self) -> Option<&Editor> {
         match &self.overlay {
             Overlay::Settings { editor: Some(editor), .. } | Overlay::Connect(editor) => Some(editor),
@@ -251,7 +251,7 @@ impl App {
         self.toast = Some(Toast { text, until: self.now + TOAST });
     }
 
-    /// Takes `event`; a run ending while the interface quits ends it.
+    /// Takes `event`. A run ending while the interface quits ends it.
     pub fn event(&mut self, event: &Event, now: Instant) -> Vec<Effect> {
         self.now = now;
         let shown = self.latency_server().cloned();
@@ -265,7 +265,7 @@ impl App {
                 if std::mem::take(&mut self.setup.chooser) {
                     self.open_chooser();
                 }
-                // Only the address this check was for, which a later edit may already have replaced.
+                // Only the address this check was for counts, since a later edit may already have replaced it.
                 let current = self.asked == Some(self.config.key());
                 let prepared = current && !servers.is_empty() && servers.iter().all(|server| server.path.is_ok());
                 if current
@@ -286,7 +286,7 @@ impl App {
             }
             Event::CheckFailed(_) => {
                 self.setup.chooser = false;
-                // A sign-in that lapsed leaves the address as it is; a server that could not be reached opens it.
+                // A sign-in that lapsed leaves the address as it is. A server that could not be reached opens it.
                 if !self.running() && matches!(self.view.check, Check::Failed(_)) {
                     self.unreachable();
                 }
@@ -338,7 +338,7 @@ impl App {
         }
     }
 
-    /// Reacts to terminal input: keys, pasted text, and the pointer's moves, presses and wheel.
+    /// Reacts to terminal input, from keys and pasted text to the pointer's moves, presses and wheel.
     pub fn input(&mut self, input: Input, now: Instant) -> Vec<Effect> {
         self.now = now;
         match input {
@@ -359,7 +359,7 @@ impl App {
         Vec::new()
     }
 
-    /// The pointer: a move lights what it rests on, a press presses it, the wheel scrolls a sheet or moves its focus.
+    /// A pointer move lights what it rests on, a press presses it, and the wheel scrolls a sheet or moves its focus.
     fn mouse(&mut self, mouse: MouseEvent) -> Vec<Effect> {
         let target = self.target(mouse.column, mouse.row);
         match mouse.kind {
@@ -384,7 +384,7 @@ impl App {
         Vec::new()
     }
 
-    /// The topmost pressable region at `column` and `row` in the last frame.
+    /// Finds the topmost pressable region at `column` and `row` in the last frame.
     fn target(&self, column: u16, row: u16) -> Option<Target> {
         let at = Position::new(column, row);
         self.hits
@@ -394,7 +394,7 @@ impl App {
             .map(|(_, target)| *target)
     }
 
-    /// Whether the pointer rests on `target`.
+    /// Tells which target the pointer rests on.
     pub fn hovered(&self) -> Option<Target> {
         self.hover
     }
@@ -433,7 +433,7 @@ impl App {
         Vec::new()
     }
 
-    /// Reacts to a key; a background answer arriving after the query gave up is dropped.
+    /// Reacts to a key. A background answer arriving after the query gave up is dropped.
     pub fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         self.now = now;
         let answer = |c: char| c.is_ascii_hexdigit() || "rgb:/;#".contains(c);
@@ -511,7 +511,7 @@ impl App {
         self.set_flag(Row::Stage(stage), on);
     }
 
-    /// Quits, a running test first stopping.
+    /// Quits, stopping a running test first.
     fn quit(&mut self) -> Vec<Effect> {
         if !self.running() {
             return vec![Effect::Quit];
@@ -527,13 +527,13 @@ impl App {
         self.stop()
     }
 
-    /// Quits as a caught signal ending with `status` asks: like ctrl+c.
+    /// Quits as a caught signal ending with `status` asks, like ctrl+c.
     pub fn signal(&mut self, status: u8) -> Vec<Effect> {
         self.caught = Some(status);
         self.interrupt()
     }
 
-    /// Quits as ctrl+c asks: like q, and at once while quitting.
+    /// Quits as ctrl+c asks, like q, and at once while quitting.
     fn interrupt(&mut self) -> Vec<Effect> {
         if !self.running() {
             return vec![Effect::Quit];
@@ -554,7 +554,7 @@ impl App {
     pub fn tick(&mut self, now: Instant) -> Vec<Effect> {
         self.now = now;
         self.toast = self.toast.take().filter(|toast| toast.until > now);
-        // A check waits for the run to end: the newest operation would replace the run.
+        // A check waits for the run to end, since the newest operation would replace the run.
         match self.recheck {
             Some(due) if due <= now && !self.running() => {
                 self.recheck = None;
@@ -565,18 +565,18 @@ impl App {
         }
     }
 
-    /// Whether a frame tick has work: something animates, or a check is due.
+    /// Tells whether a frame tick has work, because something animates or a check is due.
     pub fn waiting(&self) -> bool {
         self.animating() || self.recheck.is_some()
     }
 
-    /// Whether frames change without input: a spinner turns, the needle moves, or a notice waits to lapse.
+    /// Tells whether frames change without input, as a spinner turns, the needle moves, or a notice waits to lapse.
     pub fn animating(&self) -> bool {
         let busy = self.checking() || self.running() || matches!(self.overlay, Overlay::SignIn(_));
         busy || self.toast.is_some() || self.live.moving(self.now)
     }
 
-    /// How the interface ends now: a signal's status after an interrupted run, or a caught one after a stopped run.
+    /// Ends the interface now, with a signal's status after an interrupted run, or a caught one after a stopped run.
     pub fn exit(self) -> Exit {
         let outcome = self.view.latest().and_then(|run| run.outcome);
         let report = outcome.is_some() && self.view.run.as_ref().is_some_and(|run| run.at.is_some());
@@ -589,7 +589,7 @@ impl App {
         }
     }
 
-    /// The key table of what is on top.
+    /// Picks the key table of what is on top.
     fn table(&self) -> &'static [keys::Binding] {
         match &self.overlay {
             Overlay::None | Overlay::Connect(_) => keys::CONSOLE,
@@ -622,7 +622,7 @@ impl App {
         };
     }
 
-    /// Runs the settings when they are valid; without a server it asks for one.
+    /// Runs the settings when they are valid. Without a server it asks for one.
     fn start(&mut self) -> Vec<Effect> {
         if self.config.url.is_none() {
             self.ask_for_server();
@@ -639,7 +639,7 @@ impl App {
         Effect::command(Command::Run(self.config.clone()))
     }
 
-    /// The spinner's glyph now.
+    /// Picks the spinner's glyph for now.
     fn spinner(&self) -> &'static str {
         let frames = self.now.saturating_duration_since(self.since).as_millis() / SPIN.as_millis();
         SPINNER[(frames % SPINNER.len() as u128) as usize]
@@ -652,13 +652,13 @@ impl App {
         }
     }
 
-    /// The selected servers' names with their locations.
+    /// Lists the selected servers' names with their locations.
     pub(super) fn labels(&self) -> Vec<String> {
         let label = |server: &crate::run::prepare::ServerPath| format::server(&server.name, &server.location);
         self.view.servers.iter().map(label).collect()
     }
 
-    /// A key and what it does as a bar's cap: the key on a raised plate, its deed beside it.
+    /// Draws a key and what it does as a bar's cap, the key on a raised plate and its deed beside it.
     fn cap(&self, key: &str, does: &str, hovered: bool) -> Line {
         let plate = Style {
             bg: Some(if hovered { self.palette.selected } else { self.palette.raised }),

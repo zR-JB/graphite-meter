@@ -1,5 +1,5 @@
-// The Settings sheet's body: the connection, the test's timeline, display, saving, probes and transfers, and a reset.
-// A test setting goes through the run, which refuses what can no longer apply; display settings never lock.
+// The Settings sheet's body covers the connection, the test's timeline, display, saving, probes and transfers, and
+// a reset. A test setting goes through the run, which refuses what can no longer apply. Display settings never lock.
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";
@@ -28,9 +28,9 @@ import { Unfold } from "./unfold";
 
 export type Group = "connection" | "duration" | "display" | "probes" | "transfers";
 export interface Edits {
-  /** Runs a test-setting change; a refusal shows under `group` and is announced, until a change applies. */
+  /** Runs a test-setting change. A refusal shows under `group` and is announced, until a change applies. */
   edit(group: Group, change: () => boolean): boolean;
-  /** The refusal notice under `group`. */
+  /** Renders the refusal notice under `group`. */
   notice(group: Group): Node;
 }
 
@@ -65,7 +65,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
         refused.set(null);
         return true;
       }
-      // A live run says why it refused; any other refusal is the change itself.
+      // A live run says why it refused. Any other refusal is the change itself.
       const text = run.refusal.peek() || REFUSED;
       refused.set({ group, text });
       announce(text);
@@ -97,7 +97,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
   const limitError = computed(() => stageLimitError(config(), servers.stageLimit()));
   const readiness = computed(() => (app.blocker() ? "blocked" : servers.selectionState()));
   const badge = computed(() => READINESS[readiness()]);
-  // Settings stays mounted: only a problem is worth interrupting for.
+  // Settings stays mounted, so only a problem is worth interrupting for.
   announceChanges(() => {
     const { label, tone } = badge();
     return tone === "err" || readiness() === "blocked" ? `Connection: ${label}` : "";
@@ -252,7 +252,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                         input.value = String(value === shown || scale(bytes) ? value : shown);
                       }}
                       onkeydown={(event) => {
-                        // Escape drops a typed number first and keeps the sheet open; the next one closes it.
+                        // Escape drops a typed number first and keeps the sheet open. The next one closes it.
                         const input = event.currentTarget;
                         if (event.key !== "Escape" || input.value === String(shownMaximum.peek())) return;
                         input.value = String(shownMaximum.peek());

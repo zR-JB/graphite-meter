@@ -1,4 +1,4 @@
-//! The controller's `/login` and `/auth/` routes: sign-in, password and OIDC, approvals, session, sign-out, tickets.
+//! Serves the controller `/login` and `/auth/` routes, password and OIDC sign-in, approvals, session, logout, tickets.
 
 use super::{
     AuthLease, Counter, Enabled, Identity, LOGIN_LIFETIME, LoginKey, Principal, Reason, Via,
@@ -38,10 +38,10 @@ const FORM_BYTES: usize = 4096;
 /// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
-/// A form's fields in order, zeroized when dropped.
+/// Holds a form's fields in order, zeroized when dropped.
 pub(super) type Form = Zeroizing<Vec<(String, String)>>;
 
-/// Answers a controller route the policy let through; a path no route claims is not found.
+/// Answers a controller route the policy let through. A path no route claims is not found.
 pub(super) async fn handle<B: http_body::Body>(
     auth: &Enabled,
     request: Request<B>,
@@ -88,7 +88,7 @@ pub(super) async fn handle<B: http_body::Body>(
     answer
 }
 
-/// A ticket for an HTTPS `target` route of `kind` on the public hostname, minted by a cookie login or a browser grant.
+/// Mints a ticket for an HTTPS `target` route of `kind` on the public hostname for a cookie login or a browser grant.
 pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
     let Some(lease) = lease.filter(|lease| lease.via() != &Via::Bearer(None)) else {
         return response::status(StatusCode::FORBIDDEN);
@@ -109,7 +109,7 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
     }
 }
 
-/// The sign-in page; its form proves a fresh token the login cookie holds for ten minutes.
+/// Renders the sign-in page. Its form proves a fresh token the login cookie holds for ten minutes.
 fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     let read = |name| query::get(request.uri().query(), name).unwrap_or_default();
     let (challenge, error, reason) = (Challenge::parse(&read("challenge")), read("error"), read("reason"));
@@ -139,7 +139,7 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     answer
 }
 
-/// Password sign-in: CSRF proof, attempt budgets, a free verifier slot and the hash, then a replacing login.
+/// Signs in by password through CSRF proof, attempt budgets, a free verifier slot and the hash, then a replacing login.
 async fn sign_in<B: http_body::Body>(
     auth: &Enabled,
     password: &Password,
@@ -205,7 +205,7 @@ pub(super) fn establish(
     Ok(answer)
 }
 
-/// Checks a sign-in form: posted from the public origin with the token its login cookie holds.
+/// Checks a sign-in form was posted from the public origin with the token its login cookie holds.
 pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
     let origin = headers.get(header::ORIGIN).filter(|origin| !origin.is_empty());
     match (origin, cookie(headers, Cookie::Login)) {
@@ -220,7 +220,7 @@ pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Re
     }
 }
 
-/// Back to the sign-in page with the refusal's notice, keeping the approval challenge.
+/// Sends back to the sign-in page with the refusal's notice, keeping the approval challenge.
 pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
     auth.security.refused(reason);
     let notice = reason.notice();
@@ -230,7 +230,7 @@ pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challe
     })
 }
 
-/// The signed-in login's name, provider, expiry and CSRF token.
+/// Reports the signed-in login's name, provider, expiry and CSRF token.
 fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -273,7 +273,7 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Re
     answer
 }
 
-/// A 303 answering a form post.
+/// Answers a form post with a 303.
 pub(super) fn redirect(target: &str) -> Response<Body> {
     let target = HeaderValue::from_str(target).expect("targets are ASCII");
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
@@ -295,13 +295,13 @@ pub(super) fn clear_cookie(answer: &mut Response<Body>, cookie: Cookie) {
     set_cookie(answer, cookie, "", UNIX_EPOCH + Duration::from_secs(1));
 }
 
-/// A form field's value; empty when absent.
+/// Gives a form field's value, empty when absent.
 pub(super) fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
     let found = form.iter().find(|(key, _)| key == name);
     found.map_or("", |(_, value)| value.as_str())
 }
 
-/// The request's head, and its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
+/// Splits off the request's head and reads its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
 pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Option<Form>) {
     let (head, body) = request.into_parts();
     let content_type = head.headers.get(header::CONTENT_TYPE);
@@ -315,7 +315,7 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
     (head, form)
 }
 
-/// A request body of at most 4 KiB, in one allocation zeroized when dropped.
+/// Reads a request body of at most 4 KiB into one allocation zeroized when dropped.
 pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
     let mut body = pin!(body);
     let mut bytes = Zeroizing::new(Vec::with_capacity(FORM_BYTES));

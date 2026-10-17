@@ -1,4 +1,4 @@
-//! Connections over HTTP/1.1, HTTP/2 and HTTP/3, QUIC dialing, WebTransport sessions, bodies and answers.
+//! Dials HTTP/1.1, HTTP/2, HTTP/3 and QUIC connections and WebTransport sessions, and carries bodies and answers.
 use super::{CONTROL_TIMEOUT, Client, Request, fault::Fault};
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -39,33 +39,33 @@ use tokio::{
     time::timeout,
 };
 
-/// Receive windows that let one connection carry 5 Gbit/s over a 100 ms path.
+/// These receive windows let one connection carry 5 Gbit/s over a 100 ms path.
 const H2_STREAM_WINDOW: u32 = 32 << 20;
 const H2_CONNECTION_WINDOW: u32 = 64 << 20;
-/// The largest DATA frame accepted, as the server sends them: larger frames cost less CPU per byte.
+/// Accepts DATA frames this large, as the server sends them, since larger frames cost less CPU per byte.
 const H2_FRAME_BYTES: u32 = 64 << 10;
 /// An HTTP/2 connection that reads nothing this long is pinged, and closed when the ping goes unanswered.
 const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
-/// A download lane's HTTP/1.1 reads: hyper's adaptive buffer grows past it and costs memory.
+/// A download lane's HTTP/1.1 reads use this size, since hyper's adaptive buffer grows past it and costs memory.
 const FIXED_READ_BYTES: usize = 256 << 10;
-/// The most bytes one transfer request or stream carries.
+/// One transfer request or stream carries at most this many bytes.
 pub(super) const TRANSFER_BYTES: u64 = 64 << 30;
-/// How long a server that stopped reading an upload may take to show its answer.
+/// A server that stopped reading an upload may take this long to show its answer.
 const EARLY_ANSWER: Duration = Duration::from_secs(1);
 
-/// How an HTTP/1.1 connection reads.
+/// Says how an HTTP/1.1 connection reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadBuffer {
     Adaptive,
-    /// A fixed 256 KiB buffer, as download lanes read.
+    /// Reads into a fixed 256 KiB buffer, as download lanes do.
     Fixed,
 }
 
 /// Reads a JSON answer, as `Preflight::decode` and its siblings do.
 pub type Decode<T> = fn(&[u8]) -> Result<T, serde_json::Error>;
 
-/// One connection to an origin.
+/// Holds one connection to an origin.
 pub enum Conn {
     Http1 { sender: http1::SendRequest<Payload>, form: RequestForm },
     Http2(http2::SendRequest<Payload>),
@@ -74,14 +74,14 @@ pub enum Conn {
 
 pub(super) type Answer = http::Response<Incoming>;
 
-/// A request that failed; `again` when its connection failed before answering, so it may go on another.
+/// A request failed. It may go `again` on another connection when this one failed before answering.
 pub(super) struct Failed {
     pub fault: Fault,
     pub again: bool,
 }
 
 impl Conn {
-    /// A connection to `origin` over `via`, HTTP/2 if TLS agrees; TCP runs where dialed, QUIC on `home` or a runtime.
+    /// Dials `origin` over `via`, HTTP/2 if TLS agrees. TCP runs where dialed, QUIC on `home` or a runtime.
     pub(super) async fn dial(
         client: &Client,
         origin: &Origin,
@@ -128,7 +128,7 @@ impl Conn {
         Ok(Self::Http2(sender))
     }
 
-    /// Another handle to a multiplexed connection; none for HTTP/1.1.
+    /// Returns another handle to a multiplexed connection, none for HTTP/1.1.
     pub(super) fn share(&self) -> Option<Self> {
         match self {
             Self::Http1 { .. } => None,
@@ -137,7 +137,7 @@ impl Conn {
         }
     }
 
-    /// Whether the connection may take another request.
+    /// Tells whether the connection may take another request.
     pub(super) fn usable(&self) -> bool {
         match self {
             Self::Http1 { sender, .. } => !sender.is_closed(),
@@ -146,12 +146,12 @@ impl Conn {
         }
     }
 
-    /// Whether an HTTP/1.1 connection finished its last exchange.
+    /// Tells whether an HTTP/1.1 connection finished its last exchange.
     pub(super) fn idle(&self) -> bool {
         matches!(self, Self::Http1 { sender, .. } if sender.is_ready())
     }
 
-    /// The runtime a QUIC connection runs on.
+    /// Returns the runtime a QUIC connection runs on.
     pub(super) fn home(&self) -> Option<Handle> {
         match self {
             Self::Http3 { quic, .. } => Some(quic.home.clone()),
@@ -190,7 +190,7 @@ impl Conn {
     }
 }
 
-/// An HTTP/1.1 head: in origin form with its Host, or in absolute form with a proxy's credentials.
+/// Puts an HTTP/1.1 head in origin form with its Host, or in absolute form with a proxy's credentials.
 fn http1_form(head: &mut http::Request<()>, form: &RequestForm) {
     let authority = head.uri().authority();
     if let Some(Ok(host)) = authority.map(|authority| HeaderValue::from_str(authority.as_str())) {
@@ -236,7 +236,7 @@ async fn http3_send(
     Ok(response.map(|()| Incoming { source, ended: None }))
 }
 
-/// A request body: none, one block once, or one block repeated for a transfer's bytes.
+/// A request body is empty, one block once, or one block repeated for a transfer's bytes.
 pub struct Payload {
     block: Bytes,
     remaining: u64,
@@ -249,17 +249,17 @@ impl Payload {
         Self { block: Bytes::new(), remaining: 0, sent: None }
     }
 
-    /// `bytes` once.
+    /// Sends `bytes` once.
     pub fn once(bytes: Bytes) -> Self {
         Self { remaining: bytes.len() as u64, block: bytes, sent: None }
     }
 
-    /// `block` repeated for a transfer's bytes, adding each slice handed on to `sent`.
+    /// Repeats `block` for a transfer's bytes, adding each slice handed on to `sent`.
     pub fn repeat(block: Bytes, sent: Arc<AtomicU64>) -> Self {
         Self { block, remaining: TRANSFER_BYTES, sent: Some(sent) }
     }
 
-    /// The next slice, `None` once the transfer's bytes were handed on.
+    /// Returns the next slice, `None` once the transfer's bytes were handed on.
     pub(super) fn slice(&mut self) -> Option<Bytes> {
         let size = self.remaining.min(self.block.len() as u64);
         if size == 0 {
@@ -290,7 +290,7 @@ impl hyper::body::Body for Payload {
     }
 }
 
-/// A response body, holding the connection it reads from.
+/// A response body holds the connection it reads from.
 pub struct Incoming {
     source: Source,
     /// Runs once the body ended.
@@ -303,17 +303,17 @@ enum Source {
 }
 
 impl Incoming {
-    /// The next payload, or `None` at the body's end; an HTTP/3 body cut short of its length ends there.
+    /// Returns the next payload, or `None` at the body's end. An HTTP/3 body cut short of its length ends there.
     pub async fn chunk(&mut self) -> Result<Option<Bytes>, Fault> {
         self.read(true).await
     }
 
-    /// The same body, running `ended` once it ended.
+    /// Returns the same body, which runs `ended` once it ended.
     pub(super) fn then(self, ended: impl FnOnce() + Send + 'static) -> Self {
         Self { ended: Some(Box::new(ended)), ..self }
     }
 
-    /// The next payload; `lenient` reads a message error at an HTTP/3 body's end as its end.
+    /// Returns the next payload. A `lenient` read takes a message error at an HTTP/3 body's end as its end.
     async fn read(&mut self, lenient: bool) -> Result<Option<Bytes>, Fault> {
         let read = match &mut self.source {
             Source::Hyper(body) => loop {
@@ -335,7 +335,7 @@ impl Incoming {
         read
     }
 
-    /// The body, at most 64 KiB of it, read by `decode`.
+    /// Reads the body, at most 64 KiB of it, with `decode`.
     pub async fn json<T>(mut self, decode: Decode<T>) -> Result<T, Fault> {
         let oversized = || Fault::Malformed(format!("control response exceeds {MAX_RESPONSE_BYTES} bytes"));
         if let Source::Hyper(body) = &self.source
@@ -362,7 +362,7 @@ fn hyper_fault(error: &hyper::Error) -> Fault {
     }
 }
 
-/// A hyper failure; a stream the peer reset ends alone, so only a connection's own failure goes again.
+/// Classifies a hyper failure. A stream the peer reset ends alone, so only a connection's own failure goes again.
 fn hyper_failed(error: hyper::Error) -> Failed {
     let source = std::error::Error::source(&error).and_then(|source| source.downcast_ref::<h2::Error>());
     let again = !error.is_user() && !source.is_some_and(h2::Error::is_reset);
@@ -385,17 +385,17 @@ fn http3_failed(error: http3::Error) -> Failed {
     Failed { fault: http3_fault(error), again }
 }
 
-/// How long an address may stay silent: lost handshake packets on a lossy path take seconds.
+/// An address may stay silent this long, since lost handshake packets on a lossy path take seconds.
 const SILENT: Duration = Duration::from_secs(3);
-/// How long an answering address may take to finish the handshake.
+/// An answering address may take this long to finish the handshake.
 const ANSWERING: Duration = Duration::from_secs(5);
 
-/// A QUIC connection with its endpoint and HTTP/3 driver; dropping it closes them.
+/// A QUIC connection holds its endpoint and HTTP/3 driver, and closes them when dropped.
 pub struct Quic {
     connection: noq::Connection,
     _endpoint: noq::Endpoint,
     driver: AbortHandle,
-    /// The runtime that runs them.
+    /// This runtime runs them.
     pub home: Handle,
 }
 
@@ -412,17 +412,17 @@ impl Drop for Quic {
     }
 }
 
-/// Dials `origin` on `runtime`, which then runs the connection, endpoint and driver; dropping the dial abandons it.
+/// Dials `origin` on `runtime`, which then runs the connection, endpoint and driver. Dropping the dial abandons it.
 pub(super) async fn dial(origin: &Origin, verify: Verify, runtime: &Handle) -> Result<Dialed, Fault> {
     let origin = origin.clone();
     let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
     (&mut dialing.0).await.map_err(|error| Fault::Lost(error.to_string()))?
 }
 
-/// A connection and its request sender.
+/// Pairs a connection with its request sender.
 type Dialed = (Arc<Quic>, client::SendRequest);
 
-/// A dial running on another runtime, aborted once nothing awaits it.
+/// A dial runs on another runtime and is aborted once nothing awaits it.
 struct Dialing(JoinHandle<Result<Dialed, Fault>>);
 
 impl Drop for Dialing {
@@ -431,7 +431,7 @@ impl Drop for Dialing {
     }
 }
 
-/// Each address in turn, IPv4 first; the last address's fault if none connects.
+/// Tries each address in turn, IPv4 first, and returns the last address's fault if none connects.
 async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
     let crypto =
         QuicClientConfig::try_from(client_config(&verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
@@ -485,7 +485,7 @@ async fn attempt(config: &noq::ClientConfig, address: SocketAddr, name: &str) ->
     Ok((Arc::new(quic), requests))
 }
 
-/// A handshake's failure, with the TLS error a certificate check raised.
+/// Converts a handshake's failure, keeping the TLS error a certificate check raised.
 fn refused(error: noq::ConnectionError) -> Fault {
     let tls = match &error {
         noq::ConnectionError::TransportError(transport) => transport.crypto.as_deref(),
@@ -497,7 +497,7 @@ fn refused(error: noq::ConnectionError) -> Fault {
     }
 }
 
-/// A WebTransport session with its connection; dropping it closes both.
+/// A WebTransport session holds its connection, and dropping it closes both.
 pub struct Session {
     session: webtransport::Session,
     quic: Arc<Quic>,
@@ -506,7 +506,7 @@ pub struct Session {
 }
 
 impl Client {
-    /// A session at `route` on a connection of its own, which `home` runs, else the next pinned runtime.
+    /// Opens a session at `route` on a connection of its own, which `home` runs, else the next pinned runtime.
     pub async fn session(
         &self,
         home: Option<&Handle>,
@@ -533,12 +533,12 @@ impl Client {
 }
 
 impl Session {
-    /// Whether the session and its connection still carry streams.
+    /// Tells whether the session and its connection still carry streams.
     pub(super) fn usable(&self) -> bool {
         !self.quic.closed() && self.ended().is_none()
     }
 
-    /// The fault the session ended with, once it ended.
+    /// Returns the fault the session ended with, once it ended.
     pub(super) fn ended(&self) -> Option<Fault> {
         Some(match self.session.closed().now_or_never()? {
             Ok(SessionClose { code, .. }) => match LaneEnding::find_by(LaneEnding::webtransport_code, code) {
@@ -549,7 +549,7 @@ impl Session {
         })
     }
 
-    /// What `error` on one of the session's streams means: the session's ending once it ended.
+    /// Reads `error` on one of the session's streams as the session's ending once it ended.
     pub fn fault(&self, error: http3::Error) -> Fault {
         self.ended().unwrap_or_else(|| http3_fault(error))
     }
@@ -559,7 +559,7 @@ impl Session {
             .unwrap_or_else(|| Fault::Lost("WebTransport session ended".into()))
     }
 
-    /// The next stream the server opened.
+    /// Accepts the next stream the server opened.
     pub async fn accept_uni(&self) -> Result<RecvStream, Fault> {
         self.session.accept_uni().await.ok_or_else(|| self.gone())
     }

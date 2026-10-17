@@ -1,4 +1,4 @@
-//! The operator's password: fixed-cost Argon2id PHC hashes, verified off the runtime, attempt budgets, device cookies.
+//! Checks operator passwords, fixed-cost Argon2id PHC hashes, off the runtime with attempt budgets and device cookies.
 
 use super::rate::{Attempts, Ceiling};
 use crate::peer::ClientKeys;
@@ -25,10 +25,10 @@ const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
 const DEVICE_LIFETIME: Duration = Duration::from_hours(30 * 24);
-/// The longest password.
+/// A password is at most this long.
 pub const MAX_BYTES: usize = 1024;
 
-/// Unpadded standard base64 that tolerates nonzero trailing bits.
+/// Decodes unpadded standard base64 and tolerates nonzero trailing bits.
 const RAW_STD: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,
     GeneralPurposeConfig::new()
@@ -36,7 +36,7 @@ const RAW_STD: GeneralPurpose = GeneralPurpose::new(
         .with_decode_allow_trailing_bits(true),
 );
 
-/// The password rules: 1 to 1024 bytes without line breaks, not necessarily UTF-8.
+/// A password holds 1 to 1024 bytes without line breaks, not necessarily UTF-8.
 pub fn validate(password: &[u8]) -> Result<(), &'static str> {
     if password.is_empty() || password.len() > MAX_BYTES {
         return Err("password must contain 1 to 1024 bytes");
@@ -47,7 +47,7 @@ pub fn validate(password: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// The PHC string of `password` under a fresh 16-byte salt.
+/// Hashes `password` into a PHC string under a fresh 16-byte salt.
 pub fn hash(password: &[u8]) -> Result<String, &'static str> {
     validate(password)?;
     let mut salt = [0; SALT_BYTES];
@@ -66,7 +66,7 @@ fn derive(password: &[u8], salt: &[u8]) -> Result<[u8; KEY_BYTES], &'static str>
     Ok(key)
 }
 
-/// A configured hash's salt and key.
+/// Holds a configured hash's salt and key.
 #[derive(Clone, Copy)]
 struct Hash {
     salt: [u8; SALT_BYTES],
@@ -105,7 +105,7 @@ impl Hash {
     }
 }
 
-/// What a password check found.
+/// Says what a password check found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
     Match,
@@ -114,24 +114,24 @@ pub(super) enum Verdict {
     Busy,
 }
 
-/// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
+/// Signs in by password with the hash, the key of device cookies, two verifier slots and the attempt budgets.
 pub(super) struct Password {
     hash: Hash,
-    /// Derived from the configured hash: devices survive restarts, and a new password forgets them.
+    /// The key derives from the configured hash, so devices survive restarts and a new password forgets them.
     device: hmac::Key,
     slots: Arc<Semaphore>,
     attempts: Attempts,
     wrong: Ceiling,
 }
 
-/// The device-cookie key: an HMAC of a fixed label under the hash, so no other use of the hash shares the key.
+/// The device-cookie key is an HMAC of a fixed label under the hash, so no other use of the hash shares the key.
 fn device_key(encoded: &str) -> hmac::Key {
     let derived = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, encoded.as_bytes()), b"graphite-meter device cookie");
     hmac::Key::new(hmac::HMAC_SHA256, derived.as_ref())
 }
 
 impl Password {
-    /// The sign-in `encoded`, the configured hash, allows.
+    /// Builds the password sign-in that `encoded`, the configured hash, allows.
     pub fn new(encoded: &str) -> Result<Self, String> {
         Ok(Self {
             hash: Hash::parse(encoded)?,
@@ -142,7 +142,7 @@ impl Password {
         })
     }
 
-    /// Records an attempt by `keys`, five a minute; a known `device` skips the shared 60 wrong passwords a minute.
+    /// Records an attempt by `keys`, five a minute. A known `device` skips the shared 60 wrong passwords a minute.
     pub fn admit(&self, keys: Option<ClientKeys>, device: Option<&str>) -> bool {
         let known = device.is_some_and(|cookie| self.known(cookie));
         keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))
@@ -168,7 +168,7 @@ impl Password {
         }
     }
 
-    /// A device cookie's value, its expiry in seconds and their HMAC, and that expiry.
+    /// Mints a device cookie's value, its expiry in seconds and their HMAC, and gives that expiry.
     pub fn device(&self, now: SystemTime) -> (String, SystemTime) {
         let expires = now + DEVICE_LIFETIME;
         let since_epoch = expires.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -201,13 +201,13 @@ mod tests {
         (STANDARD_NO_PAD.decode(fields[4]).unwrap(), STANDARD_NO_PAD.decode(fields[5]).unwrap())
     }
 
-    /// `api/password.testvectors.json`: a pinned hash and the passwords refused and accepted.
+    /// Reads `api/password.testvectors.json`, a pinned hash and the passwords refused and accepted.
     fn vectors() -> serde_json::Value {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
-    /// A case's bytes: `hex`, repeated `repeat` times.
+    /// A case's bytes are `hex`, repeated `repeat` times.
     fn bytes(case: &serde_json::Value) -> Vec<u8> {
         let hex = case["hex"].as_str().unwrap();
         let once: Vec<u8> = (0..hex.len())

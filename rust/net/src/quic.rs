@@ -1,29 +1,29 @@
-//! QUIC transport settings for both roles, with the shared receive and send windows.
+//! Builds the QUIC transport settings for both roles and holds the shared receive and send windows.
 use graphite_meter_proto::lane::IDLE_BOUND;
 use noq::{IdleTimeout, TransportConfig, VarInt};
 
-/// The receive window autotuning grows each stream to.
+/// Autotuning grows each stream's receive window to this size.
 const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
-/// The receive window autotuning grows each connection to.
+/// Autotuning grows each connection's receive window to this size.
 pub const RECEIVE_WINDOW: u32 = 48 << 20;
-/// The first connection receive window, from which autotuning starts.
+/// A connection's receive window starts here, and autotuning grows it from there.
 pub const INITIAL_RECEIVE_WINDOW: u32 = 768 << 10;
-/// A server connection's receive window until an admitted upload reads: one maximal HTTP/3 frame.
+/// A server connection's receive window stays at one maximal HTTP/3 frame until an admitted upload reads.
 pub const RECEIVE_WINDOW_FLOOR: u32 = 64 << 10;
-/// The send window a server connection starts at and tunes back to.
+/// A server connection starts its send window here and tunes back to it.
 pub const MIN_SEND_WINDOW: u64 = 2 << 20;
-/// The client's send window and the ceiling of the server's tuning.
+/// The client sends with this window, and the server's tuning stops here.
 pub const MAX_SEND_WINDOW: u64 = 16 << 20;
 
-/// The unidirectional streams a client accepts from a server.
+/// A client accepts this many unidirectional streams from a server.
 const CLIENT_UNI_STREAMS: u32 = 36;
-/// The client's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
+/// A server grants the client's three HTTP/3 streams, the 16-lane WebTransport cap and four streams of credit headroom.
 const SERVER_UNI_STREAMS: u32 = 3 + 16 + 4;
 const CLIENT_DATAGRAM_BUFFER: usize = 256 << 10;
 const SERVER_DATAGRAM_BUFFER: usize = 64 << 10;
 const CLIENT_IDLE_MILLIS: u32 = 60_000;
 
-/// A client connection's transport: no streams opened by the server but unidirectional ones.
+/// Configures a client connection's transport, which lets the server open only unidirectional streams.
 pub fn client_transport() -> TransportConfig {
     let mut transport = TransportConfig::default();
     transport.max_concurrent_bidi_streams(0_u32.into());
@@ -37,7 +37,7 @@ pub fn client_transport() -> TransportConfig {
     transport
 }
 
-/// A server connection's transport, accepting `requests` request streams and idling out after the lane bound.
+/// Configures a server connection's transport to accept `requests` request streams and idle out after the lane bound.
 pub fn server_transport(requests: u32) -> TransportConfig {
     let mut transport = TransportConfig::default();
     transport.max_concurrent_bidi_streams(requests.into());

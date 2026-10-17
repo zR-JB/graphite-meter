@@ -1,4 +1,4 @@
-//! The Graphite Meter native terminal client.
+//! Implements the Graphite Meter native terminal client.
 
 pub mod config;
 pub mod controller;
@@ -35,17 +35,17 @@ use graphite_meter_net::Pool;
 use model::Outcome;
 use std::{io::Write, pin::pin, sync::Arc};
 
-/// The version `--version` prints.
+/// The client prints this version for `--version`.
 pub const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
 
-/// The statuses of an interrupt and of a termination that stopped a run.
+/// A run stopped by an interrupt or a termination ends with these statuses.
 pub const INTERRUPTED: u8 = 130;
 pub const TERMINATED: u8 = 143;
 
-/// Runs `config` once without the interface, stage progress to stderr; the view and the status, which `stop` can set.
+/// Runs `config` once without the interface, stage progress on stderr. Returns the view and a status `stop` can set.
 pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> (View, u8) {
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(false, runtimes, events);
@@ -76,7 +76,7 @@ pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Out
     (view, status)
 }
 
-/// The status the process ends with: `signal` when set, 0 when complete or before any run, else 1.
+/// The process ends with `signal` when set, with 0 when complete or before any run, else with 1.
 pub fn status(view: &View, signal: Option<u8>) -> u8 {
     match (signal, view.latest().and_then(|run| run.outcome)) {
         (Some(code), _) => code,

@@ -17,8 +17,8 @@ afterEach(() => {
   net.restore();
 });
 
-/** A selected server's connection on the fake network, and every readiness its view painted: what it shows once the
-    task that changed it is done. */
+/** Connects a selected server on the fake network and records every readiness its view painted, meaning what it
+    shows once the task that changed it is done. */
 function connect(
   entry: CatalogEntry,
   { auth = publicAuth(entry) as ServerAuth, latency = false, shown = true, now = net.now } = {},
@@ -98,7 +98,7 @@ test("a device that says it is offline still checks its servers, and says offlin
         ? { body: preflight([h(".", "http1")]) }
         : { body: PROBE, hop: "http/1.1" },
   );
-  // A lab link without a gateway: the browser reports offline, the server answers.
+  // On a lab link without a gateway, the browser reports offline and the server answers.
   const peer: CatalogEntry = { id: "peer", url: "https://peer.example", name: "Peer", additionalOrigins: [] };
   const { connection, env } = connect(peer);
   env.online.set(false);
@@ -227,7 +227,7 @@ test("a monitored server re-reads its discovery each minute, quietly, and a new 
   expect(net.sent("/probe")).toEqual([0, 0]);
   expect(buses.opened.map(({ disposed }) => disposed)).toEqual([false]);
   expect(readiness).toEqual(["checking", "verified"]);
-  // A restart behind a proxy that keeps the bus open.
+  // The server restarts behind a proxy that keeps the bus open.
   generation = "g2";
   await net.advance(3_000);
   expect(net.sent("/preflight")).toEqual([0, 60_000, 120_000]);

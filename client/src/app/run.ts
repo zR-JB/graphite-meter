@@ -1,5 +1,5 @@
-// The run as the page sees it: Start, Stop and Cancel, the settings that may change while a test runs, and the facts
-// of the current or last run that views read. Only the current run writes them.
+// Shows the run as the page sees it, with Start, Stop and Cancel, the settings that may change while a test runs, and
+// the facts of the current or last run that views read. Only the current run writes them.
 import type { LatencyBucket } from "../engine/measure/buckets";
 import type { LatencySummary } from "../engine/measure/latency";
 import type { Clock } from "../engine/run/clock";
@@ -24,24 +24,24 @@ const LONGEST_WARMUP_RTT_MS = Number.POSITIVE_INFINITY;
 
 interface RunEnvironment {
   preferences: PreferenceStore;
-  /** Why Start cannot run now; it shows where it arises, so a refused Start adds nothing. */
+  /** Says why Start cannot run now. It shows where it arises, so a refused Start adds nothing. */
   blocker: Read<string>;
-  /** Why a Start now is refused at once, said in its place until its cause clears; "" lets it run. */
+  /** Says why a Start now is refused at once, in its place until its cause clears. "" lets it run. */
   refusal: Read<string>;
-  /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
+  /** The page's sign-in and every grant must cover `plannedMs`. Throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again: what Start runs on, the servers left out, and whose latency leads. Throws
-      with the words to show when a server, as just read, refuses `config`; an AbortError means newer intent
-      superseded the start. */
+  /** Checks the selected servers again and returns what Start runs on, the servers left out, and whose latency
+      leads. Throws with the words to show when a server, as just read, refuses `config`. An AbortError means newer
+      intent superseded the start. */
   prepare(
     signal: AbortSignal,
     config: TestConfig,
   ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
-  /** Whether a run of `totalMs` still fits the sign-in; a live change that lengthens the test must. */
+  /** Tells whether a run of `totalMs` still fits the sign-in. A live change that lengthens the test must. */
   fits(totalMs: number): boolean;
-  /** A server failed during the run, or with null the whole run did: its paths are checked again. */
+  /** A server failed during the run, or with null the whole run did, so its paths are checked again. */
   recheck(failure: ServerFailure | null): void;
-  /** Hands a finished run to History; null withdraws the one shown. */
+  /** Hands a finished run to History. Null withdraws the one shown. */
   finished(run: { result: RunResult; plans: StagePlans; engine: string } | null): void;
   open: OpenStage;
   streams: RunOptions["streams"];
@@ -49,7 +49,7 @@ interface RunEnvironment {
 }
 
 export type Preparation = "idle" | "authenticating" | "checking" | "launching" | "blocked" | "failed";
-/** What the console shows; `data-phase` carries it. */
+/** The console shows this phase, and `data-phase` carries it. */
 export type ShownPhase = "idle" | Phase | "complete" | "aborted" | "error";
 type Step = "preparing" | "running" | "finalizing";
 
@@ -93,7 +93,7 @@ export function createRun(env: RunEnvironment) {
   const plan = signal<RunPlan | null>(null);
   const preparation = signal<Preparation>("idle");
   const startError = signal("");
-  /** Why the latest live change was refused, until a change applies or the run goes. */
+  /** Says why the latest live change was refused, until a change applies or the run goes. */
   const refusal = signal("");
   /** The servers the current or last run measured, as Start prepared them. */
   const prepared = signal<readonly PreparedServer[]>([]);
@@ -147,7 +147,7 @@ export function createRun(env: RunEnvironment) {
     stageBase = { stage: "", bytes: 0, last: 0 };
   }
 
-  /** Lets go of the run: its late events can never reach the facts of a newer one. */
+  /** Lets go of the run, so its late events can never reach the facts of a newer one. */
   function releaseRun(): void {
     release();
     release = () => {};
@@ -161,7 +161,7 @@ export function createRun(env: RunEnvironment) {
         case "phase":
           return batch(() => {
             if (event.phase !== phase.peek()) stageBytes.set(0);
-            // A stage's warmup hands its live rate on to its window; only a new stage starts without one.
+            // A stage's warmup hands its live rate on to its window. Only a new stage starts without one.
             if (event.stage !== stage.peek()) live.set(null);
             phase.set(event.phase);
             stage.set(event.stage);
@@ -177,7 +177,7 @@ export function createRun(env: RunEnvironment) {
         case "live": {
           const { sample } = event;
           if (sample.warmup) return live.set(sample);
-          // A new stage counts from the last reading; a count that went backwards starts over.
+          // A new stage counts from the last reading. A count that went backwards starts over.
           if (sample.stage !== stageBase.stage || sample.bytes < stageBase.last)
             stageBase = { stage: sample.stage, bytes: sample.bytes < stageBase.last ? 0 : stageBase.last, last: 0 };
           stageBase.last = sample.bytes;
@@ -254,7 +254,7 @@ export function createRun(env: RunEnvironment) {
             stall.set(null);
             phase.set("aborted");
           });
-          // Nothing reads a run that ended; what it measured lives in the facts above.
+          // Nothing reads a run that ended. What it measured lives in the facts above.
           return releaseRun();
       }
     });
@@ -284,7 +284,7 @@ export function createRun(env: RunEnvironment) {
       streams: env.streams,
       clock: env.clock,
     });
-    // The previous result clears only now: cancelling earlier keeps it. One batch, so Start never looks idle.
+    // The previous result clears only now, so cancelling earlier keeps it. The batch keeps Start from looking idle.
     batch(() => {
       releaseRun();
       env.finished(null);
@@ -301,7 +301,7 @@ export function createRun(env: RunEnvironment) {
     next.start();
   }
 
-  /** Start, Stop or Cancel: what the run key does now. */
+  /** Runs the key's current action, Start, Stop or Cancel. */
   function toggle(): void {
     if (running.peek()) {
       cancel();
@@ -355,8 +355,8 @@ export function createRun(env: RunEnvironment) {
     untrack(cancel);
   });
 
-  /** May this stage be turned on or off now? While a test runs, the run's own rule decides, read again as its stage
-      moves on. */
+  /** Tells whether this stage may be turned on or off now. While a test runs, the run's own rule decides, read again
+      as its stage moves on. */
   const canToggle = (name: Stage) => {
     if (preparing()) return false;
     if (!running()) return true;
@@ -364,8 +364,8 @@ export function createRun(env: RunEnvironment) {
     return run?.canChange(name) ?? false;
   };
 
-  /** The one writer of test settings: refused while a start prepares; while a run is live only stages, durations,
-      early finish and the gauge maximum may change, a stage only until it begins. Returns whether it applied. */
+  /** The one writer of test settings. It refuses while a start prepares. A live run lets only stages, durations,
+      early finish and the gauge maximum change, a stage only until it begins. Returns whether it applied. */
   function configure(patch: Partial<TestConfig>): boolean {
     const keys = Object.keys(patch);
     // A refusal speaks for the change that caused it, never for a later one.
@@ -380,7 +380,7 @@ export function createRun(env: RunEnvironment) {
       Object.values(candidate.duration).some((ms) => !Number.isFinite(ms) || ms < 0)
     )
       return false;
-    // The gauge's maximum is the page's alone: the run never hears of it.
+    // The gauge's maximum is the page's alone, so the run never hears of it.
     if (current && keys.some((key) => key !== "visualization")) {
       const runPlan = adaptWarmup({ ...current.plan, ...pick(candidate) }, rttMs);
       const refuse = (message: string) => (refusal.set(message), false);
@@ -395,7 +395,7 @@ export function createRun(env: RunEnvironment) {
       plan.set(current.plan);
       spanMs = totalMs(current.plan);
     }
-    // A change to what Start would run lapses a refused or failed start; the gauge alone leaves it be.
+    // A change to what Start would run lapses a refused or failed start. The gauge alone leaves it be.
     if (keys.some((key) => key !== "visualization")) cancel();
     preferences.set({ config: candidate });
     return true;
@@ -408,7 +408,7 @@ export function createRun(env: RunEnvironment) {
     return configure({ stages });
   }
 
-  /** Start over: the shown run and its result go. */
+  /** Starts over, so the shown run and its result go. */
   function returnToStart(): void {
     cancel();
     releaseRun();
@@ -432,7 +432,7 @@ export function createRun(env: RunEnvironment) {
     stageBytes: stageBytes as Read<number>,
     throughput: throughput as readonly ThroughputSample[],
     throughputVersion: throughputVersion as Read<number>,
-    /** One server's latency buckets and summaries; read `version` to follow the buckets. */
+    /** One server's latency buckets and summaries. Read `version` to follow the buckets. */
     latency: (id: string): LatencySeries => {
       seriesReset();
       return series(id);

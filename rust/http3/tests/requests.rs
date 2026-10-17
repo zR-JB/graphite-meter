@@ -1,4 +1,4 @@
-//! The connection driver and request streams over loopback QUIC.
+//! Exercises the connection driver and request streams over loopback QUIC.
 mod support;
 
 use bytes::Bytes;
@@ -160,7 +160,7 @@ async fn our_control_stream_opens_once_stream_credit_arrives() -> Result<(), Tes
 
 #[tokio::test]
 async fn refusals_stay_on_their_stream() -> Result<(), TestError> {
-    // Our QPACK: :status 431 as a literal after the static :status name, :status 400 indexed.
+    // Our QPACK writes :status 431 as a literal after the static :status name and :status 400 indexed.
     let status_431 = frame(0x01, &[0x00, 0x00, 0x5f, 0x09, 0x03, b'4', b'3', b'1']);
     let status_400 = frame(0x01, &[0x00, 0x00, 0xff, 0x04]);
     let lane_cancelled = Code::WT_CANCELLED;
@@ -258,7 +258,7 @@ async fn a_peer_stream_declares_its_type_within_10_seconds() -> Result<(), TestE
         let unknown = uni(&peers.client, &varint(0x21)).await?;
         assert_eq!(stopped(&unknown).await, Some(Code::H3_STREAM_CREATION_ERROR));
     }
-    // The first byte of a two-byte type; the stream is charged once the server holds it.
+    // Only the first byte of a two-byte type arrives. The stream is charged once the server holds it.
     let silent = uni(&peers.client, &[0x40]).await?;
     charged(&peers.budget, 0).await;
     jump(Duration::from_secs(9)).await;

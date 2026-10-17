@@ -1,4 +1,4 @@
-//! OIDC sign-in as a confidential client: browser-bound state, nonce and PKCE, routes, code exchange, ID token, groups.
+//! Signs in by OIDC as a confidential client with browser-bound state, nonce, PKCE, code exchange, ID token and groups.
 
 use super::{
     Counter, Enabled, Identity, LoginKey, Principal, Reason, Security,
@@ -39,18 +39,18 @@ const ANSWER_MARGIN: Duration = Duration::from_secs(3);
 /// Discovery retries back off from one second, doubling up to this.
 const RETRY_MAX: Duration = Duration::from_mins(1);
 
-/// A sign-in sent to the provider, keyed by its state's digest.
+/// Records a sign-in sent to the provider, keyed by its state's digest.
 struct Transaction {
     provider: Arc<Provider>,
-    /// The digest of the browser's transaction cookie.
+    /// Digests the browser's transaction cookie.
     browser: Digest,
     nonce: Zeroizing<String>,
     verifier: Zeroizing<String>,
     deadline: Instant,
     clients: Vec<ClientKey>,
-    /// The approval to show after sign-in.
+    /// The page shows this approval after sign-in.
     challenge: Option<Challenge>,
-    /// The login the browser presented at the start, which the new one replaces.
+    /// The browser presented this login at the start, and the new one replaces it.
     prior: Option<LoginKey>,
 }
 
@@ -60,7 +60,7 @@ pub(super) struct Oidc {
     secret: Zeroizing<String>,
     client: Client,
     provider: OnceLock<Arc<Provider>>,
-    /// The transactions, and when their ceiling was last logged.
+    /// Holds the transactions, and when their ceiling was last logged.
     transactions: Mutex<(HashMap<Digest, Transaction>, Option<Instant>)>,
     starts: Attempts,
     exchanges: Attempts,
@@ -85,7 +85,7 @@ impl Oidc {
         })
     }
 
-    /// The provider once discovered.
+    /// Gives the provider once discovered.
     pub fn provider(&self) -> Option<&Arc<Provider>> {
         self.provider.get()
     }
@@ -163,7 +163,7 @@ impl Oidc {
         Ok((url, browser))
     }
 
-    /// Ends `state`'s transaction for cookie `browser`, checking `issuer`; a refusal carries its challenge if found.
+    /// Ends `state`'s transaction for cookie `browser`, checking `issuer`. A refusal carries its challenge if found.
     fn take(
         &self,
         state: &str,
@@ -185,7 +185,7 @@ impl Oidc {
         Ok(transaction)
     }
 
-    /// The login principal and display name the provider vouches for; provider failures go to `security`'s log.
+    /// Gets the login principal and display name the provider vouches for. Provider failures go to `security`'s log.
     async fn identify(
         &self,
         transaction: &Transaction,
@@ -228,7 +228,7 @@ impl Oidc {
         Ok((Principal::oidc(&subject), name.to_owned()))
     }
 
-    /// The access token and ID token `code` exchanges for, authenticated with the client secret.
+    /// Exchanges `code` for the access token and ID token, authenticated with the client secret.
     async fn exchange(
         &self,
         provider: &Provider,
@@ -267,7 +267,7 @@ impl Oidc {
         Ok((tokens.access_token, id_token))
     }
 
-    /// The user information document; a signed one must verify and name the issuer and this client.
+    /// Fetches the user information document. A signed one must verify and name the issuer and this client.
     async fn user_info(&self, provider: &Provider, access_token: &str, security: &Security) -> Option<Vec<u8>> {
         let mut bearer = HeaderValue::from_str(&format!("Bearer {access_token}")).ok()?;
         bearer.set_sensitive(true);
@@ -285,7 +285,7 @@ impl Oidc {
     }
 }
 
-/// `POST /auth/oidc/start`: the form's CSRF proof and the start budget, then a transaction and the way to the provider.
+/// `POST /auth/oidc/start` checks the CSRF proof and start budget, then opens a transaction and points to the provider.
 pub(super) async fn start<B: http_body::Body>(
     auth: &Enabled,
     oidc: &Oidc,
@@ -319,7 +319,7 @@ pub(super) async fn start<B: http_body::Body>(
     }
 }
 
-/// `GET /auth/oidc/callback`: the named transaction, exchange budget, then the provider's word by `deadline`.
+/// `GET /auth/oidc/callback` takes the named transaction and exchange budget, then the provider's word by `deadline`.
 pub(super) async fn callback(
     auth: &Enabled,
     oidc: &Oidc,
@@ -373,7 +373,7 @@ async fn sign_in(
     Ok(answer)
 }
 
-/// An OIDC refusal, which the security log also counts as an OIDC failure.
+/// Refuses an OIDC sign-in, which the security log also counts as an OIDC failure.
 fn refused(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
     auth.security.count(Counter::OidcFailure);
     rejected(auth, reason, challenge)

@@ -1,4 +1,4 @@
-//! WebTransport sessions (`api/wire.md#webtransport-routes`): admitted, served over a lane, closed with its code.
+//! Serves admitted WebTransport sessions (`api/wire.md#webtransport-routes`) over a lane and closes each with its code.
 
 mod upload;
 
@@ -17,7 +17,7 @@ use tokio::time::sleep;
 
 /// A CONNECT that opens no session is answered within this long.
 pub const ANSWER_BOUND: Duration = Duration::from_secs(10);
-/// An establish-only download session closes after this long; its answer is the handshake.
+/// An establish-only download session closes after this long. Its answer is the handshake.
 const VERIFY_LINGER: Duration = Duration::from_secs(5);
 /// A download datagram carries this much.
 const DATAGRAM_BYTES: usize = 1000;
@@ -26,26 +26,26 @@ const DATAGRAM_YIELD_BATCH: usize = 16;
 /// A download stream writes at most this much at a time.
 const LANE_WRITE_BYTES: usize = 16 << 10;
 
-/// What an admitted session serves.
+/// Says what an admitted session serves.
 pub enum Plan {
-    /// The latency bus, one message per datagram.
+    /// The session runs the latency bus, one message per datagram.
     Ping,
-    /// `source`'s bytes in `form`.
+    /// The session sends `source`'s bytes in `form`.
     Download { source: DownloadSource, form: Form },
-    /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
+    /// Client streams, and datagrams when asked, feed an upload, with its progress feed on a server stream.
     Upload(Upload),
 }
 
-/// How a download sends its bytes.
+/// Says how a download sends its bytes.
 #[derive(Clone, Copy)]
 pub enum Form {
-    /// On this many server streams at once.
+    /// The download runs on this many server streams at once.
     Streams(usize),
-    /// Repeated in datagrams.
+    /// The download repeats in datagrams.
     Datagrams,
 }
 
-/// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
+/// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends. Uploads ask `fund`.
 pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan, fund: impl FnMut() -> bool) {
     let Ok(session) = Session::accept(stream, headers).await else {
         return;
@@ -70,7 +70,7 @@ async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() ->
     }
 }
 
-/// Hands every datagram to `received` and refuses peer streams until the session ends; unread datagrams queue.
+/// Hands every datagram to `received` and refuses peer streams until the session ends. Unread datagrams queue.
 async fn drain(session: &Session, mut received: impl FnMut(Bytes)) {
     loop {
         tokio::select! {
@@ -85,7 +85,7 @@ async fn drain(session: &Session, mut received: impl FnMut(Bytes)) {
     }
 }
 
-/// Every datagram is the peer's movement; each valid PING gets its PONG.
+/// Every datagram is the peer's movement, and each valid PING gets its PONG.
 async fn ping(session: &Session, lane: &Lane) {
     drain(session, |datagram| {
         let received = std::time::Instant::now();
@@ -97,7 +97,7 @@ async fn ping(session: &Session, lane: &Lane) {
     .await;
 }
 
-/// Streams or a datagram flood; only the peer's datagrams in the datagram form and drained streams are movement.
+/// Runs streams or a datagram flood. Only the peer's datagrams in the datagram form and drained streams are movement.
 async fn download(session: &Session, lane: &Lane, source: DownloadSource, form: Form) {
     let transfer = async {
         match form {
@@ -117,7 +117,7 @@ async fn download(session: &Session, lane: &Lane, source: DownloadSource, form: 
     }
 }
 
-/// Writes `source` on a stream, replacing each one the peer drained; a stream the peer took nothing from ends the lane.
+/// Writes `source` on a stream, replacing each one the peer drained. A stream the peer took nothing from ends the lane.
 async fn download_stream(session: &Session, source: &DownloadSource, lane: &Lane) {
     loop {
         let Ok(mut stream) = session.open_uni().await else {

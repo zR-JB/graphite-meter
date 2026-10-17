@@ -1,4 +1,4 @@
-//! Lane groups: which connection or session a stage's lanes share, and the one loop every lane runs.
+//! Groups a stage's lanes by the connection or session they share and holds the one loop every lane runs.
 use super::{
     Attempt, Client, Request, Retry,
     conn::Session,
@@ -27,16 +27,16 @@ use std::{
 use tokio::{runtime::Handle, sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
-/// The bytes each WebTransport download stream carries.
+/// Each WebTransport download stream carries this many bytes.
 const STREAM_BYTES: u64 = 64 << 20;
-/// The most lanes one WebTransport session carries.
+/// One WebTransport session carries at most this many lanes.
 const SESSION_LANES: usize = 16;
-/// The block an upload repeats; an attempt that handed on more than one moved bytes.
+/// An upload repeats this block. An attempt that handed on more than one block moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
-/// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
+/// A WebTransport download stream takes this many chunks under one lock of the connection and counts them at once.
 const READ_BATCH: usize = 32;
 
-/// A server's throughput path as preparation chose it, its protocol resolved.
+/// Holds a server's throughput path as preparation chose it, with its protocol resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThroughputPath {
     pub origin: Origin,
@@ -44,18 +44,18 @@ pub struct ThroughputPath {
     pub protocol: Protocol,
 }
 
-/// What a group's lanes share.
+/// Says what a group's lanes share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Carrier {
-    /// A connection the group dials: HTTP/1.1 for one lane, HTTP/2 or HTTP/3 for many.
+    /// The group dials a connection, HTTP/1.1 for one lane, HTTP/2 or HTTP/3 for many.
     Dialed,
-    /// The path's HTTP/3 connection, which control requests use too.
+    /// The lanes share the path's HTTP/3 connection, which control requests use too.
     Path,
-    /// A WebTransport session on a connection of its own.
+    /// The lanes share a WebTransport session on a connection of its own.
     Session,
 }
 
-/// One lane group: what its lanes share, their direction and their numbers.
+/// One lane group says what its lanes share, their direction and their numbers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupPlan {
     pub path: ThroughputPath,
@@ -64,7 +64,7 @@ pub struct GroupPlan {
     pub lanes: Range<usize>,
 }
 
-/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport 16 each.
+/// HTTP/1.1 lanes group alone, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport 16 each.
 pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<GroupPlan> {
     let mut plans = Vec::new();
     for &direction in stage.directions() {
@@ -87,15 +87,15 @@ pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<G
     plans
 }
 
-/// What a direction's lanes do.
+/// Says what a direction's lanes do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
     Download,
-    /// Send to the receiver of this upload ID.
+    /// Lanes send to the receiver of this upload ID.
     Upload(String),
 }
 
-/// A direction's lanes in their groups; dropping it ends them.
+/// A direction's lanes run in their groups, and dropping this ends them.
 pub struct Lanes {
     tally: Arc<Tally>,
     tasks: JoinSet<Option<Fault>>,
@@ -103,14 +103,14 @@ pub struct Lanes {
     failed: Option<Fault>,
 }
 
-/// What a direction's lanes report, shared across their runtimes.
+/// Collects what a direction's lanes report, shared across their runtimes.
 #[derive(Default)]
 struct Tally {
     bytes: AtomicU64,
     ready: AtomicUsize,
-    /// Each lane's failure while it retries without moving bytes.
+    /// Each lane records its failure while it retries without moving bytes.
     retrying: Mutex<Vec<Option<Failure>>>,
-    /// The latest session upload lanes opened.
+    /// Upload lanes publish the latest session they opened.
     session: watch::Sender<Option<Arc<Session>>>,
 }
 
@@ -163,17 +163,17 @@ impl Lanes {
         Self { tally, tasks, count, failed: None }
     }
 
-    /// Payload bytes the download lanes consumed; upload lanes count none, as the receiver counts uploads.
+    /// Returns the payload bytes the download lanes consumed. Upload lanes count none, as the receiver counts uploads.
     pub fn bytes(&self) -> u64 {
         self.tally.bytes.load(Ordering::Relaxed)
     }
 
-    /// Every lane opened once: a download its first answer, an upload its first request.
+    /// Tells whether every lane opened once, a download with its first answer, an upload with its first request.
     pub fn ready(&self) -> bool {
         self.tally.ready.load(Ordering::Relaxed) >= self.count
     }
 
-    /// Failed once any lane's fault stood, else retrying while a lane fails without moving bytes.
+    /// Reports failed once any lane's fault stood, else retrying while a lane fails without moving bytes.
     pub fn health(&mut self) -> LaneHealth {
         while let Some(ended) = self.tasks.try_join_next() {
             let fault = match ended {
@@ -192,7 +192,7 @@ impl Lanes {
         }
     }
 
-    /// The upload refusal a lane's fault stood for, once `health` saw it.
+    /// Returns the upload refusal a lane's fault stood for, once `health` saw it.
     pub fn refusal(&self) -> Option<UploadRefusal> {
         if let Some(Fault::Refused(refusal)) = self.failed {
             Some(refusal)
@@ -201,24 +201,24 @@ impl Lanes {
         }
     }
 
-    /// The latest session WebTransport upload lanes opened, whose first server stream carries the receiver's feed.
+    /// Tracks the latest session WebTransport upload lanes opened. Its first server stream carries the receiver's feed.
     pub fn session(&self) -> watch::Receiver<Option<Arc<Session>>> {
         self.tally.session.subscribe()
     }
 }
 
-/// A random block, so no hop compresses the upload; a host without randomness cannot measure and panics.
+/// Draws a random block, so no hop compresses the upload. A host without randomness cannot measure and panics.
 fn block() -> Bytes {
     let mut block = vec![0; BLOCK_BYTES];
     getrandom::fill(&mut block).expect("the system provides randomness");
     block.into()
 }
 
-/// A group's shared connection or session, replaced one dial at a time once unusable.
+/// Holds a group's shared connection or session, replaced one dial at a time once unusable.
 struct Slot<T>(tokio::sync::Mutex<Option<T>>);
 
 impl<T> Slot<T> {
-    /// A `handle` to the one `usable` allows, else to what `dial` brings; without one, as HTTP/1.1, the lane keeps it.
+    /// Hands out a `handle` to the `usable` one, else to what `dial` brings. HTTP/1.1 gives none, so the lane keeps it.
     async fn get(
         &self,
         dial: impl Future<Output = Result<T, Fault>>,
@@ -236,24 +236,24 @@ impl<T> Slot<T> {
     }
 }
 
-/// A group: its plan and what its lanes share, a connection or a session as the plan's carrier says.
+/// A group holds its plan and what its lanes share, a connection or a session as the plan's carrier says.
 struct Group {
     client: Client,
     plan: GroupPlan,
     work: Work,
-    /// The block uploads repeat.
+    /// Uploads repeat this block.
     block: Bytes,
     conn: Slot<Conn>,
     session: Slot<Arc<Session>>,
 }
 
-/// One lane's state across its attempts.
+/// Carries one lane's state across its attempts.
 struct Lane {
     number: usize,
     announced: bool,
     /// The attempt consumed payload.
     moved: bool,
-    /// Bytes its upload bodies handed on.
+    /// Its upload bodies handed on this many bytes.
     sent: Arc<AtomicU64>,
 }
 
@@ -319,7 +319,7 @@ impl Group {
         }
     }
 
-    /// The group's session, dialed on the lane's runtime; an upload's is announced for its feed.
+    /// Dials the group's session on the lane's runtime. An upload's is announced for its feed.
     async fn dial_session(&self, tally: &Tally) -> Result<Arc<Session>, Fault> {
         let (route, query) = match &self.work {
             Work::Download => {
@@ -368,7 +368,7 @@ impl Group {
     }
 }
 
-/// One server stream of the session, counted as it arrives; the lane opens at its first bytes.
+/// Receives one server stream of the session, counted as it arrives. The lane opens at its first bytes.
 async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
     let mut stream = session.accept_uni().await?;
     let (mut chunks, mut received) = ([const { Bytes::new() }; READ_BATCH], 0);
@@ -395,7 +395,7 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
     }
 }
 
-/// Streams of a transfer's bytes, one after another, on the session.
+/// Sends streams of a transfer's bytes, one after another, on the session.
 async fn send(session: &Session, block: &Bytes, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
     loop {
         let mut stream = session.open_uni().await?;
@@ -408,7 +408,7 @@ async fn send(session: &Session, block: &Bytes, lane: &mut Lane, tally: &Tally) 
     }
 }
 
-/// A lane request's cache buster: the time in nanoseconds.
+/// A lane request's cache buster is the time in nanoseconds.
 fn cache_buster() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH);
     now.unwrap_or_default().as_nanos().to_string()

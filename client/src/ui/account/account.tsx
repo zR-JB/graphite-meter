@@ -1,5 +1,5 @@
-// Who is signed in, and the two ways out: this session, or every session after a confirmation. Rendered only once
-// the session answers; without it the meter works on, and the run reports a lost sign-in itself.
+// Shows who is signed in and the two ways out, this session or every session after a confirmation. It renders
+// only once the session answers. Without it the meter works on, and the run reports a lost sign-in itself.
 import "./account.css";
 import type { App } from "../../app/app";
 import { csrfHeaders, type Account } from "../../engine/net/page";
@@ -34,7 +34,7 @@ export function AccountControl(props: { app: App }): Node {
         const label = computed(() => (local() ? "Local operator" : session().name));
         const provider = computed(() => (local() ? "Operator session" : session().provider));
         const confirming = signal(false);
-        // A result the sign-out would leave unsaved: asked here, so staying is known and Sign out works again.
+        // The sign-out asks here about a result it would leave unsaved, so staying is known and Sign out works again.
         const unsaved = signal(false);
         let form!: HTMLFormElement;
         let everywhere!: HTMLButtonElement;
@@ -51,8 +51,8 @@ export function AccountControl(props: { app: App }): Node {
             method="post"
             action="/auth/logout"
             aria-label={() => `${label()}, ${provider()}`}
-            // The page leaves once the run ended and its result's write landed, with the token as it is now: another
-            // tab may have signed in again since this one read it. A submit drops its submitter, so the scope rides along.
+            // The page leaves once the run ended and its result's write landed. It rereads the token, since another tab
+            // may have signed in again since this one read it. A submit drops its submitter, so the scope rides along.
             onsubmit={(event) => {
               event.preventDefault();
               if (leaving) return;

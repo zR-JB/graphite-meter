@@ -1,4 +1,4 @@
-//! Version-independent HTTP: the gate, dispatch to control endpoints, engines and the browser app, finalizing.
+//! Gates, dispatches and finalizes version-independent HTTP for control endpoints, engines and the browser app.
 
 mod control;
 pub mod finalize;
@@ -41,7 +41,7 @@ use std::{
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-/// The state every request shares; transports hold it in an `Arc`.
+/// Every request shares this state. Transports hold it in an `Arc`.
 pub struct App {
     config: Config,
     budget: Budget,
@@ -50,14 +50,14 @@ pub struct App {
     auth: Auth,
     assets: Assets,
     block: Block,
-    /// The process's discovery generation: 32 hex digits.
+    /// The process's discovery generation is 32 hex digits.
     generation: String,
-    /// What a bootstrap probe answer names: the HTTP/3 port.
+    /// A bootstrap probe answer names the HTTP/3 port.
     alt_svc: Option<HeaderValue>,
     shutdown: CancellationToken,
 }
 
-/// What the accepting transport knows of a request's connection, never anything the request claims.
+/// The accepting transport knows this of a request's connection, and never anything the request claims.
 #[derive(Debug, Clone)]
 pub struct Connection {
     pub endpoint: Endpoint,
@@ -73,10 +73,10 @@ impl Connection {
     }
 }
 
-/// A request's outcome, or the answer refusing it.
+/// A request yields its outcome, or the answer refusing it.
 type Admitted = Result<Outcome, Response<Body>>;
 
-/// What a transport does for a request.
+/// A transport does one of these for a request.
 pub enum Outcome {
     /// Writes the reply within the bound its body carries.
     Response(Response<Body>),
@@ -84,12 +84,12 @@ pub enum Outcome {
     WebSocket(Response<Body>, Lane),
     /// Accepts the WebTransport session with the head's fields, then serves the plan over the lane.
     WebTransport(Response<Body>, Lane, Plan),
-    /// Ends the exchange without an answer: an HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
+    /// Ends the exchange without an answer. An HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
     Abort,
 }
 
 impl App {
-    /// Draws the download block from the budget; admitted work ends when `shutdown` is canceled.
+    /// Draws the download block from the budget. Admitted work ends when `shutdown` is canceled.
     pub fn new(config: Config, shutdown: CancellationToken) -> Result<Self, String> {
         let auth = Auth::new(config.auth.as_ref(), &config.outbound, config.verbose)?;
         let budget = Budget::new(config.max_buffer_bytes);
@@ -137,26 +137,26 @@ impl App {
         &self.auth
     }
 
-    /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.
+    /// Writes the verbose throughput lines for the `window` since the last, for each direction that moved or runs.
     pub fn transfer_lines(&self, window: Duration) -> impl Iterator<Item = (&'static str, String)> + '_ {
         [("download", self.block.meter()), ("upload", self.uploads.meter())]
             .into_iter()
             .filter_map(move |(direction, meter)| Some((direction, meter.line(window)?)))
     }
 
-    /// A connection's share, keyed by its socket address; `None` refuses the connection.
+    /// Takes a connection's share, keyed by its socket address. `None` refuses the connection.
     pub fn connection(&self, peer: IpAddr, transport: Transport) -> Option<Hold> {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
         self.quotas.connection(&keys, transport)
     }
 
-    /// Whether a QUIC handshake from `peer` needs Retry: a quarter of connections or budget used, or its source held.
+    /// A QUIC handshake from `peer` needs Retry once a quarter of connections or budget is used, or its source is held.
     pub fn quic_retry(&self, peer: IpAddr) -> bool {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
         self.quotas.connections_crowded() || self.budget.pressure() >= Pressure::Retry || self.quotas.holds_quic(&keys)
     }
 
-    /// Receive-window credit for a connection `keys` fund; `None` past their share or the clients' half.
+    /// Credits the receive window of a connection `keys` fund. `None` means past their share or the clients' half.
     pub fn window_credit(&self, keys: &ClientKeys, bytes: usize) -> Option<Hold> {
         self.quotas.credit(keys, bytes)
     }
@@ -251,7 +251,7 @@ impl App {
         Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
     }
 
-    /// A WebTransport session admitted before its upgrade: `/wt/ping` as an operation, transfer routes as sessions.
+    /// Admits a WebTransport session before its upgrade, `/wt/ping` as an operation and transfer routes as sessions.
     fn webtransport<B>(
         &self,
         request: &Request<B>,
@@ -282,7 +282,7 @@ impl App {
         Ok(Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan))
     }
 
-    /// The WebSocket bus, admitted before its handshake is checked.
+    /// Admits the WebSocket bus before its handshake is checked.
     fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Admitted {
         let lane = self.admit(peer, connection, exchange, false)?;
         Ok(match websocket::handshake(request) {
@@ -291,7 +291,7 @@ impl App {
         })
     }
 
-    /// `bytes=` payload bytes; HEAD and an empty download release their handler with the reply.
+    /// Sends `bytes=` payload bytes. HEAD and an empty download release their handler with the reply.
     fn download<B>(
         &self,
         request: &Request<B>,
@@ -353,7 +353,7 @@ impl App {
     }
 }
 
-/// The routes a WebTransport session serves.
+/// A WebTransport session serves one of these routes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WtRoute {
     Ping,
@@ -361,10 +361,10 @@ enum WtRoute {
     Upload,
 }
 
-/// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.
+/// One read takes this many upload frames and records them at once. An HTTP/3 frame carries one QUIC packet's data.
 const READ_BATCH: usize = 32;
 
-/// The data bytes of the frames one read took, and how the upload ended after them, if it did.
+/// A batch counts the data bytes of the frames one read took, and says how the upload ended after them, if it did.
 struct Batch {
     bytes: usize,
     end: Option<End>,
@@ -376,7 +376,7 @@ enum End {
     Lane(LaneEnding),
 }
 
-/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check; pending only while none is.
+/// Takes up to `READ_BATCH` ready frames of `body`, then checks `lane`. It is pending only while no frame is ready.
 fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
     let mut bytes = 0;
     for taken in 0..READ_BATCH {
@@ -395,14 +395,14 @@ fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, l
     Poll::Ready(Batch { bytes, end: lane.due().map(End::Lane) })
 }
 
-/// The authority a request names in its URI or Host header, without user information.
+/// Reads the authority a request names in its URI or Host header, without user information.
 pub(crate) fn authority<B>(request: &Request<B>) -> Option<Authority> {
     let named = || request.headers().get(header::HOST)?.to_str().ok()?.parse().ok();
     let authority = request.uri().authority().cloned().or_else(named);
     authority.filter(|authority| !authority.as_str().contains('@'))
 }
 
-/// What accepted a connection: a TCP listener, HTTP/3's TCP companion or QUIC; its mounts follow `api/routes.txt`.
+/// A TCP listener, HTTP/3's TCP companion or QUIC accepted the connection. Its mounts follow `api/routes.txt`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     H1,
@@ -415,7 +415,7 @@ pub enum Endpoint {
 impl Endpoint {
     pub const ALL: [Self; 5] = [Self::H1, Self::H1Tls, Self::H2, Self::H3Companion, Self::Quic];
 
-    /// Whether this endpoint serves `route`: the only mount decision.
+    /// Tells whether this endpoint serves `route`. It is the only mount decision.
     pub const fn mounts(self, route: Route) -> bool {
         match route {
             Route::Probe
@@ -439,7 +439,7 @@ impl Endpoint {
         matches!(self, Self::H3Companion)
     }
 
-    /// Its protocol, which its errors lead with.
+    /// Its errors lead with this protocol.
     pub const fn protocol(self) -> &'static str {
         match self {
             Self::H1 => "HTTP/1.1",
@@ -449,7 +449,7 @@ impl Endpoint {
         }
     }
 
-    /// What its startup line says it serves.
+    /// Its startup line says it serves this.
     pub const fn roles(self, auth: bool) -> &'static str {
         const ALL: &str = "UI, discovery, probe, transfers, WebSockets";
         match self {

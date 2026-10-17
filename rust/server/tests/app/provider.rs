@@ -1,4 +1,4 @@
-//! A fake OIDC provider over TLS for the sign-in tests, whose apps trust it through `SSL_CERT_FILE`.
+//! Fakes an OIDC provider over TLS for the sign-in tests, whose apps trust it through `SSL_CERT_FILE`.
 
 use base64::{
     Engine as _,
@@ -35,9 +35,9 @@ use tokio_rustls::TlsAcceptor;
 
 pub(super) const CLIENT_ID: &str = "meter";
 pub(super) const SECRET: &str = "s3cret~*";
-/// What the provider changes in its answers: members merged into its metadata, its RSA key, the ID token's header
-/// and claims and the user information, where `null` removes one; `=` padding on its keys' members, the key set as
-/// `key_set` rewrites it, and user information signed with its P-256 key.
+/// A twist changes the provider's answers. It merges members into its metadata, its RSA key, the ID token's header
+/// and claims and the user information, where `null` removes one. It may pad its keys' members with `=`, rewrite the
+/// key set as `key_set` says, and sign user information with its P-256 key.
 #[derive(Default)]
 pub(super) struct Twist {
     pub padded_keys: bool,
@@ -53,18 +53,18 @@ pub(super) struct Twist {
 struct Shared {
     issuer: String,
     keys: Signers,
-    /// Each code's PKCE challenge and nonce.
+    /// Each code maps to its PKCE challenge and nonce.
     codes: Mutex<HashMap<String, (String, String)>>,
     twist: Mutex<Twist>,
     key_sets: AtomicUsize,
-    /// Where token and user information requests announce themselves while held.
+    /// Token and user information requests announce themselves here while held.
     held: Mutex<Option<Held>>,
 }
 
-/// A held request's path, and the sender that lets its answer go.
+/// A held request sends its path and the sender that lets its answer go.
 type Held = mpsc::UnboundedSender<(String, oneshot::Sender<()>)>;
 
-/// A provider, and the CA file and empty root directory a server trusts it through.
+/// A provider comes with the CA file and empty root directory a server trusts it through.
 pub(super) struct Provider(Arc<Shared>, Roots);
 
 struct Roots {
@@ -83,7 +83,7 @@ impl Provider {
         Self(Self::serve(listener, issuer, &identity), Roots { paths: roots, _scratch: scratch })
     }
 
-    /// The settings that make a server trust this provider alone.
+    /// Gives the settings that make a server trust this provider alone.
     pub fn trust(&self) -> [(&'static str, &str); 2] {
         [("SSL_CERT_FILE", &self.1.paths[0]), ("SSL_CERT_DIR", &self.1.paths[1])]
     }
@@ -131,7 +131,7 @@ impl Provider {
         held
     }
 
-    /// How many times the server fetched the key set.
+    /// Counts how many times the server fetched the key set.
     pub fn key_sets(&self) -> usize {
         self.0.key_sets.load(Ordering::Relaxed)
     }
@@ -219,7 +219,7 @@ impl Shared {
         answered(status, "application/json", document.to_string())
     }
 
-    /// The code exchange: the client's secret, the redirect URI and the verifier of the code's PKCE challenge.
+    /// Exchanges the code after checking the client's secret, the redirect URI and the verifier of its PKCE challenge.
     fn token(&self, headers: &http::HeaderMap, body: &[u8]) -> (u16, Value) {
         let basic = format!("Basic {}", STANDARD.encode("meter:s3cret~%2A"));
         assert_eq!(headers[header::AUTHORIZATION], basic);
@@ -268,7 +268,7 @@ fn merge(mut value: Value, twist: &Value) -> Value {
     value
 }
 
-/// The provider's signing keys; `stranger` signs with a P-256 key its key set leaves out.
+/// The provider signs with these keys. `stranger` signs with a P-256 key its key set leaves out.
 struct Signers {
     rsa: RsaKeyPair,
     p256: EcdsaKeyPair,
@@ -328,7 +328,7 @@ impl Signers {
         keys
     }
 
-    /// A compact JWS of `claims` signed as `header` names; `none` and unknown algorithms sign nothing.
+    /// Signs `claims` as a compact JWS the way `header` names. `none` and unknown algorithms sign nothing.
     fn sign(&self, header: &Value, claims: &Value) -> String {
         let message = format!("{}.{}", B64.encode(header.to_string()), B64.encode(claims.to_string()));
         let rsa = |padding: &'static dyn signature::RsaEncoding| {

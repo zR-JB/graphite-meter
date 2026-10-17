@@ -1,5 +1,5 @@
-// The page's own facts, read once from its document, and its sign-in: cookies and CSRF on its requests, the lifetime
-// a planned test needs, and the one end the app navigates on.
+// Reads the page's own facts once from its document, and holds its sign-in, which puts cookies and CSRF on its
+// requests, checks the lifetime a planned test needs, and marks the one end the app navigates on.
 import { signal, type Read } from "../../lib/signal";
 import { readJSON, release, session as sessionDocument, signInMarker } from "../../protocol/documents";
 import { AUTH_ROUTES } from "../../protocol/routes";
@@ -7,9 +7,9 @@ import { AUTH_ROUTES } from "../../protocol/routes";
 export interface PageConfig {
   origin: string;
   secure: boolean;
-  /** The server marks authenticated pages; the document stays the only owner of that fact. */
+  /** The server marks authenticated pages. The document stays the only owner of that fact. */
   auth: boolean;
-  /** The operator's default for saving results; the user's own choice wins. */
+  /** The operator's default for saving results. The user's own choice wins. */
   historyDefault: boolean;
   webTransport: "available" | "insecure-page" | "no-api";
 }
@@ -27,7 +27,7 @@ export function readPageConfig(): PageConfig {
 
 type SessionEnd = "expired" | "renew";
 
-/** The sign-in cannot cover a planned test; the message says what the user can do. */
+/** The sign-in cannot cover a planned test. The message says what the user can do. */
 export class CoverageError extends Error {}
 
 export interface Account {
@@ -37,18 +37,18 @@ export interface Account {
 }
 
 export interface PageSession {
-  /** Set once when the page's sign-in ends; the app saves what it can and navigates to sign-in. */
+  /** Set once when the page's sign-in ends. The app then saves what it can and navigates to sign-in. */
   readonly ended: Read<SessionEnd | null>;
   end(reason: SessionEnd): void;
-  /** What the sign-in adds to a request: the CSRF token its readable cookie mirrors, on methods that change state. */
+  /** The sign-in adds the CSRF token its readable cookie mirrors to a request, on methods that change state. */
   headers(method: string): Record<string, string>;
-  /** A request to the page's own server: its cookies, CSRF on unsafe methods, and no redirect with credentials. */
+  /** Asks the page's own server, with its cookies, CSRF on unsafe methods, and no redirect with credentials. */
   fetch(input: string, init?: RequestInit): Promise<Response>;
-  /** Whether the sign-in has ended, from one shared check; a yes ends the session. */
+  /** Asks whether the sign-in has ended, from one shared check. A yes ends the session. */
   expired(signal?: AbortSignal): Promise<boolean>;
-  /** The sign-in's monotonic deadline when it covers `requiredMs`, null without authentication. */
+  /** Gives the sign-in's monotonic deadline when it covers `requiredMs`, or null without authentication. */
   coverage(requiredMs: number, signal: AbortSignal): Promise<number | null>;
-  /** Who is signed in, for the account control; null without authentication or when it cannot be read. */
+  /** Names who is signed in, for the account control, or null without authentication or when it cannot be read. */
   account(signal: AbortSignal): Promise<Account | null>;
 }
 
@@ -56,8 +56,8 @@ export interface PageSession {
 export const ENDED_CHECK_MS = 3_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Whether a sign-in or grant ended, from one `check` in flight for everyone who asks, so an expiry never fans out
-    into a burst from parallel lanes; an asker that gave up hears no. A failed check is no evidence. */
+/** Asks whether a sign-in or grant ended, from one `check` in flight for everyone who asks, so an expiry never fans
+    out into a burst from parallel lanes. An asker that gave up hears no. A failed check is no evidence. */
 export function endedCheck(check: () => Promise<Response>): (signal?: AbortSignal) => Promise<boolean> {
   let checking: Promise<boolean> | null = null;
   const marked = () =>
@@ -72,7 +72,7 @@ export function endedCheck(check: () => Promise<Response>): (signal?: AbortSigna
   };
 }
 
-/** The sign-in's CSRF token, which it mirrors into a readable cookie, as a header for methods that change state. */
+/** Puts the sign-in's CSRF token, which it mirrors into a readable cookie, in a header for methods that change state. */
 export function csrfHeaders(method: string, cookie: string): Record<string, string> {
   if (SAFE_METHODS.has(method.toUpperCase())) return {};
   const prefix = "__Host-gm_csrf=";

@@ -1,4 +1,4 @@
-//! Native sign-in: a PKCE approval page, then its token exchange polled up to 120 s; the grant stays in memory.
+//! Signs in natively through a PKCE approval page and polls its token exchange up to 120 s. The grant stays in memory.
 use super::{
     CONTROL_TIMEOUT, Client,
     conn::{Conn, Payload, ReadBuffer},
@@ -19,30 +19,30 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
-/// How long an approval waits for the operator.
+/// An approval waits this long for the operator.
 const LIFETIME: Duration = Duration::from_mins(2);
-/// The spacing of token polls.
+/// Token polls are spaced this far apart.
 const POLL: Duration = Duration::from_secs(1);
 
-/// A sign-in at a server waiting for the operator's approval.
+/// A sign-in at a server waits for the operator's approval.
 pub struct Approval {
     pub origin: Origin,
-    /// The approval page: `<origin>/auth/cli?challenge=…`.
+    /// The approval page lives at `<origin>/auth/cli?challenge=…`.
     pub url: String,
-    /// The code the page shows too.
+    /// The page shows this code too.
     pub code: String,
     pub deadline: Instant,
     verifier: String,
 }
 
-/// Why an approval gave no grant.
+/// Says why an approval gave no grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unapproved {
     Expired,
     Failed(Failure),
 }
 
-/// Why `origin` refuses sign-in: it is not HTTPS, or TLS goes unverified.
+/// Says why `origin` refuses sign-in when it is not HTTPS or TLS goes unverified.
 pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
     match () {
         _ if insecure => Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure)."),
@@ -52,7 +52,7 @@ pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
 }
 
 impl Approval {
-    /// A fresh approval at `origin` with a verifier from 32 random bytes.
+    /// Starts a fresh approval at `origin` with a verifier from 32 random bytes.
     pub fn new(origin: &Origin) -> Self {
         let mut entropy = [0; 32];
         getrandom::fill(&mut entropy).expect("the system provides randomness");
@@ -67,15 +67,15 @@ impl Approval {
         }
     }
 
-    /// The grant once approved at `client`'s server.
+    /// Returns the grant once it is approved at `client`'s server.
     pub async fn grant(&self, client: &Client) -> Result<String, Unapproved> {
         let conn = &tokio::sync::Mutex::new(None);
         self.wait(|| async move { self.poll(client, &mut *conn.lock().await).await })
             .await
     }
 
-    /// The grant `poll` brings, asked every second; polls outlast network failures until the deadline, which reports
-    /// the last of them.
+    /// Asks `poll` every second for the grant. Polls outlast network failures until the deadline, which reports the
+    /// last of them.
     pub async fn wait<F>(&self, mut poll: impl FnMut() -> F) -> Result<String, Unapproved>
     where
         F: Future<Output = Result<Option<String>, Fault>>,
@@ -101,7 +101,7 @@ impl Approval {
         }
     }
 
-    /// One token exchange over `conn`, kept for the next while it stays usable: the grant, or none while pending.
+    /// Runs one token exchange over `conn`, kept for the next while usable. Returns the grant, or none while pending.
     async fn poll(&self, client: &Client, conn: &mut Option<Conn>) -> Result<Option<String>, Fault> {
         let exchange = async {
             let mut ready = match conn.take().filter(Conn::usable) {
@@ -141,7 +141,7 @@ impl Approval {
 }
 
 impl Unapproved {
-    /// The failure a view shows.
+    /// Returns the failure a view shows.
     pub fn failure(&self) -> Failure {
         match self {
             Self::Expired => Failure::new(FailureReason::SignInRequired, EXPIRED),
@@ -150,5 +150,5 @@ impl Unapproved {
     }
 }
 
-/// What an expired approval asks the operator to do.
+/// An expired approval asks this of the operator.
 pub const EXPIRED: &str = "Sign-in expired";

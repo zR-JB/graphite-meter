@@ -1,4 +1,4 @@
-//! HTTP/3 and WebTransport over the noq QUIC fork, both roles: sans-IO protocol modules and a driver per connection.
+//! Runs HTTP/3 and WebTransport over the noq QUIC fork in both roles, with sans-IO modules and a driver per connection.
 mod budget;
 mod capsule;
 pub mod client;
@@ -32,14 +32,14 @@ mod testing {
             .collect()
     }
 
-    /// A frame of `kind`; capsules are laid out the same way.
+    /// Builds a frame of `kind`. Capsules are laid out the same way.
     pub fn frame(kind: impl crate::frame::Kind, payload: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
         crate::frame::put_header(kind, payload.len() as u64, &mut bytes);
         [bytes, payload.to_vec()].concat()
     }
 
-    /// `fields` as our QPACK encodes them.
+    /// Encodes `fields` with our QPACK.
     pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
         let mut section = Vec::new();
         let fields = fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes()));

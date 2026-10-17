@@ -1,16 +1,16 @@
-// The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
-// visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
+// Holds the instrument's drawing helpers, a view's painter on the shared frame clock, whether an element is on screen
+// in a visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
 import { animate, pageMs } from "../../lib/frame";
 import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 
-/** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
+/** A live view redraws at most this often; past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
-/** A view's painter: `wake()` draws on the next frame, and on every frame after while `draw` returns true, skipping
-    frames closer than LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws instead before the
-    frame's next layout, so a view keeps step with its box at any display rate. A change is drawn once however many
-    wakes ask for it. While `away` holds it draws nothing, and it draws again as its view returns. Released with its
-    owner. */
+/** Makes a view's painter. `wake()` draws on the next frame, and on every frame after while `draw` returns true,
+    skipping frames closer than LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws instead
+    before the frame's next layout, so a view keeps step with its box at any display rate. A change is drawn once
+    however many wakes ask for it. While `away` holds it draws nothing, and it draws again as its view returns. It is
+    released with its owner. */
 export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
@@ -47,7 +47,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
     if (!resized) return start();
     if (queued) return;
     queued = true;
-    // After the callback or batch that resized the view, so every wake it caused is drawn in one go.
+    // It runs after the callback or batch that resized the view, so every wake it caused is drawn in one go.
     queueMicrotask(() => {
       queued = false;
       if (!disposed && due && !away?.peek() && paint(pageMs())) start();
@@ -72,7 +72,7 @@ export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (
   return wake;
 }
 
-/** Whether `element` is on screen in a visible page; `initial` until the first observation. */
+/** Says whether `element` is on screen in a visible page; `initial` until the first observation. */
 export function inView(element: Element, initial: boolean): Read<boolean> {
   const seen = signal(initial);
   let intersecting = initial;
@@ -92,13 +92,13 @@ export function inView(element: Element, initial: boolean): Read<boolean> {
 
 type Size = { width: number; height: number };
 
-/** Every measured element, its last size and the views that follow it. */
+/** Maps every measured element to its last size and the views that follow it. */
 const measured = new Map<Element, { size: Size; follow: Set<(size: Size) => void> }>();
 let sizer: ResizeObserver | null = null;
 
-/** Each element's border-box size in whole CSS px, as `clientWidth` reads it, so the sub-pixel steps at a slide's end
-    draw nothing until they add up to a pixel. One observer serves every view, so a frame's resizes arrive in one
-    callback and one batch; read there, never by forcing layout. */
+/** Gives each element's border-box size in whole CSS px, as `clientWidth` reads it, so the sub-pixel steps at a
+    slide's end draw nothing until they add up to a pixel. One observer serves every view, so a frame's resizes arrive
+    in one callback and one batch; sizes are read there, never by forcing layout. */
 export function measure<K extends string>(elements: Record<K, Element>): Record<K, Read<Size>> {
   sizer ??= new ResizeObserver((records) =>
     batch(() => {
@@ -171,9 +171,9 @@ export function scrub(read: (event: PointerEvent) => void, clear: (event: Pointe
   };
 }
 
-/** A figure that changes every frame or every sample: a box of fixed size (`.figure`), as wide in ch as its longest
-    text so far, whose text lays out alone in an absolutely placed, contained box inside it, so writing a new value
-    lays out nothing around it. Mono figures only. */
+/** Holds a figure that changes every frame or every sample in a box of fixed size (`.figure`), as wide in ch as its
+    longest text so far. Its text lays out alone in an absolutely placed, contained box inside it, so writing a new
+    value lays out nothing around it. Mono figures only. */
 export class Figure {
   readonly box: HTMLElement;
   readonly #text: Text;

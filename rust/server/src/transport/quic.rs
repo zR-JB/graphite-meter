@@ -1,4 +1,4 @@
-//! HTTP/3 over QUIC: endpoints holding buffers from bind, Retry under pressure, connection floors, the driver.
+//! Drives HTTP/3 over QUIC. Endpoints hold buffers from bind, connections hold floors and Retry answers under pressure.
 
 mod budget;
 mod endpoint;
@@ -41,12 +41,12 @@ use tokio_util::sync::CancellationToken;
 
 /// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
-/// How often a connection's send window follows its demand.
+/// A connection's send window follows its demand this often.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 /// Connections closed once the shutdown drain ended have this long to send their close.
 const CLOSE_FLUSH: Duration = Duration::from_secs(1);
 
-/// An endpoint's accepts; dropping it refuses new connections while running ones go on.
+/// Accepts for one endpoint. Dropping it refuses new connections while running ones go on.
 pub struct Listener {
     endpoint: noq::Endpoint,
     app: Arc<App>,
@@ -54,13 +54,13 @@ pub struct Listener {
     shard: Option<Shard>,
 }
 
-/// An accepted handshake and its share of its endpoint's connections.
+/// Carries an accepted handshake and its share of its endpoint's connections.
 pub struct Arrival {
     incoming: noq::Incoming,
     occupant: Option<Occupant>,
 }
 
-/// What the endpoints' connections share.
+/// Holds what the endpoints' connections share.
 #[derive(Clone)]
 pub struct Http3 {
     app: Arc<App>,
@@ -75,7 +75,7 @@ impl Listener {
         self.endpoint.local_addr()
     }
 
-    /// The runtime the endpoint and its connections run on.
+    /// The endpoint and its connections run on this runtime.
     pub fn runtime(&self) -> Handle {
         self.runtime.clone()
     }
@@ -84,7 +84,7 @@ impl Listener {
 impl Listen for Listener {
     type Connection = Arrival;
 
-    /// The next handshake, or `None` once Retry answered it: a round trip protects admission from spoofed Initials.
+    /// Gets the next handshake, or `None` once Retry answered it. A round trip guards admission from spoofed Initials.
     async fn accept(&mut self) -> io::Result<Option<(Arrival, SocketAddr)>> {
         let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
         let peer = incoming.remote_address();
@@ -118,7 +118,7 @@ impl Drop for Listener {
 }
 
 impl Http3 {
-    /// An incoming connection's work, holding its floor from now; one whose floor does not fit is refused.
+    /// Serves an incoming connection and holds its floor from now. One whose floor does not fit is refused.
     pub fn connection(&self, arrival: Arrival, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
         let floor = floor_bytes(self.certificates.handshake_bytes());
         let budget = self.app.budget().lease(floor).map(|floor| self.budget(floor));
@@ -158,7 +158,7 @@ impl Http3 {
         }
     }
 
-    /// The connection's share of the budget, holding `floor`, and the configuration that has noq charge it.
+    /// Builds the connection's share of the budget, holding `floor`, and the configuration that has noq charge it.
     fn budget(&self, floor: Lease) -> (Arc<ConnectionBudget>, Arc<noq::ServerConfig>) {
         let budget = Arc::new(ConnectionBudget::new(self.app.budget(), floor));
         let mut transport = (*self.config.transport).clone();
@@ -168,7 +168,7 @@ impl Http3 {
         (budget, Arc::new(config))
     }
 
-    /// Serves requests until the layer or lifecycle ends the connection; a stop closes every session first.
+    /// Serves requests until the layer or lifecycle ends the connection. A stop closes every session first.
     async fn serve(
         &self,
         quic: noq::Connection,
@@ -183,7 +183,7 @@ impl Http3 {
         let (mut running, mut send_window) = (FuturesUnordered::new(), SendWindow::default());
         let mut tuning = interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        // A child token: polling it never takes the server-wide token's waiter lock.
+        // Polling a child token never takes the server-wide token's waiter lock.
         let shutdown = self.shutdown.child_token();
         let mut stopping = pin!(shutdown.cancelled());
         let mut stopped = false;
@@ -211,7 +211,7 @@ impl Http3 {
     }
 }
 
-/// Whether a connection ended without a failure worth logging: a peer's close or an idle timeout.
+/// Says whether a connection ended without a failure worth logging, by a peer's close or an idle timeout.
 fn ended_normally(error: &http3::Error) -> bool {
     use noq::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
     match error {

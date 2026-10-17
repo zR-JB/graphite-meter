@@ -1,4 +1,4 @@
-//! The store of logins, grants and one-use socket tickets; raw credentials go only to their issuer, keyed by SHA-256.
+//! Stores logins, grants and one-use socket tickets keyed by SHA-256. Raw credentials go only to their issuer.
 
 use super::{
     AuthLease, BrowserOrigin, Holder, Principal, Via,
@@ -28,7 +28,7 @@ const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 
 pub(super) type Digest = [u8; 32];
 
-/// A login's key: the digest of its session cookie.
+/// A login's key is the digest of its session cookie.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LoginKey(pub(super) Digest);
 
@@ -38,7 +38,7 @@ impl fmt::Debug for LoginKey {
     }
 }
 
-/// Credentials, which never print.
+/// Defines credentials, which never print.
 macro_rules! secret {
     ($($(#[$meta:meta])* $name:ident,)+) => {$(
         $(#[$meta])*
@@ -60,22 +60,22 @@ macro_rules! secret {
 }
 
 secret! {
-    /// A login's session cookie.
+    /// The token is a login's session cookie.
     SessionToken,
-    /// A login's CSRF token, which the app sends back in a header.
+    /// The token is a login's CSRF token, which the app sends back in a header.
     CsrfToken,
-    /// A grant's bearer token.
+    /// The token is a grant's bearer token.
     GrantToken,
 }
 
-/// Who signs in, and how the login presents itself.
+/// Names who signs in, and how the login presents itself.
 pub struct Identity<'a> {
     pub principal: Principal,
     pub name: &'a str,
     pub provider: &'a str,
 }
 
-/// A new login's credentials, for its cookies.
+/// Carries a new login's credentials, for its cookies.
 pub struct NewLogin {
     pub key: LoginKey,
     pub token: SessionToken,
@@ -83,7 +83,7 @@ pub struct NewLogin {
     pub expires: SystemTime,
 }
 
-/// Why a grant was not issued.
+/// Says why a grant was not issued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrantRefusal {
     /// The login ended.
@@ -92,7 +92,7 @@ pub enum GrantRefusal {
     Full,
 }
 
-/// Why a ticket was not minted.
+/// Says why a ticket was not minted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MintRefusal {
     Ended,
@@ -100,7 +100,7 @@ pub(super) enum MintRefusal {
     Full,
 }
 
-/// What `/auth/session` reports of a login.
+/// Carries what `/auth/session` reports of a login.
 pub(super) struct LoginView {
     pub name: String,
     pub provider: String,
@@ -141,17 +141,17 @@ pub(super) struct State {
     logins: HashMap<Digest, Login>,
     grants: HashMap<Digest, Grant>,
     tickets: HashMap<Digest, Ticket>,
-    /// Approvals by their challenge.
+    /// Keys approvals by their challenge.
     pub(super) approvals: HashMap<Challenge, Approval>,
     sequence: u64,
 }
 
-/// The authentication state every listener shares; clones share one store.
+/// Holds the authentication state every listener shares. Clones share one store.
 #[derive(Clone, Default)]
 pub struct Store(pub(super) Arc<Mutex<State>>);
 
 impl Store {
-    /// Signs `identity` in, ending its principal's oldest login at eight; `None` when the server holds 1024.
+    /// Signs `identity` in, ending its principal's oldest login at eight, or `None` when the server holds 1024.
     pub fn sign_in(&self, identity: Identity<'_>) -> Option<NewLogin> {
         let (token, csrf, id) = (SessionToken(random::<32>()), CsrfToken(random::<32>()), random::<16>());
         let key = digest(token.as_str());
@@ -182,7 +182,7 @@ impl Store {
         Some(NewLogin { key: LoginKey(key), token, csrf, expires })
     }
 
-    /// Ends the login, or with `every` its principal's logins, with grants and tickets; `false` when it already ended.
+    /// Ends the login, or with `every` its principal's logins, with grants and tickets. `false` means it already ended.
     pub fn sign_out(&self, login: LoginKey, every: bool) -> bool {
         let mut state = lock(&self.0);
         let Some(principal) = state.login(&login.0).map(|login| login.principal.clone()) else {
@@ -195,7 +195,7 @@ impl Store {
         true
     }
 
-    /// The lease of the login whose session cookie is `token`.
+    /// Finds the lease of the login whose session cookie is `token`.
     pub fn cookie(&self, token: &str) -> Option<AuthLease> {
         let key = digest(token);
         let mut state = lock(&self.0);
@@ -211,7 +211,7 @@ impl Store {
         }
     }
 
-    /// The lease of the grant whose bearer token is `token`: 32 random bytes in canonical unpadded base64url.
+    /// Finds the lease of the grant whose bearer token is `token`, 32 random bytes in canonical unpadded base64url.
     pub fn bearer(&self, token: &str) -> Option<AuthLease> {
         let mut raw = [0; 32];
         if token.len() != 43 || URL_SAFE_NO_PAD.decode_slice(token, &mut raw).ok()? != 32 {
@@ -231,7 +231,7 @@ impl Store {
         lock(&self.0).grant(login, browser, credentials)
     }
 
-    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, for 30 s at most.
+    /// Mints a one-use ticket presenting `lease` at `target` from the `origin` that minted it, for 30 s at most.
     pub(super) fn mint(
         &self,
         lease: &AuthLease,
@@ -267,7 +267,7 @@ impl Store {
         valid.then_some(ticket.lease).filter(|lease| !lease.is_ended(now))
     }
 
-    /// Whether `proof` is the login's CSRF token, compared in constant time.
+    /// Says whether `proof` is the login's CSRF token, compared in constant time.
     pub(super) fn csrf(&self, login: LoginKey, proof: &str) -> bool {
         let state = lock(&self.0);
         state
@@ -284,7 +284,7 @@ impl Store {
 }
 
 impl State {
-    /// Issues `login` a grant with `credentials`; eight per login, then native replaces oldest native, else refused.
+    /// Issues `login` a grant with `credentials`. At eight, a native one replaces the oldest native, else it refuses.
     pub(super) fn grant(
         &mut self,
         login: LoginKey,
@@ -308,12 +308,12 @@ impl State {
         Ok(token)
     }
 
-    /// How many grants `login` holds.
+    /// Counts the grants `login` holds.
     pub(super) fn grants_of(&self, login: LoginKey) -> usize {
         self.grants.values().filter(|grant| grant.login == login).count()
     }
 
-    /// The logins of `principal`, oldest first.
+    /// Lists the logins of `principal`, oldest first.
     fn held(&self, principal: &Principal) -> Vec<Digest> {
         let held = self.logins.iter().filter(|(_, login)| login.principal == *principal);
         let mut held: Vec<_> = held.map(|(key, login)| (login.sequence, *key)).collect();
@@ -321,7 +321,7 @@ impl State {
         held.into_iter().map(|(_, key)| key).collect()
     }
 
-    /// The login keyed `key` while it lasts.
+    /// Finds the login keyed `key` while it lasts.
     pub(super) fn login(&self, key: &Digest) -> Option<&Login> {
         self.logins.get(key).filter(|login| Instant::now() < login.deadline)
     }
@@ -363,18 +363,18 @@ pub(super) fn digest(token: &str) -> Digest {
     digest.as_ref().try_into().expect("SHA-256 digests are 32 bytes")
 }
 
-/// `N` random bytes in unpadded base64url.
+/// Draws `N` random bytes in unpadded base64url.
 pub(super) fn random<const N: usize>() -> String {
     URL_SAFE_NO_PAD.encode(crate::random::<N>())
 }
 
-/// A new grant's bearer token and id.
+/// Holds a new grant's bearer token and id.
 pub(super) struct Credentials {
     token: GrantToken,
     id: Arc<str>,
 }
 
-/// A new grant's credentials, drawn before the store is locked.
+/// Draws a new grant's credentials before the store is locked.
 pub(super) fn credentials() -> Credentials {
     Credentials { token: GrantToken(random::<32>()), id: random::<16>().into() }
 }

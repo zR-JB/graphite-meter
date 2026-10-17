@@ -1,4 +1,4 @@
-//! The browser app on the listeners that serve it, its documents under the page's content security policy.
+//! Serves the browser app's documents, under the page's content security policy, on the listeners that carry it.
 
 use super::{App, Endpoint, finalize::harden, response};
 use crate::{peer::Peer, transport::body::Body};
@@ -13,7 +13,7 @@ use std::{
 };
 
 impl App {
-    /// The answer to a request that no route claims on a listener serving the app.
+    /// Answers a request that no route claims on a listener serving the app.
     pub(super) fn page<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Response<Body> {
         let head = request.method() == Method::HEAD;
         let mut response = match self.assets.get(request.uri().path(), request.headers()) {
@@ -37,7 +37,7 @@ impl App {
         if status != StatusCode::NOT_MODIFIED {
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
         }
-        // Every response carries the policy: a worker runs under its own script's, not the page's.
+        // Every response carries the policy, because a worker runs under its own script's, not the page's.
         let policy = self
             .assets
             .policy(&self.connect_sources(&self.preflight(request), secure(request, endpoint, peer)));
@@ -51,8 +51,8 @@ impl App {
         response
     }
 
-    /// What the page may connect to beyond itself: catalog servers and this host's targets, less IPv6 literals and,
-    /// on an HTTPS page, the clear-text sources it cannot use.
+    /// Lists what the page may connect to beyond itself, the catalog servers and this host's targets, less IPv6
+    /// literals and, on an HTTPS page, the clear-text sources it cannot use.
     fn connect_sources(&self, preflight: &Preflight, secure: bool) -> Vec<String> {
         let mut sources = Vec::new();
         for server in &self.config.catalog.servers {
@@ -79,12 +79,12 @@ impl App {
     }
 }
 
-/// Whether the browser loaded the page over HTTPS: on the TLS listener, or through a trusted proxy that says so.
+/// Tells whether the browser loaded the page over HTTPS, on the TLS listener or through a trusted proxy that says so.
 fn secure<B>(request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> bool {
     endpoint == Endpoint::H1Tls || peer.forwarded_tls(request.headers())
 }
 
-/// A clear-text source, which browsers block from an HTTPS page as mixed content unless its host is loopback.
+/// Spots a clear-text source, which browsers block from an HTTPS page as mixed content unless its host is loopback.
 fn mixed(source: &str) -> bool {
     let (scheme, rest) = source.split_once("://").unwrap_or_default();
     let host = rest.split(':').next().unwrap_or_default().to_ascii_lowercase();
@@ -94,7 +94,7 @@ fn mixed(source: &str) -> bool {
     matches!(scheme, "http" | "ws") && !loopback
 }
 
-/// An origin and its WebSocket form.
+/// Pairs an origin with its WebSocket form.
 fn with_socket(origin: &Origin) -> [String; 2] {
     let origin = origin.to_string();
     let socket = origin.replacen("http", "ws", 1);

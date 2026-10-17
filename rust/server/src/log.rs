@@ -1,9 +1,9 @@
-//! Log lines with a UTC time, level, topic and source, and limits for lines peers or load can repeat.
+//! Writes log lines with a UTC time, level, topic and source, and limits lines that peers or load can repeat.
 //!
-//! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next:
+//! A message states what happened, then after `: ` its detail, then after `; ` what to do or what happens next, as in
 //! `certificate renewal rejected: <error>; keeping the current certificate`. It starts lowercase, has no full stop and
-//! uses one word for one meaning: `failed` (an operation did not complete), `refused` (the server declined),
-//! `unavailable` (a dependency did not answer), `missing`, `ready`.
+//! uses one word for one meaning. The words are `failed` (an operation did not complete), `refused` (the server
+//! declined), `unavailable` (a dependency did not answer), `missing` and `ready`.
 
 use std::{
     fmt::{self, Write as _},
@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-/// Writes one line to stderr: `log!(Warn, "tls", "certificate expires in {left}")`.
+/// Writes one line to stderr, as in `log!(Warn, "tls", "certificate expires in {left}")`.
 #[macro_export]
 macro_rules! log {
     ($level:ident, $topic:expr, $($message:tt)*) => {
@@ -42,7 +42,7 @@ impl Level {
         }
     }
 
-    /// The label's and the message's terminal colors.
+    /// Returns the terminal colors of the label and the message.
     fn colors(self) -> (&'static str, &'static str) {
         match self {
             Self::Debug => ("34", "2"),
@@ -55,13 +55,13 @@ impl Level {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
-    /// `2026-10-06T14:31:02Z WARN  tls:       message; advice (transport::tls)`, for files, pipes and `docker logs`.
+    /// Files, pipes and `docker logs` get `2026-10-06T14:31:02Z WARN  tls:       message; advice (transport::tls)`.
     Plain,
-    /// The plain line in color; a warning's or error's advice on a `help:` line.
+    /// A terminal gets the plain line in color, with a warning's or error's advice on a `help:` line.
     Color,
 }
 
-/// Color on a terminal that is not `TERM=dumb` unless `NO_COLOR` is set; `FORCE_COLOR` asks for it anywhere.
+/// Color goes to a terminal that is not `TERM=dumb` unless `NO_COLOR` is set. `FORCE_COLOR` asks for it anywhere.
 static STYLE: LazyLock<Style> = LazyLock::new(|| {
     let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0");
     let terminal =
@@ -73,19 +73,19 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
     }
 });
 
-/// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled log pipe never
-/// blocks the thread that logs.
+/// This many lines may wait for the writer thread. Past that a line is dropped and counted, so a stalled log pipe
+/// never blocks the thread that logs.
 const QUEUE: usize = 1024;
-/// How long `flush` waits for the queue to drain.
+/// `flush` waits this long for the queue to drain.
 const FLUSH_WAIT: Duration = Duration::from_secs(2);
 
 enum Entry {
     Line(String),
-    /// Answered once every earlier line is written.
+    /// The writer answers once every earlier line is written.
     Flush(SyncSender<()>),
 }
 
-/// The writer thread's queue; none if the thread could not start, and lines are then written in place.
+/// Queues lines for the writer thread. If the thread could not start there is none, and lines are written in place.
 static WRITER: LazyLock<Option<SyncSender<Entry>>> = LazyLock::new(|| {
     let (queue, entries) = mpsc::sync_channel(QUEUE);
     let writer = std::thread::Builder::new().name("gm-log".into()).spawn(move || {
@@ -153,8 +153,8 @@ fn now() -> String {
 /// Topics are padded to the longest, `admission:`, so messages start in one column.
 const TOPIC_WIDTH: usize = 10;
 
-/// One log line; control characters are escaped so no peer text drives a terminal. Warnings and errors name the
-/// module that wrote them, such as `transport::tls`.
+/// Formats one log line. Control characters are escaped so no peer text drives a terminal. Warnings and errors name
+/// the module that wrote them, such as `transport::tls`.
 pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, time: &str, style: Style) -> String {
     let mut text = String::new();
     for character in message.to_string().chars() {
@@ -192,7 +192,7 @@ pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>
     }
 }
 
-/// A span in prose: `80 ms`, `4 s`, `4.5 s`, `1 min 5 s`, `2 h 5 min`.
+/// Writes a span in prose, such as `80 ms`, `4 s`, `4.5 s`, `1 min 5 s` or `2 h 5 min`.
 pub fn span(span: Duration) -> String {
     let (millis, seconds) = (span.as_millis(), span.as_secs());
     let (minutes, hours) = (seconds / 60 % 60, seconds / 3600);
@@ -208,11 +208,11 @@ pub fn span(span: Duration) -> String {
 
 const INTERVAL: Duration = Duration::from_mins(1);
 
-/// A line any peer can cause: written at most once a minute, the next one counting those held back.
+/// Limits a line any peer can cause to once a minute. The next one written counts those held back.
 pub struct RateLimited {
     level: Level,
     topic: &'static str,
-    /// What the held-back lines report, such as `peer connection failures`.
+    /// Names what the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     module: &'static str,
     state: Mutex<Window>,
@@ -249,7 +249,7 @@ impl RateLimited {
         }
     }
 
-    /// The lines held back since the last one written, when one may be written at `now`.
+    /// Returns the lines held back since the last one written, if one may be written at `now`.
     fn admit(&self, now: Instant) -> Option<u64> {
         let mut window = crate::lock(&self.state);
         if window.next.is_some_and(|next| now < next) {
@@ -261,12 +261,12 @@ impl RateLimited {
     }
 }
 
-/// A condition logged at start and end, each at its own threshold so a value hovering at one cannot flood the log.
+/// Logs a condition at start and end, each at its own threshold, so a value hovering at one cannot flood the log.
 #[derive(Debug, Default)]
 pub struct Latch(AtomicBool);
 
 impl Latch {
-    /// `Some(true)` when the condition starts, `Some(false)` when it ends; one caller sees each change.
+    /// Gives `Some(true)` when the condition starts and `Some(false)` when it ends. One caller sees each change.
     pub fn update(&self, start: bool, end: bool) -> Option<bool> {
         let on = self.0.load(Ordering::Relaxed);
         let changed = if on { end } else { start };

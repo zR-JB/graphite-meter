@@ -1,18 +1,18 @@
-// Dialling a socket from a worker: its single-use ticket (api/wire.md#socket-credentials), minted right before a dial.
-// The server spends one on any answer, a refusal too; one whose dial lapsed unanswered may never have reached it, so
-// close dials share it, keeping a worker's retries inside the server's outstanding tickets per sign-in.
+// Holds a worker's single-use socket ticket (api/wire.md#socket-credentials), minted right before a dial. The server
+// spends one on any answer, a refusal too. A ticket whose dial lapsed unanswered may never have reached it, so close
+// dials share it, which keeps a worker's retries inside the server's outstanding tickets per sign-in.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";
 import type { TicketRecipe } from "../types";
 import { refused } from "./endings";
 
-/** Two dial budgets and a restart pause. */
+/** Covers two dial budgets and a restart pause. */
 const REUSE_MS = 6_300;
 
 export type Ticket = { type: "token"; token: string } | EndReport;
 
-/** One worker's held ticket. Its lifetime is wall-clock time, as the server states `expires`. */
+/** Holds one worker's ticket. Its lifetime is wall-clock time, as the server states `expires`. */
 export class Tickets {
   #held: { url: string; token: string; until: number } | null = null;
 
@@ -45,6 +45,6 @@ export class Tickets {
   }
 }
 
-/** The dial URL with its ticket; the empty ticket of a server without authentication adds nothing. */
+/** Appends the ticket to the dial URL. The empty ticket of a server without authentication adds nothing. */
 export const withToken = (url: string, token: string) =>
   token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url;

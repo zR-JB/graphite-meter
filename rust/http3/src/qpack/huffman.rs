@@ -1,7 +1,7 @@
 //! The HPACK Huffman code (RFC 7541 Appendix B). It is canonical, so code lengths define it.
 use super::Invalid;
 
-/// Code length per symbol, 16 symbols per row; the last is EOS.
+/// Lists each symbol's code length, 16 per row. The last is EOS.
 #[rustfmt::skip]
 const LENGTHS: [u8; 257] = [
     13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
@@ -26,7 +26,7 @@ const EOS: u16 = 256;
 
 struct Code {
     codes: [u32; 257],
-    /// Per length: the first code, how many codes there are and where their symbols start.
+    /// Per length, these hold the first code, how many codes there are and where their symbols start.
     first: [u32; 31],
     count: [u32; 31],
     start: [usize; 31],
@@ -62,7 +62,7 @@ const fn canonical() -> Code {
         fill[length] += 1;
         symbol += 1;
     }
-    // A complete code, with EOS as the all-ones 30-bit code: every bit string decodes or pads.
+    // The code is complete, with EOS as the all-ones 30-bit code, so every bit string decodes or pads.
     assert!(code == 1 << 31 && codes[EOS as usize] == (1 << 30) - 1);
     Code { codes, first, count, start, symbols }
 }
@@ -107,7 +107,7 @@ pub(crate) fn decode(input: &[u8], output: &mut Vec<u8>) -> Result<(), Invalid> 
             }
         }
     }
-    // Padding is a prefix of EOS: at most seven one bits.
+    // Padding is a prefix of EOS, so at most seven one bits.
     if length > 7 || code != (1 << length) - 1 {
         return Err(Invalid::Qpack);
     }

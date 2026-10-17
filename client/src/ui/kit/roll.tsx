@@ -1,5 +1,5 @@
-// A changed figure rolls like a counter, upward while its rank grows: only the changed figures when the words between
-// them stay, else the whole text. A change during a roll ends it and swaps at once.
+// A changed figure rolls like a counter, upward while its rank grows. Only the changed figures roll when the words
+// between them stay, else the whole text. A change during a roll ends it and swaps at once.
 import { pageMs } from "../../lib/frame";
 import { reducedMotion } from "../../lib/motion";
 import { effect, untrack } from "../../lib/signal";
@@ -12,7 +12,7 @@ const CUBIC_IN = "cubic-bezier(0.32, 0, 0.67, 0)";
 const FIGURE = /(\d+(?:\.\d+)?)/;
 const parts = (text: string) => text.split(FIGURE).filter(Boolean);
 const isFigure = (part: string) => /\d/.test(part);
-/** The words between a text's figures: two texts of one shape roll figure by figure. */
+/** Reads the words between a text's figures. Two texts of one shape roll figure by figure. */
 const shape = (text: string) =>
   parts(text)
     .map((part) => (isFigure(part) ? "#" : part))
@@ -21,7 +21,7 @@ const shape = (text: string) =>
 const span = (className: string, text: string) =>
   Object.assign(document.createElement("span"), { className, textContent: text });
 
-/** Figures in ink, each in a slot of its own, the words between them quieter. */
+/** Sets figures in ink, each in a slot of its own, and the words between them quieter. */
 function value(text: string): HTMLSpanElement {
   const shown = document.createElement("span");
   shown.className = "roll-value";
@@ -37,9 +37,9 @@ function value(text: string): HTMLSpanElement {
   return shown;
 }
 
-/** When each box last started a roll. */
+/** Records when each box last started a roll. */
 const rolled = new WeakMap<Element, number>();
-/** Whether `box` changed too recently for another roll: its roll ends where it was going, and the change swaps. */
+/** Tells whether `box` changed too soon to roll again. Its roll then ends where it was going and the change swaps. */
 function hurried(box: Element): boolean {
   const now = pageMs();
   if (now - (rolled.get(box) ?? Number.NEGATIVE_INFINITY) >= ROLL_MS) return false;
@@ -49,10 +49,10 @@ function hurried(box: Element): boolean {
   return true;
 }
 
-/** Rolls `old` out and `next` in, both already in place; `old` is removed once it has left. */
+/** Rolls `old` out and `next` in, both already in place, and removes `old` once it has left. */
 function roll(box: Element, old: HTMLElement, next: HTMLElement, direction: number): void {
   rolled.set(box, pageMs());
-  // Read once: the leaving text is only drawn.
+  // The reader hears the text once, since the leaving copy is only drawn.
   old.setAttribute("aria-hidden", "true");
   const offset = (side: number) => `0 ${side * direction * ROLL_PX}px`;
   const leaving = old.animate(
@@ -93,7 +93,7 @@ export function Roll(props: { text: () => string; rank: () => number }): Node {
       if (shown && shownText === text) return;
       const still = !shown || reducedMotion.peek() || !root.checkVisibility();
       if (shown && !still && shape(text) === shape(shownText)) {
-        // Same words: each changed figure rolls in its slot.
+        // The words match, so each changed figure rolls in its slot.
         const figures = parts(text).filter(isFigure);
         const slots = shown.querySelectorAll<HTMLElement>(".roll-slot");
         figures.forEach((figure, index) => {

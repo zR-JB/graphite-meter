@@ -31,7 +31,7 @@ const record = (id: string, completedAt: number): HistoryRecord => ({
   },
 });
 
-/** A repository whose reads the test answers one at a time. */
+/** Makes a repository whose reads the test answers one at a time. */
 function repository() {
   const reads: PromiseWithResolvers<unknown>[] = [];
   const read = () => {
@@ -67,7 +67,7 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   await settle();
   expect(archive.state()).toBe("ready");
 
-  // Another tab's change.
+  // Another tab changes History.
   change({ type: "elsewhere" });
   reads[1]!.reject(new Error("closed"));
   await settle();
@@ -80,7 +80,7 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   await settle();
   expect(archive.state()).toBe("ready");
   expect(archive.records()).toHaveLength(1);
-  // The result that could not be read says so, rather than leaving the previous one on show; Retry reads it again.
+  // A result that could not be read says so instead of leaving the previous one on show. Retry reads it again.
   expect(archive.selected().status).toBe("unread");
   archive.reread();
   expect(archive.selected().status).toBe("pending");
@@ -119,7 +119,7 @@ test("the list keeps entries only; the open result alone is read whole, again as
   await settle();
   expect(archive.selected()).toEqual({ status: "ready", record: a });
 
-  // Deleted in another tab: the list read again no longer holds it.
+  // Another tab deleted it, so the list read again no longer holds it.
   change({ type: "elsewhere" });
   reads[2]!.resolve({ records: [b], malformedCount: 0 });
   await settle();
@@ -137,7 +137,7 @@ test("an earlier lookup landing late never overwrites the latest one's answer", 
   const [a, b] = [record("a", 2), record("b", 1)];
   reads[0]!.resolve({ records: [a, b], malformedCount: 0 });
   await settle();
-  // A, then B, then A again: the second look at A answers first, then the first fails.
+  // The test opens A, then B, then A again. The second look at A answers first, then the first fails.
   selectedId.set("a");
   selectedId.set("b");
   selectedId.set("a");

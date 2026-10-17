@@ -1,4 +1,4 @@
-// Values that move on the frame clock: glides that correct a value towards each sample, clocks that run at a rate,
+// Moves values on the frame clock, with glides that correct a value towards each sample, clocks that run at a rate,
 // hand-offs between keyed views, and the damped spring every layout move uses. Reduced motion snaps them all.
 import { animate, pageMs } from "./frame";
 import { batch, effect, onCleanup, signal, untrack, type Read, type Signal } from "./signal";
@@ -24,7 +24,7 @@ interface Sample {
   now?: number;
 }
 
-/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples: samples
+/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples. Samples
     correct the value, never step it. The offset from the sample fades linearly, so a clock keeps its own pace. */
 export class Glide {
   #from: number;
@@ -83,13 +83,13 @@ export class Glide {
   }
 }
 
-/** A hand-off's fade-out; the stylesheet's .handoff-out reads it as --dur-handoff-out. */
+/** A hand-off's fade-out. The stylesheet's .handoff-out reads it as --dur-handoff-out. */
 export const HANDOFF_OUT_MS = 70;
 if (typeof document !== "undefined")
   document.documentElement.style.setProperty("--dur-handoff-out", `${HANDOFF_OUT_MS}ms`);
 
-/** A keyed view: a new key fades the shown view out (`out`) and swaps it in once the fade-out ran; a key held
-    shorter than that never shows; the same key updates in place; a view with nothing to fade out (`outMs` 0) swaps
+/** A keyed view. A new key fades the shown view out (`out`) and swaps it in once the fade-out ran, so a key held
+    shorter than that never shows. The same key updates in place. A view with nothing to fade out (`outMs` 0) swaps
     in the same frame. The fades themselves are CSS (.handoff). */
 class Handoff<T> {
   readonly #shown: Signal<T>;
@@ -131,7 +131,7 @@ class Handoff<T> {
     });
   }
 
-  /** How long the shown view fades out. */
+  /** The shown view fades out for this long. */
   #fadeMs(): number {
     return typeof this.outMs === "function" ? this.outMs(this.#shown.peek()) : this.outMs;
   }
@@ -166,7 +166,7 @@ const DAMPING = 0.81;
 const OMEGA = 0.024;
 const DECAY = DAMPING * OMEGA;
 const RING = OMEGA * Math.sqrt(1 - DAMPING ** 2);
-/** How long a spring move is drawn; it settles within 1 % in about 0.26 s and overshoots once by about 1.3 %. */
+/** A spring move is drawn for this long. It settles within 1 % in about 0.26 s and overshoots once by about 1.3 %. */
 export const SPRING_MS = 420;
 
 /** Offset and velocity (units per ms) `t` ms after a damped spring is released at `x0` moving at `v0`. */

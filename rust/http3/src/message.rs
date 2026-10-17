@@ -1,4 +1,4 @@
-//! A request stream's frames (RFC 9114 §4.1): HEADERS, DATA, optional trailers, then FIN.
+//! Reads a request stream's frames (RFC 9114 §4.1), HEADERS, DATA, optional trailers, then FIN.
 use crate::{
     code::Code,
     driver::Role,
@@ -29,22 +29,22 @@ pub(crate) struct Message {
     phase: Phase,
     started: bool,
     kind: FrameType,
-    /// A field section split across chunks; its capacity is the frame's declared length.
+    /// Collects a field section split across chunks. Its capacity is the frame's declared length.
     section: Vec<u8>,
     limit: u64,
-    /// Body bytes the head's content-length still owes.
+    /// The head's content-length still owes this many body bytes.
     pub(crate) owed: Option<u64>,
-    /// A response, on which a server could interleave PUSH_PROMISE.
+    /// The message is a response, on which a server could interleave PUSH_PROMISE.
     response: bool,
 }
 
 impl Message {
-    /// A message `peer` sends: a server sends responses.
+    /// Reads a message `peer` sends. A server sends responses.
     pub(crate) fn new(limit: u64, peer: Role) -> Self {
         Self { limit, response: peer == Role::Server, ..Self::default() }
     }
 
-    /// Takes a response head: `None` for an interim one, restarting the message, else the final one, bounded by status.
+    /// Takes a response head. An interim one yields `None` and restarts the message. A final one is bounded by status.
     pub(crate) fn response(
         &mut self,
         section: &[u8],
@@ -69,7 +69,7 @@ impl Message {
         Ok(Some(head.message))
     }
 
-    /// The next event `input` completes; errors carry the code ending the stream, or the connection for frame errors.
+    /// Reads the next event from `input`. Errors carry the code ending the stream, or the connection for frame errors.
     pub(crate) fn next(&mut self, input: &mut Bytes) -> Result<Option<Event>, Code> {
         while let Some(piece) = self.frames.next(input) {
             let event = match piece {
@@ -93,7 +93,7 @@ impl Message {
             (FrameType::HEADERS, Phase::Head | Phase::Body) | (FrameType::DATA, Phase::Body) => Ok(None),
             (FrameType::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
             (FrameType::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => Err(Code::H3_ID_ERROR),
-            // No route takes a peer's WebTransport stream: it is refused like a cancelled lane.
+            // No route takes a peer's WebTransport stream, so it is refused like a cancelled lane.
             (FrameType::WEBTRANSPORT_BIDI, _) => Err(Code::WT_CANCELLED),
             // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
             (FrameType::PUSH_PROMISE, _) if self.response => Err(Code::H3_ID_ERROR),
@@ -162,12 +162,12 @@ impl Message {
         }
     }
 
-    /// Bytes of a field section being assembled across chunks.
+    /// Counts the bytes of a field section being assembled across chunks.
     pub(crate) fn buffered(&self) -> usize {
         self.section.capacity()
     }
 
-    /// Whether the head has been read, so a request may be in processing.
+    /// Reports whether the head has been read, so a request may be in processing.
     pub(crate) fn has_head(&self) -> bool {
         self.phase != Phase::Head
     }
@@ -183,7 +183,7 @@ mod tests {
         frame(FrameType::HEADERS, &section(fields))
     }
 
-    /// Reads `bytes` in chunks of `chunk` bytes, then FIN; the events and how the stream ends.
+    /// Reads `bytes` in chunks of `chunk` bytes, then FIN, and returns the events and how the stream ends.
     fn read(message: &mut Message, bytes: &[u8], chunk: usize) -> (Vec<Event>, Result<(), Code>) {
         let mut events = Vec::new();
         for part in bytes.chunks(chunk) {

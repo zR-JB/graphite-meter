@@ -1,4 +1,4 @@
-//! What the console reads of a run: stage states, shown rates, the needle and the latency server's populations.
+//! Reads a run for the console, from stage states and shown rates to the needle and the latency server's populations.
 use super::{
     App,
     chrome::Progress,
@@ -19,22 +19,22 @@ use std::{
 /// The needle closes on its reading by e⁻¹ every 110 ms, so it rises, falls and drains without a jump.
 const NEEDLE: f64 = 0.11;
 
-/// What the console animates and picks during a run, beside what the view keeps.
+/// The console animates and picks these during a run, beside what the view keeps.
 #[derive(Debug, Default)]
 pub struct Live {
     since: Option<Instant>,
     pub shown: Dir<Glide>,
     probes: Vec<(ServerId, Option<Duration>, usize)>,
-    /// The dial's scale while idle latency is measured, in milliseconds; it only grows during a run.
+    /// Scales the dial while idle latency is measured, in milliseconds. It only grows during a run.
     pub rtt_scale: f64,
     pub pick: Option<ServerId>,
-    /// Where the needle stands, 0–1 of the sweep, and when it last moved.
+    /// Records where the needle stands, 0–1 of the sweep, and when it last moved.
     needle: Cell<(f64, Option<Instant>)>,
-    /// When the result began to sweep in, and from where.
+    /// Records when the result began to sweep in, and from where.
     sweep: Option<(Instant, f64)>,
 }
 
-/// A shown rate moving to each new value over the time between samples, as the browser's readout does.
+/// A shown rate moves to each new value over the time between samples, as the browser's readout does.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Glide {
     from: f64,
@@ -50,7 +50,7 @@ impl Glide {
         self.from + (self.to - self.from) * share.min(1.0)
     }
 
-    /// Glides toward `to` from where the value stands at `now`; a first value snaps.
+    /// Glides toward `to` from where the value stands at `now`. A first value snaps.
     fn toward(self, to: f64, now: Instant) -> Self {
         let over = self.at.map_or(Duration::ZERO, |at| {
             now.saturating_duration_since(at)
@@ -61,7 +61,7 @@ impl Glide {
 }
 
 impl Live {
-    /// Takes `event` once `run` applied it; `shown` is the latency server.
+    /// Takes `event` once `run` applied it. `shown` is the latency server.
     pub(super) fn event(&mut self, event: &Event, run: Option<&Run>, shown: Option<&ServerId>, now: Instant) {
         match event {
             Event::RunStarted { .. } => *self = Self::default(),
@@ -113,7 +113,7 @@ impl Live {
         }
     }
 
-    /// The needle at `now` on its way to `to`, 0–1 of the sweep.
+    /// Moves the needle at `now` on its way to `to`, 0–1 of the sweep.
     pub fn needle(&self, to: f64, now: Instant) -> f64 {
         let to = to.clamp(0.0, 1.0);
         let (at, then) = self.needle.get();
@@ -125,7 +125,7 @@ impl Live {
         shown
     }
 
-    /// A result arc reaching `to`, sweeping on from where the needle stood over at most 0.9 s, easing out.
+    /// Sweeps a result arc to `to` from where the needle stood over at most 0.9 s, easing out.
     pub fn swept(&self, to: f64, now: Instant) -> f64 {
         let Some((at, from)) = self.sweep else { return to };
         let over = (0.9 * (1.0 - from)).max(0.36);
@@ -133,7 +133,7 @@ impl Live {
         to.min(from + (1.0 - from) * (1.0 - (1.0 - share).powi(3)))
     }
 
-    /// Whether the needle or the result's sweep still moves.
+    /// Tells whether the needle or the result's sweep still moves.
     pub fn moving(&self, now: Instant) -> bool {
         let sweeping = self
             .sweep
@@ -143,7 +143,7 @@ impl Live {
     }
 }
 
-/// Where a stage stands: not begun, warming up, measuring, or ended with its status.
+/// A stage has not begun, warms up, measures, or ended with its status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Pending,
@@ -171,13 +171,13 @@ impl App {
         }
     }
 
-    /// The servers `l` steps through: those prepared that have not left the run.
+    /// `l` steps through these servers, those prepared that have not left the run.
     pub(super) fn participants(&self) -> Vec<ServerId> {
         let servers = self.view.servers.iter().filter(|server| self.view.remains(&server.id));
         servers.map(|server| server.id.clone()).collect()
     }
 
-    /// The latency server shown: the one `l` picked while it remains, else the run's.
+    /// Shows the latency server `l` picked while it remains, else the run's.
     pub(super) fn latency_server(&self) -> Option<&ServerId> {
         let focus = self.view.run.as_ref()?.focus.as_ref();
         let remains =
@@ -203,13 +203,13 @@ impl App {
         server.map_or_else(|| crate::format::MISSING.into(), |server| server.name.clone())
     }
 
-    /// How long the stage's warmup or window has run.
+    /// Measures how long the stage's warmup or window has run.
     pub(super) fn elapsed(&self) -> Duration {
         let since = self.live.since.unwrap_or(self.now);
         self.now.saturating_duration_since(since)
     }
 
-    /// The share of its planned time a stopped stage measured.
+    /// Gives the share of its planned time a stopped stage measured.
     pub(super) fn reached(&self, stage: Stage) -> f64 {
         let run = self.view.run.as_ref();
         let planned = run
@@ -222,7 +222,7 @@ impl App {
         }
     }
 
-    /// The latency server's statistics in `stage`: the stage's own once it ended, else its latency so far.
+    /// Gives the latency server's statistics in `stage`, the stage's own once it ended, else its latency so far.
     pub(super) fn population(&self, stage: Stage) -> Option<Summary> {
         let run = self.view.run.as_ref()?;
         let server = self.latency_server()?;
@@ -234,14 +234,14 @@ impl App {
         live.map(|&(.., summary)| summary)
     }
 
-    /// The latency server's latest round trip.
+    /// Gives the latency server's latest round trip.
     pub(super) fn latest(&self) -> Option<Duration> {
         let shown = self.latency_server();
         let probe = self.live.probes.iter().find(|(id, ..)| Some(id) == shown);
         probe.and_then(|(_, rtt, _)| *rtt)
     }
 
-    /// Timeouts in a row, in the warning tone and from three on the error tone.
+    /// Counts timeouts in a row, in the warning tone and from three on the error tone.
     pub(super) fn timeout_streak(&self) -> Line {
         let shown = self.latency_server();
         match self.live.probes.iter().find(|(id, ..)| Some(id) == shown) {
@@ -254,7 +254,7 @@ impl App {
         }
     }
 
-    /// The stage's measured window on the plan's clock in seconds, once it opened.
+    /// Places the stage's measured window on the plan's clock in seconds, once it opened.
     pub(super) fn window(&self, run: &Run, stage: Stage) -> Option<(f64, f64)> {
         let at = run.plan.iter().position(|(planned, _)| *planned == stage)?;
         let offset: Duration = run.plan[..at].iter().map(|(_, duration)| *duration).sum();
@@ -264,7 +264,7 @@ impl App {
         opened.then(|| (offset.as_secs_f64(), (offset + run.plan[at].1).as_secs_f64()))
     }
 
-    /// The progress bar: busy while preparing, then the planned stage time done; an incomplete stage adds nothing.
+    /// The progress bar is busy while preparing, then the planned stage time done. An incomplete stage adds nothing.
     pub(super) fn progress(&self) -> Progress {
         if self.view.starting {
             return Progress::Busy;
@@ -281,7 +281,7 @@ impl App {
         Progress::Share((done.as_secs_f64() / total.as_secs_f64().max(1.0) * 100.0) as u8)
     }
 
-    /// The time left in the stage's measured window, for the status bar.
+    /// Gives the time left in the stage's measured window, for the status bar.
     pub(super) fn left(&self) -> Option<Duration> {
         let run = self.view.run.as_ref().filter(|_| self.running())?;
         match run.stage.as_ref()? {

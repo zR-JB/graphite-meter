@@ -1,4 +1,4 @@
-//! What carries requests and replies over the network.
+//! Carries requests and replies over the network.
 
 pub mod accept;
 pub mod body;
@@ -20,20 +20,20 @@ use std::{
 use tokio::{io::BufReader, net::TcpStream};
 use tokio_rustls::server::TlsStream;
 
-/// Connection failures any peer can cause, such as a refused TLS handshake.
+/// Logs connection failures any peer can cause, such as a refused TLS handshake.
 pub(crate) static PEER_FAILURES: RateLimited =
     RateLimited::new(Level::Info, "peer", "peer connection failures", module_path!());
 
-/// Bytes a connection's socket moves before its task lets the other tasks on its pinned runtime run.
+/// A connection's task lets the other tasks on its pinned runtime run after its socket moved this many bytes.
 const BURST_BYTES: usize = 256 << 10;
 
-/// A connection's socket bytes since its task last waited, which bound how long a bulk transfer holds its thread.
+/// Counts the socket bytes since the task last waited, which bounds how long a bulk transfer holds its thread.
 #[derive(Default)]
 pub(crate) struct Burst(usize);
 
 impl Burst {
-    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran,
-    /// and the thread offers its CPU to threads waiting for it.
+    /// Stays ready below `BURST_BYTES`. Past it, the task is pending once and wakes after every other ready task and
+    /// the I/O driver ran, and the thread offers its CPU to threads waiting for it.
     pub fn poll_turn(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.0 < BURST_BYTES {
             return Poll::Ready(());
@@ -50,17 +50,17 @@ impl Burst {
         self.0 = self.0.saturating_add(bytes);
     }
 
-    /// The socket would block: the task waits anyway, so its next poll starts a new burst.
+    /// The task waits because the socket would block, so its next poll starts a new burst.
     pub fn waited(&mut self) {
         self.0 = 0;
     }
 }
 
-/// A stream over one TCP socket, which can move to another runtime's I/O driver.
+/// Moves a stream over one TCP socket to another runtime's I/O driver.
 pub(crate) trait Rehome {
     fn socket(&mut self) -> &mut TcpStream;
 
-    /// Registers the socket with the calling runtime's driver through a duplicate of its descriptor; on an error it
+    /// Registers the socket with the calling runtime's driver through a duplicate of its descriptor. On an error it
     /// stays with its first runtime.
     fn rehome(&mut self) -> io::Result<()> {
         let socket = self.socket();
@@ -126,7 +126,7 @@ mod tests {
         let mut peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let accepted = listener.accept().unwrap().0;
         accepted.set_nonblocking(true).unwrap();
-        // Registered with the first runtime's driver, which nothing polls again.
+        // The socket registers with the first runtime's driver, which nothing polls again.
         let mut socket = first.block_on(async { TcpStream::from_std(accepted) }).unwrap();
         let read = second.block_on(async move {
             socket.rehome().unwrap();

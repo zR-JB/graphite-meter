@@ -1,5 +1,5 @@
-//! OIDC sign-in over the app against a fake provider over TLS: the round trip, transaction binding, ID token and
-//! key checks, group membership, discovery and the exchange bound.
+//! Tests OIDC sign-in over the app against a fake provider over TLS, covering the round trip, transaction binding,
+//! ID token and key checks, group membership, discovery and the exchange bound.
 
 use super::{
     auth::{HASH, PUBLIC, public, store, tls},
@@ -23,7 +23,7 @@ use std::{
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 
-/// An OIDC app of `issuer`, trusting what `trust` names.
+/// Builds an OIDC app of `issuer`, trusting what `trust` names.
 pub(super) fn oidc_app(issuer: &str, trust: &[(&str, &str)], hybrid: bool) -> App {
     let mut env = [ALL_LISTENERS.as_slice(), trust].concat();
     env.extend([
@@ -48,7 +48,7 @@ async fn discovered(provider: &Provider) -> App {
     app
 }
 
-/// The start form posted from `peer` with a valid CSRF proof and `challenge`.
+/// Posts the start form from `peer` with a valid CSRF proof and `challenge`.
 async fn start(app: &App, peer: &str, challenge: &str) -> Response<Body> {
     let request = public("POST", "/auth/oidc/start")
         .header("origin", PUBLIC)
@@ -69,7 +69,7 @@ fn location(response: &Response<Body>) -> &str {
     header(response, "location").unwrap()
 }
 
-/// The `Set-Cookie` line of `name`.
+/// Finds the `Set-Cookie` line of `name`.
 fn set_cookie<'a>(response: &'a Response<Body>, name: &str) -> &'a str {
     let lines = response.headers().get_all("set-cookie").iter();
     let mut lines = lines.map(|line| line.to_str().unwrap());
@@ -81,7 +81,7 @@ fn cookie_value<'a>(response: &'a Response<Body>, name: &str) -> &'a str {
     line[name.len() + 1..].split(';').next().unwrap()
 }
 
-/// A sign-in started from `peer` whose callback comes from `returning`.
+/// Runs a sign-in started from `peer` whose callback comes from `returning`.
 async fn sign_in_from(app: &App, provider: &Provider, peer: &str, returning: &str) -> Response<Body> {
     let started = start(app, peer, "").await;
     let browser = cookie_value(&started, "__Host-gm_oidc").to_owned();
@@ -296,7 +296,7 @@ async fn a_provider_too_slow_for_the_exchange_bound_fails_the_sign_in_in_time() 
     assert!(line(&app, &mut [0; COUNTERS]).contains(" oidc=0 invalid-password=0 oidc-failure=1 "));
 }
 
-/// Whether a sign-in through a fresh app, with no keys cached, passes once the provider answers with `twist`.
+/// Tells whether a sign-in through a fresh app, with no keys cached, passes once the provider answers with `twist`.
 async fn signs_in_with(provider: &Provider, twist: Twist) -> bool {
     provider.twist(twist);
     let app = discovered(provider).await;
@@ -307,7 +307,7 @@ fn signed_as(header: Value) -> Twist {
     Twist { header, ..Twist::default() }
 }
 
-/// An RS256 token from the RSA key whose key set entry merges `rsa_key`.
+/// Signs an RS256 token with the RSA key whose key set entry merges `rsa_key`.
 fn rsa_key(rsa_key: Value) -> Twist {
     Twist { rsa_key, ..signed_as(json!({"alg": "RS256", "kid": "rsa"})) }
 }
@@ -320,7 +320,7 @@ fn key_set(key_set: fn(Value) -> String, header: Value) -> Twist {
     Twist { key_set: Some(key_set), header, ..Twist::default() }
 }
 
-/// Sixty-three usable keys ahead of the provider's, leaving the RSA key the 64th and the P-256 key past the cap.
+/// Puts sixty-three usable keys ahead of the provider's, leaving the RSA key the 64th and the P-256 key past the cap.
 fn crowded(keys: Value) -> String {
     let filler = json!({"kty": "EC", "crv": "P-256", "kid": "filler", "x": "A".repeat(43), "y": "A".repeat(43)});
     let mut all = vec![filler; 63];

@@ -1,4 +1,4 @@
-/* History: the workspace over the console, its list of rows on one grid with heads that stick and rows that fold,
+/* History lies over the console. It styles the list of rows on one grid with heads that stick and rows that fold,
    the split beside an open result, the view popover, and the result's own head and facts. */
 @layer components {
   .history-workspace {
@@ -30,7 +30,7 @@
     border-bottom-color: var(--border);
     animation: none;
   }
-  /* Reserving the list's scrollbar gutter, a notice ends on the rows' edge. */
+  /* A notice reserves the list's scrollbar gutter, so it ends on the rows' edge. */
   .notices {
     display: grid;
     flex: none;
@@ -56,7 +56,7 @@
     grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     min-height: 0;
 
-    /* Each pane lays out on its own: what changes in a result never lays out the list's rows again. */
+    /* Each pane lays out on its own, so what changes in a result never lays out the list's rows again. */
     & > :is(.history-list, .detail-pane) {
       contain: strict;
       grid-area: 1 / 1;
@@ -66,7 +66,7 @@
       overscroll-behavior-y: contain;
       scrollbar-gutter: stable;
     }
-    /* On the hairline, reaching into the result's margin so the list keeps its scrollbar. */
+    /* The handle sits on the hairline and reaches into the result's margin, so the list keeps its scrollbar. */
     & > .resize-handle {
       display: none;
       grid-area: 1 / 2;
@@ -89,7 +89,7 @@
     opacity: 0.55;
     transition-delay: var(--dur-hover);
   }
-  /* Wide enough (history.tsx), a result opens beside the list, which keeps its share of the width. */
+  /* A wide enough workspace (history.tsx) opens a result beside the list, which keeps its share of the width. */
   .has-detail[data-beside] {
     grid-template-columns: var(--list) minmax(0, 1fr);
     & > .history-list {
@@ -118,7 +118,7 @@
   }
 
   /* The time takes the slack first and the value columns the rest, so the table fills the list at any width. Value
-     columns never shrink below their content: the rows fold first. */
+     columns never shrink below their content. The rows fold first. */
   .history-table {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto repeat(var(--metric-columns), minmax(max-content, 1fr));
@@ -138,7 +138,7 @@
         grid-column: 1 / -1;
       }
     }
-    /* The list is page, not plate: a day's rows sit between two rules, with hairlines between them. */
+    /* The list is page, not plate, so a day's rows sit between two rules, with hairlines between them. */
     & ol {
       border-block: var(--hairline) solid var(--border-subtle);
       font: var(--role-row);
@@ -226,7 +226,7 @@
       animation-range: 0 var(--space-3);
     }
   }
-  /* One label line tall, so the glyph centers on its word above the unit. */
+  /* The icon is one label line tall, so the glyph centers on its word above the unit. */
   .head-icon {
     display: grid;
     flex: none;
@@ -253,8 +253,8 @@
     & > * {
       padding: 7px var(--space-3);
     }
-    /* The time over its server, on the lines of the values and their notes; a long name is cut, never wrapped. The
-       time is the row's name, weighted like its values. */
+    /* The time sits over its server, on the lines of the values and their notes. A long name is cut, never wrapped.
+       The time is the row's name, weighted like its values. */
     & > time {
       display: grid;
       font-weight: 500;
@@ -275,8 +275,8 @@
       color: var(--text-muted);
     }
   }
-  /* A value, then what it cost or how it varied, in the column's own ink. The bar takes the column's slack up to a
-     reading length, so a wide list draws longer bars, not wider gaps. */
+  /* A metric shows a value, then what it cost or how it varied, in the column's own ink. The bar takes the column's
+     slack up to a reading length, so a wide list draws longer bars, not wider gaps. */
   .metric {
     display: grid;
     grid-template: "bar value" auto ". note" auto / minmax(0, 12rem) auto;
@@ -284,7 +284,7 @@
     justify-content: end;
     column-gap: var(--space-2);
 
-    /* Deeper than --tone-ink, so a note keeps 4.5:1 on a row's wash as on the page. */
+    /* The ink runs deeper than --tone-ink, so a note keeps 4.5:1 on a row's wash as on the page. */
     & .note {
       grid-area: note;
       justify-self: end;
@@ -312,8 +312,8 @@
     &[data-tone="loaded"] {
       --peak: var(--peak-loaded);
     }
-    /* A magnitude, never a verdict: the column's largest value fills the bar from the zero end beside the value,
-       and the track behind it shows the scale it fills. */
+    /* The bar shows a magnitude, never a verdict. The column's largest value fills it from the zero end beside the
+       value, and the track behind it shows the scale it fills. */
     & .bar {
       display: none;
       grid-area: bar;
@@ -359,7 +359,7 @@
     }
   }
 
-  /* Folded: the time and server head their row and the values share the width under it. */
+  /* A folded row puts the time and server at its head and shares the width under them among the values. */
   .history-list.compact {
     & .history-table {
       grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
@@ -377,7 +377,7 @@
       & > * {
         padding: 4px var(--space-2);
       }
-      /* The server beside its time, clear of an outcome at the row's end. */
+      /* The server sits beside its time, clear of an outcome at the row's end. */
       & > time {
         display: flex;
         grid-column: 1 / -1;
@@ -407,7 +407,7 @@
   .view-trigger .layout-icon {
     color: var(--brand-strong);
   }
-  /* As tall as the room beside its key allows, less its margins, so the order control stays in view. */
+  /* The popover is as tall as the room beside its key allows, less margins, so the order control stays in view. */
   .view-popover {
     display: grid;
     gap: var(--space-1);
@@ -454,12 +454,12 @@
       font: var(--role-panel-title);
       letter-spacing: var(--track-tight);
     }
-    /* Pulled out by its padding, so the arrow starts on the title's edge. */
+    /* Its padding pulls it out, so the arrow starts on the title's edge. */
     & .back {
       display: none;
       margin-left: calc(-1 * (var(--space-3) + var(--hit-pad)));
     }
-    /* In the head's margin on the pane's edge, a step from the title. */
+    /* The fold sits in the head's margin on the pane's edge, a step from the title. */
     & .fold {
       margin-inline: calc(-1 * (var(--space-3) + var(--hit-pad))) calc(-1 * var(--space-3));
     }
@@ -499,7 +499,7 @@
       display: none;
     }
   }
-  /* A phone keeps the result's reading height: the head scrolls away under History's own. */
+  /* A phone keeps the result's reading height, so the head scrolls away under History's own. */
   @container detail (max-width: 560px) {
     .result-detail .detail-head {
       position: static;

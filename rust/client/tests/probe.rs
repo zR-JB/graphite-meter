@@ -1,4 +1,4 @@
-//! The probe schedule against scripted times, and a prober against a loopback reflector.
+//! Runs the probe schedule against scripted times, and a prober against a loopback reflector.
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_client::{
     measure::latency::ProbeOutcome,

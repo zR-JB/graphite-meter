@@ -1,16 +1,16 @@
-//! The graphite palette in the terminal's color profile, which follows the environment, and the OSC 11 background.
+//! Builds the graphite palette in the color profile the environment names, and reads the terminal's OSC 11 background.
 use crate::{
     model::{Outcome, Stage},
     text::{Color, Profile, Style},
 };
 use std::{io, time::Duration};
 
-/// The background query: OSC 11, then DA1, which every terminal answers, in order.
+/// Queries the background with OSC 11, then DA1, which every terminal answers, in order.
 pub const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
-/// How long a terminal may take to answer the query.
+/// A terminal may take this long to answer the query.
 pub const ANSWER: Duration = Duration::from_secs(2);
 
-/// A tone's light and dark shades.
+/// A tone has a light and a dark shade.
 type Tone = [Color; 2];
 
 const fn tone(light: (u32, u8, u8), dark: (u32, u8, u8)) -> Tone {
@@ -26,7 +26,7 @@ const SOFT: Tone = tone((0x5f646a, 241, 8), (0x8e9299, 246, 7));
 const GOOD: Tone = tone((0x2e734b, 29, 2), (0x88d1a2, 115, 10));
 const CAUTION: Tone = tone((0x85671f, 94, 1), (0xe8cf83, 186, 11));
 const BAD: Tone = tone((0xab413e, 131, 1), (0xed8b88, 210, 9));
-/// The canvas when the terminal does not name its background.
+/// The canvas falls back to this when the terminal does not name its background.
 const CANVAS: Tone = tone((0xfdfdfd, 231, 15), (0x0d1013, 233, 0));
 const PLATE_OFF: Tone = tone((0xdcdde0, 253, 7), (0x2a2d31, 236, 8));
 const BORDER: Tone = tone((0xcacbcf, 252, 15), (0x3e4348, 238, 8));
@@ -43,7 +43,7 @@ const TRACES: [Tone; Stage::ALL.len()] = [
     tone((0x9b2065, 125, 1), (0xe472ac, 169, 9)),
 ];
 
-/// The styles and fills views draw with.
+/// Views draw with these styles and fills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     pub text: Style,
@@ -55,19 +55,19 @@ pub struct Palette {
     pub warn: Style,
     pub err: Style,
     pub border: Style,
-    /// The editor's block cursor.
+    /// Draws the editor's block cursor.
     pub cursor: Style,
-    /// The run key: ink with the canvas on it, its faint note, and the quiet plate of Stop and of a key that cannot
-    /// be pressed.
+    /// Styles the run key as ink with the canvas on it, its faint note, and the quiet plate of Stop and of a key that
+    /// cannot be pressed.
     pub plate: Style,
     pub plate_note: Style,
     pub plate_off: Style,
-    /// Tiles one step over the canvas, plates and key caps two; the pointer's wash and the focused row's.
+    /// Tiles sit one step over the canvas, plates and key caps two. The pointer's wash and the focused row's follow.
     pub surface: Color,
     pub raised: Color,
     pub hover: Color,
     pub selected: Color,
-    /// The terminal's own background when it said, so fills land on it exactly.
+    /// Holds the terminal's own background when it said, so fills land on it exactly.
     canvas: Color,
     dark: bool,
 }
@@ -77,7 +77,7 @@ impl Palette {
         Self::on(dark, CANVAS[usize::from(dark)])
     }
 
-    /// The palette over the background a terminal named.
+    /// Builds the palette over the background a terminal named.
     pub fn over(background: Background) -> Self {
         let dark = background.dark();
         let canvas = CANVAS[usize::from(dark)];
@@ -122,17 +122,17 @@ impl Palette {
         Style::fg(STAGES[stage.index()][usize::from(self.dark)])
     }
 
-    /// A stage's chart trace.
+    /// Colors a stage's chart trace.
     pub fn trace(&self, stage: Stage) -> Color {
         TRACES[stage.index()][usize::from(self.dark)]
     }
 
-    /// `share` of a stage's hue over `under`: a tile's wash, a chart's field, a box plot's box.
+    /// Mixes `share` of a stage's hue over `under`, for a tile's wash, a chart's field or a box plot's box.
     pub fn wash(&self, stage: Stage, share: f64, under: Color) -> Color {
         mix(self.trace(stage), under, share)
     }
 
-    /// An outcome's label: bold in its badge's color.
+    /// Styles an outcome's label bold in its badge's color.
     pub fn outcome(&self, outcome: Outcome) -> Style {
         let tone = match outcome {
             Outcome::Complete => GOOD,
@@ -144,7 +144,7 @@ impl Palette {
     }
 }
 
-/// `share` of `color` over `under` in sRGB, at the nearest of the 256 colors, and `color`'s own of the 16.
+/// Mixes `share` of `color` over `under` in sRGB, at the nearest of the 256 colors and `color`'s own of the 16.
 pub fn mix(color: Color, under: Color, share: f64) -> Color {
     let channel = |at: u32| {
         let (over, below) = (f64::from((color.rgb >> at) as u8), f64::from((under.rgb >> at) as u8));
@@ -153,7 +153,7 @@ pub fn mix(color: Color, under: Color, share: f64) -> Color {
     nearest([channel(16), channel(8), channel(0)], color.ansi)
 }
 
-/// `rgb` with the nearest of the 256 colors and `ansi` of the 16.
+/// Pairs `rgb` with the nearest of the 256 colors and `ansi` of the 16.
 pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
@@ -162,7 +162,7 @@ pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
             .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
             .sum::<u32>()
     };
-    // The 6×6×6 cube's nearest color or the grey ramp's, whichever lies closer.
+    // The 6×6×6 cube's nearest color or the grey ramp's wins, whichever lies closer.
     let cube = rgb.map(|value| (0..6).min_by_key(|&index| value.abs_diff(LEVELS[index])).unwrap_or(0));
     let grey = (rgb.iter().map(|&value| u16::from(value)).sum::<u16>() / 3).saturating_sub(3) / 10;
     let grey = grey.min(23) as u8;
@@ -177,7 +177,7 @@ pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     }
 }
 
-/// The color profile of a terminal, `tty` when output reaches one, from the environment `var` reads.
+/// Picks a terminal's color profile from the environment `var` reads, `tty` when output reaches one.
 pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     let set = |name| var(name).is_some_and(|value| !value.is_empty() && value != "0");
     let term = var("TERM").unwrap_or_default();
@@ -204,7 +204,7 @@ pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     }
 }
 
-/// The terminal in raw mode until dropped.
+/// Keeps the terminal in raw mode until dropped.
 pub struct Raw;
 
 impl Raw {
@@ -219,7 +219,7 @@ impl Drop for Raw {
     }
 }
 
-/// What the background query brought: the background, if named, and whether Ctrl+C was pressed meanwhile.
+/// The background query brought the background, if named, and whether Ctrl+C was pressed meanwhile.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Answer {
     pub background: Option<Background>,
@@ -264,12 +264,12 @@ pub fn ask(_: Duration) -> Answer {
     Answer::default()
 }
 
-/// What a terminal says its background is: its color, unless it could not be read.
+/// A terminal says its background is this color, unless it could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Background(pub Option<[u8; 3]>);
 
 impl Background {
-    /// Whether the background has an HSL lightness under one half; an unreadable one is dark.
+    /// Tells whether the background has an HSL lightness under one half. An unreadable one is dark.
     pub fn dark(self) -> bool {
         self.0.is_none_or(|rgb| {
             let (high, low) = (rgb.iter().max().copied().unwrap_or(0), rgb.iter().min().copied().unwrap_or(0));
@@ -278,13 +278,13 @@ impl Background {
     }
 }
 
-/// The answers so far: OSC 11's background, if any, and whether DA1's reply ended them.
+/// Scans the answers so far for OSC 11's background, if any, and whether DA1's reply ended them.
 pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
     let (mut background, mut rest) = (None, answers);
     while let Some(escape) = rest.iter().position(|&byte| byte == 0x1b) {
         rest = &rest[escape + 1..];
         if let Some(body) = rest.strip_prefix(b"]") {
-            // BEL or ST ends an OSC; another escape cuts it short.
+            // BEL or ST ends an OSC. Another escape cuts it short.
             let Some(end) = body.iter().position(|&byte| matches!(byte, 0x07 | 0x1b)) else {
                 break;
             };
@@ -310,7 +310,7 @@ pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
     (background, false)
 }
 
-/// An `rgb:`/`rgba:` or `#` color's channels.
+/// Reads an `rgb:`/`rgba:` or `#` color's channels.
 fn rgb(color: &[u8]) -> Option<[u8; 3]> {
     let hex = |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
     let color = std::str::from_utf8(color).unwrap_or_default();

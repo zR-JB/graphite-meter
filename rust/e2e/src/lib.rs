@@ -1,4 +1,4 @@
-//! End-to-end tests of the client against the in-process server.
+//! Runs the client end to end against the in-process server.
 use graphite_meter_client::config::{self, Config, Parsed};
 use graphite_meter_net::Pool;
 use graphite_meter_proto::origin::Origin;
@@ -14,12 +14,12 @@ use tokio::{
     time::timeout,
 };
 
-/// One loopback address spelled three ways, as listener addresses must differ: discovery advertises every listener
-/// on the host it was asked at.
+/// One loopback address is spelled three ways because listener addresses must differ. Discovery advertises every
+/// listener on the host it was asked at.
 const ADDRESSES: [&str; 3] = ["127.0.0.7:0", "127.0.7:0", "127.7:0"];
 
-/// The server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 on the test's runtime until
-/// dropped.
+/// Runs the server on local ports, serving cleartext HTTP/1.1, HTTP/2 over TLS and HTTP/3 on the test's runtime
+/// until dropped.
 pub struct Server {
     pub http1: Origin,
     pub http2: Origin,
@@ -35,17 +35,17 @@ impl Server {
         Self::with(&[]).await
     }
 
-    /// The server with `settings` over the test configuration.
+    /// Starts the server with `settings` over the test configuration.
     pub async fn with(settings: &[(&str, &str)]) -> Self {
         Self::serve(settings, &Identity::generate().unwrap()).await
     }
 
-    /// The server with `settings` over the test configuration, presenting `identity`.
+    /// Starts the server with `settings` over the test configuration, presenting `identity`.
     pub async fn serve(settings: &[(&str, &str)], identity: &Identity) -> Self {
         Self::try_serve(settings, identity).await.unwrap()
     }
 
-    /// `serve`, or why the server could not bind.
+    /// Does what `serve` does, or tells why the server could not bind.
     pub async fn try_serve(settings: &[(&str, &str)], identity: &Identity) -> Result<Self, String> {
         let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
@@ -88,7 +88,7 @@ impl Server {
     }
 }
 
-/// The client's run settings for `args`.
+/// Parses the client's run settings for `args`.
 pub fn config(args: &[&str]) -> Config {
     match config::parse(args.iter().map(OsString::from)) {
         Ok(Parsed::Run(config)) => *config,
@@ -96,7 +96,7 @@ pub fn config(args: &[&str]) -> Config {
     }
 }
 
-/// What `received` brings up to the first item `last` matches, within `limit`.
+/// Collects what `received` brings up to the first item `last` matches, within `limit`.
 pub async fn until<T: std::fmt::Debug>(
     received: &mut mpsc::UnboundedReceiver<T>,
     limit: Duration,

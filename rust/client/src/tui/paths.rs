@@ -1,4 +1,4 @@
-//! The path choices the checked servers offer, and how ready each selected server is.
+//! Lists the path choices the checked servers offer, and how ready each selected server is.
 use super::App;
 use crate::{
     config::PathChoice,
@@ -13,7 +13,7 @@ use graphite_meter_proto::{
     reason::FailureReason,
 };
 
-/// A selected server's paths as setup shows them.
+/// Setup shows a selected server's paths in one of these states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Readiness {
     Ready,
@@ -34,7 +34,7 @@ impl Readiness {
 }
 
 impl App {
-    /// Whether the paths are being checked, or will be once the settings rest.
+    /// Tells whether the paths are being checked, or will be once the settings rest.
     pub(super) fn checking(&self) -> bool {
         self.recheck.is_some() || self.view.check == Check::Checking
     }
@@ -48,21 +48,21 @@ impl App {
         }
     }
 
-    /// The selected servers whose paths a run can take.
+    /// Lists the selected servers whose paths a run can take.
     pub(super) fn ready(&self) -> Vec<ServerId> {
         let usable = |server: &&ServerPath| self.readiness(server) == Readiness::Ready;
         let servers = self.view.servers.iter().filter(usable);
         servers.map(|server| server.id.clone()).collect()
     }
 
-    /// Whether the last check left no server to run with.
+    /// Tells whether the last check left no server to run with.
     pub(super) fn could_not_start(&self) -> bool {
         let failed =
             matches!(self.view.check, Check::Failed(_)) || self.view.check == Check::Ready && self.ready().is_empty();
         failed && !self.checking()
     }
 
-    /// The single selected server and what its preflight offered.
+    /// Finds the single selected server and what its preflight offered.
     fn single(&self) -> Option<(&ServerPath, &Capabilities)> {
         match &self.view.servers[..] {
             [server] => Some((server, server.offered.as_ref()?)),
@@ -70,7 +70,7 @@ impl App {
         }
     }
 
-    /// A path row's choices: automatic, then the single server's offers or the transports servers may share.
+    /// Lists a path row's choices, automatic, then the single server's offers or the transports servers may share.
     pub(super) fn choices<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> Vec<Choice<T>> {
         let automatic = |note| Choice::new(None, None, "Automatic".into(), note);
         let Some((server, offered)) = self.single() else {
@@ -105,7 +105,7 @@ impl App {
         choices
     }
 
-    /// A path row's value: the chosen path, or what was chosen though the checked server does not offer it.
+    /// Shows a path row's value, the chosen path, or what was chosen though the checked server does not offer it.
     pub(super) fn path_value<T: Copy + PartialEq>(&self, kind: &Kind<T>) -> String {
         let (choices, chosen) = (self.choices(kind), (kind.chosen)(&self.config.paths));
         match choices.iter().find(|choice| choice.selects(chosen)) {
@@ -118,7 +118,7 @@ impl App {
         }
     }
 
-    /// Steps a path row to the next choice, or to the first when the chosen one is not offered: its label.
+    /// Steps a path row to the next choice, or to the first when the chosen one is not offered, and returns its label.
     pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) -> String {
         let choices = self.choices(kind);
         let chosen = (kind.chosen)(&self.config.paths);
@@ -129,7 +129,7 @@ impl App {
         choice.label.clone()
     }
 
-    /// The HTTP version of the chosen throughput path when it does not negotiate one.
+    /// Gives the HTTP version of the chosen throughput path when it does not negotiate one.
     pub(super) fn fixed_protocol(&self) -> Option<Protocol> {
         let (server, offered) = self.single()?;
         let (Some(origin), Some(transport)) = (THROUGHPUT.chosen)(&self.config.paths) else {
@@ -140,7 +140,7 @@ impl App {
         (version != Protocol::Negotiated).then_some(version)
     }
 
-    /// An origin by its authority, or by its port alone on the server's host.
+    /// Names an origin by its authority, or by its port alone on the server's host.
     fn short(&self, origin: &Origin) -> String {
         if self.config.url.as_ref().is_some_and(|url| url.host == origin.host)
             && origin.port != origin.scheme.default_port()
@@ -151,10 +151,10 @@ impl App {
     }
 }
 
-/// A path a preflight offered: its origin, transport and HTTP version.
+/// A path a preflight offered has an origin, a transport and an HTTP version.
 type Offer<T> = (Origin, T, Protocol);
 
-/// A path row's transport kind: nameable transports, labels, settings slot, offered paths by origin, checked origin.
+/// A path row's transport kind has nameable transports, labels, settings slot, offered paths by origin, checked origin.
 pub(super) struct Kind<T> {
     shared: [T; 2],
     label: fn(T) -> &'static str,
@@ -194,7 +194,7 @@ pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
     checked: |paths| paths.latency.as_ref().map(|path| &path.origin),
 };
 
-/// A path row's choice: an origin and a transport, each automatic when none.
+/// A path row's choice pairs an origin and a transport, each automatic when none.
 pub(super) struct Choice<T> {
     origin: Option<Origin>,
     transport: Option<T>,

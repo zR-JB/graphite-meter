@@ -11,7 +11,7 @@ const bits = { base: "base10", kind: "bits" } as const;
 const rate = (reportedBytesPerSec: number) => ({ reportedBytesPerSec });
 const latency = (p50Ms: number) => ({ p50Ms, probeCount: 20 });
 
-// Only what History's list reads; the rest of a record never reaches it.
+// A stored record holds only what History's list reads; the rest never reaches it.
 function stored(id: string, completedAt: number, result: Partial<Record<keyof RunResult, unknown>> = {}) {
   return {
     schemaVersion: 5,
@@ -38,11 +38,11 @@ const saved = (...args: Parameters<typeof stored>): HistoryEntry => historyEntry
 test("a rate column reads in the tier of its upper median, latency in ms, a column without values unitless", () => {
   const cases: [number[], string, number][] = [
     [[250_000_000], "Gbit/s", 250_000_000],
-    // A prefix reads from 1.2 of its step: 1 Gbit/s still reads in Mbit/s.
+    // A prefix reads from 1.2 of its step, so 1 Gbit/s still reads in Mbit/s.
     [[125_000_000], "Mbit/s", 125_000_000],
     // One fast outlier never lifts the column out of the tier most results read in.
     [[1_000_000, 2_000_000, 250_000_000], "Mbit/s", 250_000_000],
-    // The upper median of an even count.
+    // An even count takes its upper median.
     [[1_000_000, 250_000_000], "Gbit/s", 250_000_000],
     [[200, 300], "kbit/s", 300],
   ];
@@ -199,7 +199,7 @@ test("Yesterday is the calendar day before, even after a 23-hour day", () => {
   const zone = process.env.TZ;
   process.env.TZ = "America/New_York";
   try {
-    // 00:30 on the day after the spring-forward change, which lasted 23 hours.
+    // The clock reads 00:30 on the day after the spring-forward change, which lasted 23 hours.
     const now = new Date(2026, 2, 9, 0, 30).getTime();
     expect(daysAt(now)).toEqual({ today: "Mon Mar 09 2026", yesterday: "Sun Mar 08 2026" });
   } finally {

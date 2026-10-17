@@ -1,4 +1,4 @@
-//! The app as transports drive it: constructed requests with in-memory bodies through `App::handle`.
+//! Drives the app as transports do, sending constructed requests with in-memory bodies through `App::handle`.
 
 mod approvals;
 mod auth;
@@ -25,7 +25,7 @@ use serde_json::Value;
 use std::{convert::Infallible, ffi::OsString};
 use tokio_util::sync::CancellationToken;
 
-/// TLS listeners on every native address: each endpoint exists.
+/// Enables TLS listeners on every native address, so each endpoint exists.
 const ALL_LISTENERS: [(&str, &str); 5] = [
     ("GM_TLS_CERT", "/cert.pem"),
     ("GM_TLS_KEY", "/key.pem"),
@@ -50,7 +50,7 @@ fn app(env: &[(&str, &str)]) -> App {
     App::new(config(env), CancellationToken::new()).unwrap()
 }
 
-/// A request naming the host its URI does not.
+/// Builds a request naming the host its URI does not.
 fn request(method: &str, uri: &str) -> Builder {
     Request::builder()
         .method(method)
@@ -100,7 +100,7 @@ async fn json(response: Response<Body>) -> Value {
     serde_json::from_str(&text(response).await).unwrap()
 }
 
-/// The handlers `/probe` reports in use.
+/// Reads the handlers `/probe` reports in use.
 async fn active(app: &App) -> u64 {
     let probe = json(send(app, Endpoint::H1, empty(request("GET", "/probe"))).await).await;
     probe["load"]["active"].as_u64().unwrap()

@@ -1,5 +1,5 @@
-/* The account in the top bar: who is signed in, then the two sign-out scopes as keys like their neighbours. The
-   provider lives in the tip and the form's accessible name. */
+/* The top bar shows who is signed in, then the two sign-out scopes as keys like their neighbours. The provider
+   lives in the tip and the form's accessible name. */
 @layer components {
   .account {
     display: flex;

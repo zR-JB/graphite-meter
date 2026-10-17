@@ -1,4 +1,4 @@
-//! The Graphite Meter native terminal client.
+//! Starts the Graphite Meter native terminal client.
 
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED, VERSION,
@@ -23,7 +23,7 @@ include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 #[global_allocator]
 static ALLOCATOR: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
 
-/// The status of a refused command line.
+/// A refused command line ends with this status.
 const USAGE_ERROR: u8 = 2;
 
 fn main() -> ExitCode {
@@ -67,8 +67,8 @@ fn fail(error: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Shows the interface when `interactive`, else runs `config` once; prints the finished report to stdout. `kept` is
-/// the server remembered for later starts, if any.
+/// Shows the interface when `interactive`, else runs `config` once, and prints the finished report to stdout. `kept`
+/// names the server remembered for later starts, if any.
 fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let pool = Arc::new(Pool::probing(runtime.handle())?);
@@ -116,13 +116,13 @@ fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<Ex
     })
 }
 
-/// The terminal's width, when stdout is one.
+/// Reads the terminal's width when stdout is one.
 fn columns(terminal: bool) -> Option<u16> {
     let columns = crossterm::terminal::size().ok().map(|(columns, _)| columns);
     columns.filter(|&columns| terminal && columns > 0)
 }
 
-/// Writes `view`'s report to stdout at terminal width or 100 columns, ending with `status`; 141 into a closed pipe.
+/// Writes `view`'s report to stdout at terminal width or 100 columns and ends with `status`, or 141 into a closed pipe.
 fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, status: u8) -> io::Result<ExitCode> {
     let width = columns.map_or(report::WIDTH, |columns| usize::from(columns).max(40));
     let lines = report::report(view, width, palette);
@@ -132,7 +132,7 @@ fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, s
     Ok(ExitCode::from(if printed == 0 { status } else { printed }))
 }
 
-/// The first signal's status.
+/// Waits for the first signal and yields its status.
 async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
     match signals.recv().await {
         Some(status) => status,
@@ -140,8 +140,8 @@ async fn first(mut signals: UnboundedReceiver<u8>) -> u8 {
     }
 }
 
-/// Each interrupt's and termination's status as it arrives; with `at_once`, a second exits at once with its own after
-/// putting back a terminal the background query left raw.
+/// Delivers each interrupt's and termination's status as it arrives. With `at_once`, a second one exits the process
+/// at once with its own status, after putting back a terminal the background query left raw.
 fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     let (caught, signals) = mpsc::unbounded_channel();
     let mut stopping = false;
@@ -197,7 +197,7 @@ fn legal() -> ExitCode {
     }
 }
 
-/// Writes `bytes` to stdout; the status is 141 into a closed pipe on Unix.
+/// Writes `bytes` to stdout. The status is 141 into a closed pipe on Unix.
 fn written(bytes: &[u8]) -> ExitCode {
     match graphite_meter_legal::print(io::stdout().lock(), bytes) {
         Ok(status) => ExitCode::from(status),

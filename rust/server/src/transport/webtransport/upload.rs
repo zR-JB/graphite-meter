@@ -1,4 +1,4 @@
-//! `/wt/upload` (`api/upload.md`): up to 16 client streams and optional datagrams into one aggregate with a feed.
+//! Serves `/wt/upload` (`api/upload.md`), up to 16 client streams and optional datagrams into an aggregate with a feed.
 
 use super::drain;
 use crate::{
@@ -18,24 +18,24 @@ use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Rec
 use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
-/// Client streams read at once; more are stopped.
+/// This many client streams read at once, and more are stopped.
 const MAX_STREAMS: usize = 16;
-/// A client stream's chunks taken in one read, recorded at once.
+/// One read takes this many of a client stream's chunks and records them at once.
 const READ_BATCH: usize = 32;
 /// A session refused at connect closes this long after its `error` record.
 const REFUSAL_LINGER: Duration = Duration::from_secs(2);
 
-/// An upload session's aggregate and how it is reached.
+/// Names an upload session's aggregate and how it is reached.
 pub struct Upload {
     pub uploads: Uploads,
     pub id: String,
     pub owner: Option<ClientKeys>,
-    /// Whether received datagrams count as upload bytes.
+    /// Received datagrams count as upload bytes when set.
     pub datagrams: bool,
 }
 
 impl Upload {
-    /// Serves the session until it ends; refusals get an `error` record and close after a linger; `fund` once fed.
+    /// Serves the session until it ends. Refusals get an `error` record and close after a linger. `fund` runs once fed.
     pub(super) async fn serve(self, session: &Session, lane: &Lane, mut fund: impl FnMut() -> bool) {
         let feed = match self.uploads.subscribe(&self.id, self.owner.as_ref()) {
             Ok(feed) => feed,
@@ -69,7 +69,7 @@ impl Upload {
         loop {
             tokio::select! {
                 _ = &mut background => {}
-                // A datagram lane has no FIN: it leaves once the upload is finalized.
+                // A datagram lane has no FIN, so it leaves once the upload is finalized.
                 _ = &mut finalized, if datagrams.is_some() => datagrams = None,
                 Some(()) = streams.next() => {}
                 () = &mut refusal => {}
@@ -94,7 +94,7 @@ impl Upload {
     }
 }
 
-/// A client stream's bytes, a batch at a time, until its FIN or `IDLE_BOUND` without any.
+/// Records a client stream's bytes, a batch at a time, until its FIN or `IDLE_BOUND` without any.
 async fn receive(mut stream: RecvStream, mut sink: UploadSink) {
     let mut chunks = [const { Bytes::new() }; READ_BATCH];
     while let Ok(Ok(Some(count))) = timeout(IDLE_BOUND, stream.read_chunks(&mut chunks)).await {
@@ -102,7 +102,7 @@ async fn receive(mut stream: RecvStream, mut sink: UploadSink) {
     }
 }
 
-/// The feed's lines on a server stream, which finishes with the feed.
+/// Writes the feed's lines on a server stream, which finishes with the feed.
 async fn progress(session: &Session, mut feed: ProgressFeed) {
     let Ok(mut stream) = session.open_uni().await else {
         return;
@@ -115,7 +115,7 @@ async fn progress(session: &Session, mut feed: ProgressFeed) {
     let _ = stream.finish();
 }
 
-/// `refusal`'s `error` record on a server stream of its own.
+/// Writes `refusal`'s `error` record on a server stream of its own.
 async fn refuse(session: &Session, refusal: UploadRefusal) {
     let Ok(mut stream) = session.open_uni().await else {
         return;

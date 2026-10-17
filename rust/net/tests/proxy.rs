@@ -1,4 +1,4 @@
-//! Which proxy a target goes through, from the environment.
+//! Checks which proxy a target goes through, given the environment.
 use graphite_meter_net::Proxy;
 use graphite_meter_proto::origin::Origin;
 
@@ -12,7 +12,7 @@ fn from(variables: &[(&str, &str)]) -> Proxy {
     })
 }
 
-/// The proxy `target` goes through, `-` for none, or the refusal.
+/// Names the proxy `target` goes through, `-` for none, or the refusal.
 fn via(proxy: &Proxy, target: &str) -> String {
     match proxy.route(&Origin::parse(target).unwrap()) {
         Ok(Some(upstream)) => format!("{upstream:?}"),

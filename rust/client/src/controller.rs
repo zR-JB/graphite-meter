@@ -1,4 +1,4 @@
-//! One operation at a time, each awaiting the one it replaces; a stopped run gets 5 s; sign-in waits on the operator.
+//! One operation runs at a time and awaits the one it replaces. A stopped run gets 5 s. Sign-in waits on the operator.
 use crate::{
     config::Config,
     events::{Event, Events, SignInEnd, SignInPrompt},
@@ -24,15 +24,15 @@ use std::{
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// How long a stopped operation may take to finish before it is dropped.
+/// A stopped operation may take this long to finish before it is dropped.
 const GRACE: Duration = Duration::from_secs(5);
-/// Why a run without the interface does not sign in.
+/// A run without the interface fails with this instead of signing in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
-/// What a failure from a panic says.
+/// A failure from a panic says this.
 const INTERNAL: &str = "Internal error";
 
-/// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
+/// Builds the failure for a panic. `connection-lost` would send a server away for the client's own bug.
 pub fn internal() -> Failure {
     Failure::new(FailureReason::PreparationFailed, INTERNAL)
 }
@@ -44,14 +44,14 @@ pub enum Command {
     Stop,
 }
 
-/// What an operation does: check the paths, or run over them.
+/// An operation checks the paths or runs over them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Check,
     Run,
 }
 
-/// What operations hand on: the last check for a run to reuse, and each signed-in server's grant.
+/// Operations hand on the last check for a run to reuse, and each signed-in server's grant.
 #[derive(Default)]
 struct State {
     prepared: Option<Prepared>,
@@ -61,7 +61,7 @@ struct State {
 struct Operation {
     kind: Kind,
     config: Config,
-    /// The unfinished check a run replaced, which a stop starts again.
+    /// A run replaced this unfinished check, which a stop starts again.
     replaced: Option<Config>,
     token: CancellationToken,
     stop: CancellationToken,
@@ -70,7 +70,7 @@ struct Operation {
 
 /// Runs the operations commands ask for and sends their events.
 pub struct Controller {
-    /// What each operation starts from; its stop token is replaced.
+    /// Each operation starts from this, with its stop token replaced.
     work: Work,
     current: Option<Operation>,
     idle: State,
@@ -88,7 +88,7 @@ impl Controller {
         Self { work, current: None, idle: State::default() }
     }
 
-    /// The same controller connecting through `proxy` and verifying as `verify` says, unless a config is insecure.
+    /// Connects through `proxy` and verifies as `verify` says, unless a config is insecure.
     pub fn with_outbound(mut self, verify: Verify, proxy: Proxy) -> Self {
         self.work.outbound = Some((verify, proxy));
         self
@@ -149,14 +149,14 @@ impl Drop for Controller {
     }
 }
 
-/// One operation's view of the controller.
+/// Gives one operation its view of the controller.
 #[derive(Clone)]
 struct Work {
     events: Events,
     runtimes: Arc<Pool>,
-    /// Whether an operator can approve sign-ins.
+    /// Set when an operator can approve sign-ins.
     interactive: bool,
-    /// The proxies and verification of checked clients in place of the environment's.
+    /// Checked clients use these proxies and verification in place of the environment's.
     outbound: Option<(Verify, Proxy)>,
     stop: CancellationToken,
 }
@@ -210,7 +210,7 @@ impl Work {
         self.events.send(Event::RunFinished { outcome, error, elapsed });
     }
 
-    /// Prepares `config` with kept grants, signing in while a server asks and an operator approves; none once stopped.
+    /// Prepares `config` with kept grants, signing in while a server asks and an operator approves, none once stopped.
     async fn prepare(&self, config: &Config, state: &mut State) -> Option<Result<Prepared, Failure>> {
         let mut approved = Vec::new();
         loop {
@@ -245,7 +245,7 @@ impl Work {
         }
     }
 
-    /// The grant of the operator's approval at `origin`, or why none came; none once stopped.
+    /// Asks the operator to approve at `origin` and yields the grant, or why none came, nothing once stopped.
     async fn sign_in(&self, origin: &Origin, issuer: String, client: &Client) -> Option<Result<String, Failure>> {
         let approval = Approval::new(origin);
         let (url, code, deadline) = (approval.url.clone(), approval.code.clone(), approval.deadline);
@@ -263,7 +263,7 @@ impl Work {
     }
 }
 
-/// Awaits `work` until it ends, or until the grace after `stop`; a run cut short ends as stopped.
+/// Awaits `work` until it ends, or until the grace after `stop`. A run cut short ends as stopped.
 async fn bounded(
     events: &Events,
     kind: Kind,
@@ -284,7 +284,7 @@ async fn bounded(
     }
 }
 
-/// Runs `work`, the operation begun at `started`; a panic in it ends the check or run as failed.
+/// Runs `work`, the operation begun at `started`. A panic in it ends the check or run as failed.
 async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Future<Output = ()>) {
     if AssertUnwindSafe(work).catch_unwind().await.is_ok() {
         return;
@@ -296,7 +296,7 @@ async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Futur
     });
 }
 
-/// The first origin asking for sign-in, the server's or a test server's, with the name a prompt gives it.
+/// Finds the first origin asking for sign-in, the server's or a test server's, with the name a prompt gives it.
 fn asking(prepared: &Result<Prepared, Failure>, url: Option<&Origin>) -> Option<(Origin, String)> {
     let asks = |failure: &Failure| failure.reason == FailureReason::SignInRequired;
     match prepared {

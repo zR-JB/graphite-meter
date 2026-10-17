@@ -1,5 +1,5 @@
-// The engine's shared vocabulary: servers and their verified paths, credentials, evidence, and the contract between
-// the run and the resources each server opens for a stage.
+// Defines the engine's shared vocabulary, from servers and their verified paths, credentials and evidence to the
+// contract between the run and the resources each server opens for a stage.
 import type { Probe } from "../protocol/documents";
 import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../protocol/messages";
 import type { FailureReason } from "../protocol/reasons";
@@ -11,7 +11,7 @@ export const ROLES = ["throughput", "latency"] as const;
 export type Role = (typeof ROLES)[number];
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
-/** Fixed start-to-start probe spacing; reply-driven has none. */
+/** Fixed start-to-start probe spacing. Reply-driven has none. */
 export const CADENCE_MS: Record<PingCadence, number | null> = {
   "reply-driven": null,
   fast: 80,
@@ -34,7 +34,7 @@ export const identityOf = ({ id, url, name, location }: ServerIdentity): ServerI
   ...(location ? { location } : {}),
 });
 
-/** A receiver observation: an upload id's bytes and receiver nanoseconds, and when the client saw it. */
+/** A receiver observation holds an upload id's bytes and receiver nanoseconds, and when the client saw it. */
 export interface Checkpoint {
   id: string;
   bytes: number;
@@ -45,7 +45,7 @@ export interface Checkpoint {
 
 export type HttpProtocol = "http1" | "http2" | "http3" | "negotiated";
 
-/** An advertised way to reach a server; `id` is what a saved selection names (the origin, `::wt` or `::wtdg`). */
+/** An advertised way to reach a server. `id` is what a saved selection names (the origin, `::wt` or `::wtdg`). */
 export interface FetchTarget {
   id: string;
   origin: string;
@@ -69,7 +69,7 @@ export interface LatencyTarget {
   tls: boolean;
 }
 
-/** What one origin of a server offers this page, or why the browser cannot use it. */
+/** Holds what one origin of a server offers this page, or why the browser cannot use it. */
 export interface OriginTargets<T> {
   blocked: string | null;
   targets: T[];
@@ -92,16 +92,16 @@ export interface Discovery {
   latency: Map<string, OriginTargets<LatencyTarget>>;
 }
 
-/** A path proven to work, and the selection it was proven for: Automatic stays valid while its first candidate does
-    not change; an explicit choice while it resolves to the verified target. */
+/** Records what a working path was proven for. Automatic stays valid while its first candidate does not change, an
+    explicit choice while it resolves to the verified target. */
 export interface VerifiedFor {
   selection: string;
   head: string;
 }
 export interface ThroughputPath {
-  /** What carries the bytes: a fetch target with the protocol the browser negotiated, or a WebTransport target. */
+  /** Carries the bytes, as a fetch target with the protocol the browser negotiated or a WebTransport target. */
   target: ThroughputTarget;
-  /** The HTTP view of the target's origin: probes, upload sessions, checkpoints and the HTTP progress feed. */
+  /** The HTTP view of the target's origin serves probes, upload sessions, checkpoints and the HTTP progress feed. */
   fetch: FetchTarget;
   probe: Probe;
   /** The browser's own `nextHopProtocol`, when it reported one. */
@@ -113,14 +113,14 @@ export interface ThroughputPath {
 export interface LatencyPath {
   target: LatencyTarget;
   probe: Probe;
-  /** The median of the check's replies; null without one. */
+  /** The median of the check's replies, or null without one. */
   rttMs: number | null;
   generation: string;
   verifiedAt: number;
   verifiedFor: VerifiedFor;
 }
 
-/** A server ready to run: immutable input to one run. */
+/** A server ready to run is immutable input to one run. */
 export interface PreparedServer {
   server: ServerIdentity;
   auth: ServerAuth;
@@ -130,20 +130,20 @@ export interface PreparedServer {
   latency: LatencyPath | null;
 }
 
-/** A server's credentials: none, the page's own sign-in, or a measurement grant. Requests never leave the server's
+/** A server's credentials are none, the page's own sign-in, or a measurement grant. Requests never leave the server's
     allowed destinations, and a grant never appears in a URL. */
 export interface ServerAuth {
   readonly kind: "public" | "session" | "grant";
-  /** Ms until the grant ends by whichever clock says less; Infinity for credentials without an end of their own. */
+  /** Ms until the grant ends by whichever clock says less, or Infinity for credentials without an end of their own. */
   left(): number;
   /** Throws SignInRequired when the grant is missing or ended. */
   request(url: string, method: string): RequestRecipe;
-  /** A control request: high priority, the recipe applied, a 403 carrying the sign-in marker thrown as
+  /** Sends a control request at high priority with the recipe applied. A 403 carrying the sign-in marker is thrown as
       SignInRequired with its body released. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
-  /** Null when a socket needs no ticket: public servers, and a WebSocket riding the page's own cookie. */
+  /** Null when a socket needs no ticket, on public servers and for a WebSocket riding the page's own cookie. */
   ticket(origin: string, route: string): TicketRecipe | null;
-  /** Whether a broken stream was the sign-in or grant ending: the one cheap check per kind, at most 3 s. */
+  /** Asks whether a broken stream was the sign-in or grant ending, by the one cheap check per kind, at most 3 s. */
   ended(signal?: AbortSignal): Promise<boolean>;
 }
 
@@ -153,7 +153,7 @@ export class SignInRequired extends Error {
   }
 }
 
-/** A non-terminal stall: a direction went quiet or its lanes are reconnecting. */
+/** A non-terminal stall means a direction went quiet or its lanes are reconnecting. */
 export interface Stall {
   reason: FailureReason;
   detail: string;
@@ -161,18 +161,18 @@ export interface Stall {
   rotate?: boolean;
 }
 
-/** What one server's stage resources report to the run. */
+/** One server's stage resources report these to the run. */
 export interface StageEvents {
-  /** Client-consumed payload bytes of a measured download. */
+  /** Counts client-consumed payload bytes of a measured download. */
   download(bytes: number): void;
-  /** A receiver observation of a measured upload. */
+  /** Reports a receiver observation of a measured upload. */
   receiver(checkpoint: Checkpoint): void;
-  /** Client-consumed bytes before the measured window, which only the live rate reads. */
+  /** Counts client-consumed bytes before the measured window, which only the live rate reads. */
   warmupDownload(bytes: number): void;
-  /** A receiver observation before the measured window, which only the live rate reads. */
+  /** Reports a receiver observation before the measured window, which only the live rate reads. */
   warmupReceiver(checkpoint: Checkpoint): void;
   probes(outcomes: readonly ProbeOutcome[]): void;
-  /** Probes that will get no verdict: lost with their connection, or never sent. Neither is a timeout. */
+  /** Counts probes that will get no verdict, lost with their connection or never sent. Neither is a timeout. */
   probesInterrupted(count: number, reason: "unresolved" | "send-failed"): void;
   /** The probe population's accounting can no longer be complete. */
   probesIncomplete(): void;
@@ -182,7 +182,7 @@ export interface StageEvents {
   latencyResumed(): void;
   failed(reason: FailureReason, message: string): void;
   signInRequired(role: Role): void;
-  /** A locally timed upload POST: presentation evidence while a receiver pauses. */
+  /** Reports a locally timed upload POST, which is presentation evidence while a receiver pauses. */
   uploadHint(lane: number, bytes: number, elapsedMs: number): void;
 }
 
@@ -192,20 +192,20 @@ export type StageLanes = Pick<StageSetup, "streams" | "gating">;
 export interface StageSetup {
   server: PreparedServer;
   activity: Activity;
-  /** Lanes per direction for this server and stage; 0 for a direction the stage does not move. */
+  /** Lanes per direction for this server and stage, 0 for a direction the stage does not move. */
   streams: Record<Direction, number>;
   /** Upload lanes across every server of the stage. */
   uploadLanes: number;
-  /** The lanes readiness waits for: those an HTTP/1.1 origin's pool runs at once; all of `streams` when absent. */
+  /** Readiness waits for these lanes, those an HTTP/1.1 origin's pool runs at once, or all of `streams` if absent. */
   gating?: Record<Direction, number>;
-  /** The probe spacing of this stage: the idle cadence for the latency stage, the loaded one otherwise. */
+  /** The latency stage probes at the idle cadence, any other stage at the loaded one. */
   cadence: PingCadence;
   /** Distinguishes this run's requests from cached ones. */
   seed: string;
   events: StageEvents;
   /** Run ms, the clock checkpoints are stamped with. */
   now(): number;
-  /** The server's latency bus for the run: opened by the first stage that probes, adopted by each later one. */
+  /** The first stage that probes opens the server's latency bus for the run, and each later one adopts it. */
   bus: { current: LatencyBus | null };
 }
 
@@ -214,18 +214,18 @@ export interface StageResources {
   /** Opens the carriers, receiver and probe channel, and resolves once they work, within 3.5 s. Loaded latency never
       holds throughput back. */
   prepare(signal: AbortSignal): Promise<void>;
-  /** The measured window starts: evidence from now on counts. */
+  /** The measured window starts, so evidence from now on counts. */
   measure(): void;
-  /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
+  /** Asks for a receiver checkpoint. `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
   /** Resolves once the download bytes the lanes had counted by `cutoff` (page time) reached `download`, with the
-      latest page time those counts stand at (null without download lanes); never rejects. */
+      latest page time those counts stand at (null without download lanes). It never rejects. */
   flush(cutoff: number): Promise<number | null>;
-  /** Replaces an upload id the server no longer knows: the run's one rotation per server. */
+  /** Replaces an upload id the server no longer knows, as the run's one rotation per server. */
   replaceUpload(signal: AbortSignal): Promise<void>;
-  /** Graceful end: probes drain to their deadlines, sessions finalize, then everything is released. */
+  /** Ends gracefully. Probes drain to their deadlines, sessions finalize, then everything is released. */
   finish(): Promise<void>;
-  /** Immediate release; `incomplete` first reports the probes it cuts off. */
+  /** Releases at once. `incomplete` first reports the probes it cuts off. */
   discard(incomplete?: boolean): void;
 }
 
@@ -243,13 +243,13 @@ export class StageFailure extends Error {
   }
 }
 
-/** A latency bus to one server: a WebSocket, or WebTransport datagrams, driven from a worker. */
+/** Opens a latency bus to one server, a WebSocket or WebTransport datagrams, driven from a worker. */
 export interface ProbeChannelOptions {
   target: LatencyTarget;
   auth: ServerAuth;
   /** Fixed start-to-start spacing in ms, or null for reply-driven probing. */
   intervalMs: number | null;
-  /** Probes in flight at most; a full window skips a send, never times one out. */
+  /** Bounds the probes in flight. A full window skips a send, never times one out. */
   maxInFlight: number;
 }
 export interface ProbeChannelEvents {
@@ -257,33 +257,33 @@ export interface ProbeChannelEvents {
   ready(): void;
   outcomes(batch: readonly ProbeOutcome[]): void;
   interrupted(count: number, reason: "unresolved" | "send-failed"): void;
-  /** The connection was lost and is reconnecting (once per outage); `resumed` when replies flow again. */
+  /** The connection was lost and is reconnecting (once per outage). `resumed` follows when replies flow again. */
   stalled(detail: string): void;
   resumed(): void;
   signInRequired(): void;
-  /** Outcomes were lost uncounted: a population can no longer be complete. */
+  /** Outcomes were lost uncounted, so a population can no longer be complete. */
   incomplete?(): void;
 }
 export interface ProbeChannel {
-  /** Outcomes count from now on; probes sent before never enter a population. */
+  /** Outcomes count from now on. Probes sent before never enter a population. */
   measure(): void;
-  /** Probes at this start-to-start spacing (null: on each reply), with at most `maxInFlight` in flight when given, from
-      the next send on; probes in flight keep their deadlines. */
+  /** Probes at this start-to-start spacing (null for on each reply), with at most `maxInFlight` in flight when given,
+      from the next send on. Probes in flight keep their deadlines. */
   pace(intervalMs: number | null, maxInFlight?: number): void;
-  /** Ends the measured window: its probes in flight drain to their own deadlines and resolve outside it; the bus
+  /** Ends the measured window. Its probes in flight drain to their own deadlines and resolve outside it. The bus
       probes on, unmeasured, until disposed. */
   stop(): Promise<void>;
-  /** Immediate release; `incomplete` first reports the probes it cuts off. */
+  /** Releases at once. `incomplete` first reports the probes it cuts off. */
   dispose(incomplete?: boolean): void;
 }
 export type OpenProbeChannel = (options: ProbeChannelOptions, events: ProbeChannelEvents) => ProbeChannel;
 /** A probe channel that outlives its stage. */
 export interface LatencyBus extends ProbeChannel {
-  /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
+  /** Its events go to `events` from now on, told at once whether the bus answers or stalled. False once it ended. */
   adopt(events: ProbeChannelEvents): boolean;
 }
 
-/** The test settings as saved (localStorage `graphite-meter:v1` → `config`). */
+/** The test settings are saved in localStorage `graphite-meter:v1` → `config`. */
 export interface TestConfig {
   stages: Record<Stage, boolean>;
   /** Transfer stages probe no loaded latency while the latency stage is off. */
@@ -291,13 +291,13 @@ export interface TestConfig {
   duration: { warmupMs: number; latencyMs: number; downloadMs: number; uploadMs: number; bidirectionalMs: number };
   pingCadence: PingCadence;
   loadedPingCadence: PingCadence;
-  /** Automatic: HTTP/1.1 lanes per direction at most; forced: exactly this many on every protocol. */
+  /** Automatic opens at most this many HTTP/1.1 lanes per direction, forced exactly this many on every protocol. */
   transferStreams: { mode: "auto" | "forced"; count: number };
   /** Lists the WebTransport datagram path among throughput choices. */
   experimentalDatagramThroughput: boolean;
-  /** Saved selections: "auto", "protocol:<http1|http2|http3>", "transport:<kind>", "<origin>", "<origin>::wt[dg]". */
+  /** A saved selection is "auto", "protocol:<http1|http2|http3>", "transport:<kind>", "<origin>" or "<origin>::wt[dg]". */
   transports: { throughputTarget: string; latencyTarget: string };
-  /** Finish stable stages early. */
+  /** Finishes stable stages early. */
   adaptive: boolean;
   visualization: { throughputMaxBytesPerSec: number | "auto" };
 }

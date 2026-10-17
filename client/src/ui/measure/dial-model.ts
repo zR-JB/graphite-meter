@@ -1,19 +1,19 @@
-// The dial's pure rules: the ring's geometry, the rate curve, the result arcs and the needle's course.
+// Holds the dial's pure rules, the ring's geometry, the rate curve, the result arcs and the needle's course.
 import type { TransferStage } from "../../engine/run/schedule";
 import { STAGE } from "../../view/words";
 
-/** The ring opens downward: clockwise from the bottom left, angles from +x with y down. */
+/** The ring opens downward and runs clockwise from the bottom left, with angles from +x and y down. */
 export const SWEEP_DEG = 270;
 export const ARC_START = 0.75 * Math.PI;
 export const ARC_SWEEP = (SWEEP_DEG * Math.PI) / 180;
 const TICKS = 8;
-/** The label fractions of the ring, in label order. */
+/** Labels sit at these fractions of the ring, in label order. */
 export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
 const LABEL_CLEARANCE = 8;
 const NOTE_GAP = 8;
-/** The share of the labelled ring's height its centring moves it down. */
+/** Centring the labelled ring moves it down by this share of its height. */
 const DROP = (1 - Math.SQRT1_2) / 2;
-/** Tick ends over the radius: half an arc of 0.13 r, a 3 px gap, then 0.08 r of tick. */
+/** Tick ends lie this far out over the radius, half an arc of 0.13 r, a 3 px gap, then 0.08 r of tick. */
 const TICK_REACH = 1.145;
 const EPSILON = 1e-6;
 
@@ -30,23 +30,23 @@ export interface DialLayout {
   arcWidth: number;
   /** A head is flat in its hue and a little wider than its arc. */
   headRadius: number;
-  /** The whole ring, which the track and every result arc stroke. */
+  /** The track and every result arc stroke this whole ring. */
   track: string;
   /** The tick marks as one path. */
   ticks: string;
   labels: (Point & { anchorX: Anchor; anchorY: Anchor })[];
-  /** Where a note hung under the ring starts: just under the tick ends. */
+  /** A note hung under the ring starts here, just under the tick ends. */
   noteTop: number;
-  /** How wide a hung note may be and stay between the lowest tick labels. */
+  /** A hung note may be this wide and stay between the lowest tick labels. */
   noteWidth: number;
-  /** The face's shorter side, or the ring's span when the ring is the smaller: every type size reads it. */
+  /** Every type size reads this, the face's shorter side or the ring's span when the ring is the smaller. */
   faceMin: number;
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;
 const anchor = (direction: number): Anchor => (direction < -EPSILON ? "end" : direction > EPSILON ? "start" : "center");
 
-/** One geometry for the SVG and the DOM labels, in CSS pixels of the face; `note` is a band hung under the ring. */
+/** Lays out the SVG and the DOM labels alike, in CSS pixels of the face; `note` is a band hung under the ring. */
 export function dialLayout(faceWidth: number, faceHeight: number, note = 0): DialLayout {
   const width = Math.max(1, faceWidth);
   const height = Math.max(1, faceHeight);
@@ -65,7 +65,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
   const arcWidth = Math.max(6, radius * 0.13);
   const tickInner = radius + arcWidth / 2 + 3;
   const tickOuter = tickInner + radius * 0.08;
-  // The ring with its labels, centred in the face.
+  // The ring and its labels centre in the face.
   const center = { x: width / 2, y: height / 2 + DROP * (tickOuter + LABEL_CLEARANCE) };
   const at = (angle: number, distance: number) => ({
     x: center.x + Math.cos(angle) * distance,
@@ -104,12 +104,12 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
   };
 }
 
-// One low-end transfer curve for every rate: a hundredth of the scale already moves the needle an eighth of the ring.
+// Every rate shares one low-end transfer curve; a hundredth of the scale moves the needle an eighth of the ring.
 const KNOTS = [0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1] as const;
 const SPANS = KNOTS.length - 1;
 const scaleOf = (scale: number) => (Number.isFinite(scale) && scale > 0 ? scale : 1);
 
-/** Where a rate sits on the ring, 0 to 1; a value that is not a finite number sits at 0. */
+/** Places a rate on the ring, 0 to 1; a value that is not a finite number sits at 0. */
 export function gaugeFraction(bytesPerSec: number, scale: number): number {
   const value = bytesPerSec / scaleOf(scale);
   if (!(value > 0)) return 0;
@@ -120,7 +120,7 @@ export function gaugeFraction(bytesPerSec: number, scale: number): number {
   return (i - 1 + (value - low) / (KNOTS[i]! - low)) / SPANS;
 }
 
-/** The rate at a fraction of the ring: the inverse of `gaugeFraction`. */
+/** Gives the rate at a fraction of the ring, the inverse of `gaugeFraction`. */
 export function gaugeValue(fraction: number, scale: number): number {
   const f = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
   if (f >= 1) return scaleOf(scale);
@@ -129,8 +129,8 @@ export function gaugeValue(fraction: number, scale: number): number {
   return scaleOf(scale) * (low + (f * SPANS - i) * (KNOTS[i + 1]! - low));
 }
 
-/** A finished transfer stage's result on the ring. A one-sided bidirectional result is dashed and named by the
-    direction that survived; its rate is that direction's alone. */
+/** Draws a finished transfer stage's result on the ring. A one-sided bidirectional result is dashed and named by
+    the direction that survived; its rate is that direction's alone. */
 export interface ResultArc {
   stage: TransferStage;
   direction: TransferStage;
@@ -140,8 +140,8 @@ export interface ResultArc {
 
 type Rated = { reportedBytesPerSec: number } | null | undefined;
 
-/** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
-    both lanes, and a zero lane is evidence. */
+/** Lists every transfer result, the longest first, so each shorter one lies over it. A combined bidirectional value
+    needs both lanes, and a zero lane is evidence. */
 export function resultArcs(
   results: { download: Rated; upload: Rated; bidirectional: { down: Rated; up: Rated } | null } | null,
 ): ResultArc[] {
@@ -166,13 +166,13 @@ export function resultArcs(
   return arcs.sort((a, b) => value(b) - value(a));
 }
 
-/** The result the dial reads out, by role and never by size: download, else upload, else bidirectional. */
+/** Picks the result the dial reads out by role and never by size, download, else upload, else bidirectional. */
 export const headlineArc = (arcs: readonly ResultArc[]): ResultArc | null =>
   (["download", "upload", "bidirectional"] as const)
     .map((stage) => arcs.find((arc) => arc.stage === stage))
     .find(Boolean) ?? null;
 
-/** An arc's name, as its bead's tip gives it. */
+/** Names an arc as its bead's tip gives it. */
 export const arcLabel = (arc: ResultArc) =>
   arc.dashed
     ? `${STAGE.bidirectional.label}, ${STAGE[arc.direction].label.toLowerCase()} only`
@@ -180,7 +180,7 @@ export const arcLabel = (arc: ResultArc) =>
 
 type Bead = "bead" | "stacked" | "split";
 
-/** How each head sits on the ring, judged against the heads painted before it (the higher results): one nearly
+/** Judges how each head sits on the ring against the heads painted before it (the higher results). One nearly
     level with a neighbour shows only its trailing half, so the pair reads as one bead in both hues; one that
     overlaps is cut out of the neighbour by a halo in the ground. Heads never leave the ring. */
 export function beadKinds(fractions: readonly number[], radius: number, headRadius: number): Bead[] {
@@ -198,7 +198,7 @@ const SWEEP_MIN_MS = 360;
 /** A result sweeps the rest of the ring from where the needle stood, in its share of SWEEP_MS, never under the floor. */
 export const resultSweepMs = (from: number) => Math.max(SWEEP_MIN_MS, SWEEP_MS * (1 - from));
 
-/** When the sweep's ease-out-cubic front, setting off at `from`, reaches `fraction`: a bead pops then. */
+/** Tells when the sweep's ease-out-cubic front, setting off at `from`, reaches `fraction`; a bead pops then. */
 export const reachMs = (fraction: number, from: number, sweepMs: number) =>
   fraction <= from ? 0 : (1 - Math.cbrt(1 - (fraction - from) / (1 - from))) * sweepMs;
 
@@ -209,11 +209,11 @@ export const RESCALE_MS = 360;
 /** Frames further apart than this leave the needle at rest between them. */
 const FRAME_GAP_MS = 50;
 
-/** What the needle is told when what the dial shows changes, not every frame. */
+/** The needle is told this when what the dial shows changes, not every frame. */
 interface NeedleInput {
   /** The dial shows a value the needle can point at. */
   visible: boolean;
-  /** A run ending in a speed result: the needle waits where it stands for the result to take over. */
+  /** A run is ending in a speed result, so the needle waits where it stands for the result to take over. */
   hold: boolean;
   /** The dial is seen and motion is allowed; otherwise every change snaps. */
   motion: boolean;
@@ -221,17 +221,17 @@ interface NeedleInput {
   course: string;
 }
 
-/** The needle's course. A stage's first value rises from zero, or turns the needle round from where the last stage's
-    drain has taken it, at the speed it drains; within a stage the needle follows the live value, and a scale change
-    glides it across; when the value ends it drains to zero, so one stage hands the ring to the next through zero. A
-    result takes over the ring where the needle stands. Angles are degrees along the ring. */
+/** Steers the needle's course. A stage's first value rises from zero, or turns the needle round from where the last
+    stage's drain has taken it, at the speed it drains. Within a stage the needle follows the live value, and a scale
+    change glides it across. When the value ends it drains to zero, so one stage hands the ring to the next through
+    zero. A result takes over the ring where the needle stands. Angles are degrees along the ring. */
 export class Needle {
   #from = 0;
   #at = 0;
   #ms = 0;
-  /** Degrees per ms the needle had as its move began; a move sets off at that speed. */
+  /** The needle had this speed in degrees per ms as its move began; a move sets off at that speed. */
   #speed = 0;
-  /** Where a move lands: on the live value it follows, at zero, or where the needle already is. */
+  /** A move lands on the live value it follows, at zero, or where the needle already is. */
   #end: "target" | "zero" | "still" = "zero";
   #drawn = 0;
   #drawnAt = Number.NEGATIVE_INFINITY;
@@ -240,11 +240,11 @@ export class Needle {
   #parked = false;
   #course = "";
 
-  /** The angle at `now`, `target` being the live value's angle or null while the dial shows none. */
+  /** Gives the angle at `now`; `target` is the live value's angle, or null while the dial shows none. */
   angle(now: number, target: number | null): number {
     const end = this.#end === "zero" ? 0 : this.#end === "still" ? this.#from : (target ?? this.#drawn);
     const u = this.#ms > 0 ? Math.max(0, (now - this.#at) / this.#ms) : 1;
-    // A cubic Hermite from where the move began, at the speed it had, to rest on its end.
+    // A cubic Hermite runs from where the move began, at the speed it had, to rest on its end.
     const angle =
       u >= 1
         ? end
@@ -259,12 +259,12 @@ export class Needle {
     return angle;
   }
 
-  /** A move under way; the needle may still follow a moving value after it. */
+  /** Tells whether a move is under way; the needle may still follow a moving value after it. */
   moving(now: number): boolean {
     return now - this.#at < this.#ms;
   }
 
-  /** Lit while it shows a value, and while it drains on to zero; a needle a result took over fades where it stood. */
+  /** It is lit while it shows a value or drains on to zero; a needle a result took over fades where it stood. */
   lit(visible: boolean, motion: boolean): boolean {
     return visible || (motion && this.#drawn > 0.5 && !this.#parked);
   }
@@ -288,7 +288,7 @@ export class Needle {
     this.#course = course;
   }
 
-  /** A result takes over: its sweep runs on from the needle's place, which it returns as a fraction of the ring. */
+  /** A result takes over, so its sweep runs on from the needle's place, returned here as a fraction of the ring. */
   takeover(motion: boolean, now: number): number {
     const from = motion && this.#revealed ? Math.min(1, this.#drawn / SWEEP_DEG) : 0;
     this.#parked = this.#revealed;

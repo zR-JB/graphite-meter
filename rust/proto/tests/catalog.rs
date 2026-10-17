@@ -20,7 +20,7 @@ fn entry(name: &str, url: &str) -> ServerEntry {
     }
 }
 
-/// `self` and Frankfurt, which may also measure on a transfer host.
+/// Builds a catalog of `self` and Frankfurt, which may also measure on a transfer host.
 fn catalog() -> ServerCatalog {
     let mut frankfurt = entry("frankfurt", "https://fra.example.net");
     frankfurt.additional_origins = vec![Origin::parse("https://transfer.example.net:8443").unwrap()];

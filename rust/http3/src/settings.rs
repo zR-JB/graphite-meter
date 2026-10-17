@@ -1,4 +1,4 @@
-//! SETTINGS (RFC 9114 §7.2.4): our profile per role, the peer's values and its WebTransport dialect.
+//! Handles SETTINGS (RFC 9114 §7.2.4), from our profile per role to the peer's values and its WebTransport dialect.
 use crate::{
     code::Code,
     frame::{self, FrameType, StreamType},
@@ -12,15 +12,15 @@ const H3_DATAGRAM: u64 = 0x33;
 const H3_DATAGRAM_DRAFT04: u64 = 0xffd277;
 const WT_ENABLE_DRAFT02: u64 = 0x2b603742;
 const WT_ENABLED: u64 = 0x2c7cf000;
-/// Bounds on a peer's SETTINGS frame and its distinct identifiers, far above any real peer's.
+/// A peer's SETTINGS frame and its distinct identifiers stay under these bounds, far above any real peer's.
 const MAX_LENGTH: u64 = 8 * 1024;
 const MAX_IDS: usize = 64;
 
-/// The largest field section each role accepts: request heads are small, responses may carry more.
+/// Each role accepts a field section up to this size. Request heads are small, responses may carry more.
 pub(crate) const SERVER_FIELD_SECTION: u64 = 4096;
 pub(crate) const CLIENT_FIELD_SECTION: u64 = 32 * 1024;
 
-/// Static-only QPACK and no WebTransport flow control.
+/// We announce static-only QPACK and no WebTransport flow control.
 pub(crate) const SERVER: [(u64, u64); 5] = [
     (MAX_FIELD_SECTION_SIZE, SERVER_FIELD_SECTION),
     (ENABLE_CONNECT_PROTOCOL, 1),
@@ -31,7 +31,7 @@ pub(crate) const SERVER: [(u64, u64); 5] = [
 pub(crate) const CLIENT: [(u64, u64); 3] =
     [(MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION), (H3_DATAGRAM, 1), (WT_ENABLED, 1)];
 
-/// A control stream's first bytes: its stream type, then the SETTINGS frame.
+/// Builds a control stream's first bytes, its stream type and then the SETTINGS frame.
 pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
     let encoded = |&(id, value): &(u64, u64)| varint::len(id) + varint::len(value);
     let length: usize = settings.iter().map(encoded).sum();
@@ -45,7 +45,7 @@ pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
     bytes
 }
 
-/// How a peer speaks WebTransport: draft 02 (Chromium and Firefox) or the current draft.
+/// A peer speaks WebTransport in draft 02 (Chromium and Firefox) or the current draft.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Dialect {
     Draft02,
@@ -56,7 +56,7 @@ pub(crate) enum Dialect {
 pub(crate) struct Peer {
     pub(crate) max_field_section_size: Option<u64>,
     pub(crate) connect_protocol: bool,
-    /// RFC 9297's H3_DATAGRAM, as opposed to draft 04's.
+    /// The peer sent RFC 9297's H3_DATAGRAM, as opposed to draft 04's.
     h3_datagram: bool,
     datagrams: bool,
     draft02: bool,
@@ -64,7 +64,7 @@ pub(crate) struct Peer {
 }
 
 impl Peer {
-    /// RFC 9297 §2.1.1: H3_DATAGRAM sans transport parameter is H3_SETTINGS_ERROR; draft 04's leaves WebTransport off.
+    /// H3_DATAGRAM sans transport parameter is H3_SETTINGS_ERROR (RFC 9297 §2.1.1). Draft 04's leaves WebTransport off.
     pub(crate) fn check(&self, datagram_frames: bool) -> Result<(), Code> {
         if self.h3_datagram && !datagram_frames {
             Err(Code::H3_SETTINGS_ERROR)
@@ -73,7 +73,7 @@ impl Peer {
         }
     }
 
-    /// Needs a WebTransport signal, HTTP datagrams and the datagram parameter.
+    /// WebTransport needs a signal, HTTP datagrams and the datagram parameter.
     pub(crate) fn webtransport(&self, datagram_frames: bool) -> Option<Dialect> {
         if !self.datagrams || !datagram_frames {
             None

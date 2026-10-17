@@ -1,4 +1,4 @@
-//! The server role: a connection yields requests, and each resolves its head within 10 s.
+//! Plays the server role. A connection yields requests, and each resolves its head within 10 s.
 use crate::{
     budget::{Budget, Charge},
     code::Code,
@@ -21,17 +21,17 @@ impl Connection {
         Self(Driver::new(quic, budget, Role::Server))
     }
 
-    /// The next request; `None` once the connection closed gracefully, idle or drained. Cancel safe.
+    /// Yields the next request, or `None` once the connection closed gracefully, idle or drained. Cancel safe.
     pub async fn next(&mut self) -> Result<Option<Request>, Error> {
         Ok(self.0.next().await?.map(Request))
     }
 
-    /// Sends GOAWAY: later requests are refused, and the connection closes once the others end.
+    /// Sends GOAWAY. Later requests are refused, and the connection closes once the others end.
     pub fn goaway(&mut self) {
         self.0.goaway();
     }
 
-    /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or in 5 s.
+    /// Also ends the session, even later ones, with `code` and `reason`. The connection closes as others end or in 5 s.
     pub fn shutdown(&mut self, code: u32, reason: &str) {
         self.0.shutdown(code, reason);
     }
@@ -46,7 +46,7 @@ impl Request {
         self.0.abort(Code::H3_REQUEST_REJECTED);
     }
 
-    /// Checks the head: over 4 KiB 431, non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
+    /// A head over 4 KiB gets 431, a non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
         let Ok(request) = tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await else {

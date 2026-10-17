@@ -50,7 +50,7 @@ test.chrome("a signed-in protected home runs automatic, HTTP/3 and WebTransport 
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });
 
-// A server of its own, so the wrong attempt spends none of the shared one's sign-in budget.
+// The test gets a server of its own, so the wrong attempt spends none of the shared one's sign-in budget.
 test("a wrong password keeps the card's host, show key and focus", async (page) => {
   const vault = await spawnPeer("Vault", (server) => ({
     GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
@@ -92,7 +92,7 @@ test("signing out lands on the signed-out notice, even with a token another sign
 });
 
 test("a sign-out that would leave a result unsaved asks first, and signs out after staying", async (page) => {
-  // History's writes fail, for now, as a busy disk's would: the saver keeps retrying.
+  // History's writes fail, for now, as a busy disk's would, and the saver keeps retrying.
   await page.addInitScript(() => {
     const state = { failing: false };
     Object.assign(window, { writes: state });
@@ -102,7 +102,7 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
       return put.apply(this, args);
     };
   });
-  // A server of its own, so this sign-in spends none of the shared one's budget.
+  // The test gets a server of its own, so this sign-in spends none of the shared one's budget.
   const vault = await spawnPeer("Vault", (server) => ({
     GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
     GM_AUTH_MODE: "password",
@@ -125,7 +125,7 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
     await expect(ask).toBeVisible({ timeout: 10_000 });
     await ask.getByRole("button", { name: "Stay signed in" }).click();
     await expect(ask).toHaveCount(0);
-    // Storage recovers and the result saves; Sign out works again.
+    // Storage recovers and the result saves, so Sign out works again.
     await page.evaluate(() => {
       (window as any).writes.failing = false;
       window.dispatchEvent(new Event("online"));
@@ -150,7 +150,7 @@ test("a session read that failed at boot is tried again when the network returns
       return Promise.reject(new TypeError("Failed to fetch"));
     }) as typeof fetch;
   });
-  // A server of its own, so this sign-in spends none of the shared one's budget.
+  // The test gets a server of its own, so this sign-in spends none of the shared one's budget.
   const vault = await spawnPeer("Vault", (server) => ({
     GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls",
     GM_AUTH_MODE: "password",
@@ -184,7 +184,7 @@ test("signing out everywhere waits for confirmation", async (page) => {
     name: "Sign out Local operator everywhere",
   });
   await expect(everywhere).toBeVisible();
-  // Record the submission instead of ending the fleet's shared operator sessions.
+  // The test records the submission instead of ending the fleet's shared operator sessions.
   await page.evaluate(() => {
     HTMLFormElement.prototype.submit = function () {
       (window as any).submitted = new FormData(this).get("scope") ?? "this session";
@@ -386,7 +386,7 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   await open(page, home.url, {
     servers: [home, locked],
     config: {
-      // Wherever the revocation lands, the interval before or after it spans the 800 ms evidence floor; in 1.5 s a
+      // Wherever the revocation lands, the interval before or after it spans the 800 ms evidence floor. In 1.5 s a
       // dropout near the middle left neither, and the download failed.
       duration: { ...baseConfig.duration, downloadMs: 3000, uploadMs: 1000 },
     },

@@ -1,5 +1,5 @@
-// The control documents the servers answer (api/discovery.md): small JSON bodies, read with a 64 KiB bound and
-// decoded strictly before anything acts on them.
+// Decodes the control documents the servers answer (api/discovery.md). They are small JSON bodies, read with a 64 KiB
+// bound and decoded strictly before anything acts on them.
 import { array, DecodeError, integer, object, oneOf, string, type Decoded, type Decoder } from "../lib/decode";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -9,12 +9,12 @@ export const MAX_STAGE_LIMIT_MS = 86_400_000;
 /** Lets go of a body nobody reads. */
 export const release = (response: Response) => response.body?.cancel().catch(() => {});
 
-/** Only HTTP 403 with this marker means a sign-in or grant has ended; other refusals and failures are not evidence. */
+/** Only HTTP 403 with this marker means a sign-in or grant has ended. Other refusals and failures are not evidence. */
 export const signInMarker = (response: Response) =>
   response.status === 403 && response.headers.get("Graphite-Meter-Auth") === "required";
 
 /** One JSON document of at most `maxBytes` (64 KiB unless named) of strict UTF-8, decoded bytes counted as they
-    stream; the body is always released. */
+    stream. The body is always released. */
 export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   if (!response.body) throw new DecodeError("the response has no body");
   const reader = response.body.getReader();
@@ -42,11 +42,11 @@ export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): P
   }
 }
 
-// Controls and direction formatting could disguise a server's displayed identity; the same set as
+// Controls and direction formatting could disguise a server's displayed identity. The set matches
 // rust/proto/src/text.rs.
 const UNSAFE_TEXT = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
-/** Text a view shows: bounded, and refused when it carries controls or direction overrides. */
+/** Text a view shows is bounded, and refused when it carries controls or direction overrides. */
 export const displayText =
   (max: number, min = 0): Decoder<string> =>
   (value, path = "") => {
@@ -56,7 +56,7 @@ export const displayText =
     return text;
   };
 
-/** A server's detail made safe for a saved result: empty when it carries controls, else at most `max` characters. */
+/** A server's detail made safe for a saved result, empty when it carries controls, else at most `max` characters. */
 export const safeDetail = (text: string, max = 256) => (UNSAFE_TEXT.test(text) ? "" : text.slice(0, max));
 
 const ORIGIN = /^https?:\/\/[^@/?#\\\s]+$/;
@@ -78,7 +78,7 @@ const baseUrl: Decoder<string> = (value, path = "") => {
   return text === "." ? text : canonicalOrigin(text, path);
 };
 
-/** A mechanism the client knows, or null for a newer one the target list skips; absent or empty is malformed. */
+/** A mechanism the client knows, or null for a newer one the target list skips. Absent or empty is malformed. */
 const mechanism =
   <const T extends readonly string[]>(...known: T): Decoder<T[number] | null> =>
   (value, path = "") => {
@@ -86,7 +86,7 @@ const mechanism =
     return known.includes(text) ? (text as T[number]) : null;
   };
 
-/** At most 32 targets as sent; one naming an unknown mechanism is skipped before its address is checked. */
+/** At most 32 targets as sent. One naming an unknown mechanism is skipped before its address is checked. */
 function targets<T extends Record<string, Decoder<string | null>>>(
   mechanisms: T,
 ): Decoder<({ baseUrl: string } & { [K in keyof T]: NonNullable<Decoded<T[K]>> })[]> {
@@ -131,7 +131,7 @@ export type Probe = Decoded<typeof probe>;
 
 export const uploadSession = object({ uploadId: string(1, 8192) });
 
-/** A single-use socket ticket; authentication off answers an empty token. */
+/** A single-use socket ticket. Authentication off answers an empty token. */
 export const socketTicket = object({ token: string(0, 8192), expires: integer() });
 
 /** How long a sign-in or grant has left, within its maximum lifetime. */
@@ -171,9 +171,9 @@ const catalogOrigin = (value: unknown, path = "") => {
 
 export interface CatalogEntry {
   id: string;
-  /** The canonical origin; the page's own for `self`. */
+  /** The canonical origin, or the page's own for `self`. */
   url: string;
-  /** The operator's fallback; discovery names the server once it answers. */
+  /** The operator's fallback. Discovery names the server once it answers. */
   name: string;
   location?: string;
   additionalOrigins: string[];
@@ -183,8 +183,8 @@ export interface Catalog {
   defaultSelection: string[];
 }
 
-/** The originating server's catalog: `self` first, unique IDs and origins, 1–4 default IDs. Any violation refuses
-    the whole document. */
+/** The originating server's catalog holds `self` first, unique IDs and origins, and 1–4 default IDs. Any violation
+    refuses the whole document. */
 export function catalog(value: unknown, pageOrigin: string): Catalog {
   const document = object({
     servers: array(

@@ -135,7 +135,7 @@ test("without randomUUID, on plain-HTTP LAN pages, ids are still v4 UUIDs", () =
   random.mockRestore();
 });
 
-/** `record` with the value at a dotted path replaced; nothing in the copy is shared. */
+/** `record` with the value at a dotted path replaced. Nothing in the copy is shared. */
 function altered(record: unknown, path: string, value: unknown): unknown {
   const copy = JSON.parse(JSON.stringify(record));
   const keys = path.split(".");
@@ -210,7 +210,7 @@ test("a stored row is readable only when every field History dereferences holds,
     ["result.stages.download", "aborted", false],
     [`${server}.stages.latency`, "running", false],
     [`${server}.throughput.protocol`, "h2", false],
-    // Plain data: bounded text, lists, objects and depth, finite numbers, nothing else.
+    // Plain data means bounded text, lists, objects and depth, finite numbers, nothing else.
     ["engine", "x".repeat(2_048), true],
     ["engine", "x".repeat(2_049), false],
     ["result.multiServer.failures.0.message", "x".repeat(2_049), false],
@@ -250,7 +250,7 @@ test("an older build's row upgrades to this build's form, and the row itself sta
     [`${server}.throughput.protocol`, "negotiated", "negotiated"],
     [`${server}.throughput.protocol`, "", "negotiated"],
     [`${server}.throughput.protocol`, "spdy/3", "negotiated"],
-    // Views look stage statuses up: one this build does not know reads as not run.
+    // Views look stage statuses up, so one this build does not know reads as not run.
     ["result.stages.download", "aborted", "not-run"],
     ["result.stages.upload", undefined, "not-run"],
     [`${server}.stages.latency`, "running", "not-run"],
@@ -334,7 +334,7 @@ const results4 = {
   bidirectional: null,
 };
 const home = { id: "self", url: "", name: "Home", location: "Here" };
-/** `flat` as read: `changes` to its result, measured alike by its one server, with `entry` changes to that server. */
+/** `flat` as read, with `changes` to its result, measured alike by its one server, which takes `entry` changes. */
 const lifted = (changes: object = {}, entry: object = {}, server: object = home) => {
   const { stages, outcome, ...evidence } = { ...results4, stages: statuses4, outcome: "incomplete", ...changes };
   const measuredBy = {
@@ -493,7 +493,7 @@ test("History sorts missing values last, equal ones newest first, each field in 
     }),
     // A large surviving lane must not outrank a complete bidirectional result.
     record("c", 3, { bidirectional: { down: rate(1_000), up: null, wire: null }, latency: idle(10) }),
-    // Ties go newest first, then by id: ids here run against completion times.
+    // Ties go newest first, then by id. Ids here run against completion times.
     record("d", 5, { download: transfer(10) }),
     record("e", 4, { download: transfer(10) }),
     record("f", 5, { download: transfer(10) }),

@@ -1,5 +1,5 @@
-// The browser's own settings in localStorage "graphite-meter:v1": the next test's settings and display preferences.
-// The key and its shape are shared with the pre-paint script and the sign-in pages.
+// Keeps the browser's own settings, the next test's settings and display preferences, in localStorage
+// "graphite-meter:v1". The key and its shape are shared with the pre-paint script and the sign-in pages.
 import { STORAGE_KEY } from "../../auth/theme";
 import { normalizeStreamCount } from "../engine/net/streams";
 import { CADENCE_MS, type PingCadence, type TestConfig } from "../engine/types";
@@ -36,7 +36,7 @@ export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   bidirectionalMs: [1_000, MAX_STAGE_LIMIT_MS],
 };
 
-/** A whole number of ms within the setting's limits; anything else is its default. */
+/** A whole number of ms within the setting's limits. Anything else is its default. */
 function clampDuration(key: DurationKey, value: unknown): number {
   const [min, max] = DURATION_LIMITS[key];
   return typeof value === "number" && Number.isFinite(value)
@@ -52,7 +52,7 @@ export type HistoryColumn = (typeof HISTORY_COLUMNS)[number];
 export type Theme = "dark" | "light" | "auto";
 type HistoryPreference = "default" | "enabled" | "disabled";
 
-/** In the order they are stored. */
+/** The fields appear in the order they are stored. */
 export interface Preferences {
   config: TestConfig;
   unitBase: "base10" | "base2";
@@ -81,13 +81,13 @@ const positive = <T>(value: unknown, fallback: T): number | T =>
   typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : fallback;
 const CADENCES = Object.keys(CADENCE_MS) as PingCadence[];
 
-/** Each stored field sanitized on its own: anything unreadable falls back to its default, unknown keys go. */
+/** Sanitizes each stored field on its own. Anything unreadable falls back to its default, and unknown keys go. */
 export function readPreferences(stored: unknown): Preferences {
   const saved = record(stored);
   const config = record(saved.config);
   const stages = record(config.stages);
   const duration = record(config.duration);
-  // Earlier versions skipped a stage by giving it 0 ms; only its switch skips now.
+  // Earlier versions skipped a stage by giving it 0 ms. Only its switch skips now.
   const skipped = (key: DurationKey) => key !== "warmupMs" && typeof duration[key] === "number" && duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
@@ -153,7 +153,7 @@ export interface PreferenceStore extends PreferenceSignals {
   dispose(): void;
 }
 
-/** Storage that is absent, blocked, full or corrupt never raises: a preference then lasts for this page only. */
+/** Storage that is absent, blocked, full or corrupt never raises. A preference then lasts for this page only. */
 function read(storage: Storage | null): unknown {
   try {
     const text = storage?.getItem(STORAGE_KEY);
@@ -165,7 +165,7 @@ function read(storage: Storage | null): unknown {
 
 /** Loads the preferences, saves changes once edits pause and before the page goes, and follows the History
     choices other tabs make. A save rewrites only the fields this tab changed over what is stored, read afresh, so two
-    tabs keep each other's changes to other fields (the test settings are one field); loading writes nothing. */
+    tabs keep each other's changes to other fields (the test settings are one field). Loading writes nothing. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,
@@ -194,7 +194,7 @@ export function createPreferences(
     clearTimeout(timer);
     timer = setTimeout(save, SAVE_DELAY_MS);
   };
-  // Only History choices follow other tabs; an event that changes nothing writes nothing back.
+  // Only History choices follow other tabs. An event that changes nothing writes nothing back.
   const follow = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY) return;
     const next = readPreferences(read(storage));

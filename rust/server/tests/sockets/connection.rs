@@ -1,11 +1,11 @@
-//! What bounds an HTTP/1 connection: keep-alive idleness, the exchange bound, head limits and connection shares.
+//! Tests what bounds an HTTP/1 connection, keep-alive idleness, the exchange bound, head limits and connection shares.
 
 use super::*;
 use futures_util::FutureExt;
 use tokio::time::{Instant, sleep};
 
-/// How long the server takes to close the connection, open at `open`, on paused time moved in steps after it, so that
-/// no timer the close starts moves it further.
+/// Measures how long the server takes to close the connection, open at `open`, on paused time moved in steps after it,
+/// so that no timer the close starts moves it further.
 async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duration {
     tokio::time::pause();
     let started = Instant::now();

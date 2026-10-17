@@ -1,4 +1,4 @@
-//! When a multiplexed connection goes away and closes, per streams, admitted work and credit; HTTP/2 and QUIC.
+//! Decides when an HTTP/2 or QUIC connection goes away and closes, from its streams, admitted work and credit.
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
@@ -13,16 +13,16 @@ use tokio::time::{Instant, Sleep, sleep, sleep_until};
 /// A connection without streams, or one holding receive credit without admitted work, goes away after this long.
 pub const IDLE: Duration = Duration::from_secs(15);
 
-/// What a connection's driver does next.
+/// Tells a connection's driver what to do next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    /// Send GOAWAY: no new requests.
+    /// The driver sends GOAWAY and takes no new requests.
     GoAway,
-    /// Close the connection.
+    /// The driver closes the connection.
     Close,
 }
 
-/// How admitted work that outlived the GOAWAY grace ends it.
+/// Decides how admitted work that outlived the GOAWAY grace ends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grace {
     /// The connection closes a fresh grace after that work ends, as HTTP/2 does.
@@ -31,7 +31,7 @@ pub enum Grace {
     Once,
 }
 
-/// What a connection's driver observes for its lifecycle at each poll.
+/// Carries what a connection's driver observes for its lifecycle at each poll.
 #[derive(Debug, Clone, Copy)]
 pub struct Activity {
     /// The receive window is raised for admitted uploads.
@@ -40,24 +40,24 @@ pub struct Activity {
     pub streams: bool,
 }
 
-/// One connection's lifecycle, which its driver polls with what it observes.
+/// Tracks one connection's lifecycle, which its driver polls with what it observes.
 #[derive(Debug)]
 pub struct Lifecycle {
     work: Work,
     grace: Grace,
     stopping: bool,
-    /// The start of the admitted work's idle period last observed; `None` while some runs.
+    /// Marks the start of the admitted work's idle period last observed. It is `None` while some runs.
     idle_since: Option<Instant>,
-    /// When a credited connection without admitted work goes away.
+    /// Fires when a credited connection without admitted work goes away.
     stale: Option<Pin<Box<Sleep>>>,
-    /// When a connection without streams goes away.
+    /// Fires when a connection without streams goes away.
     quiet: Option<Pin<Box<Sleep>>>,
-    /// When a connection that went away closes.
+    /// Fires when a connection that went away closes.
     closing: Option<Pin<Box<Sleep>>>,
 }
 
 impl Lifecycle {
-    /// The lifecycle of a connection whose admitted work is `work`.
+    /// Starts the lifecycle of a connection whose admitted work is `work`.
     pub fn new(work: Work, grace: Grace) -> Self {
         Self {
             work,
@@ -70,12 +70,12 @@ impl Lifecycle {
         }
     }
 
-    /// The server stops: the connection goes away and closes after the grace, whatever runs on it.
+    /// The server stops, so the connection goes away and closes after the grace, whatever runs on it.
     pub fn stop(&mut self) {
         self.stopping = true;
     }
 
-    /// The next event, given the connection's `activity`; unadmitted requests never hold credit open.
+    /// Polls the next event, given the connection's `activity`. Unadmitted requests never hold credit open.
     pub fn poll(&mut self, cx: &mut Context<'_>, activity: Activity) -> Poll<Event> {
         self.observe(activity.credited);
         let timer = self.stale.as_mut();
@@ -92,8 +92,8 @@ impl Lifecycle {
         }
     }
 
-    /// Restarts the stale bound when the admitted work's idle period changes or the connection gets credit while
-    /// idle, and the grace when work that outlived it ends on a connection with fresh graces.
+    /// Restarts the stale bound when the admitted work's idle period changes or the connection gets credit while idle.
+    /// It restarts the grace when work that outlived it ends on a connection with fresh graces.
     fn observe(&mut self, credited: bool) {
         let since = self.work.idle_since();
         if since != self.idle_since {
@@ -110,7 +110,7 @@ impl Lifecycle {
         }
     }
 
-    /// Whether the connection has gone `IDLE` without a stream.
+    /// Says whether the connection has gone `IDLE` without a stream.
     fn quiet(&mut self, cx: &mut Context<'_>, streams: bool) -> bool {
         if streams {
             self.quiet = None;

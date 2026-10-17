@@ -1,5 +1,5 @@
-// The History workspace: saved results in a sortable list beside the one opened, the archive's notices, and the
-// actions that change it. It lies over the console, which keeps measuring beneath.
+// The History workspace lists saved results in sortable order beside the one opened, with the archive's notices
+// and the actions that change it. It lies over the console, which keeps measuring beneath.
 import { HISTORY_SPLIT } from "../../app/preferences";
 import "./history.css";
 import type { App } from "../../app/app";
@@ -22,7 +22,7 @@ import { span } from "./model";
 import { ViewControl } from "./view";
 
 const MINUTE_MS = 60_000;
-/** Controls that take the arrow keys themselves. */
+/** These controls take the arrow keys themselves. */
 const OWNS_ARROWS =
   "[role=slider], [role=separator], [role=radiogroup], [role=radio], [role=tab], [role=menu], [role=menuitem]";
 const MIN_LIST_PX = 360;
@@ -30,7 +30,7 @@ const MIN_DETAIL_PX = 460;
 /** From this width a result opens beside the list (`data-beside`). */
 const BESIDE_PX = 821;
 
-/** Unreadable rows dismissed, per archive, for the page's life: the notice returns when their count changes. */
+/** Keeps the dismissed unreadable count per archive for the page's life. The notice returns when it changes. */
 const dismissals = new WeakMap<HistoryRepository, number>();
 
 const CONFIRM = {
@@ -49,7 +49,7 @@ const CONFIRM = {
 };
 type Action = { kind: "delete"; id: string; when: number } | { kind: "clear" };
 
-/** Built as History opens and disposed as it closes, which stops an archive read still under way. */
+/** History builds this as it opens and disposes it as it closes, which stops an archive read still under way. */
 export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Read<string | null> }): Node {
   const { app, shell } = props;
   const archive = createArchive(app.history, props.selectedId);
@@ -141,7 +141,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       const removed = await app.history.removeMalformed();
       if (disposed) return;
       announce(`${removed} unreadable ${removed === 1 ? "result" : "results"} removed.`);
-      // None left to remove means another tab took them first: the count is stale.
+      // None left to remove means another tab took them first, so the count is stale.
       if (!removed) archive.load(true);
     } catch {
       if (!disposed) actionError.set("Could not remove the unreadable results.");
@@ -184,10 +184,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     </div>
   );
 
-  // The result last focused, so a pane built again for it never takes focus twice.
+  // Remembers the result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
-  // Where focus was as a result was chosen: its pane, built once the result is read, takes focus only while focus
-  // is still there and nothing outside History was used since.
+  // Remembers where focus was as a result was chosen. Its pane, built once the result is read, takes focus only
+  // while focus is still there and nothing outside History was used since.
   let intent: { id: string; from: Element | null } | null = null;
   effect(() => {
     const id = props.selectedId();
@@ -219,7 +219,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   };
   window.addEventListener("keydown", step);
   onCleanup(() => window.removeEventListener("keydown", step));
-  /** A result whose views threw: it reads as unreadable for the rest of the visit. */
+  /** A result whose views threw reads as unreadable for the rest of the visit. */
   const broken = signal<string | null>(null);
   function DetailPane(selected: Selected): Node | null {
     if (selected.status === "none") focused = null;
@@ -254,15 +254,15 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         if (owed && !activeModal() && canFocus(article)) article.focus({ preventScroll: true });
       });
     }
-    // Kept on show while another result is read, it takes no input: its actions belong to the result it shows.
+    // While another result is read the pane stays on show but takes no input; its actions belong to what it shows.
     return (
       <div class="detail-pane enter" data-flip="history-detail" inert={() => props.selectedId() !== record.id}>
         {article}
       </div>
     );
   }
-  // Built again only when another result, or another state of the link, shows; a result still being read keeps what
-  // shows, so moving between results never blanks the pane.
+  // The pane is built again only when another result, or another state of the link, shows. A result still being
+  // read keeps what shows, so moving between results never blanks the pane.
   let shownBefore = "none";
   const shownKey = computed(() => {
     const selected = archive.selected();
@@ -321,7 +321,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         />
       </div>
     ) as HTMLElement;
-    // In this order, so the page lays out once: the leaving pane, the list's width and fold, the arriving pane.
+    // The leaving pane goes first, then the list's width and fold, then the arriving pane, so the page lays out once.
     let pane: { key: string; node: Node | null; dispose: () => void } | null = null;
     effect(() => {
       const key = shownKey();

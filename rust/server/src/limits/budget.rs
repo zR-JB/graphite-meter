@@ -1,4 +1,4 @@
-//! The buffer budget QUIC and HTTP/2 connection state and the download block draw on (`GM_MAX_BUFFER_BYTES`).
+//! Holds the buffer budget QUIC and HTTP/2 connection state and the download block draw on (`GM_MAX_BUFFER_BYTES`).
 
 use crate::log::Latch;
 use std::sync::{
@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{self, AtomicUsize, Ordering},
 };
 
-/// One shared byte limit; clones share it.
+/// A budget is one shared byte limit. Clones share it.
 #[derive(Debug, Clone)]
 pub struct Budget(Arc<Shared>);
 
@@ -14,23 +14,23 @@ pub struct Budget(Arc<Shared>);
 struct Shared {
     limit: usize,
     used: AtomicUsize,
-    /// Endpoint buffers ever reserved and released, wrapping; those held count within `used`.
+    /// Endpoint buffers ever reserved and released are counted here, wrapping. Those held count within `used`.
     reserved: AtomicUsize,
     released: AtomicUsize,
     held_back: Latch,
 }
 
-/// How full the budget is, past its reservations.
+/// Pressure says how full the budget is, past its reservations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pressure {
     Normal,
-    /// A quarter is used: unvalidated QUIC handshakes need Retry.
+    /// A quarter is used, so unvalidated QUIC handshakes need Retry.
     Retry,
-    /// Three quarters are used: no receive or send window grows.
+    /// Three quarters are used, so no receive or send window grows.
     HoldBack,
 }
 
-/// A snapshot for tests and logs.
+/// Usage is a snapshot for tests and logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
     pub limit: usize,
@@ -66,7 +66,7 @@ impl Budget {
         Some(Lease { budget: self.clone(), bytes, reserved: true })
     }
 
-    /// The pressure level; logs when growth is held back at three quarters and when usage falls below five eighths.
+    /// Reads the pressure level. It logs growth held back at three quarters and usage falling below five eighths.
     pub fn pressure(&self) -> Pressure {
         let (limit, used) = self.0.unreserved();
         if let Some(held_back) = self.0.held_back.update(used >= limit / 4 * 3, used < limit / 8 * 5) {
@@ -84,7 +84,7 @@ impl Budget {
         }
     }
 
-    /// The receive-window credit all clients together may hold: half the budget past its reservations.
+    /// All clients together may hold this much receive-window credit, half the budget past its reservations.
     pub fn client_windows(&self) -> usize {
         self.0.unreserved().0 / 2
     }
@@ -97,12 +97,12 @@ impl Budget {
         }
     }
 
-    /// The budget as noq charges it.
+    /// Hands the budget to noq to charge.
     pub fn noq(&self) -> Arc<dyn noq::SharedBudget> {
         self.0.clone()
     }
 
-    /// The budget as the h2 fork charges it.
+    /// Hands the budget to the h2 fork to charge.
     pub fn h2(&self) -> Arc<dyn h2::SharedBudget> {
         self.0.clone()
     }
@@ -123,7 +123,7 @@ impl Shared {
         self.reserved.load(Ordering::Relaxed).wrapping_sub(released)
     }
 
-    /// The limit past reservations and its use; totals read around `used` may overcount, only lowering pressure.
+    /// Reads the limit past reservations and its use. Totals read around `used` may overcount, only lowering pressure.
     fn unreserved(&self) -> (usize, usize) {
         let released = self.released.load(Ordering::Acquire);
         let used = self.used.load(Ordering::Acquire);
@@ -149,13 +149,13 @@ macro_rules! shared_budget {
 
 shared_budget!(noq, h2);
 
-/// Bytes charged until dropped.
+/// A lease charges bytes until dropped.
 #[derive(Debug)]
 #[must_use]
 pub struct Lease {
     budget: Budget,
     bytes: usize,
-    /// Endpoint buffers from `reserve`.
+    /// The bytes are endpoint buffers from `reserve`.
     reserved: bool,
 }
 

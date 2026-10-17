@@ -1,4 +1,4 @@
-//! HTTP(S) origins, compared parsed, never as text: Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
+//! Compares HTTP(S) origins parsed, never as text, because Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
 
 use serde::{Serialize, Serializer};
 use std::{
@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-/// The longest origin text a contract accepts.
+/// A contract accepts origin text at most this long.
 pub const MAX_ORIGIN_BYTES: usize = 2048;
 
 table! {
@@ -19,7 +19,7 @@ table! {
     }
 }
 
-/// An origin's host: a lowercase ASCII name or an IP address.
+/// An origin's host is a lowercase ASCII name or an IP address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Host {
     Name(String),
@@ -27,7 +27,7 @@ pub enum Host {
 }
 
 impl Host {
-    /// A name of ASCII letters, digits, `-` and `_` labels, or a dotted IPv4 address if it ends in a number.
+    /// Parses a name of ASCII letters, digits, `-` and `_` labels, or a dotted IPv4 address if it ends in a number.
     fn parse(text: &str) -> Result<Self, OriginError> {
         let name = text.strip_suffix('.').unwrap_or(text);
         let label_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_');
@@ -59,7 +59,7 @@ impl fmt::Display for Host {
     }
 }
 
-/// An HTTP(S) origin; two spellings of one origin parse equal.
+/// Holds an HTTP(S) origin. Two spellings of one origin parse equal.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Origin {
     pub scheme: Scheme,
@@ -79,7 +79,7 @@ impl fmt::Display for OriginError {
 impl std::error::Error for OriginError {}
 
 impl Origin {
-    /// Parses an origin of at most 2048 bytes: an ASCII host, a nonzero port, no credentials, path, query or fragment.
+    /// Parses an origin of at most 2048 bytes, an ASCII host and nonzero port, no credentials, path, query or fragment.
     pub fn parse(text: &str) -> Result<Self, OriginError> {
         match Self::split(text)? {
             (origin, "") if text.len() <= MAX_ORIGIN_BYTES => Ok(origin),
@@ -87,7 +87,7 @@ impl Origin {
         }
     }
 
-    /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
+    /// Splits a URL into origin and rest, which is at most 2048 bytes of printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
         let named = |known: &Scheme| known.name().eq_ignore_ascii_case(scheme);
@@ -115,7 +115,7 @@ impl Origin {
     }
 }
 
-/// A nonzero port of decimal digits only.
+/// Parses a nonzero port of decimal digits only.
 fn decimal_port(digits: &str) -> Option<u16> {
     let decimal = digits.bytes().all(|byte| byte.is_ascii_digit());
     let port: u16 = decimal.then(|| digits.parse().ok())??;
@@ -138,10 +138,10 @@ impl Serialize for Origin {
     }
 }
 
-/// A received target's `baseUrl` or catalog `url`.
+/// Holds a received target's `baseUrl` or catalog `url`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseUrl {
-    /// `.`: the origin that served the document.
+    /// `.` names the origin that served the document.
     Served,
     Origin(Origin),
 }
@@ -154,7 +154,7 @@ impl BaseUrl {
         }
     }
 
-    /// The origin this names, given the origin that served the document.
+    /// Resolves the origin this names, given the origin that served the document.
     pub fn resolve<'a>(&'a self, served: &'a Origin) -> &'a Origin {
         match self {
             Self::Served => served,

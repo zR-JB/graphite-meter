@@ -1,4 +1,4 @@
-//! What QUIC holds of the buffer budget, and a connection's receive and send windows.
+//! Accounts for what QUIC holds of the buffer budget and sizes a connection's receive and send windows.
 
 use crate::{
     app::App,
@@ -21,13 +21,13 @@ use std::{
 };
 use tokio::time::Instant;
 
-/// Request streams past a client's admission shares, for its control requests.
+/// A client gets this many request streams past its admission shares, for its control requests.
 const CONTROL_STREAMS: usize = 4;
-/// Handshake packets the endpoint queues for one incoming connection, and for all of them.
+/// The endpoint queues this many bytes of handshake packets for one incoming connection, and for all of them.
 pub(super) const INCOMING_BYTES: u64 = 64 << 10;
 pub(super) const INCOMING_TOTAL_BYTES: u64 = 4 << 20;
 
-/// A connection's request streams: a client's admission shares and control streams, if a QUIC stream count fits.
+/// A connection gets a client's admission shares plus control streams as request streams, if a QUIC stream count fits.
 pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
     let streams = limits
         .operations_per_client
@@ -36,27 +36,27 @@ pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
     streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
-/// The transport of every connection, whose floor noq charges when it creates one.
+/// Configures the transport of every connection, whose floor noq charges when it creates one.
 pub(super) fn transport(limits: &Limits) -> Result<noq::TransportConfig, String> {
     max_requests(limits).map(server_transport)
 }
 
-/// What a connection holds from accept until noq drops it: its TLS handshake and the HTTP/3 layer's state.
+/// A connection holds its TLS handshake and the HTTP/3 layer's state from accept until noq drops it.
 pub fn floor_bytes(handshake: usize) -> usize {
     handshake.saturating_add(http3::CONNECTION_BYTES)
 }
 
-/// The floor noq itself charges each connection with these limits.
+/// Computes the floor noq itself charges each connection with these limits.
 pub fn noq_floor(limits: &Limits) -> Result<usize, String> {
     transport(limits).map(|transport| transport.connection_floor_bytes())
 }
 
-/// The largest datagram an endpoint reads into one receive segment.
+/// An endpoint reads at most this large a datagram into one receive segment.
 pub(super) fn packet_bytes(config: &noq::EndpointConfig) -> Option<usize> {
     usize::try_from(config.get_max_udp_payload_size().min(64 << 10)).ok()
 }
 
-/// One of `shards` endpoints' buffers: receive batch, handshake and queued packets, forwarding, `kernel` bytes.
+/// Sums one of `shards` endpoints' receive batch, handshake and queued packets, forwarding and `kernel` bytes.
 pub fn endpoint_bytes(
     config: &noq::EndpointConfig,
     shards: usize,
@@ -73,7 +73,7 @@ pub fn endpoint_bytes(
         .checked_add(kernel)
 }
 
-/// A connection's noq-charged share: its floor until dropped, and its first funded upload's credit.
+/// Holds a connection's noq-charged share, its floor until dropped and its first funded upload's credit.
 #[derive(Debug)]
 pub(super) struct ConnectionBudget {
     budget: Budget,
@@ -85,7 +85,7 @@ pub(super) struct ConnectionBudget {
 
 #[derive(Debug, Default)]
 struct Held {
-    /// The credit and the share of the client whose upload reserved it.
+    /// Holds the credit and the share of the client whose upload reserved it.
     credit: Option<(Lease, Hold)>,
     undrawn: usize,
     overdraft: usize,
@@ -102,7 +102,7 @@ impl ConnectionBudget {
         }
     }
 
-    /// Reserves the credit once, from the budget and the share of the client `keys` name; whether it is reserved.
+    /// Reserves the credit once, from the budget and the share of the client `keys` name. Says whether it is reserved.
     pub(super) fn reserve(&self, app: &App, keys: &ClientKeys) -> bool {
         let mut held = lock(&self.held);
         if held.credit.is_none()
@@ -116,7 +116,7 @@ impl ConnectionBudget {
         held.credit.is_some()
     }
 
-    /// Whether the credit is reserved, which it stays until the connection is gone.
+    /// Says whether the credit is reserved, which it stays until the connection is gone.
     pub(super) fn reserved(&self) -> bool {
         self.reserved.load(Ordering::Relaxed)
     }
@@ -144,12 +144,12 @@ impl noq::SharedBudget for ConnectionBudget {
     }
 }
 
-/// The least growth of a send window worth a change.
+/// A send window changes only for growth of at least this much.
 const SEND_WINDOW_STEP: u64 = 256 << 10;
 /// A send window shrinks after its demand stayed low this long.
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
-/// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
+/// The receive window is 64 KiB, then autotunes from 768 KiB to 48 MiB on its client's credit once an upload reads.
 pub(super) struct Window {
     app: Arc<App>,
     quic: noq::Connection,
@@ -161,7 +161,7 @@ impl Window {
         Self { app, quic, budget }
     }
 
-    /// Whether an upload of `keys` reads at the raised window, raising it for the first.
+    /// Says whether an upload of `keys` reads at the raised window, raising it for the first.
     pub(super) fn fund(&self, keys: &ClientKeys) -> bool {
         let reserved = self.budget.reserve(&self.app, keys);
         if reserved {
@@ -170,7 +170,7 @@ impl Window {
         reserved
     }
 
-    /// Whether the window was raised.
+    /// Says whether the window was raised.
     pub(super) fn raised(&self) -> bool {
         self.budget.reserved()
     }
@@ -193,10 +193,10 @@ impl ReceiveWindow for Window {
     }
 }
 
-/// The send window: 2 MiB, toward two BDPs up to 16 MiB with headroom, back to 2 MiB after 1 s of low demand.
+/// The send window is 2 MiB, grows toward two BDPs up to 16 MiB with headroom and drops back after 1 s of low demand.
 pub(super) struct SendWindow {
     limit: u64,
-    /// When the path's sent bytes were last read, and their count.
+    /// Records when the path's sent bytes were last read, and their count.
     last: Option<(Instant, u64)>,
     low_since: Option<Instant>,
 }
@@ -213,7 +213,7 @@ impl SendWindow {
         if !busy {
             return self.release(quic);
         }
-        // The total first, so a send on the first path in between cannot look like another path's traffic.
+        // The total is read first, so a send on the first path in between cannot look like another path's traffic.
         let all_sent = quic.stats().udp_tx.bytes;
         let path = quic.path_stats(noq::PathId::ZERO);
         let Some(path) = path.filter(|path| all_sent <= path.udp_tx.bytes) else {
@@ -253,7 +253,7 @@ impl SendWindow {
     }
 }
 
-/// Two bandwidth-delay products of `sent` over `elapsed`, within the send window's bounds, sparing the queue.
+/// Wants two bandwidth-delay products of `sent` over `elapsed`, within the send window's bounds, sparing the queue.
 fn desired(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
     let sent_rtt = u128::from(sent).saturating_mul(rtt.as_nanos());
     let Some(demand) = sent_rtt.saturating_mul(2).checked_div(elapsed.as_nanos()) else {

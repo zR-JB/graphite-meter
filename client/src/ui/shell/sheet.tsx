@@ -1,5 +1,5 @@
-// A side sheet: one non-modal dialog docked beside the stage, flying over it, or rising from the bottom (shell.css).
-// Closed, it is inert and rests once its slide is over, its content kept.
+// A side sheet is one non-modal dialog docked beside the stage, flying over it, or rising from the bottom
+// (shell.css). Closed, it is inert and rests once its slide is over, its content kept.
 import { Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, untrack, type Read } from "../../lib/signal";
@@ -15,11 +15,11 @@ export function Sheet(props: {
   open: Read<boolean>;
   docked: Read<boolean>;
   bottomSheet: Read<boolean>;
-  /** Its column while docked, and how far the handle may take it. */
+  /** Holds its column while docked, and how far the handle may take it. */
   dock: Read<DockWidths>;
-  /** The width it prefers, before the layout fits it. */
+  /** The sheet prefers this width, before the layout fits it. */
   preferred: Read<number>;
-  /** Built on first use, then kept. */
+  /** The content is built on first use, then kept. */
   built: Read<boolean>;
   children: () => Child;
   onClose(): void;
@@ -53,7 +53,7 @@ export function Sheet(props: {
       <div class="panel-body sheet-body">
         <Show when={props.built}>{props.children}</Show>
       </div>
-      {/* After the content, so Tab from the title reaches the controls first. */}
+      {/* The splitter follows the content, so Tab from the title reaches the controls first. */}
       <Show when={props.docked}>
         {() => (
           <Splitter
@@ -70,8 +70,8 @@ export function Sheet(props: {
     </dialog>
   ) as HTMLDialogElement;
 
-  // Its own width only, a property its content does not inherit: a resize restyles this one element. A closing
-  // docked sheet keeps the width its column gave it, so it leaves as it stood.
+  // The width is a property of the sheet alone, which its content does not inherit, so a resize restyles this one
+  // element. A closing docked sheet keeps the width its column gave it, so it leaves as it stood.
   let column = 0;
   effect(() => {
     const flying = Math.min(DOCK.max, Math.max(DOCK.min, props.preferred()));

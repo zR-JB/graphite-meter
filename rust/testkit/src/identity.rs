@@ -1,4 +1,4 @@
-//! Disposable TLS identities generated in memory, so no key lives in source.
+//! Generates disposable TLS identities in memory, so no key lives in source.
 use crate::Error;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
@@ -7,14 +7,14 @@ use rcgen::{
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{sync::Arc, time::SystemTime};
 
-/// A CA and the certificate it signed, as PEM: for `localhost`, `127.0.0.1` and `::1` unless self-signed.
+/// Holds a CA and the certificate it signed as PEM, for `localhost`, `127.0.0.1` and `::1` unless self-signed.
 pub struct Identity {
     pub ca: String,
     pub certificate: String,
     pub key: String,
 }
 
-/// Valid from the start of last year to the end of next year.
+/// The certificate is valid from the start of last year to the end of next year.
 fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificateParams, Error> {
     let mut params = CertificateParams::new(names.iter().map(|name| name.to_string()).collect::<Vec<_>>())?;
     params.distinguished_name.push(DnType::CommonName, common_name);
@@ -35,12 +35,12 @@ fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificatePara
 const LOCAL: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 impl Identity {
-    /// A CA and a server certificate it signed.
+    /// Generates a CA and a server certificate it signed.
     pub fn generate() -> Result<Self, Error> {
         Self::signed(params(&LOCAL, "localhost", false)?)
     }
 
-    /// A CA and a CA certificate it signed, which no TLS client takes as a server's own.
+    /// Generates a CA and a CA certificate it signed, which no TLS client takes as a server's own.
     pub fn intermediate() -> Result<Self, Error> {
         Self::signed(params(&LOCAL, "localhost", true)?)
     }
@@ -56,7 +56,7 @@ impl Identity {
         })
     }
 
-    /// A certificate for the DNS name `host` that is its own CA.
+    /// Generates a certificate for the DNS name `host` that is its own CA.
     pub fn self_signed(host: &str) -> Result<Self, Error> {
         let key = KeyPair::generate()?;
         let mut params = params(&[host], host, true)?;
@@ -68,7 +68,7 @@ impl Identity {
             key: key.serialize_pem(),
         })
     }
-    /// A TLS 1.3 server config presenting the leaf.
+    /// Builds a TLS 1.3 server config presenting the leaf.
     pub fn server(&self, alpn: &[&[u8]]) -> rustls::ServerConfig {
         let chain = CertificateDer::pem_slice_iter(self.certificate.as_bytes()).collect::<Result<_, _>>();
         let key = PrivateKeyDer::from_pem_slice(self.key.as_bytes()).expect("generated key");
@@ -82,7 +82,7 @@ impl Identity {
         config
     }
 
-    /// A TLS 1.3 client config trusting only the CA.
+    /// Builds a TLS 1.3 client config trusting only the CA.
     pub fn client(&self, alpn: &[&[u8]]) -> rustls::ClientConfig {
         let mut roots = rustls::RootCertStore::empty();
         roots
@@ -97,13 +97,13 @@ impl Identity {
         config
     }
 
-    /// A QUIC server config offering `h3`, with noq's default transport.
+    /// Builds a QUIC server config offering `h3`, with noq's default transport.
     pub fn quic_server(&self) -> noq::ServerConfig {
         let crypto = noq::crypto::rustls::QuicServerConfig::try_from(self.server(&[b"h3"]));
         noq::ServerConfig::with_crypto(Arc::new(crypto.expect("QUIC's initial suite")))
     }
 
-    /// A QUIC client config offering `h3`, with noq's default transport.
+    /// Builds a QUIC client config offering `h3`, with noq's default transport.
     pub fn quic_client(&self) -> noq::ClientConfig {
         let crypto = noq::crypto::rustls::QuicClientConfig::try_from(self.client(&[b"h3"]));
         noq::ClientConfig::new(Arc::new(crypto.expect("QUIC's initial suite")))

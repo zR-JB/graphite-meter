@@ -1,4 +1,4 @@
-//! Lane groups and QUIC dials against the server.
+//! Runs lane groups and QUIC dials against the server.
 use graphite_meter_client::{
     model::{Dir, LaneHealth, Stage},
     net::{Client, Fault, Lanes, Request, ThroughputPath, Work, topology},

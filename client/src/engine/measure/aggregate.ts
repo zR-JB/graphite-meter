@@ -1,6 +1,6 @@
-// Coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers): intervals of fixed membership over common
-// boundaries, where downloads count client-consumed bytes on the client clock and uploads each receiver's bytes on
-// its own clock. The terminal client shares its vectors (api/aggregation.testvectors.json).
+// Computes coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers) over intervals of fixed membership
+// between common boundaries. Downloads count the bytes the client consumed on the client clock, and uploads count
+// each receiver's bytes on its own clock. The terminal client shares its vectors (api/aggregation.testvectors.json).
 import type { TransferStage } from "../run/schedule";
 import type { Checkpoint, Direction } from "../types";
 import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transferConfidence } from "./stability";
@@ -8,18 +8,18 @@ import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transf
 /** Evidence must span this long on the client clock and on every receiver clock. */
 export const MIN_EVIDENCE_MS = 800;
 const PEAK_WINDOW_MS = 500;
-/** Recent intervals a result keeps; older ones only count. */
+/** A result keeps this many recent intervals and only counts older ones. */
 const INTERVAL_LIMIT = 128;
 const COMBINED = "";
 
-/** One instant across the participants: download counters and the latest receiver checkpoints. */
+/** Captures one instant across the participants, with download counters and the latest receiver checkpoints. */
 export interface Boundary {
   atMs: number;
   down: Record<string, number>;
   up: Record<string, Checkpoint | null>;
 }
 
-/** One server's share of a window, on the clock its evidence comes from. */
+/** Holds one server's share of a window on the clock its evidence comes from. */
 export interface ComponentWindow {
   serverId: string;
   bytes: number;
@@ -43,7 +43,7 @@ export interface AggregateWindow {
   up: ComponentWindow[] | null;
   downBytesPerSec: number | null;
   upBytesPerSec: number | null;
-  /** Time in the window when no server moved each direction. */
+  /** No server moved each direction for this long within the window. */
   quietMs?: Record<Direction, number>;
 }
 
@@ -53,7 +53,7 @@ export interface Interval {
   participants: string[];
   startMs: number;
   endMs: number;
-  /** False once a replaced receiver or a regressed counter cut it short. */
+  /** Turns false once a replaced receiver or a regressed counter cuts the interval short. */
   complete: boolean;
   reason: "stage-start" | "dropout" | "evidence-resumed";
   full: AggregateWindow | null;
@@ -61,16 +61,16 @@ export interface Interval {
 }
 
 export interface ThroughputResult {
-  /** The fastest disjoint window of at least 500 ms on every clock, never below the headline. */
+  /** Reports the fastest disjoint window of at least 500 ms on every clock and never falls below the headline. */
   peakBytesPerSec: number;
   stabilityPct: number;
-  /** Time in the headline window when no server moved this direction. */
+  /** No server moved this direction for this long within the headline window. */
   quietMs?: number;
   totalBytes: number;
   reportedBytesPerSec: number;
 }
 
-/** A stage direction's settled headline and the window it describes. */
+/** Pairs a stage direction's settled headline with the window it describes. */
 interface Headline {
   result: ThroughputResult;
   window: AggregateWindow;
@@ -80,7 +80,7 @@ type Totals = Record<Direction, number>;
 type Series = Record<Direction, RateSeries>;
 type Peaks = Map<string, Partial<Record<Direction, number>>>;
 
-/** Where a server last moved a direction: enough to end the interval there if it departs. */
+/** Records where a server last moved a direction, so the interval can end there if the server departs. */
 interface Mark {
   boundary: Boundary;
   full: AggregateWindow | null;
@@ -89,7 +89,7 @@ interface Mark {
   series: [RateSeries, SeriesMark][];
 }
 
-/** A result kept from an interval the log let go: what a stage or a server measured stays measured. */
+/** Keeps a result from an interval the log let go, so what a stage or a server measured stays measured. */
 interface Kept {
   window: AggregateWindow | null;
   bytesPerSec: number;
@@ -101,13 +101,13 @@ interface Open {
   record: Interval;
   first: Boundary | null;
   last: Boundary | null;
-  /** Where the current steady stretch began, while early finish tracks one. */
+  /** Marks where the current steady stretch began while early finish tracks one. */
   stable: Boundary | null;
   wasStable: boolean;
   quiet: Totals;
-  /** Quiet time up to `stable`. */
+  /** Counts the quiet time up to `stable`. */
   stableQuiet: Totals;
-  /** All directions together, for the early-finish score. */
+  /** Sums all directions together for the early-finish score. */
   combined: RateSeries;
   total: Series;
   servers: Map<string, Series>;
@@ -130,11 +130,11 @@ export class Aggregate {
   #open: Open | null = null;
   #closed = new Map<number, Open>();
   #stageTotals = new Map<TransferStage, Map<string, Totals>>();
-  /** The highest byte count credited per server and upload id. */
+  /** Tracks the highest byte count credited per server and upload id. */
   #ledgers = new Map<string, Map<string, number>>();
-  /** Where each stage's first interval began, once the interval limit let it go. */
+  /** Remembers where each stage's first interval began once the interval limit let it go. */
   #evictedStart = new Map<TransferStage, number>();
-  /** The latest results of intervals the limit let go, by stage and direction, and by server. */
+  /** Holds the latest results of intervals the limit let go, by stage and direction and by server. */
   #kept = new Map<string, Kept>();
   #latest: { boundary: Boundary; final: boolean } | null = null;
 
@@ -142,7 +142,7 @@ export class Aggregate {
     return this.#open?.record ?? null;
   }
 
-  /** Whether the open interval already holds a reportable window. */
+  /** Reports whether the open interval already holds a reportable window. */
   get sufficient(): boolean {
     return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
@@ -189,7 +189,7 @@ export class Aggregate {
     };
   }
 
-  /** Ends the interval where a departed server last moved, so its silence never counts; survivors go on from
+  /** Ends the interval where a departed server last moved, so its silence never counts. Survivors go on from
       there in a `dropout` interval. */
   dropout(survivors: string[], atMs: number): void {
     const open = this.#open;
@@ -218,7 +218,7 @@ export class Aggregate {
     this.#open = null;
   }
 
-  /** Unique measured bytes per server, never counting overlapping evidence twice. */
+  /** Sums the unique measured bytes per server and never counts overlapping evidence twice. */
   totals(id: string): Totals {
     const sum = { down: 0, up: 0 };
     for (const stage of this.#stageTotals.values())
@@ -232,7 +232,7 @@ export class Aggregate {
   }
 
   /** Upload bytes count from each receiver's highest count, whether or not it reached a boundary. A receiver first
-      seen during a stage starts at its current count; a replacement starts at zero. */
+      seen during a stage starts at its current count. A replacement starts at zero. */
   credit(id: string, receiver: { id: string; bytes: number }): void {
     const stage = this.#open?.record.stage;
     if (!stage || !Number.isSafeInteger(receiver.bytes) || receiver.bytes < 0) return;
@@ -243,8 +243,8 @@ export class Aggregate {
     ledger.set(receiver.id, Math.max(maximum, receiver.bytes));
   }
 
-  /** Adds a boundary; one missing any component is skipped, and the next valid one spans the gap. Returns the
-      window since the previous boundary. */
+  /** Adds a boundary and returns the window since the previous one. A boundary missing any component is skipped,
+      and the next valid one spans the gap. */
   observe(boundary: Boundary, final = false): AggregateWindow | null {
     const open = this.#open;
     if (!open) return null;
@@ -279,7 +279,7 @@ export class Aggregate {
         return a.id === b.id && b.bytes >= a.bytes && b.nanos >= a.nanos;
       }),
     );
-    // The same tick again, or an unchanged receiver clock, is stale: the receiver clock is authoritative.
+    // The same tick again, or an unchanged receiver clock, is stale, because the receiver clock is authoritative.
     const unchanged =
       boundary.atMs <= last.atMs ||
       (dirs.includes("up") && record.participants.some((id) => boundary.up[id]!.nanos === last.up[id]!.nanos));
@@ -297,7 +297,7 @@ export class Aggregate {
     for (const dir of dirs) {
       const rate = rateOf(sample, dir)!;
       open.total[dir].observe((rate * ms) / 1000, ms);
-      // A step no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
+      // A step no server moved counts as quiet on its evidence's clock, the client's or the shortest receiver's.
       if (!rate) open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
       for (const component of sample[dir]!)
         open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
@@ -325,7 +325,7 @@ export class Aggregate {
     return sample;
   }
 
-  /** The early-finish score over the trailing four seconds of all directions together. */
+  /** Scores the early finish over the trailing four seconds of all directions together. */
   confidence() {
     return transferConfidence(this.#open?.combined.recent ?? []);
   }
@@ -338,7 +338,7 @@ export class Aggregate {
     open.stable = null;
   }
 
-  /** Follows the early-finish score; while it holds, the headline window starts where it began to hold. */
+  /** Follows the early-finish score. While it holds, the headline window starts where it began to hold. */
   trackStable(score: number): boolean {
     const open = this.#open;
     if (!open || !open.record.complete) return false;
@@ -352,10 +352,10 @@ export class Aggregate {
     return stable;
   }
 
-  /** Each direction's headline: the latest complete interval with enough evidence, and the window it came from,
-      which becomes that interval's headline. `stable` prefers the steady window an early finish chose when it
+  /** Settles each direction's headline from the latest complete interval with enough evidence. The window it came
+      from becomes that interval's headline. `stable` prefers the steady window an early finish chose when it
       suffices for every direction, so the rate, stability, quiet time and wire estimate of a stage describe one
-      window; the peak spans the whole interval, never below the rate. */
+      window. The peak spans the whole interval and never falls below the rate. */
   settle(stage: TransferStage, stable: boolean): Record<Direction, Headline | null> {
     const intervals = this.intervals.filter((interval) => interval.stage === stage);
     const dirs = directions(stage);
@@ -398,12 +398,12 @@ export class Aggregate {
     return { down: reduce("down"), up: reduce("up") };
   }
 
-  /** How long a stage's intervals span, from its first interval even past the interval limit. */
+  /** Measures how long a stage's intervals span, from its first interval even past the interval limit. */
   coveredMs(stage: TransferStage): number {
     return coveredMs(this.intervals, stage, this.#evictedStart.get(stage));
   }
 
-  /** One server's share: the latest complete interval where its own component has enough evidence. */
+  /** Reports one server's share from the latest complete interval where its own component has enough evidence. */
   serverResult(stage: TransferStage, dir: Direction, id: string): ThroughputResult | null {
     for (const record of this.intervals.toReversed()) {
       if (record.stage !== stage || !record.complete) continue;
@@ -428,8 +428,8 @@ export class Aggregate {
       : null;
   }
 
-  /** Keeps what an interval the limit lets go measured, where nothing later measured it: the stage's full window and
-      each server's share. Totals are read from the ledgers, which go on counting. */
+  /** Keeps the stage's full window and each server's share from an interval the limit lets go, where nothing later
+      measured them. Totals come from the ledgers, which go on counting. */
   #keep(record: Interval): void {
     const open = this.#interval(record);
     if (!open || !record.complete || !record.full) return;
@@ -494,7 +494,7 @@ export class Aggregate {
   }
 }
 
-/** From a stage's first interval, or the start of the first one the log let go, to its last; gaps included. */
+/** Spans from a stage's first interval, or the start of the first one the log let go, to its last, gaps included. */
 export function coveredMs(intervals: readonly Interval[], stage: TransferStage, firstStart?: number): number {
   const spans = intervals.filter((interval) => interval.stage === stage);
   return spans.length ? spans.at(-1)!.endMs - (firstStart ?? spans[0]!.startMs) : 0;
@@ -509,7 +509,7 @@ function raise(peaks: Peaks, id: string, dir: Direction, rate: number): void {
   peaks.set(id, peak);
 }
 
-/** Whether a window spans the evidence floor on the client clock and on every receiver clock of `dir` (or both). */
+/** Tells if a window spans the evidence floor on the client clock and on every receiver clock of `dir` (or both). */
 export function sufficient(window: AggregateWindow | null, dir?: Direction): boolean {
   return (
     !!window &&

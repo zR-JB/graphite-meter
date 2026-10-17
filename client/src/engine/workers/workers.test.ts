@@ -17,7 +17,7 @@ afterEach(() => {
   Object.assign(globalThis, saved);
 });
 
-/** Evaluates a fresh copy of a worker module against `globals`: what it posts, and its owner's side of the port. */
+/** Boots a fresh copy of a worker module against `globals`, yielding what it posts and its owner's side of the port. */
 async function boot<Command>(module: string, globals: Partial<Record<(typeof GLOBALS)[number], unknown>>) {
   const posted: { type: string; [field: string]: unknown }[] = [];
   Object.assign(globalThis, { onmessage: null, postMessage: (report: (typeof posted)[number]) => posted.push(report) });
@@ -38,21 +38,21 @@ const task = () =>
     port2.postMessage(null);
   });
 
-/** A controllable stream of byte chunks or NDJSON lines. */
+/** Builds a controllable stream of byte chunks or NDJSON lines. */
 function source() {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
   return { stream, push: (text: string) => controller.enqueue(encoder.encode(text)), controller: () => controller };
 }
 
-/** A WebTransport session the test answers for the server: handshake, server streams, datagrams and its close. */
+/** The test answers for the server on this WebTransport session, its handshake, streams, datagrams and close. */
 class FakeWebTransport {
   static dialed: FakeWebTransport[] = [];
   readonly ready: Promise<void>;
   readonly closed: Promise<WebTransportCloseInfo>;
   readonly accept: () => void;
   readonly refuse: () => void;
-  /** Closes the session; the first close, ours or the server's, is the one `closed` reports. */
+  /** Closes the session. The first close, ours or the server's, is the one `closed` reports. */
   readonly end: (info: WebTransportCloseInfo) => void;
   #streams!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
   #datagrams!: ReadableStreamDefaultController<Uint8Array>;
@@ -168,7 +168,7 @@ test("an upload drains each answer and breaks on one past 64 KiB rather than kee
 });
 
 test("upload POSTs grow past their turnaround, so one lane stays about 90 % busy on a long path", async () => {
-  // 100 Mbit/s: a POST sends its body, then its answer arrives one round trip later.
+  // At 100 Mbit/s a POST sends its body, then its answer arrives one round trip later.
   const BYTES_PER_MS = 12_500;
   for (const [pathMs, rttMs] of [
     [50, 50],
@@ -291,7 +291,7 @@ test("a final flush counts the datagrams read by its cutoff and none after, howe
   transport.datagram(1_200);
   await elapse(10);
   const at = performance.timeOrigin + performance.now();
-  // A datagram read after the cutoff, and the flush handled 50 ms late.
+  // A datagram is read after the cutoff, and the flush is handled 50 ms late.
   await elapse(10);
   transport.datagram(1_200);
   await elapse(40);
@@ -300,15 +300,15 @@ test("a final flush counts the datagrams read by its cutoff and none after, howe
 });
 
 test("a slow datagram download reports each datagram as it arrives", async () => {
-  // Its own epoch: an earlier test's loop may still post into the shared port.
+  // It gets its own epoch, since an earlier test's loop may still post into the shared port.
   const { session, transport } = await datagrams(7);
   const reported = () => session.posted.filter((report) => report.type === "bytes" && report.epoch === 7).length;
-  // Five datagrams a second, each well past the report window.
+  // Five datagrams a second arrive, each well past the report window.
   await elapse(200);
   transport.datagram(1_200);
   await elapse(0);
   expect(reported()).toBe(1);
-  // The loop yields a task between datagrams: a message, then a timer.
+  // The loop yields a task between datagrams, a message, then a timer.
   await task();
   await elapse(180);
   transport.datagram(1_200);
@@ -374,7 +374,7 @@ test("a session's refused dial spends its ticket, and one that lapsed unanswered
   ]);
 });
 
-/** A WebSocket the test answers for the server. */
+/** The test answers for the server on this WebSocket. */
 class FakeWebSocket {
   static opened: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
@@ -413,14 +413,14 @@ test("a WebSocket dial past its budget stays, reported as an outage until it ans
     fetch: async () => Response.json({ token: `t${++minted}`, expires: Date.now() + 30_000 }),
   });
   probe.send(bus("websocket", true));
-  // The browser queues the handshake: closing it would only delay the next one.
+  // The browser queues the handshake, so closing it would only delay the next one.
   await elapse(3_500);
   expect(probe.types()).toEqual(["stalled"]);
   expect(FakeWebSocket.opened.map(({ closes }) => closes)).toEqual([0]);
   FakeWebSocket.opened.at(-1)!.onopen!();
   await elapse(0);
   expect(probe.types()).toEqual(["stalled", "ready", "resumed"]);
-  // A refused upgrade presented its ticket: the server spent it whatever it answered.
+  // A refused upgrade presented its ticket, so the server spent it whatever it answered.
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1006, reason: "" });
   await elapse(100);
   FakeWebSocket.opened.at(-1)!.onclose!({ code: 1008, reason: "authentication required" });

@@ -52,7 +52,7 @@ test("a forced stream count beyond the browser's connections is kept exactly and
   await page.getByRole("button", { name: "Details" }).click();
   await expect(page.locator(".infra")).toContainText(/Exact\s*12 per direction/);
   await page.press("Escape");
-  // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
+  // Lanes past the browser's HTTP/1.1 pool queue, and the runnable ones carry the stage.
   const saved = await run(page);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);

@@ -6,7 +6,7 @@ import { STAGE } from "../src/view/words";
 import { describe, launch, type Server } from "./servers";
 import { expect, settled, type Page } from "./webview";
 
-/** The History database: the contract this suite holds the client to, written out on its own. */
+/** The History database is the contract this suite holds the client to, written out on its own. */
 export const HISTORY_DB = {
   name: "graphite-meter",
   version: 3,
@@ -31,7 +31,7 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-/** A server of its own; `env` may depend on it, such as a public URL for sign-in. */
+/** Launches a server of its own. `env` may depend on it, such as a public URL for sign-in. */
 export async function spawnPeer(
   name: string,
   env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
@@ -66,7 +66,7 @@ export interface Seed {
   config?: Partial<Record<keyof RunnerConfig, unknown>>;
 }
 
-/** The plan each stage ran under, as far as saved settings tell: an adaptive run may have finished any stage early. */
+/** Saved settings give each stage's plan this far. An adaptive run may have finished any stage early. */
 export const plansOf = (config: Pick<RunnerConfig, "stages" | "duration" | "adaptive">): StagePlans =>
   Object.fromEntries(
     STAGES.map((stage) => [
@@ -96,7 +96,7 @@ export async function openSettings(page: Page) {
   if (await panel.all((els) => els.every((el) => el.inert)))
     await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect.poll(() => panel.all((els) => els.some((el) => !el.inert))).toBe(true);
-  // The sheet slides in with its column; a pointer aimed mid-slide misses its row.
+  // The sheet slides in with its column, so a pointer aimed mid-slide misses its row.
   await page.evaluate(settled);
   return panel;
 }
@@ -106,7 +106,7 @@ export async function closeSettings(page: Page) {
   await panel.getByRole("button", { name: "Close Settings" }).click();
   // The close transition must finish, or a reopen sees a panel that is still open.
   await expect.poll(() => panel.all((els) => els.every((el) => el.inert))).toBe(true);
-  // The stage slides back with the column; a pointer aimed mid-slide misses its control.
+  // The stage slides back with the column, so a pointer aimed mid-slide misses its control.
   await page.evaluate(settled);
 }
 
@@ -152,7 +152,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
     .toBe(true);
   const config = await page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config);
   expect(incoherence(record!.result, plansOf(config))).toEqual([]);
-  // History views have no stage track; the live view must show what was saved.
+  // History views have no stage track, so the live view must show what was saved.
   for (const stage of STAGES) {
     const status = record!.result.stages[stage];
     const name = new RegExp(`^${STAGE[stage].label} stage`);

@@ -1,4 +1,4 @@
-//! The TLS certificate: PEM pair loading and checks, renewal re-reads, TLS 1.3 config, the bounded handshake.
+//! Loads and checks the TLS PEM pair, re-reads it on renewal, builds the TLS 1.3 config and bounds the handshake.
 
 use super::PEER_FAILURES;
 use crate::{
@@ -35,13 +35,13 @@ const RENEWAL_CHECK: Duration = Duration::from_mins(1);
 /// A certificate expiring sooner is logged with a warning.
 const EXPIRY_WARNING: Duration = Duration::from_hours(30 * 24);
 
-/// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
+/// Says whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
 type Fits = Box<dyn Fn(usize) -> Result<(), String> + Send + Sync>;
 
-/// The PEM pair every TLS listener serves, replaced only by a complete and valid renewal that the budget covers.
+/// Holds the PEM pair every TLS listener serves, replaced only by a complete, valid renewal the budget covers.
 pub struct Certificates {
     files: TlsFiles,
-    /// The hosts of the TLS listeners' public origins, which the leaf must cover.
+    /// The leaf must cover these hosts of the TLS listeners' public origins.
     hosts: Vec<Host>,
     fits: Fits,
     current: RwLock<Arc<CertifiedKey>>,
@@ -49,7 +49,7 @@ pub struct Certificates {
     handshake: AtomicUsize,
 }
 
-/// A QUIC handshake's hold for a C-byte, N-certificate chain: five flights of C + 5N + 609 bytes, a copy of C + 48N.
+/// A QUIC handshake with a C-byte, N-certificate chain holds five flights of C + 5N + 609 bytes and a copy of C + 48N.
 pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
     let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
     5 * (bytes + 5 * count + 609) + bytes + 48 * count
@@ -64,7 +64,7 @@ impl fmt::Debug for Certificates {
     }
 }
 
-/// The hosts of the public origins configured for TLS listeners.
+/// Lists the hosts of the public origins configured for TLS listeners.
 pub fn covered_hosts(config: &Config) -> Vec<Host> {
     let listeners = config.listeners.iter();
     let tls = listeners.filter(|listener| listener.kind.scheme() == Scheme::Https);
@@ -73,7 +73,7 @@ pub fn covered_hosts(config: &Config) -> Vec<Host> {
 }
 
 impl Certificates {
-    /// Reads and validates the pair, which must cover `hosts` and whose handshake must `fit`; blocking file reads.
+    /// Reads and validates the pair, which must cover `hosts` and whose handshake must `fit`. The file reads block.
     pub fn load(
         files: TlsFiles,
         hosts: Vec<Host>,
@@ -95,7 +95,7 @@ impl Certificates {
         })
     }
 
-    /// Re-reads the pair, keeping the current one over a bad or unbudgeted renewal; whether the leaf changed.
+    /// Re-reads the pair, keeping the current one over a bad or unbudgeted renewal. Says whether the leaf changed.
     pub fn reload(&self, now: SystemTime) -> Result<bool, String> {
         let (pair, expires) = read(&self.files, &self.hosts, now)?;
         let handshake = handshake_bytes(&pair.cert);
@@ -111,7 +111,7 @@ impl Certificates {
         Ok(changed)
     }
 
-    /// The bytes a QUIC handshake with the current chain holds.
+    /// A QUIC handshake with the current chain holds this many bytes.
     pub fn handshake_bytes(&self) -> usize {
         self.handshake.load(Ordering::Relaxed)
     }
@@ -130,7 +130,7 @@ impl Certificates {
         }
     }
 
-    /// A TLS 1.3 configuration offering `alpn`, serving the current pair; without AES hardware ChaCha20-Poly1305 wins.
+    /// Configures TLS 1.3 offering `alpn` with the current pair. Without AES hardware ChaCha20-Poly1305 wins.
     pub fn server_config(self: &Arc<Self>, alpn: &[u8]) -> ServerConfig {
         let mut config = ServerConfig::builder_with_provider(graphite_meter_net::provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -153,7 +153,7 @@ impl ResolvesServerCert for Certificates {
     }
 }
 
-/// Completes a handshake within the exchange bound; a failure is the peer's, logged at most once a minute.
+/// Completes a handshake within the exchange bound. A failure is the peer's, logged at most once a minute.
 pub async fn accept<S>(acceptor: &TlsAcceptor, socket: S, peer: SocketAddr) -> Option<TlsStream<BufReader<S>>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -168,7 +168,7 @@ where
     None
 }
 
-/// The pair, its leaf current and covering `hosts`, and when that leaf expires.
+/// Reads the pair, checks its leaf is current and covers `hosts`, and tells when that leaf expires.
 fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedKey, SystemTime), String> {
     let pair = pair(files).map_err(|error| format!("TLS certificate and key unusable: {error}"))?;
     let leaf = &pair.cert[0];
@@ -194,7 +194,7 @@ fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedK
     Ok((pair, not_after))
 }
 
-/// Both files read and paired before the leaf is checked.
+/// Reads both files and pairs them before the leaf is checked.
 fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
     let read =
         |path: &Path| std::fs::read(path).map_err(|error| could_not(&format!("read {}", path.display()), &error));
@@ -216,7 +216,7 @@ fn log_loaded(expires: SystemTime, now: SystemTime) {
     log!(Info, "tls", "certificate loaded: expires {}", clock::rfc3339(expires));
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
-        // Whole days from two days on, else whole hours.
+        // The warning counts whole days from two days on, else whole hours.
         let hours = (remaining + Duration::from_mins(30)).as_secs() / 3600;
         let left = if hours >= 48 {
             format!("{} days", (hours + 12) / 24)
@@ -240,7 +240,7 @@ fn warn_readable(key: &Path) {
     }
 }
 
-/// A certificate's notBefore and notAfter, read from its DER.
+/// Reads a certificate's notBefore and notAfter from its DER.
 fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {
     let (0x30, certificate, _) = der(certificate)? else {
         return None;
@@ -266,7 +266,7 @@ fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {
     Some((der_time(first, not_before)?, der_time(second, not_after)?))
 }
 
-/// One DER element: its tag, contents and what follows.
+/// Splits one DER element into its tag, contents and what follows.
 fn der(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
     let (&tag, rest) = input.split_first()?;
     let (&first, rest) = rest.split_first()?;
@@ -286,7 +286,7 @@ fn der(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
     (rest.len() >= length).then(|| (tag, &rest[..length], &rest[length..]))
 }
 
-/// A UTCTime (`YYMMDDHHMMSSZ`) or GeneralizedTime (`YYYYMMDDHHMMSSZ`).
+/// Reads a UTCTime (`YYMMDDHHMMSSZ`) or GeneralizedTime (`YYYYMMDDHHMMSSZ`).
 fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
     let number = |digits: &[u8]| {
         digits

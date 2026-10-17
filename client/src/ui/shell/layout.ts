@@ -1,5 +1,5 @@
-// How the console lays out at this viewport: whether panels dock beside the stage (two, one) or fly over it, and the
-// dock widths. One owner for every breakpoint JS needs; it stamps the mode on <html> for the stylesheet.
+// Lays out the console at this viewport, deciding whether panels dock beside the stage (two, one) or fly over it,
+// and the dock widths. It owns every breakpoint JS needs and stamps the mode on <html> for the stylesheet.
 import { nextFrame } from "../../lib/frame";
 import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
 
@@ -14,12 +14,12 @@ export type Side = "left" | "right";
 export interface DockWidths {
   /** The grid column, 0 when closed. */
   column: number;
-  /** The most the handle may give this side now. */
+  /** The handle may give this side at most this much now. */
   max: number;
 }
 
-/** Each open side within 360–720 px, the stage keeping 800 px. Past the budget the excess comes out of each side in
-    proportion to how far it sits above the minimum, except that `priority` (the side resized last) keeps its own
+/** Keeps each open side within 360–720 px and the stage at 800 px. Past the budget the excess comes out of each side
+    in proportion to how far it sits above the minimum, except that `priority` (the side resized last) keeps its own
     width so a dragged edge follows the pointer. Preferences never change here. */
 export function resolveDocks(
   width: number,
@@ -53,7 +53,7 @@ export function resolveDocks(
 
 export interface Layout {
   mode: Read<Mode>;
-  /** Flyouts rise from the bottom: a phone held upright. */
+  /** Flyouts rise from the bottom on a phone held upright. */
   bottomSheet: Read<boolean>;
   /** The console's width in px. */
   width: Read<number>;

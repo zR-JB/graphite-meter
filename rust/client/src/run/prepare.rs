@@ -1,4 +1,4 @@
-//! Path checks: the catalog at `--url`, each selected server's preflight, then throughput and latency paths, in 12 s.
+//! Checks the catalog at `--url`, each selected server's preflight, then its throughput and latency paths, in 12 s.
 use super::select;
 use crate::{
     config::{Config, PrepKey},
@@ -23,62 +23,62 @@ use std::{
 };
 use tokio::time::{self, timeout};
 
-/// How long a path check may take, the catalog and every server included.
+/// A path check may take this long, the catalog and every server included.
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
-/// How long a run may take its check's paths and connections.
+/// A run may take its check's paths and connections for this long.
 const REUSE: Duration = Duration::from_secs(30);
-/// How long a WebTransport session or a latency bus may take to show that its path works.
+/// A WebTransport session or a latency bus may take this long to show that its path works.
 const VERIFY: Duration = Duration::from_secs(3);
-/// How long a datagram probe waits for its reply before another goes.
+/// A datagram probe waits this long for its reply before another goes.
 const DATAGRAM_REPLY: Duration = Duration::from_millis(750);
 
-/// A path check: its dependencies, start, network state, the catalog and each selected server's paths.
+/// A path check records its dependencies, start, network state, the catalog and each selected server's paths.
 pub struct Prepared {
     pub key: PrepKey,
     pub at: Instant,
     pub client: Client,
     pub catalog: Arc<[ServerEntry]>,
-    /// In catalog order.
+    /// The servers come in catalog order.
     pub servers: Vec<ServerPath>,
 }
 
-/// A selected server and what its check found.
+/// Pairs a selected server with what its check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerPath {
     pub id: ServerId,
-    /// Its preflight's name, else its catalog entry's; the location likewise.
+    /// Its name comes from its preflight, else its catalog entry, and the location likewise.
     pub name: String,
     pub location: String,
-    /// The origin its discovery came from, where it signs in.
+    /// Its discovery came from this origin, where it signs in.
     pub origin: Origin,
-    /// What its preflight offered, once it answered.
+    /// Its preflight offered this, once it answered.
     pub offered: Option<Capabilities>,
     pub path: Result<Paths, Failure>,
 }
 
-/// A prepared server's paths and what its checks measured.
+/// Holds a prepared server's paths and what its checks measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub throughput: ThroughputPath,
-    /// The protocol its throughput check went over, unresolved; upload control requests take it and its connection.
+    /// Its throughput check went over this protocol, unresolved. Upload control requests take it and its connection.
     pub control: Protocol,
-    /// When a stage probes latency.
+    /// A stage that probes latency uses this path.
     pub latency: Option<LatencyPath>,
     pub stage_limit: Duration,
-    /// The latency check's round trip.
+    /// The latency check measured this round trip.
     pub idle_rtt: Option<Duration>,
-    /// The address family the server saw the throughput check arrive from.
+    /// The server saw the throughput check arrive from this address family.
     pub ip_family: IpFamily,
 }
 
 impl Prepared {
-    /// The event that tells viewers what this check found.
+    /// Builds the event that tells viewers what this check found.
     pub fn event(&self) -> Event {
         let (servers, catalog) = (self.servers.clone().into(), self.catalog.clone());
         Event::Prepared { servers, catalog }
     }
 
-    /// Whether a run with `key` may take this check: every server prepared, the key equal and at most 30 s old.
+    /// A run with `key` may take this check when every server prepared, the key is equal and it is at most 30 s old.
     pub fn reusable(&self, key: &PrepKey, now: Instant) -> bool {
         let fresh = now.saturating_duration_since(self.at) <= REUSE;
         fresh && self.key == *key && self.servers.iter().all(|server| server.path.is_ok())
@@ -113,7 +113,7 @@ pub async fn prepare(config: &Config, client: Client) -> Result<Prepared, Failur
     Ok(Prepared { key: config.key(), at, client, catalog, servers })
 }
 
-/// One server's preflight and path checks; its name and location follow its preflight.
+/// Runs one server's preflight and path checks. Its name and location follow its preflight.
 async fn check(
     client: &Client,
     config: &Config,
@@ -163,7 +163,7 @@ async fn check(
     })
 }
 
-/// The first of `candidates` whose check passes, moving on unless a server asks for sign-in; else the last fault.
+/// Finds the first of `candidates` whose check passes, moving on unless a server asks for sign-in, else the last fault.
 async fn first<P: Clone, T, F>(candidates: &[P], check: impl Fn(P) -> F) -> Result<T, Fault>
 where
     F: Future<Output = Result<T, Fault>>,
@@ -178,8 +178,8 @@ where
     result
 }
 
-/// A throughput path answering a probe, its WebTransport session opened first; the probe resolves the protocol and
-/// names the address family it arrived from.
+/// Checks a throughput path answers a probe, its WebTransport session opened first. The probe resolves the protocol
+/// and names the address family it arrived from.
 async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(ThroughputPath, IpFamily), Fault> {
     if path.transport == ThroughputTransport::WebTransport {
         let session = client.session(None, &path.origin, Route::WtDownload, vec![("bytes", "0".into())]);
@@ -190,7 +190,7 @@ async fn check_throughput(client: &Client, path: &ThroughputPath) -> Result<(Thr
     Ok((ThroughputPath { protocol, ..path.clone() }, ip_family))
 }
 
-/// A probe's round trip over its own bus; only the latest reply counts, and a datagram probe repeats after 750 ms.
+/// Times a probe's round trip over its own bus. Only the latest reply counts. A datagram probe repeats after 750 ms.
 async fn check_latency(client: &Client, path: &LatencyPath) -> Result<Duration, Fault> {
     let wait = match path.transport {
         LatencyTransport::WebTransport => DATAGRAM_REPLY,

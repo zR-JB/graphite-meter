@@ -1,4 +1,4 @@
-//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a larger buffer.
+//! Request streams over noq pass payloads uncopied, charged by length, so a sent one must not pin a larger buffer.
 use crate::{
     budget::{Budget, Charge},
     code::Code,
@@ -17,16 +17,16 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-/// A request stream, from [`crate::server::Request::resolve`] or [`crate::client::SendRequest::send_request`].
+/// A request stream comes from [`crate::server::Request::resolve`] or [`crate::client::SendRequest::send_request`].
 pub struct RequestStream {
     pub(crate) send: SendHalf,
     pub(crate) recv: RecvHalf,
 }
 
-/// Chunks one read takes from noq under a single lock of the connection.
+/// One read takes this many chunks from noq under a single lock of the connection.
 const READ_CHUNKS: usize = 16;
 
-/// Charges for a request stream's two halves, so each can drop on its own.
+/// Charges a request stream's two halves separately, so each can drop on its own.
 pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
     Some((Charge::new(budget, size_of::<SendHalf>())?, Charge::new(budget, size_of::<RecvHalf>())?))
 }
@@ -80,7 +80,7 @@ impl RequestStream {
         (self.send, self.recv)
     }
 
-    /// The QUIC stream ID; a CONNECT stream's is its WebTransport session ID.
+    /// Returns the QUIC stream ID. A CONNECT stream's is its WebTransport session ID.
     pub(crate) fn id(&self) -> u64 {
         self.send.stream.id().into()
     }
@@ -97,17 +97,17 @@ impl RequestStream {
     }
 }
 
-/// Reads a message: its head, then DATA payloads as noq delivered them. Trailers are checked and dropped.
+/// Reads a message, its head and then DATA payloads as noq delivered them. Trailers are checked and dropped.
 pub struct RecvHalf {
     stream: noq::RecvStream,
     pub(crate) message: Message,
     input: Bytes,
-    /// Chunks read past `input`, the unparsed ones at `read`; noq charges them until they drop.
+    /// Holds chunks read past `input`, the unparsed ones at `read`. noq charges them until they drop.
     chunks: [Bytes; READ_CHUNKS],
     read: Range<usize>,
     shared: Arc<Shared>,
     charge: Charge,
-    /// The client's request method: a HEAD response has no body, and a successful CONNECT one no length.
+    /// The client's request method matters, as a HEAD response has no body and a successful CONNECT one no length.
     pub(crate) method: http::Method,
     /// FIN arrived, or the stream was stopped.
     done: bool,
@@ -136,7 +136,7 @@ impl RecvHalf {
         }
     }
 
-    /// The next DATA payload, or `None` once the message is complete.
+    /// Reads the next DATA payload, or `None` once the message is complete.
     pub async fn data(&mut self) -> Result<Option<Bytes>, Error> {
         poll_fn(|cx| self.poll_data(cx)).await
     }
@@ -208,7 +208,7 @@ impl RecvHalf {
         Error::Protocol(code)
     }
 
-    /// Whether FIN already arrived unread, after a complete message.
+    /// Reports whether FIN already arrived unread, after a complete message.
     fn finished_unread(&mut self) -> bool {
         let mut cx = Context::from_waker(Waker::noop());
         let complete = self.input.is_empty() && self.read.is_empty() && self.message.finish().is_ok();
@@ -228,7 +228,7 @@ impl Drop for RecvHalf {
     }
 }
 
-/// Writes frames; a partly written frame stays owned here, and dropping it resets instead of FIN.
+/// Writes frames. A partly written frame stays owned here, and dropping it resets instead of FIN.
 pub struct SendHalf {
     stream: noq::SendStream,
     header: Header,
@@ -307,7 +307,7 @@ impl SendHalf {
         poll_fn(|cx| self.poll_finish(cx)).await
     }
 
-    /// Waits for the peer to stop the stream, or to acknowledge all of its data and FIN; the future borrows nothing.
+    /// Waits for the peer to stop the stream, or to acknowledge all of its data and FIN. The future borrows nothing.
     pub fn stopped(&self) -> impl Future<Output = Result<Option<Code>, Error>> + Send + use<> {
         let stopped = self.stream.stopped();
         async move {

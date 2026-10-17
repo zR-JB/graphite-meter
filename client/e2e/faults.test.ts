@@ -20,10 +20,10 @@ interface Fault {
   name: string;
   downloadMs?: number;
   uploadMs?: number;
-  /** Acts once the named stage has measured for 300 ms: its own time left shows, not the last stage's handing off. */
+  /** Acts once the named stage has measured for 300 ms and shows its own time left, not the last one's handing off. */
   during: "download" | "upload";
   act?(page: Page, victim: Peer): Promise<{ kill(): void } | void>;
-  /** A Settings edit of the active download's duration, a second after the fault's moment. */
+  /** The test edits the active download's duration to this in Settings, a second after the fault's moment. */
   editDownloadMs?: number;
   outcome: "partial" | "incomplete" | "complete";
   failure: { serverId: string; stage: string; reason: string } | null;
@@ -33,7 +33,7 @@ interface Fault {
 const faults: Fault[] = [
   {
     name: "a stopped peer leaves the download it stalled",
-    // The fault lands once the page shows the stage, which a busy browser can show late; a stall must still end the
+    // The fault lands once the page shows the stage, which a busy browser can show late. A stall must still end the
     // window well before it closes to fail the stage rather than the next one.
     downloadMs: 5_000,
     during: "download",
@@ -98,7 +98,7 @@ test.chrome("a download graph leaves separate curves and fills across a page-clo
       page.evaluate(() => document.querySelector<SVGPathElement>(".graph .plot path.line")?.getTotalLength() ?? 0),
     )
     .toBeGreaterThan(0);
-  // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
+  // The page pauses while its transfer worker keeps running, then the visible graph resumes drawing.
   await page.evaluate(() => {
     const until = performance.now() + 2_000;
     while (performance.now() < until) {}
@@ -145,7 +145,7 @@ async function editDownload(page: Page, value: number) {
   }, value);
 }
 
-// Freezing a page is Chrome's lifecycle control; no other browser offers it.
+// Freezing a page is Chrome's lifecycle control, which no other browser offers.
 for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name.includes("frozen")))
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");

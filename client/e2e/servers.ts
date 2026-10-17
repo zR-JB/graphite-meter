@@ -20,8 +20,8 @@ export interface Launch {
   key: string;
 }
 
-// Below the Linux ephemeral range, so no outgoing connection takes a port before its server binds it. The suite's
-// processes share one TMPDIR, where an exclusive reservation file gives each port to one of them.
+// The ports lie below the Linux ephemeral range, so no outgoing connection takes one before its server binds it. The
+// suite's processes share one TMPDIR, where an exclusive reservation file gives each port to one of them.
 const FIRST_PORT = 20_000;
 const PORTS = 12_000;
 async function freePort(): Promise<number> {

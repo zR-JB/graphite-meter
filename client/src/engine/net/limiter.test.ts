@@ -21,7 +21,7 @@ test("checks run 2 per origin and 8 at once; background ones only on an idle ori
   const abort = new AbortController();
   void take("f#1", abort.signal);
   await flush();
-  // a#2 waits for its origin; e#1 and f#1 for the background cap; the selected a#3 still starts.
+  // a#2 waits for its origin, and e#1 and f#1 for the background cap. The selected a#3 still starts.
   expect(started).toEqual(["a#1", "a#3", "b#1", "c#1", "d#1"]);
   abort.abort("closed");
   await flush();
@@ -31,7 +31,7 @@ test("checks run 2 per origin and 8 at once; background ones only on an idle ori
   releases.get("a#1")!();
   await flush();
   expect(started.slice(5)).toEqual(["f#1 refused: closed", "e#1"]);
-  // Priorities are read again on every drain: a server selected meanwhile no longer waits for an idle origin.
+  // Priorities are read again on every drain, so a server selected meanwhile no longer waits for an idle origin.
   selected.add("a#2");
   limiter.drain();
   await flush();
@@ -41,6 +41,6 @@ test("checks run 2 per origin and 8 at once; background ones only on an idle ori
     void take(label);
   }
   await flush();
-  // Eight run at once: a#2, a#3, b, c, d, e and two of the new ones.
+  // Eight run at once, a#2, a#3, b, c, d, e and two of the new ones.
   expect(started.slice(-2)).toEqual(["g#1", "g#2"]);
 });

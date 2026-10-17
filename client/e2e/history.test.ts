@@ -5,7 +5,7 @@ import { expect, test, type Page } from "./webview";
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
 const base = Date.UTC(2026, 7, 28, 12);
 
-/** A row as schema 4 saved it, before database version 3. */
+/** Builds a row as schema 4 saved it, before database version 3. */
 function legacy(index: number, completedAt = base - index * 60_000) {
   const lane = (rate: number) => ({
     reportedBytesPerSec: rate,
@@ -177,8 +177,8 @@ test("closing History stops an unfinished archive scan and preserves its records
         this.source.objectStore.transaction.mode === "readonly"
       ) {
         stats.deliveries++;
-        // Interrupt the actual scan, without slowing cursor deliveries or
-        // relying on the test driver to catch a brief intermediate state.
+        // The hook interrupts the actual scan without slowing cursor deliveries or relying on the test driver to
+        // catch a brief intermediate state.
         if (stats.deliveries === 20) {
           const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close History"]');
           if (!close) throw new Error("History scan has no dismiss control");
@@ -252,7 +252,7 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   await history(page);
   await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "History view options" })).toBeVisible();
-  // Each order: whether it is chosen, a tab stop and focused.
+  // Each order reports whether it is chosen, a tab stop and focused.
   const orders = () =>
     page.evaluate(() =>
       Array.from(
@@ -268,7 +268,7 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   const only = (at: number, state: string) =>
     Array.from({ length: count }, (_, index) => (index === at ? state : "000"));
   expect(await orders()).toEqual(only(0, "110"));
-  // The popover gives focus to its first column; Tab passes the columns and the heading's term to the chosen order
+  // The popover gives focus to its first column. Tab passes the columns and the heading's term to the chosen order
   // alone, and leaves the group again.
   const role = () => page.evaluate(() => document.activeElement?.getAttribute("role"));
   await expect.poll(role).toBe("checkbox");
@@ -295,7 +295,7 @@ test("a page shown again after a night away dates its results at once", async (p
   await history(page);
   const heading = page.locator(".history-list h3");
   await expect(heading).toHaveText("Today");
-  // The night passes in the background; the minute clock has not ticked since.
+  // The night passes in the background, and the minute clock has not ticked since.
   await page.evaluate(() => {
     const real = Date.now;
     Date.now = () => real() + 86_400_000;
@@ -452,7 +452,7 @@ test("History refuses other database versions at once and on Retry, and never ch
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible(OPEN_BOUND);
   await page.evaluate(() => (window as any).older.close());
-  // An open cannot be cancelled: read once History's queued upgrade has been refused and left version 1.
+  // An open cannot be cancelled, so the test reads once History's queued upgrade has been refused and left version 1.
   await expect
     .poll(
       async () => {
@@ -468,7 +468,7 @@ test("History refuses other database versions at once and on Retry, and never ch
       pending: [],
     });
   expect(await stored(page)).toEqual(before);
-  // Chrome 153's renderer crashes when an open races an aborting upgrade, so read once Retry's open has settled.
+  // Chrome 153's renderer crashes when an open races an aborting upgrade, so the read waits for Retry's open to settle.
   const tried = (await page.storage()).opens.length;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect
@@ -489,7 +489,7 @@ test("History never waits on a version 2 connection, and upgrades once that conn
   const row = legacy(1);
   await seed(page, { records: [row], version: 2 });
   await page.goto(home.url);
-  // An older build's tab keeps its connection open: the upgrade is blocked, and History says so within a moment.
+  // An older build's tab keeps its connection open, so the upgrade is blocked, and History says so within a moment.
   const older = await page.evaluate(
     (db) =>
       new Promise<string>((resolve) => {
@@ -505,7 +505,7 @@ test("History never waits on a version 2 connection, and upgrades once that conn
   expect(older).toBe("v2");
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible(OPEN_BOUND);
-  // The blocked open stays queued: once the older connection closes it upgrades the row in place.
+  // The blocked open stays queued, and once the older connection closes it upgrades the row in place.
   await page.evaluate(() => (window as any).older.close());
   await expect
     .poll(async () => {
@@ -689,7 +689,7 @@ test("Up and Down open the results beside the open one on its history entry, pas
 test("closing a linked result far down the list returns to its row", async (page) => {
   await fixturePage(page);
   await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });
-  // Beside the list, and over it.
+  // The result opens beside the list, then over it.
   for (const [width, close] of [
     [1280, "Close result"],
     [700, "Back to results"],

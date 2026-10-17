@@ -1,4 +1,4 @@
-//! What the settings sheet's keys change: steps, cycles, switches, a reset and the inline editor.
+//! Changes settings from the sheet's keys, with steps, cycles, switches, a reset and the inline editor.
 use super::{
     App, Effect, Overlay, RECHECK,
     keys::{self, Action, Key},
@@ -19,11 +19,11 @@ use graphite_meter_proto::{
 use std::{num::NonZero, ops::RangeInclusive, time::Duration};
 use unicode_width::UnicodeWidthChar;
 
-/// The most characters the editor holds.
+/// The editor holds at most this many characters.
 const MAX_TEXT: usize = 4096;
 
 impl App {
-    /// Reacts to `action` on the focused row; a change to what a check depends on rechecks the paths.
+    /// Reacts to `action` on the focused row. A change to what a check depends on rechecks the paths.
     pub(super) fn settings_key(&mut self, action: Action, key: Key) -> Vec<Effect> {
         let (row, step) = (self.row(), key.step());
         let resetting = self.resetting(false);
@@ -47,7 +47,7 @@ impl App {
         Vec::new()
     }
 
-    /// A click on row `index`: the first focuses it, a second does what space does.
+    /// A click on row `index` focuses it, and a second does what space does.
     pub(super) fn click_row(&mut self, index: usize) -> Vec<Effect> {
         if self.setup.row != index {
             self.setup.row = index;
@@ -57,7 +57,7 @@ impl App {
         self.settings_key(Action::Toggle, Key::Code(KeyCode::Null))
     }
 
-    /// Checks the paths once the settings rest; without a server there are none to check.
+    /// Checks the paths once the settings rest. Without a server there are none to check.
     pub(super) fn recheck_soon(&mut self) {
         self.recheck = self.config.url.as_ref().map(|_| self.now + RECHECK);
     }
@@ -80,7 +80,7 @@ impl App {
         }
     }
 
-    /// Enter or space on `row`: open, edit, reset once confirmed, or step a choice.
+    /// Enter or space on `row` opens, edits, resets once confirmed, or steps a choice.
     fn activate(&mut self, row: Row, confirmed: bool) {
         match row {
             Row::Servers => self.open_chooser(),
@@ -106,7 +106,7 @@ impl App {
         }
     }
 
-    /// ←/→ on `row`: a duration steps, a switch turns on or off, anything else cycles.
+    /// ←/→ on `row` steps a duration, turns a switch on or off, or cycles anything else.
     fn adjust(&mut self, row: Row, step: isize) {
         if let Some((value, bounds)) = span(&mut self.config, row) {
             let unit = match value
@@ -171,7 +171,7 @@ impl App {
         }
     }
 
-    /// A key while typing: enter applies, esc cancels, others edit the text.
+    /// A key while typing applies on enter, cancels on esc, and edits the text otherwise.
     pub(super) fn edit_key(&mut self, key: Key) -> Vec<Effect> {
         let connecting = matches!(self.overlay, Overlay::Connect(_));
         if connecting && key == Key::Code(KeyCode::Tab) {
@@ -237,7 +237,7 @@ impl App {
     }
 }
 
-/// The duration `row` sets and the range it keeps to.
+/// Finds the duration `row` sets and the range it keeps to.
 fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<Duration>)> {
     match row {
         Row::Stage(stage) => Some((&mut config.durations[stage.index()], STAGE_LIMITS)),
@@ -246,7 +246,7 @@ fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<
     }
 }
 
-/// The inline editor: up to 4096 characters, a cursor, and the error its last apply found.
+/// The inline editor holds up to 4096 characters, a cursor, and the error its last apply found.
 pub(super) struct Editor {
     pub row: Row,
     text: Vec<char>,
@@ -269,7 +269,7 @@ impl Editor {
         (self.text, self.cursor, self.error) = (Vec::new(), 0, None);
     }
 
-    /// Inserts `text` at the cursor while room is left; tabs and line breaks become spaces.
+    /// Inserts `text` at the cursor while room is left. Tabs and line breaks become spaces.
     pub fn insert(&mut self, text: &str) {
         let spaced = text
             .chars()
@@ -306,7 +306,7 @@ impl Editor {
         self.error = None;
     }
 
-    /// The text around the cursor in `width` cells, the cursor a block over its character.
+    /// Shows the text around the cursor in `width` cells, the cursor a block over its character.
     pub fn line(&self, width: usize, palette: &Palette) -> Line {
         let cell = |c: &char| c.width().unwrap_or(0);
         let under = self.text.get(self.cursor).copied().unwrap_or(' ');

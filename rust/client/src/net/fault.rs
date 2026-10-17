@@ -1,4 +1,4 @@
-//! Failures typed where they arise: their reason, how a retry treats them, and the text a view shows.
+//! Types failures where they arise, with their reason, how a retry treats them and the text a view shows.
 use crate::{model::Failure, text::capitalized};
 use graphite_meter_net::ConnectError;
 use graphite_meter_proto::{
@@ -8,14 +8,14 @@ use http::{HeaderMap, StatusCode};
 use rustls::CertificateError;
 use std::{fmt, time::Duration};
 
-/// Why a request, a connection or a lane failed.
+/// Says why a request, a connection or a lane failed.
 #[derive(Debug)]
 pub enum Fault {
     /// No connection opened.
     Connect(ConnectError),
     /// An open connection or stream broke.
     Lost(String),
-    /// What did not arrive in time.
+    /// Names what did not arrive in time.
     TimedOut(&'static str),
     /// The server answered `from` with another status than 200.
     Status {
@@ -33,11 +33,11 @@ pub enum Fault {
     Malformed(String),
 }
 
-/// How a retry treats a fault.
+/// Says how a retry treats a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Redial,
-    /// The server is busy; it asked to wait this long.
+    /// The server is busy and asked to wait this long.
     Busy(Duration),
     Final,
 }
@@ -60,7 +60,7 @@ impl Fault {
     pub fn class(&self) -> Class {
         match self {
             Self::Status { status, retry_after, .. } if busy(*status) => Class::Busy(retry_after.unwrap_or_default()),
-            // An upload's control requests outlast a proxy's passing server error; lanes do not.
+            // An upload's control requests outlast a proxy's passing server error. Lanes do not.
             Self::Status { status, from, .. } if status.is_server_error() && upload_control(*from) => Class::Redial,
             Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_))
             | Self::Status { .. }
@@ -76,7 +76,7 @@ impl Fault {
         Failure::new(self.reason(), self.to_string())
     }
 
-    /// The fault an answer of `status` to `from` means, if any; a sign-in is for the server `issuer` names.
+    /// Maps an answer of `status` to `from` to its fault, if any. A sign-in is for the server `issuer` names.
     pub(super) fn answer(
         status: StatusCode,
         headers: &HeaderMap,
@@ -103,7 +103,7 @@ impl Fault {
         )
     }
 
-    /// The fault an upload refusal in an answer to `from` or a progress record means; sign-in is for `issuer`'s server.
+    /// Maps an upload refusal in an answer to `from` or a progress record to a fault. Sign-in is for `issuer`'s server.
     pub(super) fn refusal(
         refusal: UploadRefusal,
         from: Route,
@@ -163,7 +163,7 @@ fn busy(status: StatusCode) -> bool {
     matches!(status, StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE)
 }
 
-/// What a status text calls the request: a control request by name, any other by its path.
+/// A status text calls a control request by name and any other request by its path.
 fn source(route: Route) -> &'static str {
     match route {
         Route::Servers => "the test server list",

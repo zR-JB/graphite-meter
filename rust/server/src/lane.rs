@@ -1,4 +1,4 @@
-//! An admitted request's time bounds, the one place a lane's ending is decided, and a connection's admitted work.
+//! Bounds an admitted request's time, decides a lane's ending in one place, and counts a connection's admitted work.
 
 use crate::{auth::AuthLease, limits::Hold, lock};
 use graphite_meter_proto::lane::{IDLE_BOUND, LaneEnding};
@@ -13,7 +13,7 @@ use std::{
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-/// An admitted request, WebSocket bus or WebTransport session; its last clone releases its admission and work.
+/// A lane is an admitted request, WebSocket bus or WebTransport session. Its last clone releases admission and work.
 #[derive(Debug, Clone)]
 #[must_use = "dropping the last clone releases the admission and work"]
 pub struct Lane(Arc<State>);
@@ -34,7 +34,7 @@ struct State {
 }
 
 impl Lane {
-    /// A lane holding `hold` until its `lifetime` ends, on `shutdown` or on revocation of the request's sign-in.
+    /// Starts a lane holding `hold` until its `lifetime` ends, `shutdown` fires or the request's sign-in is revoked.
     pub(crate) fn start(
         hold: Hold,
         lifetime: Duration,
@@ -49,7 +49,7 @@ impl Lane {
             moved: AtomicU64::new(0),
             ending: OnceLock::new(),
             decided: CancellationToken::new(),
-            // A child token: polling it never takes the server-wide token's waiter lock.
+            // Polling a child token never takes the server-wide token's waiter lock.
             shutdown: shutdown.child_token(),
             auth: auth.cloned(),
             _hold: hold,
@@ -67,7 +67,7 @@ impl Lane {
         self.0.ending.get().copied()
     }
 
-    /// The lane's first ending, same for every caller: revocation, shutdown, lifetime, `IDLE_BOUND`, `finish`.
+    /// Awaits the first ending, shared by every caller, of revocation, shutdown, lifetime, `IDLE_BOUND` or `finish`.
     pub async fn ended(&self) -> LaneEnding {
         let state = &self.0;
         let revoked = async {
@@ -87,7 +87,7 @@ impl Lane {
         self.decide(cause)
     }
 
-    /// The ending due now, decided without waiting: cheap per chunk, so a transfer needs `ended` only to wait.
+    /// Decides the ending due now without waiting. It is cheap per chunk, so a transfer needs `ended` only to wait.
     pub fn due(&self) -> Option<LaneEnding> {
         if let Some(ending) = self.ending() {
             return Some(ending);
@@ -134,7 +134,7 @@ impl Lane {
     }
 }
 
-/// The admitted work running on one connection; its lifecycle reads when the last of it ended.
+/// Counts the admitted work running on one connection. Its lifecycle reads when the last of it ended.
 #[derive(Debug, Clone)]
 pub struct Work(Arc<Mutex<WorkState>>);
 
@@ -156,14 +156,14 @@ impl Work {
         WorkGuard(self.clone())
     }
 
-    /// When the last admitted work ended, or the connection began; `None` while some runs.
+    /// Returns when the last admitted work ended, or the connection began. `None` means some still runs.
     pub fn idle_since(&self) -> Option<Instant> {
         let state = lock(&self.0);
         (state.running == 0).then_some(state.idle_since)
     }
 }
 
-/// One piece of admitted work, ended when dropped.
+/// One piece of admitted work ends when its guard drops.
 #[derive(Debug)]
 #[must_use = "dropping it ends the work"]
 pub struct WorkGuard(Work);
@@ -227,7 +227,7 @@ mod tests {
 
     const LONG: Duration = Duration::from_secs(3600);
 
-    /// The lane's ending and how long after admission it came.
+    /// Returns the lane's ending and how long after admission it came.
     async fn ending(lane: &Lane) -> (LaneEnding, Duration) {
         let start = Instant::now();
         let ending = lane.ended().await;

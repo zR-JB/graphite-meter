@@ -1,5 +1,5 @@
-// The console body: dial, lanes, run key, chips and cards. Its width classes come from its measured box, as a size
-// container would restyle the whole instrument on every frame that changes a figure.
+// The console body holds the dial, lanes, run key, chips and cards. Its width classes come from its measured box, as
+// a size container would restyle the whole instrument on every frame that changes a figure.
 import type { App } from "../../app/app";
 import { Show } from "../../lib/dom";
 import { computed, effect } from "../../lib/signal";
@@ -71,7 +71,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
   return section;
 }
 
-/** One lens over a multi-server result: every server together, or one; a running stage has only all servers' rate. */
+/** Shows a multi-server result for every server together or for one; a running stage has only all servers' rate. */
 function Lens(props: { app: App; live: Live }): Node {
   const { app, live } = props;
   const servers = live.indicated;

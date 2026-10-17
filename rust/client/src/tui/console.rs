@@ -1,4 +1,4 @@
-//! The console, the one screen before, during and after a run.
+//! Draws the console, the one screen before, during and after a run.
 use super::{
     App, Target, chart,
     dial::{self, Arc, Dial},
@@ -18,17 +18,17 @@ use graphite_meter_proto::reason::FailureReason;
 use ratatui_core::layout::Rect;
 use std::{borrow::Cow, time::Duration};
 
-/// From this size the dial stands beside the lanes over the cards; below it the console stacks without the ring.
+/// From this size the dial stands beside the lanes over the cards. Below it the console stacks without the ring.
 const WIDE: (u16, u16) = (110, 32);
-/// The browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
+/// Mirrors the browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
 pub(super) const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
-/// The run key's and the chips' widest.
+/// The run key and the chips grow to this width at most.
 const CONTROLS: u16 = 64;
-/// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
+/// Mirrors the browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`), with equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
 
-/// Where `value` sits on a dial reaching `scale`, from 0 to 1.
+/// Places `value` on a dial reaching `scale`, from 0 to 1.
 pub fn gauge_fraction(value: f64, scale: f64) -> f64 {
     let v = (value / scale).clamp(0.0, 1.0);
     if v.is_nan() {
@@ -39,14 +39,14 @@ pub fn gauge_fraction(value: f64, scale: f64) -> f64 {
     (i as f64 - 1.0 + (v - KNOTS[i - 1]) / (KNOTS[i] - KNOTS[i - 1])) / spans
 }
 
-/// The value at `fraction` of a dial reaching `scale`.
+/// Reads the value at `fraction` of a dial reaching `scale`.
 pub fn gauge_value(fraction: f64, scale: f64) -> f64 {
     let at = fraction.clamp(0.0, 1.0) * (KNOTS.len() - 1) as f64;
     let i = (at as usize).min(KNOTS.len() - 2);
     scale * (KNOTS[i] + (at - i as f64) * (KNOTS[i + 1] - KNOTS[i]))
 }
 
-/// The browser's axis ceiling (`client/src/view/scales.ts`): the first step at or above `v`.
+/// Mirrors the browser's axis ceiling (`client/src/view/scales.ts`), the first step at or above `v`.
 pub fn ceil_step(v: f64, steps: &[f64]) -> f64 {
     if !v.is_finite() || v <= 0.0 {
         return steps[0];
@@ -68,8 +68,8 @@ pub fn icon(stage: Stage) -> &'static str {
     }
 }
 
-/// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with 3% headroom, and from
-/// a megabit up never under 1 Gbit/s, where most connections fit.
+/// Mirrors the browser's dial scale for a combined rate in bytes per second, its 1-2-5 step above it with 3% headroom,
+/// and from a megabit up never under 1 Gbit/s, where most connections fit.
 pub fn gauge_ceiling(bytes_per_sec: f64) -> f64 {
     let bits = bytes_per_sec * 8.0 * 1.03;
     let top = ceil_step(bits, &[1.0, 2.0, 5.0]);
@@ -77,7 +77,7 @@ pub fn gauge_ceiling(bytes_per_sec: f64) -> f64 {
     top / 8.0
 }
 
-/// The page's rate unit, the dial's, from the highest rate so far; before any, the browser's 100 Mbit/s reference.
+/// The page and dial take their rate unit from the highest rate so far, before any, the browser's 100 Mbit/s reference.
 #[derive(Debug, Clone, Copy)]
 pub struct Unit {
     divisor: f64,
@@ -91,13 +91,13 @@ impl Unit {
         Self { divisor: peak * 8.0 / shown, name }
     }
 
-    /// `bytes_per_sec` as a figure in this unit.
+    /// Formats `bytes_per_sec` as a figure in this unit.
     pub fn figure(self, bytes_per_sec: f64) -> String {
         format::speed(bytes_per_sec * 8.0 / self.divisor)
     }
 }
 
-/// The cards' tops: the rate charts' in bytes per second, and the idle and loaded reply tracks' in milliseconds.
+/// Caps the cards, the rate charts in bytes per second and the idle and loaded reply tracks in milliseconds.
 #[derive(Debug, Clone, Copy)]
 struct Scales {
     rate: f64,
@@ -105,7 +105,7 @@ struct Scales {
     loaded: f64,
 }
 
-/// A latency lane: a population's statistics, its latest reply while it is measured, and whether it is.
+/// A latency lane holds a population's statistics, its latest reply while it is measured, and whether it is.
 pub(super) struct Lane {
     pub stage: Stage,
     pub summary: Option<Summary>,
@@ -114,7 +114,7 @@ pub(super) struct Lane {
 }
 
 impl App {
-    /// The console in `area`: wide, the dial beside the lanes and controls over the cards; narrow, stacked.
+    /// Draws the console in `area`, wide with the dial beside the lanes and controls over the cards, narrow stacked.
     pub(super) fn console(&self, canvas: &mut Canvas, area: Rect) {
         let lanes = self.lanes();
         if area.width >= WIDE.0 && area.height >= WIDE.1 {
@@ -154,7 +154,7 @@ impl App {
         }
     }
 
-    /// The run key over the stage chips, as wide as each other.
+    /// Draws the run key over the stage chips, as wide as each other.
     fn controls(&self, canvas: &mut Canvas, area: Rect) {
         let width = area.width.min(CONTROLS);
         let x = area.x + (area.width - width) / 2;
@@ -162,7 +162,7 @@ impl App {
         self.chips(canvas, Rect::new(x, area.y + 4, width, 2));
     }
 
-    /// Start test, Stop test while a run goes, Run again after one; a key that cannot start says why on it.
+    /// Draws Start test, Stop test while a run goes, or Run again after one. A key that cannot start says why on it.
     fn run_key(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         let hovered = self.hover == Some(Target::Key);
@@ -199,7 +199,7 @@ impl App {
         canvas.hit(area, Target::Key);
     }
 
-    /// Why the key cannot start a test now, if it cannot.
+    /// Says why the key cannot start a test now, if it cannot.
     pub(super) fn blocked(&self) -> Option<String> {
         match () {
             _ if self.running() => None,
@@ -212,7 +212,7 @@ impl App {
         }
     }
 
-    /// A chip per stage: its bar fills as the stage runs, under its mark, name and time or state.
+    /// Draws a chip per stage. Its bar fills as the stage runs, under its mark, name and time or state.
     fn chips(&self, canvas: &mut Canvas, area: Rect) {
         let stages = self.chip_stages();
         let count = stages.len() as u16;
@@ -224,7 +224,7 @@ impl App {
         }
     }
 
-    /// The stages the chips show: the default three, and bidirectional while it is on or ran, in order.
+    /// The chips show the default three stages, and bidirectional while it is on or ran, in order.
     fn chip_stages(&self) -> Vec<Stage> {
         let planned = self.plan();
         let stages = Stage::ALL.iter().copied();
@@ -292,7 +292,7 @@ impl App {
         }
     }
 
-    /// The chip's end: the planned time, the time into it, a check, or its state.
+    /// The chip ends in the planned time, the time into it, a check, or its state.
     fn chip_status(&self, stage: Stage, state: State, planned: Option<Duration>, width: u16) -> (String, Style) {
         let palette = &self.palette;
         match state {
@@ -312,7 +312,7 @@ impl App {
         }
     }
 
-    /// Whether a warming chip's sweep covers `cell` of `cells` now: 45% of the rule crossing it every 1.1 s.
+    /// Tells whether a warming chip's sweep, 45% of the rule crossing it every 1.1 s, covers `cell` of `cells` now.
     fn sweeping(&self, cell: u16, cells: u16) -> bool {
         let phase = self.now.saturating_duration_since(self.since).as_secs_f64() / 1.1 % 1.0;
         let head = (-0.45 + phase * 1.9) * f64::from(cells);
@@ -320,7 +320,7 @@ impl App {
         at >= head && at < head + 0.45 * f64::from(cells)
     }
 
-    /// The latency lanes in `area`, a lane each `pitch` rows: figures, a 10th to 90th percentile box plot and Added.
+    /// Draws a latency lane each `pitch` rows in `area`, as figures, a 10th to 90th percentile box plot and Added.
     fn lanes_area(&self, canvas: &mut Canvas, area: Rect, lanes: &[Lane], pitch: u16) {
         const LABEL: u16 = 15;
         const FIGURE: u16 = 10;
@@ -444,7 +444,7 @@ impl App {
         }
     }
 
-    /// A card per stage, as many to a row as keep each at least 30 columns wide; a short area keeps them in one row.
+    /// Lays out a card per stage, as many to a row as keep each at least 30 columns wide, one row in a short area.
     fn cards(&self, canvas: &mut Canvas, area: Rect) {
         let plan = self.plan();
         if plan.is_empty() || area.height < 2 {
@@ -472,7 +472,7 @@ impl App {
         }
     }
 
-    /// The cards' tops; a reply track's is the ladder step over 2.5× its 75th percentile, so its body keeps its shape.
+    /// Caps the cards. A reply track's is the ladder step over 2.5× its 75th percentile, so its body keeps its shape.
     fn scales(&self) -> Scales {
         let run = self.view.run.as_ref();
         let peak = run.map_or(0.0, |run| run.peak);
@@ -500,7 +500,7 @@ impl App {
         Scales { rate, idle: top(true), loaded: top(false) }
     }
 
-    /// One stage's card, laid out alike before, during and after a run, so nothing moves between Start and the result.
+    /// Draws one stage's card alike before, during and after a run, so nothing moves between Start and the result.
     fn card(&self, canvas: &mut Canvas, area: Rect, stage: Stage, duration: Duration, scales: Scales) {
         let palette = &self.palette;
         let state = self.stage_state(stage);
@@ -548,7 +548,7 @@ impl App {
         }
     }
 
-    /// The card's head end: what the stage is doing, how it ended, or that a stopped test never reached it.
+    /// The card's head ends in what the stage is doing, how it ended, or that a stopped test never reached it.
     fn card_status(&self, stage: Stage, state: State) -> (&'static str, Style) {
         let palette = &self.palette;
         let run = self
@@ -566,7 +566,7 @@ impl App {
         }
     }
 
-    /// An ended stage's mark: a check once complete, else its status in its tone.
+    /// An ended stage shows a check once complete, else its status in its tone.
     fn ended(&self, status: StageStatus) -> (&'static str, Style) {
         let (palette, label) = (&self.palette, format::status_label(status));
         match status {
@@ -577,7 +577,7 @@ impl App {
         }
     }
 
-    /// The card's figure, and its quiet line: the wire rate, the jitter, a failure's reason or the warmup.
+    /// Builds the card's figure and its quiet line, the wire rate, the jitter, a failure's reason or the warmup.
     fn card_lines(&self, stage: Stage, state: State, unit: Unit, width: u16) -> [Line; 2] {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
@@ -645,7 +645,7 @@ impl App {
         [value, quiet]
     }
 
-    /// Why the stage failed: the latency server's first failure, else any server's.
+    /// Says why the stage failed, from the latency server's first failure, else any server's.
     fn failure(&self, stage: Stage) -> Option<&'static str> {
         let run = self.view.run.as_ref()?;
         let result = run.results.iter().rfind(|result| result.stage == stage)?;
@@ -657,7 +657,7 @@ impl App {
         Some(own.or_else(|| failures.next())?.failure.reason.label())
     }
 
-    /// The card's facts as label and value, missing until known.
+    /// Lists the card's facts as label and value, missing until known.
     fn facts(&self, stage: Stage, result: Option<&StageResult>, unit: Unit) -> Vec<(&'static str, String)> {
         let missing = || MISSING.to_owned();
         if stage.directions().is_empty() {
@@ -693,7 +693,7 @@ impl App {
         }
     }
 
-    /// The stage's traces on its field: a transfer's rate line over its loaded replies, or the idle replies alone.
+    /// Draws the stage's traces on its field, a transfer's rate line over loaded replies, or the idle replies alone.
     fn traces(&self, canvas: &mut Canvas, field: Rect, stage: Stage, duration: Duration, scales: Scales) {
         let Some(run) = self.view.run.as_ref() else { return };
         let Some(window) = self.window(run, stage) else { return };
@@ -736,7 +736,7 @@ impl App {
         }
     }
 
-    /// What the dial shows: the live stage while one measures, the result once the run ends, at rest otherwise.
+    /// The dial shows the live stage while one measures, the result once the run ends, and rests otherwise.
     pub(super) fn dial(&self) -> Dial {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
@@ -811,7 +811,7 @@ impl App {
                 note: Line::default(),
             };
         }
-        // Finished: every transfer stage's arc, swept in from where the needle stood, and the first one's figure.
+        // Once finished, every transfer stage's arc sweeps in from where the needle stood, with the first one's figure.
         let mut results = run.plan.iter().filter_map(|&(stage, _)| {
             let mean = run.results.iter().rfind(|result| result.stage == stage)?.mean();
             (!stage.directions().is_empty() && mean > 0.0).then_some((stage, mean))
@@ -848,7 +848,7 @@ impl App {
         }
     }
 
-    /// Under a finished run's dial: why it stopped or failed, if it did.
+    /// Says under a finished run's dial why it stopped or failed, if it did.
     fn outcome_note(&self) -> Line {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
@@ -862,7 +862,7 @@ impl App {
         }
     }
 
-    /// A lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
+    /// Builds a lane for idle latency and, with loaded latency on, each transfer stage, in plan order.
     pub(super) fn lanes(&self) -> Vec<Lane> {
         let loaded = |stage: Stage| stage == Stage::Latency || self.config.loaded_latency;
         let plan = self.plan();
@@ -882,7 +882,7 @@ impl App {
         lanes.collect()
     }
 
-    /// The stages shown: the run's plan once it started, else the settings'.
+    /// Shows the run's plan once it started, else the settings' stages.
     pub(super) fn plan(&self) -> Cow<'_, [(Stage, Duration)]> {
         match &self.view.run {
             Some(run) if !run.plan.is_empty() => Cow::Borrowed(&run.plan),
@@ -891,14 +891,14 @@ impl App {
     }
 }
 
-/// The lanes' shared axis: the ladder step over their 90th percentiles with a quarter's room, at least 1 ms.
+/// The lanes share an axis, the ladder step over their 90th percentiles with a quarter's room, at least 1 ms.
 fn lane_scale(lanes: &[Lane]) -> f64 {
     let p90 = |lane: &Lane| Some(lane.summary?.spread?.p90.as_secs_f64() * 1e3);
     let top = lanes.iter().filter_map(p90).fold(0.0, f64::max);
     ceil_step((top * 1.25).max(1.0), &LADDER)
 }
 
-/// The series' points over `window` seconds.
+/// Picks the series' points over `window` seconds.
 fn between(series: &Series, (t0, t1): (f64, f64)) -> &[Point] {
     let at = |t: f64| series.points.partition_point(|point| point.at.as_secs_f64() < t);
     &series.points[at(t0)..at(t1 + 1e-9)]

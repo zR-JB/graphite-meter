@@ -1,4 +1,4 @@
-//! An upload session (`api/upload.md`): minted receiver, lanes, feed, checkpoints, one replacement per server and run.
+//! Mints a receiver (`api/upload.md`) and runs its lanes, feed and checkpoints, one replacement per server and run.
 use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
@@ -32,12 +32,12 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// The pause before a missed checkpoint is asked again.
+/// A missed checkpoint is asked again after this pause.
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
-/// How long a departed server's receiver may take to answer its finalize.
+/// A departed server's receiver may take this long to answer its finalize.
 const DEPART: Duration = Duration::from_secs(1);
 
-/// One stage's uploads to a server; dropping it ends its lanes and feed.
+/// Carries one stage's uploads to a server. Dropping it ends its lanes and feed.
 pub struct UploadSession {
     start: Start,
     upload: Upload,
@@ -46,10 +46,10 @@ pub struct UploadSession {
     replaced: Arc<AtomicBool>,
 }
 
-/// What a receiver starts from, so that a replacement starts the same lanes.
+/// Holds what a receiver starts from, so that a replacement starts the same lanes.
 #[derive(Clone)]
 struct Start {
-    /// The client its lanes go through.
+    /// Its lanes go through this client.
     client: Client,
     control: Control,
     plans: Vec<GroupPlan>,
@@ -58,7 +58,7 @@ struct Start {
     token: CancellationToken,
 }
 
-/// A receiver: its upload ID, its number in the session, its lanes and what its feed reported.
+/// A receiver carries its upload ID, its number in the session, its lanes and what its feed reported.
 struct Upload {
     id: String,
     number: u32,
@@ -73,11 +73,11 @@ struct Progress {
     ready: bool,
     latest: Option<Counters>,
     complete: bool,
-    /// The fault the feed ended with after recovery.
+    /// The feed ended with this fault after recovery.
     ended: Option<Fault>,
 }
 
-/// Where control requests go: the throughput check's connection, or on an HTTP/3 path the session's own connections.
+/// Control requests go over the throughput check's connection, or on an HTTP/3 path the session's own connections.
 #[derive(Clone)]
 struct Control {
     client: Client,
@@ -86,7 +86,7 @@ struct Control {
 }
 
 impl UploadSession {
-    /// Mints a receiver over `via`, starting its feed and lanes `stagger` apart; `replaced` is the server's this run.
+    /// Mints a receiver over `via`, starting its feed and lanes `stagger` apart. `replaced` is the server's this run.
     pub async fn open(
         client: &Client,
         path: &ThroughputPath,
@@ -114,20 +114,20 @@ impl UploadSession {
         Ok(Self { start, upload, replacing: None, replaced })
     }
 
-    /// Lanes open, the feed attached and the receiver counting.
+    /// Tells whether lanes are open, the feed attached and the receiver counting.
     pub fn ready(&self) -> bool {
         let progress = self.upload.progress.borrow();
         let counting = matches!(progress.latest, Some(latest) if latest.bytes() > 0 && latest.nanos() > 0);
         self.upload.lanes.ready() && progress.ready && counting
     }
 
-    /// The highest byte count the current receiver's feed reported.
+    /// Returns the highest byte count the current receiver's feed reported.
     pub fn fed(&self) -> Option<Fed> {
         let latest = self.upload.progress.borrow().latest?;
         Some(Fed { id: self.upload.number, bytes: latest.bytes() })
     }
 
-    /// A fresh checkpoint within `budget`, a miss asked again every 100 ms unless its fault is final.
+    /// Asks for a fresh checkpoint within `budget`, a miss again every 100 ms unless its fault is final.
     pub async fn checkpoint(&self, budget: Duration) -> Result<Receiver, Fault> {
         let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
         loop {
@@ -145,7 +145,7 @@ impl UploadSession {
         }
     }
 
-    /// The lanes' and feed's health; a receiver that no longer knows its ID is replaced once per server and run.
+    /// Reports lane and feed health. A receiver that no longer knows its ID is replaced once per server and run.
     pub fn health(&mut self) -> LaneHealth {
         if let Some(replacing) = self.replacing.take_if(|replacing| replacing.is_finished()) {
             match futures_util::FutureExt::now_or_never(replacing) {
@@ -219,7 +219,7 @@ impl Start {
 }
 
 impl Control {
-    /// A request to `method` on `route` for upload `id`, if any.
+    /// Builds a request to `method` on `route` for upload `id`, if any.
     fn request(&self, method: Method, route: Route, id: Option<&str>) -> Request {
         let query = id.map(|id| ("id", id.to_owned())).into_iter().collect();
         Request { query, ..Request::new(method, &self.origin, route) }
@@ -234,7 +234,7 @@ impl Control {
     }
 }
 
-/// Follows `id`'s feed into `progress` until `complete`: WebTransport's first server stream, else HTTP, with retry.
+/// Follows `id`'s feed into `progress` until `complete`, over WebTransport's first server stream, else HTTP with retry.
 async fn follow(
     control: Control,
     id: String,
@@ -276,7 +276,7 @@ async fn follow(
     }
 }
 
-/// Where the feed's lines arrive.
+/// The feed's lines arrive here.
 enum Source {
     Http(Incoming),
     Stream(RecvStream, Arc<Session>),
@@ -291,7 +291,7 @@ impl Source {
     }
 }
 
-/// Records from `source` into `progress` until `complete`, lines up to 64 KiB within the control timeout; `moved`.
+/// Reads `source` into `progress` until `complete`, lines up to 64 KiB within the control timeout, marking `moved`.
 async fn read(
     control: &Control,
     mut source: Source,
@@ -325,7 +325,7 @@ async fn read(
     }
 }
 
-/// Applies a record; true once `complete` arrived. A regressing observation is stale and ignored.
+/// Applies a record, returning true once `complete` arrived. A regressing observation is stale and ignored.
 fn apply(control: &Control, record: Record, progress: &watch::Sender<Progress>) -> Result<bool, Fault> {
     let (counters, complete) = match record {
         Record::Ready => {

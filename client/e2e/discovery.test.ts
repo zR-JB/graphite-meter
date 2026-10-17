@@ -19,7 +19,7 @@ async function observe(page: Page, hold: string[] = []) {
   await page.addInitScript(
     (activity: Activity) => {
       Object.assign(window, { activity });
-      // Both clocks move: freshness is judged on page time, the record on the wall clock.
+      // Both clocks move, because freshness is judged on page time and the record on the wall clock.
       const now = Date.now.bind(Date);
       Date.now = () => now() + activity.nowOffset;
       const page = performance.now.bind(performance);
@@ -31,7 +31,7 @@ async function observe(page: Page, hold: string[] = []) {
         if (url.pathname === "/servers") activity.catalogs.push(url.origin);
         if (url.pathname !== "/preflight") return original(input, init);
         activity.requests.push(url.origin);
-        // The selected page server's own check may overlap; it is not settings discovery.
+        // The selected page server's own check may overlap, and it is not settings discovery.
         const discovery = url.origin !== location.origin;
         activity.inFlight++;
         if (discovery) activity.peak = Math.max(activity.peak, ++activity.discovering);

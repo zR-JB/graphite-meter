@@ -1,6 +1,6 @@
-// The words the views share, one per concept: stages and their state in the shown run, outcomes, run phases and the
-// run key, failure reasons, latency populations, paths, transports, HTTP versions, readiness, connectivity, servers,
-// themes, starting over and the explainers, with tones.
+// Holds the words the views share, one per concept, with tones. They cover stages and their state in the shown run,
+// outcomes, run phases and the run key, failure reasons, latency populations, paths, transports, HTTP versions,
+// readiness, connectivity, servers, themes, starting over and the explainers.
 import type { Theme } from "../app/preferences";
 import type { Preparation, ShownPhase } from "../app/run";
 import type { Readiness } from "../engine/net/connection";
@@ -20,15 +20,15 @@ import {
 import { FAILURE_REASONS, type FailureReason } from "../protocol/reasons";
 import { fmtDuration } from "./format";
 
-/** The hues `[data-tone]` maps (styles/tokens.css): each stage's own, the warmup's, and the status tones. */
+/** The hues `[data-tone]` maps (styles/tokens.css), each stage's own, the warmup's, and the status tones. */
 export type Tone = Stage | "warmup" | "ok" | "warn" | "err" | "neutral";
-/** A status word; a null tone leaves its subject's own hue. */
+/** A status word. A null tone leaves its subject's own hue. */
 export interface Word {
   label: string;
   tone: Tone | null;
 }
 
-/** `short` names a stage where space is tight: chips, lane rows, History column heads. */
+/** `short` names a stage where space is tight, in chips, lane rows and History column heads. */
 export const STAGE = {
   latency: { label: "Latency", short: "Latency", icon: "ping", tone: "latency" },
   download: { label: "Download", short: "Download", icon: "download", tone: "download" },
@@ -36,7 +36,7 @@ export const STAGE = {
   bidirectional: { label: "Bidirectional", short: "Bi-dir", icon: "bidirectional", tone: "bidirectional" },
 } as const satisfies Record<Stage, { label: string; short: string; icon: string; tone: Tone }>;
 
-/** What the run is doing, as the status bar and the dial say it; a finished run reads its outcome. */
+/** Says what the run is doing, as the status bar and the dial say it. A finished run reads its outcome. */
 export const PHASE = {
   idle: "Not started",
   authenticating: "Checking sign-in",
@@ -58,7 +58,7 @@ export const OUTCOME = {
   incomplete: { label: "Incomplete", tone: "warn" },
 } as const satisfies Record<Outcome, Word>;
 
-/** What the run key does now; the Space hint holds every one. */
+/** Names what the run key does now. The Space hint holds every one. */
 export const RUN_ACTION = { start: "Start test", stop: "Stop test", again: "Run again", cancel: "Cancel" } as const;
 
 export function runAction(preparing: boolean, running: boolean, phase: ShownPhase): string {
@@ -67,8 +67,8 @@ export function runAction(preparing: boolean, running: boolean, phase: ShownPhas
   return phase === "complete" || phase === "aborted" || phase === "error" ? RUN_ACTION.again : RUN_ACTION.start;
 }
 
-/** The run in one word, as the status strip says it: a refused start, a check under way, else the phase or the
-    finished run's outcome. */
+/** Names the run in one word, as the status strip says it. A refused start or a check under way comes first, else
+    the phase or the finished run's outcome. */
 export function statusLabel(preparation: Preparation, phase: ShownPhase, outcome: Outcome | undefined): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
@@ -79,8 +79,8 @@ export function statusLabel(preparation: Preparation, phase: ShownPhase, outcome
   return PHASE[phase];
 }
 
-/** A stage in the shown run. `skipped`: the run left it out; `unreached`: the run ended without reaching or settling
-    it. */
+/** A stage in the shown run. The run left a `skipped` stage out, and ended without reaching or settling an
+    `unreached` one. */
 export type StageState =
   | "skipped"
   | "upcoming"
@@ -116,14 +116,14 @@ export interface StageFacts {
   planned: boolean;
   /** Its status once it ended. */
   settled: StageStatus | null;
-  /** The run's phase while this is its stage, kept once the run ends; null until the run moves to it. */
+  /** The run's phase while this is its stage, kept once the run ends, and null until the run moves to it. */
   phase: Phase | null;
   stalled: boolean;
-  /** How the run ended; null while it runs. */
+  /** How the run ended, or null while it runs. */
   ended: "complete" | "stopped" | "error" | null;
 }
 
-/** The plan decides first, then a settled status; a stall reads Recovering, in warmup too. A stopped or failed run
+/** The plan decides first, then a settled status. A stall reads Recovering, in warmup too. A stopped or failed run
     leaves the stage it was in stopped or failed, and any other stage it never settled unreached. Checking paths
     before the first stage is not that stage yet. */
 export function stageState({ planned, settled, phase, stalled, ended }: StageFacts): StageState {
@@ -161,7 +161,7 @@ export const PATH_TIP: Record<Role, string> = {
   latency: `${PATH.latency}\nTransport of the probes, on its own connection`,
 };
 
-/** A path choice's second line: what it does, in a few words. */
+/** A path choice's second line says what it does, in a few words. */
 export const PATH_NOTE: Record<Role, Record<string, string>> = {
   throughput: {
     auto: "HTTP/1.1, else HTTP/2, HTTP/3 or WebTransport",
@@ -193,7 +193,7 @@ export function transportLabel(transport: string, role: Role): string | null {
   return Object.hasOwn(TRANSPORT, kind) ? TRANSPORT[kind as Transport] : null;
 }
 
-/** An HTTP version as recorded or as a browser's next hop names it ("h2"); one this build does not know reads as
+/** An HTTP version as recorded or as a browser's next hop names it ("h2"). One this build does not know reads as
     given. */
 export function httpVersionLabel(name: string): string {
   const known = protocolFromNextHop(name) ?? name;
@@ -212,7 +212,7 @@ export const READINESS = {
   used: { label: "Used", tone: "neutral" },
 } as const satisfies Record<Readiness | "blocked" | "in-use" | "used", Word>;
 
-/** What each readiness means, under its word as the title line. */
+/** Explains each readiness under its word as the title line. */
 export const READINESS_TIP = {
   unchecked: `${READINESS.unchecked.label}\nThe last check expired or a path changed\nIt reruns before the test`,
   checking: `${READINESS.checking.label}\nAsking each selected server which paths it offers`,
@@ -223,7 +223,7 @@ export const READINESS_TIP = {
   failed: `${READINESS.failed.label}\nA selected server or path did not answer its check`,
 } satisfies Record<Readiness, string>;
 
-/** The connection as the idle probes judge it between runs; a stalled run is Recovering wherever it shows. */
+/** The connection as the idle probes judge it between runs. A stalled run is Recovering wherever it shows. */
 export const CONNECTIVITY = {
   connected: { label: "Connected", tone: "ok" },
   degraded: { label: "Degraded", tone: "warn" },
@@ -248,12 +248,12 @@ export function allServersLabel(total: number, stayed: number, measured: number)
   return shown < total ? `${shown} of ${total} servers` : `All ${total} servers`;
 }
 
-/** Words joined with commas and a last "and", no serial comma: "Latency, Download and Upload". */
+/** Joins words with commas and a last "and", no serial comma, as in "Latency, Download and Upload". */
 export const listed = (words: readonly string[]) =>
   words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 
-/** Why Start is refused when planned stages outlast the shortest stage limit of the selected servers; "" when none
-    does. */
+/** Start is refused with these words when planned stages outlast the shortest stage limit of the selected servers.
+    "" means none does. */
 export function stageLimitError(config: TestConfig, limit: { ms: number; server: string | null }): string {
   const over = STAGES.filter((stage) => planned(config, stage) && config.duration[`${stage}Ms`] > limit.ms);
   if (!limit.server || !over.length) return "";
@@ -298,7 +298,7 @@ export const CADENCE: Record<PingCadence, { label: string; short: string }> = {
 };
 const SPACINGS = `Fast ${CADENCE_MS.fast} ms · Medium ${CADENCE_MS.medium} ms · Slow ${CADENCE_MS.slow} ms`;
 
-/** The explanations beside words and figures: a title line, then a few short lines. */
+/** The explanations beside words and figures each open with a title line, then a few short lines. */
 export const TIP = {
   latency: "Idle latency\nMedian round trip on an idle connection\nThe base for added latency",
   transferred: "Transferred\nPayload bytes measured in this stage",

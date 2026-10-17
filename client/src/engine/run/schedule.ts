@@ -1,4 +1,4 @@
-// The run's timeline: for each planned stage a warmup then its measured window, on the run's active clock.
+// Lays out the run's timeline, a warmup and then a measured window for each planned stage, on the run's active clock.
 import type { Direction } from "../types";
 
 export const STAGES = ["latency", "download", "upload", "bidirectional"] as const;
@@ -12,7 +12,7 @@ export interface Plan {
   skipLoadedLatencyWhenStageOff: boolean;
 }
 
-/** What a stage's warmup and window both exercise; the window reuses its warmup's connections. */
+/** Describes what a stage's warmup and window both exercise. The window reuses its warmup's connections. */
 export interface Activity {
   stage: Stage;
   transfer: Direction[];
@@ -27,7 +27,7 @@ export interface Segment {
   activity: Activity;
 }
 
-/** A stage runs when it is on and has time; 0 ms skips it. */
+/** A stage runs when it is on and has time. 0 ms skips it. */
 export const planned = (plan: Pick<Plan, "stages" | "duration">, stage: Stage) =>
   plan.stages[stage] && plan.duration[`${stage}Ms`] > 0;
 
@@ -38,7 +38,7 @@ const TRANSFER: Record<Stage, Activity["transfer"]> = {
   bidirectional: ["down", "up"],
 };
 
-/** Each planned stage's activity, in stage order. */
+/** Lists each planned stage's activity in stage order. */
 export const activities = (plan: Plan): Activity[] =>
   STAGES.filter((stage) => planned(plan, stage)).map((stage) => ({
     stage,
@@ -54,7 +54,7 @@ export const changeable = (current: Stage | null, stage: Stage) =>
 const SLOW_START_RTTS = 10;
 const WARMUP_CEILING_MS = 4_000;
 
-/** `plan` with its configured warmup stretched to ten round trips of `rttMs` but never past 4 s. */
+/** Returns `plan` with its configured warmup stretched to ten round trips of `rttMs` but never past 4 s. */
 export const adaptWarmup = <T extends Pick<Plan, "duration">>(plan: T, rttMs: number): T => {
   const stretched = Math.round((rttMs > 0 ? rttMs : 0) * SLOW_START_RTTS);
   const warmupMs = Math.min(WARMUP_CEILING_MS, Math.max(plan.duration.warmupMs, stretched));
@@ -76,15 +76,15 @@ export function timeline(plan: Plan): Segment[] {
   return segments;
 }
 
-/** The whole timeline's length. */
+/** Measures the whole timeline's length. */
 export const totalMs = (plan: Plan) => timeline(plan).at(-1)?.end ?? 0;
 
-/** The segment covering `elapsed`, or undefined past the end. */
+/** Finds the segment covering `elapsed`, or undefined past the end. */
 export const segmentAt = (segments: readonly Segment[], elapsed: number) =>
   segments.find((segment) => elapsed >= segment.start && elapsed < segment.end);
 
-/** The unfinished timeline under a changed plan. What ran stays; the running segment takes its new length (never
-    ending before now); stages not started yet follow. `between` means no segment is active. */
+/** Rebuilds the unfinished timeline under a changed plan. What ran stays, the running segment takes its new length
+    (never ending before now) and stages not started yet follow. `between` means no segment is active. */
 export function replan(segments: readonly Segment[], elapsed: number, plan: Plan, between = false): Segment[] {
   const active = between ? undefined : segmentAt(segments, elapsed);
   const kept = active ? segments.filter((s) => s.start < active.start) : segments.filter((s) => s.end <= elapsed);

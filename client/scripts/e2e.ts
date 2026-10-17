@@ -8,7 +8,7 @@ import { describe, host, launch, logs } from "../e2e/servers";
 // Paths resolve from the client folder, which the suite runs in.
 const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("../rust/target/ci/graphite-meter-server");
 if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing; mise run e2e-server builds it`);
-// CI runs the browser mise.toml pins; a local run takes whichever is installed.
+// CI runs the browser mise.toml pins. A local run takes whichever is installed.
 for (const [path, expected, name] of [
   [process.env.BUN_CHROME_PATH ?? "chrome", process.env.GM_EXPECTED_CHROME_VERSION, "Google Chrome for Testing"],
   [process.env.GM_FIREFOX_PATH ?? "firefox", process.env.GM_EXPECTED_FIREFOX_VERSION, "Mozilla Firefox"],
@@ -19,7 +19,7 @@ for (const [path, expected, name] of [
 }
 
 const dir = await mkdtemp(join(tmpdir(), "gm-e2e-"));
-// Everything the suite starts inherits it: servers, workers, browsers and their profiles, and port reservations.
+// Everything the suite starts inherits it, from servers and workers to browsers, their profiles and port reservations.
 process.env.TMPDIR = dir;
 
 // A worker can exit without its cleanup hooks, so whatever still runs with this directory is stopped (Linux /proc).
@@ -106,7 +106,7 @@ try {
 
   const started = performance.now();
   const command = process.argv.slice(2);
-  // A Firefox worker weighs more than Chrome's; three of them starve a CI runner's measurements.
+  // A Firefox worker weighs more than Chrome's, and three of them starve a CI runner's measurements.
   const workers = process.env.GM_E2E_BROWSER === "firefox" ? 2 : 3;
   const suite = Bun.spawn(command.length ? command : [process.execPath, "run", "test:e2e", `--parallel=${workers}`], {
     stdio: ["inherit", "inherit", "inherit"],

@@ -1,6 +1,6 @@
-// Connection checks for one server: its discovery, and the proof that a chosen throughput or latency path carries
-// data from this page, each within its budget. A failure carries the words its row shows, chosen where it happens,
-// and whether time alone can clear it.
+// Checks one server's connections. It discovers the server and proves that a chosen throughput or latency path
+// carries data from this page, each within its budget. A failure carries the words its row shows, chosen where it
+// happens, and whether time alone can clear it.
 import {
   preflight,
   probe as probeDocument,
@@ -46,7 +46,7 @@ import {
 
 export type Retry = "retryable" | "needs-user" | "impossible";
 
-/** A check that failed for a reason the user can read; `retry` says whether time alone can clear it. */
+/** A check that failed for a reason the user can read. `retry` says whether time alone can clear it. */
 export class CheckError extends Error {
   constructor(
     message: string,
@@ -64,7 +64,7 @@ export interface Failure {
   signIn: boolean;
 }
 
-/** What a check needs of its server and this page. */
+/** Gives a check what it needs of its server and this page. */
 export interface CheckContext {
   entry: CatalogEntry;
   auth: ServerAuth;
@@ -80,7 +80,7 @@ const ESTABLISH_MARGIN_MS = 500;
 // HTTP/3 bootstrap is bounded by attempts and by wall time together, so a path that never answers cannot hold a check.
 const H3_ATTEMPTS = 8;
 const H3_DEADLINE_MS = 2_000;
-/** Body completion can precede the browser's Resource Timing entry; a loaded browser delivers it late. */
+/** Body completion can precede the browser's Resource Timing entry. A loaded browser delivers it late. */
 const TIMING_DELIVERY_MS = 1_000;
 const PREPARATION_INTERVAL_MS = 120;
 const PREPARATION_RTTS = 5;
@@ -90,7 +90,7 @@ const SESSION_CHECK_BYTES = 16 * 1024;
 const NETWORK_FAILURE =
   /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
 
-/** The error and its causes, outermost first; engines word one network failure differently. */
+/** Walks the error and its causes, outermost first. Engines word one network failure differently. */
 function* causes(error: unknown): Generator<Error> {
   for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++) yield error;
 }
@@ -98,7 +98,7 @@ const isNetworkFailure = (error: unknown) =>
   [...causes(error)].some(({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message));
 const signsIn = (error: unknown) => [...causes(error)].some((cause) => cause instanceof SignInRequired);
 
-/** How a failed check reads on its server's row, `name` being the server's displayed name. */
+/** Words a failed check as its server's row reads it, `name` being the server's displayed name. */
 export function failureOf(error: unknown, name: string): Failure {
   if (signsIn(error)) return { message: `Sign in to ${name}`, retry: "needs-user", signIn: true };
   if (error instanceof CheckError) return { message: error.message, retry: error.retry, signIn: false };
@@ -110,7 +110,7 @@ export function failureOf(error: unknown, name: string): Failure {
   };
 }
 
-/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal; its own deadline reads "Connection
+/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal. Its own deadline reads "Connection
     check timed out". */
 export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>) {
   owner.throwIfAborted();
@@ -127,7 +127,7 @@ export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (sign
 
 let requests = 0;
 
-/** The browser's next-hop protocol for one unique URL, watched from before the request so that neither a full
+/** Watches the browser's next-hop protocol for one unique URL from before the request, so that neither a full
     Resource Timing buffer nor an older request's late entry can hide or replace it. */
 function watchProtocol(url: string) {
   let protocol: string | null | undefined;
@@ -161,7 +161,7 @@ function watchProtocol(url: string) {
           delivered = done;
         });
       signal.throwIfAborted();
-      // An entry already buffered whose observer callback is still queued.
+      // An entry may be buffered already while its observer callback is still queued.
       if (protocol === undefined) take(performance.getEntriesByName(url, "resource"));
       return protocol ?? null;
     },
@@ -177,7 +177,7 @@ async function decoded<T>(response: Response, decode: (value: unknown) => T, mes
   }
 }
 
-/** A plain refusal's first line says why, such as a proxy that names no client; any other body is released unread. */
+/** A plain refusal's first line says why, such as a proxy that names no client. Any other body is released unread. */
 async function refusal(response: Response): Promise<string> {
   const body = response.headers.get("Content-Type")?.startsWith("text/plain") ? response.body : null;
   if (!body) {
@@ -202,7 +202,7 @@ async function refusal(response: Response): Promise<string> {
   return line && `: ${line}`;
 }
 
-/** A failure after the request left: the page's sign-in gets its one expiry check, then the failure is worded. */
+/** After a request left and failed, the page's sign-in gets its one expiry check, then the failure is worded. */
 async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, unreachable: string): Promise<never> {
   signal.throwIfAborted();
   if (auth.kind === "session" && !signsIn(error)) await auth.ended(signal);
@@ -212,8 +212,8 @@ async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, un
   });
 }
 
-/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no probe, socket
-    or other side effect. A browser policy refuses it before any request. */
+/** Makes one GET /preflight, decoded, held to the catalog entry's origins and classified for this page, with no probe,
+    socket or other side effect. A browser policy refuses it before any request. */
 export async function discover(context: CheckContext, signal: AbortSignal): Promise<Discovery> {
   const { entry, auth, page, now } = context;
   signal.throwIfAborted();
@@ -277,8 +277,8 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
   }
 }
 
-/** The targets a check tries: Automatic's candidates in rank order, or only what an explicit choice resolves to.
-    Nothing to try fails before any request. */
+/** Lists the targets a check tries, Automatic's candidates in rank order, or only what an explicit choice resolves
+    to. Nothing to try fails before any request. */
 function targetsFor<R extends Role>(context: CheckContext, discovery: Discovery, role: R, selection: Selection) {
   const requested = resolve(discovery, role, selection, context.page);
   if (!requested) {
@@ -288,8 +288,8 @@ function targetsFor<R extends Role>(context: CheckContext, discovery: Discovery,
   return selection.kind === "auto" ? candidates(discovery, role, context.page) : [requested];
 }
 
-/** The first target that verifies, each within its own budget. Automatic stops at a sign-in refusal rather than
-    probing another endpoint; when all fail, the preferred target's failure says the most. */
+/** Returns the first target that verifies, each within its own budget. Automatic stops at a sign-in refusal rather
+    than probing another endpoint. When all fail, the preferred target's failure says the most. */
 async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   targets: readonly T[],
   signal: AbortSignal,
@@ -298,7 +298,7 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   let failure: unknown;
   let retryable = false;
   for (const target of targets) {
-    // Sockets add their establishment to the HTTP/3 bootstrap's wall time; each inner bound keeps its margin.
+    // Sockets add their establishment to the HTTP/3 bootstrap's wall time. Each inner bound keeps its margin.
     const sockets = target.transport === "fetch-stream" ? 0 : ESTABLISH_MS + ESTABLISH_MARGIN_MS;
     const budgetMs = H3_DEADLINE_MS + ESTABLISH_MARGIN_MS + sockets;
     try {
@@ -316,7 +316,7 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   throw failure;
 }
 
-/** Proves the throughput path `selection` names: the HTTP view of its origin answers a probe over the protocol it
+/** Proves the throughput path `selection` names. The HTTP view of its origin answers a probe over the protocol it
     claims, and a WebTransport session delivers bytes. */
 export async function checkThroughput(
   context: CheckContext,
@@ -352,7 +352,7 @@ async function verifyThroughput(
       if (protocolFromNextHop(answer.protocol) === "http3") break;
     }
   } catch (error) {
-    // The bootstrap ran out of time: the last answer says what the browser used.
+    // The bootstrap ran out of time, so the last answer says what the browser used.
     if (signal.aborted || !bounded.aborted || !answer) throw error;
   }
   const observed = protocolFromNextHop(answer!.protocol);
@@ -370,7 +370,7 @@ async function verifyThroughput(
   return { target: session ? target : view, fetch: view, probe: answer!.probe, browserProtocol: answer!.protocol };
 }
 
-/** Opening a session is not enough: the selected transfer must deliver a byte. */
+/** Opening a session is not enough. The selected transfer must deliver a byte. */
 async function verifySession(auth: ServerAuth, target: SessionTarget, signal: AbortSignal): Promise<void> {
   const datagrams = target.transport === "webtransport-datagram";
   let url = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
@@ -416,15 +416,15 @@ async function verifySession(auth: ServerAuth, target: SessionTarget, signal: Ab
   }
 }
 
-/** The bus a latency check proved, still open at the preparation cadence so the idle monitor can take it over; until
-    then it closes with its check, at the latest when the check's budget ends. */
+/** A latency check proved this bus and keeps it open at the preparation cadence so the idle monitor can take it
+    over. Until then it closes with its check, at the latest when the check's budget ends. */
 export interface CheckedBus {
   /** Its events go to `events` from now on, and the channel to its adopter. */
   adopt(events: ProbeChannelEvents): ProbeChannel;
   dispose(): void;
 }
 
-/** Proves the latency path `selection` names: its origin answers a probe while its bus answers pings, both at once. */
+/** Proves the latency path `selection` names. Its origin answers a probe while its bus answers pings, both at once. */
 export async function checkLatency(
   context: CheckContext,
   discovery: Discovery,
@@ -445,7 +445,7 @@ export async function checkLatency(
       ]);
       const release = () => channel.dispose();
       bounded.addEventListener("abort", release, { once: true });
-      // The budget may have ended between the answers and here; its abort has fired already.
+      // The budget may have ended between the answers and here. Its abort has fired already.
       if (bounded.aborted) release();
       const bus: CheckedBus = {
         adopt(next) {
@@ -474,8 +474,8 @@ export async function checkLatency(
 
 type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
 
-/** Opens the bus at the preparation cadence: once it answers, replies are collected for a moment; their median, or
-    null without one, and the bus, still open, with the events it reports to. */
+/** Opens the bus at the preparation cadence. Once it answers, replies are collected for a moment. It yields their
+    median, or null without one, and the bus, still open, with the events it reports to. */
 function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortSignal): Promise<Collected> {
   if (signal.aborted) return Promise.reject(signal.reason);
   const { promise, resolve, reject } = Promise.withResolvers<Collected>();
@@ -483,7 +483,7 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
   let channel: ProbeChannel | null = null;
   let collecting = false;
   let done = false;
-  /** The median, once collected; handed over with the channel once that exists. */
+  /** The median, once collected, is handed over with the channel once that exists. */
   let collected = null as { rttMs: number | null } | null;
   const finish = (error?: unknown) => {
     if (done) return;

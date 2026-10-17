@@ -1,4 +1,4 @@
-//! The running server: certificate, listeners and connections; shutdown closes listeners, ends lanes, drains.
+//! Runs the server with its certificate, listeners and connections. Shutdown closes listeners, ends lanes and drains.
 
 use crate::{
     app::{App, Endpoint},
@@ -36,7 +36,7 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-/// A server with its listeners bound.
+/// A server has its listeners bound.
 pub struct Server {
     app: Arc<App>,
     pool: Pool,
@@ -51,7 +51,7 @@ struct Listening {
     socket: Socket,
 }
 
-/// A listener's socket and what its connections speak, over TLS with the acceptor's ALPN.
+/// A listener's socket says what its connections speak, over TLS with the acceptor's ALPN.
 enum Socket {
     Http1(TcpListener, Option<TlsAcceptor>),
     Http2(TcpListener, TlsAcceptor),
@@ -70,7 +70,7 @@ impl Socket {
 type Accepting<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 impl Server {
-    /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port; a failure closes those bound.
+    /// Loads the certificate and binds every listener, HTTP/3 UDP on its TCP port. A failure closes those bound.
     pub async fn bind(mut config: Config, pool: Pool) -> Result<Self, String> {
         log!(Info, "server", "graphite-meter {ENGINE_VERSION} starting");
         let others = match config.catalog.servers.len() - 1 {
@@ -138,13 +138,13 @@ impl Server {
         Ok(Self { app, pool, listeners, certificates, shutdown })
     }
 
-    /// Where the listener of `endpoint` accepts.
+    /// Tells where the listener of `endpoint` accepts.
     pub fn local_addr(&self, endpoint: Endpoint) -> Option<SocketAddr> {
         let listening = self.listeners.iter().find(|listening| listening.endpoint == endpoint)?;
         listening.socket.local_addr().ok()
     }
 
-    /// How many endpoints share the HTTP/3 port.
+    /// Counts the endpoints sharing the HTTP/3 port.
     pub fn quic_endpoints(&self) -> usize {
         let quic = self.listeners.iter().find_map(|listening| match &listening.socket {
             Socket::Quic(quic) => Some(quic.listeners.len()),
@@ -301,7 +301,7 @@ async fn release_when_idle(app: &App, release: impl Fn()) {
     }
 }
 
-/// Returns freed pages to the OS from every pool thread's heap: mimalloc does so only while freeing threads allocate.
+/// Returns freed pages to the OS from every pool thread's heap. mimalloc does so only while freeing threads allocate.
 fn release_memory(pool: &Pool) {
     collect();
     for runtime in pool.runtimes() {
@@ -405,7 +405,7 @@ pub fn check_budget(config: &Config) -> Result<(), String> {
     Terms::of(config)?.check(0, configured_endpoint(config)?)
 }
 
-/// The QUIC endpoint's buffers without its socket's, or none without HTTP/3.
+/// Sizes the QUIC endpoint's buffers without its socket's, or none without HTTP/3.
 fn configured_endpoint(config: &Config) -> Result<usize, String> {
     match config.listener(ListenerKind::H3) {
         Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections.get(), 0, 1)
@@ -414,13 +414,13 @@ fn configured_endpoint(config: &Config) -> Result<usize, String> {
     }
 }
 
-/// What the buffer budget must cover: every connection's floor, the QUIC endpoint's buffers and the download block.
+/// The buffer budget must cover every connection's floor, the QUIC endpoint's buffers and the download block.
 #[derive(Debug, Clone, Copy)]
 struct Terms {
     limit: usize,
     connections: usize,
     h2: bool,
-    /// noq's own floor per connection, with HTTP/3 enabled.
+    /// noq adds its own floor per connection with HTTP/3 enabled.
     quic: Option<usize>,
 }
 
@@ -465,7 +465,7 @@ impl Terms {
     }
 }
 
-/// Bytes in binary units with at most one decimal, such as `1.5 MiB` or `256 KiB`.
+/// Writes bytes in binary units with at most one decimal, such as `1.5 MiB` or `256 KiB`.
 fn binary(bytes: u128) -> String {
     let (mut value, mut unit) = (bytes as f64, "B");
     for next in ["KiB", "MiB", "GiB", "TiB"] {

@@ -1,5 +1,5 @@
-// Fakes for the net tests: page time that moves only when a test says so, a network whose answers carry the next hop
-// Resource Timing reports, and latency buses.
+// Fakes the net tests' world with page time that moves only when a test says so, a network whose answers carry the
+// next hop Resource Timing reports, and latency buses.
 import { jest, spyOn } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { delay } from "../run/clock";
@@ -29,7 +29,7 @@ export const page: PageConfig = {
   webTransport: "available",
 };
 
-/** Credentials for a server that needs none. */
+/** Builds credentials for a server that needs none. */
 export const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, {} as PageSession);
 
 export const MARKER = { "Graphite-Meter-Auth": "required" };
@@ -45,8 +45,8 @@ export const preflight = (throughput: object[], latency: object[] = []) => ({
   capabilities: { throughput, latency, uploadCheckpoint: true, maxStageMs: 300_000 },
 });
 
-/** One answer: a JSON body after `afterMs` with the next hop the browser reports (h2 unless named; null when it names
-    none), a request that never answers, or one that cannot reach the server. */
+/** One answer is a JSON body after `afterMs` with the next hop the browser reports (h2 unless named, null when it
+    names none), a request that never answers, or one that cannot reach the server. */
 export type Answer =
   | { status?: number; body?: unknown; headers?: Record<string, string>; afterMs?: number; hop?: string | null }
   | "hang"
@@ -56,7 +56,7 @@ const settle = async () => {
   for (let turn = 0; turn < 4; turn++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-/** Fake timers from page time 0 and a network answering each request as `route` says, both until `restore`. */
+/** Installs fake timers from page time 0 and a network answering each request as `route` says, both until `restore`. */
 export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
   jest.useFakeTimers();
   Object.assign(globalThis, { BUILD: { clientVersion: "v9.9.9" } });
@@ -85,7 +85,7 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
   });
   return {
     requests,
-    /** When each request to `pathname` was sent, in page ms. */
+    /** Lists when each request to `pathname` was sent, in page ms. */
     sent: (pathname: string) => requests.filter(({ url }) => url.pathname === pathname).map(({ at }) => at),
     now: () => performance.now(),
     /** Fires the timers due within `ms` in order, letting what each starts settle before the next. */
@@ -107,13 +107,13 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
 export interface Bus {
   options: ProbeChannelOptions;
   events: ProbeChannelEvents;
-  /** The spacing it was opened with, or paced to since. */
+  /** The bus was opened with this spacing, or paced to it since. */
   intervalMs: number | null;
   disposed: boolean;
 }
 
-/** Latency buses that answer `rttMs` after measuring starts and once per interval after the next reply, or never
-    while `rttMs` is null; every bus opened stays listed. */
+/** Opens latency buses that answer `rttMs` after measuring starts and once per interval after the next reply, or
+    never while `rttMs` is null. Every bus opened stays listed. */
 export class FakeBuses {
   rttMs: number | null = 10;
   readonly opened: Bus[] = [];

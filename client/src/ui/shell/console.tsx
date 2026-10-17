@@ -1,5 +1,5 @@
-// The console: the page frame every view lives in. Top bar; Settings, then the workspaces, the status strip and
-// Details, in Tab order; the phase toast, the live region and the shell's dialogs. Views come from their owners.
+// The console is the page frame every view lives in. In Tab order it holds the top bar, Settings, the workspaces,
+// the status strip and Details, then the phase toast, live region and shell dialogs. Their owners supply the views.
 import "./shell.css";
 import type { App } from "../../app/app";
 import { markDocument } from "../../app/document";
@@ -25,28 +25,28 @@ export interface Views {
   measurement(shell: Shell): Node;
   settings(shell: Shell): Node;
   details(shell: Shell): Node;
-  /** Built as History opens and disposed as it closes. */
+  /** The view is built as History opens and disposed as it closes. */
   history(shell: Shell, selectedId: Read<string | null>): Node;
-  /** The status strip's facts, before the keyboard hints. */
+  /** Renders the status strip's facts, before the keyboard hints. */
   status(shell: Shell): Node;
   toast(shell: Shell): Node;
-  /** The connection indicator in the top bar. */
+  /** Renders the connection indicator in the top bar. */
   connectivity(shell: Shell): Node;
 }
 
-// Moments that mark a result arriving play when it arrives; what the console mounts with shows settled.
+// Moments that mark a result arriving play when it arrives. What the console mounts with shows settled.
 const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
 const finishSettled = (stage: HTMLElement) => {
   for (const animation of stage.getAnimations({ subtree: true }))
     if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName)) animation.finish();
 };
 
-/** Mounts the console into `root` and renders the URL it loaded with; the disposer takes it down again. */
+/** Mounts the console into `root` and renders the URL it loaded with. The disposer takes it down again. */
 export function mountConsole(root: HTMLElement, app: App, views: Views): { shell: Shell; dispose(): void } {
   const [shell, dispose] = scope(() => {
     markDocument(app.preferences);
     const frame = (<main id="console" data-phase={app.run.phase} />) as HTMLElement;
-    // In the page first, so the layout starts from the console's real width.
+    // The frame enters the page first, so the layout starts from the console's real width.
     root.append(frame);
     onCleanup(() => frame.remove());
     const layout = createLayout(frame);
@@ -168,7 +168,7 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
   );
 }
 
-/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell holds every run word,
+/** Names the keys the page answers in the strip while shortcuts are on. The run word's cell holds every run word,
     so a change never moves the strip. */
 function ShortcutHints(props: { app: App }): Node {
   const { app } = props;

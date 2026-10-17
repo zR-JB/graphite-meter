@@ -53,7 +53,7 @@ test("an arrow key or a step key steps the time typed into a field, not the one 
   const settings = await openSettings(page);
   await settings.getByRole("button", { name: "Custom", exact: true }).click();
   const download = settings.getByRole("spinbutton", { name: "Download stage time" });
-  // Typed, not yet committed: no change event until the field is left.
+  // Typed text is not yet committed. No change event fires until the field is left.
   const type = (text: string) =>
     download.evaluate((field: HTMLInputElement, text: string) => {
       field.focus();
@@ -70,7 +70,7 @@ test("an arrow key or a step key steps the time typed into a field, not the one 
   await type("soon");
   await page.press("ArrowUp");
   await expect(download).toHaveValue("3 s");
-  // The key beside the field steps the typed time too: 20 typed over 3 s lengthens from 20 s.
+  // The key beside the field steps the typed time too, so 20 typed over 3 s lengthens from 20 s.
   await type("20");
   await settings.getByRole("button", { name: "Download stage time, increase" }).click();
   await expect(download).toHaveValue("21 s");
@@ -90,7 +90,7 @@ test("a unit switch relabels the dial in place, on round ticks, without replayin
               (animation as CSSAnimation).animationName === "result-sweep" && animation.playState === "running",
           ).length,
     );
-  // The result takes the dial a hand-off after the run completes; its sweep ends before the switch.
+  // The result takes the dial a hand-off after the run completes. Its sweep ends before the switch.
   await expect.poll(() => page.locator(".result-arc").all((paths: Element[]) => paths.length)).toBeGreaterThan(0);
   await expect.poll(sweeps).toBe(0);
   const settings = await openSettings(page);
@@ -146,7 +146,7 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await closed(details);
   await page.press("Escape");
   await expect(runButton(page, "Stop test")).toBeVisible();
-  // A stop before the run is under way cancels the start; one after it aborts the run.
+  // A stop before the run is under way cancels the start. One after it aborts the run.
   await expect(phase(page, "idle")).toHaveCount(0);
   await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
@@ -201,7 +201,7 @@ test.chrome("a held shortcut acts on its press, and its repeats do nothing", asy
       autoRepeat,
     });
   await key("keyDown");
-  // Five repeats: had each toggled, History would end closed.
+  // History would end closed had each of the five repeats toggled.
   for (let i = 0; i < 5; i++) await key("keyDown", true);
   await key("keyUp");
   await expect(page.locator(".history-workspace")).toHaveCount(1);
@@ -213,10 +213,10 @@ test("Space and R run the test from page load; a focused control keeps Space", a
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });
   await ready(page);
-  // As after a fresh load: focus left the Settings button that ready() used.
+  // Focus leaves the Settings button that ready() used, as after a fresh load.
   await page.evaluate(() => (document.activeElement as HTMLElement).blur());
   await page.press(" ");
-  // Stop shows from the press; the run is under way once its first stage has started.
+  // Stop shows from the press. The run is under way once its first stage has started.
   await expect(runButton(page, "Stop test")).toBeVisible();
   await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
   await page.press("r");
@@ -256,7 +256,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   const link = dialog.locator(".group:last-child .component:last-child .where a:last-child");
   const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());
-  // Past the last control a modal hands focus to the browser, never the page; only Chrome has its UI headless.
+  // Past the last control a modal hands focus to the browser, never the page. Only Chrome has its UI headless.
   if (browser !== "chrome") return;
   await page.press("Tab");
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
@@ -324,7 +324,7 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
     await wait(600);
     key("d");
     await wait(60);
-    // Mid-way out it is still on screen: the sheet itself, or a copy where a browser cannot keep it displayed.
+    // Mid-way out it is still on screen, as the sheet itself or as a copy where a browser cannot keep it displayed.
     const leaving = [...document.querySelectorAll('dialog[aria-label="Details"]')].some(
       (el) => el.checkVisibility() && el.getBoundingClientRect().left < innerWidth,
     );
@@ -392,7 +392,7 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in; the address is pressed once it rests. Scroll-driven
+  // A busy runner can still be sliding the sheet in, and the address is pressed once it rests. Scroll-driven
   // animations never finish, so only timed ones are waited for.
   await page.evaluate(() =>
     Promise.all(
@@ -435,7 +435,7 @@ test.chrome(
       });
     const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
     await page.touch("start", x, y);
-    // Upwards, so the sheet's content scrolls rather than the sheet being dragged away.
+    // The swipe goes upwards, so the sheet's content scrolls rather than the sheet being dragged away.
     for (let step = 1; step <= 8; step++) await page.touch("move", x, y - step * 15);
     await page.touch("end", x, y - 120);
     // A tap during the swipe's fling only stops the fling, on a phone too, so the next one waits for it to rest.

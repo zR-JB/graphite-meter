@@ -1,4 +1,4 @@
-// The latency lanes: a row per probe population, its figures and its spread as a box plot on one shared axis.
+// Draws the latency lanes, a row per probe population, its figures and its spread as a box plot on one shared axis.
 import type { App } from "../../app/app";
 import type { AddedLatency, LatencySummary } from "../../engine/measure/latency";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -38,15 +38,15 @@ import { inView, measure, painter, scrub } from "./paint";
 export interface LaneInput {
   stage: Stage;
   summary: LatencySummary | null;
-  /** The newest reply's median while the stage runs; the live view marks it. */
+  /** Holds the newest reply's median while the stage runs; the live view marks it. */
   current?: number | null;
-  /** The stage runs now, its warmup included: the row washes in. */
+  /** The stage runs now, its warmup included, so the row washes in. */
   active?: boolean;
-  /** Why this population's probes stopped. */
+  /** Says why this population's probes stopped. */
   failure?: string;
 }
 
-/** What stands beside the title: why the idle stage failed, a choice of whose latency to show, or whose it is. */
+/** Beside the title stands why the idle stage failed, a choice of whose latency to show, or whose it is. */
 type LanesHead =
   | { kind: "none" }
   | { kind: "failure"; text: string }
@@ -63,8 +63,8 @@ interface Row {
   values: Values;
 }
 
-/** The lanes for a live run ("bare": marks glide, the latest reply is marked) or a saved result ("compact"), rows in
-    stage order. A row kept as the same object draws nothing again; until the run has `added`, the medians give it. */
+/** Draws the lanes of a live run ("bare") or a saved result ("compact") in stage order. Live marks glide and mark the
+    latest reply. A row kept as the same object draws nothing again; the medians give `added` until the run has it. */
 export function LatencyProfileView(props: {
   lanes: () => readonly LaneInput[];
   variant?: "bare" | "compact";
@@ -88,7 +88,7 @@ export function LatencyProfileView(props: {
   const measured = computed(() => rows().some((row) => row.values.center !== null));
   const several = computed(() => rows().length > 1);
   const axis = computed(() => lanesAxisMs(rows().map((row) => row.values)));
-  // Lit like a stage card: dim until something is measured, brightest while the idle stage runs.
+  // The card lights like a stage card, dim until something is measured and brightest while the idle stage runs.
   const light = computed(() => (idleActive() ? "active" : measured() ? "complete" : "pending"));
   const ticks = handoff(
     () => [0, axis() / 2, axis()].map((tick) => fmtTick(tick)),
@@ -211,7 +211,7 @@ function Lane(props: {
   const pct = (ms: number) => Math.min(100, Math.max(0, (ms / props.axis()) * 100));
   const overflow = computed(() => (shown().max ?? 0) > props.axis());
 
-  // The row's plot, sized by its attributes from the track's measured box.
+  // The row's plot is sized by its attributes from the track's measured box.
   const track = (
     <div
       class="track"
@@ -271,7 +271,7 @@ function Lane(props: {
     />
   ) as HTMLElement;
   const size = measure({ track }).track;
-  // Marks placed by percentages of the axis, so a resize moves them in layout; they paint in this order.
+  // Marks are placed by percentages of the axis, so a resize moves them in layout; they paint in this order.
   const art = (<span class="lane-art" aria-hidden="true" />) as HTMLElement;
   const mark = (name: string) => Object.assign(document.createElement("i"), { className: name });
   const range = mark("range");
@@ -318,7 +318,7 @@ function Lane(props: {
     const later = order.slice(order.indexOf(node) + 1).find((each) => each.isConnected);
     art.insertBefore(node, later ?? null);
   };
-  // What each mark was last given, so a frame writes only what moved.
+  // Each mark remembers what it was last given, so a frame writes only what moved.
   const placed = new WeakMap<HTMLElement, string>();
   const place = (node: HTMLElement, left: number, width?: number) => {
     const at = width === undefined ? `${left}` : `${left} ${width}`;
@@ -345,7 +345,7 @@ function Lane(props: {
     const box = p10 !== null && p90 !== null;
     attach(band, box);
     if (box) place(band, p10, p90 - p10);
-    // Under the box, clear of the whisker: a bracket from the idle median to a loaded median, what the load added.
+    // A bracket under the box, clear of the whisker, spans the idle median to a loaded median, what the load added.
     const base = props.idle();
     const centre = at("center");
     const from = base !== null && props.several() && (values.center ?? 0) > base ? pct(base) : null;
@@ -431,8 +431,8 @@ function Lane(props: {
   );
 }
 
-/** The plate reading the row: the figure of the mark nearest the pointer, over it and inside the plot, and a guide on
-    the mark. The plate stands as far along its own width as the mark lies along the plot, so it never leaves the
+/** Reads the row on a plate, the figure of the mark nearest the pointer, over it and inside the plot, with a guide
+    on the mark. The plate stands as far along its own width as the mark lies along the plot, so it never leaves the
     plot and is never measured; both are placed before they show, then glide from mark to mark. */
 function Reading(props: {
   metric: Read<Metric>;
@@ -463,8 +463,8 @@ function Reading(props: {
   );
 }
 
-/** The live console's lanes: the run's rows, whose latency to show when several servers run, and the idle stage's
-    failure, heard once when it fails. A row stays the same object while its values do, so it draws nothing again. */
+/** Draws the live console's lanes, the run's rows, a choice of whose latency to show with several servers, and the
+    idle stage's failure, heard once. A row stays the same object while its values do, so it draws nothing again. */
 export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;
@@ -487,7 +487,7 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
     const next = STAGES.filter((stage) => live.visibility(stage).lane).map((stage) => {
       const state = live.states()[stage];
       const active = state === "warmup" || state === "running" || state === "recovering";
-      // A settled lane draws like a saved one: the latest reply marks only a running stage.
+      // A settled lane draws like a saved one, as the latest reply marks only a running stage.
       const next: LaneInput = {
         stage,
         summary: live.summaries()[stage] ?? null,

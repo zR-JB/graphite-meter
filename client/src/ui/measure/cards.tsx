@@ -1,4 +1,4 @@
-// The result cards: the live console's carry strips and follow the frame clock; History's show a saved result.
+// Draws the result cards. The live console's carry strips and follow the frame clock; History's show a saved result.
 import type { App } from "../../app/app";
 import type { RunResult } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
@@ -31,7 +31,7 @@ import type { Live } from "./live";
 import { Figure, painter, setText } from "./paint";
 import { StageGraph, type Head } from "./strip";
 
-/** The figures a card's painter writes while its stage runs. */
+/** A card's painter writes these figures while its stage runs. */
 interface Figures {
   num: Figure;
   down: Figure;
@@ -39,7 +39,7 @@ interface Figures {
   combined: Figure | null;
 }
 
-/** One stage's card. The headline is re-made, rising in, when the lens shows another server. */
+/** Builds one stage's card. The headline is re-made, rising in, when the lens shows another server. */
 function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<string>; strip?: () => Node | null }): {
   element: HTMLElement;
   figures: Figures;
@@ -117,7 +117,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
     );
   });
   const unknown = computed(() => card().facts.every((fact) => fact.value === MISSING));
-  // The quiet line: a failure's reason, else the wire rate, else latency's jitter; then time without data.
+  // The quiet line shows a failure's reason, else the wire rate, else latency's jitter, then time without data.
   const reason = computed(() => (quiet() ? "" : props.reason()));
   const wire = computed(() => card().wire?.value ?? "");
   const overhead = computed(() => card().wire?.overhead ?? "");
@@ -206,7 +206,7 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
   return { element, figures };
 }
 
-/** The cards in a grid of up to four across, pairing up and then stacking as the console narrows. */
+/** Lays the cards in a grid of up to four across, pairing up and then stacking as the console narrows. */
 function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) => HTMLElement; issues?: Node }): Node {
   const grid = (
     <div class="result-cards" ref={tipGroup}>
@@ -229,7 +229,7 @@ function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) =
   return summary;
 }
 
-/** A saved result's cards, as History shows them: settled stages only, no strips, and the issues no card carries.
+/** Shows a saved result's cards as History does, settled stages only, no strips, and the issues no card carries.
     `lens` "" shows every server together; `units` carry the result's own tier, so its figures read as they did
     live. */
 export function ResultSummary(props: {
@@ -282,8 +282,8 @@ export function ResultSummary(props: {
 
 const RUNNING_STATES = new Set<StageState>(["warmup", "running", "recovering"]);
 
-/** The live console's cards: settled stages from the run's results, the running one following the frame clock with its
-    strip's leading edge, the rest waiting; a completed run is announced once. */
+/** Draws the live console's cards. Settled stages read the run's results, the running one follows the frame clock
+    with its strip's leading edge, and the rest wait; a completed run is announced once. */
 export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;
@@ -306,7 +306,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const attributed = computed(() => (details()?.selection.length ?? 1) > 1 && !lens());
   const plan = computed(() => run.plan() ?? app.preferences.config());
 
-  /** What a stage that has not settled shows, read from the run only while it runs or after it stopped. */
+  /** Reads what a stage that has not settled shows, from the run only while it runs or after it stopped. */
   const liveEvidence = (stage: Stage, state: StageState): LiveEvidence => {
     const running = RUNNING_STATES.has(state);
     const idle = live.summaries().latency ?? null;
@@ -487,7 +487,7 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     return element;
   };
 
-  // Once per completed run, never again for a unit or lens change; a result already shown at mount is not news.
+  // A run is announced once on completion, never again for a unit or lens change; a result shown at mount is not news.
   let spoken = run.result.peek();
   effect(() => {
     const result = run.result();

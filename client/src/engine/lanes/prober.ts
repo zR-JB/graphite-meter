@@ -1,6 +1,6 @@
-// One latency bus's probing, whatever carries it (docs/MEASUREMENTS.md#latency-probing): fixed or reply-driven pacing
-// within an in-flight window, RFC 6298 deadlines fixed at send, outcomes batched for the owner, reconnects with
-// backoff, and a drain to the probes' own deadlines at each window's end. One timer serves it all.
+// Probes one latency bus, whatever carries it (docs/MEASUREMENTS.md#latency-probing). It paces probes, fixed or
+// reply-driven, within an in-flight window, fixes RFC 6298 deadlines at send, batches outcomes for the owner,
+// reconnects with backoff and drains to the probes' own deadlines at each window's end. One timer serves it all.
 import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
 import { DEADLINE_FLOOR_MS, RttEstimator } from "../measure/latency";
@@ -10,27 +10,27 @@ const FLUSH_MS = 50;
 const BATCH_MAX = 128;
 const RECONNECT_MIN_MS = 100;
 const RECONNECT_MAX_MS = 2_000;
-/** Evicted probes a late reply may still name: the only way the estimator learns a jump from fast to slow. */
+/** A late reply may still name this many evicted probes. Only so does the estimator learn a jump from fast to slow. */
 const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
 const BACKUP_CEILING_MS = 1_000;
 /** A timer this late means the worker or its page froze, as the run's own gap rule judges a page. */
 const FROZEN_MS = 1_500;
 
-/** Time as the prober sees it, so tests can drive it. */
+/** Gives the prober its time, so tests can drive it. */
 interface ProberClock {
   now(): number;
-  /** Epoch ms at `now() === 0`: outcomes leave the realm on epoch time. */
+  /** Epoch ms at `now() === 0`, since outcomes leave the realm on epoch time. */
   readonly origin: number;
   /** Arms the one timer to call `wake()` in `ms`, replacing an armed one. */
   arm(ms: number): void;
   disarm(): void;
 }
 
-/** The connection side: a dial is answered by opened(), closed() or signIn(), and may lapse() first. */
+/** Connects the prober. A dial is answered by opened(), closed() or signIn(), and may lapse() first. */
 interface ProberIO {
   dial(): void;
-  /** Sends on the open connection; throws or rejects when the browser could not send. */
+  /** Sends on the open connection. It throws or rejects when the browser could not send. */
   send(text: string): void | Promise<void>;
   /** Closes the current connection, which then answers nothing. */
   hangUp(): void;
@@ -40,11 +40,11 @@ interface ProberIO {
 interface Probe {
   sentAt: number;
   deadline: number;
-  /** A datagram's write resolves later; one still unconfirmed at its deadline never left, so it cannot time out. */
+  /** A datagram's write resolves later. One still unconfirmed at its deadline never left, so it cannot time out. */
   confirmed: boolean;
   /** Warmup probes never enter a population. */
   measured: boolean;
-  /** When its window ended: a later outcome resolves it outside the window. */
+  /** The probe's window ended at this time, so a later outcome resolves it outside the window. */
   cutoff: number;
 }
 
@@ -57,7 +57,7 @@ export class Prober {
   readonly #rtt = new RttEstimator();
   #pace: { intervalMs: number | null; maxInFlight: number };
   #nextId = 0;
-  /** The latest probe: a reply-driven chain steps when it resolves. */
+  /** A reply-driven chain steps when this latest probe resolves. */
   #head = -1;
   #sentAt = -Infinity;
   #backupAt = Infinity;
@@ -102,10 +102,10 @@ export class Prober {
     if (this.#state === "stopped") return;
     if (this.#state === "open") this.#state = "connecting";
     const now = this.clock.now();
-    // A deadline that passed before the gap stays a timeout; the others are unfinished, never timeouts.
+    // A deadline that passed before the gap stays a timeout. The others are unfinished, never timeouts.
     this.#sweep(now);
     this.#interrupt();
-    // Once per outage, until replies flow again.
+    // The stall is posted once per outage, until replies flow again.
     if (!this.#stalled) this.io.post({ type: "stalled", detail });
     this.#stalled = true;
     this.#backoff = Math.min(RECONNECT_MAX_MS, this.#backoff * 2 || RECONNECT_MIN_MS);
@@ -113,14 +113,14 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** A dial outlived its budget and still awaits the browser's verdict: an outage as far as the owner can tell. */
+  /** A dial outlived its budget and still awaits the browser's verdict. The owner can only read that as an outage. */
   lapsed(detail: string): void {
     if (this.#state !== "connecting" || this.#stalled) return;
     this.#stalled = true;
     this.io.post({ type: "stalled", detail });
   }
 
-  /** The server ended the login or grant: nothing pending gets a verdict. */
+  /** The server ended the login or grant, so nothing pending gets a verdict. */
   signIn(): void {
     if (this.#state === "stopped") return;
     this.#interrupt();
@@ -128,7 +128,7 @@ export class Prober {
     this.#finish();
   }
 
-  /** A message from the server, read at `at` before it was parsed. */
+  /** Handles a message from the server, read at `at` before it was parsed. */
   frame(text: string, at: number): void {
     if (this.#state !== "open") return;
     // A reply that reached a frozen worker is read only after the freeze, perhaps before the late timer.
@@ -160,7 +160,7 @@ export class Prober {
     this.#settle(at);
   }
 
-  /** Outcomes count from now on; a fixed cadence probes the window's start at once. */
+  /** Outcomes count from now on. A fixed cadence probes the window's start at once. */
   measure(): void {
     if (this.#state === "stopped") return;
     this.#measuring = true;
@@ -171,16 +171,16 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain starting at once;
-      probes in flight keep their deadlines. */
+  /** Applies from the next send on, as a fixed cadence spaced from the last send or a reply-driven chain starting at
+      once. Probes in flight keep their deadlines. */
   pace(intervalMs: number | null, maxInFlight = this.#pace.maxInFlight): void {
     this.#pace = { intervalMs, maxInFlight };
     this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
     this.wake();
   }
 
-  /** Ends the measured window: its probes in flight drain to their own deadlines, each at most 10 s away, and the
-      drain is acknowledged; the bus probes on, unmeasured. */
+  /** Ends the measured window. Its probes in flight drain to their own deadlines, each at most 10 s away, and the
+      drain is acknowledged. The bus probes on, unmeasured. */
   stop(): void {
     if (this.#state === "stopped") return this.io.post({ type: "drained" });
     const now = this.clock.now();
@@ -195,7 +195,7 @@ export class Prober {
     this.#timerAt = Infinity;
     if (this.#state === "stopped") return;
     const now = this.clock.now();
-    // Probes in flight across a freeze get no verdict: their replies may be waiting unread, and their RTTs would
+    // Probes in flight across a freeze get no verdict. Their replies may be waiting unread, and their RTTs would
     // carry the freeze.
     if (now - due > FROZEN_MS) this.#interrupt();
     if (now >= this.#reconnectAt) {
@@ -209,8 +209,8 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** Sends when it is the next probe's turn and the window has room: a fixed cadence keeps start-to-start spacing
-      from the actual sends, never catching up; a reply-driven chain steps when its latest probe resolves or its
+  /** Sends when it is the next probe's turn and the window has room. A fixed cadence keeps start-to-start spacing
+      from the actual sends, never catching up. A reply-driven chain steps when its latest probe resolves or its
       backup fires, and sleeps while the window is full. */
   #step(now: number, chained: boolean): void {
     const { intervalMs, maxInFlight } = this.#pace;
@@ -268,8 +268,8 @@ export class Prober {
     this.#settle(this.clock.now());
   }
 
-  /** Resolves each probe at the deadline fixed when it was sent: a timeout, or a send failure while its write is still
-      unconfirmed. */
+  /** Resolves each probe at the deadline fixed when it was sent. It timed out, or its send failed if its write is
+      still unconfirmed. */
   #sweep(now: number): void {
     let evicted = false;
     let head = false;
@@ -292,11 +292,11 @@ export class Prober {
       this.#flush();
       this.io.post({ type: "interrupted", count: unsent, reason: "send-failed" });
     }
-    // A timeout completes a chain step as a reply would; a write given up wakes a chain its full window put to sleep.
+    // A timeout completes a chain step as a reply would. A write given up wakes a chain its full window put to sleep.
     if (evicted) this.#step(now, head);
   }
 
-  /** The RTO within 8 ms and 1 s, so a reply-driven chain covers a late reply well before its deadline. */
+  /** Bounds the RTO within 8 ms and 1 s, so a reply-driven chain covers a late reply well before its deadline. */
   #backupMs(): number {
     const srtt = this.#rtt.srttMs;
     if (srtt === null) return DEADLINE_FLOOR_MS;
@@ -347,7 +347,7 @@ export class Prober {
     this.io.post({ type: "drained" });
   }
 
-  /** Ends a drain at its window's last deadline, or once nothing of it is pending; otherwise arms the timer for the
+  /** Ends a drain at its window's last deadline, or once nothing of it is pending. Otherwise it arms the timer for the
       earliest of the next send, a deadline, the batch flush, the drain's end and a reconnect. An armed timer that
       fires earlier just re-arms. */
   #settle(now: number): void {
@@ -365,7 +365,7 @@ export class Prober {
     let at = Math.min(this.#flushAt, this.#reconnectAt, drainAt);
     for (const probe of this.#pending.values()) at = Math.min(at, probe.deadline);
     const { intervalMs, maxInFlight } = this.#pace;
-    // A backup due while the window is full puts the chain to sleep; a full cadence waits for a free slot.
+    // A backup due while the window is full puts the chain to sleep. A full cadence waits for a free slot.
     if (this.#state === "open")
       at = Math.min(
         at,

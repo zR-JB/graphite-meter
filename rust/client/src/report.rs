@@ -1,4 +1,4 @@
-//! A finished run as the printed report, with each server's share and the run's issues when several servers ran.
+//! Prints a finished run as the report, with each server's share and the run's issues when several servers ran.
 use crate::{
     events::{Run, View},
     format::{
@@ -13,11 +13,11 @@ use crate::{
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::Duration;
 
-/// The width of a report that does not reach a terminal.
+/// A report that does not reach a terminal takes this width.
 pub const WIDTH: usize = 100;
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
 
-/// The report of the view's finished run; none for a run that never started or lost its sign-in.
+/// Builds the report of the view's finished run, none for a run that never started or lost its sign-in.
 pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     let started = view.run.as_ref();
     let reported = started.filter(|run| run.outcome.is_some() && unreported(view).is_none());
@@ -38,7 +38,7 @@ pub fn report(view: &View, width: usize, palette: &Palette) -> Vec<Line> {
     blocks.join(&Line::default()).into_iter().map(Line::trimmed).collect()
 }
 
-/// Why the view's run has no report: it never started, or its sign-in expired.
+/// Says why the view's run has no report. It never started, or its sign-in expired.
 pub fn unreported(view: &View) -> Option<String> {
     let run = view.latest()?;
     let error = run.error.as_ref();
@@ -78,7 +78,7 @@ impl Report<'_> {
         Some(self.result(stage)?.status(self.focus))
     }
 
-    /// What a planned stage shows without a value.
+    /// A planned stage shows this without a value.
     fn unmeasured(&self, stage: Stage) -> &'static str {
         let stopped = self.run.outcome == Some(Outcome::Stopped);
         let skipped = if stopped { "Not reached" } else { "Skipped" };
@@ -88,7 +88,7 @@ impl Report<'_> {
         })
     }
 
-    /// The latency server's population in `stage`.
+    /// Finds the latency server's population in `stage`.
     fn population(&self, stage: Stage) -> Option<Population> {
         let result = self.result(stage)?;
         let server = result.servers.iter().find(|server| Some(&server.server) == self.focus);
@@ -114,7 +114,7 @@ impl Report<'_> {
             .and(facts.join(" · "), self.palette.muted)
     }
 
-    /// Each planned direction's mean rate and facts.
+    /// Lists each planned direction's mean rate and facts.
     fn throughput(&self) -> Vec<Line> {
         let (palette, partial) = (self.palette, format::status_label(StageStatus::Partial));
         let mut rows = Vec::new();
@@ -162,7 +162,7 @@ impl Report<'_> {
         lines
     }
 
-    /// The latency grid, the failures under it and whether a row shows Added; none when nothing was measured.
+    /// Builds the latency grid, the failures under it and whether a row shows Added, none when nothing was measured.
     fn results(&self, heading: &str) -> Option<(Vec<Line>, Vec<Line>, bool)> {
         let palette = self.palette;
         let idle = self.population(Stage::Latency).and_then(|idle| idle.median());
@@ -206,7 +206,7 @@ impl Report<'_> {
         Some((grid, failures, added_shown))
     }
 
-    /// That a direction stopped in its window, or why every server left its stage.
+    /// Says that a direction stopped in its window, or why every server left its stage.
     fn throughput_failure(&self, result: &StageResult, direction: Direction) -> Option<Line> {
         let label = direction_label(result.stage, direction);
         if result.stopped {
@@ -219,7 +219,7 @@ impl Report<'_> {
         gone.then(|| Line::styled(format!("{label}: {}", last.reason.label()), self.palette.err))
     }
 
-    /// That the latency server's population stopped, or why it ended early: its first failure in the stage.
+    /// Says that the latency server's population stopped, or why it ended early, from its first failure in the stage.
     fn latency_failure(&self, result: &StageResult) -> Option<Line> {
         let label = population_label(result.stage);
         if result.stopped {
@@ -233,7 +233,7 @@ impl Report<'_> {
         Some(Line::styled(format!("{label}: {}", failed?.failure.reason.label()), self.palette.err))
     }
 
-    /// Latency populations with issues, the server's share of the round trips, and what Added means.
+    /// Notes latency populations with issues, the server's share of the round trips, and what Added means.
     fn notes(&self, added_shown: bool) -> Vec<Line> {
         let (mut notes, mut timing) = (Vec::new(), Vec::new());
         for &(stage, _) in &self.run.plan {
@@ -260,7 +260,7 @@ impl Report<'_> {
         notes
     }
 
-    /// The label and its facts, wrapped under the label when the first does not fit beside it; none without facts.
+    /// Wraps the label and its facts, under the label when the first does not fit beside it, none without facts.
     fn note(&self, label: &str, facts: &[String]) -> Vec<Line> {
         let room = self.width.saturating_sub(2);
         let Some((head, rest)) = facts.split_first() else { return Vec::new() };
@@ -276,7 +276,7 @@ impl Report<'_> {
         lines.into_iter().map(muted).collect()
     }
 
-    /// Muted headers over text cells, or each row's facts under its name when the columns do not fit.
+    /// Lays muted headers over text cells, or each row's facts under its name when the columns do not fit.
     fn grid(&self, headers: &[&str], rows: Vec<Vec<Line>>) -> Vec<Line> {
         let (muted, text) = (self.palette.muted, self.palette.text);
         let mut widths: Vec<_> = headers.iter().map(|header| crate::text::width(header)).collect();
@@ -308,7 +308,7 @@ impl Report<'_> {
         lines
     }
 
-    /// Per-server mean rates and latency medians, ✗ once left, and issues.
+    /// Lists per-server mean rates and latency medians, ✗ once left, and issues.
     fn details(&self) -> Vec<Line> {
         let (palette, run) = (self.palette, self.run);
         let planned = run.plan.iter();
@@ -363,7 +363,7 @@ impl Report<'_> {
         lines.into_iter().map(|line| line.fit(self.width)).collect()
     }
 
-    /// The run's outcome with how many of its servers remain.
+    /// States the run's outcome with how many of its servers remain.
     fn notice(&self) -> String {
         let selected = self.view.servers.len();
         let servers = self.view.servers.iter();
@@ -376,7 +376,7 @@ impl Report<'_> {
     }
 }
 
-/// Median, Added, P95, Jitter and Timeouts.
+/// Fills Median, Added, P95, Jitter and Timeouts.
 fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<String> {
     let (summary, median) = (population.summary, population.median());
     let mut cells = vec![MISSING.to_owned(); 5];
@@ -399,7 +399,7 @@ fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<String>
     cells
 }
 
-/// The peak without the mean's unit, bytes, the window and, for uploads, that the receiver timed it.
+/// Lists the peak without the mean's unit, bytes, the window and, for uploads, that the receiver timed it.
 fn throughput_facts(throughput: Throughput, measured: Duration, direction: Direction) -> Vec<String> {
     let mut facts = Vec::new();
     if let Some(rate) = throughput.rate.filter(|rate| rate.peak > 0.0) {
@@ -415,7 +415,7 @@ fn throughput_facts(throughput: Throughput, measured: Duration, direction: Direc
     facts
 }
 
-/// Replies, the window, and the probes left unresolved or never sent.
+/// Lists replies, the window, and the probes left unresolved or never sent.
 fn latency_facts(summary: Summary, measured: Duration) -> Vec<String> {
     let mut facts = vec![format!("{} replies", count(summary.replies))];
     facts.extend((!measured.is_zero()).then(|| format::duration(measured)));

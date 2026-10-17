@@ -1,18 +1,18 @@
-// What Details says of one server: its load, the HTTP version each side saw, and what it advertises.
+// Builds what Details says of one server, from its load and the HTTP version each side saw to what it advertises.
 import type { Discovery, OriginTargets, Probe, Role } from "../../engine/types";
 import { httpVersionLabel, transportLabel } from "../../view/words";
 
 /** Past this share of its slots, concurrent tests share the bandwidth this run measures. */
 const BUSY_SHARE = 0.5;
 
-/** Occupancy as the server reported it when the path was checked; nothing without a slot limit. */
+/** Reports the occupancy the server gave when the path was checked, or nothing without a slot limit. */
 export function loadSummary(load: Probe["load"]): string | null {
   if (!load || load.max <= 0) return null;
   const slots = `${load.active} of ${load.max} slots`;
   return load.active / load.max > BUSY_SHARE ? `${slots}, server busy: results may be affected` : slots;
 }
 
-/** Each side's own observation, never merged: "Browser HTTP/1.1, server HTTP/2"; `unknown` until either reports. */
+/** Keeps both sides apart, as in "Browser HTTP/1.1, server HTTP/2", and reads `unknown` until either reports. */
 export function evidence(browser: string | null, server: string | null, unknown: string): string {
   const seen = [
     browser && `Browser ${httpVersionLabel(browser)}`,
@@ -28,7 +28,7 @@ const origins = (discovery: Discovery, role: Role) => [
   ).values(),
 ];
 
-/** Every HTTP version and security the server's fetch targets advertise, on every origin; null before discovery. */
+/** Lists the HTTP version and security of every fetch target the server advertises, or null before discovery. */
 export function httpPaths(discovery: Discovery | null): string[] | null {
   if (!discovery) return null;
   const targets = origins(discovery, "throughput").flatMap((entry) => entry.targets);
@@ -41,8 +41,8 @@ export function httpPaths(discovery: Discovery | null): string[] | null {
   ];
 }
 
-/** The mechanisms the server advertises for `role`, and whether this page cannot reach some of its origins; null
-    before discovery. */
+/** Lists the mechanisms the server advertises for `role`, noting origins this page cannot reach, or null before
+    discovery. */
 export function capabilities(discovery: Discovery | null, role: Role): string[] | null {
   if (!discovery) return null;
   const entries = origins(discovery, role);

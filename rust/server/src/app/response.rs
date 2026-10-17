@@ -1,4 +1,4 @@
-//! The one set of response constructors.
+//! Builds every response in one place.
 
 use crate::{limits::Refusal, transport::body::Body};
 use bytes::Bytes;
@@ -6,7 +6,7 @@ use graphite_meter_proto::refusal::UploadRefusal;
 use http::{HeaderValue, Method, Response, StatusCode, header};
 use serde::Serialize;
 
-/// Plain text no browser sniffs, ending in a line break.
+/// Sends plain text no browser sniffs, ending in a line break.
 pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     let mut response = Response::new(Body::full(format!("{text}\n")));
     *response.status_mut() = status;
@@ -16,7 +16,7 @@ pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     response
 }
 
-/// `status` with its own text: `404 page not found`, else the reason phrase.
+/// Sends `status` with its own text, `404 page not found`, or else the reason phrase.
 pub fn status(status: StatusCode) -> Response<Body> {
     match status {
         StatusCode::NOT_FOUND => text(status, "404 page not found"),
@@ -30,7 +30,6 @@ pub fn empty(status: StatusCode) -> Response<Body> {
     response
 }
 
-/// An HTML page.
 pub fn html(page: String) -> Response<Body> {
     let mut response = Response::new(Body::full(page));
     let html = HeaderValue::from_static("text/html; charset=utf-8");
@@ -38,7 +37,7 @@ pub fn html(page: String) -> Response<Body> {
     response
 }
 
-/// A JSON document no cache keeps.
+/// Sends a JSON document no cache keeps.
 pub fn json(document: impl Into<Bytes>) -> Response<Body> {
     let mut response = Response::new(Body::full(document));
     let headers = response.headers_mut();
@@ -51,7 +50,7 @@ pub fn json_of(document: &impl Serialize) -> Response<Body> {
     json(serde_json::to_vec(document).expect("documents serialize"))
 }
 
-/// A redirect to `location`; a GET answer links it in a short HTML body.
+/// Redirects to `location`. A GET answer links it in a short HTML body.
 pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> Response<Body> {
     let linked = matches!(*method, Method::GET | Method::HEAD);
     let mut response = match *method == Method::GET {
@@ -75,7 +74,7 @@ pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> 
     response
 }
 
-/// A 405 naming the methods the route answers.
+/// Sends a 405 naming the methods the route answers.
 pub fn method_not_allowed(allow: &str) -> Response<Body> {
     let mut response = status(StatusCode::METHOD_NOT_ALLOWED);
     let allow = HeaderValue::from_str(allow).expect("method names are header values");
@@ -83,7 +82,7 @@ pub fn method_not_allowed(allow: &str) -> Response<Body> {
     response
 }
 
-/// A full handler pool or client share: 503 or 429, asking for a retry after a second.
+/// Answers a full handler pool or client share with 503 or 429, asking for a retry after a second.
 pub fn busy(refusal: Refusal) -> Response<Body> {
     let mut response = status(refusal.status());
     response
@@ -92,7 +91,7 @@ pub fn busy(refusal: Refusal) -> Response<Body> {
     response
 }
 
-/// A metered request whose trusted proxy named no single client.
+/// Refuses a metered request whose trusted proxy named no single client.
 pub fn ambiguous() -> Response<Body> {
     text(
         StatusCode::BAD_REQUEST,
@@ -101,7 +100,7 @@ pub fn ambiguous() -> Response<Body> {
     )
 }
 
-/// An upload refusal's message, status and name (`api/uploadrefusals.txt`).
+/// Sends an upload refusal's message, status and name (`api/uploadrefusals.txt`).
 pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
     let mut response = text(refusal.status(), refusal.message());
     let headers = response.headers_mut();

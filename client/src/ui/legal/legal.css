@@ -1,4 +1,4 @@
-/* The About & legal dialog: a sheet-built modal of the project's facts and the third-party components by ecosystem. */
+/* The About & legal dialog is a sheet-built modal of the project's facts and third-party components by ecosystem. */
 @layer components {
   dialog.legal-dialog {
     --dialog-width: 880px;
@@ -57,7 +57,7 @@
         color: var(--text-soft);
       }
     }
-    /* A link's place never wraps: it ends in an ellipsis instead. */
+    /* A link's place never wraps, so it ends in an ellipsis instead. */
     & a {
       display: inline-flex;
       align-items: center;

@@ -1,5 +1,5 @@
-// The servers a test runs on, for the app layer: the operator's catalog, the selection and its saved choice, each
-// server's credentials and connection, the approval that grants a peer, and what Start runs on.
+// Gives the app layer the servers a test runs on, from the operator's catalog, the selection and its saved choice,
+// each server's credentials and connection, and the approval that grants a peer, to what Start runs on.
 import { object, string } from "../../lib/decode";
 import { batch, computed, effect, signal, untrack, type Read } from "../../lib/signal";
 import {
@@ -40,7 +40,7 @@ interface ServersEnv {
   config: Read<TestConfig>;
   /** Rewrites the saved path choices when a choice must apply to every selected server. */
   setTransports(transports: TestConfig["transports"]): void;
-  /** Checks and their timers may run: the app is booted and visible, and no run or start is pending. */
+  /** Checks and their timers may run, as the app is booted and visible, and no run or start is pending. */
   active: Read<boolean>;
   online: Read<boolean>;
   /** The server whose latency the console pins, if any. */
@@ -51,23 +51,23 @@ interface ServersEnv {
   now(): number;
 }
 
-/** A saved selection row: an ID bound to the origin it named, so an ID never silently moves to another server. */
+/** A saved selection row binds an ID to the origin it named, so an ID never silently moves to another server. */
 interface SavedServer {
   id: string;
   url: string;
 }
 
-/** A peer's sign-in, one at a time across all servers. */
+/** A peer's sign-in runs one at a time across all servers. */
 export type Approval =
   | { state: "idle" }
-  /** The window is reserved; the challenge is being made. */
+  /** The window is reserved while the challenge is being made. */
   | { state: "preparing"; id: string }
   | { state: "waiting"; id: string; url: string; code: string }
-  /** The approval ended without a grant; its challenge is spent. */
+  /** The approval ended without a grant, and its challenge is spent. */
   | { state: "failed"; id: string }
-  /** The remote sign-in holds all its grants: it must be renewed there first. */
+  /** The remote sign-in holds all its grants, so it must be renewed there first. */
   | { state: "limit"; id: string; renewUrl: string }
-  /** The grant ends before the planned test, and so would another: grants end with the remote sign-in. */
+  /** The grant ends before the planned test, and so would another, since grants end with the remote sign-in. */
   | { state: "renew"; id: string; renewUrl: string };
 
 export interface Servers {
@@ -90,27 +90,27 @@ export interface Servers {
   streamPlanError: Read<string>;
   /** The lane policy in words for Settings. */
   streams: Read<{ value: string; aside: string }>;
-  /** The server whose latency the console shows: the pinned one while selected, else the first selected. */
+  /** The console shows this server's latency. It is the pinned one while selected, else the first selected. */
   latencyServer: Read<string | null>;
   metadataLoading: Read<boolean>;
   load(): Promise<void>;
   retryCatalog(): Promise<void>;
-  /** False when the selection cannot change now; throws for a set that is not one to four catalog servers. */
+  /** Yields false when the selection cannot change now. A set that is not one to four catalog servers throws. */
   apply(ids: readonly string[]): boolean;
-  /** Call from the click itself: the sign-in window must open within the user's activation. */
+  /** Call this from the click itself, as the sign-in window must open within the user's activation. */
   signIn(id: string): void;
   cancelSignIn(): void;
   retry(id?: string, role?: Role): Promise<void>;
   showMetadata(open: boolean): void;
-  /** The page's sign-in and every selected grant must cover `requiredMs`; a CoverageError carries the words to show. */
+  /** The page's sign-in and every selected grant must cover `requiredMs`. A CoverageError carries the words to show. */
   authorize(requiredMs: number, signal: AbortSignal): Promise<void>;
-  /** Re-reads every selected server's discovery and re-checks stale paths: what Start runs on, the servers left out
-      with their reason, and whose latency leads. An AbortError means a reload or an approval replaced a connection. */
+  /** Re-reads every selected server's discovery and re-checks stale paths. An AbortError means a reload or an approval
+      replaced a connection. It yields what Start runs on, the dropped servers and why, and whose latency leads. */
   prepare(signal: AbortSignal): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
-  /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
+  /** Tells whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
-  /** A run failed on one server, or with null as a whole: a refused sign-in is required again, other failures send
-      the failed paths back to be checked. */
+  /** A run failed on one server, or with null as a whole. A refused sign-in is required again, and other failures
+      send the failed paths back to be checked. */
   recheck(failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null): void;
   resume(): void;
   dispose(): void;
@@ -124,12 +124,12 @@ export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latency
 
 const savedRow = object({ id: displayText(64, 1), url: string(1, 2048) });
 
-/** `ids` in catalog order. */
+/** Sorts `ids` into catalog order. */
 const inCatalogOrder = (catalog: Catalog, ids: readonly string[]) =>
   catalog.servers.filter((entry) => ids.includes(entry.id)).map((entry) => entry.id);
 
-/** The saved choice against the current catalog. A row counts only while its ID keeps its origin, else it waits
-    for the user; no choice, or anything malformed, means the operator's defaults. */
+/** Reconciles the saved choice with the current catalog. A row counts only while its ID keeps its origin, else it
+    waits for the user. No choice, or anything malformed, means the operator's defaults. */
 export function reconcile(catalog: Catalog, saved: unknown): { ids: string[]; unresolved: SavedServer[] } {
   const defaults = { ids: inCatalogOrder(catalog, catalog.defaultSelection), unresolved: [] };
   if (!Array.isArray(saved) || saved.length < 1 || saved.length > MAX_SELECTED) return defaults;
@@ -170,8 +170,8 @@ function writeSaved(rows: SavedServer[]): void {
   } catch {}
 }
 
-/** A window reserved inside the click, before the challenge exists: popup blockers allow nothing later. The opener
-    link is cut at once, as `noopener` would return no handle to navigate or close. */
+/** Reserves a window inside the click, before the challenge exists, since popup blockers allow nothing later. The
+    opener link is cut at once, as `noopener` would return no handle to navigate or close. */
 function reserveWindow(signal: AbortSignal): { navigate(url: string): void; close(): void } {
   let popup: Window | null = null;
   const close = () => {
@@ -179,7 +179,7 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
     try {
       popup?.close();
     } catch {
-      // Cross-origin isolation may sever the handle; approval never depends on it.
+      // Cross-origin isolation may sever the handle. Approval never depends on it.
     }
     popup = null;
   };
@@ -203,7 +203,7 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
   };
 }
 
-/** The longest stage every one of `servers` admits, and the server that sets it. */
+/** Finds the longest stage every one of `servers` admits, and the server that sets it. */
 export function stageLimit(servers: readonly { name: string; discovery: Discovery | null }[]) {
   let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
   for (const { name, discovery } of servers)
@@ -214,7 +214,7 @@ export function stageLimit(servers: readonly { name: string; discovery: Discover
 export function createServers(env: ServersEnv): Servers {
   const { page, config, now } = env;
   const catalog = signal<Catalog | null>(null);
-  // The app loads the catalog as it boots: until the first answer it is loading, never missing.
+  // The app loads the catalog as it boots, so until the first answer it is loading, never missing.
   const loading = signal(true);
   const loadError = signal("");
   const selected = signal<readonly string[]>([]);
@@ -222,7 +222,7 @@ export function createServers(env: ServersEnv): Servers {
   const connections = signal<ReadonlyMap<string, Connection>>(new Map());
   const approval = signal(IDLE);
   const metadata = signal(false);
-  // Grants outlive a catalog reload while their server keeps its ID and origin; reloading the page drops them.
+  // Grants outlive a catalog reload while their server keeps its ID and origin. Reloading the page drops them.
   const grants = new Map<string, { url: string; grant: Grant; auth: ServerAuth }>();
   const limiter = createLimiter();
   const lifetime = new AbortController();
@@ -410,7 +410,7 @@ export function createServers(env: ServersEnv): Servers {
       const grant = await exchangeGrant(entry, verifier, signal, now);
       if (flow !== abort || catalog.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url) return;
       grants.set(entry.id, { url: entry.url, grant, auth: grantAuth(entry, grant, now) });
-      // Approval owns the grant exchange; the new connection owns every later path error.
+      // Approval owns the grant exchange. The new connection owns every later path error.
       const granted = connect(entry);
       batch(() => {
         const old = connections.peek();
@@ -418,7 +418,7 @@ export function createServers(env: ServersEnv): Servers {
         connections.set(new Map([...old, [entry.id, granted]]));
         approval.set(IDLE);
       });
-      // Checked at once: the approving window may have hidden this page, which holds back timed checks.
+      // The check runs at once, as the approving window may have hidden this page, which holds back timed checks.
       void granted.check();
     } catch (cause) {
       if (signal.aborted) return;
@@ -468,7 +468,7 @@ export function createServers(env: ServersEnv): Servers {
 
   async function prepare(signal: AbortSignal) {
     const chosen = chosenConnections();
-    // One judgement of freshness: what the checks keep is what the run may use, however long they take.
+    // Freshness is judged once, so what the checks keep is what the run may use, however long they take.
     const since = now() - FRESH_MS;
     await Promise.all(chosen.map((connection) => connection.check({ since, signal })));
     signal.throwIfAborted();

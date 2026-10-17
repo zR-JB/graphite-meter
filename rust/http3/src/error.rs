@@ -1,4 +1,4 @@
-//! One error type for requests, sessions and connections, mapped once from noq's.
+//! Defines one error type for requests, sessions and connections, mapped once from noq's.
 use crate::code::Code;
 use bytes::Bytes;
 use std::fmt;
@@ -21,7 +21,7 @@ pub enum Error {
     NoWebTransport,
     /// After the server's GOAWAY no request or session starts on the connection (RFC 9114 §5.2).
     GoingAway,
-    /// Refused locally: over a limit or the budget, or in an ended session.
+    /// This side refused, over a limit or the budget, or in an ended session.
     Refused,
 }
 
@@ -31,7 +31,7 @@ impl Error {
         Self::Connection { local: true, code, reason: Bytes::new() }
     }
 
-    /// A normal close: H3_NO_ERROR, a peer's 0, which some servers stop with, or an application close below the layer.
+    /// Treats H3_NO_ERROR, the peer's 0 some servers stop with, and an application close below the layer as normal.
     pub(crate) fn graceful(&self) -> bool {
         match self {
             Self::Connection { local, code, .. } => *code == Code::H3_NO_ERROR || !local && *code == Code(0),

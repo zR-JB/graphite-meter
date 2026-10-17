@@ -1,4 +1,4 @@
-//! The OIDC provider over HTTPS: discovery, signing keys, and one bounded connection per request on the main runtime.
+//! Reaches the OIDC provider over HTTPS for discovery and keys, one bounded connection a request on the main runtime.
 
 use super::jwt::{self, Alg, Jwks, Verified};
 use crate::config;
@@ -19,7 +19,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// An answer's body holds at most this many bytes.
 const MAX_BODY: usize = 1 << 20;
 
-/// A 200 answer's media type, in lower case without parameters, and body.
+/// Carries a 200 answer's media type, in lower case without parameters, and body.
 pub(super) struct Answer {
     pub media: String,
     pub body: Vec<u8>,
@@ -31,14 +31,14 @@ pub(super) struct Client {
 }
 
 impl Client {
-    /// A client sending from the runtime it is created on, as `outbound` says.
+    /// Builds a client sending from the runtime it is created on, as `outbound` says.
     pub fn new(outbound: &config::Outbound) -> Result<Self, String> {
         let runtime = Handle::try_current().map_err(|error| error.to_string())?;
         let connector = Connector::new(outbound.proxy.clone(), outbound.verify.clone());
         Ok(Self { connector: Arc::new(connector), runtime })
     }
 
-    /// GETs `url`, or POSTs `form` URL-encoded, with header `field`; `url` is HTTPS, as config or discovery checked.
+    /// GETs `url`, or POSTs `form` URL-encoded, with header `field`. `url` is HTTPS, as config or discovery checked.
     pub async fn send(
         &self,
         url: &str,
@@ -103,10 +103,10 @@ fn media(headers: &HeaderMap) -> String {
     media.trim().to_ascii_lowercase()
 }
 
-/// The provider as discovery found it.
+/// Describes the provider as discovery found it.
 pub(super) struct Provider {
     authorization: String,
-    /// The authorization endpoint's origin, which sign-in forms reach through the start route.
+    /// Sign-in forms reach the authorization endpoint's origin through the start route.
     pub origin: String,
     pub token: String,
     pub userinfo: String,
@@ -114,13 +114,13 @@ pub(super) struct Provider {
     algorithms: Vec<Alg>,
     /// The provider names itself in `iss` on every callback.
     pub issuer_parameter: bool,
-    /// The signing keys; every refetch, failed or not, replaces the `Arc`.
+    /// Holds the signing keys. Every refetch, failed or not, replaces the `Arc`.
     keys: std::sync::Mutex<Arc<Jwks>>,
     refetch: tokio::sync::Mutex<()>,
 }
 
 impl Provider {
-    /// The provider `issuer` describes, which must name itself and only HTTPS endpoints.
+    /// Discovers the provider `issuer` describes, which must name itself and only HTTPS endpoints.
     pub async fn discover(client: &Client, issuer: &str) -> Result<Self, String> {
         #[derive(Deserialize)]
         struct Metadata {
@@ -166,7 +166,7 @@ impl Provider {
         })
     }
 
-    /// The provider's sign-in page for the URL-encoded `query`.
+    /// Builds the URL of the provider's sign-in page for the URL-encoded `query`.
     pub fn sign_in(&self, query: &str) -> String {
         let separator = if self.authorization.contains('?') { '&' } else { '?' };
         format!("{}{separator}{query}", self.authorization)

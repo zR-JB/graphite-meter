@@ -46,9 +46,9 @@
         <form method="post" action="/auth/password">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <input type="hidden" name="challenge" value="{{.Challenge}}">
-          <!-- The one account's name, for password managers only; the server ignores it. -->
+          <!-- The one account's name is here for password managers only. The server ignores it. -->
           <input class="sr-only" name="username" type="text" value="operator" autocomplete="username" readonly tabindex="-1" aria-hidden="true">
-          <!-- Beside a working provider the caret stays out of the operator's field. -->
+          <!-- The caret stays out of the operator's field beside a working provider. -->
           <div class="field">
             <label for="password">Operator password</label>
             <div class="entry">

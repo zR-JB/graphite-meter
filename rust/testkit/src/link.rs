@@ -1,4 +1,4 @@
-//! A loopback relay that delays each direction, optionally through a bottleneck, and stalls on demand.
+//! Relays over loopback, delaying each direction, optionally through a bottleneck, and stalls on demand.
 use bytes::Bytes;
 use std::{
     io,
@@ -14,14 +14,14 @@ use tokio::{
     time::Instant,
 };
 
-/// A drop-tail bottleneck in each direction of a UDP link: its rate, and how much sending its queue holds.
+/// A drop-tail bottleneck in each direction of a UDP link has this rate, and its queue holds this much sending.
 #[derive(Clone, Copy, Debug)]
 pub struct Bottleneck {
     pub bits_per_second: u64,
     pub queue: Duration,
 }
 
-/// When packets leave a direction's bottleneck.
+/// Tracks when packets leave a direction's bottleneck.
 struct Pace {
     bottleneck: Option<Bottleneck>,
     free: Instant,
@@ -32,7 +32,7 @@ impl Pace {
         Self { bottleneck, free: Instant::now() }
     }
 
-    /// When a packet of `bytes` leaves the bottleneck, or `None` when its queue is full.
+    /// Tells when a packet of `bytes` leaves the bottleneck, or `None` when its queue is full.
     fn departure(&mut self, bytes: usize) -> Option<Instant> {
         let now = Instant::now();
         let Some(bottleneck) = self.bottleneck else {
@@ -48,7 +48,7 @@ impl Pace {
     }
 }
 
-/// A relay to one target; dropping it stops relaying.
+/// Relays to one target. Dropping it stops relaying.
 pub struct Link {
     pub address: SocketAddr,
     stalled: watch::Sender<bool>,
@@ -171,7 +171,7 @@ impl Link {
     }
 }
 
-/// A receive error an earlier send's ICMP reply raised, such as an unbound target; the socket still works.
+/// Spots a receive error an earlier send's ICMP reply raised, such as an unbound target. The socket still works.
 fn transient(error: &io::Error) -> bool {
     matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset)
 }

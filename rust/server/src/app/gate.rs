@@ -1,4 +1,4 @@
-//! The checks before dispatch: the request head, the route this endpoint mounts and its methods, and authorization.
+//! Checks the request head, the route this endpoint mounts and its methods, and authorization before dispatch.
 
 use super::{
     App, Connection,
@@ -15,7 +15,7 @@ use http::{Method, Request, Response, StatusCode, Version, header};
 /// A request head, as parsed, holds at most this many bytes.
 pub(crate) const MAX_HEAD_BYTES: usize = 32 << 10;
 
-/// Dispatch a request to the route this endpoint mounts at its path, if any, as `peer`'s; or the gate's answer.
+/// A gate passes a request to the route this endpoint mounts at its path, if any, as `peer`'s, or answers it.
 pub(super) type Gate = Result<(Option<Route>, Peer), Response<Body>>;
 
 impl App {
@@ -46,7 +46,7 @@ impl App {
     }
 }
 
-/// The answer to a request breaking the head size, Host or body rules, or to `OPTIONS *`.
+/// Answers a request breaking the head size, Host or body rules, or an `OPTIONS *`.
 fn validate<B: http_body::Body>(request: &Request<B>) -> Option<Response<Body>> {
     if head_bytes(request) > MAX_HEAD_BYTES {
         return Some(response::status(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE));
@@ -63,7 +63,7 @@ fn validate<B: http_body::Body>(request: &Request<B>) -> Option<Response<Body>> 
     Some(response)
 }
 
-/// The method, URI and header fields, each field with its separators.
+/// Counts the method, URI and header fields, each field with its separators.
 fn head_bytes<B>(request: &Request<B>) -> usize {
     let uri = request.uri();
     let uri_bytes = uri.scheme_str().map_or(0, |scheme| scheme.len() + 3)
@@ -89,12 +89,12 @@ fn host_refusal<B>(request: &Request<B>) -> Option<&'static str> {
     }
 }
 
-/// A byte a host name, an IP literal with its zone, or a port may hold.
+/// Tells whether a host name, an IP literal with its zone, or a port may hold `byte`.
 fn host_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!$%&'()*+,-.:;=[]_~".contains(&byte)
 }
 
-/// Only POST may carry a body: a nonzero declared length, or an unknown one outside HTTP/3.
+/// Only POST may carry a body, which means a nonzero declared length or an unknown one outside HTTP/3.
 fn carries_body<B: http_body::Body>(request: &Request<B>) -> bool {
     let length = request.headers().get(header::CONTENT_LENGTH);
     let declared = length.and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
@@ -102,7 +102,7 @@ fn carries_body<B: http_body::Body>(request: &Request<B>) -> bool {
     request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown)
 }
 
-/// The methods a route answers: those it dispatches, HEAD with GET, and OPTIONS on plain HTTP routes.
+/// A route answers the methods it dispatches, HEAD with GET, and OPTIONS on plain HTTP routes.
 fn methods(route: Route) -> impl Iterator<Item = &'static str> {
     let dispatched = route.methods();
     let head = dispatched.contains(&"GET").then_some("HEAD");

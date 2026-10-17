@@ -11,7 +11,7 @@ const turns = async () => {
   for (let i = 0; i < 20; i++) await null;
 };
 
-/** History in memory; each write waits until the test answers it. */
+/** History in memory. Each write waits until the test answers it. */
 function memoryHistory() {
   const rows = new Map<string, HistoryRecord>();
   const listeners = new Set<(change: HistoryChange) => void>();
@@ -90,7 +90,7 @@ test("writes go one at a time and in order, each under the clear count read when
   saver.offer(record("b"));
   await turns();
   expect(history.writes.map(({ id }) => id)).toEqual(["a"]);
-  // Both were queued before this clear, in this tab or any other: neither may bring History back.
+  // Both were queued before this clear, in this tab or any other, so neither may bring History back.
   history.clear();
   saver.offer(record("c"));
   for (const write of [0, 1, 2]) {
@@ -261,7 +261,7 @@ test("while storage keeps failing, results wait in a bounded queue and the oldes
   await turns();
   jest.advanceTimersByTime(15_000);
   await turns();
-  // Storage recovered: the head, then what still waits, in order.
+  // Storage recovered. The head is written, then what still waits, in order.
   for (let write = 1; write < history.writes.length; write++) {
     history.writes[write]!.answer();
     await turns();
@@ -287,7 +287,7 @@ test("a first write whose clear count could not be read is saved once storage an
 });
 
 test("a write whose clear count could not be read never comes back after a clear", async () => {
-  // Nothing in this tab has read the count yet: the write has no count it can trust once History changed.
+  // Nothing in this tab has read the count yet, so the write has no count it can trust once History changed.
   const history = memoryHistory();
   history.failing.clears = true;
   const saver = createHistorySaving(history.repository, signal(true), windowEvents());
@@ -328,7 +328,7 @@ test("a write whose clear count could not be read takes the count this tab last 
   await turns();
   expect(history.writes[2]!.clears).toBe(1);
   expect([...history.rows.keys()]).toEqual(["c"]);
-  // A change in another tab may have cleared History: until the count is read again, a write cannot be ordered.
+  // A change in another tab may have cleared History, so until the count is read again, a write cannot be ordered.
   history.elsewhere(() => history.clear());
   saver.offer(record("d"));
   await turns();

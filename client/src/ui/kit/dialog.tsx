@@ -1,5 +1,5 @@
-// Native modal dialogs: they trap focus and carry their own live region; the owner keeps the open state and hears
-// every close request once. Focus returns to the opener unless the user already moved it.
+// Wraps native modal dialogs. They trap focus and carry their own live region. The owner keeps the open state and
+// hears every close request once. Focus returns to the opener unless the user already moved it.
 import type { Child } from "../../lib/jsx-runtime";
 import { effect, onCleanup, untrack, type Read } from "../../lib/signal";
 import { Announcements } from "./announce";
@@ -10,7 +10,7 @@ export function Dialog(props: {
   onCancel: () => void;
   /** A click on the backdrop closes it. */
   lightDismiss?: boolean;
-  /** Where focus returns if the opener is gone; the opener is the focused element when it opens. */
+  /** Focus returns here if the opener is gone. The opener is the focused element when the dialog opens. */
   invoker?: () => HTMLElement | null;
   class?: string;
   role?: "dialog" | "alertdialog";
@@ -18,7 +18,7 @@ export function Dialog(props: {
   describedby?: string;
   children: Child;
 }): HTMLDialogElement {
-  // A close can follow a cancel the owner is still applying: report once.
+  // A close can follow a cancel the owner is still applying, so the owner hears it once.
   let reported = false;
   const cancel = () => {
     if (reported) return;
@@ -77,7 +77,7 @@ export function Dialog(props: {
   return dialog;
 }
 
-/** A question before something that cannot be undone; Cancel comes first and takes focus. */
+/** Asks before something that cannot be undone. Cancel comes first and takes focus. */
 export function ConfirmDialog(props: {
   open: Read<boolean>;
   id: string;

@@ -1,8 +1,8 @@
-//! HTTP messages as field sections (RFC 9114 §4.2-4.3, RFC 9220): validation, size and conversion.
+//! Validates, sizes and converts HTTP messages as field sections (RFC 9114 §4.2-4.3, RFC 9220).
 use crate::qpack::{self, Invalid};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri};
 
-/// A decoded message head and the field section size (RFC 9114 §4.2.2) it was checked against.
+/// A decoded message head comes with the field section size (RFC 9114 §4.2.2) it was checked against.
 pub(crate) struct Head<T> {
     pub(crate) message: T,
     pub(crate) content_length: Option<u64>,
@@ -56,7 +56,7 @@ impl Fields {
     }
 }
 
-/// A regular field: lowercase, valid, and not specific to an HTTP/1.1 connection.
+/// A regular field is lowercase, valid, and not specific to an HTTP/1.1 connection.
 fn regular(name: &[u8], value: &[u8]) -> Result<(HeaderName, HeaderValue), Invalid> {
     let name = HeaderName::from_lowercase(name).map_err(|_| Invalid::Malformed)?;
     if connection_specific(&name) || name == header::TE && value != b"trailers" {
@@ -83,7 +83,7 @@ fn set<T, E>(slot: &mut Option<T>, value: Result<T, E>) -> Result<(), Invalid> {
     }
 }
 
-/// A request our routes serve. Plain CONNECT and other extended CONNECT protocols are `Unsupported`.
+/// Decodes a request our routes serve. Plain CONNECT and other extended CONNECT protocols are `Unsupported`.
 pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Request<()>>, Invalid> {
     let mut fields = Fields::default();
     let (mut method, mut scheme, mut authority, mut path, mut protocol) = (None, None, None, None, None);
@@ -163,7 +163,7 @@ pub(crate) fn decode_response(section: &[u8], limit: u64) -> Result<Head<http::R
     Ok(fields.head(response, http::Response::headers_mut))
 }
 
-/// Trailers are validated and dropped: no route reads them.
+/// Trailers are validated and dropped, as no route reads them.
 pub(crate) fn check_trailers(section: &[u8], limit: u64) -> Result<(), Invalid> {
     let mut fields = Fields::default();
     qpack::decode(section, |name, value| {

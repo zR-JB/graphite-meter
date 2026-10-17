@@ -1,4 +1,4 @@
-//! HTTP/2 through the h2 fork: connection floor and settings, bounded streams, the reply pump, upload windows.
+//! Runs HTTP/2 on the h2 fork with a connection floor and settings, bounded streams, a reply pump and upload windows.
 
 use super::{
     Burst,
@@ -42,13 +42,13 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-/// What a connection holds of the buffer budget from accept until its task ends.
+/// A connection holds this much of the buffer budget from accept until its task ends.
 pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;
-/// Socket reads, TLS records and deframer, frame reads, the write buffer, HPACK and the default window.
+/// Covers socket reads, TLS records and deframer, frame reads, the write buffer, HPACK and the default window.
 const TRANSPORT_BYTES: usize = 512 << 10;
-/// Decoded headers, buffered DATA and queued response metadata, which h2 charges to the floor as they fill.
+/// Covers decoded headers, buffered DATA and queued response metadata, which h2 charges to the floor as they fill.
 const STATE_BYTES: usize = 1 << 20;
-/// Each stream's receive window; the connection's opens to 24 MiB for admitted uploads.
+/// Each stream gets this receive window. The connection's opens to 24 MiB for admitted uploads.
 const STREAM_WINDOW: u32 = 8 << 20;
 const MAX_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
@@ -59,7 +59,7 @@ const PREFACE_BOUND: Duration = Duration::from_secs(10);
 #[cfg(target_os = "linux")]
 const NOTSENT_LOWAT: u32 = 64 << 10;
 
-/// What an HTTP/2 listener's connections share.
+/// Holds what an HTTP/2 listener's connections share.
 #[derive(Clone)]
 pub struct Http2 {
     pub app: Arc<App>,
@@ -68,7 +68,7 @@ pub struct Http2 {
 }
 
 impl Http2 {
-    /// An accepted connection's work, holding its floor from now; a connection whose floor does not fit closes.
+    /// Serves an accepted connection and holds its floor from now. A connection whose floor does not fit closes.
     pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
         let floor = self.app.budget().lease(FLOOR_BYTES);
         let _ = socket.set_nodelay(true);
@@ -113,14 +113,14 @@ impl Http2 {
         let window = Arc::new(Window::new(self.app.clone()));
         let mut lifecycle = Lifecycle::new(connection.work.clone(), Grace::Fresh);
         let mut streams = FuturesUnordered::new();
-        // A child token: polling it never takes the server-wide token's waiter lock.
+        // Polling a child token never takes the server-wide token's waiter lock.
         let shutdown = self.shutdown.child_token();
         let mut stopping = pin!(shutdown.cancelled());
         poll_fn(|cx| {
             if stopping.as_mut().poll(cx).is_ready() {
                 lifecycle.stop();
             }
-            // Streams first, on a fresh coop budget: socket reads spend it, and a spent budget stalls their selects.
+            // Streams poll first, on a fresh coop budget. Socket reads spend it, and a spent one stalls their selects.
             while let Poll::Ready(Some(())) = streams.poll_next_unpin(cx) {}
             loop {
                 match h2.poll_accept(cx) {
@@ -149,7 +149,7 @@ impl Http2 {
         .await;
     }
 
-    /// One stream: reset when it expires unadmitted or its reply ends unwritten; admitted work once a poll sees it.
+    /// A stream resets if it expires unadmitted or its reply ends unwritten, and is admitted work once a poll sees it.
     fn stream(
         &self,
         request: Request<RecvStream>,
@@ -179,7 +179,7 @@ impl Http2 {
     }
 }
 
-/// An HTTP/2 stream's reply: its head ends the stream when nothing follows, data goes in frames flow control admits.
+/// Writes an HTTP/2 reply. Its head ends the stream when nothing follows, and data goes in frames flow control admits.
 struct Reply<'a> {
     respond: &'a mut SendResponse<Bytes>,
     stream: Option<SendStream<Bytes>>,
@@ -222,7 +222,7 @@ impl Sink for Reply<'_> {
     }
 }
 
-/// Up to `length` bytes the stream may send, within peer flow control and h2's send buffer.
+/// Waits for up to `length` bytes the stream may send, within peer flow control and h2's send buffer.
 async fn capacity(stream: &mut SendStream<Bytes>, bound: &mut ReplyBound, length: usize) -> Result<usize, Aborted> {
     stream.reserve_capacity(length);
     poll_fn(|cx| {
@@ -244,12 +244,12 @@ async fn capacity(stream: &mut SendStream<Bytes>, bound: &mut ReplyBound, length
     .await
 }
 
-/// A connection's socket, ended by a write blocked for the idle bound: a blocked socket stalls every stream.
+/// Ends a connection's socket once a write blocked for the idle bound, since a blocked socket stalls every stream.
 struct Stalled<S> {
     inner: S,
-    /// When the blocked write began.
+    /// Marks when the blocked write began.
     since: Option<Instant>,
-    /// Due no later than the current stall's end, and re-armed only when it fires, so a stall costs no timer.
+    /// Fires no later than the current stall's end and is re-armed only when it fires, so a stall costs no timer.
     timer: Pin<Box<Sleep>>,
     burst: Burst,
 }
@@ -264,7 +264,7 @@ impl<S> Stalled<S> {
         }
     }
 
-    /// A write is blocked; fails once it has been for the idle bound.
+    /// A write is blocked. The socket fails once it has been for the idle bound.
     fn blocked(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.burst.waited();
         let due = *self.since.get_or_insert_with(Instant::now) + IDLE_BOUND;
@@ -347,16 +347,16 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
     }
 }
 
-/// The connection window until an admitted upload reads.
+/// The connection window stays here until an admitted upload reads.
 const DEFAULT_WINDOW: u32 = 65_535;
-/// The connection window while admitted uploads read.
+/// The connection window opens to this while admitted uploads read.
 const WINDOW: u32 = 24 << 20;
 
-/// The receive window: 64 KiB, 24 MiB while admitted uploads read, held to the end in the first raiser's share.
+/// The receive window is 64 KiB, or 24 MiB while admitted uploads read, held to the end in the first raiser's share.
 pub(super) struct Window {
     app: Arc<App>,
     credit: Mutex<Option<Hold>>,
-    /// Admitted uploads reading, funded or not: running transfers keep the window they read at.
+    /// Counts admitted uploads reading, funded or not, since running transfers keep the window they read at.
     readers: AtomicUsize,
     raised: AtomicBool,
 }
@@ -371,7 +371,7 @@ impl Window {
         }
     }
 
-    /// Whether the window was raised, which the connection's credit then holds until it ends.
+    /// Says whether the window was raised, which the connection's credit then holds until it ends.
     pub(super) fn raised(&self) -> bool {
         self.raised.load(Ordering::Relaxed)
     }

@@ -1,4 +1,4 @@
-//! Discovery and probe documents (`api/discovery.md`, `preflight.schema.json`, `probe.schema.json`).
+//! Models the discovery and probe documents (`api/discovery.md`, `preflight.schema.json`, `probe.schema.json`).
 
 use crate::{json, origin::BaseUrl, text};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -10,9 +10,9 @@ pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 pub const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 pub const MAX_METADATA_BYTES: usize = 256;
-/// A server's stage limit unless its operator sets one.
+/// A server keeps this stage limit unless its operator sets one.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
-/// The stage limits a server may advertise.
+/// A server may advertise stage limits in this range.
 pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_hours(24);
 
 named! {
@@ -24,7 +24,7 @@ named! {
 }
 
 named! {
-    /// A throughput target's HTTP version; on a negotiated origin the client chooses.
+    /// Names a throughput target's HTTP version. On a negotiated origin the client chooses.
     pub enum Protocol {
         Http1 => "http1",
         Http2 => "http2",
@@ -41,7 +41,7 @@ named! {
 }
 
 named! {
-    /// Where the server read the client's address: its socket or a trusted proxy's header.
+    /// Says where the server read the client's address, its socket or a trusted proxy's header.
     pub enum ClientIpSource {
         Socket => "socket",
         Forwarded => "forwarded",
@@ -49,7 +49,7 @@ named! {
 }
 
 named! {
-    /// The HTTP version the probe reached the server's hop over.
+    /// The probe reached the server's hop over this HTTP version.
     pub enum NegotiatedProtocol {
         Http1 => "http/1.1",
         Http2 => "h2",
@@ -57,7 +57,7 @@ named! {
     }
 }
 
-/// `/preflight`: who a server is and the targets it offers.
+/// `/preflight` tells who a server is and the targets it offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Preflight {
@@ -102,7 +102,7 @@ pub struct LatencyTarget {
 }
 
 impl Preflight {
-    /// Reads a preflight; invalid metadata, stage limit or known target refuses it; unknown transports are skipped.
+    /// Reads a preflight. Invalid metadata, stage limit or known target refuses it, and unknown transports are skipped.
     pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
         let preflight: Self = json::decode(data)?;
         let Self { server, engine_version, generation, capabilities } = &preflight;
@@ -116,7 +116,7 @@ impl Preflight {
         Ok(preflight)
     }
 
-    /// Every target's base URL, throughput targets first.
+    /// Yields every target's base URL, throughput targets first.
     pub fn base_urls(&self) -> impl Iterator<Item = &BaseUrl> {
         let throughput = self.capabilities.throughput.iter().map(|target| &target.base_url);
         throughput.chain(self.capabilities.latency.iter().map(|target| &target.base_url))
@@ -124,7 +124,7 @@ impl Preflight {
 }
 
 impl Capabilities {
-    /// The longest stage a client may plan against this server.
+    /// A client may plan a stage this long against this server.
     pub fn stage_limit(&self) -> Duration {
         Duration::from_millis(self.max_stage_ms)
     }
@@ -189,7 +189,7 @@ fn base_url_of<E: serde::de::Error>(text: &str) -> Result<BaseUrl, E> {
     BaseUrl::parse(text).map_err(E::custom)
 }
 
-/// An address family, which documents spell as its IP version: 4 or 6.
+/// Documents spell an address family as its IP version, 4 or 6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IpFamily {
     V4,
@@ -225,7 +225,7 @@ impl<'de> Deserialize<'de> for IpFamily {
     }
 }
 
-/// `/probe`: how the server saw this connection.
+/// `/probe` tells how the server saw this connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Probe {
@@ -237,7 +237,7 @@ pub struct Probe {
     pub load: Option<Load>,
 }
 
-/// Measurement-handler occupancy when the probe was answered.
+/// Records measurement-handler occupancy when the probe was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Load {
     pub active: u64,
@@ -245,7 +245,7 @@ pub struct Load {
 }
 
 impl Probe {
-    /// Reads probe evidence; invalid evidence never reaches the caller.
+    /// Reads probe evidence. Invalid evidence never reaches the caller.
     pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
         let probe: Self = json::decode(data)?;
         if !(1..=64).contains(&probe.client_ip.len()) {

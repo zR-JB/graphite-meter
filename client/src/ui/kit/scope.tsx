@@ -1,4 +1,4 @@
-// A choice of one server among several: the lens over results, the server Details inspects, the History detail's.
+// Chooses one server among several, as the lens over results, the server Details inspects or the History detail's.
 import { For } from "../../lib/dom";
 import { effect } from "../../lib/signal";
 import { serverLabel } from "../../view/words";
@@ -13,15 +13,15 @@ interface ScopeServer {
 export function ServerScope(props: {
   label: string;
   servers: () => readonly ScopeServer[];
-  /** The chosen id; "" is the aggregate. */
+  /** The chosen id, or "" for the aggregate. */
   value: () => string;
   onChange(id: string): void;
-  /** The choice of every server at once, as "" in `value`. */
+  /** Names the choice of every server at once, which `value` reads as "". */
   aggregate?: () => string;
   disabled?: () => boolean;
-  /** Servers listed but not choosable. */
+  /** These servers are listed but not choosable. */
   unavailable?: () => readonly string[];
-  /** A lens over results: a server mark and a borderless field. */
+  /** Draws a lens over results, with a server mark and a borderless field. */
   quiet?: boolean;
 }): Node {
   const select = (
@@ -41,7 +41,7 @@ export function ServerScope(props: {
       </For>
     </select>
   ) as HTMLSelectElement;
-  // After the rows' own update, so the chosen option exists.
+  // The value is set after the rows' own update, so the chosen option exists.
   effect(() => {
     props.servers();
     select.value = props.value();

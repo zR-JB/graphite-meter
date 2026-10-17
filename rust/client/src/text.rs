@@ -1,9 +1,9 @@
-//! Styled terminal text: spans measured in cells, fitting, padding and wrapping, and one SGR writer per color profile.
+//! Styles terminal text as spans measured in cells, fits, pads and wraps them, and writes SGR per color profile.
 use graphite_meter_proto::text::safe;
 use std::io::{self, Write};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// A color as each profile writes it: 24-bit, and the 256- and 16-color indexes it converts to.
+/// A color holds its 24-bit value and the 256- and 16-color indexes it converts to, one per profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
     pub rgb: u32,
@@ -28,11 +28,11 @@ impl Style {
     }
 }
 
-/// What a terminal shows of color.
+/// A terminal shows this much color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Profile {
     Plain,
-    /// Bold without color.
+    /// Shows bold without color.
     Ascii,
     Ansi,
     Ansi256,
@@ -57,7 +57,7 @@ impl Line {
         Self::styled(text, Style::default())
     }
 
-    /// The line with `text` added in `style`.
+    /// Appends `text` in `style`.
     pub fn and(mut self, text: impl Into<String>, style: Style) -> Self {
         self.0.push(Span { text: text.into(), style });
         self
@@ -71,7 +71,7 @@ impl Line {
         }
     }
 
-    /// The line with `other`'s spans added.
+    /// Appends `other`'s spans.
     pub fn with(mut self, other: Self) -> Self {
         self.0.extend(other.0);
         self
@@ -85,13 +85,13 @@ impl Line {
         self.0.iter().map(|span| span.text.as_str()).collect()
     }
 
-    /// The line padded with spaces to `cells`.
+    /// Pads the line with spaces to `cells`.
     pub fn pad(self, cells: usize) -> Self {
         let fill = cells.saturating_sub(self.width());
         self.and(" ".repeat(fill), Style::default())
     }
 
-    /// The line cut to `cells`, a longer one ending in `…` in the style it cuts.
+    /// Cuts the line to `cells`. A longer one ends in `…` in the style it cuts.
     pub fn fit(self, cells: usize) -> Self {
         let cells = cells.max(1);
         if self.width() <= cells {
@@ -114,7 +114,7 @@ impl Line {
         Self(spans)
     }
 
-    /// The line with `base` for its unstyled spans.
+    /// Gives the unstyled spans `base`.
     pub fn based(mut self, base: Style) -> Self {
         for span in self.0.iter_mut().filter(|span| span.style == Style::default()) {
             span.style = base;
@@ -122,7 +122,7 @@ impl Line {
         self
     }
 
-    /// The line without trailing spaces.
+    /// Drops trailing spaces.
     pub fn trimmed(mut self) -> Self {
         while let Some(last) = self.0.last_mut() {
             last.text.truncate(last.text.trim_end_matches(' ').len());
@@ -135,7 +135,7 @@ impl Line {
     }
 }
 
-/// `text` with its first character in upper case.
+/// Upper-cases the first character of `text`.
 pub fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars
@@ -143,12 +143,12 @@ pub fn capitalized(text: &str) -> String {
         .map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
-/// The cells `text` takes.
+/// Counts the cells `text` takes.
 pub fn width(text: &str) -> usize {
     text.width()
 }
 
-/// `parts` joined by ` · ` while a line holds `cells`.
+/// Joins `parts` with ` · ` while a line holds `cells`.
 pub fn wrap(parts: &[String], cells: usize) -> Vec<String> {
     let mut lines = vec![String::new()];
     for part in parts {
@@ -165,7 +165,7 @@ pub fn wrap(parts: &[String], cells: usize) -> Vec<String> {
     lines
 }
 
-/// `text`'s words filled into lines of at most `cells`; a longer word takes a line of its own.
+/// Fills `text`'s words into lines of at most `cells`. A longer word takes a line of its own.
 pub fn fill(text: &str, cells: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     for word in text.split_whitespace() {
@@ -195,7 +195,7 @@ pub fn write(lines: &[Line], profile: Profile, out: &mut impl Write) -> io::Resu
     out.flush()
 }
 
-/// The SGR parameters of `style` in `profile`; none for no style.
+/// Builds the SGR parameters of `style` in `profile`, none for no style.
 fn sgr(style: Style, profile: Profile) -> Option<String> {
     let color = |color: Option<Color>, base: u8| {
         let color = color?;

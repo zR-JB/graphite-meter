@@ -1,5 +1,5 @@
-// The Details sheet's body: the server shown and how it was reached, what it supports, the builds, and a diagnostic
-// report. Inspecting a server only reads; this browser's address is in the page only while its key is pressed.
+// The Details sheet's body shows the server, how it was reached, what it supports, the builds, and a diagnostic
+// report. Inspecting a server only reads. This browser's address is in the page only while its key is pressed.
 import "./details.css";
 import type { App } from "../../app/app";
 import { describeStreams, needsPings } from "../../engine/net/streams";
@@ -23,17 +23,17 @@ import { diagnosticReport } from "./report";
 
 const ROLES = ["throughput", "latency"] as const;
 const COPIED_MS = 1_500;
-// A release stamps the full commit; the row shows git's short form, its tip and the report the whole one.
+// A release stamps the full commit. The row shows git's short form, its tip and the report the whole one.
 const REVISION = /^[0-9a-f]{12,}$/.test(BUILD.revision) ? BUILD.revision.slice(0, 8) : BUILD.revision;
 
-/** An address that breaks after each colon, so IPv6 wraps there. */
+/** Breaks an address after each colon, so IPv6 wraps there. */
 const breakable = (address: string) =>
   address.split(":").flatMap((part, index) => (index ? [":", document.createElement("wbr"), part] : [part]));
 
 export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const { servers, run } = app;
   const live = liveOf(app);
-  // While a run exists, the servers it prepared; otherwise the selected ones.
+  // The list holds the servers a run prepared while the run exists, and the selected ones otherwise.
   const listed = computed(() => {
     const prepared = run.prepared();
     if (prepared.length) return prepared.map(({ server }) => server);
@@ -70,7 +70,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   });
   const prepared = computed(() => run.prepared().find(({ server }) => server.id === shownId()) ?? null);
   const mode = computed(() => (run.running() ? "running" : prepared() ? "result" : "live"));
-  // What Start prepared while its run is shown, so nothing a later check learns moves it; else the live checks.
+  // While a run shows, the facts stay what Start prepared, so no later check moves them. Else the live checks show.
   const facts = computed(() => {
     const frozen = prepared();
     if (frozen) return { discovery: frozen.discovery, throughput: frozen.throughput, latency: frozen.latency };
@@ -82,7 +82,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     };
   });
   const discovery = () => facts().discovery;
-  /** The role's target: the prepared one, else what the server's checks resolve now. */
+  /** Gives the role's prepared target, or what the server's checks resolve now. */
   const target = (role: Role) => (prepared() ? (facts()[role]?.target ?? null) : shownTarget(view(), role, app.page));
   const runConfig = computed(() => ({ ...app.preferences.config(), ...run.plan() }));
   const issues = computed(() => {
@@ -136,11 +136,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const supports = (items: string[] | null) =>
     items === null ? ["Checking server"] : items.length ? items : ["None advertised"];
 
-  /** How the last copy went, for a moment. */
+  /** Holds how the last copy went, for a moment. */
   const copied = signal<"" | "copied" | "failed">("");
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(copiedTimer));
-  // Everything the page holds about the servers and the run, read on demand.
+  // The report reads everything the page holds about the servers and the run, on demand.
   const report = () => {
     const views = servers.views.peek();
     const measured = run.details.peek();
@@ -196,7 +196,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       },
     });
   };
-  // A plain-HTTP page has no Clipboard API: there the report is copied through a selection, within the press.
+  // A plain-HTTP page has no Clipboard API, so there the report is copied through a selection, within the press.
   async function copyReport(from: HTMLElement) {
     clearTimeout(copiedTimer);
     const text = report();
@@ -425,7 +425,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   );
 }
 
-/** Copies `text` by selecting it in a field beside `at`, inside any dialog `at` is in; whether it copied. */
+/** Copies `text` by selecting it in a field beside `at`, inside any dialog `at` is in. Returns whether it copied. */
 function copyBySelection(text: string, at: HTMLElement): boolean {
   const field = document.createElement("textarea");
   field.value = text;

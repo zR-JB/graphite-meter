@@ -1,4 +1,4 @@
-//! Authentication: the policy every request passes, its own routes, and the lease a signed-in request carries.
+//! Authenticates requests with the policy each one passes, its own routes and the lease a signed-in request carries.
 
 mod approval;
 mod jwt;
@@ -43,26 +43,26 @@ use std::{
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-/// What the policy decided: serve it, as the lease's holder when signed in, or its own answer from the head.
+/// The policy decided to serve the request, as the lease's holder when signed in, or to answer from the head itself.
 pub type Decision = Result<Option<AuthLease>, Response<Body>>;
 
-/// The configured authentication; without it every request is allowed, anonymously.
+/// Holds the configured authentication. Without it every request is allowed, anonymously.
 pub struct Auth(Option<Box<Enabled>>);
 
-/// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
+/// Signs in at the public origin with policy, login store, password and OIDC sign-in, approval budget and security log.
 pub struct Enabled {
     policy: Policy,
     store: Store,
     sign_in: SignIn,
-    /// Approval pages opened per client address.
+    /// Counts approval pages opened per client address.
     browser_approvals: Attempts,
     security: Security,
-    /// The OIDC provider's name, which the sign-in page shows.
+    /// The sign-in page shows this OIDC provider name.
     provider: String,
 }
 
 impl Auth {
-    /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
+    /// Builds what `config` enables, reading its hash and OIDC secret. The OIDC provider is discovered later.
     pub fn new(config: Option<&config::Auth>, outbound: &config::Outbound, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self(None)) };
         let (mode, settings) = match &config.methods {
@@ -106,7 +106,7 @@ impl Auth {
         }))))
     }
 
-    /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
+    /// Discovers the OIDC provider once, when one is configured. OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
         match self.0.as_ref().and_then(|auth| auth.sign_in.oidc()) {
             Some(oidc) => oidc.discover().await,
@@ -114,7 +114,7 @@ impl Auth {
         }
     }
 
-    /// Hybrid mode's discovery, retried in the background until the provider answers.
+    /// Retries hybrid mode's discovery in the background until the provider answers.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
         let SignIn::Hybrid(_, oidc) = &auth.sign_in else { return None };
@@ -125,17 +125,17 @@ impl Auth {
         self.0.is_some()
     }
 
-    /// The store of logins, grants and tickets, when enabled.
+    /// Gives the store of logins, grants and tickets, when enabled.
     pub fn store(&self) -> Option<&Store> {
         self.0.as_ref().map(|auth| &auth.store)
     }
 
-    /// The security log's counts, when enabled.
+    /// Gives the security log's counts, when enabled.
     pub fn security(&self) -> Option<&Security> {
         self.0.as_ref().map(|auth| &auth.security)
     }
 
-    /// The policy every request passes, decided from its head alone.
+    /// Applies the policy every request passes, decided from its head alone.
     pub fn authorize<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Decision {
         match &self.0 {
             None => Ok(None),
@@ -143,12 +143,12 @@ impl Auth {
         }
     }
 
-    /// Whether `path` is one of the routes `handle` answers on the endpoints serving the app; none when off.
+    /// Says whether `path` is one of the routes `handle` answers on the endpoints serving the app. None are when off.
     pub fn claims(&self, path: &str) -> bool {
         self.enabled() && (path == "/login" || path.starts_with("/auth/"))
     }
 
-    /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.
+    /// Answers an authentication route by `deadline`, a page, sign-in post, the OIDC callback, an approval or logout.
     pub async fn handle<B: http_body::Body>(&self, request: Request<B>, deadline: Instant, peer: &Peer) -> Outcome {
         let response = match &self.0 {
             None => response::status(StatusCode::NOT_FOUND),
@@ -157,7 +157,7 @@ impl Auth {
         Outcome::Response(response)
     }
 
-    /// Who may read the answer to a request for `route` from another origin.
+    /// Says who may read the answer to a request for `route` from another origin.
     pub(crate) fn access(
         &self,
         route: Option<Route>,
@@ -171,7 +171,7 @@ impl Auth {
         }
     }
 
-    /// The answer to a socket-ticket mint for routes of `kind`.
+    /// Answers a socket-ticket mint for routes of `kind`.
     pub(crate) fn ticket<B>(&self, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
         match &self.0 {
             None => response::json_of(&SocketTicket::unauthenticated()),
@@ -180,7 +180,7 @@ impl Auth {
     }
 }
 
-/// How people sign in, as configured: the password, OIDC or both.
+/// People sign in, as configured, with the password, OIDC or both.
 enum SignIn {
     Password(Password),
     Oidc(Box<Oidc>),
@@ -203,39 +203,39 @@ impl SignIn {
     }
 }
 
-/// Who a login belongs to, the key its admission share and uploads count under.
+/// Names who a login belongs to, the key its admission share and uploads count under.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Principal(Arc<str>);
 
 impl Principal {
-    /// The principal every password login shares.
+    /// Every password login shares this principal.
     pub fn operator() -> Self {
         Self("local-operator".into())
     }
 
-    /// The principal of an OIDC subject.
+    /// Names the principal of an OIDC subject.
     pub fn oidc(subject: &str) -> Self {
         Self(format!("oidc:{subject}").into())
     }
 }
 
-/// What a lease is held through: a login's session or a measurement grant issued to it.
+/// A lease is held through a login's session or a measurement grant issued to it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Holder {
     Login(Arc<str>),
     Grant(Arc<str>),
 }
 
-/// How a lease's credential was presented.
+/// Says how a lease's credential was presented.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Via {
-    /// The login's session cookie.
+    /// The login's session cookie carried it.
     Cookie,
-    /// A grant's bearer token or a socket ticket, with the browser origin a browser grant serves.
+    /// A grant's bearer token or a socket ticket carried it, with the browser origin a browser grant serves.
     Bearer(Option<BrowserOrigin>),
 }
 
-/// A signed-in request's identity, and what ends it: its login's expiry, sign-out, or the grant's revocation.
+/// Carries a signed-in request's identity and what ends it, its login's expiry, sign-out or the grant's revocation.
 #[derive(Debug, Clone)]
 pub struct AuthLease {
     holder: Holder,
@@ -251,7 +251,7 @@ impl AuthLease {
         &self.via
     }
 
-    /// The browser origin a browser grant serves.
+    /// Gives the browser origin a browser grant serves.
     pub fn browser(&self) -> Option<&BrowserOrigin> {
         match &self.via {
             Via::Bearer(browser) => browser.as_ref(),
@@ -259,22 +259,22 @@ impl AuthLease {
         }
     }
 
-    /// The login it belongs to.
+    /// Gives the login it belongs to.
     pub fn login(&self) -> LoginKey {
         self.login
     }
 
-    /// The holder, then its principal at twice the share: admission keys and the owner of uploads it creates.
+    /// Gives the holder, then its principal at twice the share, as admission keys and the owner of uploads it creates.
     pub fn keys(&self) -> ClientKeys {
         ClientKeys::Auth(self.holder.clone(), self.principal.clone())
     }
 
-    /// Whether it was revoked, or expired by `now`.
+    /// Says whether it was revoked, or expired by `now`.
     pub fn is_ended(&self, now: Instant) -> bool {
         self.revoked.is_cancelled() || now >= self.expires
     }
 
-    /// Completes once it is revoked or expires; lanes end with `revoked` then.
+    /// Completes once it is revoked or expires. Lanes end with `revoked` then.
     pub async fn ended(&self) {
         tokio::select! {
             () = self.revoked.cancelled() => {}
@@ -284,7 +284,7 @@ impl AuthLease {
 }
 
 graphite_meter_proto::table! {
-    /// A counted outcome, at its place in the minute line.
+    /// Names a counted outcome at its place in the minute line.
     enum Counter {
         name.0: &'static str,
     } {
@@ -301,11 +301,11 @@ graphite_meter_proto::table! {
     }
 }
 
-/// How many counters the minute line reports.
+/// The minute line reports this many counters.
 pub const COUNTERS: usize = Counter::ALL.len();
 
 graphite_meter_proto::table! {
-    /// Why a sign-in was refused: its security log code, the sign-in page's notice and the counter it adds to.
+    /// Tells why a sign-in was refused, its security log code, the sign-in page's notice and the counter it adds to.
     enum Reason {
         code.0: &'static str,
         notice.1: &'static str,
@@ -337,13 +337,13 @@ graphite_meter_proto::table! {
         AccessTokenHash => ("access_token_hash", "failed", None),
         UserInfoOrSubject => ("userinfo_or_subject", "failed", None),
         UserInfoClaims => ("userinfo_claims_or_group", "failed", None),
-        /// No allowed group: reported as `userinfo_claims_or_group`, counted apart.
+        /// The user has no allowed group, reported as `userinfo_claims_or_group` and counted apart.
         GroupDenied => ("userinfo_claims_or_group", "failed", Some(Counter::GroupDenial)),
         InvalidSubject => ("invalid_subject", "failed", None),
     }
 }
 
-/// The security log: sign-in outcomes counted into one line a minute, and debug lines under `GM_VERBOSE`.
+/// Counts sign-in outcomes into one security log line a minute and writes debug lines under `GM_VERBOSE`.
 pub struct Security {
     counts: [AtomicU64; COUNTERS],
     verbose: bool,
@@ -372,7 +372,7 @@ impl Security {
         }
     }
 
-    /// The minute line of the counts since `last`, which it advances; `None` when nothing changed.
+    /// Writes the minute line of the counts since `last`, which it advances, or `None` when nothing changed.
     pub fn line(&self, last: &mut [u64; COUNTERS]) -> Option<String> {
         let counts = self.counts.each_ref().map(|count| count.load(Ordering::Relaxed));
         if counts == *last {

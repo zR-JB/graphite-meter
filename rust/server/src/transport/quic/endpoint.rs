@@ -1,4 +1,4 @@
-//! HTTP/3 endpoints: on Linux one per two runtime threads on one port, else one, each holding budgeted buffers.
+//! Binds HTTP/3 endpoints, on Linux one per two runtime threads on one port, else one, each holding budgeted buffers.
 
 use super::{
     Http3, Listener,
@@ -28,19 +28,19 @@ use std::{
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
-/// The most endpoints: their reservations stay a small part of the default budget on hosts with many cores.
+/// Caps the endpoints so their reservations stay a small part of the default budget on hosts with many cores.
 const MAX_SHARDS: usize = 16;
 const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
 
-/// HTTP/3's endpoints on one port and what their connections share.
+/// Holds HTTP/3's endpoints on one port and what their connections share.
 pub struct Endpoints {
     pub listeners: Vec<Listener>,
     pub http3: Http3,
-    /// What their buffers hold of the budget.
+    /// Their buffers hold this much of the budget.
     pub bytes: usize,
 }
 
-/// What binding needs; `fits` refuses endpoint bytes the budget does not cover beside every connection's floor.
+/// Carries what binding needs. `fits` refuses endpoint bytes the budget does not cover beside every connection's floor.
 pub struct Binding<'a, F> {
     pub app: &'a Arc<App>,
     pub limits: &'a Limits,
@@ -50,7 +50,7 @@ pub struct Binding<'a, F> {
 }
 
 impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
-    /// On Linux, endpoints on half of `pool`'s runtimes, 2 to 16 as budget covers (2 beat 1 or 4 on 4 workers).
+    /// On Linux, binds endpoints on half of `pool`'s runtimes, 2 to 16 as budget covers (2 beat 1 or 4 on 4 workers).
     pub fn bind(&self, address: SocketAddr, pool: &Pool) -> Result<Endpoints, String> {
         let runtimes = pool.runtimes();
         if cfg!(target_os = "linux") && runtimes.len() > 1 {
@@ -71,7 +71,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         self.single(address, pool.next())
     }
 
-    /// One endpoint on `runtime`.
+    /// Binds one endpoint on `runtime`.
     fn single(&self, address: SocketAddr, runtime: Handle) -> Result<Endpoints, String> {
         let udp = Udp::bind(address, 1, &runtime)?;
         let config = noq::EndpointConfig::default();
@@ -82,11 +82,11 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Endpoints { listeners: vec![listener], http3, bytes })
     }
 
-    /// Endpoints on as many `runtimes` as the budget covers, sharing keys and limits; `None` under two.
+    /// Binds endpoints on as many `runtimes` as the budget covers, sharing keys and limits, or `None` under two.
     fn shards(&self, address: SocketAddr, runtimes: &[Handle]) -> Result<Option<Endpoints>, String> {
         let config = noq::EndpointConfig::default();
         let first = Udp::bind(address, runtimes.len(), &runtimes[0])?;
-        // The others join the port the first bound; it stands for them until they exist.
+        // The others join the port the first bound, and it stands for them until they exist.
         let address = first.socket.local_addr().map_err(|error| error.to_string())?;
         let total = |shards| first.bytes(&config, shards, self.limits).ok()?.checked_mul(shards);
         let fitting = (2..=runtimes.len())
@@ -131,8 +131,8 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Some(Endpoints { listeners, http3, bytes }))
     }
 
-    /// An endpoint built on `runtime`, whose socket holds `bytes` of the budget until it and its senders drop; its
-    /// connections hold a share of `shard`'s count.
+    /// Builds an endpoint on `runtime`. Its socket holds `bytes` of the budget until it and its senders drop, and
+    /// its connections hold a share of `shard`'s count.
     fn endpoint(
         &self,
         endpoint: noq::EndpointConfig,
@@ -151,7 +151,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Listener { endpoint, app: self.app.clone(), runtime, shard })
     }
 
-    /// What a shard's connections share: their part of server-wide incoming limits; handshakes queue per endpoint.
+    /// Builds what a shard's connections share, its part of server-wide incoming limits. Handshakes queue per endpoint.
     fn http3(&self, shards: usize) -> Result<Http3, String> {
         let crypto = QuicServerConfig::try_from(self.certificates.server_config(b"h3"));
         let mut config = noq::ServerConfig::with_crypto(Arc::new(crypto.map_err(|error| error.to_string())?));
@@ -172,7 +172,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     }
 }
 
-/// One of `sockets` UDP sockets on an address, wrapped for noq on its binding runtime, with its kernel bytes and, in a
+/// Wraps one of `sockets` UDP sockets on an address for noq on its binding runtime, with its kernel bytes and, in a
 /// set, whether the kernel took the routing program.
 struct Udp {
     socket: Box<dyn AsyncUdpSocket>,
@@ -206,14 +206,14 @@ impl Udp {
         Ok(Self { socket, quic, kernel, routed })
     }
 
-    /// What one of `shards` endpoints on this socket holds of the budget.
+    /// One of `shards` endpoints on this socket holds this much of the budget.
     fn bytes(&self, config: &noq::EndpointConfig, shards: usize, limits: &Limits) -> Result<usize, String> {
         let segments = self.socket.max_receive_segments().get();
         endpoint_bytes(config, shards, limits.connections.get(), self.kernel, segments).ok_or_else(|| OVERFLOW.into())
     }
 }
 
-/// An endpoint's socket, whose buffers hold their reservation until the socket and its senders drop.
+/// Wraps an endpoint's socket, whose buffers hold their reservation until the socket and its senders drop.
 #[derive(Debug)]
 struct Budgeted {
     socket: Box<dyn AsyncUdpSocket>,

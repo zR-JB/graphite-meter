@@ -1,4 +1,4 @@
-//! The originating server's catalog (`api/discovery.md`, `servers.schema.json`).
+//! Models the originating server's catalog (`api/discovery.md`, `servers.schema.json`).
 
 use crate::{
     discovery::{Preflight, is_metadata},
@@ -15,7 +15,7 @@ pub const MAX_SELECTED: usize = 4;
 /// An entry names at most this many additional origins.
 pub const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
-/// A catalog server ID: 1–64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
+/// A catalog server ID has 1–64 ASCII letters, digits, `.`, `_` or `-`. Clones share the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerId(Arc<str>);
 
@@ -31,7 +31,7 @@ impl ServerId {
         ((1..=64).contains(&text.len()) && text.bytes().all(id_byte)).then(|| Self(text.into()))
     }
 
-    /// `self`: the server that serves the catalog.
+    /// Names `self`, the server that serves the catalog.
     pub fn own() -> Self {
         Self("self".into())
     }
@@ -47,7 +47,7 @@ impl fmt::Display for ServerId {
     }
 }
 
-/// One measurement server and the origins its discovery may advertise beyond its own host.
+/// Describes one measurement server and the origins its discovery may advertise beyond its own host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerEntry {
@@ -60,7 +60,7 @@ pub struct ServerEntry {
     pub additional_origins: Vec<Origin>,
 }
 
-/// `/servers`: the catalog, `self` first, and the servers selected by default.
+/// `/servers` returns the catalog, `self` first, and the servers selected by default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCatalog {
@@ -69,7 +69,7 @@ pub struct ServerCatalog {
 }
 
 table! {
-    /// Why a catalog, or one entry of it, is invalid.
+    /// Says why a catalog, or one entry of it, is invalid.
     pub enum CatalogError {
         message.0: &'static str,
     } {
@@ -90,14 +90,14 @@ impl fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// A received entry left out, and why.
+/// Records a received entry left out, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
     pub id: String,
     pub error: CatalogError,
 }
 
-/// A received catalog: its valid entries, and the entries left out.
+/// Holds a received catalog's valid entries and the entries left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
     pub catalog: ServerCatalog,
@@ -105,7 +105,7 @@ pub struct Received {
 }
 
 impl ServerCatalog {
-    /// The catalog of a server configured without one.
+    /// Builds the catalog of a server configured without one.
     pub fn singleton() -> Self {
         let own = ServerEntry {
             id: ServerId::own(),
@@ -128,7 +128,7 @@ impl ServerCatalog {
         self.validate_selection(&self.default_selection)
     }
 
-    /// Checks a selection: one to four distinct servers of this catalog.
+    /// Checks that a selection names one to four distinct servers of this catalog.
     pub fn validate_selection(&self, selected: &[ServerId]) -> Result<(), CatalogError> {
         let mut seen = HashSet::new();
         let known = |id: &ServerId| self.servers.iter().any(|entry| entry.id == *id);
@@ -137,7 +137,7 @@ impl ServerCatalog {
         valid.then_some(()).ok_or(CatalogError::Selection)
     }
 
-    /// Reads a received catalog, dropping invalid entries but `self`; an emptied selection falls back to `self`.
+    /// Reads a received catalog, dropping invalid entries but `self`. An emptied selection falls back to `self`.
     pub fn decode(data: &[u8]) -> Result<Received, serde_json::Error> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -173,7 +173,7 @@ impl ServerCatalog {
 }
 
 impl ServerEntry {
-    /// Whether this entry's discovery from `served` may list all `preflight` targets: served-host ports, exact origins.
+    /// Approves all `preflight` targets for this entry's discovery from `served`, served-host ports or exact origins.
     pub fn approves(&self, served: &Origin, preflight: &Preflight) -> bool {
         preflight.base_urls().all(|base| match base {
             BaseUrl::Served => true,
@@ -181,7 +181,7 @@ impl ServerEntry {
         })
     }
 
-    /// This entry's faults, given the entries before it.
+    /// Finds this entry's faults, given the entries before it.
     fn check(&self, earlier: &[Self]) -> Result<(), CatalogError> {
         if !is_metadata(&self.name) || !is_metadata(&self.location) {
             return Err(CatalogError::Identity);
@@ -199,7 +199,7 @@ impl ServerEntry {
     }
 }
 
-/// A catalog entry as sent, read field by field so one invalid entry is refused alone.
+/// Holds a catalog entry as sent, read field by field so one invalid entry is refused alone.
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct SentEntry {
@@ -228,7 +228,7 @@ impl SentEntry {
     }
 }
 
-/// A catalog origin, which may end in one slash.
+/// Parses a catalog origin, which may end in one slash.
 fn received_origin(text: &str) -> Result<Origin, CatalogError> {
     Origin::parse(text.strip_suffix('/').unwrap_or(text)).map_err(|_| CatalogError::Origin)
 }

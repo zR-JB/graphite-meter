@@ -6,7 +6,7 @@ import { computed, effect, onCleanup, scope, untrack } from "../../lib/signal";
 
 const UNFOLD_MS = 180;
 
-/** A row from nothing to its own height, padding and edge; it shows by halfway. */
+/** Takes a row from nothing to its own height, padding and edge. It shows by halfway. */
 function frames(row: HTMLElement): Keyframe[] {
   const style = getComputedStyle(row);
   const folded = { height: "0px", minHeight: "0px", paddingTop: "0px", paddingBottom: "0px", borderTopWidth: "0px" };
@@ -44,7 +44,7 @@ export function Unfold(props: { when: () => boolean; children: () => Child }): N
     content = null;
     clear(start, end);
   };
-  // A cancelled animation lingers with the timeline until its next frame; without its effect it holds no row.
+  // A cancelled animation lingers with the timeline until its next frame. Without its effect it holds no row.
   const stop = () => {
     for (const animation of content?.motion ?? []) {
       animation.cancel();
@@ -52,7 +52,7 @@ export function Unfold(props: { when: () => boolean; children: () => Child }): N
     }
     if (content) content.motion = [];
   };
-  // The motion ends as one; what is wanted by then stays.
+  // The motion ends as one, and what is wanted by then stays.
   const settle = () => {
     stop();
     if (!open) remove();

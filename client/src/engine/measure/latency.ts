@@ -1,14 +1,14 @@
-// Latency statistics (docs/MEASUREMENTS.md#latency-probing): one population per server and stage, exact nearest-rank
-// percentiles with a midpoint median, jitter over adjacent replies, and the RFC 6298 probe deadline.
+// Keeps latency statistics (docs/MEASUREMENTS.md#latency-probing) in one population per server and stage, with exact
+// nearest-rank percentiles, a midpoint median, jitter over adjacent replies and the RFC 6298 probe deadline.
 import type { ProbeOutcome } from "../../protocol/messages";
 import type { Stage, TransferStage } from "../run/schedule";
 import { SCORE_WINDOW_MS, type Confidence } from "./stability";
 
-/** A stage population's statistics; history saves them as they are. */
+/** Summarizes a stage population. History saves these statistics as they are. */
 export interface LatencySummary {
-  /** Means over in-window replies with a valid server handling time. */
+  /** Averages the in-window replies with a valid server handling time. */
   reflectorTiming?: { sampleCount: number; meanRawRttMs: number; meanHandlingMs: number };
-  /** False when a lost worker leaves the population's outcomes unknown. */
+  /** Turns false when a lost worker leaves the population's outcomes unknown. */
   accountingComplete: boolean;
   probeCount: number;
   timeoutCount: number;
@@ -27,15 +27,15 @@ export interface LatencySummary {
 
 type Outcome = Pick<ProbeOutcome, "rttMs" | "timedOut" | "handlingMs" | "inWindow">;
 
-/** The 0-based nearest rank of percentile `p` among `n` sorted values. */
+/** Returns the 0-based nearest rank of percentile `p` among `n` sorted values. */
 export const nearestRank = (p: number, n: number) => Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
 
-/** The median of `n` sorted values read through `at`, the mean of the middle two for an even count. */
+/** Returns the median of `n` sorted values read through `at`, the mean of the middle two for an even count. */
 export const midpointMedian = (n: number, at: (rank: number) => number) =>
   n % 2 ? at(n >> 1) : (at((n >> 1) - 1) + at(n >> 1)) / 2;
 
-/** Distinct RTTs kept to the nanosecond; past them new ones keep four significant digits (0.01 %), so a day-long
-    stage holds tens of thousands of values at most. */
+/** A population keeps this many distinct RTTs to the nanosecond. Past them new ones keep four significant digits
+    (0.01 %), so a day-long stage holds tens of thousands of values at most. */
 const EXACT_VALUES = 65_536;
 const significant = (ns: number) => {
   if (ns < 10_000) return ns;
@@ -43,7 +43,7 @@ const significant = (ns: number) => {
   return Math.round(ns / step) * step;
 };
 
-/** One stage's outcomes. RTTs are kept once per distinct nanosecond value with a count, so a dense loopback run
+/** Holds one stage's outcomes. RTTs are kept once per distinct nanosecond value with a count, so a dense loopback run
     holds its few thousand distinct values rather than millions of samples. */
 export class Population {
   #counts = new Map<number, number>();
@@ -64,7 +64,7 @@ export class Population {
   #cached: LatencySummary | null | undefined;
   #final: LatencySummary | null | undefined;
 
-  /** Resolved probes: replies and timeouts. */
+  /** Counts resolved probes, replies and timeouts alike. */
   get count(): number {
     return this.#replies + this.#timeouts;
   }
@@ -101,7 +101,7 @@ export class Population {
     this.#previous = rttMs;
   }
 
-  /** Probes the channel lost before a verdict, or could not send; neither is a timeout. */
+  /** Counts probes the channel lost before a verdict or could not send. Neither is a timeout. */
   interrupt(count: number, reason: "unresolved" | "send-failed"): void {
     if (!Number.isSafeInteger(count) || count <= 0) return;
     this.#cached = undefined;
@@ -132,7 +132,7 @@ export class Population {
     let total = 0;
     for (let i = 0; i < keys.length; i++) cumulative[i] = total += this.#counts.get(keys[i]!)!;
     const n = this.#rtts;
-    // The value at a 0-based rank among all samples, found through the cumulative counts.
+    // Finds the value at a 0-based rank among all samples through the cumulative counts.
     const at = (rank: number) => {
       let [lo, hi] = [0, keys.length - 1];
       while (lo < hi) {
@@ -183,7 +183,7 @@ export class Population {
   }
 }
 
-/** The idle stage's last four seconds of outcomes, which early finish scores. */
+/** Keeps the idle stage's last four seconds of outcomes, which early finish scores. */
 class IdleWindow {
   #times: number[] = [];
   /** RTTs, NaN for a timeout. */
@@ -230,7 +230,7 @@ class IdleWindow {
   }
 }
 
-/** The k-th smallest of the first n values, by selection; smaller values end up before it. */
+/** Selects the k-th smallest of the first n values. Smaller values end up before it. */
 function select(values: Float64Array, n: number, k: number): number {
   let lo = 0;
   let hi = n - 1;
@@ -261,7 +261,7 @@ function selectMedian(values: Float64Array, n: number): number {
   return (lower + upper) / 2;
 }
 
-/** RFC 6298 smoothing (α = 1/8, β = 1/4) for the probe deadline. */
+/** Smooths RTTs per RFC 6298 (α = 1/8, β = 1/4) for the probe deadline. */
 export class RttEstimator {
   #srtt = 0;
   #rttvar = 0;
@@ -283,7 +283,7 @@ export class RttEstimator {
     return this.#rttvar;
   }
 
-  /** SRTT + 4 × max(RTTVAR, 1 ms), within 250 ms and 10 s; 250 ms before the first reply. */
+  /** Returns SRTT + 4 × max(RTTVAR, 1 ms), within 250 ms and 10 s, or 250 ms before the first reply. */
   deadlineMs(): number {
     if (!this.#seen) return DEADLINE_FLOOR_MS;
     return Math.min(Math.max(this.#srtt + 4 * Math.max(1, this.#rttvar), DEADLINE_FLOOR_MS), DEADLINE_CEILING_MS);
@@ -293,20 +293,20 @@ export class RttEstimator {
 export const DEADLINE_FLOOR_MS = 250;
 export const DEADLINE_CEILING_MS = 10_000;
 
-/** The idle headline: the latency stage's median, its jitter and their ratio as stability. */
+/** Reports the idle headline as the latency stage's median, its jitter and their ratio as stability. */
 export interface LatencyResult {
   reportedMs: number;
   jitterMs: number | null;
   stabilityPct: number | null;
 }
 
-/** Each loaded stage's median minus the idle median, in signed ms. */
+/** Holds each loaded stage's median minus the idle median, in signed ms. */
 export type AddedLatency = Record<TransferStage, number | null>;
 
 /** A failed population names its median only from this many resolved probes. */
 const MIN_FAILED_OUTCOMES = 3;
 
-/** One server's populations, one per stage: idle and loaded RTTs, and servers, are never pooled. */
+/** Holds one server's populations, one per stage. Idle and loaded RTTs, and servers, are never pooled. */
 export class ServerLatency {
   readonly stages: Record<Stage, Population> = {
     latency: new Population(),
@@ -315,7 +315,7 @@ export class ServerLatency {
     bidirectional: new Population(),
   };
   readonly failed = new Set<Stage>();
-  /** The idle stage's recent outcomes, for early finish. */
+  /** Keeps the idle stage's recent outcomes for early finish. */
   readonly idle = new IdleWindow();
 
   observe(stage: Stage, outcome: Outcome, t: number, continuity: number): void {
@@ -361,7 +361,7 @@ export class ServerLatency {
     };
   }
 
-  /** Null without an idle median or any loaded one; a negative difference stays negative. */
+  /** Returns null without an idle median or any loaded one. A negative difference stays negative. */
   addedLatency(): AddedLatency | null {
     const idle = this.summary("latency")?.p50Ms;
     const loaded = (stage: TransferStage) => this.summary(stage)?.p50Ms ?? null;

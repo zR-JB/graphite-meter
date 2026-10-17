@@ -1,4 +1,4 @@
-//! The network layer: one request API over HTTP/1.1, 2 and 3, lane groups, latency bus, failures, retry, sign-in.
+//! Serves one request API over HTTP/1.1, 2 and 3, and holds lane groups, the latency bus, failures, retry and sign-in.
 pub mod approval;
 mod bus;
 mod conn;
@@ -12,7 +12,7 @@ pub use fault::{Class, Fault};
 pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
-/// What a check says of a server no connection reached.
+/// A check says this of a server no connection reached.
 pub const UNREACHABLE: &str = "Server could not be reached";
 
 use conn::{Answer, Failed};
@@ -38,10 +38,10 @@ use tokio::{
     time::{Instant, timeout_at},
 };
 
-/// How long a control request may take, its answer's body included, and a session or bus to open.
+/// A control request may take this long, its answer's body included, and so may opening a session or bus.
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A path check's network state, reused by its run: proxies, verification, grants, control connections, QUIC runtimes.
+/// Keeps proxies, verification, grants, control connections and QUIC runtimes for a path check and its run.
 #[derive(Clone)]
 pub struct Client {
     shared: Arc<Shared>,
@@ -55,7 +55,7 @@ struct Shared {
     runtimes: Arc<Pool>,
 }
 
-/// Each signed-in server's grant, and the server whose grant each enrolled target takes.
+/// Maps each signed-in server to its grant, and each enrolled target to the server whose grant it takes.
 #[derive(Default)]
 struct Grants {
     tokens: HashMap<Origin, HeaderValue>,
@@ -63,13 +63,13 @@ struct Grants {
 }
 
 impl Grants {
-    /// The server whose grant `target` takes: the one that enrolled it, else its own.
+    /// Returns the server whose grant `target` takes, the one that enrolled it, else its own.
     fn issuer<'a>(&'a self, target: &'a Origin) -> &'a Origin {
         self.issuers.get(target).unwrap_or(target)
     }
 }
 
-/// A bodyless request to a route.
+/// Describes a bodyless request to a route.
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: Method,
@@ -85,35 +85,35 @@ impl Request {
 }
 
 impl Client {
-    /// A client through the environment's proxies; `insecure` skips certificate checks and never sends a grant.
+    /// Uses the environment's proxies. An `insecure` client skips certificate checks and never sends a grant.
     pub fn new(insecure: bool, runtimes: Arc<Pool>) -> Self {
         Self::with(if insecure { Verify::Insecure } else { Verify::trusted() }, Proxy::from_env(), runtimes)
     }
 
-    /// A client through `proxy`, checking certificates as `verify` says; an insecure one never sends a grant.
+    /// Uses `proxy` and checks certificates as `verify` says. An insecure client never sends a grant.
     pub fn with(verify: Verify, proxy: Proxy, runtimes: Arc<Pool>) -> Self {
         let connector = Connector::new(proxy, verify.clone());
         let shared = Arc::new(Shared { connector, verify, grants: Mutex::default(), runtimes });
         Self { shared, connections: Arc::default() }
     }
 
-    /// Where latency probes run, apart from the runtimes that carry transfers.
+    /// Latency probes run here, apart from the runtimes that carry transfers.
     pub fn latency_runtime(&self) -> Handle {
         self.shared.runtimes.latency()
     }
 
-    /// The same client with control connections of its own, apart from those its lanes may share.
+    /// Returns the same client with control connections of its own, apart from those its lanes may share.
     pub fn apart(&self) -> Self {
         Self { shared: self.shared.clone(), connections: Arc::default() }
     }
 
-    /// A control request's JSON answer, read by `decode` within the control timeout.
+    /// Reads a control request's JSON answer with `decode` within the control timeout.
     pub async fn json<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<T, Fault> {
         Ok(self.exchange(via, request, decode).await?.1)
     }
 
-    /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family
-    /// the server saw the probe arrive from.
+    /// Returns the protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address
+    /// family the server saw the probe arrive from.
     pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<(Protocol, IpFamily), Fault> {
         let request = Request::new(Method::GET, origin, Route::Probe);
         let (version, probe) = self.exchange(via, request, Probe::decode).await?;
@@ -128,14 +128,14 @@ impl Client {
         Ok((protocol, probe.client_ip_version))
     }
 
-    /// A control request's answer, its head within the control timeout; the caller bounds its body.
+    /// Sends a control request and reads its answer's head within the control timeout. The caller bounds its body.
     pub async fn control(&self, via: Protocol, request: Request) -> Result<Incoming, Fault> {
         let deadline = Instant::now() + CONTROL_TIMEOUT;
         let answer = self.connections.send(self, via, &request, deadline).await?;
         self.check(&request, answer)
     }
 
-    /// A connection of its own to `origin`, dialed on the current runtime, which then runs it.
+    /// Dials a connection of its own to `origin` on the current runtime, which then runs it.
     pub async fn dial(&self, origin: &Origin, via: Protocol, buffer: ReadBuffer) -> Result<Conn, Fault> {
         Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
     }
@@ -159,7 +159,7 @@ impl Client {
         }
     }
 
-    /// The HTTP version a JSON answer came over, and the answer read by `decode`, within the control timeout.
+    /// Returns the HTTP version a JSON answer came over and the answer read by `decode`, within the control timeout.
     async fn exchange<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<(Version, T), Fault> {
         let deadline = Instant::now() + CONTROL_TIMEOUT;
         let exchange = async {
@@ -171,7 +171,7 @@ impl Client {
         exchanged.unwrap_or(Err(Fault::TimedOut("control response")))
     }
 
-    /// The request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS.
+    /// Builds the request's head with an absolute URI, uncacheable, with its server's grant over verified HTTPS.
     fn head(&self, request: &Request) -> Result<http::Request<()>, Fault> {
         let mut target = format!("{}{}", request.origin, request.route.path());
         if !request.query.is_empty() {
@@ -192,13 +192,13 @@ impl Client {
         head.body(()).map_err(|error| Fault::Malformed(error.to_string()))
     }
 
-    /// The answer's body when it is a 200.
+    /// Returns the answer's body when it is a 200.
     fn check(&self, request: &Request, answer: Answer) -> Result<Incoming, Fault> {
         let refused = self.refusal(request, answer.status(), answer.headers());
         refused.map_or_else(|| Ok(answer.into_body()), Err)
     }
 
-    /// The fault an upload progress `error` record from `origin` means; a revoked grant is dropped.
+    /// Maps an upload progress `error` record from `origin` to its fault. A revoked grant is dropped.
     pub fn upload_error(&self, origin: &Origin, code: &str) -> Fault {
         let Some(refusal) = UploadRefusal::find_by(UploadRefusal::name, code) else {
             return Fault::Malformed(format!("upload progress error {code}"));
@@ -207,13 +207,13 @@ impl Client {
         self.signed_out(Fault::refusal(refusal, Route::UploadProgress, None, issuer))
     }
 
-    /// The fault an answer other than a 200 means; a sign-in refusal drops its server's grant.
+    /// Maps an answer other than a 200 to its fault. A sign-in refusal drops its server's grant.
     fn refusal(&self, request: &Request, status: StatusCode, headers: &HeaderMap) -> Option<Fault> {
         let issuer = || self.issuer(&request.origin);
         Some(self.signed_out(Fault::answer(status, headers, request.route, issuer)?))
     }
 
-    /// The fault a lane ending at `origin` means; a revoked grant is dropped and its server asks for sign-in.
+    /// Maps a lane ending at `origin` to its fault. A revoked grant is dropped and its server asks for sign-in.
     fn ending(&self, origin: &Origin, ending: LaneEnding) -> Fault {
         match ending {
             LaneEnding::Revoked => self.signed_out(Fault::SignIn(self.issuer(origin))),
@@ -221,12 +221,12 @@ impl Client {
         }
     }
 
-    /// The server whose grant `origin` takes.
+    /// Returns the server whose grant `origin` takes.
     fn issuer(&self, origin: &Origin) -> Origin {
         lock(&self.shared.grants).issuer(origin).clone()
     }
 
-    /// `fault`, dropping its server's grant when it asks for sign-in.
+    /// Passes `fault` on, dropping its server's grant when it asks for sign-in.
     fn signed_out(&self, fault: Fault) -> Fault {
         if let Fault::SignIn(issuer) = &fault {
             lock(&self.shared.grants).tokens.remove(issuer);
@@ -240,10 +240,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Idle HTTP/1.1 connections kept per origin and protocol.
+/// This many idle HTTP/1.1 connections are kept per origin and protocol.
 const IDLE: usize = 32;
 
-/// Control connections per origin and protocol: a multiplexed one shared, idle HTTP/1.1 ones reused.
+/// Pools control connections per origin and protocol, sharing a multiplexed one and reusing idle HTTP/1.1 ones.
 #[derive(Default)]
 struct Connections {
     slots: Mutex<HashMap<(Origin, Protocol), Arc<Slot>>>,
@@ -252,17 +252,17 @@ struct Connections {
 
 #[derive(Default)]
 struct Slot {
-    /// The multiplexed connection, by its serial.
+    /// Holds the multiplexed connection with its serial.
     shared: Mutex<Option<(u64, Conn)>>,
-    /// Held across a dial that may bring the multiplexed connection, which other requests wait for.
+    /// Stays held across a dial that may bring the multiplexed connection, which other requests wait for.
     dialing: tokio::sync::Mutex<()>,
-    /// HTTP/1.1 connections whose last answer ended.
+    /// Lists the HTTP/1.1 connections whose last answer ended.
     idle: Mutex<Vec<Conn>>,
     /// A negotiated dial found HTTP/1.1, so each request without an idle connection dials its own.
     exclusive: AtomicBool,
 }
 
-/// A connection taken for one request: the shared one's serial, and whether an earlier request used it.
+/// A connection taken for one request carries the shared one's serial and whether an earlier request used it.
 struct Taken {
     conn: Conn,
     serial: Option<u64>,
@@ -270,7 +270,7 @@ struct Taken {
 }
 
 impl Connections {
-    /// The answer's head by `deadline`; a request failing unanswered on a reused connection retries once on a new one.
+    /// Reads the answer's head by `deadline`. A request failing unanswered on a reused connection retries once afresh.
     async fn send(
         &self,
         client: &Client,
@@ -286,13 +286,13 @@ impl Connections {
         .map_err(|(fault, _)| fault)
     }
 
-    /// The multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
+    /// Returns the multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
     async fn shared(&self, client: &Client, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
         let (slot, home) = (self.slot(origin, via), Handle::current());
         Ok(self.take(client, &slot, via, origin, true, Some(&home)).await?.conn)
     }
 
-    /// The runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.
+    /// Returns the runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.
     fn home(&self, origin: &Origin, via: Protocol) -> Option<Handle> {
         let slot = self.slot(origin, via);
         let shared = lock(&slot.shared);
@@ -304,7 +304,7 @@ impl Connections {
         slots.entry((origin.clone(), via)).or_default().clone()
     }
 
-    /// One try; its fault says whether it failed on a reused connection before any answer.
+    /// Makes one try. Its fault says whether it failed on a reused connection before any answer.
     async fn attempt(
         &self,
         client: &Client,
@@ -333,7 +333,7 @@ impl Connections {
         }
     }
 
-    /// A connection for one request; a QUIC one it dials runs on `home`, else on the next pinned runtime.
+    /// Takes a connection for one request. A QUIC one it dials runs on `home`, else on the next pinned runtime.
     async fn take(
         &self,
         client: &Client,
@@ -368,7 +368,7 @@ impl Connections {
 }
 
 impl Slot {
-    /// The usable multiplexed connection, or an idle HTTP/1.1 one.
+    /// Returns the usable multiplexed connection, or an idle HTTP/1.1 one.
     fn reusable(&self) -> Option<Taken> {
         let shared = lock(&self.shared);
         if let Some((serial, conn)) = shared.as_ref().filter(|(_, conn)| conn.usable()) {
@@ -381,7 +381,7 @@ impl Slot {
         Some(Taken { conn: idle.swap_remove(ready), serial: None, reused: true })
     }
 
-    /// Keeps an HTTP/1.1 connection for later requests once `answer`'s body ended; one sent mid-body would wait behind.
+    /// Keeps an HTTP/1.1 connection for later requests once `answer`'s body ended. One sent mid-body would wait behind.
     fn keep(self: &Arc<Self>, conn: Conn, answer: Answer) -> Answer {
         if conn.share().is_some() {
             return answer;
@@ -397,7 +397,7 @@ impl Slot {
         })
     }
 
-    /// Later requests take another connection than the shared one of `serial`; its open streams go on.
+    /// Later requests take another connection than the shared one of `serial`. Its open streams go on.
     fn retire(&self, serial: Option<u64>) {
         let mut shared = lock(&self.shared);
         if serial.is_some() && shared.as_ref().map(|(current, _)| *current) == serial {

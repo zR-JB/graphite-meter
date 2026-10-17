@@ -1,5 +1,5 @@
-// A strip's pure rules: rate lanes binned to the plot's width, the monotone curve through the bins, and reply bars
-// that join whole buckets to a bar's pitch.
+// Holds a strip's pure rules, rate lanes binned to the plot's width, the monotone curve through the bins, and reply
+// bars that join whole buckets to a bar's pitch.
 import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { TransferStage } from "../../engine/run/schedule";
@@ -7,13 +7,13 @@ import type { ThroughputSample } from "../../app/series";
 
 /** Plot columns are this wide, at least eight of them. */
 const BIN_PX = 4;
-/** A reply bar's least pitch: buckets narrower than this join, so bars keep air between them. */
+/** A reply bar's pitch is at least this; buckets narrower than it join, so bars keep air between them. */
 const REPLY_PX = 4;
 
 export const columnsFor = (width: number) => Math.max(8, Math.floor(width / BIN_PX));
 
-/** One lane's non-empty bins: centre time (timeline ms) and mean rate (bytes/s), in time order. Buffers are kept and
-    grown, so rebinning a live series allocates nothing once the width settles. */
+/** Holds one lane's non-empty bins, centre time (timeline ms) and mean rate (bytes/s), in time order. Buffers are
+    kept and grown, so rebinning a live series allocates nothing once the width settles. */
 export class Lane {
   t = new Float64Array(0);
   v = new Float64Array(0);
@@ -66,8 +66,8 @@ export class Lane {
   }
 }
 
-/** Tangents of the monotone cubic (Fritsch–Carlson, weighted harmonic mean) through `n` points, written to `out`:
-    the curve passes every point and never overshoots between two of them. */
+/** Writes to `out` the tangents of the monotone cubic (Fritsch–Carlson, weighted harmonic mean) through `n` points.
+    The curve passes every point and never overshoots between two of them. */
 export function monotoneTangents(
   x: ArrayLike<number>,
   y: ArrayLike<number>,
@@ -106,7 +106,7 @@ export function monotoneTangents(
   }
 }
 
-/** One bar of a reply track: the fastest to the slowest reply of the buckets it joins, at their centre time. */
+/** One bar of a reply track spans the fastest to the slowest reply of the buckets it joins, at their centre time. */
 export interface ReplyBar {
   t: number;
   t0: number;
@@ -115,8 +115,8 @@ export interface ReplyBar {
   hi: number;
 }
 
-/** A stage's reply buckets as bars. Buckets narrower than a bar's pitch join whole, on the grid of the series' first
-    bucket, so no bucket is drawn twice and a live bar only grows as its buckets close; a bucket of timeouts has none. */
+/** Joins a stage's reply buckets into bars. Buckets narrower than a bar's pitch join whole, on the first bucket's
+    grid, so no bucket is drawn twice and a live bar only grows as its buckets close; a bucket of timeouts has none. */
 export function replyBars(
   buckets: readonly LatencyBucket[],
   phase: LatencyBucket["phase"],
@@ -154,7 +154,7 @@ export function replyBars(
   return bars;
 }
 
-/** The point nearest `t` among points in time order; the earlier wins a tie. */
+/** Finds the point nearest `t` among points in time order; the earlier wins a tie. */
 export function nearestIndex(count: number, time: (i: number) => number, t: number): number {
   let best = -1;
   for (let i = 0; i < count; i++) if (best < 0 || Math.abs(time(i) - t) < Math.abs(time(best) - t)) best = i;

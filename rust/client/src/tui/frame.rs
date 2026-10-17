@@ -1,4 +1,4 @@
-//! The frame: the top bar, the console, a sheet or card over it on a dimmed backdrop, and the bottom bar.
+//! Draws the frame from the top bar, the console, a sheet or card over it on a dimmed backdrop, and the bottom bar.
 use super::{
     App, Overlay, SMALLEST, Target,
     chrome::{Chrome, Link},
@@ -17,13 +17,13 @@ use crate::{
 use ratatui_core::{buffer::Buffer, layout::Rect};
 use std::time::Instant;
 
-/// A sheet's line, and for an item's its index and what a press on it does.
+/// A sheet's line carries, for an item, its index and what a press on it does.
 type SheetLine = (Line, Option<(usize, Option<Target>)>);
 
-/// An entry of a sheet.
+/// A sheet is made of these entries.
 pub(super) enum Entry {
     Heading(String),
-    /// A label and its value, pressable as `target` when it has one.
+    /// Pairs a label and its value, pressable as `target` when it has one.
     Item {
         label: Line,
         value: Line,
@@ -57,7 +57,7 @@ impl App {
         self.console(canvas, body);
         let mut links = Vec::new();
         if !matches!(self.overlay, Overlay::None) {
-            // What opens over the console takes every press; a press beside it closes it.
+            // What opens over the console takes every press. A press beside it closes it.
             let (canvas_color, soft) = (self.palette.canvas(), self.palette.muted.fg.unwrap_or(self.palette.canvas()));
             canvas.dim(body, canvas_color, soft, 0.55);
             canvas.hits.clear();
@@ -90,7 +90,7 @@ impl App {
         links
     }
 
-    /// The brand and the server tested, its readiness at the right.
+    /// Shows the brand and the server tested, its readiness at the right.
     fn top_bar(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         canvas.fill(area, palette.surface);
@@ -113,7 +113,7 @@ impl App {
         }
     }
 
-    /// The selected servers' readiness as the top bar shows it: a dot and its words.
+    /// Describes the selected servers' readiness as the top bar shows it, a dot and its words.
     fn readiness_line(&self) -> (Line, String, Style) {
         let palette = &self.palette;
         let names = self.labels().join(", ");
@@ -139,7 +139,7 @@ impl App {
         }
     }
 
-    /// The run's state, time and bytes at the left; the keys of what is on top at the right.
+    /// Shows the run's state, time and bytes at the left and the keys of what is on top at the right.
     fn bottom_bar(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         canvas.fill(area, palette.surface);
@@ -203,7 +203,7 @@ impl App {
         }
     }
 
-    /// The keys the bottom bar names for what is on top.
+    /// Lists the keys the bottom bar names for what is on top.
     fn bar_keys(&self) -> Vec<keys::Binding> {
         if self.editor().is_some() {
             return keys::listed(keys::EDIT, |_| true);
@@ -231,7 +231,7 @@ impl App {
         shown
     }
 
-    /// The state and its tone: the outcome's, the measuring stage's, or how the server stands.
+    /// Gives the state and its tone, the outcome's, the measuring stage's, or how the server stands.
     pub(super) fn status(&self) -> (&'static str, Style) {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
@@ -256,7 +256,7 @@ impl App {
         }
     }
 
-    /// A sheet titled `title` at the right of `area`, scrolled to keep the `focus` entry shown.
+    /// Draws a sheet titled `title` at the right of `area`, scrolled to keep the `focus` entry shown.
     fn sheet(
         &mut self,
         canvas: &mut Canvas,
@@ -281,7 +281,7 @@ impl App {
             Rect::new(sheet.right() - close_width - 2, sheet.y + 1, close_width, 1),
             Target::Cap(Action::Close),
         );
-        // Every entry as the lines it takes, and where the focused one starts.
+        // Lays out every entry as the lines it takes and notes where the focused one starts.
         let mut lines: Vec<SheetLine> = Vec::new();
         let mut focused_line = None;
         for (index, entry) in entries.iter().enumerate() {
@@ -358,7 +358,7 @@ impl App {
         }
     }
 
-    /// A card centred over the console, `height` rows tall at most, its ground filled; its inner area.
+    /// Fills a card centred over the console, `height` rows tall at most, and returns its inner area.
     fn card_over(&self, canvas: &mut Canvas, area: Rect, height: u16) -> Rect {
         let (width, height) = (area.width.saturating_sub(4).min(76), height.min(area.height));
         let card = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 3, width, height);
@@ -368,7 +368,7 @@ impl App {
         Rect::new(card.x + 3, card.y + 1, width.saturating_sub(6), height.saturating_sub(2))
     }
 
-    /// The server's address asked for: the field, and how its check stands.
+    /// Asks for the server's address with the field, and shows how its check stands.
     fn connect_card(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         let inner = self.card_over(canvas, area, 13);
@@ -410,7 +410,7 @@ impl App {
         };
         canvas.line(inner.x, inner.y + 6, inner.width, &said.fit(usize::from(inner.width)));
         canvas.line(inner.x, inner.y + 7, inner.width, &next.fit(usize::from(inner.width)));
-        // Remembering is the user's choice: the switch, lit under the pointer, and its key.
+        // Remembering is the user's choice, so the switch sits here, lit under the pointer, with its key.
         let switch = Rect::new(inner.x, inner.y + 9, inner.width, 1);
         if self.hover == Some(Target::Remember) {
             canvas.fill(Rect::new(switch.x - 1, switch.y, switch.width + 2, 1), palette.hover);
@@ -426,7 +426,7 @@ impl App {
         canvas.line(inner.x, inner.y + 10, inner.width, &keys);
     }
 
-    /// The sign-in card: the code to match, the time waited and left, and the page's address as a link.
+    /// Draws the sign-in card with the code to match, the time waited and left, and the page's address as a link.
     fn sign_in_card(&self, canvas: &mut Canvas, area: Rect) -> Vec<Link> {
         let (Overlay::SignIn(sign_in), Some(prompt)) = (&self.overlay, &self.view.sign_in) else {
             return Vec::new();
@@ -468,7 +468,7 @@ impl App {
         links
     }
 
-    /// Every key, grouped by where it works.
+    /// Lists every key, grouped by where it works.
     fn help_entries(&self) -> Vec<Entry> {
         let groups: [(&str, &[keys::Binding]); 5] = [
             ("Console", keys::CONSOLE),
@@ -498,7 +498,7 @@ impl App {
         entries
     }
 
-    /// The servers, paths, results and build, as label and value under their headings.
+    /// Lists the servers, paths, results and build, as label and value under their headings.
     fn details_entries(&self) -> Vec<Entry> {
         let palette = &self.palette;
         let item = |label: &str, value: String| Entry::Item {
@@ -587,7 +587,7 @@ impl App {
         entries
     }
 
-    /// Whether the chips' stage `stage` is on for the next run.
+    /// Tells whether the chips' stage `stage` is on for the next run.
     pub(super) fn stage_on(&self, stage: Stage) -> bool {
         match self.running() {
             true => self.plan().iter().any(|(own, _)| *own == stage),

@@ -1,4 +1,4 @@
-//! Sign-in approvals: a terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
+//! Approves sign-ins. A terminal or browser asks with a challenge, the operator approves, the verifier earns a grant.
 
 use super::{
     AuthLease, BrowserOrigin, Counter, Enabled, LOGIN_LIFETIME, LoginKey, page,
@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
 const LIFETIME: Duration = Duration::from_mins(2);
-/// How long an issued grant answers its verifier again, for an exchange whose answer was lost.
+/// An issued grant answers its verifier again this long, for an exchange whose answer was lost.
 const REPLAY: Duration = Duration::from_secs(30);
 const MAX_APPROVALS: usize = 256;
 const MAX_LOGIN_APPROVALS: usize = 8;
@@ -30,7 +30,7 @@ const MAX_CLIENT_APPROVALS: usize = 8;
 const MAX_VERIFIER: usize = 128;
 const MIN_BROWSER_VERIFIER: usize = 32;
 
-/// An approval challenge, checked once: an S256 digest, with the code the operator compares it by.
+/// Holds an approval challenge, an S256 digest checked once, with the code the operator compares it by.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Challenge {
     text: String,
@@ -42,7 +42,7 @@ impl Challenge {
         Some(Self { code: verification_code(text)?, text: text.to_owned() })
     }
 
-    /// The challenge `verifier` answers.
+    /// Derives the challenge `verifier` answers.
     fn of(verifier: &str) -> Option<Self> {
         Self::parse(&challenge(verifier))
     }
@@ -52,17 +52,16 @@ impl Challenge {
     }
 }
 
-/// An approval of one challenge: pending, then the grant it issued while that lasts.
+/// An approval of one challenge is pending, then holds the grant it issued while that lasts.
 pub(super) struct Approval {
-    /// The browser origin asking, or none for a terminal.
+    /// A browser origin asks, or none for a terminal.
     browser: Option<BrowserOrigin>,
     clients: Vec<ClientKey>,
     stage: Stage,
     pub deadline: Instant,
 }
 
-/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by that login, or the grant
-/// it issued.
+/// An approval is unclaimed, claimed by the login that may approve it, approved by that login, or the grant it issued.
 #[derive(Clone)]
 enum Stage {
     Open,
@@ -71,7 +70,7 @@ enum Stage {
     Issued(Issued),
 }
 
-/// The grant an approval issued, and its token while the verifier may ask again.
+/// Holds the grant an approval issued, and its token while the verifier may ask again.
 #[derive(Clone)]
 struct Issued {
     login: LoginKey,
@@ -81,7 +80,7 @@ struct Issued {
 }
 
 impl Approval {
-    /// The login that claimed it.
+    /// Gives the login that claimed it.
     pub(super) fn login(&self) -> Option<LoginKey> {
         match &self.stage {
             Stage::Open => None,
@@ -94,7 +93,7 @@ impl Approval {
         matches!(self.stage, Stage::Issued(_))
     }
 
-    /// Whether it issued the grant keyed `grant`.
+    /// Says whether it issued the grant keyed `grant`.
     pub(super) fn became(&self, grant: &Digest) -> bool {
         matches!(&self.stage, Stage::Issued(issued) if issued.grant == *grant)
     }
@@ -109,14 +108,14 @@ impl Approval {
     }
 }
 
-/// Room for one more approval: within its login's eight, and within the server bounds and the client's share.
+/// Says whether one more approval fits, within its login's eight and within the server bounds and the client's share.
 struct Room {
     login: bool,
     shared: bool,
 }
 
 impl State {
-    /// The room for one more approval of `login`; before sign-in at most half the server's approvals.
+    /// Measures the room for one more approval of `login`. Before sign-in it has at most half the server's approvals.
     fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> Room {
         // An issued approval is bounded by its live grant, so only pending ones count.
         let count = |held: &dyn Fn(&Approval) -> bool| {
@@ -132,7 +131,7 @@ impl State {
         }
     }
 
-    /// The approval of `challenge` while it lasts.
+    /// Finds the approval of `challenge` while it lasts.
     fn pending(&self, challenge: &Challenge) -> Option<&Approval> {
         self.approvals
             .get(challenge)
@@ -153,7 +152,7 @@ impl State {
     }
 }
 
-/// `GET /auth/cli`: the signed-in login's approval page for a terminal's challenge.
+/// `GET /auth/cli` shows the signed-in login's approval page for a terminal's challenge.
 pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> Response<Body> {
     let challenge = query::get(request.uri().query(), "challenge").unwrap_or_default();
     let Some(challenge) = Challenge::parse(&challenge) else {
@@ -190,7 +189,7 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     approval_page(auth, &lease, &challenge, None)
 }
 
-/// `GET /auth/browser`: the approval page for a browser origin's challenge, opened before sign-in when need be.
+/// `GET /auth/browser` shows the approval page for a browser origin's challenge, opened before sign-in when need be.
 pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> Response<Body> {
     let (headers, query) = (request.headers(), request.uri().query());
     let challenge = query::get(query, "challenge").and_then(|challenge| Challenge::parse(&challenge));
@@ -244,7 +243,7 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     approval_page(auth, &lease, &challenge, Some(&origin))
 }
 
-/// `POST /auth/{cli,browser}/approve`: the login's approval of its pending challenge, proving its CSRF token.
+/// `POST /auth/{cli,browser}/approve` takes the login's approval of its pending challenge, proving its CSRF token.
 pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>, browser: bool) -> Response<Body> {
     let (Some(lease), Some(form)) = (lease, form) else {
         return response::empty(StatusCode::FORBIDDEN);
@@ -277,7 +276,7 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     response::html(page::CliDone { browser }.render())
 }
 
-/// `POST /auth/{cli,browser}/token`: the grant for an approved challenge's verifier; a browser's from its origin.
+/// `POST /auth/{cli,browser}/token` issues the grant for an approved challenge's verifier, a browser's from its origin.
 pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B>, browser: bool) -> Response<Body> {
     #[derive(Deserialize)]
     struct Exchange {
@@ -355,13 +354,13 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
     })
 }
 
-/// A document navigation from another site, which reenters with the strictly same-site session cookie.
+/// Detects a document navigation from another site, which reenters with the strictly same-site session cookie.
 fn cross_site_navigation(headers: &HeaderMap) -> bool {
     let sent = |name, value| headers.get(name).is_some_and(|given| given == value);
     sent(SEC_FETCH_SITE, "cross-site") && sent(SEC_FETCH_MODE, "navigate") && sent(SEC_FETCH_DEST, "document")
 }
 
-/// The cookie login of a request that carries no `Authorization`.
+/// Finds the cookie login of a request that carries no `Authorization`.
 fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
     if headers.contains_key(header::AUTHORIZATION) {
         return None;
@@ -369,7 +368,7 @@ fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
     cookie_lease(&auth.store, headers)
 }
 
-/// The page approving `challenge` for a terminal, or for the browser `origin`.
+/// Renders the page approving `challenge` for a terminal, or for the browser `origin`.
 fn approval_page(
     auth: &Enabled,
     lease: &AuthLease,
@@ -393,7 +392,7 @@ fn approval_page(
 }
 
 graphite_meter_proto::table! {
-    /// Why the approval page refuses: a link it cannot approve, or bounds spent for now.
+    /// The approval page refuses over a link it cannot approve, or bounds spent for now.
     enum Refused {
         name.0: &'static str,
     } {
@@ -407,7 +406,7 @@ fn refused(refused: Refused) -> Response<Body> {
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 
-/// The page of a login holding its eight grants.
+/// Renders the page of a login holding its eight grants.
 fn capacity() -> Response<Body> {
     let page = page::Cli::Capacity { limit: MAX_LOGIN_GRANTS }.render();
     with_status(StatusCode::TOO_MANY_REQUESTS, response::html(page))

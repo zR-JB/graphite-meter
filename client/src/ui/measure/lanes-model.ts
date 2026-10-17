@@ -1,4 +1,4 @@
-// The latency lanes' pure rules: the axis, the metrics a row is read at, and the words that describe a row.
+// Holds the latency lanes' pure rules, the axis, the metrics a row is read at, and the words that describe a row.
 import type { LatencySummary } from "../../engine/measure/latency";
 import { fmtAddedMs, fmtCount, fmtMs, fmtPercent, MISSING } from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
@@ -34,14 +34,14 @@ export function values(summary: LatencySummary | null, current: number | null = 
   };
 }
 
-/** The drawn metrics a row can be read at, along the axis; P95 has no mark, so it is spoken, never pointed at. */
+/** Lists the drawn metrics a row is read at, along the axis; P95 has no mark, so it is spoken, never pointed at. */
 export const present = (row: Values): Metric[] =>
   METRICS.filter((metric) => metric !== "p95" && row[metric] !== null).sort((a, b) => row[a]! - row[b]!);
 
 /** The rows' axis follows the dial's ladder over their P90s, so the boxes fill it and one slow reply never sets it. */
 export const lanesAxisMs = (rows: readonly Values[]) => latencyCeilingMs(rows.map((row) => row.p90 ?? row.center));
 
-/** The measured metric nearest a value on the axis, so a hand follows from marker to marker; null with none. */
+/** Finds the measured metric nearest a value on the axis, so a hand follows from marker to marker; null with none. */
 export function nearestMetric(row: Values, ms: number): Metric | null {
   let best: Metric | null = null;
   for (const metric of present(row))
@@ -49,7 +49,7 @@ export function nearestMetric(row: Values, ms: number): Metric | null {
   return best;
 }
 
-/** A slider key's step through the present metrics, null for any other key; from no reading, a step down takes the
+/** Steps a slider key through the present metrics, null for any other key; from no reading, a step down takes the
     last. */
 export function stepMetric(row: Values, from: Metric | null, key: string): Metric | null {
   const metrics = present(row);
@@ -75,13 +75,13 @@ export function stepMetric(row: Values, from: Metric | null, key: string): Metri
 /** A twentieth of the probes timing out is worth a look. */
 export const TIMEOUTS_WARN = 0.05;
 
-/** The share of resolved probes that timed out; null before any resolved. */
+/** Gives the share of resolved probes that timed out; null before any resolved. */
 export const timeoutShare = (summary: LatencySummary | null) =>
   summary?.probeCount ? summary.timeoutCount / summary.probeCount : null;
 
 export const fmtTimeouts = (ratio: number | null) => (ratio === null ? MISSING : fmtPercent(ratio * 100));
 
-/** Unknown outcomes or anything but a reply: the figure says it explains them. */
+/** Unknown outcomes or anything but a reply make the figure say it explains them. */
 export const accountingNotice = (summary: LatencySummary | null) =>
   !!summary &&
   (!summary.accountingComplete ||
@@ -101,19 +101,19 @@ function accounting(summary: LatencySummary): string {
   return summary.accountingComplete ? counts : `Known: ${counts}. Additional outcomes unknown.`;
 }
 
-/** The figure's explainer: its outcomes when it has a notice, else what the share counts. */
+/** Explains the figure, its outcomes when it has a notice, else what the share counts. */
 export function timeoutsTip(label: string, summary: LatencySummary | null): string {
   if (!summary?.probeCount && !accountingNotice(summary)) return "";
   if (accountingNotice(summary)) return `${label} probe outcomes\n${accounting(summary!)}\n${NOT_LOSS}`;
   return `Timeouts\n${fmtCount(summary!.timeoutCount)} of ${fmtCount(summary!.probeCount)} probes had no reply before the deadline\n${NOT_LOSS}`;
 }
 
-/** The server's share of the round trip, from replies that carried it. */
+/** Words the server's share of the round trip, from replies that carried it. */
 export const serverHandling = (timing: NonNullable<LatencySummary["reflectorTiming"]>) =>
   `Server handling ${fmtMs(timing.meanHandlingMs)} ms of a ${fmtMs(timing.meanRawRttMs)} ms mean round trip ` +
   `(${fmtCount(timing.sampleCount)} paired replies)`;
 
-/** A row as a screen reader hears it: every figure it has, or that it waits. */
+/** Words a row as a screen reader hears it, every figure it has, or that it waits. */
 export function laneDescription(label: string, row: Values, summary: LatencySummary | null, added: number | null) {
   const ms = (value: number) => `${fmtMs(value)} ms`;
   const ratio = timeoutShare(summary);

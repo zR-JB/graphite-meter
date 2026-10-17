@@ -1,4 +1,4 @@
-//! The HTTP/2 listener: transfers and their idle endings, window funding, header floods and its SETTINGS.
+//! Tests the HTTP/2 listener, its transfers and their idle endings, window funding, header floods and its SETTINGS.
 
 use super::*;
 use bytes::Bytes;
@@ -12,14 +12,14 @@ use rustls::pki_types::ServerName;
 use std::{future::poll_fn, sync::Arc};
 use tokio_rustls::TlsConnector;
 
-/// A server with an HTTP/2 listener on a local port and a client trusting its certificate.
+/// Starts a server with an HTTP/2 listener on a local port and a client trusting its certificate.
 struct H2 {
     server: Running,
     connector: TlsConnector,
     _scratch: Scratch,
 }
 
-/// A client connection and the task driving it, which ends when the connection closes.
+/// A client connection comes with the task driving it, which ends when the connection closes.
 struct Connection {
     client: SendRequest<Bytes>,
     _driver: JoinHandle<Result<(), h2::Error>>,
@@ -38,7 +38,7 @@ impl H2 {
         Self { server, connector, _scratch: scratch }
     }
 
-    /// A connection whose streams open with `window` bytes of receive window.
+    /// Opens a connection whose streams open with `window` bytes of receive window.
     async fn connect(&self, window: u32) -> Connection {
         let socket = TcpStream::connect(self.server.h2.unwrap()).await.unwrap();
         let name = ServerName::try_from("localhost").unwrap();
@@ -86,7 +86,7 @@ impl Connection {
     }
 }
 
-/// A whole body, releasing its window as it arrives; a reset ends it with the reason.
+/// Reads a whole body, releasing its window as it arrives. A reset ends it with the reason.
 async fn read(mut body: RecvStream) -> Result<Vec<u8>, Option<Reason>> {
     let mut bytes = Vec::new();
     while let Some(chunk) = body.data().await {
@@ -109,8 +109,8 @@ async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     }
 }
 
-/// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it
-/// below a mebibyte.
+/// Tells whether an upload that sent one byte may send twice the default window within `bound`. h2's send buffer caps
+/// it below a mebibyte.
 async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {
     upload.send_data(Bytes::from_static(b"x"), false).unwrap();
     upload.reserve_capacity(4 << 20);
@@ -170,7 +170,7 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
     counted(&mut connection, &id, 2).await;
     raiser.send_data(Bytes::new(), true).unwrap();
     assert_eq!(read(raised.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
-    // More than the credit the window granted before, so the server must keep granting it.
+    // The upload sends more than the credit the window granted before, so the server must keep granting it.
     let sent = 26 << 20;
     send(&mut upload, Bytes::from(vec![7; sent]), false).await;
     counted(&mut connection, &id, 2 + sent as u64).await;
@@ -201,7 +201,7 @@ async fn an_upload_keeps_a_large_window_nearly_full() {
     let sent = 15 << 19;
     send(&mut upload, Bytes::from(vec![7; sent]), false).await;
     counted(&mut connection, &id, 1 + sent as u64).await;
-    // Refreshed once a mebibyte of its 8 MiB is unclaimed, where h2 alone waits for a third of it.
+    // The window is refreshed once a mebibyte of its 8 MiB is unclaimed, where h2 alone waits for a third of it.
     upload.reserve_capacity(8 << 20);
     let refreshed = async {
         while upload.capacity() <= 7 << 20 {

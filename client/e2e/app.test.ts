@@ -92,7 +92,7 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
     const { live, bars } = window as unknown as Record<string, number>;
     return { live, bars };
   });
-  // Reply-driven probes fill 200 ms buckets: ten over two seconds, and the replies of the stage's last moment.
+  // Reply-driven probes fill 200 ms buckets, ten over two seconds, plus the replies of the stage's last moment.
   expect(bars).toBeGreaterThanOrEqual(9);
   expect(bars).toBeLessThanOrEqual(11);
   expect(live).toBeGreaterThanOrEqual(5);
@@ -115,7 +115,7 @@ test("the page requires Trusted Types and refuses script it did not make", async
     }),
   );
   expect(refusals).toEqual(["TypeError", "TypeError"]);
-  // The guard reports each refusal; Firefox's console reports them too.
+  // The guard reports each refusal. Firefox's console reports them too.
   const reports = () => page.errors.filter((error) => error.includes("CSP violation: require-trusted-types-for"));
   await expect.poll(() => reports().length).toBe(2);
   expect(page.errors.every((error) => error.includes("require-trusted-types-for"))).toBe(true);
@@ -179,7 +179,7 @@ test.chrome("reduced motion still updates every readout and completes", async (p
 test.chrome("a run in a hidden tab completes and saves", async (page) => {
   await open(page);
   await ready(page);
-  // Closing Settings leaves its toggle's wash fading on the compositor; Chrome freezes a page minimized mid-fade.
+  // Closing Settings leaves its toggle's wash fading on the compositor, and Chrome freezes a page minimized mid-fade.
   await page.evaluate(settled);
   const { windowId } = await page.cdp("Browser.getWindowForTarget");
   const bounds = (windowState: string) => page.cdp("Browser.setWindowBounds", { windowId, bounds: { windowState } });
@@ -208,7 +208,7 @@ test("a completed run fits every layout and theme without serious violations", a
   for (const [width, height] of viewports)
     for (const scheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });
-      // The theme as the app stamps it; contrast waits for fades to settle (seriousViolations).
+      // The test stamps the theme as the app does. Contrast waits for fades to settle (seriousViolations).
       await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), scheme);
       await openSettings(page);
       const layout = () =>
@@ -245,8 +245,8 @@ test("a completed run fits every layout and theme without serious violations", a
   expect(new Set(legal.components.map((c) => c.ecosystem)).has("cargo")).toBe(true);
   expect(identity.engineVersion).toBe(legal.sourceVersion);
   await expect(dialog).toContainText("Rust crates");
-  // Every component reads one way: where it comes from (a fork's upstream), then a modified one's shipped copy and
-  // changes.
+  // Every component reads one way. It says where it comes from (a fork's upstream), then a modified one's shipped
+  // copy and changes.
   const links = legal.components.flatMap((component) => {
     expect(component.links.length).toBeGreaterThan(0);
     for (const link of component.links) expect(new URL(link.url).protocol).toMatch(/^https?:$/);

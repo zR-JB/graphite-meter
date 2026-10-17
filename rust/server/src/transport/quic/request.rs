@@ -1,4 +1,5 @@
-//! HTTP/3 requests: bounded until admitted, bodies fund the window, 16 KiB paced reply frames, CONNECT to WebTransport.
+//! Serves HTTP/3 requests. A request is bounded until admitted, bodies fund the window, replies go in paced 16 KiB
+//! frames and CONNECT hands over to WebTransport.
 
 use super::budget::Window;
 use crate::{
@@ -31,10 +32,10 @@ const FRAME_BYTES: usize = 16 << 10;
 const FAIRNESS_REPLIES: usize = 16;
 /// Replies larger than this count toward a connection's fairness bound.
 const LARGE_REPLY_BYTES: u64 = 1 << 20;
-/// The shortest wait of a large reply for its path.
+/// A large reply waits at least this long for its path.
 const PACE: Duration = Duration::from_millis(1);
 
-/// What a connection's requests share.
+/// Holds what a connection's requests share.
 #[derive(Clone)]
 pub(super) struct Requests {
     app: Arc<App>,
@@ -49,7 +50,7 @@ impl Requests {
         Self { app, connection, window, quic, large: Arc::default() }
     }
 
-    /// One request: reset when it expires unadmitted or its reply ends unwritten; admitted work once a poll sees it.
+    /// A request resets if it expires unadmitted or its reply ends unwritten and is admitted work once a poll sees it.
     pub(super) fn serve(&self, request: server::Request) -> impl Future<Output = ()> + Send + use<> {
         let requests = self.clone();
         async move {
@@ -60,7 +61,7 @@ impl Requests {
         }
     }
 
-    /// Answers a request; a stream dropped unfinished is reset.
+    /// Answers a request. A stream dropped unfinished is reset.
     async fn respond(&self, request: server::Request, exchange: Exchange, watch: &Watch) {
         let Ok((head, stream)) = request.resolve().await else {
             return;
@@ -73,7 +74,7 @@ impl Requests {
         let request = head.map(|()| Incoming::new(recv, watch.clone(), self.window.clone()));
         let response = match self.app.handle(request, &self.connection, exchange).await {
             Outcome::Response(response) => response,
-            // Dropping the stream resets it; upgrades never answer a request that is not CONNECT.
+            // Dropping the stream resets it. Upgrades never answer a request that is not CONNECT.
             Outcome::Abort | Outcome::WebSocket(..) | Outcome::WebTransport(..) => return,
         };
         let large = !bodiless
@@ -90,7 +91,7 @@ impl Requests {
         let _ = pump(&mut reply, response, bodiless).await;
     }
 
-    /// A CONNECT: its WebTransport session, or the app's answer within `ANSWER_BOUND`.
+    /// Serves a CONNECT as its WebTransport session, or writes the app's answer within `ANSWER_BOUND`.
     async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange, watch: &Watch) {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
@@ -114,11 +115,10 @@ impl Requests {
 
 type Stopped = Pin<Box<dyn Future<Output = Result<Option<Code>, http3::Error>> + Send>>;
 
-/// An HTTP/3 stream's reply.
 struct Reply {
     send: SendHalf,
     large: Option<Large>,
-    /// The peer's STOP_SENDING, watched while the body waits.
+    /// Watches for the peer's STOP_SENDING while the body waits.
     stopped: Option<Stopped>,
 }
 
@@ -160,7 +160,7 @@ impl Sink for Reply {
     }
 }
 
-/// A large reply on its connection.
+/// Counts a large reply among its connection's.
 struct Large {
     count: Arc<AtomicUsize>,
     quic: noq::Connection,
@@ -177,7 +177,7 @@ impl Large {
         self.count.load(Ordering::Relaxed) > FAIRNESS_REPLIES
     }
 
-    /// Waits while unacknowledged data exceeds the path backlog: noq charges credit on write, so bulk starves others.
+    /// Waits while unacknowledged data exceeds the path backlog. noq charges credit on write, so bulk starves others.
     async fn paced(&self) -> Result<(), Infallible> {
         while let Some(path) = self.quic.path_stats(noq::PathId::ZERO) {
             if self.quic.send_buffered_bytes() <= backlog(path.cwnd, path.rtt) {
@@ -195,12 +195,12 @@ impl Drop for Large {
     }
 }
 
-/// A large reply's wait for its path: a quarter round trip, and at least `PACE`.
+/// A large reply waits a quarter round trip for its path, and at least `PACE`.
 fn pause(rtt: Duration) -> Duration {
     PACE.max(rtt / 4)
 }
 
-/// Eight congestion windows, more where four pauses outlast a round trip: busy paths, backlog below peer credit.
+/// Allows eight congestion windows, more on busy paths where four pauses outlast a round trip, under peer credit.
 fn backlog(cwnd: u64, rtt: Duration) -> u64 {
     let span = rtt.max(4 * pause(rtt)).as_nanos();
     let bytes = u128::from(cwnd).saturating_mul(8 * span) / rtt.as_nanos().max(1);

@@ -1,5 +1,5 @@
-//! The network layer against canned peers, for what a real server never does, and under chosen proxy and trust
-//! settings: proxies, the trust store and grants over verified TLS.
+//! Tests the network layer against canned peers, for what a real server never does, and under chosen proxy and
+//! trust settings, covering proxies, the trust store and grants over verified TLS.
 use graphite_meter_client::{
     config::{Config, PathChoice},
     model::Stage,
@@ -49,7 +49,7 @@ fn origin(scheme: &str, address: SocketAddr) -> Origin {
     Origin::parse(&format!("{scheme}://localhost:{}", address.port())).unwrap()
 }
 
-/// A probe's answer as any JSON object.
+/// Reads a probe's answer as any JSON object.
 async fn probe(client: &Client, via: Protocol, origin: &Origin) -> Result<Value, Fault> {
     client
         .json(via, Request::new(Method::GET, origin, Route::Probe), json::decode)
@@ -63,8 +63,8 @@ fn ok(body: &str) -> String {
 trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 
-/// An HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the receiver;
-/// `answer` gives the `n`th request's answer from its head, `None` ending its connection unanswered.
+/// Serves an HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the
+/// receiver. `answer` gives the `n`th request's answer from its head, `None` ending its connection unanswered.
 fn peer(
     listener: TcpListener,
     tls: Option<TlsAcceptor>,
@@ -114,7 +114,7 @@ async fn an_abandoned_quic_dial_stops_sending() {
     let client = client(false);
     let dial = client.dial(&origin, Protocol::Http3, ReadBuffer::Adaptive);
     assert!(tokio::time::timeout(Duration::from_millis(200), dial).await.is_err());
-    // Its connection's close may still go out; a dial left running resends its Initial about a second in.
+    // Its connection's close may still go out. A dial left running resends its Initial about a second in.
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut datagram = [0; 2048];
     while silent.try_recv(&mut datagram).is_ok() {}
@@ -122,7 +122,7 @@ async fn an_abandoned_quic_dial_stops_sending() {
     assert!(resent.is_err(), "the abandoned dial kept sending");
 }
 
-/// A verifying client trusting only the roots of `file` and `directory`, as their variables would name them.
+/// Builds a verifying client trusting only the roots of `file` and `directory`, as their variables would name them.
 fn trusting(file: &Path, directory: &Path) -> Client {
     let (file, directory) = (file.as_os_str().to_owned(), directory.as_os_str().to_owned());
     let trust = Trust::from_lookup(|name| match name {
@@ -230,13 +230,13 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
     );
 }
 
-/// The path a request head asks for, without its query.
+/// Reads the path a request head asks for, without its query.
 fn target(head: &str) -> &str {
     let target = head.split(' ').nth(1).unwrap_or_default();
     target.split_once('?').map_or(target, |(path, _)| path)
 }
 
-/// A chunked progress feed carrying `records`, left open unless `ended`.
+/// Builds a chunked progress feed carrying `records`, left open unless `ended`.
 fn feed(records: &[&str], ended: bool) -> String {
     let lines: String = records.iter().map(|record| format!("{record}\n")).collect();
     let end = if ended { "0\r\n\r\n" } else { "" };
@@ -246,7 +246,7 @@ fn feed(records: &[&str], ended: bool) -> String {
     )
 }
 
-/// An upload session without lanes to a peer answering `answer`, and the request heads the peer saw.
+/// Opens an upload session without lanes to a peer answering `answer`, and returns the request heads the peer saw.
 async fn upload(
     answer: impl Fn(usize, &str) -> Option<String> + Send + Sync + 'static,
 ) -> (UploadSession, mpsc::UnboundedReceiver<(usize, String)>) {
@@ -283,7 +283,7 @@ async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     finalized.expect("the receiver was asked to finalize");
 }
 
-/// A server catalog of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
+/// Answers a server catalog of the peer alone, and its preflight offering HTTP/1.1 fetch streams and `extra` targets.
 fn discovery(head: &str, checkpoints: bool, extra: &str) -> Option<String> {
     let preflight = format!(
         r#"{{"server":{{"name":"Peer","location":""}},"engineVersion":"1","generation":"g","capabilities":{{"uploadCheckpoint":{checkpoints},"maxStageMs":300000,"throughput":[{{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}}{extra}],"latency":[]}}}}"#

@@ -1,5 +1,5 @@
-// The shell's state and moves: the route and the URL behind it, which panels show and how wide, where focus returns
-// when a surface closes, what each key does, the theme, and starting over. The console's markup only renders it.
+// The shell owns the route and the URL behind it, which panels show and how wide, where focus returns when a surface
+// closes, what each key does, the theme, and starting over. The console's markup only renders it.
 import type { App } from "../../app/app";
 import { THEME_CYCLE } from "../../app/document";
 import { reducedMotion } from "../../lib/motion";
@@ -26,7 +26,7 @@ const PANELS = ["settings", "details"] as const satisfies readonly Panel[];
 export const SIDE: Record<Panel, Side> = { settings: "left", details: "right" };
 const MEASUREMENT = { kind: "measurement" } as const;
 
-/** Where focus goes once a route has rendered: an element, the workspace it shows, or nowhere new. */
+/** Focus goes here once a route has rendered, to an element, the workspace it shows, or nowhere new. */
 type Focus = HTMLElement | "workspace" | "keep";
 type Workspace = KeyFacts["workspace"];
 
@@ -35,7 +35,7 @@ const OWNS_SPACE =
   "button, a[href], summary, input, [role=button], [role=link], [role=switch], [role=checkbox], [role=radio], " +
   "[role=tab], [role=menuitem], [role=option], [role=slider], [role=separator]";
 const KEYS = new Set(["escape", " ", "r", "s", "d", "h", "t"]);
-// Keys that only arm or modify a chord; any other key shows where focus is.
+// These keys only arm or modify a chord. Any other key shows where focus is.
 const MODIFIER = /^(Shift|Control|Alt|AltGraph|Meta|OS|CapsLock|Fn|PrintScreen)$/;
 
 const workspaceOf = (route: Route): Workspace => (route.kind === "app" ? route.workspace.kind : "not-found");
@@ -43,8 +43,8 @@ const legalOf = (route: Route) => route.kind === "app" && route.legal;
 const resultOf = (route: Route) =>
   route.kind === "app" && route.workspace.kind === "history" ? (route.workspace.id ?? "") : null;
 
-/** What a route change moves on the spring: the stage and the sheets as one surface when the docked panels change,
-    the History panes when a result opens, closes or changes; null when it applies in place. */
+/** Names what a route change moves on the spring, the stage and the sheets as one surface when the docked panels
+    change, the History panes when a result opens, closes or changes, or null when it applies in place. */
 export function moves(current: Route, next: Route, docked: boolean, multiple: boolean): readonly string[] | null {
   const docks = (route: Route) => {
     const fit = fitPanels(route, multiple);
@@ -57,16 +57,16 @@ export function moves(current: Route, next: Route, docked: boolean, multiple: bo
 
 type FocusMove = { to: "title" | "invoker"; panel: Panel } | { to: "wanted" | "workspace" } | null;
 
-/** Where focus goes once a route has rendered: an opened panel's title; nowhere new while the legal dialog opens (it
-    focuses its own) or when asked to keep it; where it was asked to go; for a closed panel that held focus, or let it
-    fall to the page, the panel's invoker; after Back or Forward to another workspace, that workspace. */
+/** Sends focus, once a route has rendered, to an opened panel's title, nowhere new while the legal dialog opens (it
+    focuses its own) or when asked to keep it, where it was asked to go, to the invoker of a closed panel that held
+    focus or let it fall to the page, or to the workspace Back or Forward reached. */
 export function focusMove(facts: {
   before: Route;
   after: Route;
-  /** The panels visible now; the route before names those that were open, whatever the layout showed. */
+  /** The panels visible now. The route before names those that were open, whatever the layout showed. */
   shown: readonly Panel[];
-  /** The panel that held focus as the route changed, and whether anything still holds it: asked only when a panel
-      closed, since asking lays out the page. */
+  /** The panel that held focus as the route changed, and whether anything still holds it. The latter is asked only
+      when a panel closed, since asking lays out the page. */
   holder: Panel | null;
   focused(): boolean;
   wanted: "element" | "workspace" | "keep" | null;
@@ -88,10 +88,10 @@ export function focusMove(facts: {
 
 export type Controller = ReturnType<typeof createShell>;
 
-/** The shell for one console. Must run inside an owner: its listeners and effects go with it. */
+/** Creates the shell for one console. It must run inside an owner, since its listeners and effects go with it. */
 export function createShell(app: App, layout: Layout) {
   const multiple = () => layout.mode.peek() === "docked2";
-  // Parsed at once, so the panels a deep link names are built with the console.
+  // The route is parsed at once, so the panels a deep link names are built with the console.
   const route = signal<Route>(fitPanels(parseRoute(location.hash), multiple()));
   const initial = route.peek();
   const visited = Object.fromEntries(
@@ -99,7 +99,7 @@ export function createShell(app: App, layout: Layout) {
   ) as Record<Panel, Signal<boolean>>;
 
   const workspace = computed(() => workspaceOf(route()));
-  /** The visible panels, the last opened last: one where only one fits. */
+  /** Lists the visible panels, the last opened last, or just one where only one fits. */
   const visible = (current: Route, mode: Mode): readonly Panel[] =>
     current.kind !== "app" ? [] : mode === "docked2" ? current.panels : current.panels.slice(-1);
   const panels = computed(() => visible(route(), layout.mode()));
@@ -129,14 +129,14 @@ export function createShell(app: App, layout: Layout) {
     });
   const resetWidth = (side: Side) => resize(side, DOCK.preferred);
 
-  /** What renders each surface, for focus: the sheets, and the workspaces' own focus targets. */
+  /** Holds what renders each surface, for focus, the sheets and the workspaces' own focus targets. */
   const elements: {
     sheets: Partial<Record<Panel, HTMLElement>>;
     measurement: HTMLElement | null;
     history: HTMLElement | null;
   } = { sheets: {}, measurement: null, history: null };
 
-  /** Who opened each surface: focus goes back there when it closes, if it still can take it. */
+  /** Records who opened each surface. Focus goes back there when it closes, if it still can take it. */
   const invokers = new Map<Panel | "history", HTMLElement>();
   let legalInvoker: HTMLElement | null = null;
   let intent: Focus | undefined;
@@ -231,7 +231,7 @@ export function createShell(app: App, layout: Layout) {
 
   function showHistory(id: string | null, invoker?: HTMLElement | null, focusAfter?: Focus): void {
     const current = route.peek();
-    // Back from a result to the list is a close: it steps back to where the result opened.
+    // Back from a result to the list is a close, so it steps back to where the result opened.
     if (id === null && resultOf(current)) return navigate(withWorkspace(current, { kind: "history", id }), "close");
     if (id === null && !historyOpen.peek()) {
       if (invoker) invokers.set("history", invoker);
@@ -262,7 +262,7 @@ export function createShell(app: App, layout: Layout) {
   }
 
   // Starting over asks first while a run is live or its unsaved result shows, and a new run first while the result
-  // it replaces could not be saved; the panels stay as they are.
+  // it replaces could not be saved. The panels stay as they are.
   const reset = { open: signal(false), reason: signal<"running" | "unsaved" | "rerun">("running") };
   const unsavable = () => !!app.run.result.peek() && app.saver.failed.peek();
   function startOver(): void {
@@ -288,8 +288,8 @@ export function createShell(app: App, layout: Layout) {
     });
   }
 
-  /** Light, dark, auto: each press steps from the theme applied when its change runs, so presses during a fade each
-      count. The new theme fades in over the old on the compositor; a fade a newer press skips is no error. */
+  /** Cycles light, dark and auto. Each press steps from the theme applied when its change runs, so presses during a
+      fade each count. The new theme fades in over the old on the compositor. A fade a newer press skips is no error. */
   function toggleTheme(): void {
     const update = () => app.preferences.set({ theme: THEME_CYCLE[app.preferences.theme.peek()] });
     if (reducedMotion.peek() || !document.startViewTransition) return update();
@@ -330,10 +330,10 @@ export function createShell(app: App, layout: Layout) {
     }
   }
 
-  // One page-level handler, bubbling, so local widgets, menus, modals and tips take their keys first.
+  // One page-level handler bubbles, so local widgets, menus, modals and tips take their keys first.
   function keydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
-    // Escape dismisses whatever is held with it; every other key acts only on its own.
+    // Escape dismisses whatever is held with it. Every other key acts only on its own.
     if (event.key !== "Escape" && (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)) return;
     if (!KEYS.has(event.key.toLowerCase())) return;
     if (document.querySelector(":popover-open:not(.tooltip)") || activeModal()) return;
@@ -354,10 +354,10 @@ export function createShell(app: App, layout: Layout) {
     });
     if (!order) return;
     event.preventDefault();
-    // Every shortcut toggles or acts once: a held key acts on its press, and its repeats do nothing.
+    // Every shortcut toggles or acts once, so a held key acts on its press, and its repeats do nothing.
     if (!event.repeat) run(order);
   }
-  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first; a
+  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first. A
   // sign-out asked already.
   const beforeunload = (event: BeforeUnloadEvent) => {
     if (app.signingOut.peek()) return;
@@ -365,7 +365,7 @@ export function createShell(app: App, layout: Layout) {
     event.preventDefault();
     event.returnValue = "";
   };
-  // Chromium lights a clicked control's ring on any later key, even Shift or a screenshot chord; here only a key that
+  // Chromium lights a clicked control's ring on any later key, even Shift or a screenshot chord. Here only a key that
   // moves focus does.
   const root = document.documentElement;
   const pointer = () => {
@@ -421,7 +421,7 @@ export function createShell(app: App, layout: Layout) {
     confirmStartOver,
     closeLegal,
     legalInvoker: () => legalInvoker,
-    /** Renders the location the page loaded with, a panel it names taking focus; call once the console is in the
+    /** Renders the location the page loaded with, a panel it names taking focus. Call it once the console is in the
         page. */
     start: () =>
       untrack(() => {

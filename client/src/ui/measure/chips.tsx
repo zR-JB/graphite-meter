@@ -1,4 +1,4 @@
-// The run key over the stage chips: a chip switches its stage for the next run and shows how it fares in the shown one.
+// The run key sits over the chips. A chip switches its stage for the next run and shows how it fares in the shown one.
 import type { App } from "../../app/app";
 import type { Shell } from "../shell/api";
 import { planned, STAGES, type Stage } from "../../engine/run/schedule";
@@ -26,7 +26,7 @@ import { CHIPS } from "./copy";
 import type { Live } from "./live";
 import { Figure, painter } from "./paint";
 
-/** How a chip looks: off, waiting, or the stage's state in the shown run. */
+/** A chip looks off, waiting, or like the stage's state in the shown run. */
 type Look = "off" | "pending" | "warmup" | "active" | "recovering" | "complete" | "partial" | "failed";
 const LOOK: Record<StageState, Look> = {
   skipped: "pending",
@@ -91,7 +91,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     if (nextRun()) return NEXT_RUN.label;
     return look() === "partial" || look() === "failed" ? STAGE_STATE[look() as "partial" | "failed"].label : null;
   });
-  // Why a locked chip cannot change; a settled one says nothing more than its check or tag.
+  // Says why a locked chip cannot change; a settled one says nothing more than its check or tag.
   const reason = computed(() => {
     if (tag() !== null) return tag();
     if (!locked() || look() === "complete") return null;
@@ -100,7 +100,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     return STAGE_STATE.upcoming.label;
   });
   const timed = computed(() => look() === "active" && live.budget() > 0);
-  // A waiting chip shows its stage's length: the shown run's plan, or the next run's for a stage queued for it.
+  // A waiting chip shows its stage's length from the shown run's plan, or the next run's for a stage queued for it.
   const waiting = computed(() => selected() && look() === "pending");
   const lengthMs = computed(() => (nextRun() ? config() : (run.plan() ?? config())).duration[`${stage}Ms`]);
   const length = computed(() => fmtStageTime(lengthMs()));
@@ -136,7 +136,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
       ?.failures.find((each) => each.stage === stage && (each.scope === "latency") === (stage === "latency"));
     return found ? reasonLabel(found.reason) : "";
   });
-  // One line the chip does not already show: its result, or why it is locked.
+  // The tip adds one line the chip does not already show, its result or why it is locked.
   const tipText = computed(() => {
     const settled = SETTLED_WORD[look()];
     if (settled) return [settled, value(), failure()].filter(Boolean).join("\n");
@@ -163,8 +163,8 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
       .filter(Boolean)
       .join(" ");
   });
-  // The bar: its stage's progress while it runs, the fraction a stopped stage reached, full once it settled. Only a
-  // chip whose bar follows the clock draws every frame; the rest draw once per change.
+  // The bar shows its stage's progress while it runs, the fraction a stopped stage reached, and fills once it settled.
+  // Only a chip whose bar follows the clock draws every frame; the rest draw once per change.
   const clocked = computed(() => {
     const now = look();
     return now === "active" || now === "recovering" || (state() === "stopped" && live.endedIn() === stage);
@@ -181,7 +181,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
         : clocked.peek() && length > 0
           ? Math.min(1, clock / length)
           : 0;
-    // A plain transform, not a custom property: Chrome then restyles the fill from its previous style.
+    // The fill takes a plain transform, not a custom property, so Chrome restyles it from its previous style.
     if (!(Math.abs(next - progress) < 5e-4)) fill.style.transform = `scaleX(${(progress = next)})`;
     if (timed.peek() && Math.round(clock / 100) !== tenths) {
       tenths = Math.round(clock / 100);
@@ -260,10 +260,10 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   );
 }
 
-/** How long a start may prepare before its key says Cancel rather than Stop. */
+/** A start may prepare this long before its key says Cancel rather than Stop. */
 const CANCEL_AFTER_MS = 250;
 
-/** Start, Stop or Cancel; a blocked start stays focusable and says why in its description, its tip and the dial's note. */
+/** Says Start, Stop or Cancel; a blocked start stays focusable and says why in its description, tip and dial note. */
 export function RunButton(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run, servers } = app;

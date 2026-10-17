@@ -1,4 +1,4 @@
-// History as data: columns and units, each row's words, day groups, the span, and how a change lands in a read list.
+// Models History as data, from columns, units, row words, day groups and span to how a change lands in a read list.
 import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistorySort } from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
@@ -38,7 +38,7 @@ export const SORT_LABEL: Record<HistorySort, string> = {
 
 const isLatency = (column: HistoryColumn) => column === "idle" || column === "loaded";
 
-/** The two orders a sort offers, the one it opens with first. */
+/** Lists the two orders a sort offers, the one it opens with first. */
 export function orders(sort: HistorySort): { descending: boolean; label: string }[] {
   if (sort === "date")
     return [
@@ -56,15 +56,15 @@ export function orders(sort: HistorySort): { descending: boolean; label: string 
   ];
 }
 
-/** A column's one unit and the value that fills its bars. `tier` is null for latency and for rates never measured. */
+/** A column reads in one unit; `peak` fills its bars. `tier` is null for latency and for rates never measured. */
 export interface Scale {
   tier: number | null;
   peak: number;
   unit: string;
 }
 
-/** Each column's unit from every loaded record, not only the rows shown: latency in ms, a rate in the tier of its
-    upper median, so one fast outlier never sets it. */
+/** Sets each column's unit from every loaded record, not only the rows shown. Latency reads in ms, a rate in the
+    tier of its upper median, so one fast outlier never sets it. */
 export function columnScales(records: readonly HistoryEntry[], units: Units): Record<HistoryColumn, Scale> {
   const scale = (column: HistoryColumn): Scale => {
     const values = new Float64Array(records.length);
@@ -89,7 +89,7 @@ export function columnScales(records: readonly HistoryEntry[], units: Units): Re
   };
 }
 
-// The browser's own locale, as everywhere dates show.
+// Dates use the browser's own locale, as everywhere they show.
 const DATES = {
   exact: new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }),
   time: new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }),
@@ -100,7 +100,7 @@ const DATES = {
 
 const dateLabel = (time: number) => DATES.date.format(time);
 
-/** The local calendar days a heading names "Today" and "Yesterday", as `Date#toDateString` writes them. */
+/** Names the local calendar days a heading calls "Today" and "Yesterday", as `Date#toDateString` writes them. */
 export interface Days {
   today: string;
   yesterday: string;
@@ -108,18 +108,18 @@ export interface Days {
 export function daysAt(now: number): Days {
   const date = new Date(now);
   const today = date.toDateString();
-  // The calendar day before, which a daylight-saving change can make 23 or 25 hours long.
+  // Yesterday is the calendar day before, which a daylight-saving change can make 23 or 25 hours long.
   date.setDate(date.getDate() - 1);
   return { today, yesterday: date.toDateString() };
 }
 
-/** Recent days, then months, so a sparse archive never gets a heading per result. */
+/** Heads recent days by day and the rest by month, so a sparse archive never gets a heading per result. */
 function dayHeading(time: number, days: Days): string {
   const day = new Date(time).toDateString();
   return day === days.today ? "Today" : day === days.yesterday ? "Yesterday" : DATES.month.format(time);
 }
 
-/** One date when the oldest and newest share a day, else a range that names a shared year once. */
+/** Gives one date when the oldest and newest share a day, else a range that names a shared year once. */
 export function span(records: readonly HistoryEntry[]): string {
   if (!records.length) return "";
   let first = Infinity;
@@ -137,7 +137,7 @@ export function span(records: readonly HistoryEntry[]): string {
 export interface Cell {
   column: HistoryColumn;
   text: string;
-  /** What its bar draws against the column's peak; null for a missing value, which shows a word and no bar. */
+  /** The bar draws this against the column's peak; null for a missing value, which shows a word and no bar. */
   value: number | null;
   note: string;
 }
@@ -161,10 +161,10 @@ export type Row =
       cells: Cell[];
       label: string;
     })
-  /** A record that passed validation but could not be put into words: it still links to its detail. */
+  /** A record that passed validation but could not be put into words still links to its detail. */
   | (RowBase & { kind: "unreadable"; date: string });
 
-/** What every row's words depend on besides its record and the day. Peaks are not among them: bars draw them. */
+/** Every row's words depend on this besides its record and the day. Peaks are not among them, as bars draw them. */
 export interface RowContext {
   columns: readonly HistoryColumn[];
   scales: Record<HistoryColumn, Pick<Scale, "tier" | "unit">>;
@@ -180,7 +180,7 @@ const STATUS_WORD: Record<StageStatus, string> = {
   "not-run": STAGE_STATE.skipped.label,
 };
 
-/** Under a rate, the latency its load added; under idle, its jitter; under loaded, whose load it was. */
+/** A rate notes the latency its load added, idle its jitter, and loaded whose load it was. */
 function note(entry: HistoryEntry, column: HistoryColumn): string {
   if (column === "idle") return entry.jitterMs == null ? "" : `jitter ${fmtMs(entry.jitterMs)}`;
   if (column === "loaded") return entry.loadedStage ? STAGE[entry.loadedStage].short.toLowerCase() : "";
@@ -188,7 +188,7 @@ function note(entry: HistoryEntry, column: HistoryColumn): string {
   return added == null ? "" : `${fmtAddedMs(added)} ms`;
 }
 
-/** Why a value is missing, in the stage's own word; a bidirectional stage that kept one direction says which. */
+/** Says why a value is missing, in the stage's own word; a bidirectional stage that kept one direction says which. */
 function missing(entry: HistoryEntry, column: HistoryColumn): string {
   if (column === "loaded") return MISSING;
   if (column === "idle") return STATUS_WORD[entry.stages.latency];
@@ -199,7 +199,7 @@ function missing(entry: HistoryEntry, column: HistoryColumn): string {
 const notePhrase = (column: HistoryColumn, text: string) =>
   column === "idle" ? `${text} ms` : column === "loaded" ? `under ${text}` : `${text} added`;
 
-/** The words that follow the calendar: the heading, and in date order how the time reads. */
+/** Gives the words that follow the calendar, the heading and, in date order, how the time reads. */
 function dated(completedAt: number, byDay: boolean, days: Days): { heading: string; primary: string } {
   const time = DATES.time.format(completedAt);
   if (!byDay) return { heading: "", primary: `${dateLabel(completedAt)}, ${time}` };
@@ -242,7 +242,7 @@ function resultRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   };
 }
 
-/** A row's words; a record they cannot be made from becomes an unreadable row. */
+/** Puts a row into words; a record they cannot be made from becomes an unreadable row. */
 function presentRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   try {
     return resultRow(entry, context, days);
@@ -261,12 +261,12 @@ function presentRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   }
 }
 
-/** Rows worded under one context, kept by id. A row stays the same object until what it shows changes, so its DOM is
-    built again only then: across midnight, only the rows whose day words change. */
+/** Words rows under one context and keeps them by id. A row stays the same object until what it shows changes, so
+    its DOM is built again only then; across midnight, only the rows whose day words change. */
 export function rowPresenter(context: RowContext): (entry: HistoryEntry, days: Days) => Row {
   const kept = new Map<string, { row: Row; days: Days }>();
   return (listed, days) => {
-    // Results deleted or pruned while the list stays open leave their rows here; past twice the archive, start over.
+    // Rows deleted or pruned while the list stays open linger here; past twice the archive the map starts over.
     if (kept.size > 2 * HISTORY_LIMIT) kept.clear();
     const entry = kept.get(listed.id);
     if (entry?.days === days) return entry.row;
@@ -282,13 +282,13 @@ export function rowPresenter(context: RowContext): (entry: HistoryEntry, days: D
 }
 
 export interface Group {
-  /** Unique even when a heading repeats, as a future-dated result can make it. */
+  /** Stays unique even when a heading repeats, as a future-dated result can make it. */
   key: string;
   heading: string;
   rows: Row[];
 }
 
-/** Consecutive rows under one heading; a list out of date order is one group without one. */
+/** Groups consecutive rows under one heading; a list out of date order is one group without one. */
 export function groupRows(rows: readonly Row[]): Group[] {
   const groups: Group[] = [];
   const seen = new Map<string, number>();
@@ -305,8 +305,8 @@ export function groupRows(rows: readonly Row[]): Group[] {
   return groups;
 }
 
-/** `added` in the list, replacing the same id; at the limit the oldest other record gives way, so a result opened
-    past the newest 2,000 shows and the count stays 2,000. */
+/** Puts `added` in the list, replacing the same id. At the limit the oldest other record gives way, so a result
+    opened past the newest 2,000 shows and the count stays 2,000. */
 export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry): HistoryEntry[] {
   const rest = records.filter(({ id }) => id !== added.id);
   if (rest.length >= HISTORY_LIMIT) {
@@ -324,8 +324,8 @@ export interface Listed {
   malformed: number;
 }
 
-/** This tab's change applied to a list. Each sets rows by id, so replaying one the list already holds changes
-    nothing: a list read while changes landed takes them all again. */
+/** Applies this tab's change to a list. Each sets rows by id, so replaying one the list already holds changes
+    nothing, and a list read while changes landed takes them all again. */
 export function applyChange(listed: Listed, change: Exclude<HistoryChange, { type: "elsewhere" }>): Listed {
   switch (change.type) {
     case "saved":

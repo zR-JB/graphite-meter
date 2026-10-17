@@ -1,5 +1,5 @@
-// The results list: heads that sort, rows grouped by day, pages of 50 added as they are asked for. A row is built once
-// per result from words worked out once per change, and the fold is decided from sizes the layout already has.
+// The results list sorts by its heads, groups rows by day and adds pages of 50 as they are asked for. A row is built
+// once per result from words worked out once per change, and the fold is decided from sizes the layout already has.
 import type { App } from "../../app/app";
 import {
   naturalDescending,
@@ -39,11 +39,11 @@ export interface Sort {
 const HOUR_MS = 3_600_000;
 /** From this list width the bars show (`data-bars`), and the content needs a different width. */
 const BARS_PX = 901;
-/** One side of BARS_PX: the narrowest list the unfolded content was seen to fit, and the width it was measured to
-    need, exact until rows are added. */
+/** Records, for one side of BARS_PX, the narrowest list the unfolded content was seen to fit and the width it was
+    measured to need, exact until rows are added. */
 const unknown = () => ({ fits: Infinity, needs: 0, exact: false });
 
-/** Rows built in one frame: more than a tall screen shows. */
+/** One frame builds this many rows, more than a tall screen shows. */
 const BUILD_ROWS = 16;
 export function ResultsList(props: {
   app: App;
@@ -60,7 +60,7 @@ export function ResultsList(props: {
   const columns = app.preferences.historyColumns;
   const units = computed(() => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
   const scales = computed(() => columnScales(props.records(), units()));
-  // The same object all day, so rows are dated again only when it turns.
+  // The days stay the same object all day, so rows are dated again only when it turns.
   let day: Days | undefined;
   const days = computed(() => {
     const next = daysAt(props.now());
@@ -76,16 +76,16 @@ export function ResultsList(props: {
     return untrack(() => rowPresenter({ columns: columns(), scales: scales(), units: units(), byDay: byDay() }));
   });
   const ordered = computed(() => sortHistory(props.records(), props.sort().by, props.sort().descending));
-  // Only the pages asked for: a link to a result far down opens it without building every row above it.
+  // Only the pages asked for are shown, so a link to a result far down opens it without building every row above it.
   const shown = computed(() => Math.min(ordered().length, props.pages() * PAGE_ROWS));
-  // A screenful first, or every row down to the open result's when it lies further; the rest of the pages a screenful
-  // a frame after, below the fold.
+  // The list builds a screenful first, or every row down to the open result's when it lies further, then the rest of
+  // the pages a screenful a frame after, below the fold.
   const built = signal(BUILD_ROWS);
   const selectedAt = computed(() => {
     const id = props.selectedId();
     return id === null ? -1 : ordered().findIndex((entry) => entry.id === id);
   });
-  // The result last closed: its row is built and shown, even past the pages asked for, so closing returns to it.
+  // The result last closed keeps its row built and shown, even past the pages asked for, so closing returns to it.
   const returned = signal<string | null>(null);
   const returnedAt = computed(() => {
     const id = returned();
@@ -112,7 +112,7 @@ export function ResultsList(props: {
   });
   const groups = computed(() => groupRows(visible()));
 
-  // The open result's row, marked by one write per change of selection rather than a binding per row.
+  // One write per change of selection marks the open result's row, rather than a binding per row.
   const links = new Map<string, HTMLAnchorElement>();
   let current: HTMLAnchorElement | undefined;
   const markCurrent = (link: HTMLAnchorElement | undefined) => {
@@ -137,7 +137,7 @@ export function ResultsList(props: {
     if (id !== null) revealing ??= nextFrame(reveal);
   });
   onCleanup(() => revealing?.());
-  // Closing a result returns focus to its row, or to Close History once the row is gone; after the panes settle.
+  // Closing a result returns focus to its row, or to Close History once the row is gone, after the panes settle.
   let open = props.selectedId.peek();
   effect(() => {
     const id = props.selectedId();
@@ -160,7 +160,7 @@ export function ResultsList(props: {
     });
   });
 
-  /** Whether each row's server line is cut, found as a hand or focus reaches it: no observer per row. */
+  /** Records whether a row's server line is cut, found as a hand or focus reaches it, with no observer per row. */
   const cut = new WeakMap<Element, Signal<boolean>>();
   const checkCut = (event: Event) => {
     const line = (event.target as Element).closest?.(".result-row")?.querySelector("time small");
@@ -259,7 +259,7 @@ export function ResultsList(props: {
       class="history-table"
       onclick={(event) => {
         const row = (event.target as Element).closest<HTMLAnchorElement>("a.result-row");
-        // A modified or secondary click follows the link: a new tab or window.
+        // A modified or secondary click follows the link into a new tab or window.
         if (!row || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         const id = row.dataset.historyId!;
@@ -320,7 +320,7 @@ export function ResultsList(props: {
             <span>{() => `${shown()} of ${ordered().length}`}</span>
           </div>
         ) as HTMLElement;
-        // Within the list's own scroller, so the margin loads the next page before the footer shows.
+        // The observer watches in the list's own scroller, so the margin loads the next page before the footer shows.
         const near = new IntersectionObserver(
           (entries) => {
             if (entries.some((entry) => entry.isIntersecting)) loadMore();
@@ -338,14 +338,14 @@ export function ResultsList(props: {
   // differs on either side of BARS_PX, so each side keeps what it learnt until the rows change.
   let folded = false;
   let sides = [unknown(), unknown()];
-  /** The list's scrollbar gutter, which its expected width includes. */
+  /** Holds the list's scrollbar gutter, which its expected width includes. */
   let gutter = 0;
   const fold = (on: boolean) => {
     folded = on;
     list.classList.toggle("compact", on);
   };
   const bars = (width: number) => list.toggleAttribute("data-bars", width >= BARS_PX);
-  /** Whether the unfolded content fits a list this wide, or null when only measuring it can tell. */
+  /** Says whether the unfolded content fits a list this wide, or null when only measuring it can tell. */
   const judge = (width: number): boolean | null => {
     const side = sides[width >= BARS_PX ? 1 : 0]!;
     if (width >= side.fits) return true;
@@ -366,7 +366,7 @@ export function ResultsList(props: {
     bars(width);
     const fits = folded ? judge(width) : null;
     if (fits !== null) return fold(!fits);
-    // Unfolded, or folded with nothing known for this width: measure, unfolding first (one more layout).
+    // Unfolded, or folded with nothing known for this width, the list measures, unfolding first (one more layout).
     fold(false);
     learn(width);
   };
@@ -392,7 +392,7 @@ export function ResultsList(props: {
     ordered();
     untrack(refit);
   });
-  // Added rows can only widen the content: what it needed stays a floor, where it fitted is no longer known.
+  // Added rows can only widen the content, so what it needed stays a floor and where it fitted is no longer known.
   effect(() => {
     shown();
     for (const side of sides) Object.assign(side, { fits: Infinity, exact: false });
@@ -405,14 +405,14 @@ export function ResultsList(props: {
 
   return {
     element: list,
-    /** The list is about to be `width` px wide (a result opening or closing): a fold decided now lands in the layout
-        that width takes rather than one more. */
+    /** The list is about to be `width` px wide (a result opening or closing), so a fold decided now lands in the
+        layout that width takes rather than one more. */
     fitTo(width) {
       bars(width - gutter);
       const fits = judge(width - gutter);
       if (fits !== null) fold(!fits);
     },
-    /** The result `by` rows from `id` in the list's order, its page added to those shown; null past either end. */
+    /** Finds the result `by` rows from `id` in list order and adds its page to those shown; null past either end. */
     neighbour(id, by) {
       const order = ordered.peek();
       const at = order.findIndex((entry) => entry.id === id);

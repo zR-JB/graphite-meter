@@ -1,4 +1,4 @@
-//! The QUIC endpoint: Retry under pressure, the handshake bound, receive credit and an exhausted budget.
+//! Tests the QUIC endpoint, its Retry under pressure, the handshake bound, receive credit and an exhausted budget.
 
 use super::{
     http3::{H3, read, transport},
@@ -10,7 +10,7 @@ use tokio::net::UdpSocket;
 const INITIAL: u8 = 0;
 const RETRY: u8 = 3;
 
-/// A client's first Initial towards the server, caught on a socket that never answers.
+/// Captures a client's first Initial towards the server on a socket that never answers.
 async fn initial(h3: &H3) -> Vec<u8> {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
@@ -22,7 +22,7 @@ async fn initial(h3: &H3) -> Vec<u8> {
     packet
 }
 
-/// Whether the server answers an Initial from the local address `source` with a Retry rather than its own Initial.
+/// Tells whether the server answers an Initial from local address `source` with a Retry rather than its own Initial.
 pub(super) async fn retried(h3: &H3, source: &str) -> bool {
     let socket = UdpSocket::bind(format!("{source}:0")).await.unwrap();
     socket
@@ -61,7 +61,7 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     assert!(retried(&h3, "127.0.0.3").await, "a quarter of the connections are used");
 }
 
-/// The budget's usage once it held still for a while.
+/// Reads the budget's usage once it held still for a while.
 pub(super) async fn settled(budget: &Budget) -> usize {
     let settling = async {
         let mut last = budget.usage().used;
@@ -176,7 +176,7 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
     let noq::ConnectionError::ConnectionClosed(close) = closed else {
         panic!("{closed:?}")
     };
-    // The first charge refused decides the code: the handshake's CRYPTO data, which shares the spare with the
+    // The first charge refused decides the code. It is the handshake's CRYPTO data, which shares the spare with the
     // endpoint's receive buffers, or the connection's floor.
     let codes = [noq::TransportErrorCode::INTERNAL_ERROR, noq::TransportErrorCode::CRYPTO_BUFFER_EXCEEDED];
     assert!(codes.contains(&close.error_code), "{close:?}");

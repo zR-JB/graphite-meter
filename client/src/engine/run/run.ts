@@ -1,4 +1,4 @@
-// One run: a stage schedule over one to four servers (docs/MEASUREMENTS.md). It opens each server's resources stage
+// A run is a stage schedule over one to four servers (docs/MEASUREMENTS.md). It opens each server's resources stage
 // by stage, folds their evidence into the throughput aggregate and the latency populations, judges silence, stalls
 // and dropouts, finishes stable stages early, reshapes the timeline on live changes, and reduces it all to a result.
 import { safeDetail } from "../../protocol/documents";
@@ -67,7 +67,7 @@ const TICK_MS = 60;
 const STABILITY_CADENCE_MS = 100;
 const PROGRESS_CADENCE_MS = 250;
 const SUMMARY_CADENCE_MS = 1_000;
-/** A direction that moved nothing for this long is quiet; a server that moved within it is moving. */
+/** A direction that moved nothing for this long is quiet. A server that moved within it is moving. */
 const QUIET_MS = 500;
 /** A warmup's ramp shows once it spans this long. */
 const RAMP_MS = 100;
@@ -75,15 +75,15 @@ const RAMP_MS = 100;
 const SILENCE_MS = 1_500;
 /** A receiver that sends no record at all is given longer, as its feed may lag. */
 const RECEIVER_SILENCE_MS = 4_000;
-/** Two failed reconnects (3 s establishment and 0.5 s margin each) and their 300 ms backoff. */
+/** Covers two failed reconnects (3 s establishment and 0.5 s margin each) and their 300 ms backoff. */
 const LATENCY_RECOVERY_MS = 7_300;
 
-/** The test settings a run follows, with the warmup already adapted to the measured RTT. */
+/** A run follows these test settings, with the warmup already adapted to the measured RTT. */
 export type RunPlan = Pick<
   TestConfig,
   "stages" | "duration" | "skipLoadedLatencyWhenStageOff" | "pingCadence" | "loadedPingCadence" | "adaptive"
 >;
-/** What may change while a run is live. */
+/** These settings may change while a run is live. */
 export type LiveChange = Pick<RunPlan, "stages" | "duration" | "adaptive">;
 
 export interface DroppedServer {
@@ -93,15 +93,15 @@ export interface DroppedServer {
 }
 
 export interface RunOptions {
-  /** One to four servers, in catalog order. */
+  /** Lists one to four servers in catalog order. */
   servers: PreparedServer[];
-  /** The server whose idle latency the run reports; the first when it is not among them. */
+  /** Names the server whose idle latency the run reports, or the first when it is not among them. */
   focus: string;
-  /** Selected servers that failed their start check. */
+  /** Lists the selected servers that failed their start check. */
   dropped: DroppedServer[];
   plan: RunPlan;
   open: OpenStage;
-  /** Lanes per server for a stage; throws when servers sharing an origin cannot all get theirs. */
+  /** Returns lanes per server for a stage and throws when servers sharing an origin cannot all get theirs. */
   streams(servers: readonly PreparedServer[], activity: Activity): Map<string, StageLanes>;
   clock?: Clock;
   online?: () => boolean;
@@ -109,32 +109,32 @@ export interface RunOptions {
 
 export type Phase = "connecting" | "warmup" | Stage;
 
-/** A transfer stage's presented rates at one sampling tick; results never read them. */
+/** Samples a transfer stage's presented rates at one tick. Results never read them. */
 export interface LiveSample {
   /** Timeline ms. */
   t: number;
   stage: TransferStage;
   /** Samples with different ids are separate lines. */
   continuityId: number;
-  /** Unique measured bytes of the whole run so far. */
+  /** Counts the unique measured bytes of the whole run so far. */
   bytes: number;
-  /** Null when the stage does not move the direction, or before its first bytes; 0 while stalled. */
+  /** Stays null when the stage does not move the direction, or before its first bytes, and 0 while stalled. */
   down: number | null;
   up: number | null;
-  /** The upload rate bridged by lane completions while a receiver pauses; null when nothing needed bridging. */
+  /** Bridges the upload rate with lane completions while a receiver pauses, null when nothing needed bridging. */
   bridgedUp: number | null;
   stalled: boolean;
-  /** Active ms since any server moved, once stalled for at least half a second. */
+  /** Counts active ms since any server moved, once stalled for at least half a second. */
   quietMs: number | null;
-  /** From the stage's warmup: a live rate no result counts, never part of the series. */
+  /** Marks a sample from the stage's warmup, a live rate no result counts and never part of the series. */
   warmup: boolean;
 }
 
 export type RunEvent =
-  /** The shown segment and what its stage is doing: the first stage prepares as `connecting`; a later one shows at
-      once. `t` is where the segment starts on the timeline. */
+  /** Reports the shown segment and what its stage is doing. The first stage prepares as `connecting`, and a later
+      one shows at once. `t` is where the segment starts on the timeline. */
   | { type: "phase"; phase: Phase; stage: Stage; t: number; step: "preparing" | "running" | "finalizing" }
-  /** The shown segment's position, at least every 250 ms while it runs, and once more as its stage finalizes. */
+  /** Reports the shown segment's position at least every 250 ms while it runs, and once more as its stage finalizes. */
   | { type: "progress"; elapsedMs: number; budgetMs: number }
   | { type: "live"; sample: LiveSample }
   | { type: "latency"; serverId: string; bucket: LatencyBucket }
@@ -147,48 +147,48 @@ export type RunEvent =
   | { type: "error"; reason: FailureReason; message: string }
   | { type: "aborted"; t: number };
 
-/** A server across the whole run. */
+/** Follows a server across the whole run. */
 interface Participant {
   id: string;
   prepared: PreparedServer;
   latency: ServerLatency;
   buckets: LatencyBuckets;
-  /** Out of the run; a sole server is reinstated at each new stage. */
+  /** Marks the server out of the run. A sole server is reinstated at each new stage. */
   removed: boolean;
-  /** Whether its one replacement upload id is spent. */
+  /** Tells whether its one replacement upload id is spent. */
   rotated: boolean;
-  /** Probe adjacency for jitter; a reconnect breaks it. */
+  /** Tracks probe adjacency for jitter. A reconnect breaks it. */
   continuity: number;
-  /** Its latency bus across the run's stages, disposed when the run ends. */
+  /** Carries its latency bus across the run's stages, disposed when the run ends. */
   bus: StageSetup["bus"];
 }
 
-/** A server in one stage. Times are active ms. */
+/** Seats a server in one stage. Times are active ms. */
 interface Seat {
   server: Participant;
   resources: StageResources;
-  /** Measured client-consumed bytes this stage. */
+  /** Counts measured client-consumed bytes this stage. */
   down: number;
-  /** Client-consumed bytes since the stage opened, its warmup included: the count the live rate reads, never a
-      result. */
+  /** Counts client-consumed bytes since the stage opened, its warmup included. The live rate reads this count and a
+      result never does. */
   shown: number;
   /** The window closed and its lanes are reporting what they counted before it did. */
   flushing: boolean;
-  /** The latest measured receiver checkpoint this stage. */
+  /** Holds the latest measured receiver checkpoint this stage. */
   up: Checkpoint | null;
   progressAt: Record<Direction, number>;
-  /** The last receiver record with advancing receiver time, and the receiver time its bytes last grew. */
+  /** Marks the last receiver record with advancing receiver time, and the receiver time its bytes last grew. */
   heardAt: number;
   grewNanos: number;
   recovery: { abort: AbortController; stall: Stall } | null;
   latencyStall: { at: number; detail: string } | null;
   /** Page ms of the last live summary. */
   summaryAt: number;
-  /** The warmup's first and latest receiver records of one upload id: its upload ramp. */
+  /** Holds the warmup's first and latest receiver records of one upload id, which form its upload ramp. */
   ramp: { first: Checkpoint; last: Checkpoint } | null;
 }
 
-/** One entered stage. Every callback its resources make checks that it is still the run's stage and not settled. */
+/** Holds one entered stage. Every callback its resources make checks that it is still the run's stage, not settled. */
 interface StageRun {
   activity: Activity;
   phase: "preparing" | "warmup" | "measuring" | "finalizing" | "settled";
@@ -198,20 +198,20 @@ interface StageRun {
   streams: Map<string, StageLanes>;
   /** The measured window began. */
   measured: boolean;
-  /** Active ms when finalization began; failures after it are judged against it. */
+  /** Active ms when finalization began. Failures after it are judged against it. */
   closedAt: number;
-  /** A hole, stall, dropout or gap: no early finish this stage. */
+  /** A hole, stall, dropout or gap rules out an early finish this stage. */
   disturbed: boolean;
-  /** Timeline ms since when an early finish has been eligible. */
+  /** An early finish has been eligible since this timeline ms. */
   armedAt: number | null;
   /** Page ms of the last early-finish evaluation. */
   evaluatedAt: number;
   finishedEarly: boolean;
-  /** Where the warmup began, in page ms and the download bytes shown then: its ramp's origin. */
+  /** Marks where the warmup began, in page ms and the download bytes shown then, as its ramp's origin. */
   ramp: { at: number; down: number } | null;
-  /** Page ms the measured window closed at, however long its final evidence takes; Infinity while it is open. */
+  /** The measured window closed at this page ms, however long its final evidence takes, Infinity while it is open. */
   sealedAt: number;
-  /** The plan as the window closed; later changes cannot reach a window that already ended. */
+  /** Freezes the plan as the window closed. Later changes cannot reach a window that already ended. */
   plan: StagePlans[Stage] | null;
 }
 
@@ -222,7 +222,7 @@ const quiet = (stage: StageRun, seat: Seat, at: number) =>
   stage.activity.transfer.length > 0 &&
   stage.activity.transfer.every((dir) => at - seat.progressAt[dir] >= QUIET_MS);
 
-/** The first direction silent past its limit. Uploads count on the receiver's own clock. */
+/** Finds the first direction silent past its limit. Uploads count on the receiver's own clock. */
 const silence = (stage: StageRun, seat: Seat, at: number): Direction | undefined =>
   stage.activity.transfer.find((dir) =>
     dir === "down"
@@ -248,7 +248,7 @@ function* causes(error: unknown): Generator<Error> {
   }
 }
 
-/** A busy server wins over a nested timeout; offline or a network failure is a lost connection. */
+/** A busy server wins over a nested timeout. Offline or a network failure is a lost connection. */
 function classify(cause: unknown, fallback: FailureReason, online: boolean): FailureReason {
   const chain = [...causes(cause)];
   const known = chain.find((error) => error instanceof StageFailure);
@@ -273,21 +273,21 @@ export class Run {
   #state: "created" | "running" | "completed" | "aborted" | "failed" = "created";
   #plan: RunPlan;
   #segments: Segment[];
-  /** The segment the run shows; a stage's warmup and window share one activity. */
+  /** The run shows this segment. A stage's warmup and window share one activity. */
   #shown: Segment | null = null;
-  /** Timeline ms at the last tick, and the page ms of that tick. */
+  /** Records timeline ms at the last tick, and the page ms of that tick. */
   #elapsed = 0;
   #tickAt = 0;
   #timer: (() => void) | null = null;
-  /** The stage being prepared, measured or finalized; the last settled one between stages. */
+  /** Holds the stage being prepared, measured or finalized, or the last settled one between stages. */
   #stage: StageRun | null = null;
   #stages = new Map<Stage, StageRun>();
   #settled = new Map<Stage, { status: StageStatus; plan: StagePlans[Stage] }>();
   #results: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
-  /** Each server's own result per stage and direction, taken as the stage settles: later stages' intervals may push
-      its intervals past the interval limit. */
+  /** Keeps each server's own result per stage and direction, taken as the stage settles, because later stages'
+      intervals may push its intervals past the interval limit. */
   #own = new Map<string, ThroughputResult | null>();
-  /** Complete once the current stage settles. */
+  /** The run completes once the current stage settles. */
   #finishing = false;
   #aggregate = new Aggregate();
   #failures: ServerFailure[] = [];
@@ -350,7 +350,7 @@ export class Run {
     this.#arm();
   }
 
-  /** The user's stop: nothing is reported or saved. */
+  /** Stops at the user's request. Nothing is reported or saved. */
   abort(): void {
     if (this.#state !== "running") return;
     this.#state = "aborted";
@@ -359,7 +359,7 @@ export class Run {
     this.#emit({ type: "aborted", t: this.#elapsed });
   }
 
-  /** Ends now with what was measured; each stage left unfinished fails for `reason` on each of `servers`. */
+  /** Ends now with what was measured. Each stage left unfinished fails for `reason` on each of `servers`. */
   end(reason: FailureReason, message: string, servers: readonly { id: string }[] = this.#participants()): void {
     if (this.#state !== "running") return;
     for (const stage of STAGES)
@@ -368,12 +368,12 @@ export class Run {
     this.#finish();
   }
 
-  /** Whether a stage may still be turned on or off. */
+  /** Tells whether a stage may still be turned on or off. */
   canChange(stage: Stage): boolean {
     return this.#state !== "running" || (!this.#finishing && changeable(this.#stage?.activity.stage ?? null, stage));
   }
 
-  /** Reshapes what has not run yet; throws (changing nothing) when the plan is impossible. */
+  /** Reshapes what has not run yet and throws (changing nothing) when the plan is impossible. */
   reconfigure(change: LiveChange): void {
     if (this.#state !== "running") return;
     const plan = { ...this.#plan, ...change };
@@ -383,7 +383,7 @@ export class Run {
     this.#validate(plan, this.#participants());
     const stage = this.#stage;
     this.#plan = plan;
-    // A stage that ended, or is ending, keeps its segment: the change reshapes only what follows.
+    // A stage that ended, or is ending, keeps its segment, so the change reshapes only what follows.
     const ended = stage?.phase === "finalizing" || stage?.phase === "settled";
     this.#segments = replan(this.#segments, this.#elapsed, plan, ended);
     const shown = this.#shown;
@@ -414,7 +414,7 @@ export class Run {
     };
   }
 
-  /** Completes after the current stage; later stages do not run. */
+  /** Completes after the current stage. Later stages do not run. */
   #finish(): void {
     this.#finishing = true;
     this.#cancelTimer();
@@ -455,12 +455,12 @@ export class Run {
     return activity.stage === "latency" ? this.#plan.pingCadence : this.#plan.loadedPingCadence;
   }
 
-  /** Servers whose idle population is still running. */
+  /** Lists the servers whose idle population is still running. */
   #latencyParticipants(): Participant[] {
     return this.#participants().filter((server) => server.prepared.latency && !server.latency.failed.has("latency"));
   }
 
-  /** The latency source, or once it left, the first remaining server that measured idle latency. */
+  /** Returns the latency source, or once it left, the first remaining server that measured idle latency. */
   #focus(): Participant {
     const source = this.#source;
     if (!source.removed) return source;
@@ -472,7 +472,7 @@ export class Run {
     return this.#state === "running" && this.#stage === stage;
   }
 
-  /** Timeline ms now: the last tick plus the page time since, unless held. */
+  /** Returns timeline ms now, the last tick plus the page time since, unless held. */
   #position(): number {
     return this.#elapsed + (this.#clock.held ? 0 : Math.max(0, this.#clock.read() - this.#tickAt));
   }
@@ -532,7 +532,7 @@ export class Run {
     const shown = this.#shown;
     if (!shown || !this.#stage) return this.#prepare(segment);
     if (shown.activity.stage !== segment.activity.stage) return void this.#endStage(this.#stage);
-    // A warmup hands over to its window: the same resources, nothing to wait for.
+    // A warmup hands over to its window with the same resources and nothing to wait for.
     this.#show(segment, "running");
     this.#measure(this.#stage);
   }
@@ -543,7 +543,7 @@ export class Run {
     this.#emit({ type: "phase", phase: segment.phase, stage: segment.activity.stage, t: segment.start, step });
   }
 
-  /** Opens every participant's resources for the segment's stage; the timeline waits until they work. */
+  /** Opens every participant's resources for the segment's stage. The timeline waits until they work. */
   #prepare(segment: Segment): void {
     const first = !this.#stage;
     const { activity } = segment;
@@ -580,7 +580,7 @@ export class Run {
     this.#stage = stage;
     this.#stages.set(activity.stage, stage);
     this.#clock.hold();
-    // The first stage shows as connecting until it works; a later one shows at once, without a countdown.
+    // The first stage shows as connecting until it works. A later one shows at once, without a countdown.
     if (first) this.#shown = segment;
     else this.#show(segment, "preparing");
     // A phase handler may have ended the run.
@@ -653,7 +653,7 @@ export class Run {
     return seat;
   }
 
-  /** The measured window opens: evidence counts from now on. */
+  /** The measured window opens, and evidence counts from now on. */
   #measure(stage: StageRun): void {
     const seats = active(stage);
     stage.phase = "measuring";
@@ -688,7 +688,7 @@ export class Run {
       for (const seat of seats) seat.up = null;
       const answers = seats.map(async (seat) => {
         const checkpoint = await seat.resources.checkpoint(stage.abort.signal).catch(() => null);
-        // A feed record heard while the answer was in flight is newer; the answer would take the count back.
+        // A feed record heard while the answer was in flight is newer. The answer would take the count back.
         if (!checkpoint || seat.up || stage.phase !== "measuring" || !this.#current(stage)) return;
         this.#hear(seat, checkpoint);
         this.#live.receiver(seat.server.id, checkpoint, this.#clock.read());
@@ -700,16 +700,16 @@ export class Run {
     this.#boundary(stage);
   }
 
-  /** The callbacks one server's resources make in one stage; inert once the stage closes or the server leaves. */
+  /** Builds the callbacks one server's resources make in one stage, inert once it closes or the server leaves. */
   #events(stage: StageRun, seat: Seat): StageEvents {
     const { server } = seat;
     const name = stage.activity.stage;
     const open = () => this.#current(stage) && stage.phase !== "settled";
     const live = () => open() && !server.removed;
     const measuring = () => stage.phase === "measuring" && live();
-    // A leaving server's probe accounting still counts: its population reports what was lost.
+    // A leaving server's probe accounting still counts, so its population reports what was lost.
     const counting = () => stage.measured && open();
-    // Tearing down lanes that moved to the window's end cannot fail the stage; a server that stopped earlier can.
+    // Tearing down lanes that moved to the window's end cannot fail the stage. A server that stopped earlier can.
     const teardown = () =>
       stage.phase === "finalizing" &&
       (!stage.measured || stage.activity.transfer.every((dir) => stage.closedAt - seat.progressAt[dir] < QUIET_MS));
@@ -729,7 +729,7 @@ export class Run {
         if (!(measuring() || flushed) || !stage.activity.transfer.includes("down") || !(bytes > 0)) return;
         seat.down += bytes;
         seat.shown += bytes;
-        // Flushed bytes were counted before the window closed: no evidence that the server moves now.
+        // Flushed bytes were counted before the window closed, so they are no evidence that the server moves now.
         if (!flushed) seat.progressAt.down = this.#clock.activeMs();
         this.#aggregate.addDownload(name as TransferStage, server.id, bytes);
       },
@@ -745,7 +745,7 @@ export class Run {
         if (!counting() || server.removed) return;
         const position = this.#position();
         for (const outcome of outcomes) {
-          // The window ends when the stage closes, not when its final evidence arrives: a probe sent after it is not
+          // The window ends when the stage closes, not when its final evidence arrives. A probe sent after it is not
           // the stage's, and a reply after it stays out of its round trips.
           if (outcome.observedAt - outcome.rttMs > stage.sealedAt) continue;
           const shown =
@@ -823,12 +823,12 @@ export class Run {
     };
   }
 
-  /** A page-clock observation on the timeline, relative to the last tick rather than to its delivery. */
+  /** Places a page-clock observation on the timeline, relative to the last tick rather than to its delivery. */
   #timelineAt(observedAt: number, position = this.#position()): number {
     return Math.max(this.#shown?.start ?? 0, Math.min(position, this.#elapsed + observedAt - this.#tickAt));
   }
 
-  /** Grown receiver bytes are progress; any record with advancing receiver time shows the feed is alive. */
+  /** Grown receiver bytes are progress. Any record with advancing receiver time shows the feed is alive. */
   #hear(seat: Seat, checkpoint: Checkpoint): void {
     const last = seat.up;
     const fresh = !last || last.id !== checkpoint.id;
@@ -854,7 +854,7 @@ export class Run {
     return boundary;
   }
 
-  /** Observes every participant's evidence now; true when that confirmed an early finish. */
+  /** Observes every participant's evidence now and returns true when that confirmed an early finish. */
   #boundary(stage: StageRun): boolean {
     if (stage.phase !== "measuring" || !stage.activity.transfer.length || !this.#current(stage)) return false;
     // Resuming observes a boundary of its own, and a gap rules out finishing early.
@@ -870,7 +870,7 @@ export class Run {
     return !!sample && !final && !this.#stalled && this.#evaluate(stage);
   }
 
-  /** Unique measured bytes of the run so far, both directions and every server. */
+  /** Sums the unique measured bytes of the run so far, both directions and every server. */
   #bytes(): number {
     let bytes = 0;
     for (const { id } of this.#servers) {
@@ -880,7 +880,7 @@ export class Run {
     return bytes;
   }
 
-  /** The presentation cadence: download boundaries and live rates, which results never read. */
+  /** Runs the presentation cadence, download boundaries and live rates, which results never read. */
   #sample(stage: StageRun, now: number): void {
     this.#sampledAt = now;
     const { transfer } = stage.activity;
@@ -916,8 +916,8 @@ export class Run {
     });
   }
 
-  /** A warmup's rate before the live rate has its evidence: the average since the warmup began, which climbs as the
-      connections open; null until it spans long enough and moved bytes. */
+  /** Shows a warmup's rate before the live rate has its evidence as the average since the warmup began, which climbs
+      as the connections open. Returns null until it spans long enough and moved bytes. */
   #ramp(stage: StageRun, dir: Direction, now: number): number | null {
     const seats = active(stage);
     if (dir === "down") {
@@ -942,7 +942,7 @@ export class Run {
         this.#failLatency(stage, seat, seat.latencyStall.detail);
       if (stage.phase !== "measuring") continue;
       if (stage.activity.transfer.some((dir) => at - seat.progressAt[dir] >= QUIET_MS)) stage.disturbed = true;
-      // Silence the others share is the link's: everyone stays, and the stage end judges who is still silent.
+      // Silence the others share is the link's, so everyone stays and the stage end judges who is still silent.
       const dir = silence(stage, seat, at);
       if (dir && active(stage).some((other) => other !== seat && at - other.progressAt[dir] < QUIET_MS))
         this.#leave(seat, dir);
@@ -982,7 +982,7 @@ export class Run {
     this.#updateStalled();
   }
 
-  /** A population that stayed down too long fails; loaded latency alone never removes a throughput participant. */
+  /** A population that stayed down too long fails. Loaded latency alone never removes a throughput participant. */
   #failLatency(stage: StageRun, seat: Seat, detail: string): void {
     if (stage.activity.stage === "latency") return this.#remove(seat.server, "connection-lost", detail);
     seat.latencyStall = null;
@@ -1030,7 +1030,7 @@ export class Run {
     if (!survivors.length) {
       if (!this.#measured())
         return this.#fail(reason, `All selected servers failed. ${server.prepared.server.name}: ${message}`);
-      // A sole server skips to its next stage; several that all fail end the run as incomplete.
+      // A sole server skips to its next stage. Several that all fail end the run as incomplete.
       return this.#servers.length === 1
         ? this.#skip(stage)
         : this.end(reason, "No server was left to run this stage", this.#servers);
@@ -1044,7 +1044,7 @@ export class Run {
   }
 
   /** A withdrawn sign-in or grant first shows as a broken or silent stream, and checking it can take longer than the
-      silence rule: once the check says it ended, the server's failure in `stage` becomes a sign-in. */
+      silence rule. Once the check says it ended, the server's failure in `stage` becomes a sign-in. */
   async #signedOut(server: Participant, stage: Stage): Promise<void> {
     if (!(await server.prepared.auth.ended().catch(() => false)) || this.#state !== "running") return;
     const failure = this.#failures.find(
@@ -1064,7 +1064,7 @@ export class Run {
     queueMicrotask(() => this.#tick());
   }
 
-  /** A page gap starts a new interval before any evidence after it applies; true when one did. */
+  /** A page gap starts a new interval before any evidence after it applies. Returns true when one did. */
   #resumeAfterGap(stage: StageRun): boolean {
     this.#clock.read();
     if (!this.#clock.takeGap() || stage.phase !== "measuring") return false;
@@ -1072,7 +1072,7 @@ export class Run {
     return true;
   }
 
-  /** After a page gap, evidence resumes in a new interval; the one before it still counts. */
+  /** After a page gap, evidence resumes in a new interval. The one before it still counts. */
   #resumeEvidence(stage: StageRun): void {
     this.#disturb(stage);
     this.#live.reset(this.#counts(stage), this.#clock.read());
@@ -1102,7 +1102,7 @@ export class Run {
     for (const { buckets } of this.#servers) buckets.restart(this.#elapsed, this.#continuity);
   }
 
-  /** Scores the measured window; true when that confirmed an early finish and cut the timeline there. */
+  /** Scores the measured window and returns true when that confirmed an early finish and cut the timeline there. */
   #evaluate(stage: StageRun): boolean {
     const segment = this.#shown;
     if (
@@ -1170,7 +1170,7 @@ export class Run {
     this.#clock.hold();
     const shown = this.#shown!;
     if (!preparing) {
-      // An early finish cut the shown segment short; the stage shows where it ended.
+      // An early finish cut the shown segment short. The stage shows where it ended.
       const segment =
         this.#segments.find((each) => each.phase === shown.phase && each.activity === shown.activity) ?? shown;
       this.#show(segment, "finalizing");
@@ -1225,7 +1225,7 @@ export class Run {
     const upload = transfer.includes("up");
     const boundary = this.#snapshot(stage);
     const at = stage.closedAt;
-    // Judged as the window closed: a final checkpoint answered late must not make a server that was moving silent.
+    // Silence is judged as the window closed, so a late final checkpoint never makes a server that was moving silent.
     const silent = new Set(seats.filter((seat) => silence(stage, seat, at)));
     const retrying = new Set(seats.filter((seat) => recovering(stage, seat, at)));
     // Bytes lanes counted but had not reported yet still count. Every server's lanes answer what they had counted by
@@ -1308,7 +1308,7 @@ export class Run {
     }
     if (stage) this.#reduce(name, plan.early);
     const measured = lanes(this.#results, name).every(Boolean);
-    // A result that spans too little of its planned time is kept, never complete: the rule History checks.
+    // A result that spans too little of its planned time is kept, never complete, which is the rule History checks.
     const short =
       measured && name !== "latency" && this.#aggregate.coveredMs(name) < plan.durationMs * minCoverage(plan.early);
     if (stage && !this.#failed(name) && (short || !measured)) {
@@ -1320,7 +1320,7 @@ export class Run {
       const message = short ? "Measured too little of the planned time" : "Too little measured evidence for a result";
       for (const id of ids) this.#record(id, failureScope(name), "insufficient-evidence", message, name);
     }
-    // A server that stayed but measured too little for a result of its own says so, as the run does; the stage's
+    // A server that stayed but measured too little for a result of its own says so, as the run does. The stage's
     // status counts it.
     if (stage && name !== "latency")
       for (const id of stage.seats.keys()) {
@@ -1359,8 +1359,8 @@ export class Run {
     this.#results[name] = lane && { ...lane.result, wire: this.#wire(components ?? []) };
   }
 
-  /** The wire estimate of a window: each server's share on its own path; none when any share is too short or its
-      path is unknown. */
+  /** Estimates a window's wire rate from each server's share on its own path. Returns none when any share is too
+      short or its path is unknown. */
   #wire(components: readonly ComponentWindow[]): WireModel | null {
     const paths: { bytesPerSec: number; path: WirePath }[] = [];
     for (const component of components) {

@@ -1,24 +1,24 @@
-//! Static-only QPACK (RFC 9204): a dynamic table capacity of 0 is advertised by omission.
+//! Implements static-only QPACK (RFC 9204). A dynamic table capacity of 0 is advertised by omission.
 mod huffman;
 mod table;
 
 use crate::code::Code;
 
-/// Why a field section was refused; a stream answers each differently.
+/// A field section was refused for one of these reasons, and a stream answers each differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
     /// QPACK_DECOMPRESSION_FAILED.
     Qpack,
     /// H3_MESSAGE_ERROR.
     Malformed,
-    /// Over the size limit: a 431 response to requests.
+    /// The section is over the size limit. Requests get a 431 response.
     TooLarge,
-    /// Well formed, but not a request our routes serve: a 400 response.
+    /// The request is well formed but not one our routes serve, so it gets a 400 response.
     Unsupported,
 }
 
 impl Invalid {
-    /// The code a stream that cannot answer with a status ends with.
+    /// A stream that cannot answer with a status ends with this code.
     pub(crate) fn code(self) -> Code {
         match self {
             Self::Qpack => Code::QPACK_DECOMPRESSION_FAILED,
@@ -33,7 +33,7 @@ pub(crate) fn decode(
     section: &[u8],
     mut field: impl FnMut(&[u8], &[u8]) -> Result<(), Invalid>,
 ) -> Result<(), Invalid> {
-    // Required Insert Count 0; with nothing to reference, any non-negative Base (sign bit 0) is moot.
+    // Required Insert Count must be 0. With nothing to reference, any non-negative Base (sign bit 0) is moot.
     let mut section = section.strip_prefix(&[0]).ok_or(Invalid::Qpack)?;
     if section.first().is_none_or(|&base| base & 0x80 != 0) {
         return Err(Invalid::Qpack);
@@ -83,7 +83,7 @@ pub(crate) fn encode<'a>(fields: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
     }
 }
 
-/// The peer's encoder stream (RFC 9204 §4.3): only Set Dynamic Table Capacity 0 fits our capacity.
+/// Reads the peer's encoder stream (RFC 9204 §4.3). Only Set Dynamic Table Capacity 0 fits our capacity.
 pub(crate) fn encoder_stream(input: &[u8]) -> Result<(), Code> {
     match input.iter().all(|&byte| byte == 0x20) {
         true => Ok(()),
@@ -91,10 +91,10 @@ pub(crate) fn encoder_stream(input: &[u8]) -> Result<(), Code> {
     }
 }
 
-/// The peer's decoder stream (RFC 9204 §4.4), read in chunks: only Stream Cancellation fits a non-inserting encoder.
+/// Reads the peer's decoder stream (RFC 9204 §4.4) in chunks. Only Stream Cancellation fits a non-inserting encoder.
 #[derive(Default)]
 pub(crate) struct DecoderStream {
-    /// Within a Stream Cancellation's stream ID.
+    /// The reader is within a Stream Cancellation's stream ID.
     continuing: bool,
 }
 
@@ -121,7 +121,7 @@ fn entry(index: u64) -> Result<(&'static str, &'static str), Invalid> {
         .ok_or(Invalid::Qpack)
 }
 
-/// A prefixed integer (RFC 7541 §5.1) whose value fits the section anyway, so at most 2^35.
+/// Reads a prefixed integer (RFC 7541 §5.1). Its value fits the section anyway, so at most 2^35.
 fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Invalid> {
     let (&first, mut rest) = section.split_first().ok_or(Invalid::Qpack)?;
     let max = (1 << bits) - 1;
@@ -142,7 +142,7 @@ fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Invalid> {
     Ok(value)
 }
 
-/// A string literal after a prefix of `bits` length bits and one Huffman bit.
+/// Reads a string literal after a prefix of `bits` length bits and one Huffman bit.
 fn string<'a: 'b, 'b>(section: &mut &'a [u8], bits: u32, buffer: &'b mut Vec<u8>) -> Result<&'b [u8], Invalid> {
     let huffman = section.first().is_some_and(|&first| first & 1 << bits != 0);
     let length = usize::try_from(integer(section, bits)?).map_err(|_| Invalid::Qpack)?;

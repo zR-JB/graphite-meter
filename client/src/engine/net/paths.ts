@@ -1,5 +1,5 @@
-// Which advertised target a saved path choice names on one server: the origins a catalog entry may use, selections,
-// classification against this page's browser policy, Automatic's ranking and resolution, and portable choices.
+// Resolves a saved path choice to an advertised target on one server. It covers the origins a catalog entry may use,
+// selections, classification against this page's browser policy, Automatic's ranking and portable choices.
 import type { CatalogEntry, Preflight } from "../../protocol/documents";
 import type {
   Discovery,
@@ -18,8 +18,8 @@ type TargetOf<R extends Role> = R extends "throughput" ? ThroughputTarget : Late
 type Transport = Target["transport"];
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 
-/** A saved path choice, parsed once: Automatic, an HTTP version, a mechanism, or one origin's target. Anything else
-    stays an origin that names nothing, so it round-trips and resolves to "not offered". */
+/** A saved path choice is parsed once into Automatic, an HTTP version, a mechanism, or one origin's target. Anything
+    else stays an origin that names nothing, so it round-trips and resolves to "not offered". */
 export type Selection =
   | { kind: "auto" }
   | { kind: "protocol"; protocol: HttpProtocol }
@@ -32,7 +32,7 @@ export const PROTOCOL_LABEL: Record<HttpProtocol, string> = {
   http3: "HTTP/3",
   negotiated: "Negotiated HTTP",
 };
-/** In the order pickers list them. */
+/** Pickers list them in this order. */
 const TRANSPORT_LABEL: Record<Transport, string> = {
   "fetch-stream": "HTTP",
   websocket: "WebSocket",
@@ -59,20 +59,20 @@ export function selectionText(selection: Selection): string {
   return selection.origin + selection.mechanism;
 }
 
-/** An explicit choice in words, for a server that does not offer it. */
+/** Words an explicit choice, for a server that does not offer it. */
 function selectionName(selection: Exclude<Selection, { kind: "auto" }>): string {
   if (selection.kind === "protocol") return PROTOCOL_LABEL[selection.protocol];
   if (selection.kind === "transport") return TRANSPORT_LABEL[selection.transport];
   return selectionText(selection);
 }
 
-/** The HTTP version a Resource Timing `nextHopProtocol` names; unknown or redacted values are never guessed. */
+/** Reads the HTTP version a Resource Timing `nextHopProtocol` names. Unknown or redacted values are never guessed. */
 export function protocolFromNextHop(nextHop: string | null): Exclude<HttpProtocol, "negotiated"> | null {
   return nextHop === "http/1.1" ? "http1" : nextHop === "h2" ? "http2" : nextHop === "h3" ? "http3" : null;
 }
 
-/** Whether `url` lies where `entry` may be reached: its own hostname on any scheme and port, or an exact additional
-    origin. Discovery can never widen this, and it grants no credential on its own. */
+/** Tells whether `url` lies where `entry` may be reached, on its own hostname with any scheme and port, or on an
+    exact additional origin. Discovery can never widen this, and it grants no credential on its own. */
 export function allowsOrigin(entry: Pick<CatalogEntry, "url" | "additionalOrigins">, url: string): boolean {
   let target: URL;
   try {
@@ -93,8 +93,8 @@ export function isLoopback(hostname: string): boolean {
   return octets.length === 4 && octets[0] === "127" && octets.every((part) => /^\d{1,3}$/.test(part) && +part <= 255);
 }
 
-/** Why this page cannot reach `origin` at all, or null. Literal IPv6 hosts cannot be named in the page's connection
-    policy (its own origin is covered by 'self'); an HTTPS page reaches clear HTTP only on loopback. */
+/** Says why this page cannot reach `origin` at all, or null. Literal IPv6 hosts cannot be named in the page's
+    connection policy (its own origin is covered by 'self'). An HTTPS page reaches clear HTTP only on loopback. */
 export function originPolicy(origin: string, page: Pick<PageConfig, "origin" | "secure">): string | null {
   const url = new URL(origin);
   if (url.hostname.startsWith("[") && url.origin !== page.origin)
@@ -118,7 +118,7 @@ function byOrigin<T extends Target>(
     let entry = origins.get(origin);
     if (!entry) origins.set(origin, (entry = { blocked: originPolicy(origin, page), targets: [] }));
     const at = entry.targets.findIndex((known) => known.transport === next.transport);
-    // One target per origin and mechanism: the first, unless a later one names the protocol a negotiated one left open.
+    // The first target per origin and mechanism stays, unless a later one names the protocol a negotiated one left open.
     if (at < 0) entry.targets.push(next);
     else if (entry.targets[at]!.protocol === "negotiated") entry.targets[at] = next;
   }
@@ -127,7 +127,7 @@ function byOrigin<T extends Target>(
   return origins;
 }
 
-/** The advertised targets grouped by origin, each origin judged once against this page. WebTransport dials only
+/** Groups the advertised targets by origin, each origin judged once against this page. WebTransport dials only
     https: URLs, so a session target on a clear origin is not offered. */
 export function classify(
   capabilities: Preflight["capabilities"],
@@ -163,7 +163,7 @@ const inGroup = (target: Target, selection: Selection) =>
     ? target.transport === "fetch-stream" && target.protocol === selection.protocol
     : selection.kind === "transport" && target.transport === selection.transport;
 
-/** Whether `selection` points at `target` at all, usable or not. */
+/** Tells whether `selection` points at `target` at all, usable or not. */
 export const pointsAt = (selection: Selection, target: Target) =>
   selection.kind === "auto" ||
   inGroup(target, selection) ||
@@ -172,9 +172,9 @@ export const pointsAt = (selection: Selection, target: Target) =>
 
 const RANK: Record<HttpProtocol, number> = { http1: 0, http2: 1, http3: 2, negotiated: 3 };
 
-/** Automatic's candidates, best first. Throughput prefers HTTP/1.1 bulk streams, then HTTP/2, HTTP/3, negotiated HTTP
-    and WebTransport streams; latency prefers the WebTransport datagram bus. Ties go to the discovery origin, then TLS,
-    then the target id, so the order never depends on how the server listed them. */
+/** Ranks Automatic's candidates, best first. Throughput prefers HTTP/1.1 bulk streams, then HTTP/2, HTTP/3, negotiated
+    HTTP and WebTransport streams. Latency prefers the WebTransport datagram bus. Ties go to the discovery origin, then
+    TLS, then the target id, so the order never depends on how the server listed them. */
 export function candidates<R extends Role>(discovery: Discovery, role: R, page: Browser): TargetOf<R>[] {
   const rank = (target: Target) => {
     if (role === "latency") return target.transport === "webtransport" ? 0 : 1;
@@ -199,8 +199,8 @@ function locate<R extends Role>(discovery: Discovery, role: R, id: string) {
   return null;
 }
 
-/** The target a run would use for `selection`, or null when nothing usable matches. An explicit choice never falls
-    back to another mechanism. */
+/** Picks the target a run would use for `selection`, or null when nothing usable matches. An explicit choice never
+    falls back to another mechanism. */
 export function resolve<R extends Role>(
   discovery: Discovery,
   role: R,
@@ -224,7 +224,7 @@ export function resolve<R extends Role>(
   return usable.length === 1 ? usable[0]! : null;
 }
 
-/** Why `selection` resolves to nothing on `discovery`, in the words the server's row shows. */
+/** Says why `selection` resolves to nothing on `discovery`, in the words the server's row shows. */
 export function unresolvedReason(
   discovery: Discovery,
   role: Role,
@@ -254,8 +254,8 @@ export function unresolvedReason(
   return { message: `${selectionName(selection)} not offered`, retry: "needs-user" };
 }
 
-/** Probe evidence and the upload id are HTTP whichever mechanism moves the bytes: the origin's advertised fetch
-    target, else a negotiated view of it. */
+/** Probe evidence and the upload id are HTTP whichever mechanism moves the bytes. They use the origin's advertised
+    fetch target, else a negotiated view of it. */
 export function fetchView(discovery: Discovery, target: ThroughputTarget): FetchTarget {
   const view = discovery.throughput
     .get(target.origin)
@@ -271,8 +271,8 @@ export function fetchView(discovery: Discovery, target: ThroughputTarget): Fetch
   };
 }
 
-/** Whether a path verified for `verifiedFor` still answers `selection`: Automatic while its first candidate is
-    unchanged (a verified fallback stays good), an explicit choice while it resolves to the verified target. */
+/** Tells whether a path verified for `verifiedFor` still answers `selection`. Automatic does while its first candidate
+    is unchanged (a verified fallback stays good), an explicit choice while it resolves to the verified target. */
 export function stillValid(
   path: { generation: string; verifiedFor: VerifiedFor },
   discovery: Discovery,
@@ -287,8 +287,8 @@ export function stillValid(
   );
 }
 
-/** A choice that applies to every server: carries a transport preference between servers without carrying another
-    server's origin. It resolves as if WebTransport existed, as it converts a preference, not this browser. */
+/** Makes a choice that applies to every server. It carries a transport preference between servers without carrying
+    another server's origin, and resolves as if WebTransport existed, as it converts a preference, not this browser. */
 export function portable(role: Role, selection: Selection, discovery: Discovery | null, page: Browser): Selection {
   if (selection.kind !== "origin") return selection;
   const target =

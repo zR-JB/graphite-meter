@@ -1,4 +1,4 @@
-//! Connections through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5, against in-test peers.
+//! Connects through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5 against in-test peers.
 use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
 use graphite_meter_proto::{discovery::Protocol, origin::Origin};
 use graphite_meter_testkit::Identity;
@@ -22,7 +22,7 @@ async fn connect(connector: &Connector, target: &str) -> Result<Connection, Conn
         .await
 }
 
-/// A peer on a loopback port that runs `serve` on its one connection.
+/// Listens on a loopback port and runs `serve` on its one connection.
 async fn peer<F, T>(serve: impl FnOnce(TcpStream) -> F + Send + 'static) -> (SocketAddr, JoinHandle<T>)
 where
     F: Future<Output = T> + Send,
@@ -33,7 +33,7 @@ where
     (address, tokio::spawn(async move { serve(listener.accept().await.unwrap().0).await }))
 }
 
-/// An HTTP/1.1 head, read byte by byte so nothing after it is consumed.
+/// Reads an HTTP/1.1 head byte by byte so nothing after it is consumed.
 async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
@@ -75,7 +75,7 @@ async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
     assert_eq!((&inside, alpn.as_deref()), (b"inside", Some(&b"h2"[..])));
 }
 
-/// A proxy that answers the CONNECT head it reads with `response` and returns the head.
+/// Starts a proxy that answers the CONNECT head it reads with `response` and returns the head.
 async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
     peer(|mut stream| async move {
         let head = read_head(&mut stream).await;

@@ -1,4 +1,4 @@
-/* Recipes a second component would otherwise restate: keys, rows, plates, sheets, floats and their motion states. */
+/* Keys, rows, plates, sheets, floats and their motion states live here, so no second component restates them. */
 @layer primitives {
   .hint {
     color: var(--text-soft);
@@ -6,15 +6,15 @@
     line-height: 1.5;
   }
 
-  /* Instrument chrome: axis names, unit captions and the stages legend. */
+  /* Instrument chrome covers axis names, unit captions and the stages legend. */
   .caps {
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. The lanes
-     read this way; the kept results are panels. */
+  /* A stage's area is its light on the page, a rule in its hue and a wash that fades out, with no box. The lanes
+     read this way, while the kept results are panels. */
   .stage-area {
     --wash: 0%;
     border-top: 2px solid color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
@@ -32,14 +32,14 @@
   .stage-area:is(.pending, .not-run) {
     --rule: 30%;
   }
-  /* A panel: one fill step above the canvas in a hairline with a light top edge, for a kept result. */
+  /* A panel for a kept result sits one fill step above the canvas, in a hairline with a light top edge. */
   .panel {
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
   }
-  /* A hand-off's fades run on the compositor (lib/motion.ts sets --dur-handoff-out); the frame clock only flips the
+  /* A hand-off's fades run on the compositor (lib/motion.ts sets --dur-handoff-out). The frame clock only flips the
      class. */
   .handoff {
     transition:
@@ -52,7 +52,7 @@
     translate: 0 var(--rise, 0);
     transition-duration: var(--dur-handoff-out);
   }
-  /* A stage's mark: its glyph in a small plate washed in its hue. */
+  /* A stage's mark is its glyph in a small plate washed in its hue. */
   .tone-icon {
     display: grid;
     flex: none;
@@ -93,7 +93,7 @@
     white-space: nowrap;
     transition: var(--transition-control);
   }
-  /* A key's hit box never moves under the pointer, so a press near its edge still lands: the press deepens the
+  /* A key's hit box never moves under the pointer, so a press near its edge still lands. The press deepens the
      fill, and the glyph gives and springs back as it lifts. */
   .btn:active:not(:disabled, [aria-disabled="true"]) {
     background-image: linear-gradient(var(--selected-wash) 0 0);
@@ -130,7 +130,7 @@
     width: calc(var(--control-h) + 2 * var(--hit-pad));
     padding: 0;
   }
-  /* A top-bar key: a glyph plate in full ink, whichever component owns it. */
+  /* A top-bar key is a glyph plate in full ink, whichever component owns it. */
   .btn.key {
     background-color: var(--surface-1);
     color: var(--text);
@@ -168,7 +168,7 @@
       background: var(--hover-wash) padding-box;
     }
   }
-  /* A press, or a toggle whose surface is open, takes the selected wash; after hover, so it wins there. */
+  /* A press, or a toggle whose surface is open, takes the selected wash. It follows hover, so it wins there. */
   :is(.btn-quiet, .head-actions .btn):is(:active, [aria-expanded="true"], [aria-pressed="true"]):not(
     :disabled,
     [aria-disabled="true"]
@@ -204,7 +204,7 @@
     border-radius: var(--r-full);
     background: var(--tone);
     box-shadow: 0 0 0 3px var(--tone-wash);
-    /* The dot is the state itself; forced colors would paint it the canvas. */
+    /* The dot is the state itself. Forced colors would paint it the canvas. */
     forced-color-adjust: none;
   }
   .status-dot.inline {
@@ -229,7 +229,7 @@
     background: var(--tone);
     forced-color-adjust: none;
   }
-  /* A latency track: each reply bucket a bar in its stage's hue from the dashed idle median. */
+  /* A latency track draws each reply bucket as a bar in its stage's hue from the dashed idle median. */
   .reply {
     stroke: var(--tone);
     stroke-width: 2;
@@ -345,7 +345,7 @@
     }
   }
 
-  /* A slider straddling an edge (kit/splitter.tsx); its ink line lights the edge on hover or focus. */
+  /* A slider straddles an edge (kit/splitter.tsx). Its ink line lights the edge on hover or focus. */
   .resize-handle {
     position: absolute;
     inset-block: 0;
@@ -370,7 +370,7 @@
     outline: none;
   }
 
-  /* A plate whose direct children are rows; a control sets its row's height. */
+  /* A plate's direct children are rows. A control sets its row's height. */
   .kv {
     display: grid;
     padding-inline: var(--row-inset);
@@ -402,8 +402,8 @@
       padding-block: 2px;
     }
   }
-  /* A label over a control that takes the row's width: the label sits as a one-line row's would, the control under
-     it on the same inset. */
+  /* A label may stack over a control that takes the row's width. The label sits as a one-line row's would, and the
+     control sits under it on the same inset. */
   .kv > .stacked {
     flex-direction: column;
     flex-wrap: nowrap;
@@ -417,7 +417,7 @@
   .kv:not(.choices) > * + * {
     border-top: var(--hairline) solid var(--border-subtle);
   }
-  /* A locked row dims as one, like a disabled button; a select's own fade would compound it. */
+  /* A locked row dims as one, like a disabled button. A select's own fade would compound it. */
   .kv:not(.choices) > label:has(:disabled) {
     opacity: 0.5;
   }
@@ -477,7 +477,7 @@
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  /* A choice's or a menu item's second line says what it does; the ring alone marks the chosen one. */
+  /* A choice's or a menu item's second line says what it does. The ring alone marks the chosen one. */
   :is(.choices, .menu > button) small {
     display: block;
     margin-top: 1px;
@@ -486,7 +486,7 @@
     font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     text-overflow: ellipsis;
   }
-  /* An ordinary plate row whose wash and focus ring are an inset layer, like a choice's. */
+  /* An ordinary plate row draws its wash and focus ring on an inset layer, like a choice's. */
   .link-row {
     position: relative;
     isolation: isolate;
@@ -506,11 +506,11 @@
       background-color: var(--hover-wash);
     }
   }
-  /* After hover, so the current row keeps its wash under the pointer. */
+  /* The rule follows hover, so the current row keeps its wash under the pointer. */
   .link-row[aria-current]:not([aria-current="false"])::before {
     background-color: var(--selected-wash);
   }
-  /* The row or its own control (a switch's checkbox) may hold focus; the ring is the row's. */
+  /* The row or its own control (a switch's checkbox) may hold focus. The ring is the row's. */
   .link-row:is(:focus-visible, :has(> :focus-visible)) {
     outline: none;
   }
@@ -547,8 +547,8 @@
     background: var(--brand);
     color: var(--text-inverse);
   }
-  /* The check is drawn in as the box fills, and out as it empties. Individual transforms only:
-     the minifier folds a `scale` beside `transform` into it, where `:checked` cannot undo it. */
+  /* The check is drawn in as the box fills, and out as it empties. It uses individual transforms only, because the
+     minifier folds a `scale` beside `transform` into it, where `:checked` cannot undo it. */
   input.check[type="checkbox"]::after {
     content: "";
     width: 9px;
@@ -605,7 +605,7 @@
 
   /* Segments share the control's width equally, each as wide as the widest word, so two controls with the same
      words line up. The chosen segment's plate is one thumb under the words that slides to the choice on the
-     control spring; its place comes from the chosen segment's index, so it needs no measuring and no script. */
+     control spring. Its place comes from the chosen segment's index, so it needs no measuring and no script. */
   .segmented {
     --n: 1;
     --i: 0;
@@ -675,7 +675,7 @@
   .segmented:has(> [aria-pressed="true"]):has(> :disabled)::before {
     opacity: 0.5;
   }
-  /* After the base rule, which would otherwise keep it at control height. */
+  /* The base rule would otherwise keep it at control height, so this rule follows it. */
   @media (pointer: coarse) {
     .segmented {
       min-height: var(--hit);
@@ -693,7 +693,7 @@
     white-space: nowrap;
     transition: color var(--dur-slide) var(--ease-out);
   }
-  /* After the base rule's min-width: a finger's segment is never narrower than a hit. */
+  /* This rule follows the base rule's min-width, so a finger's segment is never narrower than a hit. */
   @media (pointer: coarse) {
     .segmented > button {
       min-width: var(--hit);
@@ -705,7 +705,7 @@
   .segmented > button:focus-visible {
     outline-offset: -2px;
   }
-  /* The hover wash lies on an unchosen segment only; the chosen one already stands on its plate. */
+  /* The hover wash lies on an unchosen segment only. The chosen one already stands on its plate. */
   @media (hover: hover) {
     .segmented > button:hover:not(:disabled, [aria-pressed="true"]) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
@@ -771,7 +771,7 @@
   dialog.float {
     background: var(--surface-1);
   }
-  /* Built like a side sheet, it takes a sheet's material and edge, opaque. */
+  /* A dialog built like a side sheet takes a sheet's material and edge, opaque. */
   dialog.float.sheet {
     border-color: var(--border-subtle);
     background: var(--sheet);
@@ -789,7 +789,7 @@
     text-transform: none;
     pointer-events: none;
   }
-  /* A readout is figures alone, a line on a small plate at the line it reads; a small names the time or the marker. */
+  /* A readout is figures alone, a line on a small plate at the line it reads. A small names the time or the marker. */
   .inspect-card {
     position: absolute;
     display: flex;
@@ -879,14 +879,14 @@
   .menu > button :where(strong) {
     font-weight: var(--w-strong);
   }
-  /* Focus keeps the global ring, inset; the wash marks only the current choice. */
+  /* Focus keeps the global ring, inset. The wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
   }
   .menu > button[aria-checked="true"] {
     color: var(--text);
   }
-  /* A checklist marks its state with the check; an item that opens a surface has none, so a wash marks it open. */
+  /* A checklist marks its state with the check. An item that opens a surface has none, so a wash marks it open. */
   .menu > [role="menuitemcheckbox"][aria-checked="true"] {
     background: var(--selected-wash);
   }
@@ -899,7 +899,7 @@
   .menu > button:disabled {
     opacity: 0.55;
   }
-  /* A two-line item is a row, like a choice; coarse pointers grow every item to a hit. */
+  /* A two-line item is a row, like a choice. Coarse pointers grow every item to a hit. */
   .menu > :has(small) {
     min-height: var(--row-h);
     padding-block: 2px;
@@ -910,7 +910,7 @@
     }
   }
 
-  /* A tip is ink: the one dark plate on a light page and the one light plate on a dark one, so it never reads as
+  /* A tip is ink, the one dark plate on a light page and the one light plate on a dark one, so it never reads as
      part of the instrument. */
   .tooltip {
     position: fixed;
@@ -924,7 +924,7 @@
     margin: 6px;
     overflow: visible;
     position-area: block-start;
-    /* Cut by the viewport, a tip flips below, then aligns to its word's edge; max-content keeps it from squeezing. */
+    /* Cut by the viewport, a tip flips below, then aligns to its word's edge. Max-content keeps it from squeezing. */
     position-try-fallbacks:
       flip-block,
       block-end span-inline-start,
@@ -946,7 +946,7 @@
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
   }
-  /* A tip's pairs: a quieter label, its figure aligned at the right; a line after them is a footnote. */
+  /* A tip's pairs set a quieter label before its figure, aligned at the right. A line after them is a footnote. */
   .tooltip .inspect-row > :first-child {
     color: color-mix(in oklab, var(--text-inverse) 72%, transparent);
   }
@@ -971,7 +971,7 @@
       overlay var(--dur-slide) allow-discrete,
       display var(--dur-slide) allow-discrete;
   }
-  /* Important, so no component display can keep a closed popover hit-testable. */
+  /* The important flag means no component display can keep a closed popover hit-testable. */
   [popover]:not(:popover-open),
   dialog.float:not([open]) {
     display: none !important;

@@ -1,4 +1,4 @@
-/* Rules every component yields to, and the motion vocabulary shared across components. */
+/* Holds the rules every component yields to, and the motion vocabulary shared across components. */
 @layer utilities {
   .sr-only {
     position: absolute;
@@ -19,7 +19,7 @@
       user-select: none;
     }
   }
-  /* An explained word is read, not pressed: the help cursor, whatever its row's cursor is. */
+  /* An explained word is read, not pressed, so it takes the help cursor, whatever its row's cursor is. */
   [data-tip]:not(button, a, label, [role="switch"]) {
     cursor: help;
   }
@@ -36,7 +36,7 @@
       text-decoration-color: currentColor;
     }
   }
-  /* Forced colors drop the selected wash; the system's selection colors mark a pressed segment. */
+  /* Forced colors drop the selected wash. The system's selection colors mark a pressed segment. */
   @media (forced-colors: active) {
     .segmented > button[aria-pressed="true"] {
       forced-color-adjust: none;
@@ -55,7 +55,7 @@
   }
 }
 
-/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint; a loop runs
+/* The motion vocabulary. Every move is transform or opacity on the compositor, or a one-time paint. A loop runs
    only while the thing it describes is live. Reduced motion lands every one at its end state (base.css). */
 /* A mark that confirms something (a check, a result's bead) pops in on the spring. */
 @keyframes pop {
@@ -72,7 +72,7 @@
 }
 
 /* A theme change fades the new theme in over the old, on the compositor alone. */
-/* The page stays clickable while the fade runs: the transition layer takes no pointer. */
+/* The page stays clickable while the fade runs, since the transition layer takes no pointer. */
 ::view-transition {
   pointer-events: none;
 }

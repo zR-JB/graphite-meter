@@ -1,4 +1,4 @@
-//! The command line: the client's 22 flags, their validation and the `Config` they give.
+//! Parses the client's 22 command-line flags, validates them and builds the `Config` they give.
 
 use crate::model::{Cadence, Dir, Direction, Stage};
 use graphite_meter_proto::{
@@ -12,16 +12,16 @@ use graphite_meter_proto::{
 };
 use std::{ffi::OsString, fmt, num::NonZero, path::PathBuf, time::Duration};
 
-/// Why settings without a server address cannot run; nothing has a sensible default one.
+/// Settings without a server address cannot run, since nothing has a sensible default one.
 pub const NO_SERVER: &str = "enter the server's address";
 /// Exact and automatic streams per server and direction stay within this many.
 pub const MAX_STREAMS: usize = 14;
-/// The longest warmup a setting or a server's round trip asks for.
+/// A setting or a server's round trip asks for at most this warmup.
 pub const MAX_WARMUP: Duration = Duration::from_secs(4);
 const FASTEST_CADENCE: Duration = Duration::from_millis(80);
-/// Half the server's idle bound, so a quiet probe channel is never closed.
+/// Stays at half the server's idle bound, so a quiet probe channel is never closed.
 const SLOWEST_CADENCE: Duration = Duration::from_secs(IDLE_BOUND.as_secs() / 2);
-/// The probe cadence presets by name.
+/// Names the probe cadence presets.
 pub const CADENCES: [(&str, Cadence); 4] = [
     ("reply-driven", Cadence::ReplyDriven),
     ("fast", Cadence::Every(FASTEST_CADENCE)),
@@ -29,18 +29,18 @@ pub const CADENCES: [(&str, Cadence); 4] = [
     ("slow", Cadence::Every(Duration::from_millis(600))),
 ];
 
-/// One run's settings.
+/// Holds one run's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    /// The server whose server catalog lists the test servers; none until one is given.
+    /// This server's catalog lists the test servers. It stays none until one is given.
     pub url: Option<Origin>,
-    /// Test server IDs; empty selects the server's default.
+    /// Lists test server IDs. Empty selects the server's default.
     pub servers: Vec<ServerId>,
     pub paths: PathChoice,
-    /// Distinct, in run order.
+    /// Holds distinct stages in run order.
     pub stages: Vec<Stage>,
     pub warmup: Duration,
-    /// Each stage's measured window, by `Stage::index`.
+    /// Holds each stage's measured window, by `Stage::index`.
     pub durations: [Duration; Stage::ALL.len()],
     pub streams: Streams,
     pub ping: Cadence,
@@ -50,7 +50,7 @@ pub struct Config {
     pub report: bool,
 }
 
-/// Forced choices among the discovered paths; `None` is automatic.
+/// Forces choices among the discovered paths. `None` is automatic.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct PathChoice {
     pub throughput_origin: Option<Origin>,
@@ -60,7 +60,7 @@ pub struct PathChoice {
     pub latency_transport: Option<LatencyTransport>,
 }
 
-/// Streams per server and direction: HTTP/1.1's automatic limit, and an exact count on every path.
+/// Counts streams per server and direction, as HTTP/1.1's automatic limit and as an exact count on every path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Streams {
     pub auto: usize,
@@ -68,7 +68,7 @@ pub struct Streams {
 }
 
 impl Streams {
-    /// The count the settings show and edit: the forced one, or the automatic maximum.
+    /// The settings show and edit this count, the forced one or the automatic maximum.
     pub fn shown(&self) -> usize {
         self.forced.map_or(self.auto, NonZero::get)
     }
@@ -81,7 +81,7 @@ impl Streams {
     }
 }
 
-/// What a path check depends on; a run reuses a check whose key is equal.
+/// A path check depends on these. A run reuses a check whose key is equal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrepKey {
     url: Option<Origin>,
@@ -118,7 +118,7 @@ impl Config {
         self.durations[stage.index()]
     }
 
-    /// The stages to run with their windows.
+    /// Pairs the stages to run with their windows.
     pub fn plan(&self) -> Vec<(Stage, Duration)> {
         self.stages.iter().map(|&stage| (stage, self.duration(stage))).collect()
     }
@@ -138,18 +138,18 @@ impl Config {
         }
     }
 
-    /// Whether a stage probes latency: the latency stage, or loaded latency during transfers.
+    /// Tells whether a stage probes latency, in the latency stage or as loaded latency during transfers.
     pub fn probes(&self) -> bool {
         let transfers = self.stages.iter().any(|stage| !stage.directions().is_empty());
         self.stages.contains(&Stage::Latency) || self.loaded_latency && transfers
     }
 
-    /// Whether a stage uploads, which takes receiver checkpoints.
+    /// Tells whether a stage uploads, which takes receiver checkpoints.
     pub fn uploads(&self) -> bool {
         self.stages.iter().any(|stage| stage.moves(Direction::Up))
     }
 
-    /// Lanes per direction on a fetch-stream path of `protocol`, or a WebTransport one.
+    /// Counts the lanes per direction on a fetch-stream path of `protocol`, or on a WebTransport one.
     pub fn lanes(&self, protocol: Protocol, transport: ThroughputTransport) -> Dir<usize> {
         let (down, up) = match (self.streams.forced, transport, protocol) {
             (Some(forced), ..) => (forced.get(), forced.get()),
@@ -161,7 +161,7 @@ impl Config {
         Dir { down, up }
     }
 
-    /// Why the settings cannot run, if they cannot.
+    /// Says why the settings cannot run, if they cannot.
     pub fn validate(&self) -> Result<(), Invalid> {
         let outside = |stage: &&Stage| !STAGE_LIMITS.contains(&self.duration(**stage));
         let spaced = |cadence| matches!(cadence, Cadence::Every(spacing) if !(FASTEST_CADENCE..=SLOWEST_CADENCE).contains(&spacing));
@@ -178,7 +178,7 @@ impl Config {
     }
 }
 
-/// Why settings cannot run.
+/// Settings cannot run for one of these reasons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Invalid {
     NoServer,
@@ -220,7 +220,7 @@ impl fmt::Display for Invalid {
     }
 }
 
-/// What the command line asks for.
+/// The command line asks for one of these.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
     Help,
@@ -229,7 +229,7 @@ pub enum Parsed {
     Run(Box<Config>),
 }
 
-/// A refused command line: a flag error goes out with the usage, any other without.
+/// Refuses a command line. A flag error goes out with the usage, any other without.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     Flag(String),
@@ -257,7 +257,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// The usage text for `program`.
+/// Builds the usage text for `program`.
 pub fn usage(program: &str) -> String {
     format!("Usage: {program} [options]\n\nOptions:\n{}", flag::options(&FLAGS, &Flags::default()))
 }
@@ -270,7 +270,7 @@ struct Flags {
 }
 
 impl Flags {
-    /// The settings; a missing server is for `main` to recall or refuse.
+    /// Yields the settings. `main` recalls or refuses a missing server.
     fn finish(self) -> Result<Config, String> {
         match self.config.validate() {
             Ok(()) | Err(Invalid::NoServer) => Ok(self.config),
@@ -279,7 +279,7 @@ impl Flags {
     }
 }
 
-/// The choice named `text`, `auto` or empty being none.
+/// Finds the choice named `text`. `auto` or empty is none.
 fn choice<T: Copy>(text: &str, choices: &[T], name: fn(T) -> &'static str) -> Result<Option<T>, String> {
     if matches!(text, "" | "auto") {
         return Ok(None);
@@ -303,7 +303,7 @@ fn origin(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The server's origin, empty being none.
+/// Parses the server's origin. Empty is none.
 fn url(text: &str) -> Result<Option<Origin>, String> {
     match text {
         "" => Ok(None),
@@ -311,8 +311,8 @@ fn url(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The origin an entered or pasted address names. Without a scheme it is HTTPS, or HTTP on the local network; HTTPS
-/// never falls back to HTTP, which would let anyone on the path force a plaintext test.
+/// Finds the origin an entered or pasted address names. Without a scheme it is HTTPS, or HTTP on the local network.
+/// HTTPS never falls back to HTTP, which would let anyone on the path force a plaintext test.
 pub fn server_origin(raw: &str) -> Result<Origin, String> {
     let raw = raw.trim();
     let (scheme, rest) = raw.split_once("://").unwrap_or(("", raw));
@@ -329,8 +329,8 @@ pub fn server_origin(raw: &str) -> Result<Origin, String> {
     origin.ok_or_else(|| "use the server's address, for example https://meter.example or 192.168.1.20:7246".into())
 }
 
-/// Whether `authority` names a host on the local network: a loopback, private or link-local address, or a name without
-/// a dot or under a local-only suffix.
+/// Tells whether `authority` names a host on the local network, meaning a loopback, private or link-local address, or
+/// a name without a dot or under a local-only suffix.
 fn local(authority: &str) -> bool {
     let host = match authority.strip_prefix('[') {
         Some(literal) => literal.split(']').next().unwrap_or_default(),
@@ -350,9 +350,9 @@ fn local(authority: &str) -> bool {
     }
 }
 
-/// Where the server is kept once the user asks to remember it, so a later start needs no `--url`.
+/// The server is kept here once the user asks to remember it, so a later start needs no `--url`.
 pub fn kept_server() -> Option<PathBuf> {
-    // A directory that climbs with `..` is refused, so the file stays where it belongs.
+    // The client refuses a directory that climbs with `..`, so the file stays where it belongs.
     let var = |name| {
         std::env::var_os(name)
             .map(PathBuf::from)
@@ -367,17 +367,17 @@ pub fn kept_server() -> Option<PathBuf> {
     Some(directory?.join("graphite-meter").join("server"))
 }
 
-/// The server kept at `path`, if one is and it still parses.
+/// Reads the server kept at `path`, if one is and it still parses.
 pub fn recall(path: &std::path::Path) -> Option<Origin> {
     Origin::parse(std::fs::read_to_string(path).ok()?.trim()).ok()
 }
 
-/// Deletes the server kept at `path`; one never kept is already forgotten.
+/// Deletes the server kept at `path`. One never kept is already forgotten.
 pub fn forget(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
 }
 
-/// Keeps `origin` at `path` for the next start; it is a convenience, so a failure only costs that.
+/// Keeps `origin` at `path` for the next start. It is a convenience, so a failure only costs that.
 pub fn remember(path: &std::path::Path, origin: &Origin) {
     #[cfg(unix)]
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -407,7 +407,7 @@ fn cadence(text: &str) -> Result<Cadence, &'static str> {
     spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
 }
 
-/// A cadence as its flag spells it.
+/// Spells a cadence as its flag does.
 fn cadence_name(cadence: Cadence) -> String {
     match (CADENCES.iter().find(|(_, preset)| *preset == cadence), cadence) {
         (Some((name, _)), _) => (*name).into(),
@@ -450,7 +450,7 @@ fn show_origin(origin: &Option<Origin>) -> String {
     origin.as_ref().map_or_else(|| "auto".into(), Origin::to_string)
 }
 
-/// One flag row; `show` gives the value its usage default prints.
+/// Builds one flag row. `show` gives the value its usage default prints.
 macro_rules! row {
     ($name:literal, $value:literal, $usage:expr, |$flags:ident, $text:ident| $set:expr, |$shown:ident| $show:expr) => {
         Flag {

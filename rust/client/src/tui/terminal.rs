@@ -1,4 +1,4 @@
-//! The terminal's setup and restore, and the interface's event loop on it.
+//! Sets up and restores the terminal, and runs the interface's event loop on it.
 use super::{
     App, Effect, Exit, FRAME,
     chrome::{self, Chrome, Progress},
@@ -29,7 +29,7 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-/// Runs the interface until it quits; a burst of measurement events costs one draw at the next frame.
+/// Runs the interface until it quits. A burst of measurement events costs one draw at the next frame.
 pub async fn interactive(
     config: Config,
     kept: Option<Origin>,
@@ -81,9 +81,9 @@ pub async fn interactive(
                 changed |= paint;
                 (effects, paint)
             }
-            // Idle, nothing ticks: the frame clock runs only while there is something to paint or a check is due.
+            // The frame clock runs only while something waits to paint or a check is due, so nothing ticks when idle.
             _ = frames.tick(), if changed || app.waiting() => {
-                // While anything animates, and once after, so its last state shows.
+                // Paints while anything animates, and once after, so its last state shows.
                 let animated = app.animating();
                 let effects = app.tick(Instant::now());
                 (effects, std::mem::take(&mut changed) || animated || app.animating())
@@ -97,7 +97,7 @@ pub async fn interactive(
             match effect {
                 Effect::Command(command) => controller.command(*command),
                 Effect::OpenBrowser(url) => dialogs::browse(&url),
-                // A few bytes on local disk, written in order, so turning remembering off never loses to an earlier on.
+                // A few bytes land on local disk in order, so turning remembering off never loses to an earlier on.
                 Effect::Remember(origin) => {
                     if let Some(path) = crate::config::kept_server() {
                         crate::config::remember(&path, &origin);
@@ -124,8 +124,8 @@ pub async fn interactive(
 
 type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
-/// Draws a frame: the changed cells and chrome in one write, a synchronized update where the terminal holds one, the
-/// progress bar where it draws one. An unchanged frame writes nothing, so the terminal has nothing to repaint.
+/// Draws a frame, the changed cells and chrome in one write, as a synchronized update where the terminal holds one,
+/// with the progress bar where it draws one. An unchanged frame writes nothing, so the terminal has nothing to repaint.
 fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome)>, progress: bool) -> io::Result<()> {
     let mut frame = terminal.get_frame();
     let cells = frame.buffer_mut();
@@ -163,8 +163,8 @@ const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1003h\x1b[?1006h";
 /// Undoes `ENTER`, putting back the pushed title.
 const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1003l\x1b[23;0t";
 
-/// The terminal raw on the alternate screen with mouse and pastes; dropping it restores it all, the progress bar
-/// cleared where the terminal draws one.
+/// Holds the terminal raw on the alternate screen with mouse and pastes. Dropping it restores it all, the progress
+/// bar cleared where the terminal draws one.
 struct Session {
     hook: Arc<Hook>,
     progress: bool,
@@ -176,7 +176,7 @@ impl Session {
     fn enter(progress: bool) -> io::Result<Self> {
         let (hook, interface) = (Arc::new(std::panic::take_hook()), std::thread::current().id());
         let previous = hook.clone();
-        // A panic on the interface's thread ends it; elsewhere the run ends as failed and the interface stays.
+        // A panic on the interface's thread ends it. Elsewhere the run ends as failed and the interface stays.
         std::panic::set_hook(Box::new(move |info| {
             if std::thread::current().id() == interface {
                 restore(progress);

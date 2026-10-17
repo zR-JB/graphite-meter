@@ -1,15 +1,15 @@
-// The sign-in and approval pages' script: the host line, the show-password keys, and forms that stay on the page
-// while the server checks them. Without it every form still posts natively.
+// The sign-in and approval pages load this script for the host line, the show-password keys, and forms that stay on
+// the page while the server checks them. Without it every form still posts natively.
 
 type Page = Pick<
   Window & typeof globalThis,
   "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
 >;
 
-// A native POST would freeze the busy animation for the whole deliberately slow password check; other forms, such as a
+// A native POST would freeze the busy animation for the whole deliberately slow password check. Other forms, such as a
 // provider's sign-in, submit natively.
 const IN_PLACE = new Set(["/auth/password", "/auth/cli/approve", "/auth/browser/approve"]);
-/** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
+/** A post and its answer get this long. Past it the form is usable again and says the outcome is unknown. */
 const SUBMIT_MS = 20_000;
 const UNREACHABLE = "Could not reach the server. Try again.";
 const UNANSWERED = "The server did not answer in time. Reload to see whether it went through, or try again.";
@@ -24,7 +24,7 @@ export function install({
   setTimeout,
   clearTimeout,
 }: Page): void {
-  // From the address bar, so a visitor sees which server asks and the page discloses nothing.
+  // The host comes from the address bar, so a visitor sees which server asks and the page discloses nothing.
   const wake = (root: ParentNode) => {
     for (const line of root.querySelectorAll("[data-host]")) line.textContent = location.host;
     for (const key of root.querySelectorAll<HTMLElement>("[data-reveal]")) key.hidden = false;
@@ -35,7 +35,7 @@ export function install({
     key.setAttribute("aria-pressed", String(shown));
     key.setAttribute("aria-label", shown ? "Hide password" : "Show password");
   };
-  // aria-disabled, not disabled: a disabled button would drop the focus it holds.
+  // The key gets aria-disabled rather than disabled, because a disabled button would drop the focus it holds.
   const setBusy = (form: HTMLFormElement, busy: boolean) => {
     const submit = form.querySelector("[type=submit]");
     if (busy) {
@@ -46,7 +46,7 @@ export function install({
       submit?.removeAttribute("aria-disabled");
     }
   };
-  // One fixed sentence above the form, which stays usable: nothing a failing hop answered is shown.
+  // One fixed sentence goes above the form, which stays usable. Nothing a failing hop answered is shown.
   const unreachable = (form: HTMLFormElement, text = UNREACHABLE) => {
     setBusy(form, false);
     const shown = form.previousElementSibling;
@@ -90,15 +90,15 @@ export function install({
     const action = new URL(form.action, location.href);
     if (action.origin !== location.origin || !IN_PLACE.has(action.pathname)) return;
     event.preventDefault();
-    // URL-encoded, not multipart: the server reads only that.
+    // The body is URL-encoded, not multipart, because the server reads only that.
     const body = new URLSearchParams();
     for (const [name, value] of new FormData(form)) if (typeof value === "string") body.append(name, value);
-    // The answer's body counts against the same bound; nothing is posted again on its own.
+    // The answer's body counts against the same bound. Nothing is posted again on its own.
     const answer = new AbortController();
     const bound = setTimeout(() => answer.abort(), SUBMIT_MS);
     fetch(action, { method: "POST", body, credentials: "same-origin", redirect: "follow", signal: answer.signal })
       .then(async (response) => {
-        // A success leaves this path and goes unparsed: parsing the app would report CSP violations for its styles.
+        // A success navigates away unparsed. Parsing the app would report CSP violations for its styles.
         if (response.redirected && new URL(response.url).pathname !== location.pathname) {
           location.assign(response.url);
           return;
@@ -106,7 +106,7 @@ export function install({
         const page = new DOMParser().parseFromString(await response.text(), "text/html");
         const card = page.querySelector("main.card");
         if (!card) {
-          // A refusal without a card, such as an approval that ended, shows its page's state on a reload; a failing
+          // A refusal without a card, such as an approval that ended, shows its page's state on a reload. A failing
           // hop's answer is not this server's.
           if (response.ok) location.assign(response.url);
           else if (response.status < 500) location.reload();
@@ -117,7 +117,7 @@ export function install({
         document.querySelector("main.card")!.replaceWith(next);
         wake(next);
         document.title = page.title;
-        // Inserted nodes ignore autofocus: focus the retry field, else the heading, so the outcome is announced.
+        // Inserted nodes ignore autofocus. Focus on the retry field, else the heading, announces the outcome.
         const field = document.getElementById("password");
         const heading = next.querySelector("h1");
         if (field) field.focus();

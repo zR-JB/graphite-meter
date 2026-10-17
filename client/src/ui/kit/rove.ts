@@ -1,15 +1,15 @@
-// Keyboard roving through a list of explained facts: the list is one tab stop, and arrows, Home and End move between
-// its facts.
+// Roves the keyboard through a list of explained facts. The list is one tab stop, and arrows, Home and End move
+// between its facts.
 import { onCleanup } from "../../lib/signal";
 
 const ROVE: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
-/** Use as `ref` on a list of facts; its facts are the explained words inside it. */
+/** Goes on a list of facts as its `ref`. Its facts are the explained words inside it. */
 export function tipGroup(list: HTMLElement): void {
   // Explained words inside a group leave the tab order to it (tip.ts).
   list.dataset.tipGroup = "";
   const facts = () => [...list.querySelectorAll<HTMLElement>("[data-tip][tabindex]")];
-  // Exactly one stop, whichever facts come, go or gain or lose their tab index (tip.ts); only a change writes.
+  // The group keeps exactly one stop as facts come, go or gain or lose their tab index (tip.ts). Only a change writes.
   const settle = () => {
     const found = facts();
     const stop = found.find((fact) => fact.tabIndex === 0) ?? found[0];
@@ -18,7 +18,7 @@ export function tipGroup(list: HTMLElement): void {
   const observer = new MutationObserver(settle);
   observer.observe(list, { childList: true, subtree: true, attributeFilter: ["tabindex"] });
   onCleanup(() => observer.disconnect());
-  // After each fact has taken its place in the group.
+  // The first settle waits until each fact has taken its place in the group.
   queueMicrotask(settle);
   list.addEventListener("keydown", (event) => {
     const found = facts();

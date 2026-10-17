@@ -22,7 +22,7 @@ interface Network {
 }
 const origins = (...servers: Server[]) => servers.flatMap((server) => [server.http, server.url, server.h2, server.h3]);
 
-// Only browser reachability is simulated; measurement traffic stays real.
+// Only browser reachability is simulated. Measurement traffic stays real.
 async function limit(page: Page, failed: Server[], hanging: Server[]) {
   await page.addInitScript(
     (network: Network) => {
@@ -92,7 +92,7 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
 test("a saved unreachable peer stays selected through cancel and retry", async (page) => {
   await limit(page, [], [frankfurt]);
   await open(page, home.url, { servers: [home, frankfurt], config: http1 });
-  // Start waits for the server list; a busy runner may not have it yet.
+  // Start waits for the server list, which a busy runner may not have yet.
   await expect
     .poll(() => page.evaluate(() => !document.querySelector(".gauge-footer")?.textContent?.includes("still loading")))
     .toBe(true);

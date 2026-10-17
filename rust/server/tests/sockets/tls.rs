@@ -1,4 +1,4 @@
-//! The HTTPS listener and its certificate: TLS 1.3 only, startup checks, validity and renewal.
+//! Tests the HTTPS listener and its certificate, TLS 1.3 only, startup checks, validity and renewal.
 
 use super::*;
 use graphite_meter_server::{config::TlsFiles, transport::tls::Certificates};
@@ -7,7 +7,7 @@ use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use std::{path::PathBuf, sync::Arc, time::SystemTime};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-/// A certificate and key in `scratch` from `identity`.
+/// Writes a certificate and key in `scratch` from `identity`.
 fn files(scratch: &Scratch, identity: &Identity) -> (PathBuf, PathBuf) {
     let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
     (cert, scratch.file("key.pem", &identity.key).unwrap())
@@ -30,7 +30,7 @@ async fn the_https_listener_serves_http_1_1_over_tls_1_3_only() {
         .await
         .unwrap();
     assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"http/1.1"[..]));
-    // The client offers AES-256-GCM first; a server without AES hardware takes ChaCha20-Poly1305 instead.
+    // The client offers AES-256-GCM first. A server without AES hardware takes ChaCha20-Poly1305 instead.
     let suite = stream.get_ref().1.negotiated_cipher_suite().map(|suite| suite.suite());
     let expected = if graphite_meter_net::aes_hardware() {
         rustls::CipherSuite::TLS13_AES_256_GCM_SHA384
@@ -76,7 +76,7 @@ async fn startup_refuses_a_mismatched_pair_and_an_uncovered_public_host() {
     assert!(refused.starts_with("TLS certificate incompatible with speed.example: "), "{refused}");
 }
 
-/// Whether a client trusting only `trusted`'s CA completes a handshake with `acceptor`.
+/// Tells whether a client trusting only `trusted`'s CA completes a handshake with `acceptor`.
 async fn handshake(acceptor: &TlsAcceptor, trusted: &Identity) -> bool {
     let (client, server) = tokio::io::duplex(64 << 10);
     let connector = TlsConnector::from(Arc::new(trusted.client(&[b"http/1.1"])));

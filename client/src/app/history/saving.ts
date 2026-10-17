@@ -1,31 +1,31 @@
-// Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
-// was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
+// Saves finished results to History, one write at a time and in order. A write carries the clear count read when it
+// was queued and is dropped when History was cleared since, in any tab. A refusal is final, anything else is retried.
 // A write whose count could not be read when it was queued takes the last count this tab read and knows to be current,
-// else a count read later while no tab has changed History since; failing both, it is refused rather than brought back
+// else a count read later while no tab has changed History since. Failing both, it is refused rather than brought back
 // after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";
 
 const RETRY_MS = 15_000;
-/** Results waiting while storage fails; past this the oldest waiting one is given up, so memory stays bounded. */
+/** Results wait here while storage fails. Past this the oldest waiting one is given up, so memory stays bounded. */
 const MAX_QUEUED = 8;
 const RETRYING = "Could not save this result locally. Future writes will be retried.";
 const UNORDERED = "Could not save this result: History could not be read when it finished.";
 
 interface HistorySaving {
-  /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until
-      withdrawn. */
+  /** Offers the latest finished result. It is saved now while saving is on, else the moment it turns on in any tab,
+      until withdrawn. */
   offer(record: HistoryRecord): void;
-  /** A new Start or Start over: the result shown before can no longer be saved, though queued writes go on. */
+  /** A new Start or Start over means the result shown before can no longer be saved, though queued writes go on. */
   withdraw(): void;
-  /** Writes are queued or retrying; signing out waits for them. */
+  /** Writes are queued or retrying. Signing out waits for them. */
   readonly pending: Read<boolean>;
-  /** The offered result is not in History: saving is off, its write is queued or failed, or it is gone since. */
+  /** The offered result is not in History, as saving is off, its write is queued or failed, or it is gone since. */
   readonly unsaved: Read<boolean>;
-  /** The offered result's write was refused or given up: not saved, though saving is on and nothing removed it. */
+  /** The offered result's write was refused or given up. It is unsaved though saving is on and nothing removed it. */
   readonly failed: Read<boolean>;
-  /** Why the last write failed, until one succeeds. */
+  /** Says why the last write failed, until one succeeds. */
   readonly warning: Read<string>;
   dispose(): void;
 }
@@ -47,7 +47,7 @@ export function createHistorySaving(
   const failed = signal(false);
   const warning = signal("");
   const queue: Entry[] = [];
-  // Every record written, refused or dropped, never queued again: true while it is in History.
+  // Every record written, refused or dropped is here and never queued again. Its value is true while it is in History.
   const settled = new Map<string, boolean>();
   // Records whose write was refused or given up, as opposed to removed by a delete or a clear.
   const lost = new Set<string>();
@@ -55,8 +55,8 @@ export function createHistorySaving(
   let draining = false;
   let disposed = false;
   let stopRetries: (() => void) | null = null;
-  // The clear count as last read for a write, while nothing in another tab may have changed it since. Never read
-  // for its own sake, so History opens its database only to save.
+  // The clear count as last read for a write, while nothing in another tab may have changed it since. It is never
+  // read for its own sake, so History opens its database only to save.
   let known: number | null = null;
   /** Clears and other tabs' changes heard so far. */
   let changes = 0;
@@ -74,13 +74,13 @@ export function createHistorySaving(
 
   const enqueue = (record: HistoryRecord) => {
     if (settled.has(record.id) || queue.some((entry) => entry.record.id === record.id)) return;
-    // The head may be mid-write; the oldest behind it goes.
+    // The head may be mid-write, so the oldest behind it goes.
     if (queue.length >= MAX_QUEUED) {
       const dropped = queue.splice(1, 1)[0]!.record.id;
       settled.set(dropped, false);
       lost.add(dropped);
     }
-    // A refusal is final and says why; any other failure falls back on the count known to be current.
+    // A refusal is final and says why. Any other failure falls back on the count known to be current.
     queue.push({
       record,
       clears: read().catch((error) => (error instanceof HistoryRefusal ? error : known)),
@@ -157,7 +157,7 @@ export function createHistorySaving(
   const stopWatching = repository.onChange((change) => {
     if (change.type === "cleared" || change.type === "elsewhere") changes++;
     if (change.type === "cleared" && known !== null) known++;
-    // Another tab may have cleared History: the count is known again at the next write's read.
+    // Another tab may have cleared History, so the count is known again at the next write's read.
     if (change.type === "elsewhere") known = null;
     if (change.type === "deleted") for (const id of change.ids) removed(id);
     else if (change.type === "cleared") for (const id of settled.keys()) removed(id);

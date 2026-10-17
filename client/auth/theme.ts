@@ -1,7 +1,7 @@
-// The saved theme on <html> before the first paint, for the app shell and the auth pages. With nothing stamped
+// Stamps the saved theme on <html> before the first paint, for the app shell and the auth pages. With nothing stamped
 // (storage blocked, scripting off) their stylesheets follow the OS preference.
 
-/** The browser's own settings, shared by the app's preferences, this script and the sign-in pages. */
+/** The app's preferences, this script and the sign-in pages share this key for the browser's own settings. */
 export const STORAGE_KEY = "graphite-meter:v1";
 
 export function prePaintTheme(): void {

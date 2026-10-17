@@ -1,19 +1,19 @@
-// Rate buckets, steadiness and the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
+// Cuts rates into buckets, measures steadiness and applies the early-finish rule (docs/MEASUREMENTS.md#stage-timing).
 
 const BUCKET_MS = 250;
-/** The trailing window early finish scores. */
+/** Early finish scores this trailing window. */
 export const SCORE_WINDOW_MS = 4_000;
 export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 
-/** Running statistics of 250 ms rates, updated one rate at a time (Welford): exact for any spread at any level. */
+/** Keeps running statistics of 250 ms rates one rate at a time (Welford), exact for any spread at any level. */
 interface Moments {
   count: number;
   mean: number;
-  /** Sum of squared deviations from the mean. */
+  /** Sums the squared deviations from the mean. */
   squares: number;
 }
 
-/** What `restore` takes a series back to: its moments over every rate, and over the window open then. */
+/** `restore` takes a series back to these moments over every rate and over the window open then. */
 export interface Mark {
   all: Moments;
   window: Moments | null;
@@ -21,10 +21,10 @@ export interface Mark {
 
 const fresh = (): Moments => ({ count: 0, mean: 0, squares: 0 });
 
-/** Byte and time evidence cut into fixed 250 ms rates: their spread as running moments over every rate and over a
-    window opened at a point (a steady stretch), and the latest `keep` rates themselves. */
+/** Cuts byte and time evidence into fixed 250 ms rates. It keeps their spread as running moments over every rate and
+    over a window opened at a point (a steady stretch), and the latest `keep` rates themselves. */
 export class RateSeries {
-  /** The latest rates, at most `keep`. */
+  /** Holds the latest rates, at most `keep`. */
   readonly recent: number[] = [];
   #bytes = 0;
   #ms = 0;
@@ -71,7 +71,7 @@ export class RateSeries {
     if (this.recent.length > this.keep) this.recent.shift();
   }
 
-  /** stabilityPct of every 250 ms rate, or of the open window's. */
+  /** Reads the stabilityPct of every 250 ms rate, or of the open window's. */
   stability(window = false): number {
     const m = window ? (this.#window ?? fresh()) : this.#all;
     if (m.count < 2 || !(m.mean > 0)) return 0;
@@ -89,7 +89,7 @@ function add(m: Moments, rate: number): void {
 export interface Confidence {
   score: number;
   sampleCount: number;
-  /** The coefficient of variation, for a transfer. */
+  /** Holds the coefficient of variation for a transfer. */
   variation?: number;
 }
 
@@ -107,31 +107,31 @@ export function transferConfidence(rates: readonly number[], buckets = SCORE_BUC
   return { score: clamp01(1 - variation * 2.2 - slope * 1.4), variation, sampleCount: values.length };
 }
 
-/** 100 × (1 − CV) of every bucket, holes included, floored at 0; 0 below two buckets. */
+/** Returns 100 × (1 − CV) of every bucket, holes included, floored at 0, and 0 below two buckets. */
 export function stabilityPct(rates: readonly number[]): number {
   const { sampleCount, variation = 1 } = transferConfidence(rates, rates.length);
   return sampleCount >= 2 ? Math.max(0, 1 - variation) * 100 : 0;
 }
 
 export const EARLY_FINISH = {
-  /** The share of a stage that must have run. */
+  /** This share of a stage must have run. */
   minCoverage: 0.52,
   stability: 0.86,
   latencySamples: 8,
   transferSamples: 12,
-  /** How long the score must hold. */
+  /** The score must hold this long. */
   confirmationMs: 1_100,
 } as const;
 
 /** A complete transfer stage's intervals must span this share of its planned time. */
 export const minCoverage = (early: boolean) => (early ? EARLY_FINISH.minCoverage : 0.75);
 
-/** A Schmitt trigger: stable from the threshold, unstable again 0.08 below it. */
+/** Acts as a Schmitt trigger, stable from the threshold and unstable again 0.08 below it. */
 export const stillStable = (wasStable: boolean, score: number) =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
-/** The evidence a stage can reach within its time, never below the statistical minimum. `intervalMs` is the
-    fixed probe spacing of a latency stage, null when reply-driven. */
+/** Returns the evidence a stage can reach within its time, never below the statistical minimum. `intervalMs` is
+    the fixed probe spacing of a latency stage, or null when reply-driven. */
 function sampleFloor(kind: "latency" | "transfer", durationMs: number, intervalMs: number | null): number {
   const requested = kind === "latency" ? EARLY_FINISH.latencySamples : EARLY_FINISH.transferSamples;
   const budgetMs = Math.max(0, (Number.isFinite(durationMs) ? durationMs : 0) - EARLY_FINISH.confirmationMs);

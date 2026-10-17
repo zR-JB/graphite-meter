@@ -1,4 +1,4 @@
-//! The Graphite Meter server.
+//! Implements the Graphite Meter server.
 #![expect(
     clippy::result_large_err,
     reason = "refusals are responses, no larger than the outcomes they replace"
@@ -26,7 +26,7 @@ pub(crate) fn lock<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `N` bytes of system randomness; startup draws some first, so a later failure is a broken host and panics.
+/// Draws `N` bytes of system randomness. Startup draws some first, so a later failure means a broken host and panics.
 pub(crate) fn random<const N: usize>() -> [u8; N] {
     let mut bytes = [0; N];
     getrandom::fill(&mut bytes).expect("the system's randomness serves every credential");

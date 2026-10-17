@@ -1,4 +1,4 @@
-//! The embedded browser app: tagged paths, precompressed copies, the index's meta tags, the browser notice, the CSP.
+//! Serves the embedded app with tagged paths, precompressed copies, the index's meta tags, the browser notice and CSP.
 
 #[cfg(test)]
 mod scan;
@@ -13,7 +13,7 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use ring::digest::{SHA256, digest};
 use std::collections::HashMap;
 
-/// One embedded file.
+/// An asset is one embedded file.
 pub struct Asset {
     pub path: &'static str,
     pub content_type: &'static str,
@@ -23,40 +23,40 @@ pub struct Asset {
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
-/// A file as served.
+/// Served is a file as the client receives it.
 pub struct Served {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub bytes: Bytes,
 }
 
-/// An embedded file with its content tag.
+/// Pairs an embedded file with its content tag.
 struct Tagged {
     asset: &'static Asset,
     tag: HeaderValue,
 }
 
-/// A served name's file and the build's brotli and gzip copies of it, in that preference.
+/// Holds a served name's file and the build's brotli and gzip copies of it, in that preference.
 struct File {
     plain: Tagged,
     encoded: Vec<(&'static str, Tagged)>,
 }
 
-/// The browser app as one configuration serves it.
+/// Assets is the browser app as one configuration serves it.
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
     notice_tag: Option<HeaderValue>,
-    /// The index with the server's meta tags.
+    /// The index carries the server's meta tags.
     index: Option<Bytes>,
-    /// The policy's script and style sources, which admit the index's inline elements.
+    /// The policy's script and style sources admit the index's inline elements.
     inline: [String; 2],
-    /// The policy's Trusted Types directives, when the index names its policy.
+    /// The policy gets Trusted Types directives when the index names its policy.
     trusted_types: Option<String>,
 }
 
 impl Assets {
-    /// The app and notices this build embeds; a build without `GM_ASSET_DIR` has no app.
+    /// Loads the app and notices this build embeds. A build without `GM_ASSET_DIR` has no app.
     pub fn embedded(auth: bool, history_default: bool) -> Self {
         Self::new(EMBEDDED, &NOTICES, auth, history_default)
     }
@@ -108,8 +108,8 @@ impl Assets {
         }
     }
 
-    /// The file at `path`, a request path without its query, as `request` asks for it: `/` is the index, only exact
-    /// names match, and a client gets the precompressed copy it accepts or a 304 for the tag it holds.
+    /// Serves the file at `path`, a request path without its query, as `request` asks for it. `/` is the index, only
+    /// exact names match, and a client gets the precompressed copy it accepts or a 304 for the tag it holds.
     pub fn get(&self, path: &str, request: &HeaderMap) -> Option<Served> {
         let text = |name: header::HeaderName| {
             request
@@ -131,8 +131,8 @@ impl Assets {
         } else {
             let name = path.strip_prefix('/')?;
             let file = self.files.get(name)?;
-            // The bundler names every file under assets/ by its content hash; the fonts are unmodified upstream
-            // faces, reused for a week before a reload checks their tag.
+            // The bundler names every file under assets/ by its content hash. The fonts are unmodified upstream faces,
+            // reused for a week before a reload checks their tag.
             let cache = match name {
                 _ if name.starts_with("assets/") => "public, max-age=31536000, immutable",
                 _ if name.starts_with("fonts/") => "public, max-age=604800",
@@ -168,7 +168,7 @@ impl Assets {
         Some(Served { status: StatusCode::OK, headers, bytes })
     }
 
-    /// The page's content security policy, connecting to `connect` beyond 'self'.
+    /// Builds the page's content security policy, which connects to `connect` beyond 'self'.
     pub fn policy(&self, connect: &[String]) -> String {
         let [script, style] = &self.inline;
         let connect = connect
@@ -194,7 +194,7 @@ impl Assets {
     }
 }
 
-/// The base64 SHA-256 of the first attribute-less inline `tag`'s text.
+/// Hashes the first attribute-less inline `tag`'s text as base64 SHA-256.
 fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, content) = html.split_once(&format!("<{tag}>"))?;
@@ -202,7 +202,7 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     Some(STANDARD.encode(digest(&SHA256, content.as_bytes())))
 }
 
-/// The policy name the index's Trusted Types marker carries.
+/// Reads the policy name the index's Trusted Types marker carries.
 fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, marker) = html.split_once("<meta name=\"graphite-meter-trusted-types\" content=\"")?;
@@ -211,13 +211,13 @@ fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     (!name.is_empty() && name.bytes().all(valid)).then_some(name)
 }
 
-/// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
+/// Tags `bytes` with the quoted base64 of the first 12 bytes of their SHA-256.
 fn tag(bytes: &[u8]) -> HeaderValue {
     let tag = format!("\"{}\"", URL_SAFE_NO_PAD.encode(&digest(&SHA256, bytes).as_ref()[..12]));
     HeaderValue::try_from(tag).expect("base64 is a valid header value")
 }
 
-/// Whether an Accept-Encoding header admits `coding`: listed without a zero weight; an unreadable weight admits it.
+/// Tells whether an Accept-Encoding header lists `coding` without a zero weight. An unreadable weight admits it.
 fn accepts(header: &str, coding: &str) -> bool {
     header
         .split(',')
@@ -233,7 +233,7 @@ fn accepts(header: &str, coding: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether an If-None-Match header names `tag` or `*`; scanning stops at the first malformed entity tag.
+/// Tells whether an If-None-Match header names `tag` or `*`. Scanning stops at the first malformed entity tag.
 fn none_match(mut header: &str, tag: Option<&HeaderValue>) -> bool {
     loop {
         header = header.trim_start_matches([' ', '\t', '\r', '\n', ',']);

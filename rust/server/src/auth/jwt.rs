@@ -1,4 +1,4 @@
-//! Signed JSON Web Tokens as an OIDC provider issues them: its key set, signatures and an ID token's claims.
+//! Verifies signed JSON Web Tokens as an OIDC provider issues them, their key set, signatures and an ID token's claims.
 
 use super::Reason;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
-/// The longest token read.
+/// A token read is at most this long.
 const MAX_TOKEN: usize = 16 * 1024;
 /// A key set keeps at most this many usable keys.
 const MAX_KEYS: usize = 64;
@@ -19,7 +19,7 @@ const MAX_KEYS: usize = 64;
 const SKEW: f64 = 300.0;
 
 graphite_meter_proto::table! {
-    /// The signature algorithms tokens may use, by their JOSE names.
+    /// Lists the signature algorithms tokens may use, by their JOSE names.
     pub(super) enum Alg {
         name.0: &'static str,
     } {
@@ -35,7 +35,7 @@ graphite_meter_proto::table! {
     }
 }
 
-/// RSA parameters for keys of 2048 to 8192 bits, else a curve's algorithm.
+/// Holds RSA parameters for keys of 2048 to 8192 bits, else a curve's algorithm.
 type Scheme = Result<&'static RsaParameters, &'static dyn VerificationAlgorithm>;
 
 impl Alg {
@@ -43,7 +43,7 @@ impl Alg {
         Self::ALL.iter().copied().find(|alg| alg.name() == name)
     }
 
-    /// The advertised algorithms this server verifies; RS256 when a provider advertises none an OIDC client knows.
+    /// Filters the advertised algorithms to those this server verifies, or RS256 when none is one an OIDC client knows.
     pub fn allowed(advertised: &[String]) -> Vec<Self> {
         let known = |name: &String| name == "ES512" || Self::parse(name).is_some();
         match advertised.iter().any(known) {
@@ -52,7 +52,7 @@ impl Alg {
         }
     }
 
-    /// How a signature verifies, and the digest whose left half `at_hash` holds.
+    /// Says how a signature verifies, and the digest whose left half `at_hash` holds.
     fn scheme(self) -> (Scheme, &'static digest::Algorithm) {
         use signature::*;
         match self {
@@ -69,7 +69,7 @@ impl Alg {
     }
 }
 
-/// A signing key: an RSA modulus and exponent, or an uncompressed curve point or Ed25519 key.
+/// A signing key holds an RSA modulus and exponent, or an uncompressed curve point or Ed25519 key.
 #[derive(Clone)]
 struct Key {
     kid: Option<String>,
@@ -90,12 +90,12 @@ impl Key {
     }
 }
 
-/// A provider's signing keys.
+/// Holds a provider's signing keys.
 #[derive(Default, Clone)]
 pub(super) struct Jwks(Vec<Key>);
 
 impl Jwks {
-    /// The usable signing keys of a key set; a key not for signatures, or one this server cannot read, is skipped.
+    /// Reads a key set's usable signing keys. A key not for signatures, or one this server cannot read, is skipped.
     pub fn parse(document: &[u8]) -> Option<Self> {
         #[derive(Deserialize)]
         struct Set {
@@ -138,20 +138,20 @@ impl Jwks {
     }
 }
 
-/// A big-endian integer without leading zeros.
+/// Strips a big-endian integer's leading zeros.
 fn unsigned(mut bytes: Vec<u8>) -> Vec<u8> {
     let zeros = bytes.iter().take_while(|&&byte| byte == 0).count();
     bytes.drain(..zeros);
     bytes
 }
 
-/// A token whose signature verified, and the algorithm that signed it.
+/// Holds a token whose signature verified, and the algorithm that signed it.
 pub(super) struct Verified {
     alg: Alg,
     pub payload: Vec<u8>,
 }
 
-/// The token's payload when one of `keys` signed it with an `allowed` algorithm.
+/// Yields the token's payload when one of `keys` signed it with an `allowed` algorithm.
 pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Option<Verified> {
     #[derive(Deserialize)]
     struct Header {
@@ -181,7 +181,7 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Option<Verifi
     Some(Verified { alg, payload: B64.decode(payload).ok()? })
 }
 
-/// Whether claims name `issuer` and include `client` in their audience.
+/// Says whether claims name `issuer` and include `client` in their audience.
 pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
     #[derive(Deserialize)]
     struct Addressed {
@@ -196,7 +196,7 @@ pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
     claims.iss == issuer && audience
 }
 
-/// An ID token's subject and names for `client` from `issuer`, checking validity period, `nonce` and token hash.
+/// Gets an ID token's subject and names for `client` from `issuer`, checking validity period, `nonce` and token hash.
 pub(super) fn id_token(
     verified: &Verified,
     issuer: &str,

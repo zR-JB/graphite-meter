@@ -1,4 +1,4 @@
-//! Header names the http crate lacks, built at compile time so that no request parses them.
+//! Names the headers the http crate lacks. They are built at compile time, so no request parses them.
 
 use http::HeaderName;
 
@@ -14,7 +14,7 @@ pub const TIMING_ALLOW_ORIGIN: HeaderName = HeaderName::from_static("timing-allo
 pub const PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
 pub const X_ROBOTS_TAG: HeaderName = HeaderName::from_static("x-robots-tag");
 pub const X_ACCEL_BUFFERING: HeaderName = HeaderName::from_static("x-accel-buffering");
-/// A refusal that a sign-in would lift.
+/// Marks a refusal that a sign-in would lift.
 pub const GRAPHITE_METER_AUTH: HeaderName = HeaderName::from_static("graphite-meter-auth");
 pub const GRAPHITE_METER_BROWSER_AUTH: HeaderName = HeaderName::from_static("graphite-meter-browser-auth");
 pub const GRAPHITE_METER_AUTH_URL: HeaderName = HeaderName::from_static("graphite-meter-auth-url");

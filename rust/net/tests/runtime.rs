@@ -1,4 +1,4 @@
-//! Connections pinned to the pool's runtimes, one thread each, in turn.
+//! Checks that the pool pins connections to its runtimes, one thread each, in turn.
 use graphite_meter_net::Pool;
 use tokio::runtime::{Handle, RuntimeFlavor};
 
@@ -31,7 +31,7 @@ async fn a_current_thread_runtime_is_refused_and_an_inline_pool_serves_on_the_ca
     assert_eq!(thread_of(pool.next()).await, caller);
 }
 
-/// The calling thread's nice value, from Linux's `/proc`.
+/// Reads the calling thread's nice value from Linux's `/proc`.
 #[cfg(target_os = "linux")]
 fn nice() -> i64 {
     let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap();

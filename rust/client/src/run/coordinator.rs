@@ -1,4 +1,5 @@
-//! A run: stages over the prepared participants and engine, membership between stages, idle-round-trip warmups, events.
+//! Runs the stages over the prepared participants and engine, carries membership between stages, sizes warmups by the
+//! idle round trip and sends events.
 use super::{
     engine::{Decision, Engine, Input, Member, ProberEvent, Sample, StagePlan, Tick, lateness, stagger, warmup},
     prepare::{Prepared, ServerPath},
@@ -25,17 +26,17 @@ use std::{
 use tokio::{task::JoinHandle, time::sleep_until};
 use tokio_util::sync::{CancellationToken, DropGuard};
 
-/// How long a stage's upload sessions may take to finish, and a stopped stage's.
+/// A stage's upload sessions may take this long to finish, a stopped stage's only the second.
 const FINISH: Duration = Duration::from_secs(10);
 const STOPPED_FINISH: Duration = Duration::from_secs(1);
-/// Why a run whose test servers all left ends.
+/// A run whose test servers all left ends for this reason.
 const NO_SURVIVORS: &str = "All selected test servers failed";
 
-/// A prepared server across the run.
+/// Seats a prepared server across the run.
 struct Seat<'a> {
     server: &'a ServerPath,
     idle_rtt: Option<Duration>,
-    /// Its one replacement upload receiver in the run.
+    /// Marks its one replacement upload receiver in the run as taken.
     replaced: Arc<AtomicBool>,
     present: bool,
 }
@@ -104,7 +105,7 @@ pub async fn run(prepared: &Prepared, config: &Config, events: &Events, token: C
     outcome
 }
 
-/// Whether a sole departed server stays for the next stage: once measured, unless it needs sign-in; else why it ends.
+/// Lets a sole departed server stay for the next stage once measured, unless it needs sign-in, else says why it ends.
 fn survivor(results: &[StageResult], servers: &[ServerPath], sole: bool) -> Result<(), Failure> {
     let mut failures = results.iter().flat_map(|result| &result.failures);
     let last = failures.rfind(|failure| failure.failure.reason != FailureReason::InsufficientEvidence);
@@ -125,7 +126,7 @@ fn survivor(results: &[StageResult], servers: &[ServerPath], sole: bool) -> Resu
     }
 }
 
-/// Why the run cannot start: no server has a path, or a planned stage outlasts a server's limit.
+/// Says why the run cannot start, when no server has a path or a planned stage outlasts a server's limit.
 fn refusal(servers: &[ServerPath], unprepared: &[ServerFailure], plan: &[(Stage, Duration)]) -> Option<Failure> {
     let refused = |text: String| Failure::new(FailureReason::PreparationFailed, text);
     match unprepared.first() {
@@ -143,7 +144,7 @@ impl<'a> Seat<'a> {
 }
 
 impl Run<'_> {
-    /// `stage` over `seats` for `duration`; a stop finishes it as stopped.
+    /// Runs `stage` over `seats` for `duration`. A stop finishes it as stopped.
     async fn stage(&self, stage: Stage, duration: Duration, seats: &[&Seat<'_>]) -> StageResult {
         let config = self.config;
         let members = seats.iter().map(|seat| Member {
@@ -197,16 +198,16 @@ impl Run<'_> {
     }
 }
 
-/// A stage in progress: its engine, the participants still in it, and what the engine asked for.
+/// A stage in progress holds its engine, the participants still in it, and what the engine asked for.
 struct Live<'a> {
     run: &'a Run<'a>,
     stage: Stage,
     engine: Engine,
     participants: Vec<Participant>,
-    /// Participants that could not open, for the next tick.
+    /// Participants that could not open wait here for the next tick.
     departed: Vec<(ServerId, Failure)>,
     checkpoint: Option<Duration>,
-    /// The measured window once it opened; probes sent within it are announced until the stage ends.
+    /// The measured window, once it opened. Probes sent within it are announced until the stage ends.
     window: Option<(Instant, Instant)>,
     /// The window is open, so the boundaries' live rates are announced.
     open: bool,
@@ -233,7 +234,6 @@ impl Live<'_> {
         }
     }
 
-    /// Snapshots every participant, gathers the checkpoints asked for, drains probes and ticks the engine.
     async fn tick(&mut self, now: Instant, lateness: Duration) -> (Tick, Vec<(ServerId, ProberEvent)>) {
         let mut samples: Vec<_> = self.participants.iter_mut().map(Participant::local).collect();
         if let Some(budget) = self.checkpoint.take() {
@@ -331,19 +331,19 @@ impl Live<'_> {
     }
 }
 
-/// One server's share of a stage: its download lanes, upload session and prober; dropping it ends them.
+/// One server's share of a stage holds its download lanes, upload session and prober. Dropping it ends them.
 pub struct Participant {
     pub server: ServerId,
     down: Option<Lanes>,
     up: Option<UploadSession>,
     prober: Option<Prober>,
-    /// The upload session finishing after the window closed.
+    /// The upload session finishes here after the window closed.
     finishing: Option<JoinHandle<()>>,
     _departs: DropGuard,
 }
 
 impl Participant {
-    /// Starts `server`'s work for `plan` under `token`; `replaced` is its upload replacement for the run.
+    /// Starts `server`'s work for `plan` under `token`. `replaced` marks its upload replacement for the run.
     pub async fn open(
         client: &Client,
         server: &ServerPath,
@@ -385,7 +385,7 @@ impl Participant {
         })
     }
 
-    /// Its local counters and lane health now; checkpoints come apart.
+    /// Samples its local counters and lane health now. Checkpoints come apart.
     pub fn local(&mut self) -> Sample {
         let reading = Reading {
             server: self.server.clone(),
@@ -401,7 +401,7 @@ impl Participant {
         Sample { reading, ready, missed: None, lanes }
     }
 
-    /// A fresh receiver checkpoint within `budget`, when it uploads.
+    /// Asks for a fresh receiver checkpoint within `budget`, when it uploads.
     pub async fn checkpoint(&self, budget: Duration) -> Option<Result<Receiver, Failure>> {
         let up = self.up.as_ref()?;
         Some(up.checkpoint(budget).await.map_err(|fault| fault.failure()))
@@ -421,7 +421,7 @@ impl Participant {
         }
     }
 
-    /// The window closed: downloads stop, the upload session finishes within `budget` and the prober drains.
+    /// The window closed, so downloads stop, the upload session finishes within `budget` and the prober drains.
     pub fn close(&mut self, budget: Duration) {
         self.down = None;
         if let Some(prober) = &self.prober {
@@ -432,12 +432,12 @@ impl Participant {
         }
     }
 
-    /// Its latency population failed: probing ends.
+    /// Its latency population failed, so probing ends.
     pub fn stop_probing(&mut self) {
         self.prober = None;
     }
 
-    /// Leaves the stage: its work ends and its upload receiver is asked to finalize.
+    /// Leaves the stage. Its work ends and its upload receiver is asked to finalize.
     pub fn depart(mut self) {
         if let Some(up) = self.up.take() {
             up.depart();

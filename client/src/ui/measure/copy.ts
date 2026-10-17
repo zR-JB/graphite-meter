@@ -1,8 +1,8 @@
-// The instrument's own words: the dial's notes and the labels of the chips, lanes, cards, lens and toast.
+// Holds the instrument's own words, the dial's notes and the labels of the chips, lanes, cards, lens and toast.
 import type { ShownPhase } from "../../app/run";
 import { listed, READINESS_TIP, TIP } from "../../view/words";
 
-/** What the dial's note says between measurements; the explainer, when there is one, is the hint's tip. */
+/** The dial's note says this between measurements; the explainer, when there is one, is the hint's tip. */
 export const PHASE_HINT: Partial<Record<ShownPhase, { text: string; tip?: string }>> = {
   idle: { text: "Ready to measure your connection" },
   connecting: { text: "Verifying the selected paths", tip: READINESS_TIP.checking },
@@ -16,7 +16,7 @@ export const DIAL = {
   noData: (time: string) => `No data for ${time}`,
   noReplies: (time: string) => `No replies for ${time}`,
   checkFailed: "Connection check failed",
-  /** What a finished run lacks: the stages with no result, else what it measured in part; "" when it names none. */
+  /** Names what a finished run lacks, the stages with no result or else those measured in part; "" when none. */
   unfinished: (failed: readonly string[], partial: readonly string[]) =>
     failed.length ? `${listed(failed)} failed` : partial.length ? `${listed(partial)} measured in part` : "",
   unavailable: (throughput: boolean, latency: boolean) =>
@@ -41,7 +41,7 @@ export const LANES = {
   picker: "Show latency to",
 } as const;
 
-/** A card's facts, each with its explainer. */
+/** Labels a card's facts, each with its explainer. */
 export const FACT = {
   peak: { label: "Peak", tip: TIP.peak },
   stability: { label: "Stability", tip: TIP.rateStability },

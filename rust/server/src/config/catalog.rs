@@ -1,4 +1,4 @@
-//! The server catalog from `GM_SERVER_CATALOG` or `GM_SERVER_CATALOG_FILE` (`docs/DEPLOYMENT.md`).
+//! Loads the server catalog from `GM_SERVER_CATALOG` or `GM_SERVER_CATALOG_FILE` (`docs/DEPLOYMENT.md`).
 
 use super::could_not;
 use graphite_meter_proto::{
@@ -14,7 +14,7 @@ use std::{fmt::Write as _, fs::File, io::Read, path::Path};
 const MAX_INPUT_BYTES: usize = 64 << 10;
 const MAX_NORMALIZED_BYTES: usize = 48 << 10;
 
-/// The catalog from whichever source is present, an empty value counting as present; with neither, `self` alone.
+/// Loads the catalog from whichever source is present, an empty value counting as present. Neither gives `self` alone.
 pub(super) fn load(inline: Option<String>, file: Option<String>) -> Result<ServerCatalog, String> {
     match (inline, file) {
         (Some(_), Some(_)) => Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into()),
@@ -107,12 +107,12 @@ fn server_id(text: &str) -> Result<ServerId, String> {
     ServerId::parse(text).ok_or_else(|| CatalogError::Identity.to_string())
 }
 
-/// A catalog origin, which may end in one slash.
+/// Parses a catalog origin, which may end in one slash.
 fn origin(text: &str) -> Result<Origin, graphite_meter_proto::origin::OriginError> {
     Origin::parse(text.strip_suffix('/').unwrap_or(text))
 }
 
-/// An array-form entry: its ID hashes the origin's key, so reordering keeps IDs and saved selections.
+/// Builds an array-form entry. Its ID hashes the origin's key, so reordering keeps IDs and saved selections.
 fn listed(text: &str, url: Origin) -> ServerEntry {
     let key = origin_key(text.strip_suffix('/').unwrap_or(text));
     let mut id = String::from("server-");
@@ -132,7 +132,7 @@ fn listed(text: &str, url: Origin) -> ServerEntry {
     }
 }
 
-/// A valid ASCII origin in lower case without an empty or default port, an IPv6 literal as written.
+/// Keys a valid ASCII origin in lower case without an empty or default port, with an IPv6 literal as written.
 fn origin_key(origin: &str) -> String {
     let key = origin.to_ascii_lowercase();
     let key = key.strip_suffix(':').unwrap_or(&key);

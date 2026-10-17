@@ -1,4 +1,4 @@
-//! Discovery, the probe, upload sessions, checkpoints and progress control.
+//! Answers discovery, the probe, upload sessions, checkpoints and progress control.
 
 use super::{App, Connection, Endpoint, authority, query, response};
 use crate::{
@@ -25,7 +25,7 @@ static CATALOG_REFUSED: RateLimited =
     RateLimited::new(Level::Warn, "catalog", "refused catalog requests", module_path!());
 
 impl App {
-    /// How the server saw this request's client and connection, and the handler load.
+    /// Reports how the server saw this request's client and connection, and the handler load.
     pub(super) fn probe(&self, peer: &Peer, endpoint: Endpoint) -> Response<Body> {
         let address = peer.address();
         let Some(source) = address.source() else {
@@ -46,7 +46,7 @@ impl App {
         })
     }
 
-    /// Who this server is and the targets it offers, based on the host the request named.
+    /// Says who this server is and the targets it offers, based on the host the request named.
     pub(super) fn preflight<B>(&self, request: &Request<B>) -> Preflight {
         let host = request_host(request);
         let mut offered = Capabilities {
@@ -91,7 +91,7 @@ impl App {
         Preflight { server, engine_version, generation, capabilities: offered }
     }
 
-    /// The server catalog, `self` approving the origins of its own targets.
+    /// Publishes the server catalog, with `self` approving the origins of its own targets.
     pub(super) fn catalog<B>(&self, request: &Request<B>) -> Response<Body> {
         let mut catalog = self.config.catalog.clone();
         let own = &mut catalog.servers[0].additional_origins;
@@ -124,7 +124,7 @@ impl App {
         response::json_of(&Session { upload_id: self.uploads.mint() })
     }
 
-    /// An existing upload's counters, which never keep it alive.
+    /// Reads an existing upload's counters, which never keep it alive.
     pub(super) fn checkpoint<B>(&self, request: &Request<B>, peer: &Peer) -> Response<Body> {
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
         match self.uploads.checkpoint(&id, peer.keys().as_ref()) {
@@ -164,12 +164,12 @@ impl App {
     }
 }
 
-/// The host a request names in its URI or Host header, `localhost` without one.
+/// Reads the host a request names in its URI or Host header, or `localhost` without one.
 fn request_host<B>(request: &Request<B>) -> String {
     authority(request).map_or_else(|| "localhost".into(), |authority| authority.host().into())
 }
 
-/// A listener's own origin on `host` with its scheme and port; `localhost` when `host` forms none.
+/// Forms a listener's own origin on `host` with its scheme and port, or on `localhost` when `host` forms none.
 fn native(listener: &Listener, host: &str) -> Origin {
     let scheme = listener.kind.scheme().name();
     let port = format!(":{}", listener.address.port);
@@ -178,7 +178,7 @@ fn native(listener: &Listener, host: &str) -> Origin {
         .expect("localhost forms an origin")
 }
 
-/// Offers `base` as a fetch-stream target; a base offered with two protocols becomes negotiated.
+/// Offers `base` as a fetch-stream target. A base offered with two protocols becomes negotiated.
 fn fetch_stream(offered: &mut Capabilities, base: &BaseUrl, protocol: Protocol) {
     let transport = ThroughputTransport::FetchStream;
     let mut targets = offered.throughput.iter_mut();

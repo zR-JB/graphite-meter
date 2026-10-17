@@ -1,4 +1,4 @@
-/* The Settings sheet's body: its groups, the server checklist, path pickers, steppers and the duration strip. */
+/* The Settings sheet's body holds its groups, the server checklist, path pickers, steppers and the duration strip. */
 @layer components {
   .settings {
     display: grid;
@@ -30,7 +30,7 @@
     & .stage-row {
       align-items: center;
     }
-    /* A label then its controls: they stand at its end while the row holds both, against the right edge when they wrap. */
+    /* Controls stand at their label's end while the row holds both, and at the right edge when they wrap. */
     & .units {
       column-gap: var(--space-2);
       & > :first-child {
@@ -68,7 +68,7 @@
         font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
       }
     }
-    /* A narrow sheet stacks every stepper row and the units rows alike, so no row wraps where its neighbour does not. */
+    /* A narrow sheet stacks every stepper row and units row alike, so no row wraps where its neighbour does not. */
     @container settings (max-width: 320px) {
       & .stage-row:has(.stepper) {
         flex-flow: column nowrap;
@@ -110,7 +110,7 @@
         opacity: 0.5;
       }
     }
-    /* Name over its place, like every two-line choice. */
+    /* The name sits over its place, like every two-line choice. */
     & .server-name {
       min-width: 0;
       overflow: hidden;
@@ -201,7 +201,7 @@
         opacity: 0.5;
       }
     }
-    /* On the choices' text edge. */
+    /* The fold sits on the choices' text edge. */
     & .fold {
       justify-content: start;
       padding-inline-start: calc(var(--row-inset) - 2px + var(--check) + var(--space-3));
@@ -235,7 +235,7 @@
       }
     }
 
-    /* Stepper: the value rolls in a recessed track; while the field has focus it is plain text to edit. */
+    /* The stepper's value rolls in a recessed track. While the field has focus it is plain text to edit. */
     & .stepper {
       --control-h: 28px;
       --field-min: 5.5rem;
@@ -273,7 +273,7 @@
         align-self: center;
         text-align: center;
       }
-      /* The shown value sizes the field; the input only fills it, on top to take clicks and typing. */
+      /* The shown value sizes the field. The input only fills it, on top to take clicks and typing. */
       & input {
         z-index: 1;
         width: 0;
@@ -304,7 +304,7 @@
       pointer-events: none;
     }
 
-    /* Duration strip: widths follow the times, but never below a segment's own words. */
+    /* The duration strip's widths follow the times, but never below a segment's own words. */
     & .duration-strip {
       display: flex;
       gap: 2px;

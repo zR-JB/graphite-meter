@@ -13,7 +13,7 @@ fn load(env: &[(&str, &str)], args: &[&str]) -> (Result<Loaded, String>, String)
     (loaded, String::from_utf8(usage).unwrap())
 }
 
-/// The variables `env` sets, without their values, which may be credentials.
+/// Lists the variables `env` sets, without their values, which may be credentials.
 fn names<'a>(env: &[(&'a str, &str)]) -> Vec<&'a str> {
     env.iter().map(|(name, _)| *name).collect()
 }
@@ -177,7 +177,7 @@ fn origins_follow_their_listener_schemes_and_roles() {
     assert_eq!(config(&negotiated, &[]).public.throughput, [BaseUrl::Served]);
 }
 
-/// A password deployment behind TLS on `meter.example`.
+/// Configures a password deployment behind TLS on `meter.example`.
 fn password_auth() -> Vec<(&'static str, &'static str)> {
     with_tls(&[
         ("GM_AUTH_MODE", "password"),
@@ -212,7 +212,7 @@ fn authentication_settings_are_complete_and_canonical() {
     assert!(!format!("{:?}", auth.methods).contains("s3cret"), "secrets stay out of Debug");
 }
 
-/// The environment with later entries replacing earlier ones of the same name.
+/// Dedupes the environment, later entries replacing earlier ones of the same name.
 fn dedupe<'a>(env: Vec<(&'a str, &'a str)>) -> Vec<(&'a str, &'a str)> {
     let mut kept: Vec<(&str, &str)> = Vec::new();
     for (name, value) in env {

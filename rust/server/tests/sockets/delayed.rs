@@ -1,5 +1,5 @@
-//! Delayed links: an HTTP/3 upload beyond the floor window, a control reply beside downloads on a slow link, and the
-//! optimized-build gate that QUIC downloads outgrow a fixed 2.5 MiB window at 50 ms.
+//! Tests delayed links, with an HTTP/3 upload beyond the floor window, a control reply beside downloads on a slow
+//! link, and the optimized-build gate that QUIC downloads outgrow a fixed 2.5 MiB window at 50 ms.
 
 use super::{
     http3::{H3, read, transport},
@@ -43,7 +43,7 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
     let link = Link::udp_through(h3.server.quic.unwrap(), Duration::from_millis(20), bottleneck)
         .await
         .unwrap();
-    // A peer that never grows its connection credit past the first window on a path this slow.
+    // This peer never grows its connection credit past the first window on a path this slow.
     let mut credit = transport(None);
     credit.receive_window(INITIAL_RECEIVE_WINDOW.into());
     let connection = h3.connect_via(link.address, credit).await;
@@ -85,7 +85,7 @@ async fn quic_downloads_outgrow_a_fixed_window() {
     tokio::time::timeout(Duration::from_secs(60), gate).await.unwrap();
 }
 
-/// A download's body or WebTransport stream.
+/// A lane is a download's body or WebTransport stream.
 enum Lane {
     Http(Box<RecvHalf>),
     Stream(RecvStream),
@@ -100,7 +100,7 @@ impl Lane {
     }
 }
 
-/// The median rate in Mbit/s of one download's half-second samples after its first two seconds, over a link
+/// Measures the median rate in Mbit/s of one download's half-second samples after its first two seconds, over a link
 /// delaying each direction by `one_way`.
 async fn download_rate(webtransport: bool, one_way: Duration) -> f64 {
     let h3 = H3::start(&[]).await;

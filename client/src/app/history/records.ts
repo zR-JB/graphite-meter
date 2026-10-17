@@ -1,4 +1,4 @@
-// Saved results: the schema 5 record each finished run becomes, how History reads and orders stored rows, and the one
+// Defines the schema 5 record each finished run becomes, how History reads and orders stored rows, and the one
 // upgrade that brings rows earlier releases saved to this build's form.
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../../engine/measure/latency";
@@ -15,12 +15,12 @@ import {
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import type { HttpProtocol } from "../../engine/types";
 
-/** Readable records kept and listed: the newest by completion. */
+/** History keeps and lists this many readable records, the newest by completion. */
 export const HISTORY_LIMIT = 2_000;
 
 export interface HistoryRecord {
   schemaVersion: 5;
-  /** A v4 UUID when this client saved it; older rows may carry any text. */
+  /** A v4 UUID when this client saved it. Older rows may carry any text. */
   id: string;
   /** Epoch ms of the run's completion. */
   completedAt: number;
@@ -31,7 +31,7 @@ export interface HistoryRecord {
   result: RunResult;
 }
 
-/** A finished run as History keeps it, apart from the result on screen: one its own evidence contradicts is saved
+/** A finished run as History keeps it, apart from the result on screen. A run its own evidence contradicts is saved
     as incomplete, while the view keeps the outcome the run reported. */
 export function historyRecord(run: { result: RunResult; plans: StagePlans; engine: string }): HistoryRecord {
   const record: HistoryRecord = {
@@ -50,7 +50,7 @@ export function historyRecord(run: { result: RunResult; plans: StagePlans; engin
   return record;
 }
 
-/** A v4 UUID; randomUUID needs a secure context, which plain-HTTP LAN deployments are not. */
+/** A v4 UUID. randomUUID needs a secure context, which plain-HTTP LAN deployments are not. */
 function createUuid(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -60,7 +60,7 @@ function createUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** Stored leaves are finite numbers, text of at most 2,048 characters, booleans, null or absent; objects and lists
+/** Stored leaves are finite numbers, text of at most 2,048 characters, booleans, null or absent. Objects and lists
     hold at most 512 entries and nest at most 8 deep. */
 function plain(value: unknown, depth = 0): boolean {
   if (value == null || typeof value === "boolean") return true;
@@ -71,7 +71,7 @@ function plain(value: unknown, depth = 0): boolean {
   return entries.length <= 512 && entries.every((entry) => plain(entry, depth + 1));
 }
 
-// Checked in place rather than decoded: a record keeps every field, and only those History's views dereference
+// A record is checked in place rather than decoded. It keeps every field, and only those History's views dereference
 // are checked.
 type Check = (value: unknown) => boolean;
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -168,7 +168,7 @@ export function readHistoryRecord(value: unknown): HistoryRecord | null {
   return isObject(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
 }
 
-/** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
+/** A row an earlier release saved, schema 4 or 5, in this build's form. Null means that release could not read it
     either, and it is then left as stored. */
 export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isObject(value) || !plain(value)) return null;
@@ -180,7 +180,7 @@ export function upgradeRecord(value: unknown): HistoryRecord | null {
   }
 }
 
-// Schema 4 kept the version as the browser names it; a version never recorded was the browser's to negotiate.
+// Schema 4 kept the version as the browser names it. A version never recorded was the browser's to negotiate.
 const NAMED: Record<string, HttpProtocol> = {
   http1: "http1",
   "http/1.1": "http1",
@@ -190,7 +190,7 @@ const NAMED: Record<string, HttpProtocol> = {
   h3: "http3",
 };
 
-// Older builds saved no peak without a 500 ms window; this build's peak never falls below the headline.
+// Older builds saved no peak without a 500 ms window. This build's peak never falls below the headline.
 const lane = <T extends Omit<ThroughputResult, "quietMs"> | null>(saved: T): T =>
   saved && {
     ...saved,
@@ -246,7 +246,7 @@ function current({ result, ...record }: HistoryRecord): HistoryRecord {
   };
 }
 
-/** Schema 4 as older builds saved it: one server's stages side by side, or with a result per server. */
+/** Schema 4 as older builds saved it, one server's stages side by side, or with a result per server. */
 interface Schema4 {
   id: string;
   completedAt: number;
@@ -325,7 +325,7 @@ const summary = (lane: Lane4 | null): LatencySummary | null =>
 
 function lift(saved: Schema4): HistoryRecord {
   const { stages, wireEstimates } = saved;
-  // Schema 4 kept the estimated wire rate; the model keeps its ratio to the measured rate.
+  // Schema 4 kept the estimated wire rate. The model keeps its ratio to the measured rate.
   const wire = (stage: TransferStage, measuredRate: number): WireModel | null => {
     const breakdown = wireEstimates?.breakdown[stage];
     const estimated = wireEstimates?.[`${stage}BytesPerSec`];
@@ -399,7 +399,7 @@ function lift(saved: Schema4): HistoryRecord {
             ],
             intervals: [],
             omittedIntervals: 0,
-            // Schema 4 failures named no server or time: a lifted stage keeps its status, not its cause.
+            // Schema 4 failures named no server or time, so a lifted stage keeps its status, not its cause.
             failures: [],
           },
       outcome:
@@ -414,11 +414,11 @@ function lift(saved: Schema4): HistoryRecord {
 
 export type HistorySort = "date" | "download" | "upload" | "bidirectional" | "idle" | "loaded";
 
-/** Latency reads best lowest first; dates and rates highest first. */
+/** Latency reads best lowest first, dates and rates highest first. */
 export const naturalDescending = (sort: HistorySort) => sort !== "idle" && sort !== "loaded";
 
-/** What History's list shows of a record and orders it by: a few hundred bytes of a record's kilobytes, so the list
-    stays small while History is open. A record is read whole only as it opens. */
+/** History's list shows and orders a record by this, a few hundred bytes of a record's kilobytes, so the list stays
+    small while History is open. A record is read whole only as it opens. */
 export interface HistoryEntry {
   id: string;
   completedAt: number;
@@ -429,7 +429,7 @@ export interface HistoryEntry {
   stages: Record<Stage, StageStatus>;
   jitterMs: number | null;
   addedLatency: AddedLatency | null;
-  /** The load whose median the Loaded column shows: the highest, the first of equals. */
+  /** The load whose median the Loaded column shows, the highest, or the first of equals. */
   loadedStage: TransferStage | null;
   /** The one direction a bidirectional stage kept, when it kept only one. */
   lone: "down" | "up" | null;
@@ -474,7 +474,7 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
   };
 }
 
-/** Missing values last in either direction; equal ones newest first, then by id. */
+/** Missing values sort last in either direction. Equal ones sort newest first, then by id. */
 export function sortHistory(entries: readonly HistoryEntry[], sort: HistorySort, descending: boolean): HistoryEntry[] {
   return entries.toSorted((a, b) => {
     const [x, y] = [a.keys[sort], b.keys[sort]];

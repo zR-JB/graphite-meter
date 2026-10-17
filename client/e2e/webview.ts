@@ -25,7 +25,7 @@ const encode = (value: unknown) =>
   JSON.stringify(value, (_key, item) => (item instanceof RegExp ? { source: item.source, flags: item.flags } : item)) ??
   "undefined";
 
-// Serialized into the page; names follow accname closely enough to skip aria-hidden text.
+// This runs serialized into the page. Its names follow accname closely enough to skip aria-hidden text.
 function resolveSteps(steps: Step[]): Element[] {
   const norm = (value: unknown) =>
     String(value ?? "")
@@ -109,8 +109,8 @@ function reportPolicyViolations() {
   );
 }
 
-/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed, and where
- *  the pointer last moved, so a hover that opened nothing shows what it was over. */
+/** Every page records its last clicks and their targets, so a click that started nothing shows where it landed, and
+ *  where the pointer last moved, so a hover that opened nothing shows what it was over. */
 function recordClicks() {
   const clicks: string[] = [];
   const pointer = { x: -1, y: -1, over: "" };
@@ -140,7 +140,7 @@ function recordClicks() {
   );
 }
 
-/** Every page: no readout ever shows NaN or Infinity, and the dial moves while a transfer shows a rate. */
+/** Every page checks that no readout shows NaN or Infinity and that the dial moves while a transfer shows a rate. */
 function watchDisplay() {
   const TRANSFER = ["download", "upload", "bidirectional"];
   let reported = false;
@@ -153,7 +153,7 @@ function watchDisplay() {
     console.error(message);
   };
   const settleTransfer = () => {
-    // A steady rate may hold the needle; a changing readout with a still needle means it is stuck.
+    // A steady rate may hold the needle. A changing readout with a still needle means it is stuck.
     if (TRANSFER.includes(phase) && readouts.size >= 3 && needles.size < 2)
       report(`dial indicator did not move during ${phase}`);
     readouts.clear();
@@ -384,7 +384,7 @@ export class Page {
   getByRole(role: string, options: { name?: Name; exact?: boolean } = {}) {
     return new Locator(this, []).getByRole(role, options);
   }
-  /** Chrome only: the DevTools Protocol, for what no other browser offers. */
+  /** Sends a DevTools Protocol command to Chrome, for what no other browser offers. */
   async cdp<T = any>(method: string, params?: Record<string, unknown>) {
     const driver = await this.init();
     if (!driver.cdp) throw new Error(`${browser} has no CDP for ${method}`);
@@ -471,7 +471,7 @@ export class Page {
   async blockRequests(urls: string[]) {
     await (await this.init()).blockRequests(urls);
   }
-  /** The run's visible state, for a failure message: phase, run control, blocker, gauge status and notices. */
+  /** Gathers the phase, run control, blocker, gauge status and notices the page shows, for a failure message. */
   async summary() {
     const state = await this.evaluate(() => {
       const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, " ").trim();
@@ -578,7 +578,7 @@ export const expect: any = Object.assign(
 type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
-  /** Needs the DevTools Protocol; other browsers skip it. */
+  /** The test needs the DevTools Protocol, so other browsers skip it. */
   chrome?: boolean;
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {

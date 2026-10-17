@@ -1,5 +1,5 @@
-//! The HTTP/3 listener: transfers and their endings, exchange bounds beside admitted work, the connection lifecycle and
-//! the TCP companion's bootstrap probe.
+//! Tests the HTTP/3 listener, its transfers and their endings, exchange bounds beside admitted work, the connection
+//! lifecycle and the TCP companion's bootstrap probe.
 
 use super::*;
 use bytes::Bytes;
@@ -10,20 +10,20 @@ use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
 
-/// The HTTP/3 listener's address, which must differ from the HTTP/1 listener's.
+/// The HTTP/3 listener's address must differ from the HTTP/1 listener's.
 pub(super) const ADDRESS: &str = "127.0.0.7:0";
-/// The client's keep-alive, which keeps a connection from idling out while tests move the clock in steps of `STEP`.
+/// The client's keep-alive keeps a connection from idling out while tests move the clock in steps of `STEP`.
 const KEEP_ALIVE: Duration = Duration::from_secs(2);
 const STEP: Duration = Duration::from_secs(5);
 
-/// A server with an HTTP/3 listener on a local port and a client identity trusting its certificate.
+/// Starts a server with an HTTP/3 listener on a local port and a client identity trusting its certificate.
 pub(super) struct H3 {
     pub(super) server: Running,
     pub(super) identity: Identity,
     _scratch: Scratch,
 }
 
-/// A client connection, its request sender and the task driving it, which ends when the connection closes.
+/// A client connection comes with its request sender and the task driving it, which ends when the connection closes.
 pub(super) struct Connection {
     pub(super) quic: noq::Connection,
     pub(super) requests: client::SendRequest,
@@ -42,7 +42,7 @@ impl H3 {
         Self { server: start(&env).await, identity, _scratch: scratch }
     }
 
-    /// A client configuration trusting the server, with `transport`.
+    /// Builds a client configuration trusting the server, with `transport`.
     pub(super) fn client(&self, transport: noq::TransportConfig) -> noq::ClientConfig {
         let mut config = self.identity.quic_client();
         config.transport_config(Arc::new(transport));
@@ -53,7 +53,7 @@ impl H3 {
         self.connect_from("127.0.0.1", transport).await.unwrap()
     }
 
-    /// A connection from the local address `source`.
+    /// Opens a connection from the local address `source`.
     pub(super) async fn connect_from(
         &self,
         source: &str,
@@ -62,7 +62,7 @@ impl H3 {
         self.dial(source, self.server.quic.unwrap(), transport).await
     }
 
-    /// A connection through `relay`, an address that forwards to the listener.
+    /// Opens a connection through `relay`, an address that forwards to the listener.
     pub(super) async fn connect_via(&self, relay: SocketAddr, transport: noq::TransportConfig) -> Connection {
         self.dial("127.0.0.1", relay, transport).await.unwrap()
     }
@@ -82,7 +82,7 @@ impl H3 {
     }
 }
 
-/// A transport with keep-alives, and with a stream receive window of `window` bytes when given.
+/// Configures a transport with keep-alives, and with a stream receive window of `window` bytes when given.
 pub(super) fn transport(window: Option<u32>) -> noq::TransportConfig {
     let mut transport = noq::TransportConfig::default();
     transport.keep_alive_interval(Some(KEEP_ALIVE));
@@ -125,7 +125,7 @@ impl Connection {
             .into()
     }
 
-    /// The code the server closed the connection with, if it did within `bound` of real time.
+    /// Reads the code the server closed the connection with, if it did within `bound` of real time.
     pub(super) async fn closed_within(&self, bound: Duration) -> Option<Code> {
         match tokio::time::timeout(bound, self.quic.closed()).await {
             Ok(noq::ConnectionError::ApplicationClosed(close)) => Some(close.error_code.into()),
@@ -139,7 +139,7 @@ impl Connection {
     }
 }
 
-/// A whole body; a reset ends it with its error.
+/// Reads a whole body. A reset ends it with its error.
 pub(super) async fn read(body: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
     while let Some(chunk) = body.data().await? {
@@ -148,7 +148,7 @@ pub(super) async fn read(body: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-/// A whole reply's body; a reset ends it with its error.
+/// Reads a whole reply's body. A reset ends it with its error.
 async fn reply(recv: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     recv.response().await?;
     read(recv).await
@@ -187,7 +187,7 @@ async fn the_companion_answers_bootstrap_probes_with_alt_svc_and_serves_no_trans
 #[tokio::test]
 async fn an_unadmitted_request_is_reset_at_fifteen_seconds_beside_an_admitted_download() {
     let h3 = H3::start(&[]).await;
-    // Too little stream credit for any reply's head: both replies stall.
+    // With too little stream credit for any reply's head, both replies stall.
     let connection = h3.connect(transport(Some(64))).await;
     let (_download, mut download) = connection.open("GET", ENDLESS).await;
     h3.server.until_active(1).await;

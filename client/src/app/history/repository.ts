@@ -1,8 +1,8 @@
-// Saved History: IndexedDB "graphite-meter", and notice of each change to it in this tab and others.
+// Keeps saved History in IndexedDB "graphite-meter" and gives notice of each change to it in this tab and others.
 import { HISTORY_LIMIT, readHistoryRecord, upgradeRecord, type HistoryRecord } from "./records";
 
 const DATABASE = "graphite-meter";
-/** Version 2 held rows of any schema; version 3 holds them upgraded once, in this build's form. */
+/** Version 2 held rows of any schema. Version 3 holds them upgraded once, in this build's form. */
 const VERSION = 3;
 const RESULTS = "results";
 const META = "meta";
@@ -18,12 +18,12 @@ const UNSUPPORTED = "Unsupported history database version. Saved data has not be
 const CLOSED = "History storage was closed before it opened.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
-/** A write History will never take; the message says why. */
+/** A write History will never take. The message says why. */
 export class HistoryRefusal extends Error {}
 
 export type HistoryChange =
   | { type: "saved"; record: HistoryRecord }
-  /** Rows gone by id: one deleted, or the oldest a save pushed past the limit. */
+  /** Rows gone by id, one deleted, or the oldest a save pushed past the limit. */
   | { type: "deleted"; ids: string[] }
   | { type: "cleared" }
   | { type: "malformed-removed" }
@@ -42,7 +42,7 @@ const done = (tx: IDBTransaction) =>
     tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
   });
 
-/** The clears ever made in any tab; a corrupt count reads as none, so it never blocks saving. */
+/** The clears ever made in any tab. A corrupt count reads as none, so it never blocks saving. */
 const clearCount = (row: unknown): number => {
   const value = (row as { value?: unknown } | undefined)?.value;
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
@@ -50,7 +50,7 @@ const clearCount = (row: unknown): number => {
 
 const clearedSince = (row: unknown, clears: number): boolean => clearCount(row) > clears;
 
-/** Walking rows newest first, the id of each readable row past the limit; unreadable rows are never counted. */
+/** Walks rows newest first and yields each readable row's id past the limit. Unreadable rows are never counted. */
 function pastLimit(): (row: unknown) => string | null {
   let kept = 0;
   return (row) => {
@@ -64,12 +64,12 @@ interface OpenRequest {
   waiter: { opened(db: IDBDatabase): void; failed(error: unknown): void; blocked(): void } | null;
 }
 
-/** Creates the database from nothing, or upgrades version 2's readable rows in place, unreadable ones left as they
-    are; any other version is refused untouched. An unawaited answer is closed. */
+/** Creates the database from nothing, or upgrades version 2's readable rows in place and leaves unreadable ones as
+    they are. Any other version is refused untouched. An unawaited answer is closed. */
 function openRequest(answered: () => void): OpenRequest {
   const opening = indexedDB.open(DATABASE, VERSION);
   const pending: OpenRequest = { blocked: false, waiter: null };
-  // Refused on the abort's error, once the upgrade has unwound: Chromium can hang a page that opens behind it.
+  // The refusal rides the abort's error, once the upgrade has unwound. Chromium can hang a page that opens behind it.
   let refusal: Error | undefined;
   opening.onupgradeneeded = ({ oldVersion }) => {
     const upgrade = opening.transaction!;
@@ -117,7 +117,7 @@ interface Connection {
 
 export class HistoryRepository {
   #connection: Promise<Connection> | null = null;
-  /** Kept until answered: a new request would queue behind it, never hearing `blocked`. */
+  /** Kept until answered, since a new request would queue behind it, never hearing `blocked`. */
   #request: OpenRequest | null = null;
   #listeners = new Set<(change: HistoryChange) => void>();
   #channel: BroadcastChannel | null = null;
@@ -128,7 +128,7 @@ export class HistoryRepository {
   }
 
   /** Saves `record` unless History was cleared since `clears` was read, and resolves whether it did. Past the limit
-      the oldest readable records go; when that is `record` itself, it is refused. */
+      the oldest readable records go. When that is `record` itself, it is refused. */
   async put(record: HistoryRecord, clears: number): Promise<boolean> {
     // A record History could not read back would only sit in storage as malformed.
     if (!readHistoryRecord(record)) throw new HistoryRefusal(UNSAVABLE);
@@ -185,8 +185,8 @@ export class HistoryRepository {
     return written;
   }
 
-  /** The newest readable records, at most 2,000, each as `keep` makes it, so no whole record outlives its row; and
-      how many rows could not be read. Each row is its own task; an abort stops the walk at the next row without
+  /** The newest readable records, at most 2,000, each as `keep` makes it, so no whole record outlives its row, and
+      how many rows could not be read. Each row is its own task, so an abort stops the walk at the next row without
       aborting any write. */
   async list<T>(
     signal: AbortSignal,
@@ -250,7 +250,7 @@ export class HistoryRepository {
     this.#changed({ type: "deleted", ids: [id] });
   }
 
-  /** Deletes every row, readable or not, and counts the clear: a write queued before it, in any tab, is dropped
+  /** Deletes every row, readable or not, and counts the clear, so a write queued before it, in any tab, is dropped
       whatever the clocks say. */
   async clear(): Promise<void> {
     const tx = await this.#transaction("readwrite");
@@ -262,8 +262,8 @@ export class HistoryRepository {
     this.#changed({ type: "cleared" });
   }
 
-  /** This tab's changes as they land, and other tabs' as `elsewhere`; returns the unsubscriber. A list read while a
-      change lands may already hold it, so changes apply by id. */
+  /** Reports this tab's changes as they land, and other tabs' as `elsewhere`. Returns the unsubscriber. A list read
+      while a change lands may already hold it, so changes apply by id. */
   onChange(listener: (change: HistoryChange) => void): () => void {
     this.#listeners.add(listener);
     if (!this.#channel && typeof BroadcastChannel === "function") {
@@ -277,7 +277,7 @@ export class HistoryRepository {
     };
   }
 
-  /** Lets go of the connection; the next operation opens it again. */
+  /** Lets go of the connection. The next operation opens it again. */
   close(): void {
     void this.#connection?.then(
       ({ drop }) => drop(),
@@ -350,7 +350,7 @@ export class HistoryRepository {
 
   #changed(...changes: HistoryChange[]): void {
     if (!changes.length) return;
-    // Any message has History in other tabs read its list again; a channel never hears itself.
+    // Any message has History in other tabs read its list again. A channel never hears itself.
     if (typeof BroadcastChannel === "function") {
       const channel = this.#channel ?? new BroadcastChannel(CHANNEL);
       channel.postMessage("");

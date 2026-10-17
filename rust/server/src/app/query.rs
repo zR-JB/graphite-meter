@@ -1,24 +1,24 @@
-//! Query parameters and URL-encoded forms; transfer parameters clamped (`api/wire.md#webtransport-routes`).
+//! Reads query parameters and URL-encoded forms, and clamps transfer parameters (`api/wire.md#webtransport-routes`).
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
-/// The transfer size when `bytes=` is missing or unreadable.
+/// A transfer is this large when `bytes=` is missing or unreadable.
 pub const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
 pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
 pub const MAX_STREAMS: usize = 16;
 
-/// The first value of `name`; pairs holding `;` or a bad escape are left out.
+/// Reads the first value of `name`. Pairs holding `;` or a bad escape are left out.
 pub fn get(query: Option<&str>, name: &str) -> Option<String> {
     values(query, name).next()
 }
 
-/// Every value of `name` in order; pairs holding `;` or a bad escape are left out.
+/// Reads every value of `name` in order. Pairs holding `;` or a bad escape are left out.
 pub fn values<'a>(query: Option<&'a str>, name: &'a str) -> impl Iterator<Item = String> + 'a {
     let pairs = query.into_iter().flat_map(|query| query.split('&')).filter_map(pair);
     pairs.filter(move |(key, _)| key == name).map(|(_, value)| value)
 }
 
-/// A URL-encoded form's fields; `None` when one holds `;` or a bad escape, or a name repeats.
+/// Reads a URL-encoded form's fields. `None` means one holds `;` or a bad escape, or a name repeats.
 pub fn form(body: &str) -> Option<Vec<(String, String)>> {
     let mut fields: Vec<(String, String)> = Vec::new();
     for text in body.split('&').filter(|text| !text.is_empty()) {
@@ -31,7 +31,7 @@ pub fn form(body: &str) -> Option<Vec<(String, String)>> {
     Some(fields)
 }
 
-/// `pairs` URL-encoded in their order.
+/// Encodes `pairs` for a URL in their order.
 pub fn encode(pairs: &[(&str, &str)]) -> String {
     let pair = |(name, value): &(&str, &str)| format!("{}={}", escape(name), escape(value));
     pairs.iter().map(pair).collect::<Vec<_>>().join("&")
@@ -66,7 +66,7 @@ fn decode(text: &str) -> Option<String> {
     })
 }
 
-/// `bytes=`: missing, non-numeric or negative reads as 25 MiB, and above 64 GiB as 64 GiB.
+/// Reads `bytes=`. Missing, non-numeric or negative reads as 25 MiB, and above 64 GiB as 64 GiB.
 pub fn transfer_bytes(query: Option<&str>) -> u64 {
     match get(query, "bytes").as_deref().and_then(integer) {
         Some(bytes) if bytes >= 0 => (bytes as u64).min(MAX_TRANSFER_BYTES),
@@ -74,7 +74,7 @@ pub fn transfer_bytes(query: Option<&str>) -> u64 {
     }
 }
 
-/// `streams=`: missing, non-numeric or below one reads as one, and above 16 as 16.
+/// Reads `streams=`. Missing, non-numeric or below one reads as one, and above 16 as 16.
 pub fn streams(query: Option<&str>) -> usize {
     let streams = get(query, "streams").as_deref().and_then(integer);
     streams.map_or(1, |streams| streams.clamp(1, MAX_STREAMS as i64) as usize)
@@ -90,7 +90,7 @@ pub fn datagrams(query: Option<&str>) -> bool {
     }
 }
 
-/// A signed decimal integer, saturated to the `i64` range.
+/// Parses a signed decimal integer, saturated to the `i64` range.
 fn integer(text: &str) -> Option<i64> {
     use std::num::IntErrorKind::{NegOverflow, PosOverflow};
     match text.parse::<i64>() {

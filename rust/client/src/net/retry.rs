@@ -1,23 +1,23 @@
-//! The retry rule: work may fail moving no bytes for the redial window; busy answers back off, quick failures pause.
+//! Work may fail moving no bytes for the redial window. Busy answers back off, and quick failures pause.
 use super::fault::{Class, Fault};
 use std::time::{Duration, Instant};
 
-/// How long work may fail without moving bytes before its fault stands.
+/// Work may fail without moving bytes this long before its fault stands.
 pub const REDIAL_WINDOW: Duration = Duration::from_secs(2);
-/// The pause after an attempt that failed sooner than this.
+/// An attempt that failed sooner than this pauses for this long.
 const QUICK_FAILURE: Duration = Duration::from_millis(500);
-/// A busy answer's first wait, doubled up to the cap, which also bounds a server's `Retry-After`.
+/// A busy answer waits this long first, doubling up to the cap, which also bounds a server's `Retry-After`.
 const BUSY_FIRST: Duration = Duration::from_millis(300);
 const BUSY_CAP: Duration = Duration::from_millis(1200);
 
-/// A failed attempt: when it started and whether it moved bytes first.
+/// A failed attempt records when it started and whether it moved bytes first.
 #[derive(Debug, Clone, Copy)]
 pub struct Attempt {
     pub started: Instant,
     pub moved: bool,
 }
 
-/// One lane's or dial's retries; work that ends cleanly after moving bytes starts a new one.
+/// Tracks one lane's or dial's retries. Work that ends cleanly after moving bytes starts a new one.
 #[derive(Debug, Default)]
 pub struct Retry {
     failing_since: Option<Instant>,
@@ -25,7 +25,7 @@ pub struct Retry {
 }
 
 impl Retry {
-    /// The pause before the next attempt, or the fault when it is final or work failed for the redial window.
+    /// Returns the pause before the next attempt, or the fault when it is final or work failed for the redial window.
     pub fn after(&mut self, fault: Fault, attempt: Attempt, now: Instant) -> Result<Duration, Fault> {
         let class = fault.class();
         if attempt.moved {
@@ -51,7 +51,7 @@ impl Retry {
     }
 }
 
-/// `attempt`'s result once it succeeds or its fault stands.
+/// Returns `attempt`'s result once it succeeds or its fault stands.
 pub async fn retrying<T, F: Future<Output = Result<T, Fault>>>(mut attempt: impl FnMut() -> F) -> Result<T, Fault> {
     let mut retry = Retry::default();
     loop {

@@ -1,4 +1,4 @@
-//! What the server's work may hold: the buffer budget and the quotas keyed by client.
+//! Bounds what the server's work may hold, through the buffer budget and the quotas keyed by client.
 
 pub mod budget;
 pub mod quota;
@@ -12,9 +12,9 @@ use crate::{
 };
 use graphite_meter_net::quic::{RECEIVE_WINDOW, RECEIVE_WINDOW_FLOOR};
 
-/// The QUIC connections one client address may hold within its connection share.
+/// One client address may hold this many QUIC connections within its connection share.
 pub const QUIC_PER_CLIENT: usize = 8;
-/// The receive credit a funded QUIC connection holds past its floor.
+/// A funded QUIC connection holds this much receive credit past its floor.
 pub const CONNECTION_CREDIT: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,7 @@ pub enum Transport {
     Quic,
 }
 
-/// The quotas every listener shares.
+/// Every listener shares these quotas.
 pub struct Quotas {
     limits: Limits,
     connections: Quota,
@@ -47,7 +47,7 @@ impl Quotas {
         }
     }
 
-    /// A connection keyed by its socket address; a QUIC connection also takes one of the client's QUIC shares.
+    /// Admits a connection keyed by its socket address. A QUIC connection also takes one of the client's QUIC shares.
     pub fn connection(&self, keys: &ClientKeys, transport: Transport) -> Option<Hold> {
         let hold = self.connections.acquire(keys, 1).ok()?;
         match transport {
@@ -56,37 +56,37 @@ impl Quotas {
         }
     }
 
-    /// Whether any key of a source holds a QUIC connection, so that its unvalidated handshakes need Retry.
+    /// Tells whether any key of a source holds a QUIC connection, so that its unvalidated handshakes need Retry.
     pub fn holds_quic(&self, keys: &ClientKeys) -> bool {
         self.quic.holds_any(keys)
     }
 
-    /// Whether a quarter of the connection capacity is used, so that unvalidated QUIC handshakes need Retry.
+    /// Tells whether a quarter of the connection capacity is used, so that unvalidated QUIC handshakes need Retry.
     pub fn connections_crowded(&self) -> bool {
         self.connections.usage().active >= self.limits.connections.get() / 4
     }
 
-    /// A measurement handler.
+    /// Takes a measurement handler.
     pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
         self.operations.acquire(keys, 1)
     }
 
-    /// A WebTransport transfer session, which also takes a handler from the shared pool.
+    /// Admits a WebTransport transfer session, which also takes a handler from the shared pool.
     pub fn session(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
         self.sessions.acquire_within(keys, 1, Some(&self.operations))
     }
 
-    /// Receive-window credit for a connection an admitted client funds; none past its share or the clients' half.
+    /// Credits the receive window of a connection an admitted client funds, none past its share or the clients' half.
     pub fn credit(&self, keys: &ClientKeys, bytes: usize) -> Option<Hold> {
         self.credit.acquire(keys, bytes).ok()
     }
 
-    /// Active handlers and their limit, as `/probe` reports load.
+    /// Reports active handlers and their limit, as `/probe` reports load.
     pub fn load(&self) -> (usize, usize) {
         (self.operations.usage().active, self.limits.operations.get())
     }
 
-    /// The open connections.
+    /// Counts the open connections.
     pub fn connections(&self) -> usize {
         self.connections.usage().active
     }
@@ -96,7 +96,7 @@ impl Quotas {
         self.connections.idle().await;
     }
 
-    /// The verbose admission line: handlers, sessions and connections with their peaks and refusals.
+    /// Writes the verbose admission line, with handlers, sessions and connections, their peaks and refusals.
     pub fn admission(&self) -> String {
         let (handlers, sessions) = (self.operations.usage(), self.sessions.usage());
         let connections = self.connections.usage();

@@ -1,4 +1,4 @@
-//! The client role: a driver to run, and a handle that sends requests.
+//! Plays the client role with a driver to run and a handle that sends requests.
 use crate::{
     driver::{Driver, Role, Shared},
     error::Error,
@@ -14,11 +14,11 @@ pub fn new(quic: noq::Connection) -> (Connection, SendRequest) {
     (Connection(driver), requests)
 }
 
-/// Must be driven while requests run; dropping it closes the connection.
+/// The caller drives this while requests run. Dropping it closes the connection.
 pub struct Connection(Driver);
 
 impl Connection {
-    /// Runs until the connection closes; `Ok` when it closed gracefully.
+    /// Runs until the connection closes and returns `Ok` when it closed gracefully.
     pub async fn drive(&mut self) -> Result<(), Error> {
         self.0.next().await.map(drop)
     }
@@ -28,7 +28,7 @@ impl Connection {
 pub struct SendRequest(pub(crate) Arc<Shared>);
 
 impl SendRequest {
-    /// Whether the server sent GOAWAY, after which this connection takes no new request.
+    /// Reports whether the server sent GOAWAY, after which this connection takes no new request.
     pub fn going_away(&self) -> bool {
         self.0.going_away()
     }

@@ -1,4 +1,4 @@
-// The composition root: one App, one console with every view in its place, and the page's tooltips.
+// The composition root builds one App, one console with every view in its place, and the page's tooltips.
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/primitives.css";

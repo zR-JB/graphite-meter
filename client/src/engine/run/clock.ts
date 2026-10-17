@@ -1,18 +1,18 @@
-// The main thread's wall clock and timers, and one run's time, so tests can drive both.
+// Wraps the main thread's wall clock and timers, and one run's time, so tests can drive both.
 import { pageMs } from "../../lib/frame";
 import { workerScript } from "../../lib/trusted";
 
-/** Wall-clock milliseconds since the epoch, for timestamps that leave the page. */
+/** Returns wall-clock milliseconds since the epoch for timestamps that leave the page. */
 export const epochMs = (): number => Date.now();
 
-/** The page time of an epoch time; worker clocks cross realms only as epoch values. */
+/** Converts an epoch time to page time. Worker clocks cross realms only as epoch values. */
 export const fromEpoch = (epoch: number): number => epoch - performance.timeOrigin;
 
-/** The time a run reads; tests pass a fake. */
+/** A run reads its time through this. Tests pass a fake. */
 export interface Clock {
   now(): number;
   epoch(): number;
-  /** Runs `fn` once after `ms`; the returned function cancels it. */
+  /** Runs `fn` once after `ms`. The returned function cancels it. */
   after(ms: number, fn: () => void): () => void;
 }
 
@@ -21,7 +21,7 @@ let nextId = 0;
 const due = new Map<number, () => void>();
 
 // A tab hidden for a few minutes wakes its own timers about once a minute, which would split a long run's evidence
-// at every wake; a worker's timers keep their pace.
+// at every wake. A worker's timers keep their pace.
 function timerWorker(): Worker | null {
   if (worker !== undefined) return worker;
   worker = null;
@@ -36,7 +36,7 @@ function timerWorker(): Worker | null {
 function after(ms: number, fn: () => void): () => void {
   const host = timerWorker();
   const id = ++nextId;
-  // The page timer backs the worker up: one that failed to load or hung never answers.
+  // The page timer backs the worker up, since one that failed to load or hung never answers.
   const backstop = setTimeout(() => {
     cancel();
     fn();
@@ -58,7 +58,7 @@ function after(ms: number, fn: () => void): () => void {
 
 export const pageClock: Clock = { now: pageMs, epoch: epochMs, after };
 
-/** Resolves after `ms` on the page's timers, or at once when `signal` aborts; the timer never outlives either. */
+/** Resolves after `ms` on the page's timers, or at once when `signal` aborts. The timer never outlives either. */
 export function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
@@ -72,7 +72,7 @@ export function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** `promise`, or its signal's reason as soon as that aborts; the operation still owns its cleanup. */
+/** Follows `promise`, or rejects with its signal's reason once that aborts. The operation still owns its cleanup. */
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -84,9 +84,9 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
 
 const GAP_MS = 1_500;
 
-/** One run's time. Run ms count from the start; active ms leave out page gaps: two reads more than 1.5 s apart
-    while nothing holds the clock (a frozen or suspended page). Holds cover stage preparation and finalization, whose
-    waits are never gaps. */
+/** Keeps one run's time. Run ms count from the start. Active ms leave out page gaps, which are two reads more than
+    1.5 s apart while nothing holds the clock (a frozen or suspended page). Holds cover stage preparation and
+    finalization, whose waits are never gaps. */
 export class RunClock {
   readonly start: number;
   readonly startedAt: number;
@@ -102,7 +102,7 @@ export class RunClock {
     this.startedAt = clock.epoch();
   }
 
-  /** Page ms now; notes a gap since the previous read. */
+  /** Returns page ms now and notes a gap since the previous read. */
   read(): number {
     const at = this.#clock.now();
     if (!this.#held && at - this.#read > GAP_MS) {
@@ -120,7 +120,7 @@ export class RunClock {
     return this.read() - this.start - this.#paused;
   }
 
-  /** Whether a gap happened since the last call. */
+  /** Reports whether a gap happened since the last call. */
   takeGap(): boolean {
     const gap = this.#gap;
     this.#gap = false;

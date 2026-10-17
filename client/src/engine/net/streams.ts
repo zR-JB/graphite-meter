@@ -1,15 +1,15 @@
-// One stage's lanes per server and direction, from one model of each HTTP/1.1 origin's browser connection pool:
-// control requests reserve connections by name, lanes share the rest, and the lanes the pool can run are the lanes
+// Plans one stage's lanes per server and direction from one model of each HTTP/1.1 origin's browser connection pool.
+// Control requests reserve connections by name, lanes share the rest, and the lanes the pool can run are the lanes
 // that must deliver before the stage is ready.
 import { activities, type Activity } from "../run/schedule";
 import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, ThroughputTarget } from "../types";
 
-/** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
+/** A browser runs this many concurrent HTTP/1.1 requests per origin. More wait for a free connection. */
 export const BROWSER_POOL = 6;
 /** The server clamps a WebTransport session's lanes here in both directions. */
 const SESSION_MAX_LANES = 16;
 export const MAX_STREAMS = 128;
-// Upload splits by protocol: under loss HTTP/2 gains from four lanes while HTTP/3 loses.
+// Upload splits by protocol, since under loss HTTP/2 gains from four lanes while HTTP/3 loses.
 const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {
   http2: { down: 1, up: 4 },
   http3: { down: 1, up: 1 },
@@ -17,14 +17,14 @@ const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {
 
 type StreamPolicy = TestConfig["transferStreams"];
 
-/** What planning reads of a server's verified paths. */
+/** Planning reads this much of a server's verified paths. */
 export interface PlanServer {
   server: { id: string; name: string };
   throughput: { target: Pick<ThroughputTarget, "transport">; fetch: Pick<FetchTarget, "origin" | "protocol"> };
   latency: { target: Pick<LatencyTarget, "transport" | "origin"> } | null;
 }
 
-/** One direction's lanes: how many open, and how many must deliver before the stage is ready. */
+/** One direction's lanes say how many open, and how many must deliver before the stage is ready. */
 export interface Lanes {
   planned: number;
   gating: number;
@@ -34,7 +34,7 @@ type StreamPlan = Map<string, Record<Direction, Lanes>>;
 interface OriginBudget {
   /** What holds one of the origin's connections for the whole stage. */
   reserved: ("pings" | "feed" | "checkpoint")[];
-  /** The lanes sharing what the reservations leave, in dealing order. */
+  /** These lanes share what the reservations leave, in dealing order. */
   lanes: { name: string; lanes: Lanes }[];
 }
 
@@ -45,7 +45,7 @@ export const normalizeStreamCount = (count: number) =>
 export const needsPings = (activity: Activity) =>
   activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
 
-/** Every lane keeps one stream; the rest is dealt round-robin up to each ceiling. */
+/** Every lane keeps one stream. The rest is dealt round-robin up to each ceiling. */
 function deal(available: number, ceilings: readonly number[]): number[] {
   const dealt = ceilings.map(() => 0);
   for (let left = available, given = true; left > 0 && given; ) {
@@ -60,9 +60,9 @@ function deal(available: number, ceilings: readonly number[]): number[] {
   return dealt;
 }
 
-/** Lanes per server and direction for one stage. Each HTTP/1.1 origin's pool (unproven negotiated HTTP counts as
-    HTTP/1.1) is dealt among its lanes, refusing a stage where some lane would get no connection; Automatic opens what
-    is dealt, forced counts open exactly and only the lanes their pool can run gate readiness. */
+/** Plans lanes per server and direction for one stage. Each HTTP/1.1 origin's pool (unproven negotiated HTTP counts
+    as HTTP/1.1) is dealt among its lanes, refusing a stage where some lane would get no connection. Automatic opens
+    what is dealt, forced counts open exactly and only the lanes their pool can run gate readiness. */
 export function planStreams(servers: readonly PlanServer[], activity: Activity, policy: StreamPolicy): StreamPlan {
   const count = normalizeStreamCount(policy.count);
   const forced = policy.mode === "forced";
@@ -115,7 +115,7 @@ export function planStreams(servers: readonly PlanServer[], activity: Activity, 
   return plan;
 }
 
-/** Why `config`'s stages cannot run on `servers`, or "" when they can. */
+/** Says why `config`'s stages cannot run on `servers`, or "" when they can. */
 export function planError(config: TestConfig, servers: readonly PlanServer[]): string {
   const planned = activities(config);
   if (!planned.length) return "Give at least one stage a duration";
@@ -135,7 +135,7 @@ const ASSUMED: PlanServer = {
   latency: { target: { transport: "websocket", origin: "" } },
 };
 
-/** The lane policy in words for Settings, a value and its qualifier, read from the plan the run would make for
+/** Words the lane policy for Settings as a value and its qualifier, read from the plan the run would make for
     `server` on its own over `activities`. */
 export function describeStreams(
   policy: StreamPolicy,

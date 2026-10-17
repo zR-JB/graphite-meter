@@ -9,7 +9,7 @@ afterEach(() => {
   Reflect.deleteProperty(globalThis, "document");
 });
 
-/** A login on the fake network, its cookies holding the CSRF token. */
+/** Signs in on the fake network, with cookies holding the CSRF token. */
 function signedIn(answer: () => Answer, config = page) {
   net?.restore();
   net = fakeNet(answer);
@@ -70,7 +70,7 @@ test("one /auth/session check answers every lane asking whether the login ended;
     expect(net!.requests.length).toBe(1);
     expect(session.ended.peek()).toBe(expired ? "expired" : null);
   }
-  // The page's own requests carry its cookies, and its CSRF token where they change state; a marker ends the login.
+  // The page's own requests carry its cookies, and its CSRF token where they change state. A marker ends the login.
   const session = signedIn(() => ({ status: 403, headers: MARKER }));
   expect((await session.fetch("/upload/session", { method: "POST" })).status).toBe(403);
   const { init } = net!.requests[0]!;

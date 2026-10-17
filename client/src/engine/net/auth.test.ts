@@ -17,7 +17,7 @@ const session = { headers: (method: string) => csrfHeaders(method, "theme=dark; 
 const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, session);
 const sessionAuth = (entry: CatalogEntry, config: PageConfig, login: PageSession) => initialAuth(entry, config, login);
 const TOKEN = "t".repeat(43);
-/** A grant whose monotonic deadline is `deadline` and whose wall-clock expiry is `expires`. */
+/** Builds a grant whose monotonic deadline is `deadline` and whose wall-clock expiry is `expires`. */
 const held = (deadline: number, expires = Infinity) => ({
   token: TOKEN,
   deadline,
@@ -137,7 +137,7 @@ test("a marked refusal is a sign-in that ends what it refused; an unmarked one i
   const ending = { ...session, end: (reason: string) => ended.push(reason) } as PageSession;
   await expect(sessionAuth(self, page, ending).fetch(`${page.origin}/marked`)).rejects.toBeInstanceOf(SignInRequired);
   expect(ended).toEqual(["expired"]);
-  // A refused grant is over: whatever follows is refused before any request.
+  // A refused grant is over, so whatever follows is refused before any request.
   const auth = grantAuth(peer, held(60_000), net.now);
   await expect(auth.fetch("https://peer.example/marked")).rejects.toBeInstanceOf(SignInRequired);
   const sent = net.requests.length;

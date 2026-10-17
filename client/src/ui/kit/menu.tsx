@@ -1,5 +1,5 @@
-// An overflow menu: a native auto popover gives light dismiss, Escape and the top layer; arrows rove focus, and Tab
-// or Escape return to the trigger.
+// An overflow menu rides a native auto popover, which gives light dismiss, Escape and the top layer. Arrows rove
+// focus, and Tab or Escape return to the trigger.
 import { signal, type Read } from "../../lib/signal";
 import { Icon, type IconName } from "./icon";
 import { tip } from "./tip";
@@ -10,7 +10,7 @@ interface MenuItem {
   icon: IconName | Read<IconName>;
   /** Names the item for styling and tests (`data-more`). */
   name?: string;
-  /** Whether the surface the item toggles is open: the item is a checkbox. */
+  /** Tells whether the surface the item toggles is open, which makes the item a checkbox. */
   checked?: Read<boolean>;
   hidden?: Read<boolean>;
   run(invoker: HTMLButtonElement): void;

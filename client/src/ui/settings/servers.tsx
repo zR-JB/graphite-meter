@@ -1,4 +1,4 @@
-// The Test servers checklist and what stands in its way: a catalog that did not load, a saved selection that
+// Draws the Test servers checklist and what stands in its way, a catalog that did not load, a saved selection that
 // changed, and each selected server's problem with its Retry or Sign in.
 import type { App } from "../../app/app";
 import { MAX_SELECTED, type Approval } from "../../engine/net/servers";
@@ -16,13 +16,13 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
   const entries = computed(() => servers.catalog()?.servers ?? []);
   const retrying = signal<ReadonlySet<string>>(new Set());
   const rows = new Map<string, HTMLLabelElement>();
-  /** One server's view, which keeps its identity while another server's changes. */
+  /** Reads one server's view, which keeps its identity while another server's changes. */
   const viewOf = (id: string) => computed(() => servers.views().get(id));
-  /** As its discovery names it, else as the catalog does. */
+  /** Names the server as its discovery does, else as the catalog does. */
   const identity = (entry: Read<CatalogEntry>, view: ReturnType<typeof viewOf>) =>
     computed(() => view()?.server ?? entry());
 
-  // The list states a sign-in, and with several servers a failure; a single failed server's paths speak for it.
+  // The list states a sign-in, and with several servers a failure. A single failed server's paths speak for it.
   const problems = computed(() => {
     const selected = servers.selected();
     const several = selected.length > 1;
@@ -45,7 +45,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     try {
       await servers.retry(id);
     } finally {
-      // The key leaves with the problem; focus stays on the server it fixed.
+      // The key leaves with the problem, so focus stays on the server it fixed.
       if (servers.views.peek().get(id)?.readiness === "verified" && document.activeElement === button) {
         const row = rows.get(id);
         (row?.querySelector<HTMLInputElement>("input:not(:disabled)") ?? row)?.focus({ preventScroll: true });
@@ -218,7 +218,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                 )
               );
             },
-            // A failed approval's challenge is spent: only a new sign-in helps.
+            // A failed approval's challenge is spent, so only a new sign-in helps.
             () =>
               !failed() && (
                 <button class="btn" type="button" onclick={() => servers.cancelSignIn()}>

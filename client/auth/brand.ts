@@ -1,16 +1,16 @@
-// The brand mark, "lattice needle": the hexagon is graphite's carbon lattice and a pencil's cross-section, drawn in the
-// latency hue; the needle makes it a meter. One drawing for the favicon and the mark beside the name.
+// The brand mark is a "lattice needle". The hexagon is graphite's carbon lattice and a pencil's cross-section,
+// drawn in the latency hue. The needle makes it a meter. The favicon and the mark beside the name share one drawing.
 
 const glyph = (hexagon: number, needle: number, hub: number) =>
   `<path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="${hexagon}" ` +
   `stroke-linejoin="round"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="${needle}" ` +
   `stroke-linecap="round"/><circle cx="12" cy="12" r="${hub}" fill="currentColor"/>`;
 
-/** The auth pages' brand line; their stylesheet strokes the hexagon, and the needle takes the text colour. */
+/** The auth pages show this brand line. Their stylesheet strokes the hexagon, and the needle takes the text colour. */
 export const BRAND_LINE = `<p class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true">${glyph(2, 2.2, 2.1)}</svg>Graphite Meter</p>`;
 
-/** The favicon from the `--phase-latency` and `--text` tokens' `light-dark()` pairs. The browser draws it apart from
-    any page, so each scheme's colours are baked in as sRGB, and its strokes are heavier to hold up at 16 px. */
+/** Makes the favicon from the `--phase-latency` and `--text` tokens' `light-dark()` pairs. The browser draws it apart
+    from any page, so each scheme's colours are baked in as sRGB, and its strokes are heavier to hold up at 16 px. */
 export function favicon(latency: string, text: string): string {
   const [hexagon, ink] = [schemes(latency), schemes(text)];
   const paint = (scheme: 0 | 1) => `svg{color:${ink[scheme]}}.hex{stroke:${hexagon[scheme]}}`;
@@ -20,7 +20,7 @@ export function favicon(latency: string, text: string): string {
   );
 }
 
-/** `light-dark(oklch(…), oklch(…))` as its two sRGB hex colours, clipped to the gamut. */
+/** Splits `light-dark(oklch(…), oklch(…))` into its two sRGB hex colours, clipped to the gamut. */
 function schemes(token: string): [string, string] {
   const pair = [...token.matchAll(/oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)].map((lch) =>
     hex(Number(lch[1]), Number(lch[2]), Number(lch[3])),
@@ -29,7 +29,7 @@ function schemes(token: string): [string, string] {
   return pair as [string, string];
 }
 
-// OKLab to linear sRGB as in CSS Color 4.
+// The OKLab to linear sRGB matrices are CSS Color 4's.
 function hex(lightness: number, chroma: number, hue: number): string {
   const a = chroma * Math.cos((hue * Math.PI) / 180);
   const b = chroma * Math.sin((hue * Math.PI) / 180);

@@ -1,22 +1,22 @@
-//! The headers every answer gets last: cross-origin access, hardening, bootstrap Alt-Svc and connection hints.
+//! Adds the headers every answer gets last, for cross-origin access, hardening, bootstrap Alt-Svc and connection hints.
 
 use super::App;
 use crate::transport::body::Body;
 use http::{HeaderMap, HeaderValue, Response, Version, header};
 
-/// Who may read an answer from another origin.
+/// Access says who may read an answer from another origin.
 #[derive(Debug, Clone)]
 pub enum Access {
-    /// Anyone, without credentials: authentication is off.
+    /// Anyone reads it without credentials, as authentication is off.
     Public,
-    /// The UI origin, with its session cookie.
+    /// The UI origin reads it with its session cookie.
     Cookie(HeaderValue),
-    /// An approved browser origin, with a bearer grant.
+    /// An approved browser origin reads it with a bearer grant.
     Bearer(HeaderValue),
 }
 
 impl Access {
-    /// The headers of any answer, replacing those of a broader access.
+    /// Sets the headers of any answer, replacing those of a broader access.
     pub fn apply(&self, headers: &mut HeaderMap) {
         const PUBLIC: &str = "X-Graphite-Upload-Refusal, Retry-After";
         const AUTH: &str = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, X-Graphite-Upload-Refusal, Retry-After";
@@ -39,7 +39,7 @@ impl Access {
         }
     }
 
-    /// The headers of a preflight's answer; with authentication off every route answer carries them.
+    /// Sets the headers of a preflight's answer. With authentication off every route answer carries them.
     pub fn apply_measurement(&self, headers: &mut HeaderMap) {
         self.apply(headers);
         let allowed = match self {
@@ -54,7 +54,7 @@ impl Access {
     }
 }
 
-/// The hardening headers, and HSTS once a request is known to have arrived over TLS.
+/// Sets the hardening headers, and HSTS once a request is known to have arrived over TLS.
 pub fn harden(headers: &mut HeaderMap, secure: bool) {
     headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -73,7 +73,7 @@ pub fn close(headers: &mut HeaderMap, version: Version) {
 }
 
 impl App {
-    /// Applies a passed answer's headers: `access`, hardening once authenticated, and a bootstrap probe's HTTP/3 port.
+    /// Applies a passed answer's `access` headers, hardening once authenticated and a bootstrap probe's HTTP/3 port.
     pub(super) fn finalize(
         &self,
         response: &mut Response<Body>,

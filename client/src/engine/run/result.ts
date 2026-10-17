@@ -1,5 +1,5 @@
-// What a finished run reports and the rules that judge it: stage statuses, the outcome, and the coherence a saved
-// result must hold. History keeps these shapes as its schema 5.
+// Defines what a finished run reports and the rules that judge it, from stage statuses and the outcome to the
+// coherence a saved result must hold. History keeps these shapes as its schema 5.
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
 import { coveredMs, directions, sufficient, type Interval, type ThroughputResult } from "../measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
@@ -19,22 +19,22 @@ export interface ServerFailure {
   atMs: number;
   scope: Scope;
   reason: FailureReason;
-  /** At most 256 characters, empty when the server's text carried control characters. */
+  /** Holds at most 256 characters, and is empty when the server's text carried control characters. */
   message: string;
 }
 
-/** A run-level transfer headline with its wire estimate. */
+/** Pairs a run-level transfer headline with its wire estimate. */
 type StageThroughput = ThroughputResult & { wire: WireModel | null };
 
 export interface StageResults {
   latency: LatencyResult | null;
   download: StageThroughput | null;
   upload: StageThroughput | null;
-  /** Each lane without its own estimate; one combined estimate when both lanes have one. */
+  /** Carries each lane without its own estimate, and one combined estimate when both lanes have one. */
   bidirectional: { down: ThroughputResult | null; up: ThroughputResult | null; wire: WireModel | null } | null;
 }
 
-/** A server's share of the run; its throughput results come from its own full windows. */
+/** Holds a server's share of the run. Its throughput results come from its own full windows. */
 export interface ServerMeasurementSummary {
   server: ServerIdentity;
   throughput: {
@@ -50,20 +50,20 @@ export interface ServerMeasurementSummary {
   addedLatency: AddedLatency | null;
   download: Omit<ThroughputResult, "quietMs"> | null;
   upload: Omit<ThroughputResult, "quietMs"> | null;
-  /** Null unless the run entered the bidirectional stage. */
+  /** Stays null unless the run entered the bidirectional stage. */
   bidirectional: {
     down: Omit<ThroughputResult, "quietMs"> | null;
     up: Omit<ThroughputResult, "quietMs"> | null;
   } | null;
-  /** Unique measured bytes over every stage. */
+  /** Sums unique measured bytes over every stage. */
   totalBytes: { down: number; up: number };
   stages: Record<Stage, StageStatus>;
 }
 
 export interface MultiServerResult {
-  /** The run's servers in catalog order, then those that failed their start check. */
+  /** Lists the run's servers in catalog order, then those that failed their start check. */
   selection: ServerIdentity[];
-  /** Servers still in the run. */
+  /** Lists the servers still in the run. */
   participants: string[];
   latencyFocus: string;
   servers: ServerMeasurementSummary[];
@@ -76,7 +76,7 @@ export interface RunResult extends StageResults {
   multiServer: MultiServerResult;
   outcome: Outcome;
   stages: Record<Stage, StageStatus>;
-  /** The latency focus server's populations. */
+  /** Holds the latency focus server's populations. */
   latencyByStage: Record<Stage, LatencySummary | null>;
   addedLatency: AddedLatency | null;
   /** Epoch ms. */
@@ -85,7 +85,7 @@ export interface RunResult extends StageResults {
   durationMs: number;
 }
 
-/** What each stage was measured against when it settled; the settings may have changed since. */
+/** Records what each stage was measured against when it settled. The settings may have changed since. */
 export type StagePlans = Record<Stage, { planned: boolean; durationMs: number; early: boolean }>;
 
 export const failureScope = (stage: Stage): Scope => (stage === "latency" ? "latency" : "throughput");
@@ -98,22 +98,22 @@ export const lanes = (
 ): unknown[] =>
   stage === "bidirectional" ? [results.bidirectional?.down, results.bidirectional?.up] : [results[stage]];
 
-/** The run and each server share one rule: every lane, then no failure. */
+/** The run and each server share one rule, which checks every lane first and then any failure. */
 export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
   !results.every(Boolean) ? "failed" : failed ? "partial" : "complete";
 
 export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
   statuses.includes("failed") ? "incomplete" : failures ? "partial" : "complete";
 
-/** The bytes every server moved, both directions. */
+/** Sums the bytes every server moved, both directions. */
 export const movedBytes = (result: MultiServerResult) =>
   result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
 
-/** Invariants a saved result holds; the run downgrades one that breaks them to incomplete. */
+/** Lists the invariants a saved result holds. The run downgrades one that breaks them to incomplete. */
 export function incoherence(result: RunResult, plans: StagePlans): string[] {
   const problems: string[] = [];
   const { failures, intervals, omittedIntervals } = result.multiServer;
-  // Past 128 intervals the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
+  // Past 128 intervals the oldest give way. A stage that ran up to the first kept one cannot be checked against them.
   const firstKept = intervals.length ? STAGES.indexOf(intervals[0]!.stage) : STAGES.length;
   for (const failure of failures)
     if (!Object.hasOwn(FAILURE_REASONS, failure.reason)) problems.push(`unknown failure reason ${failure.reason}`);

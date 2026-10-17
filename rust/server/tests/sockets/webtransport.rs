@@ -1,5 +1,5 @@
-//! WebTransport sessions: datagram downloads, minimal credit, the idle ending and connections that carried only
-//! sessions.
+//! Tests WebTransport sessions, with datagram downloads, minimal credit, the idle ending and connections that carried
+//! only sessions.
 
 use super::{
     http3::{Connection, H3, pass, transport},
@@ -12,7 +12,7 @@ use graphite_meter_http3::{
 use http::{Request, Response};
 
 impl Connection {
-    /// The session `path` opens, or the answer refusing it.
+    /// Opens the session `path` names, or returns the answer refusing it.
     pub(super) async fn open_session(&self, path: &str) -> Result<Session, Response<()>> {
         let request = Request::get(format!("https://localhost{path}")).body(()).unwrap();
         let opened = Session::connect(&self.requests, request).await.unwrap();
@@ -24,7 +24,7 @@ impl Connection {
     }
 }
 
-/// Whether the session is still open after a moment of real time.
+/// Tells whether the session is still open after a moment of real time.
 pub(super) async fn open(session: &Session) -> bool {
     tokio::time::timeout(Duration::from_millis(50), session.closed())
         .await

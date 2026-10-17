@@ -1,7 +1,7 @@
-/* The console's frame: the grid, the top bar, the workspaces, the side sheets and the status strip. The layout
+/* The console's frame holds the grid, the top bar, the workspaces, the side sheets and the status strip. The layout
    owner stamps <html data-layout="docked2|docked1|flyout"> and data-bottom-sheet, so breakpoints live in one place. */
 @layer components {
-  /* Dock columns are written inline from the resolved widths; they restyle the grid alone. */
+  /* Dock columns are written inline from the resolved widths, so they restyle the grid alone. */
   #console {
     position: relative;
     isolation: isolate;
@@ -41,7 +41,7 @@
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
   }
-  /* Hexagon in the latency hue, needle in the text color (favicon.svg). */
+  /* The hexagon takes the latency hue and the needle the text color (favicon.svg). */
   .brand-glyph {
     width: 20px;
     height: 20px;
@@ -92,7 +92,7 @@
     }
   }
   /* A row of N 44 px keys with their 4 px gaps needs 48 N + 46 px. History and Details fold into More where the
-     row they leave fits, and Theme too where it does not; the way back to a live run is one key more. */
+     row they leave fits, and Theme too where it does not. The way back to a live run is one key more. */
   .topbar-more,
   .topbar [data-more] {
     display: none;
@@ -152,7 +152,7 @@
     }
   }
 
-  /* The stage is the anchor the phase toast keeps to, clear of docked sheets; its layout moves shift it by offsets. */
+  /* The stage is the anchor the phase toast keeps to, clear of docked sheets. Its layout moves shift it by offsets. */
   .stage {
     position: relative;
     anchor-name: --stage;
@@ -162,7 +162,7 @@
     gap: var(--space-3);
     min-width: 0;
     padding: var(--space-4) var(--gutter) var(--space-5);
-    /* A panel gliding to its place may pass the edge; it never scrolls the stage sideways. */
+    /* A panel gliding to its place may pass the edge, but it never scrolls the stage sideways. */
     overflow: clip auto;
     overscroll-behavior: contain;
     /* A workspace appears in one quick fade, never piece by piece. */
@@ -177,8 +177,8 @@
       align-self: center;
     }
   }
-  /* While a run is under way the console is lit from above in the running stage's hue. One gradient, repainted
-     only while the hue moves. */
+  /* While a run is under way the console is lit from above in the running stage's hue. One gradient does it, and it
+     repaints only while the hue moves. */
   .measurement-stage {
     isolation: isolate;
     &::before {
@@ -213,7 +213,7 @@
     &[data-stage="bidirectional"] {
       --ambient: var(--phase-bidirectional);
     }
-    /* Under History the console keeps its layout and skips its rendering; it fades back in on return. Skipped
+    /* Under History the console keeps its layout and skips its rendering. It fades back in on return. Skipped
        content never advances a transition, so none starts there. */
     &.away {
       content-visibility: hidden;
@@ -232,7 +232,7 @@
     overflow: hidden;
     background: var(--canvas);
   }
-  /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
+  /* A failed start leaves the previous run on screen, dimmed by a filter, as these fade by inline opacity. */
   .measurement-stage :is(.gauge-face, .results),
   footer.status :is(.elapsed, .transferred) {
     transition: filter var(--dur-slide) var(--ease-out);
@@ -335,9 +335,9 @@
     }
   }
 
-  /* A side sheet is one element in every layout: a column beside the stage while docked, a flyout over it below
+  /* A side sheet is one element in every layout, a column beside the stage while docked, a flyout over it below
      1,200 px, a bottom sheet on an upright phone. Closed, it is inert and stays displayed past its edge, so every
-     engine slides it the same way; once the slide is over its content rests skipped (data-rest), so nothing in it
+     engine slides it the same way. Once the slide is over its content rests skipped (data-rest), so nothing in it
      restyles, transitions or answers a role query, while the style and layout it had are kept for its next opening.
      Its width is its own --sheet-w, which nothing inside inherits. */
   .sheet-layer {
@@ -359,7 +359,7 @@
     &[data-rest] {
       content-visibility: hidden;
     }
-    /* Skipped content never advances a transition, so none starts there: a style read forced at rest (an audit
+    /* Skipped content never advances a transition, so none starts there, and a style read forced at rest (an audit
        after a theme change) applies at once. */
     &[data-rest] *,
     &[data-rest] *::before,
@@ -367,7 +367,7 @@
       transition: none !important;
     }
   }
-  /* Docked, the sheet is its column, flush with the bars and cut from the stage by one hairline; the column's move
+  /* Docked, the sheet is its column, flush with the bars and cut from the stage by one hairline. The column's move
      is its slide. Closed, its column is 0 wide and it hangs past the viewport's edge. */
   :root:not([data-layout="flyout"]) .side-sheet {
     grid-area: rightdock;
@@ -438,7 +438,7 @@
       display: flex;
     }
   }
-  /* Short viewports (and 400 % zoom) give the flyout the full height; the whole sheet scrolls. */
+  /* Short viewports (and 400 % zoom) give the flyout the full height, and the whole sheet scrolls. */
   @media (max-height: 480px) {
     :root[data-layout="flyout"] .side-sheet {
       top: var(--space-2);

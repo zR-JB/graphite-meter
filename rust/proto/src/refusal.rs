@@ -1,12 +1,12 @@
-//! Why a server refused an upload (`api/uploadrefusals.txt`, `api/uploadrefusalreasons.txt`).
+//! Says why a server refused an upload (`api/uploadrefusals.txt`, `api/uploadrefusalreasons.txt`).
 
 use crate::reason::FailureReason;
 use http::StatusCode;
 
 table! {
-    /// Why a server refused an upload: its name, exact message, HTTP status and the failure it ends a stage with.
+    /// Says why a server refused an upload, by name, exact message, HTTP status and the failure it ends a stage with.
     pub enum UploadRefusal {
-        /// The code in `X-Graphite-Upload-Refusal` and in a progress `error` record.
+        /// The code goes in `X-Graphite-Upload-Refusal` and in a progress `error` record.
         name.0: &'static str,
         message.1: &'static str,
         status.2: StatusCode,

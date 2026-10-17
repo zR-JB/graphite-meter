@@ -1,4 +1,4 @@
-//! Upload aggregates (`api/upload.md`): owner-bound minted IDs, displacement before the first byte, retention.
+//! Holds upload aggregates (`api/upload.md`), minting owner-bound IDs, displacing empty ones and retaining idle ones.
 
 use super::{Meter, ProgressFeed, Transfer, UploadSink};
 use crate::{
@@ -21,9 +21,9 @@ use std::{
 };
 use tokio::{sync::Notify, time::Instant};
 
-/// Aggregates the server holds at once, finished ones until their retention ends.
+/// The server holds this many aggregates at once, finished ones until their retention ends.
 pub const MAX_LIVE: usize = 1000;
-/// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
+/// One client's narrowest key holds this many aggregates. Each wider key holds twice the one before it.
 pub const MAX_PER_CLIENT: usize = 32;
 /// An ID creates state for this long after it was minted.
 pub const ID_LIFETIME: Duration = Duration::from_mins(2);
@@ -39,7 +39,7 @@ const ID_PREFIX: &str = "gmu_";
 const SIGNED_BYTES: usize = 24;
 const ID_BYTES: usize = SIGNED_BYTES + 32;
 
-/// The upload store; clones share it.
+/// Uploads is the upload store. Clones share it.
 #[derive(Clone)]
 pub struct Uploads(Arc<Store>);
 
@@ -48,18 +48,18 @@ struct Store {
     meter: Meter,
     clock: Clock,
     capacity: Quota,
-    /// The store clock at the next sweep, read without locking `entries`.
+    /// The next sweep is due at this store clock, read without locking `entries`.
     next_sweep: AtomicU64,
     entries: Mutex<Entries>,
 }
 
 struct Entries {
     live: HashMap<UploadId, Entry>,
-    /// Displaced IDs, refused until they would have expired.
+    /// Displaced IDs are refused until they would have expired.
     tombstones: HashMap<UploadId, Instant>,
 }
 
-/// An upload ID decoded from its text: issue time and nonce, then their HMAC tag.
+/// An upload ID decodes from its text as issue time and nonce, then their HMAC tag.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct UploadId([u8; ID_BYTES]);
 
@@ -83,7 +83,7 @@ struct Entry {
     _capacity: Hold,
 }
 
-/// The store's monotonic clock in nanoseconds.
+/// The store's monotonic clock counts nanoseconds.
 #[derive(Clone, Copy)]
 struct Clock(Instant);
 
@@ -93,15 +93,15 @@ impl Clock {
     }
 }
 
-/// One upload ID's receiver: the bytes of all its lanes and the time since its first accepted chunk.
+/// An aggregate receives one upload ID, counting all its lanes' bytes and the time since its first accepted chunk.
 pub(super) struct Aggregate {
     owner: ClientKey,
     clock: Clock,
     bytes: AtomicU64,
-    /// The clock at the first accepted chunk.
+    /// The first accepted chunk set this clock reading.
     first: OnceLock<u64>,
     life: Mutex<Life>,
-    /// Woken when a lane leaves, the upload finishes or expires, or a reader replaces another.
+    /// Wakes when a lane leaves, the upload finishes or expires, or a reader replaces another.
     pub(super) changed: Notify,
 }
 
@@ -109,11 +109,11 @@ pub(super) struct Life {
     pub(super) lanes: usize,
     touched: Instant,
     pub(super) phase: Phase,
-    /// The number of the reader whose feed is current.
+    /// The reader with this number has the current feed.
     pub(super) reader: u64,
 }
 
-/// Where an upload is: taking lanes, finalized, or expired, which ends a finalized one too.
+/// An upload is taking lanes, finalized, or expired, which ends a finalized one too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Phase {
     Open,
@@ -140,12 +140,12 @@ impl Aggregate {
         Counters::new(bytes, nanos)
     }
 
-    /// Finalized or expired: no lane joins any more.
+    /// No lane joins once the upload is finalized or expired.
     pub(super) fn ended(&self) -> bool {
         self.life().phase != Phase::Open
     }
 
-    /// A lane left: retention starts again from now.
+    /// A lane left, so retention starts again from now.
     pub(super) fn leave(&self) {
         let mut life = self.life();
         life.lanes -= 1;
@@ -209,19 +209,19 @@ impl Entries {
     }
 }
 
-/// How a request reaches an aggregate.
+/// A request reaches an aggregate in one of these ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Access {
-    /// A data lane, which may create the aggregate.
+    /// A data lane may create the aggregate.
     Join,
-    /// A progress reader, which may create it.
+    /// A progress reader may create it.
     Watch,
-    /// A checkpoint or finish, which needs it to exist.
+    /// A checkpoint or finish needs it to exist.
     Read,
 }
 
 impl Uploads {
-    /// A store whose IDs `key` signs; `meter` counts its lanes' bytes.
+    /// Makes a store whose IDs `key` signs. `meter` counts its lanes' bytes.
     pub fn new(key: [u8; 32], meter: Meter) -> Self {
         let now = Instant::now();
         Self(Arc::new(Store {
@@ -234,7 +234,7 @@ impl Uploads {
         }))
     }
 
-    /// A new ID, which holds no state until a lane or reader uses it.
+    /// Mints a new ID, which holds no state until a lane or reader uses it.
     pub fn mint(&self) -> String {
         let mut id = [0; ID_BYTES];
         id[..8].copy_from_slice(&self.0.clock.now().to_be_bytes());
@@ -272,12 +272,12 @@ impl Uploads {
         Ok(ProgressFeed::new(self.clone(), aggregate, reader))
     }
 
-    /// An existing aggregate's counters, without refreshing its retention.
+    /// Reads an existing aggregate's counters without refreshing its retention.
     pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, UploadRefusal> {
         Ok(self.access(id, owner, Access::Read)?.counters())
     }
 
-    /// Finalizes an aggregate: it takes no new lane, and its feed completes once its lanes drain.
+    /// Finalizes an aggregate. It takes no new lane, and its feed completes once its lanes drain.
     pub fn finish(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
         let aggregate = self.access(id, owner, Access::Read)?;
         let mut life = aggregate.life();
@@ -289,7 +289,7 @@ impl Uploads {
         Ok(())
     }
 
-    /// Expires what retention no longer covers once a sweep is due; until then it reads one atomic.
+    /// Expires what retention no longer covers once a sweep is due. Until then it reads one atomic.
     pub(super) fn sweep(&self) {
         if self.0.clock.now() >= self.0.next_sweep.load(Ordering::Relaxed) {
             drop(self.entries());
@@ -337,7 +337,7 @@ impl Uploads {
         Ok(aggregate)
     }
 
-    /// A share of the capacity; at the limit an empty aggregate makes room.
+    /// Takes a share of the capacity. At the limit an empty aggregate makes room.
     fn capacity(&self, entries: &mut Entries, keys: &ClientKeys) -> Result<Hold, UploadRefusal> {
         let refusal = |refusal| match refusal {
             Refusal::Client => UploadRefusal::ClientFull,
@@ -361,7 +361,7 @@ impl Uploads {
         entries
     }
 
-    /// Whether this store minted `id` within its lifetime.
+    /// Tells whether this store minted `id` within its lifetime.
     fn valid(&self, UploadId(raw): &UploadId) -> bool {
         let (signed, tag) = raw.split_at(SIGNED_BYTES);
         if hmac::verify(&self.0.key, signed, tag).is_err() {

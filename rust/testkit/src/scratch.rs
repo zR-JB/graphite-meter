@@ -1,15 +1,15 @@
-//! Temporary directories for tests that need files.
+//! Makes temporary directories for tests that need files.
 use std::{
     hash::{BuildHasher, RandomState},
     io,
     path::{Path, PathBuf},
 };
 
-/// A private directory under the system's temporary directory, removed on drop.
+/// Owns a private directory under the system's temporary directory, removed on drop.
 pub struct Scratch(PathBuf);
 
 impl Scratch {
-    /// Created exclusively under a random name, so no other process's directory is ever taken over.
+    /// Creates the directory exclusively under a random name, so no other process's directory is ever taken over.
     pub fn new() -> io::Result<Self> {
         loop {
             let suffix = RandomState::new().hash_one(std::process::id());

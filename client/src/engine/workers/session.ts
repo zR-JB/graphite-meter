@@ -1,5 +1,5 @@
-// One WebTransport session per direction (api/wire.md#webtransport-routes): download streams or datagrams counted,
-// or upload streams or datagrams sent with the server's progress feed relayed; it finalizes an upload when it stops.
+// Runs one WebTransport session per direction (api/wire.md#webtransport-routes). It counts download streams or
+// datagrams, or sends upload streams or datagrams and relays the server's progress feed, and finalizes uploads at stop.
 import { release } from "../../protocol/documents";
 import type { EndReport, FeedRecord, SessionCommand, SessionReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";
@@ -38,7 +38,7 @@ onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   else session = new Session(data);
 };
 
-// A full task: a message, then a timer.
+// A full task is a message, then a timer.
 const turn = new MessageChannel();
 const turning: (() => void)[] = [];
 turn.port1.onmessage = () => setTimeout(turning.shift()!);
@@ -53,7 +53,7 @@ class Session {
   #stopping: Promise<void> | null = null;
   /** Aborting closes the transport and ends the dial. */
   readonly #closed = new AbortController();
-  /** The feed's terminal record, or the end of its grace. */
+  /** Resolves on the feed's terminal record, or at the end of its grace. */
   readonly #completed = Promise.withResolvers<void>();
   #grace: ReturnType<typeof setTimeout> | undefined;
 
@@ -62,7 +62,7 @@ class Session {
     void this.#dial().catch(this.#broken);
   }
 
-  /** Stops moving bytes. An upload id is finalized whatever became of the session; only a live feed can bring the
+  /** Stops moving bytes. An upload id is finalized whatever became of the session. Only a live feed can bring the
       terminal record, so only an open session waits for it before closing. */
   stop(): Promise<void> {
     return (this.#stopping ??= this.#stop());
@@ -77,7 +77,7 @@ class Session {
     this.#closed.abort();
   }
 
-  /** The first ending is the session's; the rest are its echoes. */
+  /** The first ending is the session's. The rest are its echoes. */
   #end(report: EndReport): void {
     clearTimeout(this.#grace);
     if (this.#state !== "dialing" && this.#state !== "open") return;
@@ -126,7 +126,7 @@ class Session {
     } catch (error) {
       return this.#end(budget.aborted ? UNESTABLISHED : { type: "broken", detail: String(error) });
     } finally {
-      // An answer, a refusal too, spent the ticket; a dial that lapsed may never have reached the server.
+      // An answer, a refusal too, spent the ticket. A dial that lapsed may never have reached the server.
       if (!expired.aborted) tickets.spent(token);
     }
     if (this.#state !== "dialing") return;
@@ -146,8 +146,8 @@ class Session {
     }
   }
 
-  /** Every datagram is counted with its own clock reading, so a cutoff knows which side of it each one fell on;
-      the reading also serves the report window and the yield. */
+  /** Every datagram is counted with its own clock reading, so a cutoff knows which side of it each one fell on.
+      The reading also serves the report window and the yield. */
   async #readDatagrams(transport: WebTransport): Promise<void> {
     try {
       const reader = transport.datagrams.readable.getReader();
@@ -172,7 +172,7 @@ class Session {
     else for (let i = 0; i < streams; i++) void this.#writeStream(transport, block);
   }
 
-  /** The first server-opened stream is the feed; a later one carries a refusal for a lane. */
+  /** The first server-opened stream is the feed. A later one carries a refusal for a lane. */
   async #relay(transport: WebTransport): Promise<void> {
     try {
       const incoming = transport.incomingUnidirectionalStreams.getReader();
@@ -182,10 +182,10 @@ class Session {
     }
   }
 
-  /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session; a feed that ends
+  /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session. A feed that ends
       before it can be recovered by a fresh session, as the server reopens the feed. */
   async #follow(stream: ReadableStream<Uint8Array>): Promise<void> {
-    // Progress counts are cumulative: a flood reaches the page as its newest; every other record goes at once.
+    // Progress counts are cumulative, so a flood reaches the page as its newest. Every other record goes at once.
     let held: FeedRecord | null = null;
     let sentAt = Number.NEGATIVE_INFINITY;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -244,7 +244,7 @@ class Session {
       let yielded = performance.now();
       let unclocked = 0;
       while (this.#state === "open") {
-        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write: the size is
+        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write, so the size is
         // read again after each yield.
         if (!payload) {
           const size = Math.min(block.length, datagrams.maxDatagramSize);
@@ -265,7 +265,7 @@ class Session {
     }
   }
 
-  /** One DELETE ends the upload id; the server then drains the lanes and sends its terminal record. */
+  /** One DELETE ends the upload id. The server then drains the lanes and sends its terminal record. */
   async #finalize({ url, request }: Upload["finalize"], feeding: boolean): Promise<void> {
     try {
       const signal = AbortSignal.timeout(FINAL_GRACE_MS);
@@ -281,7 +281,7 @@ class Session {
   }
 }
 
-/** A close the server named, or a break. */
+/** Reads a close the server named, or a break. */
 function endOf(code: number | undefined): EndReport {
   const ending = sessionClosed(code);
   return ending ? { type: "ended", ending } : { type: "broken", detail: "webtransport session closed" };

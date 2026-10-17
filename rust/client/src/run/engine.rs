@@ -1,4 +1,4 @@
-//! The stage engine (`docs/MEASUREMENTS.md`), pure and tick-synchronous: the coordinator feeds time and observations.
+//! Drives a stage (`docs/MEASUREMENTS.md`) purely and tick-synchronously. The coordinator feeds time and observations.
 
 use crate::{
     config::MAX_WARMUP,
@@ -15,14 +15,14 @@ use crate::{
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::{Duration, Instant};
 
-/// The sampler's period.
+/// The sampler ticks this often.
 pub const TICK: Duration = Duration::from_millis(250);
 const READY_BOUND: Duration = Duration::from_secs(10);
 const CHECKPOINT_BUDGET: Duration = Duration::from_millis(1500);
 const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 /// A tick this late resumes evidence.
 const LATE_TICK: Duration = Duration::from_millis(1500);
-/// Half a tick: a shorter window holds only a few reads, so its rates stay off the live trace.
+/// A window shorter than half a tick holds only a few reads, so its rates stay off the live trace.
 const LIVE_WINDOW: Duration = Duration::from_millis(125);
 /// Bytes that stop growing this long are silence.
 const SILENCE: Duration = Duration::from_secs(2);
@@ -33,44 +33,44 @@ const DRAIN_BOUND: Duration = Duration::from_secs(10);
 const MAX_STAGGER: Duration = Duration::from_millis(75);
 const UNCHECKPOINTED: &str = "receiver checkpoint unavailable before measurement";
 
-/// One stage for its members.
+/// Plans one stage for its members.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagePlan {
     pub stage: Stage,
-    /// In selection order.
+    /// The members come in selection order.
     pub members: Vec<Member>,
     pub duration: Duration,
-    /// The probing cadence; none when the stage measures no latency.
+    /// The probing cadence is none when the stage measures no latency.
     pub latency: Option<Cadence>,
 }
 
-/// A server in a stage, with the warmup its idle round trip asks for.
+/// A server in a stage carries the warmup its idle round trip asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub server: ServerId,
     pub warmup: Duration,
 }
 
-/// One member's counters and lane health at a tick.
+/// Samples one member's counters and lane health at a tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
-    /// Its counters, with the checkpoint asked for when it arrived.
+    /// Its counters carry the checkpoint asked for, when it arrived.
     pub reading: Reading,
     /// Its lanes are open and its upload feed advances.
     pub ready: bool,
-    /// Why the checkpoint asked for did not arrive.
+    /// Says why the checkpoint asked for did not arrive.
     pub missed: Option<Failure>,
     pub lanes: Dir<LaneHealth>,
 }
 
-/// What a member's prober observed.
+/// Says what a member's prober observed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProberEvent {
     Outcome {
         sent: Instant,
         outcome: ProbeOutcome,
     },
-    /// The population failed: the channel is gone for this stage.
+    /// The population failed, so the channel is gone for this stage.
     Down {
         at: Instant,
         failure: Failure,
@@ -82,38 +82,38 @@ pub enum ProberEvent {
 }
 
 pub struct Input<'a> {
-    /// When the samples were taken.
+    /// The samples were taken at this instant.
     pub now: Instant,
-    /// `lateness(fired, previous Tick.next, when the previous tick returned)`; zero for the first tick.
+    /// Equals `lateness(fired, previous Tick.next, when the previous tick returned)`, zero for the first tick.
     pub lateness: Duration,
     pub samples: &'a [Sample],
     pub probes: &'a [(ServerId, ProberEvent)],
-    /// Members whose participant could not open the stage.
+    /// Lists members whose participant could not open the stage.
     pub departed: &'a [(ServerId, Failure)],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    /// The measured window: probes sent in it count, and it closes at `end`.
+    /// The measured window opened. Probes sent in it count, and it closes at `end`.
     OpenWindow { start: Instant, end: Instant },
     /// The next tick's samples carry checkpoints gathered within this budget.
     Checkpoint(Duration),
-    /// The window closed: lanes stop, upload sessions finish and probers drain.
+    /// The window closed, so lanes stop, upload sessions finish and probers drain.
     CloseWindow,
-    /// A failure the member stays for: its latency population or the stage's evidence is lost.
+    /// The member stays for this failure, which lost its latency population or the stage's evidence.
     Failed(ServerFailure),
     /// The member leaves the run for this failure.
     Remove(ServerFailure),
-    /// The stage is over: every participant ends.
+    /// The stage is over, so every participant ends.
     Finish,
 }
 
 #[derive(Debug)]
 pub struct Tick {
     pub decisions: Vec<Decision>,
-    /// The boundary's live-trace rates: a window of at least half a tick, or any at a restart; none breaks the trace.
+    /// Live-trace rates need a window of at least half a tick, or any at a restart. None breaks the trace.
     pub live: Option<Dir<Option<f64>>>,
-    /// When the engine wants its next tick.
+    /// The engine wants its next tick at this instant.
     pub next: Instant,
 }
 
@@ -123,7 +123,7 @@ enum Phase {
     Warmup(Instant),
     /// The window opens with the next tick's checkpoints.
     Opening,
-    /// `last`: the current tick's checkpoints were asked for as the final boundary's.
+    /// `last` says the current tick's checkpoints were asked for as the final boundary's.
     Measuring {
         window: Window,
         last: bool,
@@ -132,14 +132,14 @@ enum Phase {
         window: Window,
         ended: Instant,
     },
-    /// With the window and when it ended, once one opened, and whether the user stopped the stage.
+    /// Keeps the window and when it ended, once one opened, and whether the user stopped the stage.
     Done {
         measured: Option<(Window, Instant)>,
         stopped: bool,
     },
 }
 
-/// The measured window: its start, its planned end, and a transfer stage's aggregate.
+/// The measured window holds its start, its planned end, and a transfer stage's aggregate.
 #[derive(Debug)]
 struct Window {
     start: Instant,
@@ -164,7 +164,7 @@ struct Seat {
     probing: Probing,
     latency: Latency,
     misses: u32,
-    /// When its bytes last grew, per direction.
+    /// Its bytes last grew at this instant, per direction.
     moved: Dir<Instant>,
 }
 
@@ -173,13 +173,13 @@ pub struct Engine {
     plan: StagePlan,
     phase: Phase,
     created: Instant,
-    /// The plan's members in order.
+    /// Seats the plan's members in order.
     seats: Vec<Seat>,
     failures: Vec<ServerFailure>,
 }
 
 impl Seat {
-    /// How long its bytes in `direction` have not grown.
+    /// Returns how long its bytes in `direction` have not grown.
     fn quiet(&self, direction: Direction, now: Instant) -> Duration {
         now.saturating_duration_since(self.moved[direction])
     }
@@ -255,7 +255,7 @@ impl Engine {
         self.phase = Phase::Done { measured, stopped: true };
     }
 
-    /// What the stage measured; complete once it decided `Finish` or stopped.
+    /// Reports what the stage measured, complete once it decided `Finish` or stopped.
     pub fn result(&self) -> StageResult {
         let measured = self.window().map_or(Duration::ZERO, |window| {
             let ended = self.ended().unwrap_or(window.end).min(window.end);
@@ -280,13 +280,13 @@ impl Engine {
         }
     }
 
-    /// `server`'s latency so far, counting the probes sent within the window.
+    /// Returns `server`'s latency so far, counting the probes sent within the window.
     pub fn latency(&self, server: &ServerId) -> Option<Summary> {
         let seat = self.seats.iter().find(|seat| seat.server == *server)?;
         (seat.probing != Probing::Off).then(|| seat.latency.summary())
     }
 
-    /// Per direction the stage moves, `server`'s share or all servers' headline and bytes; none without a window.
+    /// Gives `server`'s share or all servers' headline and bytes per direction the stage moves, none without a window.
     fn throughput(&self, server: Option<&ServerId>) -> Dir<Option<Throughput>> {
         let measured = |all: &Aggregate, direction| match server {
             None => Throughput { rate: all.result(direction), bytes: all.total(direction) },
@@ -322,7 +322,7 @@ impl Engine {
         out.push(Decision::Finish);
     }
 
-    /// The window and when it ended, ended `now` if it still runs; the caller sets the next phase.
+    /// Takes the window and when it ended, ended `now` if it still runs. The caller sets the next phase.
     fn take_measured(&mut self, now: Instant) -> Option<(Window, Instant)> {
         match std::mem::replace(&mut self.phase, Phase::Ready) {
             Phase::Measuring { window, .. } => Some((window, now)),
@@ -332,7 +332,7 @@ impl Engine {
         }
     }
 
-    /// The window once it opened.
+    /// Returns the window once it opened.
     fn window(&self) -> Option<&Window> {
         match &self.phase {
             Phase::Measuring { window, .. }
@@ -342,12 +342,12 @@ impl Engine {
         }
     }
 
-    /// The window's start and planned end once it opened.
+    /// Returns the window's start and planned end once it opened.
     fn bounds(&self) -> Option<(Instant, Instant)> {
         self.window().map(|window| (window.start, window.end))
     }
 
-    /// When the window ended, once it did.
+    /// Returns when the window ended, once it did.
     fn ended(&self) -> Option<Instant> {
         match self.phase {
             Phase::Draining { ended, .. } | Phase::Done { measured: Some((_, ended)), .. } => Some(ended),
@@ -363,7 +363,7 @@ impl Engine {
         matches!(self.phase, Phase::Done { stopped: true, .. })
     }
 
-    /// The window's throughput accounting, once a transfer stage's window opened.
+    /// Returns the window's throughput accounting, once a transfer stage's window opened.
     pub fn aggregate(&self) -> Option<&Aggregate> {
         self.window()?.aggregate.as_ref()
     }
@@ -418,7 +418,7 @@ impl Engine {
         }
     }
 
-    /// A lost latency population; in the latency stage a server lost beside another leaves the run.
+    /// Records a lost latency population. In the latency stage a server lost beside another leaves the run.
     fn latency_failed(&mut self, index: usize, failure: Failure, at: Instant, out: &mut Vec<Decision>) {
         if std::mem::replace(&mut self.seats[index].probing, Probing::Failed) == Probing::Failed {
             return;
@@ -572,7 +572,7 @@ impl Engine {
         }
     }
 
-    /// Why a present member leaves at this boundary, if it does.
+    /// Says why a present member leaves at this boundary, if it does.
     fn departure(&mut self, index: usize, input: &Input, last: bool) -> Option<Failure> {
         let sample = sample(input, &self.seats[index].server);
         if !self.seats[index].present {
@@ -581,7 +581,7 @@ impl Engine {
         if let Some(failure) = self.missed(index, sample, input.now, last) {
             return Some(failure);
         }
-        // The final checkpoint can answer well after the window closed; silence counts up to the window's end.
+        // The final checkpoint can answer well after the window closed. Silence counts up to the window's end.
         let closed = self.bounds().map(|(_, end)| end.min(input.now));
         let (seat, now) = (&self.seats[index], if last { closed.unwrap_or(input.now) } else { input.now });
         for &direction in self.plan.stage.directions() {
@@ -613,7 +613,7 @@ impl Engine {
         (refused || seat.misses >= MISSED_CHECKPOINTS && !last && moving).then(|| failure.clone())
     }
 
-    /// Whether another present member's bytes in `direction` moved a moment ago.
+    /// Tells whether another present member's bytes in `direction` moved a moment ago.
     fn moving(&self, except: usize, direction: Direction, now: Instant) -> bool {
         let mut others = self.seats.iter().enumerate().filter(|&(index, _)| index != except);
         others.any(|(_, seat)| seat.present && seat.quiet(direction, now) < QUIET)
@@ -642,18 +642,18 @@ fn sample<'a>(input: &Input<'a>, server: &ServerId) -> Option<&'a Sample> {
     input.samples.iter().find(|sample| sample.reading.server == *server)
 }
 
-/// How late a tick fired, from its due time or the previous tick's later return, so checkpoint gathering never counts.
+/// Takes a tick's lateness from its due time or the previous tick's later return, so checkpoint gathering never counts.
 pub fn lateness(fired: Instant, due: Instant, returned: Instant) -> Duration {
     fired.saturating_duration_since(due.max(returned))
 }
 
-/// A server's warmup: `base` stretched to ten of its idle round trips, at most 4 s.
+/// A server's warmup is `base` stretched to ten of its idle round trips, at most 4 s.
 pub fn warmup(base: Duration, idle_rtt: Option<Duration>) -> Duration {
     base.max(idle_rtt.map_or(Duration::ZERO, |rtt| rtt.saturating_mul(10)))
         .min(MAX_WARMUP)
 }
 
-/// The spacing between lane starts: half the server's own warmup spread over its lanes, at most 75 ms.
+/// Lane starts are spaced by half the server's own warmup spread over its lanes, at most 75 ms.
 pub fn stagger(warmup: Duration, lanes: usize) -> Duration {
     match lanes {
         0 | 1 => Duration::ZERO,

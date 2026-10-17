@@ -55,7 +55,7 @@ function harness(
       run.start();
     },
     elapse: (ms: number) => clock.advance(ms),
-    /** The shown phases, each once per stretch. */
+    /** Lists the shown phases, each once per stretch. */
     phases: () =>
       events.flatMap((event, index) =>
         event.type === "phase" &&
@@ -118,8 +118,8 @@ test("warmup probes never enter a measured population", async () => {
 });
 
 test("loaded latency ends with the stage's window, however late its final checkpoint answers", async () => {
-  // A probe every 80 ms: 10 ms replies through the 1 s upload window, 200 ms ones after it, while the final checkpoint
-  // takes 600 ms to answer.
+  // A probe goes every 80 ms, with 10 ms replies through the 1 s upload window and 200 ms ones after it, while the
+  // final checkpoint takes 600 ms to answer.
   const measure = (events: StageEvents) => {
     const start = clock.t;
     clock.every(80, () => {
@@ -162,8 +162,8 @@ test("an aborted latency stage keeps its summary after the run releases its repl
 });
 
 test("a warmup moves the live rate, which no result counts, and the window opens on that rate", async () => {
-  // 3 bytes per ms through the default 800 ms warmup, then the fixture's 1 byte per ms through the window. The live
-  // rate shows 500 ms after its first delivery, within the warmup.
+  // The server moves 3 bytes per ms through the default 800 ms warmup, then the fixture's 1 byte per ms through the
+  // window. The live rate shows 500 ms after its first delivery, within the warmup.
   let warming = () => {};
   const h = setup(
     [
@@ -186,7 +186,7 @@ test("a warmup moves the live rate, which no result counts, and the window opens
   expect(warm.some((sample) => sample.t < 300 && (sample.down ?? 0) > 0)).toBe(true);
   near(warm.at(-1)!.down!, 3_000);
   expect(warm.every((sample) => sample.bytes === 0)).toBe(true);
-  // The first window sample is already moving: the rate carried over, nothing started from empty.
+  // The first window sample is already moving, because the rate carried over and nothing started from empty.
   expect(samples.find((sample) => !sample.warmup)!.down).toBeGreaterThan(0);
   near(result.download?.reportedBytesPerSec, 1_000);
 });
@@ -253,7 +253,7 @@ test("lanes that read on until their flush answers count against the time it ans
 });
 
 test("an answer that reaches the page late still closes the boundary when its count was read", async () => {
-  // 1 byte per ms, counted until the flush reads the count; the answer arrives 200 ms after that.
+  // The lane moves 1 byte per ms, counted until the flush reads the count. The answer arrives 200 ms after that.
   let counting = true;
   const h = setup(
     [
@@ -627,7 +627,7 @@ test("a lane that fails while a measured stage shuts down never fails the stage,
 });
 
 test("a final checkpoint answered late over a full uplink keeps a server that was moving", async () => {
-  // The feed's last record comes at 900 ms; the checkpoint asked as the window closed answers 1.2 s later with that
+  // The feed's last record comes at 900 ms. The checkpoint asked as the window closed answers 1.2 s later with that
   // count on the receiver's later clock, so the server seems to have stood still for two seconds it was not measured.
   const late: Partial<Peer> = {
     silent: (_activity, ms) => ms > 900,
@@ -644,7 +644,7 @@ test("a final checkpoint answered late over a full uplink keeps a server that wa
 });
 
 test("a stream that breaks as its grant ends leaves asking for sign-in, once the check says so", async () => {
-  // The stream breaks 300 ms in and stays silent; the silence rule removes the server before any check could answer.
+  // The stream breaks 300 ms in and stays silent. The silence rule removes the server before any check could answer.
   const broken: Partial<Peer> = {
     silent: (activity, ms) => activity.stage === "download" && ms >= 300,
     measure: (events) =>
@@ -893,7 +893,7 @@ test("a quiet link keeps its stage to the planned end, and its silence counts in
   expect(result.durationMs).toBeGreaterThanOrEqual(4_000);
   expect(result.stages.download).toBe("complete");
   expect(result.multiServer.failures).toEqual([]);
-  // Two of the four seconds carried nothing: the headline averages them in and the result says how long.
+  // Two of the four seconds carried nothing, so the headline averages them in and the result says how long.
   near(result.download?.reportedBytesPerSec, 500);
   expect(result.download!.quietMs).toBeGreaterThan(1_800);
   expect(result.download!.quietMs).toBeLessThanOrEqual(2_000);
@@ -1166,7 +1166,7 @@ test("a server's result from an early stage outlives the interval limit a later 
   const h = setup([{ id: "self" }], { download: true, upload: true }, { downloadMs: 1_000, uploadMs: 600_000 });
   h.start();
   await h.elapse(1_500);
-  // Each page gap opens an interval; past 128 the oldest, the download's, give way.
+  // Each page gap opens an interval. Past 128 the oldest, the download's, give way.
   for (let gap = 0; gap < 140; gap++) {
     h.clock.t += 2_000;
     await h.elapse(400);

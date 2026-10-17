@@ -1,20 +1,20 @@
-//! TCP dialing: the resolver's first family first, the other after a delay (RFC 8305), a timeout and keep-alive.
+//! Dials TCP with the resolver's first family first, the other after a delay (RFC 8305), a timeout and keep-alive.
 use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 
-/// A second under the client's 10 s control deadline, so a dial ends with its own error first.
+/// A dial ends a second under the client's 10 s control deadline, so it fails with its own error first.
 const TIMEOUT: Duration = Duration::from_secs(9);
-/// RFC 8305's recommended wait before the other address family joins.
+/// RFC 8305 recommends this wait before the other address family joins.
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
-/// The least share of the remaining time for each address in a family, so one dead address leaves time for others.
+/// Each address in a family gets at least this share of the time left, so one dead address leaves time for others.
 const MIN_SHARE: Duration = Duration::from_secs(2);
-/// Keep-alive idle time, probe interval and probe count: a dead peer shows within 3 min of idling.
+/// Keep-alive idle time, probe interval and probe count together show a dead peer within 3 min of idling.
 const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(30);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
 
-/// The addresses `host` names, without a lookup for an IP address.
+/// Resolves the addresses `host` names, skipping the lookup for an IP address.
 pub async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     match host {
         Host::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),
@@ -22,7 +22,7 @@ pub async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     }
 }
 
-/// A connection to an address of `host` within the timeout, which covers the lookup.
+/// Connects to an address of `host` within the timeout, which covers the lookup.
 pub(crate) async fn dial(host: &Host, port: u16) -> io::Result<TcpStream> {
     let deadline = Instant::now() + TIMEOUT;
     let dial = async {
@@ -37,13 +37,13 @@ pub(crate) async fn dial(host: &Host, port: u16) -> io::Result<TcpStream> {
         .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
 }
 
-/// The addresses of the first address's family, then the others, each in the resolver's order.
+/// Splits off the first address's family from the others, each in the resolver's order.
 fn families(addresses: Vec<SocketAddr>) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
     let first_v6 = addresses.first().is_some_and(SocketAddr::is_ipv6);
     addresses.into_iter().partition(|address| address.is_ipv6() == first_v6)
 }
 
-/// The primaries in turn, raced by fallbacks after the delay or on failure; with both failed, the primaries' error.
+/// Tries the primaries in turn, raced by fallbacks after the delay or on failure, and fails with the primaries' error.
 async fn parallel(primaries: &[SocketAddr], fallbacks: &[SocketAddr], deadline: Instant) -> io::Result<TcpStream> {
     if fallbacks.is_empty() {
         return serial(primaries, deadline).await;
@@ -66,7 +66,7 @@ async fn parallel(primaries: &[SocketAddr], fallbacks: &[SocketAddr], deadline: 
     fallback.await.map_err(|_| primary_error)
 }
 
-/// Each address in turn, each given its share of the time left; the first address's error if none connects.
+/// Tries each address in turn with its share of the time left, and fails with the first address's error.
 async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpStream> {
     let mut first = None;
     for (index, address) in addresses.iter().enumerate() {
@@ -85,13 +85,13 @@ async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpSt
     Err(first.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address resolved")))
 }
 
-/// An equal part of `left` for each of `addresses`, but at least `MIN_SHARE` while it lasts.
+/// Splits `left` equally among `addresses`, but gives at least `MIN_SHARE` while it lasts.
 fn share(left: Duration, addresses: usize) -> Duration {
     let equal = left / u32::try_from(addresses).unwrap_or(u32::MAX);
     equal.max(MIN_SHARE.min(left))
 }
 
-/// Probes an idle peer after 30 s, then every 15 s, nine times; a socket refusing the options still connects.
+/// Probes an idle peer after 30 s, then every 15 s, nine times. A socket refusing the options still connects.
 fn keep_alive(stream: &TcpStream) {
     let probes = socket2::TcpKeepalive::new().with_time(KEEP_ALIVE_IDLE);
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
@@ -131,7 +131,7 @@ mod tests {
         (listener, address)
     }
 
-    /// An address whose full accept queue drops new handshakes, so a connect to it hangs.
+    /// Binds an address whose full accept queue drops new handshakes, so a connect to it hangs.
     #[cfg(target_os = "linux")]
     fn silent() -> (socket2::Socket, std::net::TcpStream) {
         let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();

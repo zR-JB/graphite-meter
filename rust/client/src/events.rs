@@ -1,4 +1,4 @@
-//! What operations tell viewers as it happens, and the view report and interface reduce it to; sending never waits.
+//! Operations tell viewers these as they happen. The report and interface reduce them to the view. Sending never waits.
 use crate::{
     controller::Kind,
     measure::{latency::Summary, live::LiveRate},
@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 pub enum Event {
     /// A path check began, or a run's preparation.
     Checking(Kind),
-    /// The server catalog and the selected test servers with their paths, in catalog order.
+    /// Carries the server catalog and the selected test servers with their paths, in catalog order.
     Prepared {
         servers: Arc<[ServerPath]>,
         catalog: Arc<[ServerEntry]>,
@@ -26,7 +26,7 @@ pub enum Event {
     /// A server asks for sign-in until `SignInEnded`.
     SignIn(SignInPrompt),
     SignInEnded(SignInEnd),
-    /// The run's plan, its first latency server and its clock's origin.
+    /// Carries the run's plan, its first latency server and its clock's origin.
     RunStarted {
         plan: Vec<(Stage, Duration)>,
         focus: ServerId,
@@ -35,22 +35,22 @@ pub enum Event {
     StageStarted(StagePlan),
     /// The stage's measured window opened.
     Measuring(Stage),
-    /// A boundary's all-servers rates in bytes per second, `at` into the window; none restarts a direction.
+    /// Carries a boundary's all-servers rates in bytes per second, `at` into the window. None restarts a direction.
     Sample {
         at: Duration,
         rates: Dir<Option<f64>>,
     },
-    /// A server's probes resolved since the last tick that it sent within the window, in resolution order, and its
-    /// latency over the window so far.
+    /// Lists a server's probes resolved since the last tick that it sent within the window, in resolution order, and
+    /// its latency over the window so far.
     Probes {
         server: ServerId,
         probes: Box<[Probed]>,
         latency: Summary,
     },
-    /// A failure as it happens.
+    /// Reports a failure as it happens.
     ServerFailed(ServerFailure),
     StageFinished(StageResult),
-    /// The run ended `elapsed` after it began; `error` says why it never started.
+    /// The run ended `elapsed` after it began. `error` says why it never started.
     RunFinished {
         outcome: Outcome,
         error: Option<Failure>,
@@ -58,12 +58,12 @@ pub enum Event {
     },
 }
 
-/// What the sign-in screen shows.
+/// The sign-in screen shows this.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInPrompt {
-    /// The test server's name, or the server's origin.
+    /// Holds the test server's name, or the server's origin.
     pub issuer: String,
-    /// The approval page.
+    /// Links to the approval page.
     pub url: String,
     pub code: String,
     pub deadline: tokio::time::Instant,
@@ -77,7 +77,7 @@ pub enum SignInEnd {
     Canceled,
 }
 
-/// The sending side of the events.
+/// Sends the events.
 #[derive(Debug, Clone)]
 pub struct Events(mpsc::UnboundedSender<Event>);
 
@@ -87,18 +87,18 @@ impl Events {
         (Self(sender), receiver)
     }
 
-    /// Sends `event`; a viewer that left misses it.
+    /// Sends `event`. A viewer that left misses it.
     pub fn send(&self, event: Event) {
         let _ = self.0.send(event);
     }
 }
 
-/// The most points a series keeps; at the limit every pair merges and the step doubles.
+/// A series keeps at most this many points. At the limit every pair merges and the step doubles.
 const POINTS: usize = 480;
-/// The shortest spacing of points.
+/// Points are spaced at least this far apart.
 const STEP: Duration = Duration::from_millis(50);
 
-/// A trace over the plan's measured time, keeping its planned span; nearby values merge into peak-keeping means.
+/// Traces the plan's measured time and keeps its planned span. Nearby values merge into peak-keeping means.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
     pub points: Vec<Point>,
@@ -106,7 +106,7 @@ pub struct Series {
     pub span: Duration,
 }
 
-/// A probe sent `at` into the window: its round trip, or none for a timeout.
+/// A probe sent `at` into the window took this round trip, or none for a timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Probed {
     pub at: Duration,
@@ -116,12 +116,12 @@ pub struct Probed {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub at: Duration,
-    /// The mean of the merged values; none for a gap.
+    /// Averages the merged values, none for a gap.
     pub value: Option<f64>,
-    /// The merged values' lowest and highest.
+    /// The merged values ran from this low to this peak.
     pub low: f64,
     pub peak: f64,
-    /// How many values merged into it.
+    /// Counts the values merged into it.
     pub count: u32,
 }
 
@@ -130,7 +130,7 @@ impl Series {
         Self { points: Vec::new(), step: STEP, span }
     }
 
-    /// Adds `value` at `at`; none breaks the trace.
+    /// Adds `value` at `at`. None breaks the trace.
     pub fn push(&mut self, at: Duration, value: Option<f64>) {
         if let (Some(last), Some(value)) = (self.points.last_mut(), value)
             && let Some(mean) = last.value.filter(|_| at.saturating_sub(last.at) < self.step)
@@ -147,7 +147,7 @@ impl Series {
         self.points.push(Point { at, value, low: peak, peak, count: 1 });
     }
 
-    /// Merges each pair of points in place; a gap absorbs its pair.
+    /// Merges each pair of points in place. A gap absorbs its pair.
     fn coarsen(&mut self) {
         let kept = self.points.len().div_ceil(2);
         for index in 0..kept {
@@ -170,19 +170,19 @@ impl Series {
     }
 }
 
-/// What the operations so far showed.
+/// Holds what the operations so far showed.
 #[derive(Debug, Clone, Default)]
 pub struct View {
     pub check: Check,
     pub sign_in: Option<SignInPrompt>,
-    /// The latest preparation's test servers and server catalog.
+    /// Holds the latest preparation's test servers and server catalog.
     pub servers: Arc<[ServerPath]>,
     pub catalog: Arc<[ServerEntry]>,
-    /// The run shown: the latest that started, kept while the next one checks its paths.
+    /// Shows the latest run that started, kept while the next one checks its paths.
     pub run: Option<Run>,
-    /// Whether a run checks its paths and has not started yet.
+    /// Set while a run checks its paths and has not started yet.
     pub starting: bool,
-    /// A run that ended before it started, while an earlier one stays shown.
+    /// Holds a run that ended before it started, while an earlier one stays shown.
     pub refused: Option<Run>,
 }
 
@@ -197,7 +197,7 @@ pub enum Check {
     SignIn,
 }
 
-/// A stage in progress: warming up, or measuring from its window's offset into the plan.
+/// A stage in progress warms up, or measures from its window's offset into the plan.
 #[derive(Debug, Clone)]
 pub enum Running {
     Warmup(StagePlan),
@@ -218,32 +218,32 @@ impl Running {
     }
 }
 
-/// A run from its preparation on.
+/// Follows a run from its preparation on.
 #[derive(Debug, Clone, Default)]
 pub struct Run {
     pub plan: Vec<(Stage, Duration)>,
-    /// The run's clock origin once it started.
+    /// Set to the run's clock origin once it started.
     pub at: Option<Instant>,
-    /// The latency server: the first selected one, or a survivor that measured latency once it left.
+    /// The latency server is the first selected one, or a survivor that measured latency once it left.
     pub focus: Option<ServerId>,
-    /// The stage in progress.
+    /// Set while a stage is in progress.
     pub stage: Option<Running>,
-    /// Each direction's presented rate, as the browser estimates it from the samples.
+    /// Estimates each direction's presented rate from the samples, as the browser does.
     pub live: Dir<LiveRate>,
-    /// The latest sample's offset into the window.
+    /// The latest sample fell this far into the window.
     sampled: Duration,
     /// Presented rates in bytes per second.
     pub throughput: Dir<Series>,
-    /// The highest combined rate presented or measured, in bytes per second; scales only grow during a run.
+    /// Holds the highest combined rate presented or measured, in bytes per second. Scales only grow during a run.
     pub peak: f64,
-    /// The bytes moved so far: the finished stages' counts, and the running one's samples.
+    /// Counts the bytes moved so far, from the finished stages' counts and the running one's samples.
     pub moved: f64,
     /// Round trips in milliseconds per probed server.
     pub rtt: Vec<(ServerId, Series)>,
-    /// Each server's latency in each stage while it runs.
+    /// Tracks each server's latency in each stage while it runs.
     pub latency: Vec<(Stage, ServerId, Summary)>,
     pub results: Vec<StageResult>,
-    /// Every failure with its stage, a finished stage's as its result records them.
+    /// Lists every failure with its stage, a finished stage's as its result records them.
     pub issues: Vec<(Stage, ServerFailure)>,
     pub outcome: Option<Outcome>,
     pub error: Option<Failure>,
@@ -251,12 +251,12 @@ pub struct Run {
 }
 
 impl View {
-    /// The run that ended last: one refused at its start, else the one shown.
+    /// The run that ended last is one refused at its start, else the one shown.
     pub fn latest(&self) -> Option<&Run> {
         self.refused.as_ref().or(self.run.as_ref())
     }
 
-    /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
+    /// Tells whether `server` is still in the run, in its latest stage without leaving, or prepared before any.
     pub fn remains(&self, server: &ServerId) -> bool {
         let results = self.run.iter().flat_map(|run| run.results.iter().rev());
         let mut own = results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
@@ -314,7 +314,7 @@ impl Run {
         }
     }
 
-    /// The run's events from its start to its end.
+    /// Applies the run's events from its start to its end.
     fn apply(&mut self, event: &Event) {
         match event {
             Event::StageStarted(plan) => {

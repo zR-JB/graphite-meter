@@ -1,5 +1,5 @@
-// Hash routes and the browser history behind them: a surface the app opened closes by stepping back, one reached by
-// a link by replacing. The Details panel's route is `endpoint`, which saved links use.
+// Owns hash routes and the browser history behind them. A surface the app opened closes by stepping back, one
+// reached by a link by replacing. The Details panel's route is `endpoint`, which saved links use.
 
 export type Panel = "settings" | "details";
 export type Workspace = { kind: "measurement" } | { kind: "history"; id: string | null };
@@ -47,7 +47,7 @@ export function parseRoute(hash: string): Route {
   return { kind: "not-found" };
 }
 
-/** The canonical hash: the shortest path form a single surface has, else a path with a query. */
+/** Writes the canonical hash, the shortest path form a single surface has, else a path with a query. */
 export function serializeRoute(route: Route): string {
   if (route.kind === "not-found") return "#/not-found";
   const { workspace, panels, legal } = route;
@@ -73,7 +73,7 @@ export function serializeRoute(route: Route): string {
 const app = (route: Route) => (route.kind === "app" ? route : (appRoute() as Extract<Route, { kind: "app" }>));
 export const withWorkspace = (route: Route, workspace: Workspace) =>
   appRoute(workspace, app(route).panels, app(route).legal);
-/** The panel moves to the end: the end is the last opened. */
+/** The panel moves to the end, which holds the last opened. */
 export const openPanel = (route: Route, panel: Panel) =>
   appRoute(app(route).workspace, [...app(route).panels.filter((each) => each !== panel), panel], app(route).legal);
 export const closePanel = (route: Route, panel: Panel) =>
@@ -92,7 +92,7 @@ export const fitPanels = (route: Route, multiple: boolean): Route =>
 
 interface Marker {
   graphiteRoute: boolean;
-  /** The hash this entry was pushed from. */
+  /** Names the hash this entry was pushed from. */
   parent?: string;
 }
 
@@ -101,15 +101,15 @@ export interface Navigator {
   push(next: Route): void;
   /** Rewrites the current entry, keeping where it was pushed from. */
   replace(next: Route): void;
-  /** Closes a surface: back to the entry it was opened from, else a replace. */
+  /** Closes a surface by stepping back to the entry it was opened from, else by a replace. */
   close(next: Route): void;
-  /** Applies the location the page loaded with; `refit` re-applies the panel rule when the layout changes. */
+  /** Applies the location the page loaded with. `refit` re-applies the panel rule when the layout changes. */
   start(): void;
   refit(): void;
   dispose(): void;
 }
 
-/** Owns the URL. `commit` renders a route in the frame of the input that asked for it; `fromHistory` marks the
+/** Owns the URL. `commit` renders a route in the frame of the input that asked for it, and `fromHistory` marks the
     browser's own navigations (Back, Forward, links, the first load). */
 export function createNavigator(env: {
   location: Pick<Location, "hash">;
@@ -130,7 +130,7 @@ export function createNavigator(env: {
   };
   const fit = (route: Route) => fitPanels(route, env.multiple());
 
-  // The parent is the entry being left: the URL still names it while its route already rendered.
+  // The parent is the entry being left, which the URL still names while its route already rendered.
   const write = (route: Route, replace: boolean) => {
     const hash = serializeRoute(route);
     if (replace) history.replaceState(marker(), "", hash);

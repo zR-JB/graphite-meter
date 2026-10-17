@@ -23,7 +23,7 @@ test("the coordinated throughput the terminal client shares", async () => {
       aggregate.observe({ atMs: boundary.atMs, down: boundary.down, up }, boundary.final);
       for (const [id, seen] of Object.entries<any>(boundary.observedUp ?? {}))
         aggregate.credit(id, { id: seen.id, bytes: seen.maximum });
-      // The browser credits downloads as lanes report them; the vectors credit a counter's new high-water mark.
+      // The browser credits downloads as lanes report them. The vectors credit a counter's new high-water mark.
       for (const [id, bytes] of Object.entries<number>(boundary.down)) {
         const high = downloaded.get(id) ?? bytes;
         aggregate.addDownload(vector.stage, id, bytes - high);
@@ -75,7 +75,7 @@ test("a steady window too short on one direction's clock gives way to the full w
   at(0, 0, 0, 0);
   at(1_000, 1_000, 1_000, 1_000);
   aggregate.trackStable(0.9);
-  // From the steady boundary on, the receiver's clock runs only 500 ms: too short to stand alone.
+  // From the steady boundary on, the receiver's clock runs only 500 ms, which is too short to stand alone.
   at(2_000, 3_000, 1_500, 1_500);
   const { down, up } = aggregate.settle("bidirectional", true);
   expect([down?.result.reportedBytesPerSec, up?.result.reportedBytesPerSec]).toEqual([1_500, 1_000]);
@@ -92,8 +92,8 @@ test("a stage's coverage counts from its first interval after the interval limit
 });
 
 test("a stage's stability is of its 250 ms rates however long it runs", () => {
-  // A link alternating between nothing and twice its mean every 250 ms: no stability, before and after the rates
-  // kept for drawing merge at 4,096 buckets.
+  // A link alternates between nothing and twice its mean every 250 ms and shows no stability, both before and after
+  // the rates kept for drawing merge at 4,096 buckets.
   for (const buckets of [4_094, 4_096, 8_192]) {
     const aggregate = new Aggregate();
     aggregate.begin("download", ["a"], 0);
@@ -135,7 +135,7 @@ test("a stage keeps its result when every interval the log still holds measured 
   aggregate.begin("download", ["a"], 0);
   aggregate.observe({ atMs: 0, down: { a: 0 }, up: {} });
   aggregate.observe({ atMs: 2_000, down: { a: 2_000 }, up: {} });
-  // Then only resumed intervals too short to report, more than the log keeps.
+  // Only resumed intervals too short to report follow, and more of them than the log keeps.
   for (let i = 0; i < 130; i++) {
     const at = 2_000 + i * 100;
     aggregate.begin("download", ["a"], at, "evidence-resumed");
@@ -147,7 +147,7 @@ test("a stage keeps its result when every interval the log still holds measured 
 });
 
 test("a steady stretch after a burst reads the stability of its own rates", () => {
-  // One very fast bucket, then a tail 0.05% either side of its mean: the steady window is the tail alone.
+  // One very fast bucket precedes a tail 0.05% either side of its mean, so the steady window is the tail alone.
   for (const burst of [1e8, 1e9, 8e9])
     for (const low of [4, 4_000, 40_000]) {
       const rates = [burst, ...Array.from({ length: 40 }, (_, i) => low + (i % 2 ? low * 0.001 : 0))];

@@ -1,13 +1,13 @@
-//! The fixed routes both binaries share (`api/routes.txt`).
+//! Lists the fixed routes both binaries share (`api/routes.txt`).
 
 table! {
-    /// The transport that reaches a route.
+    /// Names the transport that reaches a route.
     pub enum Kind {
         name.0: &'static str,
     } {
         Http => ("http",),
         WebSocket => ("ws",),
-        /// An HTTP/3 extended-CONNECT session.
+        /// An HTTP/3 extended-CONNECT session reaches the route.
         WebTransport => ("wt",),
     }
 }
@@ -17,12 +17,12 @@ const POST: &[&str] = &["POST"];
 const CONNECT: &[&str] = &["CONNECT"];
 
 table! {
-    /// A route: its key, the exact path it is mounted at, its transport and the methods it dispatches.
+    /// Describes a route by its key, the exact path it is mounted at, its transport and the methods it dispatches.
     pub enum Route {
         name.0: &'static str,
         path.1: &'static str,
         kind.2: Kind,
-        /// The methods the route dispatches; the router answers HEAD and OPTIONS itself, never as a CORS grant.
+        /// The route dispatches these methods. The router answers HEAD and OPTIONS itself, never as a CORS grant.
         methods.3: &'static [&'static str],
     } {
         Preflight => ("preflight", "/preflight", Kind::Http, GET),

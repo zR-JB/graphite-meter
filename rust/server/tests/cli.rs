@@ -22,7 +22,7 @@ fn text(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).unwrap()
 }
 
-/// A serving server with `env` and its log's messages.
+/// Starts a serving server with `env` and reads its log's messages.
 #[cfg(unix)]
 fn serving(env: &[(&str, &str)]) -> (std::process::Child, impl Iterator<Item = String> + Send + use<>) {
     use std::io::{BufRead, BufReader};
@@ -44,7 +44,7 @@ fn terminate(mut child: std::process::Child) {
     assert!(child.wait().unwrap().success());
 }
 
-/// The level, topic and message of a plain log line after its RFC 3339 UTC time.
+/// Splits a plain log line into level, topic and message after its RFC 3339 UTC time.
 fn logged(line: &str) -> (&str, &str, &str) {
     let (stamp, rest) = line.split_once(' ').unwrap();
     let shape: String = stamp
@@ -132,7 +132,7 @@ fn help_prints_the_usage_and_exits_zero() {
     assert!(text(&output.stderr).starts_with("unknown option --nope\nUsage: "));
 }
 
-/// A verbose throughput line's message, checked for its shape, with its transfer count.
+/// Checks a verbose throughput line's message for its shape and reads its transfer count.
 fn transfers(message: &str) -> usize {
     let fields: Vec<_> = message.split(" · ").collect();
     let decimal = |field: &str| {

@@ -1,4 +1,4 @@
-// Every measurement route the browser reaches, as api/routes.txt pins them.
+// Lists every measurement route the browser reaches, as api/routes.txt pins them.
 export const ROUTES = {
   servers: "/servers",
   preflight: "/preflight",

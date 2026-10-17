@@ -1,4 +1,4 @@
-//! Transport-neutral measurement work: download payloads, the latency reflector, upload aggregates and feeds.
+//! Serves download payloads, the latency reflector, upload aggregates and feeds, independent of the transport.
 
 pub mod download;
 pub mod uploads;
@@ -25,7 +25,7 @@ use std::{
 use tokio::time::{Instant, sleep_until};
 use uploads::{Aggregate, Phase};
 
-/// One direction's counts while verbose logs are on; clones share them.
+/// A meter counts one direction while verbose logs are on. Clones share the counts.
 #[derive(Debug, Clone, Default)]
 pub struct Meter(Option<Arc<Counts>>);
 
@@ -35,17 +35,17 @@ struct Counts {
     transfers: AtomicUsize,
 }
 
-/// A running transfer, counted until dropped.
+/// A running transfer is counted until dropped.
 #[derive(Debug)]
 pub struct Transfer(Arc<Counts>);
 
 impl Meter {
-    /// A meter that counts only when `enabled`.
+    /// Makes a meter that counts only when `enabled`.
     pub fn new(enabled: bool) -> Self {
         Self(enabled.then(Arc::default))
     }
 
-    /// A running transfer, one per lane, which the lane's streams share.
+    /// Opens a running transfer, one per lane, which the lane's streams share.
     #[must_use = "dropping it ends the transfer"]
     pub fn open(&self) -> Option<Arc<Transfer>> {
         let counts = self.0.as_ref()?;
@@ -53,7 +53,7 @@ impl Meter {
         Some(Arc::new(Transfer(counts.clone())))
     }
 
-    /// The window's line, e.g. `1.20 Gbit/s · 2 transfers · 150.00 MB in 1.0 s`; none if idle.
+    /// Writes the window's line, e.g. `1.20 Gbit/s · 2 transfers · 150.00 MB in 1.0 s`, or none if idle.
     pub fn line(&self, window: Duration) -> Option<String> {
         let counts = self.0.as_ref()?;
         let bytes = counts.bytes.swap(0, Ordering::Relaxed);
@@ -80,14 +80,15 @@ impl Drop for Transfer {
     }
 }
 
-/// The PONG for a bus message received at `received` (`api/wire.md#reflector-handling-time`); `None` if malformed.
+/// Builds the PONG for a bus message received at `received` (`api/wire.md#reflector-handling-time`). A malformed
+/// message gives `None`.
 pub fn reflect(message: &[u8], received: std::time::Instant) -> Option<String> {
     let ping = Ping::decode(message)?;
     let handling = u64::try_from(received.elapsed().as_nanos()).unwrap_or(u64::MAX);
     Some(ping.reply(handling).encode())
 }
 
-/// A joined data lane; dropping it leaves the aggregate, which may then complete.
+/// A sink is a joined data lane. Dropping it leaves the aggregate, which may then complete.
 #[must_use = "dropping it leaves the aggregate"]
 pub struct UploadSink {
     aggregate: Arc<Aggregate>,
@@ -114,12 +115,11 @@ impl UploadSink {
         }
     }
 
-    /// The bytes this lane received.
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
 
-    /// Completes once the upload is finalized or expired: the end of a lane without a stream FIN.
+    /// Completes once the upload is finalized or expired, which ends a lane without a stream FIN.
     pub fn finished(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         let aggregate = self.aggregate.clone();
         async move {
@@ -146,7 +146,7 @@ pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// A blank line follows this long after the feed's last line.
 pub const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
 
-/// One reader's lines (`api/upload.md#progress-records`), from `ready` to `complete` or an `error`, on any transport.
+/// Feeds a reader lines (`api/upload.md#progress-records`), from `ready` to `complete` or an `error`, on any transport.
 pub struct ProgressFeed {
     uploads: Uploads,
     aggregate: Arc<Aggregate>,
@@ -157,7 +157,7 @@ pub struct ProgressFeed {
     last_line: Instant,
 }
 
-/// What the aggregate's state calls for.
+/// The aggregate's state calls for one of these.
 enum Step {
     Wait,
     Line(Record),
@@ -179,7 +179,7 @@ impl ProgressFeed {
         }
     }
 
-    /// The next line, a record or a heartbeat; `None` once the feed ended or a newer reader replaced it.
+    /// Yields the next line, a record or a heartbeat. `None` means the feed ended or a newer reader replaced it.
     pub async fn next(&mut self) -> Option<Bytes> {
         let aggregate = self.aggregate.clone();
         let mut ticked = false;

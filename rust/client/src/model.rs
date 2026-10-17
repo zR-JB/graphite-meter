@@ -1,4 +1,4 @@
-//! The crate's vocabulary: stages, directions, cadences, failures, stage results and the run's outcome.
+//! Defines the crate's vocabulary, from stages, directions and cadences to failures, stage results and a run's outcome.
 
 use crate::measure::{aggregate::Rate, latency::Population};
 use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
@@ -8,11 +8,11 @@ use std::{
 };
 
 graphite_meter_proto::table! {
-    /// A measured stage; runs take them in this order.
+    /// A run measures these stages in this order.
     #[derive(PartialOrd, Ord)]
     pub enum Stage {
         name.0: &'static str,
-        /// The directions the stage moves bytes in; none for latency.
+        /// The stage moves bytes in these directions, none for latency.
         directions.1: &'static [Direction],
     } {
         Latency => ("latency", &[]),
@@ -38,7 +38,7 @@ impl Direction {
     pub const BOTH: [Self; 2] = [Self::Down, Self::Up];
 }
 
-/// One value per direction.
+/// Holds one value per direction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Dir<T> {
     pub down: T,
@@ -71,14 +71,14 @@ impl<T> IndexMut<Direction> for Dir<T> {
     }
 }
 
-/// When a prober sends: on each reply, or start to start at a fixed spacing.
+/// A prober sends on each reply, or start to start at a fixed spacing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cadence {
     ReplyDriven,
     Every(Duration),
 }
 
-/// Why a server's stage or path failed, decided where the failure arose.
+/// Says why a server's stage or path failed, decided where the failure arose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub reason: FailureReason,
@@ -91,7 +91,7 @@ impl Failure {
     }
 }
 
-/// What a failure ends: a server's path, its throughput or its latency population.
+/// A failure ends a server's path, its throughput or its latency population.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Scope {
     Server,
@@ -99,7 +99,7 @@ pub enum Scope {
     Latency,
 }
 
-/// A direction's lanes: moving, retrying a failure, or failed for good.
+/// A direction's lanes are moving, retrying a failure, or failed for good.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaneHealth {
     Ok,
@@ -107,7 +107,7 @@ pub enum LaneHealth {
     Failed(Failure),
 }
 
-/// A failure as a stage recorded it.
+/// Holds a failure as a stage recorded it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerFailure {
     pub server: ServerId,
@@ -116,35 +116,35 @@ pub struct ServerFailure {
     pub at: Instant,
 }
 
-/// A direction's headline, if any, and its unique measured bytes.
+/// Holds a direction's headline, if any, and its unique measured bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Throughput {
     pub rate: Option<Rate>,
     pub bytes: u64,
 }
 
-/// One server's share of a stage.
+/// Holds one server's share of a stage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerResult {
     pub server: ServerId,
     /// The server left the run in this stage.
     pub left: bool,
-    /// Per direction the stage moves.
+    /// Set for each direction the stage moves.
     pub throughput: Dir<Option<Throughput>>,
-    /// When the stage probed this server.
+    /// Set when the stage probed this server.
     pub latency: Option<Population>,
 }
 
-/// What a stage measured.
+/// Holds what a stage measured.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StageResult {
     pub stage: Stage,
-    /// The measured window's length; zero when it never opened.
+    /// The measured window lasted this long, zero when it never opened.
     pub measured: Duration,
     pub stopped: bool,
-    /// All servers' headline per direction the stage moves, once its window opened.
+    /// Holds all servers' headline per direction the stage moves, once its window opened.
     pub throughput: Dir<Option<Throughput>>,
-    /// Every server that began the stage, in selection order.
+    /// Lists every server that began the stage, in selection order.
     pub servers: Vec<ServerResult>,
     pub failures: Vec<ServerFailure>,
 }
@@ -158,7 +158,7 @@ pub enum StageStatus {
 }
 
 impl StageResult {
-    /// The measured mean rate in bytes per second, its directions added.
+    /// Adds the directions' measured mean rates, in bytes per second.
     pub fn mean(&self) -> f64 {
         let directions = [self.throughput.down, self.throughput.up].into_iter().flatten();
         directions.filter_map(|throughput| Some(throughput.rate?.mean)).sum()
@@ -179,7 +179,7 @@ impl StageResult {
     }
 }
 
-/// The run's latency server: the first selected one while it stays, else the first survivor with a latency median.
+/// The run's latency server is the first selected one while it stays, else the first survivor with a latency median.
 pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     let first = &results.first()?.servers.first()?.server;
     let mut survivors = results.last()?.servers.iter().filter(|server| !server.left);
@@ -194,7 +194,7 @@ pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     survivors.find(measured).map(|server| server.server.clone())
 }
 
-/// How a run ended.
+/// A run ends in one of these ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// Every planned stage finished with every server.
@@ -209,7 +209,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// From the stage results; the first carries the failures of selected servers that never began a stage.
+    /// Judges the stage results. The first carries the failures of selected servers that never began a stage.
     pub fn of(results: &[StageResult], plan: &[Stage]) -> Self {
         let focus = focus(results);
         let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();

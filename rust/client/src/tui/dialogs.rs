@@ -1,4 +1,4 @@
-//! The server chooser, and the sign-in prompt's keys and the browser it opens.
+//! Runs the server chooser, the sign-in prompt's keys and the browser it opens.
 use super::{App, Effect, Overlay, Target, frame::Entry, keys::Action, keys::Key};
 use crate::{
     controller::Command,
@@ -8,7 +8,7 @@ use crate::{
 use graphite_meter_proto::catalog::{MAX_SELECTED, ServerId};
 use std::{process::Stdio, time::Instant};
 
-/// The chooser's focused catalog entry and the test servers it would select; none takes the default ones.
+/// The chooser focuses a catalog entry and drafts the test servers it would select. None takes the default ones.
 pub struct Chooser {
     row: usize,
     draft: Vec<ServerId>,
@@ -63,7 +63,7 @@ impl App {
         }
     }
 
-    /// A click on entry `index`: focuses it and selects or deselects it.
+    /// A click on entry `index` focuses it and selects or deselects it.
     pub(super) fn click_entry(&mut self, index: usize) {
         if let Overlay::Chooser(chooser) = &mut self.overlay {
             chooser.row = index;
@@ -90,7 +90,7 @@ impl App {
         format!("Test servers · {} selected", chooser.draft.len())
     }
 
-    /// The catalog as the chooser's entries, each with its address and readiness, and the focused one's index.
+    /// Lists the catalog as the chooser's entries, each with its address and readiness, and the focused one's index.
     pub(super) fn chooser_entries(&self) -> (Vec<Entry>, usize) {
         let Overlay::Chooser(chooser) = &self.overlay else { return (Vec::new(), 0) };
         let palette = &self.palette;
@@ -116,7 +116,7 @@ impl App {
     }
 }
 
-/// The sign-in prompt's arrival and whether its page was opened.
+/// Records the sign-in prompt's arrival and whether its page was opened.
 pub struct SignIn {
     pub(super) since: Instant,
     pub(super) opened: bool,

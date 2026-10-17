@@ -18,7 +18,7 @@ const moveMouse = (page: Page, x: number, y: number) => page.hover(x, y);
 
 type Point = { x: number; y: number };
 
-// A hand crossing at a normal speed: 12 px a step, a step every 16 ms or so.
+// A hand crosses at a normal speed, 12 px a step and a step every 16 ms or so.
 async function sweep(page: Page, from: Point, to: Point) {
   const steps = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 12);
   for (let step = 1; step <= steps; step++) {
@@ -38,7 +38,7 @@ test("a pause on a control opens its tip while the hand drifts, and leaving clos
   await open(page, home.http);
   const settings = page.getByRole("button", { name: "Settings", exact: true });
   const { x, y } = await centre(settings);
-  // A reading hand never holds still: the tip must open while it drifts a few pixels every step. A busy runner's
+  // A reading hand never holds still, so the tip must open while it drifts a few pixels every step. A busy runner's
   // timers fire late, so the hand drifts for a while rather than a number of steps.
   let opened = false;
   const until = performance.now() + 5_000;
@@ -67,7 +67,7 @@ test("a hand sweeping across tips opens none, even just after one showed, and a 
     }).observe(document.body, { childList: true });
   });
   const opened = () => page.evaluate<string[]>(() => (window as any).opened);
-  // History, Theme and Details sit side by side; the sweep starts and ends off them.
+  // History, Theme and Details sit side by side, and the sweep starts and ends off them.
   const left = { x: history.x - 80, y: history.y };
   const right = { x: details.x + 20, y: details.y };
   await sweep(page, left, right);
@@ -136,7 +136,7 @@ test.chrome("a touch screen with a keyboard names the keys in the strip and in t
 test.chrome("a finger's card terms are 24 px targets on a phone, and cards keep their layout", async (page) => {
   await open(page, home.http);
   await run(page);
-  // Where each card's labels and figures sit, by their text.
+  // Reads where each card's labels and figures sit, by their text.
   const layout = () =>
     page.locator(".results .card .facts").all((lists: HTMLElement[]) =>
       lists.flatMap((list) =>
@@ -148,7 +148,7 @@ test.chrome("a finger's card terms are 24 px targets on a phone, and cards keep 
         }),
       ),
     );
-  // Wide cards stack their facts 22 px apart; a phone's wrap them in columns.
+  // Wide cards stack their facts 22 px apart. A phone's wrap them in columns.
   for (const width of [1000, 390]) {
     await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
     await page.setViewportSize({ width, height: 900 });
@@ -194,7 +194,7 @@ test.chrome(
     await page.touch("start", from.x, from.y);
     for (let step = 1; step <= 8; step++) await page.touch("move", from.x, from.y - step * 20);
     await page.touch("end");
-    // The swipe flings on after the finger lifts; a drag begun mid-fling lands on moving content.
+    // The swipe flings on after the finger lifts, and a drag begun mid-fling lands on moving content.
     await expect
       .poll(() => page.evaluate(() => (window as any).restedAt ?? -1))
       .toBeGreaterThan(Math.max(before, scrolled));
@@ -286,7 +286,7 @@ test.chrome(
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(sheet).toHaveCount(1);
     await page.evaluate(settled);
-    // Whichever box scrolls in this layout, scrolled from its top, once the content is long enough to hold it.
+    // Whichever box scrolls in this layout gets scrolled from its top, once the content is long enough to hold it.
     await expect
       .poll(() =>
         sheet.evaluate((dialog: HTMLElement) => {
@@ -316,7 +316,7 @@ test.chrome("a pinch on a phone's sheet zooms the page and leaves the sheet open
   let clock = Date.now();
   const touch = (type: string, points: { x: number; y: number; id: number }[]) =>
     page.cdp("Input.dispatchTouchEvent", { type, timestamp: (clock += 8) / 1000, touchPoints: points });
-  // In the sheet's content: the lower finger first, then the upper, then they spread apart.
+  // The lower finger lands first in the sheet's content, then the upper, then they spread apart.
   await touch("touchStart", [{ x: 90, y: 600, id: 0 }]);
   await touch("touchStart", [
     { x: 90, y: 600, id: 0 },
@@ -386,7 +386,7 @@ test.chrome("a phone's top bar keeps every key in view, with a live run seen fro
 });
 
 test("the diagnostic report copies on a page without the Clipboard API, and says when it cannot", async (page) => {
-  // As on a plain-HTTP page: no Clipboard API; the copy command's selection is recorded, or refused on request.
+  // The page has no Clipboard API, as on plain HTTP. The copy command's selection is recorded, or refused on request.
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, "clipboard", { get: () => undefined, configurable: true });
     const state = { copied: "", refuse: false };
@@ -402,7 +402,7 @@ test("the diagnostic report copies on a page without the Clipboard API, and says
   await open(page, home.http);
   await page.getByRole("button", { name: "Details", exact: true }).click();
   const copy = page.getByRole("button", { name: /^Copy diagnostic report/ });
-  // The labels share one cell; the one shown is the one not hidden.
+  // The labels share one cell, and the one shown is the one not hidden.
   const shown = () =>
     copy.evaluate((button: Element) => button.querySelector(":scope > span:not(.hidden)")?.textContent?.trim());
   await copy.click();

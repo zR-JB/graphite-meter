@@ -1,5 +1,5 @@
-// One saved result as the console showed it: the console's cards and latency lanes in the result's own unit tier, then
-// each server, how it was reached, its probe outcomes and the builds that measured it.
+// Shows one saved result as the console showed it, with the cards and latency lanes in the result's own unit tier,
+// then each server, how it was reached, its probe outcomes and the builds that measured it.
 import type { App } from "../../app/app";
 import type { HistoryRecord } from "../../app/history/records";
 import type { LatencySummary } from "../../engine/measure/latency";
@@ -41,7 +41,7 @@ const PROBES_TIP =
 const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
 const CLOSE_TIP = "Close result (Esc)\n↑ ↓ open the result above or below";
 
-/** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. A version left to
+/** Names the mechanism that carried a role, and the HTTP version each side saw when they differ. A version left to
     negotiation that the browser did not report is not named. */
 function path(role: Role, transport: string, protocol?: string, browserProtocol?: string) {
   const observed = browserProtocol && httpVersionLabel(browserProtocol);
@@ -56,7 +56,7 @@ function path(role: Role, transport: string, protocol?: string, browserProtocol?
 }
 const UNMEASURED = { value: "Not measured", aside: "" };
 
-/** Replies, then what else became of the probes; older records may not know their timeouts. */
+/** Counts replies, then what else became of the probes. Older records may not know their timeouts. */
 function probeCounts(summary: LatencySummary): { shown: string; spoken: string } {
   const { probeCount, timeoutCount, unresolvedCount, sendFailureCount } = summary;
   const known = timeoutCount != null;
@@ -94,7 +94,7 @@ export function ResultDetail(props: {
   const multiple = run.selection.length > 1;
   /** "" shows every server together; each result opens on all of them. */
   const lens = signal("");
-  // One tier for the whole result, the one its own results set, as the console read it when it finished.
+  // The whole result reads in one tier, the one its own results set, as the console read it when it finished.
   const units = computed(() => {
     const base = app.preferences.unitBase();
     const kind = app.preferences.unitKind();

@@ -1,5 +1,5 @@
-// The browsers the suite drives: Chrome for Testing through Bun's WebView (CDP), and Firefox through WebDriver
-// BiDi. GM_E2E_BROWSER picks one; a page sees only the Driver both share.
+// The suite drives Chrome for Testing through Bun's WebView (CDP) and Firefox through WebDriver BiDi. GM_E2E_BROWSER
+// picks one, and a page sees only the Driver both share.
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 export const browser: "chrome" | "firefox" = process.env.GM_E2E_BROWSER === "firefox" ? "firefox" : "chrome";
 
 export interface Driver {
-  /** Evaluates an expression, awaiting a promise; the value comes back as JSON. */
+  /** Evaluates an expression, awaiting a promise. The value comes back as JSON. */
   evaluate<T>(source: string): Promise<T>;
   navigate(url: string): Promise<void>;
   reload(): Promise<void>;
@@ -15,18 +15,18 @@ export interface Driver {
   click(x: number, y: number): Promise<void>;
   hover(x: number, y: number): Promise<void>;
   press(key: string): Promise<void>;
-  /** One finger: down at a point, moved, then lifted. */
+  /** Drives one finger, which goes down at a point, moves, then lifts. */
   touch(phase: "start" | "move" | "end", x: number, y: number): Promise<void>;
   resize(width: number, height: number): Promise<void>;
   /** Runs before any page script in every document the view loads. */
   addInitScript(source: string): Promise<void>;
   /** Forgets cookies and the origins' local storage and IndexedDB, as a new visitor. */
   clearStorage(origins: string[]): Promise<void>;
-  /** Fails requests whose URL matches a `*` pattern; an empty list stops blocking. */
+  /** Fails requests whose URL matches a `*` pattern. An empty list stops blocking. */
   blockRequests(patterns: string[]): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   close(): Promise<void>;
-  /** Chrome DevTools Protocol; Firefox has none. */
+  /** Sends a Chrome DevTools Protocol command. Firefox has none. */
   cdp?<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
   onCdp?(event: string, listener: (event: unknown) => void): void;
 }
@@ -42,7 +42,7 @@ export async function openDriver(events: DriverEvents): Promise<Driver> {
   return browser === "firefox" ? firefoxDriver(events) : chromeDriver(events);
 }
 
-// Bun never removes the temp profile of the Chrome it spawns; this process's live Chrome names it (Linux /proc).
+// Bun never removes the temp profile of the Chrome it spawns. This process's live Chrome names it (Linux /proc).
 function removeProfiles() {
   const tasks = `/proc/${process.pid}/task`;
   const profiles: string[] = [];
@@ -61,9 +61,8 @@ function removeProfiles() {
       if (dirname(dir) === tmpdir()) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
     } catch {}
 }
-// Chrome is shared across files in this process. File-scoped afterAll cleanup
-// can kill the next file's first view while it starts. Only shut down at exit;
-// the fleet wrapper also owns worker profiles through its temporary directory.
+// Chrome is shared across files in this process, and a file-scoped afterAll cleanup can kill the next file's first view
+// while it starts. Only exit shuts it down. The fleet wrapper also owns worker profiles through its temp directory.
 if (browser === "chrome") process.on("exit", removeProfiles);
 
 async function chromeDriver(events: DriverEvents): Promise<Driver> {
@@ -123,7 +122,7 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
   };
 }
 
-// WebDriver's names for the keys the suite presses.
+// These are WebDriver's names for the keys the suite presses.
 const KEYS: Record<string, string> = {
   Escape: "\uE00C",
   Tab: "\uE004",
@@ -137,7 +136,7 @@ const KEYS: Record<string, string> = {
   End: "\uE010",
 };
 
-// Firefox logs a refused or failed request as an error; Chrome tells pages' console listeners nothing, and the app
+// Firefox logs a refused or failed request as an error. Chrome tells pages' console listeners nothing, and the app
 // handles both failures itself.
 const NETWORK_REPORT =
   /^(Cross-Origin Request Blocked|Firefox can.t establish a connection|The connection to .* was interrupted)/;
@@ -147,7 +146,7 @@ interface Bidi {
   on(listener: (method: string, params: any) => void): () => void;
 }
 
-// One Firefox per test process; each page is a user context of its own, with its own storage and cookies.
+// One Firefox serves a test process. Each page is a user context of its own, with its own storage and cookies.
 let firefox: Promise<Bidi> | undefined;
 function launchFirefox(): Promise<Bidi> {
   return (firefox ??= (async () => {
@@ -158,7 +157,7 @@ function launchFirefox(): Promise<Bidi> {
       [
         'user_pref("devtools.jsonview.enabled", false);',
         // A runner has no pointing device, so Firefox would report a pointer without hover and the app would act as on
-        // a phone; the suite tests a desktop with a mouse, as Chrome reports one (fine pointer 2 + hover 4).
+        // a phone. The suite tests a desktop with a mouse, as Chrome reports one (fine pointer 2 + hover 4).
         'user_pref("ui.primaryPointerCapabilities", 6);',
         'user_pref("ui.allPointerCapabilities", 6);',
         "",
@@ -190,7 +189,7 @@ function launchFirefox(): Promise<Bidi> {
       banner += new TextDecoder().decode(value);
       endpoint = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(banner)?.[1];
     }
-    // Firefox stops when its stderr fills, so keep draining it.
+    // Firefox stops when its stderr fills, so the reader keeps draining it.
     void (async () => {
       while (!(await reader.read()).done);
     })();
@@ -241,7 +240,7 @@ function launchFirefox(): Promise<Bidi> {
 
 async function firefoxDriver(events: DriverEvents): Promise<Driver> {
   const bidi = await launchFirefox();
-  // A page is a user context of its own; clearing its storage moves it to a new one with the same scripts.
+  // A page is a user context of its own. Clearing its storage moves it to a new one with the same scripts.
   let userContext = "";
   let context = "";
   let viewport = VIEWPORT;

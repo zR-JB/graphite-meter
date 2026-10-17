@@ -1,4 +1,4 @@
-//! Which requests pass under authentication: trust in the connection, credentials, origins, preflights and refusals.
+//! Decides which requests pass under authentication by connection trust, credentials, origins, preflights, refusals.
 
 use super::{AuthLease, Decision, Store, Via, protect};
 use crate::headers::{
@@ -16,7 +16,7 @@ use graphite_meter_proto::{
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority};
 
-/// Fields a request may carry at most once.
+/// A request may carry these fields at most once.
 const SINGLE: [HeaderName; 6] = [
     header::AUTHORIZATION,
     header::ORIGIN,
@@ -26,19 +26,19 @@ const SINGLE: [HeaderName; 6] = [
     header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
 
-/// When a controller route serves without a session.
+/// Says when a controller route serves without a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Open {
     Always,
-    /// While password sign-in is enabled.
+    /// The route serves while password sign-in is enabled.
     Password,
-    /// While OIDC sign-in is enabled.
+    /// The route serves while OIDC sign-in is enabled.
     Oidc,
     Never,
 }
 
 graphite_meter_proto::table! {
-    /// The controller's routes: method, path, and when each serves without a session.
+    /// Lists the controller's routes with method, path, and when each serves without a session.
     pub(super) enum AuthRoute {
         method.0: &'static str,
         path.1: &'static str,
@@ -60,49 +60,49 @@ graphite_meter_proto::table! {
 }
 
 impl AuthRoute {
-    /// The route `method` and `path` name exactly.
+    /// Finds the route `method` and `path` name exactly.
     pub(super) fn find(method: &str, path: &str) -> Option<Self> {
         Self::find_by(Self::path, path).filter(|route| route.method() == method)
     }
 }
 
 graphite_meter_proto::table! {
-    /// A cookie the controller sets: host-only and secure, HttpOnly unless scripts read it, strictly same-site unless
-    /// a cross-site redirect must carry it.
+    /// A cookie the controller sets is host-only and secure, HttpOnly unless scripts read it, strictly same-site
+    /// unless a cross-site redirect must carry it.
     pub(super) enum Cookie {
         name.0: &'static str,
         script.1: bool,
         same_site.2: &'static str,
     } {
         Session => ("__Host-gm_session", false, "Strict"),
-        /// A sign-in form's token.
+        /// The cookie holds a sign-in form's token.
         Login => ("__Host-gm_login", false, "Strict"),
-        /// The login's CSRF token, which the app sends back in a header.
+        /// The cookie holds the login's CSRF token, which the app sends back in a header.
         Csrf => ("__Host-gm_csrf", true, "Strict"),
-        /// A browser's password attempt budget.
+        /// The cookie carries a browser's password attempt budget.
         Device => ("__Host-gm_device", false, "Strict"),
-        /// The OIDC transaction, carried on the provider's cross-site redirect back.
+        /// The cookie names the OIDC transaction and rides the provider's cross-site redirect back.
         Transaction => ("__Host-gm_oidc", false, "Lax"),
     }
 }
 
-/// How far a request's connection is trusted.
+/// Says how far a request's connection is trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Trust {
-    /// TLS naming another hostname than the public origin's.
+    /// TLS names another hostname than the public origin's.
     Foreign,
     Insecure,
-    /// HTTPS on the public hostname.
+    /// HTTPS reaches the public hostname.
     Secure,
-    /// HTTPS at the public origin itself.
+    /// HTTPS reaches the public origin itself.
     Canonical,
 }
 
-/// The rules of an enabled authentication.
+/// Holds the rules of an enabled authentication.
 #[derive(Debug)]
 pub struct Policy {
     pub(super) public: Origin,
-    /// The public origin as browsers send it in `Origin`.
+    /// Browsers send the public origin like this in `Origin`.
     pub(super) origin: HeaderValue,
     login: HeaderValue,
     password: bool,
@@ -124,7 +124,7 @@ impl Policy {
         }
     }
 
-    /// The boundary: ambiguous fields, trust, preflights, the controller's routes, then credentials and origins.
+    /// Checks ambiguous fields, trust, preflights, the controller's routes, then credentials and origins.
     pub(super) fn authorize<B>(
         &self,
         store: &Store,
@@ -182,7 +182,7 @@ impl Policy {
         Ok(Some(lease))
     }
 
-    /// Who may read a signed-in request's answer: a browser grant's origin, or the public origin with its cookie.
+    /// A signed-in request's answer is readable by a browser grant's origin, or by the public origin with its cookie.
     pub(super) fn access(&self, lease: &AuthLease, headers: &HeaderMap) -> Option<Access> {
         if let Some(browser) = lease.browser() {
             return Some(Access::Bearer(browser.header().clone()));
@@ -210,7 +210,7 @@ impl Policy {
         if forwarded { Trust::Canonical } else { Trust::Insecure }
     }
 
-    /// A socket ticket on a WebSocket route, else a bearer grant once `Authorization` is present, else the cookie.
+    /// Reads a socket ticket on a WebSocket route, a bearer grant once `Authorization` is present, else the cookie.
     fn authenticate<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>) -> Option<AuthLease> {
         let headers = request.headers();
         if route.is_some_and(|route| route.kind() == Kind::WebSocket)
@@ -238,7 +238,7 @@ impl Policy {
         store.redeem(token, &target, request.headers().get(header::ORIGIN))
     }
 
-    /// Origin rules: browser grants serve only their origin's measurement routes; unsafe cookie requests prove CSRF.
+    /// Browser grants serve only their origin's measurement routes, and unsafe cookie requests prove CSRF.
     fn valid_origin<B>(&self, store: &Store, request: &Request<B>, route: Option<Route>, lease: &AuthLease) -> bool {
         let headers = request.headers();
         let Some(origin) = text(headers, &header::ORIGIN) else { return false };
@@ -271,7 +271,7 @@ impl Policy {
         ours && (route.is_none() || proof())
     }
 
-    /// Preflights: the browser token exchange, a browser grant's measurement routes, else the public origin's.
+    /// Answers preflights for the browser token exchange, a browser grant's measurement routes or the public origin's.
     fn preflight(&self, headers: &HeaderMap, route: Option<Route>, trust: Trust) -> Decision {
         let secure = trust >= Trust::Secure;
         let origin = headers.get(header::ORIGIN).and_then(BrowserOrigin::parse);
@@ -307,7 +307,7 @@ impl Policy {
         Err(answer)
     }
 
-    /// Whether `method` reaches `path` without a session: the sign-in pages and their fonts, and the token exchanges.
+    /// Says whether `method` reaches `path` without a session, as sign-in pages, their fonts and token exchanges do.
     fn public(&self, method: &Method, path: &str) -> bool {
         const SANS: &str = "/fonts/ibm-plex-sans-var-latin1.woff2";
         const MONO: &str = "/fonts/ibm-plex-mono-600-latin1.woff2";
@@ -328,7 +328,7 @@ impl Policy {
         Err(answer)
     }
 
-    /// The sign-in-required answer, readable by the public or a measuring browser origin; the app root redirects.
+    /// Requires sign-in, readable by the public or a measuring browser origin. The app root redirects.
     fn required<B>(&self, request: &Request<B>, endpoint: Endpoint, secure: bool) -> Decision {
         let root = endpoint.ui() && request.method() == Method::GET && request.uri().path() == "/";
         let mut answer = match root {
@@ -353,7 +353,7 @@ impl Policy {
     }
 }
 
-/// A field's first value: empty when absent, `None` when it is no text.
+/// Gives a field's first value, empty when absent and `None` when it is no text.
 fn text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).map_or(Some(""), |value| value.to_str().ok())
 }
@@ -364,7 +364,7 @@ fn same_host(first: &str, second: &str) -> bool {
         .eq_ignore_ascii_case(second.trim_end_matches('.'))
 }
 
-/// An exact canonical HTTPS origin, as a browser grant's audience must be.
+/// Holds an exact canonical HTTPS origin, as a browser grant's audience must be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserOrigin(HeaderValue);
 
@@ -380,7 +380,7 @@ impl BrowserOrigin {
     }
 }
 
-/// The preflight's requested headers in lower case, when each is `Content-Type` or one of `allowed`.
+/// Lists the preflight's requested headers in lower case, when each is `Content-Type` or one of `allowed`.
 fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
     let names = text(headers, &header::ACCESS_CONTROL_REQUEST_HEADERS)
         .unwrap_or_default()
@@ -392,12 +392,12 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
     names.map(|name| known(&name).then_some(name)).collect()
 }
 
-/// The lease of the login whose session cookie `headers` carry.
+/// Finds the lease of the login whose session cookie `headers` carry.
 pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
     store.cookie(cookie(headers, Cookie::Session)?)
 }
 
-/// The cookie's value: invalid pairs are skipped, and two valid ones are ambiguous.
+/// Reads the cookie's value. Invalid pairs are skipped, and two valid ones are ambiguous.
 pub(super) fn cookie(headers: &HeaderMap, cookie: Cookie) -> Option<&str> {
     let name = cookie.name();
     let values = headers.get_all(header::COOKIE).iter();

@@ -1,15 +1,15 @@
-//! UDP sockets for QUIC, with large buffers.
+//! Binds UDP sockets for QUIC with large buffers.
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
 };
 
-/// The UDP buffer each QUIC socket asks for.
+/// Each QUIC socket asks for this UDP buffer.
 const BUFFER_BYTES: usize = 7 << 20;
-/// The least each of several sockets on one address keeps: a single fast connection's headroom.
+/// Each of several sockets on one address keeps at least this much, a single fast connection's headroom.
 const SHARED_BUFFER_FLOOR: usize = 2 << 20;
 
-/// Binds one of `sockets` on `address` via `SO_REUSEPORT` (Linux only), with any buffer shortfall the host forced.
+/// Binds one of `sockets` on `address` via `SO_REUSEPORT` (Linux only), reporting any buffer shortfall the host forced.
 pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
@@ -74,7 +74,7 @@ fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), St
     shortfall(name, size()?, bytes).map_or(Ok(()), Err)
 }
 
-/// The shortfall of a buffer that stayed below `bytes`.
+/// Reports the shortfall of a buffer that stayed below `bytes`.
 fn shortfall(name: &str, after: usize, bytes: usize) -> Option<String> {
     (after < bytes).then(|| format!("{name} buffer {} KiB of {} KiB wanted", after / 1024, bytes / 1024))
 }

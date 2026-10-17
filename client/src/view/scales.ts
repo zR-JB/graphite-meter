@@ -1,5 +1,5 @@
-// Every chart and dial axis: the throughput ceilings and the page's rate tier, and the latency ladder with its live
-// window. Every ceiling is a step of a ladder that repeats each decade.
+// Sets every chart and dial axis, from the throughput ceilings and the page's rate tier to the latency ladder with its
+// live window. Every ceiling is a step of a ladder that repeats each decade.
 import type { LatencyBucket } from "../engine/measure/buckets";
 import type { StageResults } from "../engine/run/result";
 import type { TransferStage } from "../engine/run/schedule";
@@ -8,7 +8,7 @@ import { fromRateUnit, rateTier, type Units } from "./format";
 /** The highest plotted rate stays this far below the top edge. */
 const RATE_HEADROOM = 1.03;
 const DIAL_STEPS = [1, 2, 5];
-// The chart is read by its fill, so its ceiling sits just above the peak; the dial keeps round labels.
+// The chart is read by its fill, so its ceiling sits just above the peak. The dial keeps round labels.
 const CHART_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
 /** 100 Mbit/s stands in for a rate before any is known. */
 const REFERENCE_BYTES_PER_SEC = 12_500_000;
@@ -24,7 +24,7 @@ const EMPTY_LATENCY_MS = 20;
 /** A live latency spike holds the axis this long. */
 const LATENCY_WINDOW_MS = 8_000;
 
-/** The first ladder step at or above `value`; 0 for none, so each axis applies its own floor. */
+/** The first ladder step at or above `value`, or 0 for none, so each axis applies its own floor. */
 function ceilStep(value: number, steps: readonly number[]): number {
   if (!(value > 0) || !Number.isFinite(value)) return 0;
   const decade = 10 ** Math.floor(Math.log10(value));
@@ -51,13 +51,13 @@ interface LivePeaks {
 interface ThroughputScales {
   chartBytesPerSec: number;
   gaugeBytesPerSec: number;
-  /** The page's one rate tier: every rate on it reads in this prefix. */
+  /** The page's one rate tier. Every rate on it reads in this prefix. */
   tier: number;
 }
 
-/** A manual maximum fixes both axes exactly. Otherwise each axis holds everything it draws, with headroom: the chart
+/** A manual maximum fixes both axes exactly. Otherwise each axis holds everything it draws, with headroom, the chart
     each lane, the dial the lanes together. Peaks only grow during a run, so neither axis nor the tier steps back as a
-    stage settles; a finished run reads in the tier its results set, as History reads it. */
+    stage settles. A finished run reads in the tier its results set, as History reads it. */
 export function throughputScales(
   results: Pick<StageResults, TransferStage>,
   live: LivePeaks | null,
@@ -91,14 +91,14 @@ const ascending = (values: readonly (number | null)[]) =>
 const nearestRank = (sorted: readonly number[], p: number) =>
   sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))]!;
 
-/** A latency axis: the ladder step over the p95 of `values` with headroom, at least 1 ms; 20 ms without values. */
+/** A latency axis is the ladder step over the p95 of `values` with headroom, at least 1 ms, or 20 ms without values. */
 export function latencyCeilingMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
   if (!sorted.length) return EMPTY_LATENCY_MS;
   return Math.max(1, ceilStep(nearestRank(sorted, 0.95) * LATENCY_HEADROOM, LATENCY_STEPS));
 }
 
-/** A reply track's top: the ladder step over 2.5× the p75, so the body of the replies keeps its shape and an outlier
+/** A reply track's top is the ladder step over 2.5× the p75, so the body of the replies keeps its shape and an outlier
     is clamped with an arrow instead of flattening the rest. */
 export function replyTrackMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
@@ -106,7 +106,7 @@ export function replyTrackMs(values: readonly (number | null)[]): number {
   return Math.max(TRACK_FLOOR_MS, ceilStep(nearestRank(sorted, 0.75) * 2.5, LATENCY_STEPS));
 }
 
-/** The shared latency axis over the buckets' medians: the last 8 s while live, all of them once finished. */
+/** The shared latency axis spans the buckets' medians, the last 8 s while live, all of them once finished. */
 export function latencyAxisMs(buckets: readonly LatencyBucket[], finished: boolean): number {
   const from = finished ? -Infinity : (buckets.at(-1)?.endT ?? 0) - LATENCY_WINDOW_MS;
   const medians: (number | null)[] = [];

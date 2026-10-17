@@ -1,4 +1,4 @@
-//! Mounts, request-head rules, methods, CORS and hardening headers.
+//! Tests mounts, request-head rules, methods, CORS and hardening headers.
 
 use super::*;
 use graphite_meter_proto::route::Route;

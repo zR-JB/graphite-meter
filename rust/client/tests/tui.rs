@@ -1,4 +1,4 @@
-//! The interface without a terminal: keys, pointer, events, signals and ticks in; frames, chrome, effects and exits out.
+//! Runs the interface without a terminal, keys, pointer, events, signals, ticks in, frames, chrome, effects, exits out.
 use crossterm::event::{Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use graphite_meter_client::{
     INTERRUPTED, TERMINATED,
@@ -43,7 +43,7 @@ fn id(name: &str) -> ServerId {
     ServerId::parse(name).unwrap()
 }
 
-/// The default settings for a server at meter.example.
+/// Builds the default settings for a server at meter.example.
 fn config() -> Config {
     Config {
         url: Origin::parse("https://meter.example").ok(),
@@ -51,7 +51,7 @@ fn config() -> Config {
     }
 }
 
-/// The console for the default settings, its first check already asked for.
+/// Builds the console for the default settings, its first check already asked for.
 fn app() -> (App, Instant) {
     let start = Instant::now();
     let mut app = App::new(config(), None, (Profile::Plain, Palette::new(true)), start);
@@ -66,7 +66,7 @@ fn command(effects: &[Effect]) -> &Command {
     }
 }
 
-/// The settings of the one check `effects` ask for.
+/// Extracts the settings of the one check `effects` ask for.
 fn checked(effects: Vec<Effect>) -> Config {
     match command(&effects) {
         Command::Check(config) => config.clone(),
@@ -74,7 +74,7 @@ fn checked(effects: Vec<Effect>) -> Config {
     }
 }
 
-/// The frame's rows as drawn.
+/// Draws a frame and returns its rows.
 fn rows(app: &mut App, now: Instant) -> Vec<String> {
     let mut buffer = Buffer::empty(FULL);
     app.draw(&mut buffer, now);
@@ -82,7 +82,7 @@ fn rows(app: &mut App, now: Instant) -> Vec<String> {
     buffer.content().chunks(usize::from(FULL.width)).map(row).collect()
 }
 
-/// The frame's rows, each run of spaces as one.
+/// Draws a frame and returns its rows, each run of spaces as one.
 fn frame(app: &mut App, now: Instant) -> Vec<String> {
     let squeezed = |row: String| row.split_whitespace().collect::<Vec<_>>().join(" ");
     rows(app, now).into_iter().map(squeezed).collect()
@@ -92,7 +92,7 @@ fn shows(app: &mut App, now: Instant, text: &str) -> bool {
     frame(app, now).iter().any(|row| row.contains(text))
 }
 
-/// Where `text` first stands in the frame, as a column and row.
+/// Finds where `text` first stands in the frame, as a column and row.
 fn find(app: &mut App, now: Instant, text: &str) -> (u16, u16) {
     let rows = rows(app, now);
     let found = rows.iter().enumerate().find_map(|(row, line)| {
@@ -134,7 +134,7 @@ fn paths(origin: &Origin) -> Paths {
     }
 }
 
-/// A prepared server named after its ID.
+/// Builds a prepared server named after its ID.
 fn prepared_server(name: &str, origin: &Origin) -> ServerPath {
     ServerPath {
         id: id(name),
@@ -146,7 +146,7 @@ fn prepared_server(name: &str, origin: &Origin) -> ServerPath {
     }
 }
 
-/// A catalog of five servers of which the check prepared the first.
+/// Builds a catalog of five servers of which the check prepared the first.
 fn prepared() -> Event {
     let origin = |name: &str| Origin::parse(&format!("https://{name}.example")).unwrap();
     let entry = |name: &str| ServerEntry {
@@ -170,7 +170,7 @@ fn prompt(now: Instant) -> SignInPrompt {
     }
 }
 
-/// A run of `plan` over `names`, started with enter and prepared at `now`.
+/// Starts a run of `plan` over `names` with enter, prepared at `now`.
 fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     let stages = plan.iter().map(|(stage, _)| *stage).collect();
     let mut app = App::new(Config { stages, ..config() }, None, (Profile::Plain, Palette::new(true)), now);
@@ -182,7 +182,7 @@ fn running(names: &[&str], plan: &[(Stage, Duration)], now: Instant) -> App {
     app
 }
 
-/// `stage` started and measuring at `now`.
+/// Starts `stage` and sets it measuring at `now`.
 fn measuring(app: &mut App, stage: Stage, duration: Duration, now: Instant) {
     let plan = StagePlan { stage, members: Vec::new(), duration, latency: None };
     app.event(&Event::StageStarted(plan), now);
@@ -287,7 +287,7 @@ fn quitting_during_a_run_stops_it_first_and_ends_with_the_signal_s_status() {
     assert_eq!((exit.report, status(&exit.view, exit.signal)), (true, 1));
     let lines = report(&exit.view, 100, &exit.palette);
     assert!(lines[0].text().starts_with("Graphite Meter  Stopped"), "{:?}", lines[0]);
-    // A second interrupt quits at once without a report; an ended run's report follows, its status the signal's.
+    // A second interrupt quits at once without a report. An ended run's report follows, its status the signal's.
     for (key, code) in [(true, INTERRUPTED), (false, TERMINATED)] {
         for outcome in [None, Some(Outcome::Partial), Some(Outcome::Complete)] {
             let mut app = running(&["a"], &download, now);
@@ -480,7 +480,7 @@ fn the_console_follows_a_download_and_takes_presses() {
     assert!(app.hovered().is_some(), "the key lights under the pointer");
 }
 
-/// A finished download of 125 MB over `a`.
+/// Finishes a download of 125 MB over `a`.
 fn downloaded(now: Instant) -> App {
     let mut app = running(&["a"], &[(Stage::Download, SECOND * 10)], now);
     measuring(&mut app, Stage::Download, SECOND * 10, now);

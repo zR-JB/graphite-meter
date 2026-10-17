@@ -1,4 +1,4 @@
-//! Latency probing (`docs/MEASUREMENTS.md`): a pure `Schedule` of sends, deadlines and redials, and its bus loop.
+//! Probes latency (`docs/MEASUREMENTS.md`) with a pure `Schedule` of sends, deadlines and redials, and its bus loop.
 use crate::{
     controller::internal,
     measure::latency::{Deadline, ProbeOutcome},
@@ -20,14 +20,14 @@ use tokio::{
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 
-/// How long a probe may take to leave.
+/// A probe may take this long to leave.
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 /// A channel lost this soon after it opened waits this long before it is dialed again.
 const EARLY_LOSS: Duration = Duration::from_millis(500);
 /// A timed-out probe's late reply still teaches the deadline this long after it went.
 const LATE_REPLIES: Duration = Duration::from_secs(10);
 
-/// The probes a prober keeps in flight: 16 idle at a fixed cadence, 4 reply-driven, 2 under load.
+/// A prober keeps this many probes in flight, 16 idle at a fixed cadence, 4 reply-driven, 2 under load.
 pub fn window(stage: Stage, cadence: Cadence) -> usize {
     match (stage, cadence) {
         (Stage::Latency, Cadence::Every(_)) => 16,
@@ -36,21 +36,21 @@ pub fn window(stage: Stage, cadence: Cadence) -> usize {
     }
 }
 
-/// When probes go and resolve: sends start to start or on the reply in flight backed by the deadline, a full window
-/// skips a send, each probe's deadline is fixed as it goes, and after sending stops the rest drain to their deadlines.
+/// Says when probes go and resolve. Sends start to start or on the in-flight reply backed by the deadline, a full
+/// window skips a send, a probe's deadline is fixed as it goes, and once sends stop the rest drain to their deadlines.
 #[derive(Debug)]
 pub struct Schedule {
     cadence: Cadence,
     window: usize,
     deadline: Deadline,
-    /// Each probe in flight: when it went and its deadline.
+    /// Each probe in flight records when it went and its deadline.
     pending: BTreeMap<u32, (Instant, Instant)>,
-    /// Timed-out probes, when they went.
+    /// Timed-out probes are kept by when they went.
     late: BTreeMap<u32, Instant>,
     next: Ping,
-    /// The next send; none once sending stopped.
+    /// The next send is due here, none once sending stopped.
     due: Option<Instant>,
-    /// Whether any probe was answered, in time or late.
+    /// Some probe was answered, in time or late.
     answered: bool,
 }
 
@@ -69,13 +69,13 @@ impl Schedule {
         }
     }
 
-    /// When a send or a deadline is next due; none once drained.
+    /// Returns when a send or a deadline is next due, none once drained.
     pub fn wake(&self) -> Option<Instant> {
         let deadlines = self.pending.values().map(|&(_, deadline)| deadline);
         self.due.into_iter().chain(deadlines).min()
     }
 
-    /// The probe to send at `now`, unless none is due or the window is full.
+    /// Returns the probe to send at `now`, unless none is due or the window is full.
     pub fn send(&mut self, now: Instant) -> Option<Ping> {
         let due = self.due.filter(|due| now >= *due)?;
         let deadline = self.deadline.get();
@@ -95,7 +95,7 @@ impl Schedule {
         Some(ping)
     }
 
-    /// Resolves a reply at `now`: in time, else a timeout, and resends; a late one only teaches the deadline.
+    /// Resolves a reply at `now` as in time, else a timeout, and resends. A late one only teaches the deadline.
     pub fn reply(&mut self, pong: Pong, now: Instant) -> Option<ProberEvent> {
         if let Some(sent) = self.late.remove(&pong.id) {
             self.observe(now.saturating_duration_since(sent));
@@ -114,7 +114,7 @@ impl Schedule {
         Some(ProberEvent::Outcome { sent, outcome })
     }
 
-    /// Probes whose deadline passed by `now`, as timeouts.
+    /// Expires probes whose deadline passed by `now` as timeouts.
     pub fn expire(&mut self, now: Instant) -> Vec<ProberEvent> {
         let recent = |_: &u32, sent: &mut Instant| now.saturating_duration_since(*sent) <= LATE_REPLIES;
         self.late.retain(recent);
@@ -130,13 +130,13 @@ impl Schedule {
         expired
     }
 
-    /// A probe that could not leave.
+    /// Records a probe that could not leave.
     pub fn failed(&mut self, ping: Ping) -> Option<ProberEvent> {
         let (sent, _) = self.pending.remove(&ping.id)?;
         Some(ProberEvent::Outcome { sent, outcome: ProbeOutcome::SendFailed })
     }
 
-    /// The channel is gone: probes in flight stay unresolved.
+    /// The channel is gone, so probes in flight stay unresolved.
     pub fn lost(&mut self) -> Vec<ProberEvent> {
         self.late.clear();
         let pending = std::mem::take(&mut self.pending).into_values();
@@ -149,8 +149,8 @@ impl Schedule {
         self.due = None;
     }
 
-    /// When a lost channel is dialed again and by when it must open, within 2 s and the window's `end`; a channel lost
-    /// early waits 500 ms. None before the first reply or past the bound.
+    /// Says when a lost channel is dialed again and by when it must open, within 2 s and the window's `end`. A channel
+    /// lost early waits 500 ms. None before the first reply or past the bound.
     pub fn redial(&self, opened: Instant, now: Instant, end: Option<Instant>) -> Option<(Instant, Instant)> {
         let bound = end.map_or(now + REDIAL_WINDOW, |end| end.min(now + REDIAL_WINDOW));
         if !self.answered || now >= bound {
@@ -167,7 +167,7 @@ impl Schedule {
     }
 }
 
-/// A server's running prober; dropping it ends it.
+/// A server's running prober ends when dropped.
 #[derive(Debug)]
 pub struct Prober {
     window: watch::Sender<Window>,
@@ -183,7 +183,7 @@ enum Window {
 }
 
 impl Prober {
-    /// Probes `path` on the latency runtime until `token` is canceled; a panic ends the population as down.
+    /// Probes `path` on the latency runtime until `token` is canceled. A panic ends the population as down.
     pub fn spawn(client: Client, path: LatencyPath, stage: Stage, cadence: Cadence, token: CancellationToken) -> Self {
         let (window, windows) = watch::channel(Window::Waiting);
         let (sender, probes) = mpsc::unbounded_channel();
@@ -199,12 +199,12 @@ impl Prober {
         Self { window, probes, _ends: token.drop_guard() }
     }
 
-    /// The window opened; it ends at `end`, which caps a redial.
+    /// The window opened and ends at `end`, which caps a redial.
     pub fn open(&self, end: Instant) {
         self.window.send_replace(Window::Open { end });
     }
 
-    /// The window closed: sending stops and probes in flight drain.
+    /// The window closed, so sending stops and probes in flight drain.
     pub fn close(&self) {
         self.window.send_replace(Window::Closed);
     }

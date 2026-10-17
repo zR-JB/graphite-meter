@@ -12,7 +12,7 @@
     <main class="card">
       <!-- brand -->
       {{if .Refused}}
-      <!-- One fixed sentence per refusal kind: nothing from the request is echoed. -->
+      <!-- Each refusal kind gets one fixed sentence, so nothing from the request is echoed. -->
       <h1>Approval unavailable</h1>
       {{if eq .Refused "busy"}}
       <p>Too many approvals are open. Try again from the client in a few minutes.</p>

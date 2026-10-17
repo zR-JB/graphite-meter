@@ -1,4 +1,4 @@
-//! The server's settings: environment and flags through one table, validated into a plain `Config`.
+//! Reads the server's settings from environment and flags through one table, and validates them into a plain `Config`.
 
 mod catalog;
 mod settings;
@@ -23,21 +23,21 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-/// The engine version `version` prints and discovery reports.
+/// `version` prints this engine version, and discovery reports it.
 pub const ENGINE_VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     Some(version) => version,
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
 
-/// What the command line asked for.
+/// The command line asked for one of these.
 #[derive(Debug)]
 pub enum Loaded {
-    /// `-h` or `-help`: the usage went to the usage writer.
+    /// `-h` or `-help` sent the usage to the usage writer.
     Help,
     Config(Box<Config>),
 }
 
-/// Loads the environment, then the flags, and validates; flag errors and usage go to `usage`.
+/// Loads the environment, then the flags, and validates. Flag errors and usage go to `usage`.
 pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -51,12 +51,12 @@ pub fn load(
     }
 }
 
-/// A validated configuration.
+/// Config holds a validated configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// The enabled listeners, in `ListenerKind` order.
+    /// The enabled listeners come in `ListenerKind` order.
     pub listeners: Vec<Listener>,
-    /// Certificate and key paths, present when a TLS listener is enabled.
+    /// Certificate and key paths are present when a TLS listener is enabled.
     pub tls: Option<TlsFiles>,
     pub public: PublicOrigins,
     pub result_history_default: bool,
@@ -66,12 +66,12 @@ pub struct Config {
     pub max_buffer_bytes: usize,
     pub lifetimes: Lifetimes,
     pub auth: Option<Auth>,
-    /// The published catalog: `self` first, carrying the server's name and location.
+    /// The published catalog lists `self` first, carrying the server's name and location.
     pub catalog: ServerCatalog,
     pub outbound: Outbound,
 }
 
-/// How OIDC requests leave: the proxies and roots the same environment as the settings names.
+/// OIDC requests leave through the proxies and roots named by the same environment as the settings.
 #[derive(Debug, Clone)]
 pub struct Outbound {
     pub proxy: Proxy,
@@ -103,12 +103,12 @@ impl Config {
 }
 
 graphite_meter_proto::table! {
-    /// A native listener, in discovery's order.
+    /// Native listeners are listed in discovery's order.
     #[derive(PartialOrd, Ord)]
     pub enum ListenerKind {
-        /// Its name in `GM_ADVERTISED_NATIVE_ENDPOINTS`.
+        /// `GM_ADVERTISED_NATIVE_ENDPOINTS` knows it by this name.
         name.0: &'static str,
-        /// The prefix of its `_ADDR` and `_PUBLIC_ORIGIN` settings.
+        /// Its `_ADDR` and `_PUBLIC_ORIGIN` settings start with this prefix.
         env.1: &'static str,
         scheme.2: Scheme,
         protocol.3: Protocol,
@@ -120,18 +120,18 @@ graphite_meter_proto::table! {
     }
 }
 
-/// An enabled listener.
+/// Describes one enabled listener.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listener {
     pub kind: ListenerKind,
-    /// With its bound port once bound; HTTP/3 binds it for UDP and bootstrap TCP.
+    /// Carries its bound port once bound. HTTP/3 binds it for UDP and bootstrap TCP.
     pub address: ListenAddress,
     pub public_origin: Option<Origin>,
     /// Discovery offers it as a native target.
     pub advertised: bool,
 }
 
-/// `host:port`, an IPv6 host in brackets, or `:port` for every address.
+/// Reads `host:port`, an IPv6 host in brackets, or `:port` for every address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListenAddress {
     pub host: Option<String>,
@@ -164,7 +164,7 @@ pub struct TlsFiles {
     pub key: PathBuf,
 }
 
-/// Negotiated origins discovery advertises; `BaseUrl::Served` is `self`.
+/// Discovery advertises these negotiated origins. `BaseUrl::Served` is `self`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PublicOrigins {
     pub both: Vec<BaseUrl>,
@@ -172,7 +172,7 @@ pub struct PublicOrigins {
     pub latency: Vec<BaseUrl>,
 }
 
-/// Concurrency limits, each positive and per-client ones within their totals.
+/// Each concurrency limit is positive, and per-client ones stay within their totals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub operations: NonZero<usize>,
@@ -185,21 +185,21 @@ pub struct Limits {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lifetimes {
-    /// A request, WebSocket bus or `/wt/ping` session.
+    /// A request, WebSocket bus or `/wt/ping` session lives this long.
     pub operation: Duration,
-    /// A WebTransport transfer session.
+    /// A WebTransport transfer session lives this long.
     pub session: Duration,
-    /// The longest stage clients may plan.
+    /// Clients may plan a stage this long at most.
     pub stage: Duration,
 }
 
-/// Authentication settings, present when a mode is enabled.
+/// Authentication settings are present when a mode is enabled.
 #[derive(Debug, Clone)]
 pub struct Auth {
-    /// The canonical HTTPS origin of the UI.
+    /// The UI lives at this canonical HTTPS origin.
     pub public_origin: Origin,
     pub methods: Methods,
-    /// The OIDC provider's name, which the sign-in page names in every mode.
+    /// The sign-in page names this OIDC provider in every mode.
     pub provider: String,
 }
 
@@ -211,7 +211,7 @@ pub enum Methods {
 }
 
 impl Methods {
-    /// The operator password hash source, when password sign-in is enabled.
+    /// Gives the operator password hash source when password sign-in is enabled.
     pub fn password(&self) -> Option<&Secret> {
         match self {
             Self::Password(secret) | Self::Hybrid(secret, _) => Some(secret),
@@ -235,7 +235,7 @@ pub struct Oidc {
     pub allowed_groups: Groups,
 }
 
-/// The OIDC groups allowed to sign in, never none.
+/// The OIDC groups allowed to sign in are never none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Groups(Vec<String>);
 
@@ -253,7 +253,7 @@ impl Groups {
     }
 }
 
-/// A secret given inline in the environment or as a file to read.
+/// A secret comes inline in the environment or as a file to read.
 #[derive(Clone)]
 pub enum Secret {
     Inline(Zeroizing<String>),
@@ -261,7 +261,7 @@ pub enum Secret {
 }
 
 impl Secret {
-    /// The trimmed secret; a file is read up to `limit` bytes and must hold one.
+    /// Reads the trimmed secret. A file is read up to `limit` bytes and must hold one.
     pub fn read(&self, limit: u64) -> Result<Zeroizing<String>, String> {
         let path = match self {
             Self::Inline(secret) => return Ok(Zeroizing::new(secret.trim().to_owned())),
@@ -293,7 +293,7 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// `could not {action}: {message}`, the system's message in lower case without its code.
+/// Formats `could not {action}: {message}` with the system's message in lower case without its code.
 pub(crate) fn could_not(action: &str, error: &std::io::Error) -> String {
     let message = error.to_string().to_lowercase();
     let message = message.split(" (os error").next().unwrap_or_default();

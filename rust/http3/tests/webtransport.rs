@@ -1,5 +1,5 @@
-//! WebTransport sessions over loopback QUIC: the close codes, reliable reset, datagrams, early streams and head
-//! gating.
+//! Exercises WebTransport sessions over loopback QUIC, from the close codes and reliable reset to datagrams, early
+//! streams and head gating.
 mod support;
 
 use bytes::Bytes;
@@ -14,7 +14,7 @@ use std::{
 use support::*;
 use tokio::sync::{Notify, mpsc};
 
-/// The WebTransport signal of Chromium and Firefox.
+/// Chromium and Firefox send this WebTransport signal.
 const DRAFT02_SETTINGS: &[(u64, u64)] = &[(0x2b603742, 1), (0x33, 1)];
 const DRAFT02: Setup = raw(DRAFT02_SETTINGS);
 
@@ -92,7 +92,7 @@ async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError
     Ok(())
 }
 
-/// Session streams wait until the 200 head is buffered: sent first, their data would take the small
+/// Session streams wait until the 200 head is buffered. Sent first, their data would take the small
 /// connection window the head needs, and the client reads no stream before its session starts.
 #[tokio::test]
 async fn session_streams_wait_for_the_head_with_a_small_connection_window() -> Result<(), TestError> {
@@ -161,7 +161,7 @@ async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
-    // No stream credit: the 200 head never leaves, yet the close ends within its wait.
+    // With no stream credit the 200 head never leaves, yet the close ends within its wait.
     let accepted = Arc::new(Notify::new());
     let accepting = accepted.clone();
     let setup = Setup { window: Some(0), ..DRAFT02 };
@@ -260,7 +260,7 @@ async fn at_most_64_streams_wait_for_their_session_for_at_most_5_seconds() -> Re
 
 #[tokio::test]
 async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestError> {
-    // Our QPACK: :status 200 is static index 25, 400 is 67.
+    // Our QPACK encodes :status 200 as static index 25 and 400 as 67.
     let (ok, bad_request) = (frame(0x01, &[0x00, 0x00, 0xd9]), frame(0x01, &[0x00, 0x00, 0xff, 0x04]));
     for (setup, draft02, allowed) in [
         (DRAFT02, true, true),

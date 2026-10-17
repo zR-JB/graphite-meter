@@ -1,4 +1,4 @@
-//! HTTP datagrams and capsules (RFC 9297) as WebTransport sessions use them.
+//! Reads and writes HTTP datagrams and capsules (RFC 9297) as WebTransport sessions use them.
 use crate::{
     code::Code,
     frame, varint,
@@ -6,7 +6,7 @@ use crate::{
 };
 use bytes::{Buf, BufMut, Bytes};
 
-/// A capsule type (RFC 9297 §3.2): laid out as a frame, but its own space of codes.
+/// A capsule type (RFC 9297 §3.2) is laid out like a frame type but has its own space of codes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct CapsuleType(u64);
 
@@ -58,13 +58,13 @@ impl Reader {
         Ok(None)
     }
 
-    /// Whether the stream may end here without truncating a capsule.
+    /// Reports whether the stream may end here without truncating a capsule.
     pub(crate) fn at_boundary(&self) -> bool {
         self.frames.at_boundary()
     }
 }
 
-/// A CLOSE_WEBTRANSPORT_SESSION capsule; the reason is cut at a character boundary within 1024 bytes.
+/// Builds a CLOSE_WEBTRANSPORT_SESSION capsule. The reason is cut at a character boundary within 1024 bytes.
 pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
     let end = reason.floor_char_boundary(MAX_REASON);
     let mut capsule = Vec::with_capacity(end + 12);
@@ -82,7 +82,7 @@ pub(crate) fn datagram(mut payload: Bytes) -> Result<(SessionId, Bytes), Code> {
     Ok((session, payload))
 }
 
-/// The prefix of every datagram in session `id`.
+/// Every datagram in session `id` starts with this prefix.
 pub(crate) fn datagram_prefix(id: SessionId) -> ([u8; 8], usize) {
     let mut prefix = [0; 8];
     let mut rest = &mut prefix[..];

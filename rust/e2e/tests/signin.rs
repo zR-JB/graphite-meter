@@ -1,4 +1,4 @@
-//! Native sign-in against a password-mode server, by a client that trusts the server's CA alone: the operator's
+//! Signs in natively against a password-mode server with a client that trusts the server's CA alone. The operator's
 //! browser approves over HTTP and the run completes.
 use graphite_meter_client::{
     config::Config,
@@ -21,7 +21,7 @@ use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 const HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$OT2po7nOdP+21BKX5CuZQw$9kVgfSWvlFy31939zUCVY62fHIuSqC8RwL67EpQ8qy8";
 const LIMIT: Duration = Duration::from_secs(20);
 
-/// Verification against the roots of `ca` alone, as `SSL_CERT_FILE` would name them.
+/// Verifies against the roots of `ca` alone, as `SSL_CERT_FILE` would name them.
 fn trusting(ca: &Path, directory: &Path) -> Verify {
     let (ca, directory) = (ca.as_os_str().to_owned(), directory.as_os_str().to_owned());
     Verify::Trusted(Arc::new(Trust::from_lookup(|name| match name {
@@ -31,7 +31,7 @@ fn trusting(ca: &Path, directory: &Path) -> Verify {
     })))
 }
 
-/// A password-mode server whose public origin is its HTTPS HTTP/1.1 listener, on a port found free; another
+/// Starts a password-mode server whose public origin is its HTTPS HTTP/1.1 listener, on a port found free. Another
 /// process may take that port before the server binds it, so a few ports are tried.
 async fn protected(identity: &Identity) -> (Server, SocketAddr) {
     let mut failures = Vec::new();
@@ -56,7 +56,7 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
     panic!("no free port held: {failures:?}");
 }
 
-/// A check of a latency and download run at `address` over verified TLS.
+/// Configures a check of a latency and download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
     e2e::config(&[
@@ -71,7 +71,7 @@ fn config(address: SocketAddr) -> Config {
     ])
 }
 
-/// The prompt an interactive check of `config` shows.
+/// Runs an interactive check of `config` and returns the prompt it shows.
 async fn prompted(config: &Config, verify: Verify) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
     let (events, mut received) = Events::channel();
     let mut controller =
@@ -96,7 +96,7 @@ async fn exchange(identity: &Identity, address: SocketAddr, request: &str) -> St
     String::from_utf8_lossy(&answer).into_owned()
 }
 
-/// Approves `prompt` as a signed-in operator's browser does: its page, showing the code, then the approval form.
+/// Approves `prompt` as a signed-in operator's browser does, first its page showing the code, then the approval form.
 async fn approve(server: &Server, identity: &Identity, address: SocketAddr, prompt: &SignInPrompt) {
     let login = server
         .app

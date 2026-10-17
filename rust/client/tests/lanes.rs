@@ -1,4 +1,4 @@
-//! Lanes and buses against canned peers, for what the real server never does or does only after sign-in.
+//! Tests lanes and buses against canned peers, for what the real server never does or does only after sign-in.
 use futures_util::SinkExt;
 use graphite_meter_client::{
     model::{Dir, Stage},
@@ -40,7 +40,7 @@ async fn read_head(stream: &mut TcpStream) -> Option<String> {
     String::from_utf8(head).ok()
 }
 
-/// Answers downloads only once an upload arrived, and reads uploads until they end; says when each arrived.
+/// Answers downloads only once an upload arrived, and reads uploads until they end. Says when each arrived.
 async fn bidirectional(mut stream: TcpStream, uploading: watch::Sender<bool>, downloading: watch::Sender<bool>) {
     let Some(head) = read_head(&mut stream).await else { return };
     if head.starts_with("POST /upload?") {

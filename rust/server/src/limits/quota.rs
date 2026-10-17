@@ -1,4 +1,4 @@
-//! Concurrency or weight counted against a total and per-client shares, held until dropped.
+//! Counts concurrency or weight against a total and per-client shares, held until dropped.
 
 use super::budget::Budget;
 use crate::{
@@ -12,24 +12,24 @@ use std::{
 };
 use tokio::sync::Notify;
 
-/// A limit clones share.
+/// A quota is a limit clones share.
 #[derive(Clone)]
 pub struct Quota(Arc<Inner>);
 
 struct Inner {
     total: Total,
-    /// What a client's narrowest key may hold; each wider key holds twice the one before it.
+    /// A client's narrowest key may hold this much. Each wider key holds twice the one before it.
     share: usize,
-    /// A key many clients share, which bounds nothing.
+    /// Many clients share this key, which bounds nothing.
     exempt: Option<ClientKey>,
     state: Mutex<State>,
-    /// Notified when the last hold is released.
+    /// The last released hold notifies this.
     idle: Notify,
 }
 
 enum Total {
     Fixed(usize),
-    /// Half the budget past its reservations.
+    /// The total is half the budget past its reservations.
     ClientWindows(Budget),
 }
 
@@ -43,7 +43,7 @@ struct State {
 }
 
 graphite_meter_proto::table! {
-    /// Why a quota refused.
+    /// A quota refused for one of these reasons.
     pub enum Refusal {
         /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
         status.0: http::StatusCode,
@@ -54,7 +54,7 @@ graphite_meter_proto::table! {
     }
 }
 
-/// Counters for the admission log.
+/// The admission log reads these counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QuotaUsage {
     pub active: usize,
@@ -68,7 +68,7 @@ impl Quota {
         Self::with(Total::Fixed(total), share, None)
     }
 
-    /// Receive-window credit in bytes: all clients together within half the budget past its reservations.
+    /// Makes receive-window credit in bytes, all clients together within half the budget past its reservations.
     pub fn client_windows(budget: Budget, share: usize, exempt: Option<ClientKey>) -> Self {
         Self::with(Total::ClientWindows(budget), share, exempt)
     }
@@ -116,7 +116,7 @@ impl Quota {
         Ok(Hold { quota: self.clone(), keys: keys.clone(), weight, linked })
     }
 
-    /// Whether any of the keys holds part of this quota.
+    /// Tells whether any of the keys holds part of this quota.
     pub fn holds_any(&self, keys: &ClientKeys) -> bool {
         let state = lock(&self.0.state);
         self.0.keys(keys).any(|key| state.held.contains_key(&key))
@@ -147,13 +147,13 @@ impl Inner {
     }
 }
 
-/// A share of a quota, released when dropped: at the end of its work, on error and while a panic unwinds.
+/// A hold is a share of a quota, released when dropped, at the end of its work, on error and while a panic unwinds.
 #[must_use]
 pub struct Hold {
     quota: Quota,
     keys: ClientKeys,
     weight: usize,
-    /// Released with this one.
+    /// This hold releases the linked one with it.
     linked: Option<Box<Hold>>,
 }
 
@@ -170,7 +170,7 @@ impl fmt::Debug for Hold {
 }
 
 impl Hold {
-    /// One hold releasing both.
+    /// Joins into one hold releasing both.
     pub fn join(mut self, other: Hold) -> Hold {
         self.linked = Some(Box::new(match self.linked.take() {
             Some(linked) => linked.join(other),

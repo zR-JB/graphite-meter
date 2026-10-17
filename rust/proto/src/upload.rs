@@ -1,18 +1,18 @@
-//! Upload progress records and receiver counters (`api/upload.md`).
+//! Models upload progress records and receiver counters (`api/upload.md`).
 
 use crate::{json, refusal::UploadRefusal, text, token};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-/// The largest counter both clients represent exactly.
+/// Both clients represent counters up to this one exactly.
 pub const MAX_COUNTER: u64 = (1 << 53) - 1;
 
 /// Readers bound each record to this many bytes.
 pub const MAX_RECORD_BYTES: usize = 64 << 10;
 
-/// A blank line: the feed is alive, with no observation.
+/// A blank line says the feed is alive, with no observation.
 pub const HEARTBEAT: &str = "\n";
 
-/// `POST /upload/session`'s answer: the ID of a new upload aggregate.
+/// `POST /upload/session` answers with the ID of a new upload aggregate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -30,7 +30,7 @@ impl Session {
     }
 }
 
-/// One receiver observation: payload bytes and nanoseconds since the first accepted chunk.
+/// One receiver observation holds payload bytes and nanoseconds since the first accepted chunk.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counters {
     #[serde(deserialize_with = "counter")]
@@ -53,13 +53,13 @@ impl Counters {
         self.nanos
     }
 
-    /// Whether this observation may follow `last`; one where either counter regresses is stale.
+    /// Tells whether this observation may follow `last`. One where either counter regresses is stale.
     pub fn follows(self, last: Self) -> bool {
         self.bytes >= last.bytes && self.nanos >= last.nanos
     }
 }
 
-/// Any JSON number spelling of an exact integer counter, as the browser reads it.
+/// Reads any JSON number spelling of an exact integer counter, as the browser does.
 fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let number = f64::deserialize(deserializer)?;
     if !(0.0..=MAX_COUNTER as f64).contains(&number) || number.fract() != 0.0 {
@@ -68,17 +68,17 @@ fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> 
     Ok(number as u64)
 }
 
-/// One record of a progress feed.
+/// Holds one record of a progress feed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Record {
-    /// The feed is attached; this proves no delivery.
+    /// The feed is attached. This proves no delivery.
     Ready,
-    /// One cumulative receiver observation.
+    /// Carries one cumulative receiver observation.
     Progress(Counters),
-    /// The final observation, after finalization and lane drain.
+    /// Carries the final observation, after finalization and lane drain.
     Complete(Counters),
-    /// An explicit refusal; an empty field was absent, and decoding cleans both.
+    /// Carries an explicit refusal. An empty field was absent, and decoding cleans both.
     Error {
         #[serde(skip_serializing_if = "String::is_empty")]
         message: String,
@@ -88,14 +88,14 @@ pub enum Record {
 }
 
 impl Record {
-    /// The record and its newline.
+    /// Writes the record and its newline.
     pub fn line(&self) -> String {
         let mut line = serde_json::to_string(self).expect("records serialize");
         line.push('\n');
         line
     }
 
-    /// Reads a record without its newline; a heartbeat, malformed or unknown record is no observation.
+    /// Reads a record without its newline. A heartbeat, malformed or unknown record is no observation.
     pub fn decode(line: &[u8]) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
         struct Sent {

@@ -1,4 +1,4 @@
-//! Test fixtures: TLS identities, a delaying, stalling relay and temporary directories.
+//! Provides test fixtures, from TLS identities and a delaying, stalling relay to temporary directories.
 mod identity;
 mod link;
 mod scratch;

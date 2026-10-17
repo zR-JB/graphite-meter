@@ -1,5 +1,5 @@
-// The application, wired once at boot: preferences, the servers and their checks, the run, History saving, and the
-// idle latency the console shows between runs. Views read its signals and call its methods.
+// Wires the application once at boot, from preferences, the servers and their checks, the run and History saving to
+// the idle latency the console shows between runs. Views read its signals and call its methods.
 import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
 import { createServers, stageLimit } from "../engine/net/servers";
@@ -41,7 +41,7 @@ export function createApp() {
   const saver = createHistorySaving(history, saving, window);
 
   const booted = signal(false);
-  /** A lapsed sign-in is being left: nothing checks or probes against it any more. */
+  /** A lapsed sign-in is being left, so nothing checks or probes against it any more. */
   const leaving = signal(false);
   const visible = signal(document.visibilityState === "visible");
   const online = signal(navigator.onLine);
@@ -51,7 +51,7 @@ export function createApp() {
     idle.buckets.length = 0;
     idle.version.set(idle.version.peek() + 1);
   };
-  /** Whether a test runs or starts, bound once the run exists: the servers it needs are made first. */
+  /** Tells whether a test runs or starts. It binds once the run exists, since the servers it needs are made first. */
   const busy = signal<() => boolean>(() => false);
 
   const servers = createServers({
@@ -75,7 +75,7 @@ export function createApp() {
     now: pageMs,
   });
 
-  // What Start waits for: the servers, then each planned stage within every server's limit, then lanes that fit.
+  // Start waits for the servers, then each planned stage within every server's limit, then lanes that fit.
   const blocker = computed(
     () => servers.blocker() || stageLimitError(preferences.config(), servers.stageLimit()) || servers.streamPlanError(),
   );
@@ -92,7 +92,7 @@ export function createApp() {
     authorize: servers.authorize,
     async prepare(signal, config) {
       const ready = await servers.prepare(signal);
-      // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
+      // The blocker judged each limit as last read. Start holds the run to the discovery it just read.
       const limit = stageLimit(ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })));
       const refused = stageLimitError(config, limit);
       if (refused) throw new Error(refused);
@@ -183,20 +183,20 @@ export function createApp() {
     history,
     saver,
     saving,
-    /** Why Start cannot run now, or "". */
+    /** Says why Start cannot run now, or "". */
     blocker,
     /** The running test's length, else the next one's, its warmup adapted to the latency server's round trip. */
     plannedMs,
     latencyPin,
-    /** The latency server's idle probes between runs; `version` bumps when `buckets` changes in place. */
+    /** The latency server's idle probes between runs. `version` bumps when `buckets` changes in place. */
     idle: idle as { readonly buckets: readonly LatencyBucket[]; readonly version: typeof idle.version },
     boot() {
       if (booted.peek()) return;
       booted.set(true);
       void servers.load();
     },
-    /** Before the sign-out form leaves: a running test ends as a lapsed sign-in ends it, the result's write gets its
-        few seconds, and the sign-in the form ends is no reason to leave for sign-in. */
+    /** Runs before the sign-out form leaves. A running test ends as a lapsed sign-in ends it, the result's write gets
+        its few seconds, and the sign-in the form ends is no reason to leave for sign-in. */
     async signOut(): Promise<void> {
       signingOut.set(true);
       run.end("sign-in-required", "Signed out during the test");
@@ -204,7 +204,7 @@ export function createApp() {
     },
     /** Leaving for sign-out or an ended sign-in, which unload no longer asks about. */
     signingOut: signingOut as Read<boolean>,
-    /** A sign-out given up: the page goes on, and an ended sign-in leaves for sign-in again. */
+    /** A sign-out is given up, so the page goes on, and an ended sign-in leaves for sign-in again. */
     stay(): void {
       signingOut.set(false);
     },

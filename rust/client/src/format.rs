@@ -1,4 +1,4 @@
-//! Every figure, unit and label the report and the interface print (`api/format.testvectors.json`).
+//! Formats every figure, unit and label the report and the interface print (`api/format.testvectors.json`).
 use crate::{
     config::{CADENCES, Config},
     model::{Cadence, Direction, Outcome, Stage, StageStatus},
@@ -10,38 +10,38 @@ use graphite_meter_proto::{
 };
 use std::time::Duration;
 
-/// What a cell shows without a value.
+/// A cell without a value shows this.
 pub const MISSING: &str = "–";
 
-/// Milliseconds: one decimal below 100, whole from there.
+/// Formats milliseconds with one decimal below 100 and whole from there.
 pub fn ms(value: f64) -> String {
     let decimals = if (value * 10.0).round().abs() < 1000.0 { 1 } else { 0 };
     format!("{value:.decimals$}")
 }
 
-/// A round trip in milliseconds; below 0.1 shows as `< 0.1`.
+/// Formats a round trip in milliseconds. Below 0.1 shows as `< 0.1`.
 pub fn latency(value: f64) -> String {
     if (0.0..0.1).contains(&value) { "< 0.1".into() } else { ms(value) }
 }
 
-/// A round trip with its unit.
+/// Formats a round trip with its unit.
 pub fn round_trip(duration: Duration) -> String {
     format!("{} ms", latency(duration.as_secs_f64() * 1e3))
 }
 
-/// Fastest to slowest, both ends even when they read the same.
+/// Formats fastest to slowest, both ends even when they read the same.
 pub fn latency_range(fastest: Duration, slowest: Duration) -> String {
     let ms = |duration: Duration| latency(duration.as_secs_f64() * 1e3);
     format!("{}–{} ms", ms(fastest), ms(slowest))
 }
 
-/// Added latency in milliseconds, always signed; what rounds to zero is `+0.0`.
+/// Formats added latency in milliseconds, always signed. What rounds to zero is `+0.0`.
 pub fn added(value: f64) -> String {
     let sign = if (value * 10.0).round() < 0.0 { '−' } else { '+' };
     format!("{sign}{}", ms(value.abs()))
 }
 
-/// A speed in its unit: two decimals below 100, one below 1000, whole from there.
+/// Formats a speed in its unit with two decimals below 100, one below 1000, whole from there.
 pub fn speed(value: f64) -> String {
     match () {
         _ if (value * 10.0).round() >= 10_000.0 => format!("{value:.0}"),
@@ -50,13 +50,13 @@ pub fn speed(value: f64) -> String {
     }
 }
 
-/// Bytes per second as bits per second, in the largest unit the value reaches 1.2 of.
+/// Formats bytes per second as bits per second, in the largest unit the value reaches 1.2 of.
 pub fn rate(bytes_per_sec: f64) -> String {
     let (value, unit) = tier(bytes_per_sec * 8.0, 1.2);
     format!("{} {unit}", speed(value))
 }
 
-/// Bits per second in the largest unit the value reaches `headroom` of, and that unit.
+/// Scales bits per second to the largest unit the value reaches `headroom` of, and names that unit.
 pub fn tier(bits: f64, headroom: f64) -> (f64, &'static str) {
     const UNITS: [&str; 5] = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"];
     let step = |tier: usize| 1e3_f64.powi(tier as i32);
@@ -66,7 +66,7 @@ pub fn tier(bits: f64, headroom: f64) -> (f64, &'static str) {
     (bits / step(tier), UNITS[tier])
 }
 
-/// A byte count: whole bytes below 999.5, one decimal in decimal units from there.
+/// Formats a byte count as whole bytes below 999.5, one decimal in decimal units from there.
 pub fn bytes(count: u64) -> String {
     const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
     let mut value = count as f64;
@@ -81,13 +81,13 @@ pub fn bytes(count: u64) -> String {
     }
 }
 
-/// A share in percent: two decimals below 1%, so a rare timeout stays legible, one from there.
+/// Formats a share in percent with two decimals below 1%, so a rare timeout stays legible, one from there.
 pub fn percent(ratio: f64) -> String {
     let places = if ratio > 0.0 && ratio < 0.01 { 2 } else { 1 };
     format!("{:.places$}%", ratio * 100.0)
 }
 
-/// A dial or axis label: decimals down to the third significant figure, no trailing zeros.
+/// Formats a dial or axis label with decimals down to the third significant figure, no trailing zeros.
 pub fn tick(value: f64) -> String {
     if value == 0.0 || value.is_nan() {
         return "0".into();
@@ -100,7 +100,7 @@ pub fn tick(value: f64) -> String {
     }
 }
 
-/// Thousands separated by commas.
+/// Separates thousands with commas.
 pub fn count(value: usize) -> String {
     let digits = value.to_string();
     let groups = digits.as_bytes().rchunks(3).rev();
@@ -108,7 +108,7 @@ pub fn count(value: usize) -> String {
     groups.join(",")
 }
 
-/// Seconds with one decimal below a minute, then minutes and whole seconds, then hours and whole minutes.
+/// Formats seconds with one decimal below a minute, then minutes and whole seconds, then hours and whole minutes.
 pub fn duration(duration: Duration) -> String {
     let seconds = duration.as_secs_f64();
     if (seconds * 10.0).round() < 600.0 {
@@ -126,7 +126,7 @@ pub fn duration(duration: Duration) -> String {
     pair(minutes / 60, "h", minutes % 60, "min")
 }
 
-/// A planned time: as `duration`, without a whole second's decimal.
+/// Formats a planned time as `duration` does, without a whole second's decimal.
 pub fn stage_time(planned: Duration) -> String {
     let seconds = planned.as_secs_f64();
     match (seconds * 10.0).round() < 600.0 {
@@ -135,7 +135,7 @@ pub fn stage_time(planned: Duration) -> String {
     }
 }
 
-/// Seconds into a stage over its planned time; the seconds keep counting past a minute.
+/// Formats seconds into a stage over its planned time. The seconds keep counting past a minute.
 pub fn progress(elapsed: Duration, planned: Duration) -> String {
     format!("{:.1} / {}", elapsed.as_secs_f64(), stage_time(planned))
 }
@@ -162,7 +162,7 @@ pub fn population(stage: Stage) -> &'static str {
     }
 }
 
-/// `population` where a lane's label column cannot hold it.
+/// Shortens `population` where a lane's label column cannot hold it.
 pub fn compact_population(stage: Stage) -> &'static str {
     match stage {
         Stage::Latency => "Idle",
@@ -209,7 +209,7 @@ pub fn status_label(status: StageStatus) -> &'static str {
     }
 }
 
-/// An HTTP version; none is automatic.
+/// Names an HTTP version. None is automatic.
 pub fn protocol(protocol: Option<Protocol>) -> &'static str {
     match protocol {
         None => "Automatic",
@@ -235,7 +235,7 @@ pub fn latency_transport(transport: LatencyTransport) -> &'static str {
     }
 }
 
-/// The HTTP version a latency transport runs over.
+/// A latency transport runs over this HTTP version.
 pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
     match transport {
         LatencyTransport::WebSocket => Protocol::Http1,
@@ -243,7 +243,7 @@ pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
     }
 }
 
-/// A path as its transport over its HTTP version, and whether TLS carries it.
+/// Describes a path as its transport over its HTTP version, and whether TLS carries it.
 pub fn path(transport: &str, version: Protocol, origin: &Origin) -> String {
     let tls = if origin.scheme == Scheme::Https { " (TLS)" } else { "" };
     format!("{transport} over {}{tls}", protocol(Some(version)))
@@ -257,7 +257,7 @@ pub fn latency_path(path: &LatencyPath) -> String {
     self::path(latency_transport(path.transport), latency_protocol(path.transport), &path.origin)
 }
 
-/// The streams a run opens per server and direction on `path`.
+/// Describes the streams a run opens per server and direction on `path`.
 pub fn streams(config: &Config, path: &ThroughputPath) -> String {
     let lanes = config.lanes(path.protocol, path.transport);
     match (config.streams.forced, path.transport, path.protocol) {
@@ -273,7 +273,7 @@ pub fn streams(config: &Config, path: &ThroughputPath) -> String {
     }
 }
 
-/// A server by name and location, a location the name already holds read once.
+/// Names a server by name and location. A location the name already holds reads once.
 pub fn server(name: &str, location: &str) -> String {
     let (lower_name, lower_location) = (name.to_lowercase(), location.to_lowercase());
     match () {
@@ -283,14 +283,14 @@ pub fn server(name: &str, location: &str) -> String {
     }
 }
 
-/// An origin without its scheme.
+/// Strips the scheme from an origin.
 pub fn authority(origin: &Origin) -> String {
     let text = origin.to_string();
     text.split_once("://")
         .map_or_else(|| text.clone(), |(_, authority)| authority.to_owned())
 }
 
-/// A probe cadence by its preset's name, or its spacing.
+/// Names a probe cadence by its preset, or by its spacing.
 pub fn cadence(cadence: Cadence) -> String {
     let spacing = |spacing: Duration| match spacing < Duration::from_secs(1) {
         true => format!("{} ms", spacing.as_millis()),

@@ -1,6 +1,6 @@
-// Layout moves: a change applies at once, then every `data-flip` element that stayed springs to its new place.
-// `data-flip-resize` also springs its width; it and `data-flip-layout` move by offsets in layout, since Firefox draws a
-// compositor translate a frame apart from a width that moves with it.
+// Animates layout moves. A change applies at once, then every `data-flip` element that stayed springs to its new
+// place. `data-flip-resize` also springs its width. It and `data-flip-layout` move by offsets in layout, since
+// Firefox draws a compositor translate a frame apart from a width that moves with it.
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];
@@ -13,8 +13,8 @@ const STEPS = 30;
 const moving = new WeakMap<Element, { axes: Axes; run: Animation }>();
 let flipping = false;
 
-/** The speed of `el`'s move, at its animation's own time: moves started together read the same instant, and a move
-    still waiting for its first frame keeps its starting speed. */
+/** Reads the speed of `el`'s move at its animation's own time, so moves started together read the same instant and
+    a move still waiting for its first frame keeps its starting speed. */
 const velocity = (el: Element): Axes => {
   const move = moving.get(el);
   const t = move ? Number(move.run.currentTime ?? SPRING_MS) : SPRING_MS;
@@ -32,7 +32,7 @@ function settle(el: Element, axes: Axes, frame: (x: number, y: number, w: number
   moving.set(el, { axes, run: el.animate(frames, { duration: SPRING_MS }) });
 }
 
-/** The displayed elements marked `data-flip`, by key. */
+/** Collects the displayed elements marked `data-flip`, by key. */
 function boxes(only?: readonly string[]): Map<string, { el: HTMLElement; box: DOMRect }> {
   const found = new Map<string, { el: HTMLElement; box: DOMRect }>();
   for (const el of document.querySelectorAll<HTMLElement>("[data-flip]")) {
@@ -44,7 +44,7 @@ function boxes(only?: readonly string[]): Map<string, { el: HTMLElement; box: DO
   return found;
 }
 
-/** Applies `update` and moves what it moved; `only` names the keys that move, so a surface moves as one. A flip
+/** Applies `update` and moves what it moved. `only` names the keys that move, so a surface moves as one. A flip
     within a flip is part of the outer one. */
 export function flip(update: () => void, only?: readonly string[]): void {
   if (flipping || reducedMotion.peek() || document.hidden) return update();

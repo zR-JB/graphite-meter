@@ -1,5 +1,5 @@
-//! Whole runs against the server on pinned runtimes: every stage over each transport and a server that departs
-//! mid-stage.
+//! Completes whole runs against the server on pinned runtimes, every stage over each transport, and watches a server
+//! depart mid-stage.
 use graphite_meter_client::{
     config::Config,
     events::{Event, Events},
@@ -15,7 +15,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
-/// Every stage for 2 s.
+/// Runs every stage for 2 s.
 const SHORT: [&str; 11] = [
     "-stages",
     "latency,download,upload,bidirectional",
@@ -30,13 +30,13 @@ const SHORT: [&str; 11] = [
     "-insecure",
 ];
 
-/// `args` at `url` without warmup, two HTTP/1.1 lanes a direction.
+/// Configures `args` at `url` without warmup, two HTTP/1.1 lanes a direction.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
     e2e::config(&[&["-url", &url, "-warmup", "0s", "-auto-streams", "2"], args].concat())
 }
 
-/// The pinned runtimes and the latency runtime beside the test's multi-thread runtime, as the binary runs them.
+/// Spawns the pinned runtimes and the latency runtime beside the test's multi-thread runtime, as the binary runs them.
 fn pinned() -> Arc<Pool> {
     Arc::new(Pool::probing(&Handle::current()).unwrap())
 }
@@ -64,7 +64,7 @@ async fn watch(mut received: mpsc::UnboundedReceiver<Event>, mut seen: impl Asyn
     events
 }
 
-/// A server that advertises the origin it is asked at, behind a link to its HTTP/1.1 listener.
+/// Starts a server that advertises the origin it is asked at, behind a link to its HTTP/1.1 listener.
 async fn relayed() -> (Server, Link) {
     let server = Server::with(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"), ("GM_PUBLIC_ORIGINS", "self")]).await;
     let address: SocketAddr = server.http1.to_string().trim_start_matches("http://").parse().unwrap();

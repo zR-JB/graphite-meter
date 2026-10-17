@@ -1,6 +1,6 @@
 use graphite_meter_proto::{lane::LaneEnding, reason::FailureReason, refusal::UploadRefusal, route::Route};
 
-/// The fields of each row of a shared code list, comments and blank lines left out.
+/// Splits each row of a shared code list into fields, leaving comments and blank lines out.
 fn rows(list: &str) -> Vec<Vec<String>> {
     list.lines()
         .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))

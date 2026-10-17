@@ -1,4 +1,4 @@
-//! The settings table: one row per setting drives its environment variable, its flag and its usage line.
+//! Holds the settings table. One row per setting drives its environment variable, its flag and its usage line.
 
 use super::{ListenerKind, catalog};
 use graphite_meter_proto::{
@@ -10,22 +10,22 @@ use graphite_meter_proto::{
 use ipnet::IpNet;
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
 
-/// The native endpoints discovery advertises: `all` or the named ones, `none` being the empty set.
+/// Discovery advertises these native endpoints, `all` or the named ones, with `none` being the empty set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Advertised {
     All,
     Only(BTreeSet<ListenerKind>),
 }
 
-/// `GM_TRUSTED_PROXIES`: CIDRs whose peers may name their client.
+/// `GM_TRUSTED_PROXIES` lists CIDRs whose peers may name their client.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct TrustedProxies(pub Vec<IpNet>);
 
-/// A setting's value type: how trimmed text sets it and how a usage line shows it.
+/// A setting's value type says how trimmed text sets it and how a usage line shows it.
 trait Value {
     fn set(&mut self, text: &str) -> Result<(), String>;
 
-    /// The value as a usage default, empty for none.
+    /// Shows the value as a usage default, empty for none.
     fn show(&self) -> String;
 }
 
@@ -147,7 +147,7 @@ impl Value for TrustedProxies {
     }
 }
 
-/// A CIDR without a sign or leading zero in its prefix length.
+/// Parses a CIDR without a sign or leading zero in its prefix length.
 fn prefix(cidr: &str) -> Result<IpNet, String> {
     let (address, bits) = cidr.rsplit_once('/').ok_or("the prefix length after '/' is missing")?;
     let address = address
@@ -161,7 +161,7 @@ fn prefix(cidr: &str) -> Result<IpNet, String> {
     IpNet::new(address, bits).map_err(|_| format!("prefix length {bits} is too long for the address"))
 }
 
-/// Comma-separated entries, trimmed, empty ones dropped.
+/// Splits comma-separated entries, trims them and drops empty ones.
 fn split_list(text: &str) -> Vec<String> {
     text.split(',')
         .map(str::trim)
@@ -170,14 +170,14 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
+/// Declares `Settings`, its defaults and `SETTINGS` from one row per setting. An environment-only secret has no flag.
 macro_rules! settings {
     ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $placeholder:expr, $usage:literal;)+) => {
-        /// Settings as given, before validation.
+        /// Settings are held as given, before validation.
         pub(super) struct Settings {
             $(pub $field: $type,)+
             pub catalog: ServerCatalog,
-            /// The variables set by the environment or a flag, also to their defaults.
+            /// The environment or a flag set these variables, even to their defaults.
             pub given: BTreeSet<&'static str>,
         }
 
@@ -271,7 +271,7 @@ settings! {
         "label", "OIDC provider label";
 }
 
-/// Loads the environment, then the flags; `None` when usage was asked; flag errors go to `usage` before env errors.
+/// Loads the environment, then the flags. `None` means usage was asked. Flag errors go to `usage` before env errors.
 pub(super) fn load(
     env: &dyn Fn(&str) -> Option<OsString>,
     args: impl IntoIterator<Item = OsString>,
@@ -326,7 +326,7 @@ impl Settings {
         }
     }
 
-    /// Whether any authentication setting but the mode was given.
+    /// Tells whether any authentication setting but the mode was given.
     pub fn auth_given(&self) -> bool {
         self.given
             .iter()

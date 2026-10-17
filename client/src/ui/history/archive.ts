@@ -1,5 +1,5 @@
-// The saved results one visit to History lists, as small entries kept current by this tab's changes and read again
-// on another tab's; the open result alone is read whole.
+// Lists the saved results for one visit to History as small entries. This tab's changes keep them current and
+// another tab's make the list read again. Only the open result is read whole.
 import { historyEntry, type HistoryRecord } from "../../app/history/records";
 import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
@@ -14,15 +14,15 @@ const PENDING: Selected = { status: "pending" };
 const STALE = "History could not be read again, so this list may be out of date.";
 const UNREAD: Selected = { status: "unread" };
 
-/** Must run inside an owner: disposing it stops the read and the subscription. */
+/** The caller must run this inside an owner. Disposing the owner stops the read and the subscription. */
 export function createArchive(repository: HistoryRepository, selectedId: Read<string | null>) {
   const state = signal<"loading" | "ready" | "error">("loading");
   const listed = signal<Listed>({ records: [], malformed: 0 });
-  /** What reading the open result whole found: the one whole record History holds. */
+  /** Holds what reading the open result whole found. It is the one whole record this view keeps. */
   const answer = signal<{ id: string; selected: Selected } | null>(null);
   const error = signal("");
   let reading: AbortController | null = null;
-  /** This tab's changes since the running read began: it may have read before some of them landed. */
+  /** Collects this tab's changes since the running read began, which may have read before some of them landed. */
   let missed: Exclude<HistoryChange, { type: "elsewhere" }>[] = [];
   /** Counts changes, so a lookup that raced one is made again. */
   let changes = 0;
@@ -73,7 +73,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     return id !== null && records().some((entry) => entry.id === id);
   });
 
-  // Only the latest lookup answers: an earlier one for the same result, landing late, never overwrites it.
+  // Only the latest lookup answers. An earlier one for the same result that lands late never overwrites it.
   let lookups = 0;
   function lookUp(id: string): void {
     const at = changes;
@@ -85,7 +85,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
         if (changes !== at) return lookUp(id);
         batch(() => {
           answer.set({ id, selected: result });
-          // One past the newest 2,000 joins the list while it is open.
+          // A result past the newest 2,000 joins the list while it is open.
           if (result.status === "ready" && !listedOpen.peek())
             listed.set({ ...listed.peek(), records: withEntry(records.peek(), historyEntry(result.record)) });
         });
@@ -95,8 +95,8 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
       },
     );
   }
-  // The open result is read once the list is, and again as it leaves the list, so one deleted elsewhere reads as
-  // missing; closing it lets go of it.
+  // The view reads the open result once the list is read, and again as it leaves the list, so one deleted elsewhere
+  // reads as missing. Closing it lets go of it.
   effect(() => {
     const id = selectedId();
     const listedNow = listedOpen();
@@ -117,9 +117,9 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     state: state as Read<"loading" | "ready" | "error">,
     records,
     malformed: computed(() => listed().malformed),
-    /** Why this view's last change to, or read of, History failed; each list read clears it. */
+    /** Says why this view's last change to, or read of, History failed. Each list read clears it. */
     error,
-    /** The open result, or why there is none; pending while it is read, so nothing flashes "not found". */
+    /** Gives the open result, or why there is none. It stays pending while read, so nothing flashes "not found". */
     selected: computed<Selected>(() => {
       const id = selectedId();
       if (id === null) return NONE;

@@ -1,4 +1,4 @@
-/* The auth pages' own rules; build.ts puts the faces, tokens and shared rules they use ahead of them. */
+/* These are the auth pages' own rules. build.ts puts the faces, tokens and shared rules they use ahead of them. */
 *,
 ::before,
 ::after {
@@ -30,7 +30,7 @@ body {
 .card > * {
   margin: var(--space-3) 0 0;
 }
-/* One text edge: plates sit on the sheet's padding, free lines a row inset in. */
+/* Plates sit on the sheet's padding and free lines a row inset in, so all text shares one edge. */
 .card > :is(.brand, h1, p) {
   margin-inline: var(--row-inset);
 }
@@ -66,7 +66,7 @@ p {
 .card > h1 + p {
   margin-top: var(--space-1);
 }
-/* The sign-in card is a faceplate: the instrument at rest over a centred head. */
+/* The sign-in card is a faceplate. It shows the instrument at rest over a centred head. */
 .face {
   display: grid;
   justify-items: center;
@@ -94,7 +94,7 @@ p {
   stroke-width: 1.75;
   stroke-linejoin: round;
 }
-/* Out of sight at rest: an empty dash would still leave its round cap on the ring. */
+/* The sweep hides at rest, because an empty dash would still leave its round cap on the ring. */
 .face .sweep {
   opacity: 0;
   stroke: var(--phase-latency);
@@ -127,7 +127,7 @@ p {
 .host:empty {
   display: none;
 }
-/* While the sign-in is checked, the ring sweeps round after round, as a live stage's needle runs. */
+/* The ring sweeps round after round while the sign-in is checked, as a live stage's needle runs. */
 @media (prefers-reduced-motion: no-preference) {
   .card:has(form[aria-busy]) .face .sweep {
     animation: sweep var(--dur-pulse) cubic-bezier(0.45, 0, 0.25, 1) infinite;
@@ -181,7 +181,7 @@ p {
     display: none;
   }
 }
-/* Programmatic focus lands here to announce a swapped card; it is not a control. */
+/* Programmatic focus lands here to announce a swapped card. The heading is not a control. */
 h1[tabindex="-1"]:focus-visible {
   outline: none;
 }
@@ -189,7 +189,7 @@ a {
   color: var(--brand-strong);
   text-underline-offset: 3px;
 }
-/* The interstitial moves on by itself; its link is only a fallback. */
+/* The interstitial moves on by itself, so its link is only a fallback. */
 .completion a {
   display: inline-flex;
   align-items: center;
@@ -220,7 +220,7 @@ a {
   color: var(--text);
   overflow-wrap: anywhere;
 }
-/* The same face, weight and tracking as the code the app shows beside it. */
+/* The code takes the same face, weight and tracking as the code the app shows beside it. */
 .code {
   font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
   letter-spacing: var(--track-wide);
@@ -229,7 +229,7 @@ form {
   display: grid;
   gap: var(--space-3);
 }
-/* The label over its entry, on the sheet's own ground. */
+/* The label sits over its entry, on the sheet's own ground. */
 .field {
   display: grid;
   gap: 6px;
@@ -261,7 +261,7 @@ form {
   border-color: var(--brand-line);
   box-shadow: var(--ring-halo);
 }
-/* A saved password keeps the field's fill and ink: autofill's tint would be a hue on a control. */
+/* A saved password keeps the field's fill and ink, because autofill's tint would be a hue on a control. */
 .field input:autofill {
   box-shadow: inset 0 0 0 var(--hit) var(--surface-1);
   -webkit-text-fill-color: var(--text);
@@ -369,13 +369,13 @@ button[type="submit"] {
     var(--transition-control),
     transform var(--dur-hover) var(--ease-out);
 }
-/* Hover takes the stronger ink, as the run button does; a filter would re-rasterize the label. */
+/* Hover takes the stronger ink, as the run button does. A filter would re-rasterize the label. */
 @media (hover: hover) {
   button[type="submit"]:hover:enabled {
     background-color: var(--brand-strong);
   }
 }
-/* Outlined: fallbacks, unavailable actions, and the password beside a working provider. */
+/* An outline marks fallbacks, unavailable actions and the password beside a working provider. */
 .completion a,
 button[type="submit"]:disabled,
 form:has(button:enabled) ~ .separator ~ form button[type="submit"] {
@@ -403,7 +403,7 @@ button:disabled {
     border: 1px solid;
   }
 }
-/* Password verification is deliberately slow: the busy key holds its size and trades its label for a spinner. */
+/* Password verification is deliberately slow, so the busy key holds its size and trades its label for a spinner. */
 form[aria-busy] button[type="submit"] {
   color: transparent;
   cursor: progress;
@@ -425,7 +425,7 @@ form[aria-busy] button[type="submit"]::after {
     transform: rotate(1turn);
   }
 }
-/* Where the dial shows, it is the progress: the key dims under it rather than spin as well. */
+/* Where the dial shows, it is the progress. The key dims under it rather than spin as well. */
 @media (min-height: 561px) {
   .card:has(> .face) form[aria-busy] button[type="submit"] {
     color: var(--label);
@@ -436,7 +436,7 @@ form[aria-busy] button[type="submit"]::after {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* No spin, but the control must still read as busy. */
+  /* The control must still read as busy without the spin. */
   form[aria-busy] button[type="submit"]::after {
     animation: none;
     border-top-color: transparent;

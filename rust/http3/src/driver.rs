@@ -1,4 +1,4 @@
-//! One driver per connection, both roles: control and peer streams, admission, datagrams, CONNECT, GOAWAY, deadlines.
+//! Drives a connection in either role, with control and peer streams, admission, datagrams, CONNECT, GOAWAY, deadlines.
 use crate::{
     budget::{Budget, Charge},
     capsule,
@@ -31,7 +31,7 @@ use tokio::{
 const IDLE: Duration = Duration::from_secs(15);
 const DRAIN: Duration = Duration::from_secs(5);
 
-/// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
+/// The floor counts this fixed per-connection state, the driver, shared stream state, critical streams and futures.
 pub const CONNECTION_BYTES: usize = size_of::<Driver>()
     + size_of::<Shared>()
     + 3 * size_of::<PeerStream>()
@@ -55,24 +55,24 @@ impl Role {
     }
 }
 
-/// What a connection's streams and handles share with its driver.
+/// A connection's streams and handles share this with its driver.
 pub(crate) struct Shared {
     pub(crate) quic: noq::Connection,
     pub(crate) budget: Budget,
     pub(crate) role: Role,
-    /// The peer's SETTINGS, once they arrived and agree with its transport parameters.
+    /// Holds the peer's SETTINGS once they arrived and agree with its transport parameters.
     pub(crate) peer: watch::Sender<Option<Peer>>,
-    /// Request stream halves alive.
+    /// Counts the request stream halves alive.
     live: AtomicUsize,
     going_away: AtomicBool,
-    /// The code this side closed the connection with.
+    /// This side closed the connection with this code.
     closed: OnceLock<Code>,
     wake: Notify,
     sessions: Mutex<Registry>,
 }
 
 impl Shared {
-    /// The largest field section this side accepts, as its SETTINGS say.
+    /// This side accepts a field section up to this size, as its SETTINGS say.
     pub(crate) fn field_limit(&self) -> u64 {
         match self.role {
             Role::Server => settings::SERVER_FIELD_SECTION,
@@ -84,7 +84,7 @@ impl Shared {
         self.peer.borrow().and_then(|peer| peer.max_field_section_size)
     }
 
-    /// Whether the server sent GOAWAY, after which this client starts nothing new.
+    /// Reports whether the server sent GOAWAY, after which this client starts nothing new.
     pub(crate) fn going_away(&self) -> bool {
         self.going_away.load(Ordering::Relaxed)
     }
@@ -107,7 +107,7 @@ impl Shared {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Closes on a violation or with H3_NO_ERROR when done; noq reports any earlier close, the peer's too, as local.
+    /// Closes on a violation or with H3_NO_ERROR when done. noq reports any earlier close, the peer's too, as local.
     pub(crate) fn close(&self, code: Code) -> Error {
         if self.quic.close_reason().is_none() {
             let _ = self.closed.set(code);
@@ -116,7 +116,7 @@ impl Shared {
         Error::local(code)
     }
 
-    /// Why the connection ended, for what outlives it; this side's own close keeps its code.
+    /// Tells what outlives the connection why it ended. This side's own close keeps its code.
     pub(crate) fn close_error(&self) -> Error {
         match (self.quic.close_reason(), self.closed.get()) {
             (Some(noq::ConnectionError::LocallyClosed), Some(&code)) => Error::local(code),
@@ -142,7 +142,7 @@ pub(crate) struct Driver {
     control: Control,
     incoming: Incoming,
     sessions: Sessions,
-    /// Server: the lowest request stream ID not yet accepted, and the one our GOAWAY named.
+    /// A server keeps the lowest request stream ID not yet accepted here, and the one its GOAWAY named below.
     next_request: u64,
     goaway: Option<u64>,
     drain: Option<Instant>,
@@ -192,7 +192,7 @@ impl Driver {
         }
     }
 
-    /// Server: sends GOAWAY; later requests are refused, and the connection closes once the others end.
+    /// A server sends GOAWAY. Later requests are refused, and the connection closes once the others end.
     pub(crate) fn goaway(&mut self) {
         if self.goaway.is_none() && !self.ended {
             self.goaway = Some(self.next_request);
@@ -201,7 +201,7 @@ impl Driver {
         }
     }
 
-    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and 5 s bound the rest.
+    /// A server does [`Self::goaway`], ends every session with `code` and `reason`, and bounds the rest with 5 s.
     pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
         self.goaway();
         if self.drain.is_none() && !self.ended {
@@ -210,7 +210,7 @@ impl Driver {
         }
     }
 
-    /// Drives the connection, yielding the server's next request stream; `None` after a graceful close. Cancel-safe.
+    /// Drives the connection, yielding the server's next request stream or `None` after a graceful close. Cancel-safe.
     pub(crate) async fn next(&mut self) -> Result<Option<RequestStream>, Error> {
         if self.ended {
             return Ok(None);
@@ -269,7 +269,7 @@ impl Driver {
         }
     }
 
-    /// When this server connection closes with H3_NO_ERROR, if anything bounds it.
+    /// This server connection closes with H3_NO_ERROR at this instant, if anything bounds it.
     fn close_at(&mut self, now: Instant) -> Option<Instant> {
         if self.shared.role == Role::Client {
             return None;
@@ -280,13 +280,13 @@ impl Driver {
         }
         let idle = *self.idle_since.get_or_insert(now) + IDLE;
         let sessions = self.shared.sessions();
-        // A connection that only carried sessions ends with its last one: browsers would hold its slot.
+        // A connection that only carried sessions ends with its last one. Browsers would otherwise hold its slot.
         let only_sessions = sessions.carried && !sessions.served;
         let done = (self.goaway.is_some() || only_sessions).then(|| sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 
-    /// Refused past GOAWAY or over the budget, a new stream gets H3_REQUEST_REJECTED.
+    /// A new stream past GOAWAY or over the budget gets H3_REQUEST_REJECTED.
     fn admit(&mut self, (mut send, mut recv): (noq::SendStream, noq::RecvStream)) -> Option<RequestStream> {
         let id = u64::from(recv.id());
         self.next_request = self.next_request.max(id + 4);
@@ -304,7 +304,7 @@ impl Driver {
         }
     }
 
-    /// The connection ended: so does every session, also one handed over from now on.
+    /// Ends every session with the connection, also one handed over from now on.
     fn end(&mut self) {
         if !std::mem::replace(&mut self.ended, true) {
             self.sessions.end(&self.shared, &self.shared.close_error());
@@ -312,7 +312,7 @@ impl Driver {
     }
 }
 
-/// Hands a peer's session stream to the registry; one naming no possible session is refused at once, and one the
+/// Hands a peer's session stream to the registry. It refuses one naming no possible session at once, and one the
 /// budget cannot hold as unbuffered.
 fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
     let Some(session) = SessionId::new(session) else {
@@ -324,7 +324,7 @@ fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Byte
     }
 }
 
-/// Routes each datagram to its session; ends only with the connection or a malformed session ID.
+/// Routes each datagram to its session. It ends only with the connection or a malformed session ID.
 async fn route_datagrams(shared: &Shared) -> Error {
     loop {
         match shared.quic.read_datagram().await.map(capsule::datagram) {
@@ -342,7 +342,7 @@ impl Drop for Driver {
     }
 }
 
-/// Our control stream: SETTINGS first, GOAWAY on shutdown.
+/// Our control stream carries SETTINGS first and GOAWAY on shutdown.
 struct Control {
     stream: ControlStream,
     pending: Vec<u8>,
@@ -350,14 +350,14 @@ struct Control {
 }
 
 enum ControlStream {
-    /// Kept across passes, as noq wakes only a waiting open; it never resolves once the connection closed.
+    /// The open is kept across passes, as noq wakes only a waiting one. It never resolves once the connection closed.
     Opening(Pin<Box<dyn Future<Output = noq::SendStream> + Send>>),
-    /// With its STOP_SENDING, which the peer must never send (RFC 9114 §6.2.1).
+    /// Pairs the stream with its STOP_SENDING, which the peer must never send (RFC 9114 §6.2.1).
     Open(noq::SendStream, Pin<Box<noq::Stopped>>),
 }
 
 impl Control {
-    /// Opens the stream and writes what is queued; `Ready` with the code the connection closes with.
+    /// Opens the stream and writes what is queued. It is `Ready` with the code the connection closes with.
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Code> {
         if let ControlStream::Opening(opening) = &mut self.stream {
             let stream = ready!(opening.as_mut().poll(cx));
@@ -384,18 +384,18 @@ impl Control {
 }
 
 const TYPE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Streams covered by the connection floor, where peers open their critical ones.
+/// The connection floor covers this many streams, where peers open their critical ones.
 const FLOOR: u8 = 3;
 
-/// The peer's unidirectional streams: classified within 10 s, then read as control or QPACK, or handed to WebTransport.
+/// A peer's unidirectional stream is classified within 10 s, then read as control or QPACK, or handed to WebTransport.
 struct Incoming {
     streams: Vec<PeerStream>,
-    /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
+    /// Records whether the peer opened its control, QPACK encoder and QPACK decoder streams.
     critical: [bool; 3],
     floor: u8,
 }
 
-/// A WebTransport stream once its header is read: its session, the stream and the bytes after the header.
+/// A WebTransport stream with its header read carries its session, the stream and the bytes after the header.
 type Classified = (u64, noq::RecvStream, Bytes);
 
 struct PeerStream {
@@ -413,7 +413,7 @@ enum Kind {
     Session(u64),
 }
 
-/// What reading a stream came to.
+/// Reading a stream came to one of these.
 enum Read {
     Pending,
     Done,
@@ -445,7 +445,7 @@ impl Incoming {
             .push(PeerStream { stream, input: Bytes::new(), kind, _charge: charge });
     }
 
-    /// Reads every stream as far as it goes; `Ready` with a WebTransport stream or a violation's close code.
+    /// Reads every stream as far as it goes. It is `Ready` with a WebTransport stream or a violation's close code.
     fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<Result<Classified, Code>> {
         let mut index = 0;
         while index < self.streams.len() {
@@ -513,7 +513,7 @@ impl PeerStream {
     }
 }
 
-/// The kind a stream's type makes it, or `None` for an unknown type, which is stopped.
+/// Maps a stream's type to its kind, or `None` for an unknown type, which is stopped.
 fn classify(
     kind: StreamType,
     session: Option<u64>,
@@ -542,11 +542,11 @@ fn classify(
     Ok(Some(next))
 }
 
-/// The peer's control stream after its type (RFC 9114 §6.2.1): SETTINGS, then GOAWAY, MAX_PUSH_ID and CANCEL_PUSH.
+/// A peer's control stream carries SETTINGS after its type, then GOAWAY, MAX_PUSH_ID and CANCEL_PUSH (RFC 9114 §6.2.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControlEvent {
     Settings(Peer),
-    /// The server's GOAWAY: requests from this stream ID on go unprocessed.
+    /// The server's GOAWAY leaves requests from this stream ID on unprocessed.
     Goaway(u64),
 }
 
@@ -556,7 +556,7 @@ struct ControlReader {
     settings: Option<settings::Reader>,
     started: bool,
     kind: FrameType,
-    /// The one varint a GOAWAY, MAX_PUSH_ID or CANCEL_PUSH frame holds.
+    /// A GOAWAY, MAX_PUSH_ID or CANCEL_PUSH frame holds this one varint.
     value: Partial,
     goaway: Option<u64>,
 }
@@ -643,7 +643,7 @@ mod control_tests {
     use super::*;
     use crate::testing::frame;
 
-    /// The events of a stream that opens with empty SETTINGS, read one byte at a time.
+    /// Collects the events of a stream that opens with empty SETTINGS, read one byte at a time.
     fn events(peer: Role, frames: &[Vec<u8>]) -> Result<Vec<ControlEvent>, Code> {
         let mut reader = ControlReader::default();
         let mut events = Vec::new();

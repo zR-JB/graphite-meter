@@ -1,5 +1,5 @@
-// Paths in words: how a target reads in Settings and Details, the choices each picker offers on the selected servers
-// and why one cannot be chosen, and the line that states a role's check.
+// Puts paths in words, from how a target reads in Settings and Details to the choices each picker offers on the
+// selected servers, why one cannot be chosen, and the line that states a role's check.
 import type { ServerView } from "../../engine/net/connection";
 import type { PageConfig } from "../../engine/net/page";
 import { parseSelection, pointsAt, PROTOCOL_LABEL, resolve, type Selection } from "../../engine/net/paths";
@@ -18,7 +18,7 @@ import { listed, READINESS, TRANSPORT, transportLabel, type Word } from "../../v
 
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 type Target = ThroughputTarget | LatencyTarget;
-/** What a description reads of a target; a run's summary carries no more. */
+/** A description reads this much of a target. A run's summary carries no more. */
 interface PathTarget {
   transport: string;
   origin: string;
@@ -26,8 +26,8 @@ interface PathTarget {
   protocol?: HttpProtocol;
 }
 
-/** The mechanism, its carrier, and both together: "Fetch streams over HTTP/1.1 (TLS)". A WebSocket names HTTP/1.1
-    only when its origin's fetch target does. */
+/** Names the mechanism, its carrier and both together, as "Fetch streams over HTTP/1.1 (TLS)". A WebSocket names
+    HTTP/1.1 only when its origin's fetch target does. */
 export function describePath(
   discovery: Discovery | null,
   role: Role,
@@ -52,7 +52,7 @@ export function describePath(
   return { label: carrier, summary: `${mechanism} over ${carrier}`, carrier };
 }
 
-/** The target a role uses on one server now: its verified path's, else what the saved choice resolves to. */
+/** Gives the target a role uses on one server now, its verified path's, else what the saved choice resolves to. */
 export function shownTarget(view: ServerView | undefined, role: Role, page: Browser): Target | null {
   if (!view) return null;
   const path = view[role].path;
@@ -65,7 +65,7 @@ export const pathSummary = (discovery: Discovery | null, role: Role, target: Pat
 
 const origins = (discovery: Discovery, role: Role) => discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
 
-/** The browser's reason, when its policy excludes every origin the choice points at. */
+/** Gives the browser's reason when its policy excludes every origin the choice points at. */
 function blockedReason(discovery: Discovery, role: Role, selection: Selection): string | null {
   let reason: string | null = null;
   for (const entry of origins(discovery, role).values()) {
@@ -76,7 +76,7 @@ function blockedReason(discovery: Discovery, role: Role, selection: Selection): 
   return reason;
 }
 
-/** Why one server cannot run `value` for `role`; null when it can. */
+/** Says why one server cannot run `value` for `role`, or null when it can. */
 function unavailable(discovery: Discovery | null, role: Role, value: string, page: Browser): string | null {
   if (!discovery) return "Checking server transports…";
   const selection = parseSelection(value);
@@ -95,12 +95,12 @@ function unavailable(discovery: Discovery | null, role: Role, value: string, pag
 }
 
 export interface Choice {
-  /** The saved selection the choice writes. */
+  /** The choice writes this saved selection. */
   value: string;
   label: string;
-  /** The choice group whose note the row shows. */
+  /** The row shows this choice group's note. */
   group: string;
-  /** Why it cannot be chosen; null when it can. */
+  /** Says why it cannot be chosen, or null when it can. */
   unavailable: string | null;
 }
 
@@ -123,10 +123,10 @@ const GROUPS: Record<Role, readonly (readonly [string, string])[]> = {
 const groupOf = (target: Target) =>
   target.transport === "fetch-stream" ? `protocol:${target.protocol}` : `transport:${target.transport}`;
 
-/** Every choice a picker offers. One server offers Automatic, the chosen group, and each mechanism it advertises,
-    a negotiated one named by the protocol its verified path saw; several servers offer the groups, each available
-    only when every server that answers (all of them when none does) can run it. Datagram throughput shows only
-    when its switch is on or it is chosen. */
+/** Lists every choice a picker offers. One server offers Automatic, the chosen group, and each mechanism it
+    advertises, a negotiated one named by the protocol its verified path saw. Several servers offer the groups, each
+    available only when every server that answers (all of them when none does) can run it. Datagram throughput shows
+    only when its switch is on or it is chosen. */
 export function choices(
   role: Role,
   servers: readonly ServerIdentity[],
@@ -189,8 +189,8 @@ export function choices(
 
 type RoleState = ServerView["throughput"]["state"];
 
-/** The check line under a picker: one server's own state and words, or the worst of several and how many are
-    ready; a failure's message stands in for its status word. Null when no server is left to state. */
+/** Builds the check line under a picker, one server's own state and words, or the worst of several and how many
+    are ready. A failure's message stands in for its status word. Null means no server is left to state. */
 export function roleLine(
   role: Role,
   considered: readonly ServerView[],

@@ -1,4 +1,4 @@
-//! Sign-in approval: its token exchange against a canned server, and its polling on paused time.
+//! Tests sign-in approval, its token exchange against a canned server and its polling on paused time.
 use graphite_meter_client::net::{
     Client, Fault,
     approval::{Approval, Unapproved},

@@ -1,4 +1,4 @@
-//! HTTP/1.1 through hyper: an IO wrapper closing when exchange, reply or lane calls for it; WebSocket hand-off.
+//! Serves HTTP/1.1 through hyper. An IO wrapper closes when exchange, reply or lane calls for it. WebSockets hand off.
 
 use super::{
     Burst, Rehome,
@@ -42,19 +42,19 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-/// hyper's buffer: 128 KiB reads cost less CPU per uploaded byte than 64 KiB; it also bounds a head before parsing.
+/// Sizes hyper's buffer. 128 KiB reads cost less CPU per uploaded byte than 64 KiB, and bounds a head before parsing.
 const BUFFER_BYTES: usize = 128 << 10;
 /// A connection between requests closes after this long.
 const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(15);
 
-/// What an HTTP/1 listener's connections share.
+/// Holds what an HTTP/1 listener's connections share.
 #[derive(Clone)]
 pub struct Http1 {
     pub app: Arc<App>,
     pub endpoint: Endpoint,
-    /// Present on a TLS listener.
+    /// A TLS listener sets this.
     pub tls: Option<TlsAcceptor>,
-    /// The runtime WebSocket buses move to, which runs no bulk transfer.
+    /// WebSocket buses move to this runtime, which runs no bulk transfer.
     pub buses: Handle,
     pub shutdown: CancellationToken,
 }
@@ -62,7 +62,7 @@ pub struct Http1 {
 type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
 
 impl Http1 {
-    /// An accepted connection's work, after its TLS handshake on a TLS listener, on whichever runtime polls it.
+    /// Serves an accepted connection on whichever runtime polls it, after its TLS handshake on a TLS listener.
     pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
         let (listener, socket, accepted) = (self.clone(), socket.into_std(), Instant::now());
         async move {
@@ -85,7 +85,7 @@ impl Http1 {
         }
     }
 
-    /// Serves requests until the connection ends; the first request's exchange began at `start`.
+    /// Serves requests until the connection ends. The first request's exchange began at `start`.
     async fn serve<S>(&self, stream: S, connection: Connection, start: Instant)
     where
         S: AsyncRead + AsyncWrite + Rehome + Unpin + Send + 'static,
@@ -104,7 +104,7 @@ impl Http1 {
                 .serve_connection(TokioIo::new(io), service)
                 .with_upgrades()
         );
-        // A child token: polling it never takes the server-wide token's waiter lock.
+        // Polling a child token never takes the server-wide token's waiter lock.
         let shutdown = self.shutdown.child_token();
         tokio::select! {
             biased;
@@ -141,7 +141,7 @@ where
     websocket::serve(stream, read_buf, lane).await;
 }
 
-/// Answers one request; an error closes the connection unanswered.
+/// Answers one request. An error closes the connection unanswered.
 async fn respond(
     app: Arc<App>,
     mut request: Request<Incoming>,
@@ -163,13 +163,13 @@ async fn respond(
     }
 }
 
-/// What the service and the IO wrapper of one connection share.
+/// Holds what the service and the IO wrapper of one connection share.
 #[derive(Default)]
 struct Shared {
-    /// The state the service posts for the IO wrapper to adopt.
+    /// The service posts a state here for the IO wrapper to adopt.
     posted: Mutex<Option<State>>,
     changed: AtomicBool,
-    /// The deadline of the exchange a request's first byte started.
+    /// Holds the deadline of the exchange a request's first byte started.
     started: Mutex<Option<Instant>>,
     /// The reply's body ended, so the flush after it delivers the reply.
     complete: AtomicBool,
@@ -181,7 +181,7 @@ impl Shared {
         self.changed.store(true, Ordering::Release);
     }
 
-    /// The exchange of a request whose head was just parsed, which bounds the connection until admitted.
+    /// Takes the exchange of a request whose head was just parsed. It bounds the connection until admitted.
     fn exchange(&self) -> Exchange {
         let started = lock(&self.started).take();
         let exchange = Exchange::until(started.unwrap_or_else(|| Instant::now() + EXCHANGE_BOUND));
@@ -189,7 +189,7 @@ impl Shared {
         exchange
     }
 
-    /// Bounds the connection by the reply's bound; a reply without a body to send is complete at once.
+    /// Bounds the connection by the reply's bound. A reply without a body to send is complete at once.
     fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<Reply> {
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
@@ -198,7 +198,7 @@ impl Shared {
     }
 }
 
-/// A reply as hyper writes it, whose end completes it.
+/// Wraps the reply hyper writes, whose end completes it.
 struct Reply {
     body: Body,
     shared: Arc<Shared>,
@@ -226,7 +226,7 @@ impl http_body::Body for Reply {
     }
 }
 
-/// The socket as hyper sees it.
+/// Wraps the socket hyper sees.
 struct Io<S> {
     inner: S,
     state: State,
@@ -237,12 +237,12 @@ struct Io<S> {
 }
 
 enum State {
-    /// Between requests until the deadline; a first byte starts an exchange.
+    /// The connection waits between requests until the deadline. A first byte starts an exchange.
     Waiting,
-    /// A request until admitted or answered by the deadline; its watch once its head is parsed.
+    /// A request runs until admitted or answered by the deadline. It gets its watch once its head is parsed.
     Exchange(Option<Watch>),
     Reply(ReplyBound),
-    /// Admitted work reading its request, or an upgraded connection.
+    /// Admitted work reads its request, or the connection was upgraded.
     Open,
 }
 

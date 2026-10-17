@@ -1,4 +1,4 @@
-// A card's strip: the stage's rate over time over its reply track, one bar per closed bucket, read by pointer or keys.
+// A card's strip plots the stage's rate over its reply track, one bar per closed bucket, read by pointer or keys.
 import type { ThroughputSample } from "../../app/series";
 import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
@@ -12,10 +12,10 @@ import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
 import { columnsFor, Lane, monotoneTangents, nearestIndex, replyBars, type ReplyBar } from "./strip-model";
 
 const TOP_PAD = 3;
-/** Between the cursor and a readout beside it. */
+/** A readout keeps this gap from the cursor beside it. */
 const GAP = 10;
 
-/** The running stage's leading edge at a frame: now on the timeline and each lane's glided rate (bytes/s). */
+/** The running stage's leading edge at a frame holds now on the timeline and each lane's glided rate (bytes/s). */
 export interface Head {
   t: number;
   values: number[];
@@ -23,7 +23,7 @@ export interface Head {
 
 interface StripProps {
   stage: Stage;
-  /** Lanes by direction: one for download or upload, two for bidirectional, none for the latency card. */
+  /** Lanes go by direction, one for download or upload, two for bidirectional, none for the latency card. */
   dirs: readonly Direction[];
   samples: () => readonly ThroughputSample[];
   /** Changes only when this stage's samples do. */
@@ -33,13 +33,13 @@ interface StripProps {
   ownBuckets: () => unknown;
   start: () => number;
   span: () => number;
-  /** Bytes/s at the plot's top and ms at the track's, shared by every strip so heights compare. */
+  /** Every strip shares the bytes/s at the plot's top and the ms at the track's, so heights compare. */
   ceiling: () => number;
   latencyTop: () => number;
-  /** The idle median, drawn across the track. */
+  /** The idle median is drawn across the track. */
   baseline: () => number | null;
   rate: (bytesPerSec: number) => string;
-  /** The stage runs on its own rates: its leading edge moves every frame. */
+  /** The stage runs on its own rates, so its leading edge moves every frame. */
   live: () => boolean;
   /** Writes the leading edge at `now` into `head`; false when there is none. */
   head: (now: number, head: Head) => boolean;
@@ -51,7 +51,7 @@ interface Row {
   label: string;
   value: string;
   mark?: string;
-  /** The readout's key: the first lane's line, the second's, or a reply bar. */
+  /** The readout keys the row to the first lane's line, the second's, or a reply bar. */
   key: "line" | "second" | "reply";
 }
 
@@ -66,7 +66,7 @@ export function StageGraph(props: StripProps): HTMLElement {
   const trackOnly = dirs.length === 0;
   const phase = props.stage as LatencyBucket["phase"];
 
-  // The track: the idle median's dashed line, one bar per joined bucket, the cursor.
+  // The track holds the idle median's dashed line, one bar per joined bucket and the cursor.
   const track = (<div class={trackOnly ? "track full" : "track"} />) as HTMLElement;
   const trackArt = svg("svg", "art");
   trackArt.setAttribute("aria-hidden", "true");
@@ -77,7 +77,7 @@ export function StageGraph(props: StripProps): HTMLElement {
   shown(median, false);
   shown(trackCursor, false);
 
-  // The plot: lane 0 over a wash of its hue that fades down from the line, the second lane dashed, the heads' dots.
+  // The plot draws lane 0 over a wash of its hue fading down from the line, the second lane dashed, and the head dots.
   const plot = (<div class="plot" />) as HTMLElement;
   const plotArt = svg("svg", "art");
   plotArt.setAttribute("aria-hidden", "true");
@@ -120,7 +120,7 @@ export function StageGraph(props: StripProps): HTMLElement {
   const plotWidth = computed(() => sizes.plot().width);
   const width = () => (trackOnly ? sizes.track().width : plotWidth());
 
-  // Rate lanes binned to the plot's width when this stage's samples change; the buffers are kept.
+  // Rate lanes are binned to the plot's width when this stage's samples change; the buffers are kept.
   const lanes = dirs.map(() => new Lane());
   const binned = signal(0);
   effect(() => {
@@ -139,11 +139,11 @@ export function StageGraph(props: StripProps): HTMLElement {
   });
   const hasData = computed(() => (trackOnly ? bars().length > 0 : (binned(), lanes.some((lane) => lane.n > 0))));
 
-  // The reading: a time on the timeline, from a pointer or the keyboard.
+  // The reading is a time on the timeline, from a pointer or the keyboard.
   const at = signal<number | null>(null);
   let keyboard = false;
   const x = (t: number) => Math.min(width(), Math.max(0, ((t - props.start()) / (props.span() || 1)) * width()));
-  /** A reply's height on a track `h` px tall, inside a 1.5 px margin. */
+  /** Gives a reply's height on a track `h` px tall, inside a 1.5 px margin. */
   const trackY = (ms: number, h: number) =>
     h - 1.5 - Math.min(1, Math.max(0, ms / (props.latencyTop() || 1))) * (h - 3);
   const time = (when: number) => fmtDuration(Math.max(0, when - props.start()), 1);
@@ -256,8 +256,8 @@ export function StageGraph(props: StripProps): HTMLElement {
     clear();
   });
 
-  // Reply bars: each a bucket group's fastest to slowest reply, at least a dot's length, on a whole pixel; one over
-  // the track's top is clamped there and capped by an arrowhead. Only bars that changed are written.
+  // Each reply bar spans a bucket group's fastest to slowest reply, at least a dot's length, on a whole pixel; one
+  // over the track's top is clamped there and capped by an arrowhead. Only bars that changed are written.
   const marks: { line: SVGLineElement; over: SVGPathElement | null; key: string }[] = [];
   let medianAt = "";
   effect(() => {
@@ -316,7 +316,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     }
   });
 
-  // The readout: a plate beside the cursor on a side it fits, in the half of the plot the curve leaves free.
+  // The readout is a plate beside the cursor on a side it fits, in the half of the plot the curve leaves free.
   const keys: Row["key"][] = [...dirs.map((_, index): Row["key"] => (index ? "second" : "line")), "reply"];
   const readout = (
     <span class="inspect-card readout" aria-hidden="true">
@@ -336,7 +336,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     </span>
   ) as HTMLElement;
   graph.append(readout);
-  // Its width from the observer, never read on a move; hidden until known.
+  // Its width comes from the observer, never read on a move; it hides until known.
   const plate = measure({ readout }).readout;
   let placed = false;
   effect(() => {
@@ -367,7 +367,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     }
   });
 
-  // The reading's marks: a dot on each lane's curve and its reply bar drawn over the track.
+  // The reading marks a dot on each lane's curve and its reply bar drawn over the track.
   const dots = dirs.map((_, index) => svg("circle", index ? "cursor-dot second" : "cursor-dot"));
   for (const dot of dots) {
     dot.setAttribute("r", "3.5");
@@ -416,7 +416,7 @@ export function StageGraph(props: StripProps): HTMLElement {
   });
   if (trackOnly) return graph;
 
-  // The rate plot: a static curve when nothing moves; while live, a frame recomputes the curve's tail only.
+  // The rate plot is a static curve when nothing moves; while live, a frame recomputes the curve's tail only.
   const seen = inView(graph, false);
   let xs = new Float64Array(0);
   let ys = new Float64Array(0);

@@ -28,7 +28,7 @@ test("a live change keeps what ran, gives the running segment its new length but
     ["warmup", 6_500, 7_000],
     ["bidirectional", 7_000, 11_000],
   ]);
-  // A warmup under way runs on, but a stage turned off loses its window; one kept follows its warmup's new length.
+  // A warmup under way runs on, but a stage turned off loses its window. A stage kept follows its warmup's new length.
   const warming = replan(running, 4_700, plan({ download: true }, { downloadMs: 1_000 }));
   expect(spans(warming)).toEqual([
     ["warmup", 0, 500],
@@ -41,7 +41,7 @@ test("a live change keeps what ran, gives the running segment its new length but
     ["warmup", 4_500, 4_700],
     ["upload", 4_700, 8_700],
   ]);
-  // Between segments nothing is running: only what has not begun is replanned.
+  // Nothing runs between segments, so only what has not begun is replanned.
   expect(spans(replan(running, 4_500, plan({ download: true }), true))).toEqual([
     ["warmup", 0, 500],
     ["download", 500, 4_500],

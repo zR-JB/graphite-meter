@@ -1,7 +1,7 @@
-//! The Linux endpoint set: `SO_REUSEPORT` sockets on one address. Where the kernel takes the set's routing program, it
-//! delivers each datagram to the socket its connection ID names, and a new connection starts on the endpoint holding
-//! the fewest, so that a client's latency session and its transfers run on different threads while there are threads
-//! to spare; otherwise a connection runs where it arrived. Either way a socket forwards what names another endpoint.
+//! Runs the Linux endpoint set, `SO_REUSEPORT` sockets on one address. Where the kernel takes the set's routing
+//! program, it delivers each datagram to the socket its connection ID names, and a new connection starts on the
+//! endpoint with the fewest, so a client's latency session and its transfers run on different threads while there are
+//! threads to spare. Else a connection runs where it arrived. Either way a socket forwards what names another endpoint.
 
 use super::HANDSHAKE_BOUND;
 use noq::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
@@ -22,26 +22,26 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-/// Forwarded datagrams an endpoint queues; a full queue drops more, as a full socket buffer would.
+/// An endpoint queues this many forwarded datagrams. A full queue drops more, as a full socket buffer would.
 const QUEUE_DATAGRAMS: usize = 1024;
-/// New connections a socket keeps the endpoint of; more forget the oldest.
+/// A socket keeps the endpoint of this many new connections. More forget the oldest.
 const FIRST_FLIGHTS: usize = 64;
-/// Set in the first byte of long-header packets: Initial, 0-RTT, Handshake, Retry and version negotiation.
+/// Long-header packets (Initial, 0-RTT, Handshake, Retry and version negotiation) set this in their first byte.
 const LONG_HEADER: u8 = 0x80;
-/// noq's hashed connection ID: a random nonce, then a keyed hash of it.
+/// noq's hashed connection ID holds a random nonce, then a keyed hash of it.
 const NONCE_BYTES: usize = 3;
 const HASHED_CID_BYTES: usize = 8;
-/// The set's connection IDs: the endpoint's index, then the hashed ID.
+/// The set's connection IDs hold the endpoint's index, then the hashed ID.
 const CID_BYTES: usize = 1 + HASHED_CID_BYTES;
-/// The IDs a client may choose for a new connection's first packets (RFC 9000, 7.2).
+/// A client may choose IDs this long for a new connection's first packets (RFC 9000, 7.2).
 const CLIENT_CID_BYTES: RangeInclusive<usize> = 8..=20;
 
-/// A factory for `EndpointConfig::cid_generator` whose connection IDs name `shard`.
+/// Builds a factory for `EndpointConfig::cid_generator` whose connection IDs name `shard`.
 pub(super) fn cid_generator(shard: u8) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> {
     Arc::new(move || Box::new(ShardCids { shard, hash: RandomState::new() }))
 }
 
-/// The shard's index, then noq's hashed connection ID format, which noq does not export.
+/// Generates IDs of the shard's index, then noq's hashed connection ID format, which noq does not export.
 struct ShardCids {
     shard: u8,
     hash: RandomState,
@@ -82,15 +82,15 @@ impl ConnectionIdGenerator for ShardCids {
     }
 }
 
-/// A datagram another endpoint received for this one.
+/// Carries a datagram another endpoint received for this one.
 #[derive(Debug)]
 struct Forwarded {
     meta: RecvMeta,
     datagram: Box<[u8]>,
 }
 
-/// An endpoint's forwarding at its worst: every queue slot holding a datagram at the endpoints' payload limit, and
-/// every new connection its socket keeps.
+/// Sizes an endpoint's forwarding at its worst, every queue slot holding a datagram at the endpoints' payload limit
+/// and every new connection its socket keeps.
 pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
     max_datagram
         .checked_add(size_of::<Forwarded>())?
@@ -99,7 +99,7 @@ pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
 }
 
 /// Has the kernel deliver each datagram to the socket of the `SO_REUSEPORT` group that its connection ID names, as
-/// `named` reads it; a client's own ID, or an index past the group, takes the kernel's hash. Sockets join the group in
+/// `named` reads it. A client's own ID, or an index past the group, takes the kernel's hash. Sockets join the group in
 /// endpoint order, so a socket's index is its endpoint's.
 pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     cfg_select! {
@@ -114,7 +114,7 @@ pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
             const fn load(offset: u32) -> sock_filter {
                 op(BPF_LD | BPF_B | BPF_ABS, 0, 0, offset)
             }
-            // Offsets count from the UDP payload; a jump skips its `jt` or `jf` instructions.
+            // Offsets count from the UDP payload, and a jump skips its `jt` or `jf` instructions.
             let mut filter = [
                 load(0),
                 op(BPF_JMP | BPF_JSET | BPF_K, 2, 0, LONG_HEADER as u32),
@@ -136,8 +136,8 @@ pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     }
 }
 
-/// Every endpoint's queue, which each socket forwards into, and connections, which steer new ones when the kernel
-/// routes.
+/// Holds every endpoint's queue, which each socket forwards into, and connections, which steer new ones when the
+/// kernel routes.
 #[derive(Debug, Clone)]
 pub(super) struct Router {
     queues: Arc<[mpsc::Sender<Forwarded>]>,
@@ -146,7 +146,7 @@ pub(super) struct Router {
     max_datagram: usize,
 }
 
-/// An endpoint's count of connections, which each of them holds a share of while it lasts.
+/// Counts an endpoint's connections, each of which holds a share of the count while it lasts.
 #[derive(Debug, Clone)]
 pub(super) struct Shard {
     connections: Arc<[AtomicUsize]>,
@@ -160,7 +160,7 @@ impl Shard {
     }
 }
 
-/// A connection's share of its endpoint's count.
+/// Holds a connection's share of its endpoint's count.
 #[derive(Debug)]
 pub(super) struct Occupant(Shard);
 
@@ -170,17 +170,17 @@ impl Drop for Occupant {
     }
 }
 
-/// What a datagram's destination connection ID says of its endpoint.
+/// Tells what a datagram's destination connection ID says of its endpoint.
 #[derive(Debug, PartialEq)]
 enum Named {
-    /// One of the set's IDs, naming its endpoint, or an endpoint past the set.
+    /// One of the set's IDs names its endpoint, or an endpoint past the set.
     Endpoint(usize),
-    /// A client's own ID: a new connection's first packets.
+    /// A client's own ID marks a new connection's first packets.
     Client(ConnectionId),
     Nothing,
 }
 
-/// A short header's ID names its endpoint in byte 1; a long header's ID follows its length in byte 5.
+/// A short header's ID names its endpoint in byte 1. A long header's ID follows its length in byte 5.
 fn named(datagram: &[u8]) -> Named {
     match *datagram {
         [first, named, ..] if first & LONG_HEADER == 0 => Named::Endpoint(usize::from(named)),
@@ -193,11 +193,11 @@ fn named(datagram: &[u8]) -> Named {
     }
 }
 
-/// A new connection's client ID, the endpoint its first packet went to, and when.
+/// Records a new connection's client ID, the endpoint its first packet went to, and when.
 type FirstFlight = (ConnectionId, usize, Instant);
 
-/// The endpoints a socket sent new connections to, so that every packet of a first flight, resent ones too, follows
-/// the first while its handshake may last.
+/// Remembers the endpoints a socket sent new connections to, so that every packet of a first flight, resent ones too,
+/// follows the first while its handshake may last.
 #[derive(Debug)]
 struct FirstFlights(VecDeque<FirstFlight>);
 
@@ -224,12 +224,12 @@ impl FirstFlights {
     }
 }
 
-/// The datagrams other endpoints forwarded to one.
+/// Receives the datagrams other endpoints forwarded to one.
 #[derive(Debug)]
 pub(super) struct Inbox(mpsc::Receiver<Forwarded>);
 
 impl Router {
-    /// Queues for `shards` endpoints, forwarding datagrams up to the endpoints' payload limit, steering new
+    /// Builds queues for `shards` endpoints, forwarding datagrams up to the endpoints' payload limit and steering new
     /// connections when the kernel routes by connection ID.
     pub(super) fn new(shards: usize, max_datagram: usize, steering: bool) -> (Self, Vec<Inbox>) {
         let (queues, inboxes): (Vec<_>, _) = (0..shards)
@@ -246,14 +246,13 @@ impl Router {
         Shard { connections: self.connections.clone(), index }
     }
 
-    /// Where a new connection arriving at `shard` runs: the endpoint holding the fewest connections, `shard` among
-    /// equals.
+    /// Picks for a new connection arriving at `shard` the endpoint holding the fewest, `shard` among equals.
     fn steer(&self, shard: usize) -> usize {
         let held = |index: usize| self.connections[index].load(Ordering::Relaxed);
         (0..self.connections.len()).fold(shard, |least, index| if held(index) < held(least) { index } else { least })
     }
 
-    /// The other endpoint a datagram goes to: the one its ID names, or the one its new connection went to.
+    /// Picks the other endpoint a datagram goes to, the one its ID names or the one its new connection went to.
     fn destination(&self, shard: usize, flights: &mut FirstFlights, datagram: &[u8]) -> Option<usize> {
         let to = match named(datagram) {
             Named::Endpoint(to) => to,
@@ -263,7 +262,7 @@ impl Router {
         (to != shard && to < self.queues.len()).then_some(to)
     }
 
-    /// Forwards received segments for another endpoint, moving the rest together; only the last may be short (GRO).
+    /// Forwards received segments for another endpoint and moves the rest together. Only the last may be short (GRO).
     fn route(&self, shard: usize, flights: &mut FirstFlights, buf: &mut [u8], meta: &mut RecvMeta) {
         let (len, stride) = (meta.len.min(buf.len()), meta.stride.max(1));
         let mut kept = 0;
@@ -292,7 +291,7 @@ impl Router {
     }
 }
 
-/// An endpoint's socket: delivers what other endpoints forwarded to it, then receives, forwarding what names another.
+/// An endpoint's socket delivers what other endpoints forwarded to it, then receives, forwarding what names another.
 #[derive(Debug)]
 pub(super) struct ShardSocket {
     socket: Box<dyn AsyncUdpSocket>,
@@ -320,7 +319,7 @@ impl AsyncUdpSocket for ShardSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         let slots = bufs.len().min(meta.len());
-        // Forwarded datagrams fill at most half the slots so that the socket keeps its turn; an empty queue registers
+        // Forwarded datagrams fill at most half the slots so that the socket keeps its turn. An empty queue registers
         // the waker forwarding wakes.
         let mut filled = 0;
         while filled < slots.div_ceil(2) {
@@ -344,7 +343,7 @@ impl AsyncUdpSocket for ShardSocket {
                     }
                     filled += received;
                 }
-                // Forwarded datagrams go first; the next call reads the socket again.
+                // Forwarded datagrams go first, and the next call reads the socket again.
                 Poll::Ready(Err(error)) if filled == 0 => return Poll::Ready(Err(error)),
                 _ => {}
             }
@@ -372,7 +371,7 @@ mod tests {
 
     const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4433);
 
-    /// A short-header packet whose destination connection ID begins with `shard`.
+    /// Builds a short-header packet whose destination connection ID begins with `shard`.
     fn short(shard: u8, len: usize) -> Vec<u8> {
         let mut packet = vec![0x40, shard];
         packet.resize(len, 0xa5);
@@ -385,7 +384,7 @@ mod tests {
         meta
     }
 
-    /// A long-header packet whose destination connection ID is `id`.
+    /// Builds a long-header packet whose destination connection ID is `id`.
     fn long(id: &[u8], len: usize) -> Vec<u8> {
         let mut packet = vec![0xc0, 0, 0, 0, 1, u8::try_from(id.len()).unwrap()];
         packet.extend_from_slice(id);
@@ -397,7 +396,7 @@ mod tests {
         std::iter::from_fn(|| inbox.0.try_recv().ok()).collect()
     }
 
-    /// Routes `packet` as received by `shard`; whether it stayed.
+    /// Routes `packet` as received by `shard` and says whether it stayed.
     fn stays(router: &Router, shard: usize, flights: &mut FirstFlights, packet: &[u8]) -> bool {
         let mut buf = packet.to_vec();
         let mut meta = received(buf.len(), buf.len());
@@ -424,7 +423,7 @@ mod tests {
         let (router, mut inboxes) = Router::new(3, 1472, true);
         let mut flights = FirstFlights::new();
         let first = long(&[7; 8], 1200);
-        // Every endpoint is empty: the connection stays.
+        // Every endpoint is empty, so the connection stays.
         assert!(stays(&router, 1, &mut flights, &first));
         let held = router.shard(1).occupy();
         // It keeps its endpoint once that holds it, and so does every packet of its first flight.
@@ -480,7 +479,7 @@ mod tests {
         }
         let id = |shard| cid_generator(shard)().generate_cid();
         for (packet, to) in [(short(1, 40), 1), (short(0, 40), 0), (long(&id(1), 60), 1), (long(&id(0), 60), 0)] {
-            // Each client port hashes to either socket; the ID decides.
+            // Each client port hashes to either socket, so the ID decides.
             for _ in 0..8 {
                 let client = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
                 client.send_to(&packet, address).unwrap();
@@ -502,7 +501,7 @@ mod tests {
             (short(200, 40), true),
             (long, true),
             (vec![0x40], true),
-            // Past the endpoints' payload limit, which no queue slot holds: dropped.
+            // A datagram past the endpoints' payload limit, which no queue slot holds, is dropped.
             (short(3, 1473), false),
         ] {
             let mut buf = packet.clone();

@@ -1,9 +1,9 @@
-// How lanes, feeds and buses end, classified into the seven failure reasons, and how soon one may reopen. Pure: the
-// workers classify the answers they see, the owners decide what an ending means.
+// Classifies how lanes, feeds and buses end into the seven failure reasons, and says how soon one may reopen. This
+// module is pure. The workers classify the answers they see, and the owners decide what an ending means.
 import { signInMarker } from "../../protocol/documents";
 import type { Ending } from "../types";
 
-/** A connection that has not answered by now is not going to; a dial's ticket and handshake share it. */
+/** A connection that has not answered by now is not going to. A dial's ticket and handshake share this budget. */
 export const ESTABLISH_MS = 3_000;
 const RESTART_MS = 300;
 /** Busy refusals double the pause up to here, so a retry still lands inside the run's 1.5 s silence window. */
@@ -14,7 +14,7 @@ const LOST: Disposition = { reason: "connection-lost", retry: true };
 const BUSY: Disposition = { reason: "server-busy", retry: true };
 const SIGN_IN: Disposition = { reason: "sign-in-required", retry: false };
 const UNEXPECTED: Disposition = { reason: "protocol-error", retry: false };
-/** The upload refusals (api/uploadrefusals.txt) with their reasons (api/uploadrefusalreasons.txt); `invalid` means
+/** Maps the upload refusals (api/uploadrefusals.txt) to their reasons (api/uploadrefusalreasons.txt). `invalid` means
     the server no longer knows the id, which the run may replace once. */
 const REFUSALS: Record<string, Disposition> = {
   invalid: { ...UNEXPECTED, rotate: true },
@@ -27,9 +27,9 @@ const REFUSALS: Record<string, Disposition> = {
 
 export const lost = (detail: string): Ending => ({ ...LOST, detail });
 
-/** An upload refusal: its code decides; without one its status does, where a network-level or generic server failure
-    reconnects the same id. A bare 401 is a proxy's challenge, an unexpected answer, never an ended sign-in. A feed's
-    error record has no status. */
+/** Classifies an upload refusal. Its code decides, or without one its status does, where a network-level or generic
+    server failure reconnects the same id. A bare 401 is a proxy's challenge, an unexpected answer, never an ended
+    sign-in. A feed's error record has no status. */
 export function refusal(
   status: number | null,
   code: string | null | undefined,
@@ -47,34 +47,34 @@ export function refusal(
   return { ...disposition, detail, retryAfterMs };
 }
 
-/** Retry-After in whole positive seconds; a date or a fraction is ignored. */
+/** Reads Retry-After in whole positive seconds. A date or a fraction is ignored. */
 const retryAfterMs = ({ headers }: Response) => {
   const seconds = headers.get("Retry-After") ?? "";
   return /^\d+$/.test(seconds) && +seconds > 0 ? +seconds * 1000 : undefined;
 };
 
-/** A refused upload, progress feed or socket ticket. */
+/** Classifies a refused upload, progress feed or socket ticket. */
 export const refused = (response: Response, detail = `HTTP ${response.status}`): Ending =>
   signInMarker(response)
     ? { ...SIGN_IN, detail }
     : refusal(response.status, response.headers.get("X-Graphite-Upload-Refusal"), detail, retryAfterMs(response));
 
-/** Only an admission refusal reconnects a download; any other status is an unexpected answer. */
+/** Only an admission refusal reconnects a download. Any other status is an unexpected answer. */
 export const downloadRefused = (response: Response): Ending => ({
   ...(signInMarker(response) ? SIGN_IN : response.status === 429 || response.status === 503 ? BUSY : UNEXPECTED),
   detail: `HTTP ${response.status}`,
   retryAfterMs: retryAfterMs(response),
 });
 
-/** The endings a server names when it closes a bus or session (api/laneendings.txt). The browser acts on revocation
-    and reconnects after the idle and lifetime bounds; any other close is a break. */
+/** A server names these endings when it closes a bus or session (api/laneendings.txt). The browser acts on revocation
+    and reconnects after the idle and lifetime bounds. Any other close is a break. */
 export const REVOKED = { socket: 1008, session: 3, reason: "authentication required" } as const;
 const SESSION_BOUNDS = [1, 2];
-/** A server resets a session's streams just before it closes it, and closing first would replace its code with ours:
-    a broken stream waits this long for the code that names the ending. */
+/** A server resets a session's streams just before it closes it, and closing first would replace its code with ours.
+    So a broken stream waits this long for the code that names the ending. */
 export const CLOSE_GRACE_MS = 250;
 
-/** A WebTransport session's close code as an ending, or null for a break. */
+/** Turns a WebTransport session's close code into an ending, or null for a break. */
 export const sessionClosed = (code: number | undefined): Ending | null =>
   code === REVOKED.session
     ? { ...SIGN_IN, detail: "webtransport session revoked" }
@@ -82,8 +82,8 @@ export const sessionClosed = (code: number | undefined): Ending | null =>
       ? { reason: "timeout", retry: true, detail: "webtransport session reached its bound" }
       : null;
 
-/** One lane's or feed's restart pause: 300 ms, doubled by consecutive busy refusals and raised by a Retry-After,
-    within 1.2 s. */
+/** Paces one lane's or feed's restarts. The pause starts at 300 ms, doubles with consecutive busy refusals and rises
+    with a Retry-After, within 1.2 s. */
 export class Backoff {
   #busy = 0;
 
@@ -98,7 +98,7 @@ export class Backoff {
     this.#busy = 0;
   }
 
-  /** Refused as busy since it last delivered. */
+  /** The lane was refused as busy since it last delivered. */
   get busy(): boolean {
     return this.#busy > 0;
   }

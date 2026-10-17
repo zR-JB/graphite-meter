@@ -16,7 +16,7 @@ const result = (bytesPerSec: number): ThroughputResult => ({
 });
 
 test("each throughput axis holds what it draws, with headroom and no decade jump", () => {
-  // Bytes/s of one download tick → chart and dial ceilings in bytes/s, and the tier; idle reads 100 Mbit/s.
+  // One download tick in bytes/s maps to the chart and dial ceilings in bytes/s and the tier. Idle reads 100 Mbit/s.
   const cases = [
     [null, 12.5e6, 125e6, 2],
     [1_000, 1_250, 1_250, 1],
@@ -51,8 +51,8 @@ test("each throughput axis holds what it draws, with headroom and no decade jump
 });
 
 test("the dial's ceiling is round in the unit the page reads, in each of the four units", () => {
-  // Idle, a tick at 1.1× the giga or gibi prefix (which still reads a prefix below), then a 2 Gbit/s tick: 1, 2 and
-  // 5 Gbit/s; 200 MB/s, 2000 MB/s, 500 MB/s; 1000 Mibit/s, 2000 Mibit/s, 2 Gibit/s; 200, 2000, 500 MiB/s.
+  // The dial reads idle, a tick at 1.1× the giga or gibi prefix (which still reads a prefix below) and a 2 Gbit/s tick
+  // as 1, 2 and 5 Gbit/s; 200 MB/s, 2000 MB/s, 500 MB/s; 1000 Mibit/s, 2000 Mibit/s, 2 Gibit/s; 200, 2000, 500 MiB/s.
   const all: [Units, number, number, number][] = [
     [{ base: "base10", kind: "bits" }, 125e6, 250e6, 625e6],
     [{ base: "base10", kind: "bytes" }, 200e6, 2e9, 500e6],
@@ -69,8 +69,8 @@ test("the dial's ceiling is round in the unit the page reads, in each of the fou
 });
 
 test("a stage settling never rescales the page; a finished run reads in the tier History gives it", () => {
-  // A live peak and the result it settled at, in bytes/s; the tier and dial through the run, and the run's tier
-  // once it ends: History's when a result settled, else the one its live figures were drawn in.
+  // Each case gives a live peak and the result it settled at, in bytes/s, the tier and dial through the run, and the
+  // run's tier once it ends, History's when a result settled, else the one its live figures were drawn in.
   const cases = [
     // 1.3 Mbit/s live, 1.1 settled.
     [162_500, 137_500, 2, 125e6, 1],

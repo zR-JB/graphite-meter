@@ -24,10 +24,10 @@ test("a flush reads the epoch's total as counted by its cutoff, from readings ke
   reports.flush(0);
   for (let at = 0; at < 100; at += 0.25) reports.count(1, at);
   expect(reports.totalAt(-1)).toEqual({ total: 0, at: -1 });
-  // The reading at 50 ms counted the bytes at 0 ms through 50 ms; the ones until 50.75 ms come with the next.
+  // The reading at 50 ms counted the bytes at 0 ms through 50 ms. The ones until 50.75 ms come with the next.
   expect(reports.totalAt(50.75)).toEqual({ total: 201, at: 50.75 });
   expect(reports.totalAt(1_000)).toEqual({ total: 400, at: 1_000 });
-  // A lane reopening in its epoch counts on; a new epoch starts from nothing.
+  // A lane that reopens in its epoch counts on. A new epoch starts from nothing.
   reports.measure(1);
   reports.count(100, 100);
   expect(reports.totalAt(100).total).toBe(500);

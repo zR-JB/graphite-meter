@@ -1,5 +1,5 @@
-// The dial: the ring, the needle that follows the running stage, the result that takes the ring over, the readout and
-// the note. Per frame the painter writes three transforms, a text node and a class.
+// Draws the dial, with the ring, the needle that follows the running stage, the result that takes the ring over, the
+// readout and the note. Per frame the painter writes three transforms, a text node and a class.
 import type { App } from "../../app/app";
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
@@ -58,7 +58,7 @@ export function Dial(props: {
   const rate = (bytesPerSec: number) => fmtSpeed(toRateUnit(bytesPerSec, units(), units().tier ?? 0));
   const gaugeScale = computed(() => live.scales().gaugeBytesPerSec);
 
-  // A finished run's arcs read what the lens shows: every server together, or the one chosen under the dial.
+  // A finished run's arcs read what the lens shows, every server together or the one chosen under the dial.
   const shown = computed(() => {
     const id = live.lens();
     const details = run.details();
@@ -74,11 +74,11 @@ export function Dial(props: {
       (phase() === "complete" && !arcs().length && !run.result()?.latency)
     );
   });
-  // A stage's warmup already reads its stage, muted: the checked round trip, or the rate the lanes are moving, which
+  // A stage's warmup already reads its stage, muted, as the checked round trip or the rate the lanes are moving, which
   // nothing counts yet.
   const warming = computed(() => phase() === "warmup" && run.running());
   const reads = computed<string>(() => (warming() ? (run.stage() ?? phase()) : phase()));
-  // What the needle points at: the round trip on the millisecond scale, the stage's own rate, or nothing.
+  // The needle points at the round trip on the millisecond scale, the stage's own rate, or nothing.
   const pointing = computed<"rate" | "ms" | null>(() => {
     const now = reads();
     if (now === "latency") return "ms";
@@ -86,7 +86,7 @@ export function Dial(props: {
     return now === "complete" && live.completedRtt() !== null ? "ms" : null;
   });
   const visible = computed(() => !unusable() && pointing() !== null);
-  // The millisecond scale: the shared axis once a bucket measured it, else a ladder step over the shown round trip.
+  // The millisecond scale is the shared axis once a bucket measured it, else a ladder step over the shown round trip.
   const scaleMs = computed(() => {
     const completed = live.completedRtt();
     const buckets = live.buckets();
@@ -121,8 +121,8 @@ export function Dial(props: {
     (view) => view.key,
     (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
-  // The running stage's name and its figure hand off apart: the name once per stage, the figure on its first value,
-  // so a dash that stays never blinks. A finished run that reads its latency names it.
+  // The running stage's name and its figure hand off apart, the name once per stage and the figure on its first
+  // value, so a dash that stays never blinks. A finished run that reads its latency names it.
   const stageName = handoff<Stage | null>(
     () => (run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null),
     (stage) => stage,
@@ -148,7 +148,7 @@ export function Dial(props: {
     // A first value takes the dash's place at once; only a value hands off to the next.
     (leaving) => (leaving.reading === null ? 0 : HANDOFF_OUT_MS),
   );
-  // A screen reader hears the unanimated value: the receiver's accounting, or the round trip shown.
+  // A screen reader hears the unanimated value, the receiver's accounting or the round trip shown.
   const spoken = computed(() => {
     const arc = headline();
     if (arc) return `${rate(arc.bytesPerSec)} ${unit()}, ${arcLabel(arc)}`;
@@ -160,7 +160,7 @@ export function Dial(props: {
     return MISSING;
   });
 
-  // The note under the ring: a check under way, a refused start, how the run ended (and, short of complete, which
+  // The note under the ring names a check under way, a refused start, how the run ended (and, short of complete, which
   // stages it lacks), a stall, or what comes next. A counting note updates in place; only a new kind hands off.
   const unanswered = computed(() => {
     if (phase() !== "latency" || !live.replies().lost) return null;
@@ -321,7 +321,7 @@ export function Dial(props: {
     </span>
   ) as HTMLElement;
 
-  // What the painter last wrote, so it writes only changes.
+  // The painter remembers what it last wrote, so it writes only changes.
   let drawn = Number.NaN;
   let lit = false;
   let written = Number.NaN;
@@ -427,7 +427,7 @@ export function Dial(props: {
     wake(true);
   });
 
-  // One ring per idle reply, never two at once: a steady link is seen to answer, a stalled one holds still.
+  // Each idle reply draws one ring, never two at once; a steady link is seen to answer, a stalled one holds still.
   let beating = false;
   const reply = computed(() =>
     phase() === "latency" ? (live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null) : null,
@@ -435,7 +435,7 @@ export function Dial(props: {
   effect(() => {
     if (reply() === null || beating || !motion.peek()) return;
     beating = true;
-    // A box, not a circle in the head's SVG, so its ring widens and fades on the compositor.
+    // The ripple is a box, not a circle in the head's SVG, so its ring widens and fades on the compositor.
     const ripple = document.createElement("span");
     ripple.className = "ripple";
     const done = () => {
@@ -570,7 +570,7 @@ export function Dial(props: {
       </div>
     </div>
   ) as HTMLElement;
-  // Only the readout reads the face's size: set on it, a resize restyles its few elements, not the whole dial.
+  // Only the readout reads the face's size, set on it, so a resize restyles its few elements, not the whole dial.
   effect(() => {
     const { center, height, faceMin } = layout();
     readout.style.setProperty("--gauge-center-offset", `${center.y - height / 2}px`);
@@ -614,9 +614,9 @@ function sizeArt(art: SVGSVGElement, width: number, height: number): void {
 
 const angle = (fraction: number) => ARC_START + ARC_SWEEP * fraction;
 
-/** Every result's arc on the ring, the longest underneath, so each shows from where the next shorter one ends; its
-    head is a bead in its hue at the arc's end, a one-direction result's a ring. Arcs are kept by stage, so a scale or
-    unit change glides them and never replays the sweep. */
+/** Draws every result's arc on the ring, the longest underneath, so each shows from where the next shorter one ends.
+    Its head is a bead in its hue at the arc's end, a one-direction result's a ring. Arcs are kept by stage, so a
+    scale or unit change glides them and never replays the sweep. */
 function ResultLayer(props: {
   arcs: Read<ResultArc[]>;
   out: Read<boolean>;
@@ -652,8 +652,8 @@ function ResultLayer(props: {
               path.style.setProperty("--arc", `${layout().radius * ARC_SWEEP}px`);
               path.style.setProperty("--fraction", String(fractionOf(arc())));
             });
-            // A one-direction arc shows through a still mask of dashes: nothing that moves lies in a mask, whose paint
-            // may lag its style. Round caps add an arc width to every dash, so its gaps stay open.
+            // A one-direction arc shows through a still mask of dashes, as a mask's paint may lag its style and nothing
+            // that moves lies in one. Round caps add an arc width to every dash, so its gaps stay open.
             return [
               <Show when={() => arc().dashed}>
                 {() => (
@@ -711,7 +711,7 @@ function ResultLayer(props: {
       {art}
       <For each={arcs} by={(arc) => arc.stage}>
         {(arc) => {
-          // Pointer-only: the cards and the announcement carry these values.
+          // The target serves pointers only, as the cards and the announcement carry these values.
           const target = (
             <span class="head-target" aria-hidden="true" tabindex="-1" ref={tip(() => props.label(arc()))} />
           ) as HTMLElement;

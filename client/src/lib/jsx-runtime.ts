@@ -1,4 +1,4 @@
-// JSX that builds real DOM: a function in an attribute or child binds that spot to the signals it reads.
+// Builds real DOM from JSX. A function in an attribute or child binds that spot to the signals it reads.
 import { effect, untrack } from "./signal";
 
 type Primitive = string | number | boolean | null | undefined;
@@ -48,7 +48,7 @@ const SVG_TAGS = new Set([
   "filter",
   "foreignObject",
 ]);
-// Live state that an attribute only seeds.
+// An attribute only seeds this live state.
 const PROPERTIES = new Set(["value", "checked"]);
 
 type Component<P> = (props: P) => Node;
@@ -56,7 +56,7 @@ type Component<P> = (props: P) => Node;
 export function jsx(type: string | Component<any>, props: Record<string, unknown>): Node {
   if (typeof type === "function") return untrack(() => type(props));
   const element = SVG_TAGS.has(type) ? document.createElementNS(SVG_NS, type) : document.createElement(type);
-  // Children first, so a select's value finds its option; the ref last, so it sees the finished element.
+  // Children come first, so a select's value finds its option. The ref comes last, so it sees the finished element.
   insert(element, props.children as Child);
   for (const name in props) {
     const value = props[name];
@@ -92,14 +92,14 @@ function bind(element: Element, name: string, read: () => Primitive): void {
 function assign(element: Element, name: string, value: Primitive): void {
   if (name === "value") (element as HTMLInputElement).value = value == null ? "" : String(value);
   else if (PROPERTIES.has(name)) (element as unknown as Record<string, Primitive>)[name] = value;
-  // The page's policy refuses style attributes; the CSSOM is allowed.
+  // The page's policy refuses style attributes. The CSSOM is allowed.
   else if (name === "style")
     (element as HTMLElement).style.cssText = value == null || value === false ? "" : String(value);
   else if (value === false || value == null) element.removeAttribute(name);
   else element.setAttribute(name, value === true ? "" : String(value));
 }
 
-/** Appends `child` to `parent`; a function child becomes a region that rebuilds when what it read changes. */
+/** Appends `child` to `parent`. A function child becomes a region that rebuilds when what it read changes. */
 export function insert(parent: Node, child: Child): void {
   if (child == null || typeof child === "boolean") return;
   if (typeof child === "function") return region(parent, child);

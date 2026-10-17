@@ -1,4 +1,4 @@
-//! The latency bus: a WebSocket, or a WebTransport session's datagrams, one probe or reply a message.
+//! Runs the latency bus over a WebSocket or a WebTransport session's datagrams, one probe or reply a message.
 use super::{
     CONTROL_TIMEOUT, Client, Request,
     conn::Session,
@@ -29,14 +29,14 @@ use tokio_tungstenite::{
 
 type Socket = WebSocketStream<TokioIo<Upgraded>>;
 
-/// A server's latency path as preparation chose it.
+/// Holds a server's latency path as preparation chose it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LatencyPath {
     pub origin: Origin,
     pub transport: LatencyTransport,
 }
 
-/// An open latency bus; dropping it closes it.
+/// An open latency bus closes when dropped.
 pub struct Bus(Channel);
 
 enum Channel {
@@ -45,7 +45,7 @@ enum Channel {
 }
 
 impl Client {
-    /// A bus over `path`, within the control timeout.
+    /// Opens a bus over `path` within the control timeout.
     pub async fn bus(&self, path: &LatencyPath) -> Result<Bus, Fault> {
         let channel = match path.transport {
             LatencyTransport::WebTransport => {
@@ -66,7 +66,7 @@ impl Client {
         Ok(Bus(channel))
     }
 
-    /// A WebSocket upgraded from an HTTP/1.1 connection of its own, carrying the grant as requests do.
+    /// Upgrades an HTTP/1.1 connection of its own to a WebSocket, carrying the grant as requests do.
     async fn websocket(&self, origin: &Origin) -> Result<Socket, Fault> {
         let request = Request::new(Method::GET, origin, Route::Ping);
         let (mut head, key) = (self.head(&request)?, generate_key());
@@ -100,7 +100,7 @@ impl Client {
     }
 }
 
-/// Whether a 101 answer accepts the upgrade with `accept` and neither a subprotocol nor extensions.
+/// Checks whether a 101 answer accepts the upgrade with `accept` and neither a subprotocol nor extensions.
 fn upgraded(headers: &HeaderMap, accept: &str) -> bool {
     let header = |name| {
         headers
@@ -127,8 +127,8 @@ impl Bus {
         }
     }
 
-    /// The next reply and the instant its message arrived, before decoding; skips any other message; cancelling it
-    /// loses nothing.
+    /// Returns the next reply and the instant its message arrived, before decoding. It skips any other message, and
+    /// cancelling it loses nothing.
     pub async fn next(&mut self) -> Result<(Pong, Instant), Fault> {
         loop {
             let (pong, arrived) = match &mut self.0 {
@@ -158,7 +158,7 @@ impl Bus {
     }
 }
 
-/// The fault a close frame names: its lane ending, else a lost bus.
+/// Maps a close frame to its lane ending's fault, else to a lost bus.
 fn closed(client: &Client, origin: &Origin, frame: Option<CloseFrame>) -> Fault {
     match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into())) {
         Some(ending) => client.ending(origin, ending),

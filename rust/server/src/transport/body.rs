@@ -1,4 +1,4 @@
-//! Response bodies (document, download, progress feed), their bounded writing, and the HTTP/2 and HTTP/3 pump.
+//! Bounds the writing of response bodies (document, download, progress feed) and pumps them over HTTP/2 and HTTP/3.
 
 use crate::{
     engine::{DownloadSource, ProgressFeed, download::BLOCK_BYTES},
@@ -19,22 +19,22 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep_until};
 
-/// A reply's body and what bounds writing it.
+/// Carries a reply's body and what bounds writing it.
 pub struct Body {
     content: Content,
     bound: Option<Bound>,
 }
 
-/// What bounds writing a reply; the app bounds every reply it hands a transport.
+/// Bounds writing a reply. The app bounds every reply it hands a transport.
 #[derive(Clone)]
 pub enum Bound {
-    /// The reply aborts unless written by then: an unadmitted exchange's deadline, or an admitted one's last answer's.
+    /// The reply aborts unless written by then, an unadmitted exchange's deadline or an admitted one's last answer's.
     Until(Instant),
-    /// Admitted work: written bytes are the lane's movement, its finish follows delivery, other endings abort.
+    /// The reply is admitted work. Written bytes move the lane, delivery finishes it and any other ending aborts.
     Lane(Lane),
 }
 
-/// A reply ended before its last byte: an HTTP/1 connection closes, an HTTP/2 or HTTP/3 stream resets.
+/// A reply ended before its last byte, so an HTTP/1 connection closes or an HTTP/2 or HTTP/3 stream resets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Aborted;
 
@@ -53,7 +53,7 @@ impl From<Aborted> for io::Error {
 }
 
 enum Content {
-    /// A document in one frame; empty once sent.
+    /// Holds a document in one frame, which is empty once sent.
     Full(Bytes),
     Download(DownloadSource),
     Feed(Pin<Box<dyn Stream<Item = Bytes> + Send>>),
@@ -72,13 +72,13 @@ impl Body {
         Self { content: Content::Download(source), bound: None }
     }
 
-    /// A progress feed's lines until it ends.
+    /// Streams a progress feed's lines until it ends.
     pub fn feed(feed: ProgressFeed) -> Self {
         let lines = stream::unfold(feed, |mut feed| async move { feed.next().await.map(|line| (line, feed)) });
         Self { content: Content::Feed(Box::pin(lines)), bound: None }
     }
 
-    /// The body as `lane`'s work, which ends with it.
+    /// Makes the body `lane`'s work, which ends with it.
     pub fn with_lane(self, lane: Lane) -> Self {
         Self { bound: Some(Bound::Lane(lane)), ..self }
     }
@@ -136,7 +136,7 @@ impl http_body::Body for Body {
     }
 }
 
-/// Writes a reply within its bound: `Until` aborts at its deadline; lane writes move it, so it idles 30 s at most.
+/// Writes a reply within its bound. `Until` aborts at its deadline. Lane writes move it, so it idles 30 s at most.
 pub struct ReplyBound(Rule);
 
 enum Rule {
@@ -147,7 +147,7 @@ enum Rule {
 type Ended = Pin<Box<dyn Future<Output = LaneEnding> + Send>>;
 
 impl ReplyBound {
-    /// The bound of `body`, which the app bounded.
+    /// Takes the bound of `body`, which the app bounded.
     pub fn of(body: &Body) -> Self {
         match body.bound.as_ref().expect("the app bounds every reply") {
             Bound::Lane(lane) => {
@@ -159,7 +159,7 @@ impl ReplyBound {
         }
     }
 
-    /// Before each write: whether the reply must end now; registers `cx` for an `Until` deadline.
+    /// Runs before each write and says whether the reply must end now. It registers `cx` for an `Until` deadline.
     pub fn check(&mut self, cx: &mut Context<'_>) -> Result<(), Aborted> {
         let aborted = match &mut self.0 {
             Rule::Until(deadline) => deadline.as_mut().poll(cx).is_ready(),
@@ -168,7 +168,7 @@ impl ReplyBound {
         if aborted { Err(Aborted) } else { Ok(()) }
     }
 
-    /// While the transport cannot write: registers `cx` for the lane's ending, which then aborts the reply.
+    /// Runs while the transport cannot write and registers `cx` for the lane's ending, which then aborts the reply.
     pub fn blocked(&mut self, cx: &mut Context<'_>) -> Result<(), Aborted> {
         match &mut self.0 {
             Rule::Lane(_, ended) => match ended.poll_unpin(cx) {
@@ -186,7 +186,7 @@ impl ReplyBound {
         }
     }
 
-    /// The reply's last byte was written: its lane finishes unless another ending came first.
+    /// The reply's last byte was written, so its lane finishes unless another ending came first.
     pub fn delivered(&self) -> Result<(), Aborted> {
         match &self.0 {
             Rule::Lane(lane, _) if lane.finish() != LaneEnding::Finished => Err(Aborted),
@@ -195,22 +195,22 @@ impl ReplyBound {
     }
 }
 
-/// An HTTP/2 or HTTP/3 stream a reply is pumped into.
+/// Receives a reply pumped into an HTTP/2 or HTTP/3 stream.
 pub(crate) trait Sink {
-    /// Writes the head; `end` when nothing follows it.
+    /// Writes the head. `end` is set when nothing follows it.
     async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
-    /// Writes non-empty `data` as flow control admits, ending the stream when `last`; each frame is progress.
+    /// Writes non-empty `data` as flow control admits and ends the stream when `last`. Each frame counts as progress.
     async fn data(&mut self, data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
     /// Ends the stream after a body whose last data did not.
     async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
-    /// Ready once the peer abandoned the reply.
+    /// Becomes ready once the peer abandoned the reply.
     fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()>;
 }
 
-/// Writes a reply within its bound: its head, then, unless it answers HEAD, its data.
+/// Writes a reply within its bound, first its head and then its data unless it answers HEAD.
 pub(crate) async fn pump(sink: &mut impl Sink, response: Response<Body>, head: bool) -> Result<(), Aborted> {
     let (parts, mut body) = response.into_parts();
     let mut bound = ReplyBound::of(&body);
@@ -233,7 +233,7 @@ pub(crate) async fn pump(sink: &mut impl Sink, response: Response<Body>, head: b
     bound.delivered()
 }
 
-/// The body's next data; while it has none ready, the reply's bound or the peer's reset ends it.
+/// Polls the body's next data. While it has none ready, the reply's bound or the peer's reset ends it.
 fn next_data(
     cx: &mut Context<'_>,
     body: &mut Body,

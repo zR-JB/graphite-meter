@@ -1,4 +1,4 @@
-// What the run says outside the instrument: the status strip, the toast and the connection dot.
+// The run speaks outside the instrument through the status strip, the toast and the connection dot.
 import type { App } from "../../app/app";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import { needsPings } from "../../engine/net/streams";
@@ -21,9 +21,9 @@ import { Figure, painter, setText } from "./paint";
 /** The word cell is as wide as the widest word it can say, so the figures stay where they are. */
 const WORDS = [...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).map((outcome) => outcome.label)])];
 
-/** The strip's facts, left to right: the run's word, the time since it started, the bytes it moved, the time its
-    stage has left, and the build. Each figure sits in a cell as wide as its longest value, so a counting figure never
-    moves its neighbours. */
+/** Lays out the strip's facts left to right, the run's word, the time since it started, the bytes it moved, the time
+    its stage has left, and the build. Each figure sits in a cell as wide as its longest value, so a counting figure
+    never moves its neighbours. */
 export function StatusBar(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;
@@ -104,13 +104,13 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
   );
 }
 
-/** A toast lingers for its reading time, then goes; not motion. */
+/** A toast lingers for its reading time, then goes; the wait is not motion. */
 const LINGER_MS = 3_200;
-/** Its fade as it goes, while it stays laid out. */
+/** It fades this long as it goes, while it stays laid out. */
 const LEAVE_MS = 150;
 
-/** Only failures, issues, stalls and a result History could not save: the status strip already names every phase.
-    A stall shows while it lasts, and an unsaved result's warning after any toast, for as long as it is unsaved. */
+/** Toasts only failures, issues, stalls and a result History could not save, as the status strip already names
+    every phase. A stall shows while it lasts, and an unsaved result's warning after any toast, while it is unsaved. */
 export function PhaseToast(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;
@@ -170,7 +170,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
   announceChanges(() => (stalled() ? `${stall().kicker}: ${stall().message}` : ""));
   announceChanges(() => (unsaved() ? `${TOAST.unsaved}: ${app.saver.warning()}` : ""));
   announceChanges(() => (issue().message ? `${issue().kicker}: ${issue().message}` : ""));
-  // Out of layout while it shows nothing, so a stage that resizes never lays it out; laid out for its fade as it goes.
+  // The toast leaves layout while it shows nothing, so a resizing stage never lays it out; it returns for its fade.
   const showing = computed(() => lingering() || stalled() || unsaved());
   const leaving = signal(false);
   let shownBefore = false;
@@ -213,7 +213,7 @@ export function PhaseToast(props: { app: App; shell: Shell }): Node {
 const STALE_MS = 3_000;
 const WINDOW_MS = 4_000;
 
-/** The probes of the last WINDOW_MS of evidence: what the dot judges and states. */
+/** Gathers the probes of the last WINDOW_MS of evidence, which the dot judges and states. */
 function recentProbes(buckets: readonly LatencyBucket[]) {
   const latest = buckets.at(-1);
   const recent = latest
@@ -230,7 +230,7 @@ function recentProbes(buckets: readonly LatencyBucket[]) {
   };
 }
 
-/** A live verdict from missing replies only, never from latency, which a loaded stage raises by design. */
+/** Judges the link from missing replies only, never from latency, which a loaded stage raises by design. */
 function connectionQuality(buckets: readonly LatencyBucket[], nowT = Number.NEGATIVE_INFINITY): Connectivity {
   const latest = buckets.at(-1);
   if (!latest || nowT - latest.endT > STALE_MS) return "checking";
@@ -249,7 +249,7 @@ function connectionQuality(buckets: readonly LatencyBucket[], nowT = Number.NEGA
   return "connected";
 }
 
-/** The connection as a dot in its tone, its facts in a tip; only settled trouble is spoken. */
+/** Shows the connection as a dot in its tone, its facts in a tip; only settled trouble is spoken. */
 export function ConnectivityIndicator(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run, servers } = app;
@@ -280,7 +280,7 @@ export function ConnectivityIndicator(props: { app: App; shell: Shell }): Node {
   });
   const word = computed(() => CONNECTIVITY[state()]);
   const label = computed(() => `Connection: ${word().label}`);
-  // The values behind the state, so the dot is never a verdict alone.
+  // The facts give the values behind the state, so the dot is never a verdict alone.
   const facts = computed(() => {
     const { replies, probes, timeouts } = recentProbes(live.pulse());
     const selected = servers.selected();

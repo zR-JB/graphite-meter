@@ -1,5 +1,5 @@
-// Tooltips by delegation, one bubble at a time: `ref={tip(() => text)}`. A hand at rest opens a tip, a sweep never
-// does; jargon and facts answer a tap or click; a long press asks a control.
+// Shows tooltips by delegation, one bubble at a time, through `ref={tip(() => text)}`. A hand at rest opens a tip
+// and a sweep never does. Jargon and facts answer a tap or click. A long press asks a control.
 import { nextFrame, pageMs } from "../../lib/frame";
 import { computed, effect, onCleanup, scope, signal, type Read } from "../../lib/signal";
 
@@ -24,16 +24,16 @@ const GAP_PX = 8;
 const entries = new WeakMap<Element, Entry>();
 let ids = 0;
 
-/** A plain tip for a control or label; the getter may change while it shows. */
+/** Attaches a plain tip to a control or label. The getter may change while it shows. */
 export const tip =
   (text: () => string, kind: Kind = "tip") =>
   (node: HTMLElement) =>
     register(node, text, kind);
 
-/** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
+/** Marks jargon quietly. It opens after a shorter rest, or outright on a click or tap. */
 export const term = (text: () => string) => tip(text, "term");
 
-/** " (key)" while the key acts. */
+/** Reads " (key)" while the key acts. */
 export const keyHint = (key: string, acts = true) => (acts ? ` (${key})` : "");
 
 function register(node: HTMLElement, text: () => string, kind: Kind): void {
@@ -41,15 +41,15 @@ function register(node: HTMLElement, text: () => string, kind: Kind): void {
   entries.set(node, entry);
   const shown = computed(() => entry.text() !== "");
   const actionable = node.matches(ACTIONABLE);
-  // Whether this gave the node its tab stop, so an emptied tip takes back only its own.
+  // Records whether this gave the node its tab stop, so an emptied tip takes back only its own.
   let gave = false;
   effect(() => {
-    // A word or figure says it explains (the help cursor, jargon's mark); a control explains on its own.
+    // A word or figure says it explains (the help cursor, jargon's mark). A control explains on its own.
     if (!actionable && shown()) node.dataset.tip = kind === "term" ? "term" : "";
     else if (!actionable) delete node.dataset.tip;
     if (!shown() && open?.node === node) hide();
     if (actionable) return;
-    // The keyboard reaches a stand-alone word that explains once it is placed: one stop per group of facts.
+    // The keyboard reaches a stand-alone word that explains once it is placed, with one stop per group of facts.
     queueMicrotask(() => {
       if (shown.peek() === gave) return;
       if (gave) node.removeAttribute("tabindex");
@@ -69,7 +69,7 @@ interface Open {
   node: HTMLElement;
   bubble: HTMLDivElement;
   pinned: boolean;
-  /** Keyboard focus opened it: it stays beside its word while the page scrolls. */
+  /** Keyboard focus opened it, so it stays beside its word while the page scrolls. */
   keyboard: boolean;
   describedBy: string | null;
   stop: () => void;
@@ -77,12 +77,12 @@ interface Open {
 
 let open: Open | null = null;
 let coolUntil = 0;
-/** Where a mouse or pen came to rest, and the node it rests on. */
+/** Records where a mouse or pen came to rest, and the node it rests on. */
 let rest: { node: HTMLElement; x: number; y: number; timer: number } | null = null;
 let closing = 0;
-/** A click answers the pointer: a control's tip waits until the pointer leaves it and comes back. */
+/** A click answers the pointer, so a control's tip waits until the pointer leaves it and comes back. */
 let clicked: HTMLElement | null = null;
-/** A finger or long-pressing mouse, until it lifts or drifts away. */
+/** Tracks a finger or long-pressing mouse until it lifts or drifts away. */
 let press: { node: HTMLElement; x: number; y: number; timer: number; opened: boolean } | null = null;
 let lastPointer = "";
 
@@ -91,12 +91,12 @@ const anchored = () => (anchoring ??= CSS.supports("position-area", "block-start
 const explainOnClick = () => document.documentElement.dataset.explanations === "click";
 const warm = () => !!open || pageMs() < coolUntil;
 
-/** A plot's reading just closed: the next tip nearby answers a short rest. */
+/** A plot's reading just closed, so the next tip nearby answers a short rest. */
 export const warmTips = () => {
   coolUntil = pageMs() + WARM_MS;
 };
 
-/** The explained element at or above `target`; cut text yields to an element around it that explains itself. */
+/** Finds the explained element at or above `target`. Cut text yields to an element around it that explains itself. */
 function find(target: EventTarget | null): [HTMLElement, Entry] | null {
   let cut: [HTMLElement, Entry] | null = null;
   for (let node = target instanceof Element ? target : null; node; node = node.parentElement) {
@@ -108,14 +108,14 @@ function find(target: EventTarget | null): [HTMLElement, Entry] | null {
   return cut;
 }
 
-/** Jargon and stand-alone facts answer a click or tap; a control does its job and explains on a rest. */
+/** Jargon and stand-alone facts answer a click or tap. A control does its job and explains on a rest. */
 const traits = (node: HTMLElement, entry: Entry) => {
   const actionable = node.matches(ACTIONABLE);
   const inert = !actionable && !node.closest(ACTIONABLE);
   return { asks: inert || entry.kind === "term", explains: entry.kind !== "clip" && !actionable };
 };
 
-/** A multi-line tip is an explainer: its first line titles the rest; a tab splits a line into an aligned pair. */
+/** A multi-line tip is an explainer whose first line titles the rest. A tab splits a line into an aligned pair. */
 function write(bubble: HTMLElement, text: string): void {
   bubble.toggleAttribute("data-titled", text.includes("\n"));
   if (!text.includes("\t")) {
@@ -162,8 +162,8 @@ function show(node: HTMLElement, entry: Entry, pinned = false, keyboard = false)
   bubble.popover = "manual";
   bubble.setAttribute("role", "tooltip");
   bubble.style.setProperty("position-anchor", `--${id}`);
-  // One tip anchor at a time, on the element whose tip shows, beside any anchor of its own; a tip still fading from
-  // this element gives way at once.
+  // The element whose tip shows carries one tip anchor at a time, beside any anchor of its own. A tip still fading
+  // from this element gives way at once.
   const names = anchorNames(node);
   for (const name of names.filter((each) => TIP_ANCHOR.test(each))) document.getElementById(name.slice(2))?.remove();
   setAnchors(node, [...names.filter((each) => !TIP_ANCHOR.test(each)), `--${id}`]);
@@ -240,10 +240,10 @@ function endPress(): void {
   press = null;
 }
 
-// Mouse and pen hover; a finger never does. Decided per event: hover media queries misreport too often.
+// Mouse and pen hover, a finger never does. Each event decides, since hover media queries misreport too often.
 const hovers = (event: PointerEvent) => event.pointerType !== "touch";
 
-/** Hover intent: only a hand that stays near one point opens the tip; a sweep keeps moving it, a drag never counts. */
+/** Only a hand that stays near one point opens the tip. A sweep keeps moving it, and a drag never counts. */
 function settle(event: PointerEvent): void {
   const found = find(event.target);
   if (!found || !hovers(event) || event.buttons) return;
@@ -253,7 +253,7 @@ function settle(event: PointerEvent): void {
   if (rest?.node === node && Math.hypot(x - rest.x, y - rest.y) <= REST_PX) return;
   cancelRest();
   const wait = warm() ? WARM_REST_MS : entry.kind === "term" ? TERM_REST_MS : REST_MS;
-  // Not motion: hover intent is judged by rest time; a reading hand drifts within REST_PX.
+  // The wait is not motion. Rest time judges hover intent, and a reading hand drifts within REST_PX.
   rest = { node, x, y, timer: window.setTimeout(() => show(node, entry), wait) };
 }
 
@@ -270,7 +270,7 @@ function pointerout(event: PointerEvent): void {
   const [node] = found;
   if (rest?.node === node) cancelRest();
   if (clicked === node) clicked = null;
-  // Not motion: a slip off a small word keeps its tip a moment.
+  // The delay is not motion. A slip off a small word keeps its tip a moment.
   if (open?.node === node && !open.pinned) closing = window.setTimeout(hide, CLOSE_MS);
 }
 
@@ -295,7 +295,7 @@ function pointerdown(event: PointerEvent): void {
   const current = { node, x: event.clientX, y: event.clientY, timer: 0, opened: false };
   press = current;
   if (!asks && open?.node !== node)
-    // Not motion: a long press asks a control for its tip, with a mouse too once explanations wait to be asked.
+    // The wait is not motion. A long press asks a control for its tip, with a mouse too once tips wait for a click.
     current.timer = window.setTimeout(() => {
       show(node, entry, true);
       current.opened = open?.node === node;
@@ -307,7 +307,7 @@ function pointermove(event: PointerEvent): void {
   settle(event);
 }
 
-/** A tap on jargon or a fact toggles its tip; a tap on a control only runs it. */
+/** A tap on jargon or a fact toggles its tip. A tap on a control only runs it. */
 function pointerup(event: PointerEvent): void {
   const current = press;
   if (!current) return;
@@ -333,7 +333,7 @@ function contextmenu(event: Event): void {
   if (lastPointer === "touch" && find(event.target)) event.preventDefault();
 }
 
-/** Keyboard focus only (a key drops data-pointer), a microtask later, once a closing popover restored focus. */
+/** Answers keyboard focus only (a key drops data-pointer), a microtask later, once a closing popover restored focus. */
 function focusin(event: FocusEvent): void {
   const target = event.target as HTMLElement;
   queueMicrotask(() => {
@@ -370,7 +370,7 @@ const toggle = (event: Event) => {
 const visibility = () => {
   if (document.visibilityState !== "visible") hide();
 };
-/** A pointer's tip closes as the page scrolls; a focused word keeps its tip beside it. */
+/** A pointer's tip closes as the page scrolls. A focused word keeps its tip beside it. */
 const scroll = () => {
   if (open && !open.keyboard) hide();
   else if (open && !anchored()) place(open);
@@ -402,10 +402,10 @@ export function installTips(): void {
   on("focusout", focusout);
 }
 
-/** Text an ellipsis may cut: while cut, its whole text (or `full`) is its tip. */
+/** Marks text an ellipsis may cut. While cut, its whole text (or `full`) is its tip. */
 export function clip(full?: () => string): (node: HTMLElement) => void {
   return (node) => {
-    // Bumped whenever the box or its text changes, so the tip's text follows both.
+    // The counter bumps whenever the box or its text changes, so the tip's text follows both.
     const seen = signal(0);
     register(
       node,
@@ -440,7 +440,7 @@ const edits = (records: MutationRecord[]) => {
 };
 const edited = new MutationObserver(edits);
 let rewatching = false;
-/** A mutation observer cannot let go of one node: once a task's removals are in, it watches the rest afresh. */
+/** A mutation observer cannot let go of one node, so once a task's removals are in, it watches the rest afresh. */
 function rewatch(): void {
   if (rewatching) return;
   rewatching = true;

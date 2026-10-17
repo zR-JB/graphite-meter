@@ -1,6 +1,6 @@
-/* The kit's own blocks: dialog geometry, confirmations, the overflow menu and the switch. */
+/* The kit's own blocks cover dialog geometry, confirmations, the overflow menu and the switch. */
 @layer components {
-  /* The width owns the gutter; the UA's own max-width would leave 19 px. */
+  /* The width owns the gutter. The UA's own max-width would leave 19 px. */
   dialog.float {
     width: min(var(--dialog-width, 360px), calc(100vw - 2 * var(--space-4)));
     max-width: none;
@@ -55,8 +55,8 @@
     }
   }
 
-  /* A plate row with the link row's wash and ring; it contains the hidden checkbox so focusing it cannot scroll the
-     panel. On fills the track with ink, like a checked box; off is an empty track with the box's edge. */
+  /* The switch is a plate row with the link row's wash and ring. It holds the hidden checkbox, so focusing it cannot
+     scroll the panel. On fills the track with ink, like a checked box. Off is an empty track with the box's edge. */
   .switch {
     position: relative;
     display: flex;
@@ -83,7 +83,7 @@
     background: var(--track);
     transition: var(--transition-control);
   }
-  /* Centered on the track whatever its edge rounds to, 3 px from the end it rests at. */
+  /* The knob centers on the track whatever its edge rounds to, 3 px from the end it rests at. */
   .switch-knob {
     position: absolute;
     top: 50%;
@@ -110,7 +110,7 @@
     flex: 0 1 auto;
     min-width: 0;
   }
-  /* Forced colors keep the edge but drop fills; system colors draw the knob and the on state. */
+  /* Forced colors keep the edge but drop fills, so system colors draw the knob and the on state. */
   @media (forced-colors: active) {
     .switch-knob {
       background: CanvasText;
@@ -142,7 +142,7 @@
     max-width: 100%;
     text-overflow: ellipsis;
 
-    /* Sized to the shown choice, so the chevron stays by it however long another server's name is. */
+    /* The field sizes to the shown choice, so the chevron stays by it however long another server's name is. */
     &.quiet {
       field-sizing: content;
       border-color: transparent;
@@ -161,7 +161,7 @@
     }
   }
 
-  /* A rolling figure: old and new values share one cell while they roll. */
+  /* Old and new values of a rolling figure share one cell while they roll. */
   .roll {
     display: inline-grid;
     overflow: hidden;
