@@ -10,6 +10,7 @@ use crate::{
     frame::{FrameType, Header, StreamType},
     settings::Dialect,
     stream::{RequestStream, poll_write_header},
+    varint,
 };
 use bytes::Bytes;
 use std::{
@@ -69,7 +70,7 @@ pub(crate) struct SessionId(u64);
 impl SessionId {
     /// The session `id` names; `None` for an ID no CONNECT stream can have.
     pub(crate) fn new(id: u64) -> Option<Self> {
-        (id.is_multiple_of(4) && id < 1 << 62).then_some(Self(id))
+        (id.is_multiple_of(4) && id <= varint::MAX).then_some(Self(id))
     }
 
     /// The session a datagram's quarter stream ID names.
@@ -153,9 +154,6 @@ impl Session {
         let shared = &requests.0;
         let dialect = dialect(shared, None).await?;
         let connect_protocol = shared.peer.borrow().is_some_and(|peer| peer.connect_protocol);
-        if shared.going_away() {
-            return Err(Error::GoingAway);
-        }
         let (mut parts, ()) = request.into_parts();
         parts.method = http::Method::CONNECT;
         let protocol = match dialect.filter(|_| connect_protocol).ok_or(Error::NoWebTransport)? {

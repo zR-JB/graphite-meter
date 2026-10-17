@@ -6,7 +6,7 @@ use crate::{
     exchange::{Exchange, Watch},
     transport::{
         body::{Aborted, Body, ReplyBound, Sink, pump, within},
-        webtransport::{self, ANSWER_BOUND},
+        webtransport,
         window::{Funding, Incoming},
     },
 };
@@ -90,7 +90,7 @@ impl Requests {
         let _ = pump(&mut reply, response, bodiless).await;
     }
 
-    /// A CONNECT: its WebTransport session, or the app's answer within `ANSWER_BOUND`.
+    /// A CONNECT: its WebTransport session, or the app's answer within the reply's bound.
     async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange, watch: &Watch) {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
@@ -105,7 +105,7 @@ impl Requests {
             Outcome::Response(response) => {
                 let (send, _recv) = stream.split();
                 let mut reply = H3Reply { send, large: None, stopped: None };
-                let _ = tokio::time::timeout(ANSWER_BOUND, pump(&mut reply, response, false)).await;
+                let _ = pump(&mut reply, response, false).await;
             }
             Outcome::WebSocket(..) | Outcome::Abort => {}
         }

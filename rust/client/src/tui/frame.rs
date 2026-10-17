@@ -541,15 +541,7 @@ impl App {
                     .filter(|result| !result.stage.directions().is_empty());
                 for result in results {
                     let own = result.servers.iter().find(|own| own.server == server.id);
-                    let rate: f64 = own.map_or(0.0, |own| {
-                        own.throughput
-                            .down
-                            .iter()
-                            .chain(own.throughput.up.iter())
-                            .filter_map(|t| t.rate)
-                            .map(|r| r.mean)
-                            .sum()
-                    });
+                    let rate = own.map_or(0.0, |own| own.throughput.mean());
                     if rate > 0.0 {
                         let label = format!("{} {}", icon(result.stage), format::label(result.stage));
                         entries.push(item(&label, format::rate(rate)));

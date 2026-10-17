@@ -2,8 +2,7 @@
 
 use super::{AuthLease, Decision, Store, Via, protect};
 use crate::headers::{
-    GRAPHITE_METER_AUTH, GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN,
-    X_FORWARDED_HOST,
+    GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN, X_FORWARDED_HOST,
 };
 use crate::{
     app::{Endpoint, authority, finalize::Access, finalize::close, query, response},
@@ -12,6 +11,7 @@ use crate::{
 };
 use graphite_meter_proto::{
     origin::{Origin, Scheme},
+    refusal::SIGN_IN_HEADER,
     route::{AuthRoute, Kind, Route},
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority};
@@ -84,7 +84,7 @@ impl Policy {
         let origin = config.public_origin.to_string();
         let login = HeaderValue::from_str(&format!("{origin}{}", AuthRoute::Login.path())).expect("origins are ASCII");
         let origin = HeaderValue::from_str(&origin).expect("origins are ASCII");
-        let (password, oidc) = (config.methods.password().is_some(), config.methods.oidc().is_some());
+        let (password, oidc) = (config.methods.password.is_some(), config.methods.oidc.is_some());
         Self {
             public: config.public_origin.clone(),
             origin,
@@ -252,10 +252,7 @@ impl Policy {
             (None, Some(origin))
                 if trust == Trust::Canonical && method == "POST" && requested(headers, &[]).is_some() =>
             {
-                Access::Bearer(origin.header().clone()).apply(answered);
-                answered.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
-                answered.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type"));
-                answered.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
+                Access::Bearer(origin.header().clone()).apply_preflight(answered, "POST", "Content-Type");
             }
             (Some(route), Some(origin)) if secure && *origin.header() != self.origin && route != Route::Servers => {
                 let names = requested(headers, &["authorization"]);
@@ -295,7 +292,7 @@ impl Policy {
 
     fn forbidden(&self, secure: bool) -> Decision {
         let mut answer = response::empty(StatusCode::FORBIDDEN);
-        protect(answer.headers_mut(), secure);
+        protect(answer.headers_mut(), secure, None);
         Err(answer)
     }
 
@@ -307,7 +304,7 @@ impl Policy {
             false => response::empty(StatusCode::FORBIDDEN),
         };
         let headers = answer.headers_mut();
-        protect(headers, secure);
+        protect(headers, secure, None);
         let origin = request.headers().get(header::ORIGIN);
         if origin == Some(&self.origin) {
             Access::Cookie(self.origin.clone()).apply(headers);
@@ -316,7 +313,7 @@ impl Policy {
         {
             Access::Bearer(origin.header().clone()).apply(headers);
         }
-        headers.insert(GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
+        headers.insert(SIGN_IN_HEADER, HeaderValue::from_static("required"));
         headers.insert(GRAPHITE_METER_BROWSER_AUTH, HeaderValue::from_static("1"));
         headers.insert(GRAPHITE_METER_AUTH_URL, self.login.clone());
         close(headers, request.version());

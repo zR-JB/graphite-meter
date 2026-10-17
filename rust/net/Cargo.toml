@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 base64.workspace = true
+getrandom.workspace = true
 graphite-meter-proto.workspace = true
 ipnet.workspace = true
 noq = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }

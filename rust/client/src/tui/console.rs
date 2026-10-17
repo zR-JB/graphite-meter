@@ -622,7 +622,7 @@ impl App {
             }
         };
         if let Some(result) = result.filter(|_| state == State::Ended(StageStatus::Complete)) {
-            let mean = result.mean();
+            let mean = result.throughput.mean();
             if let Some(wire) = wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005) {
                 quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
@@ -813,7 +813,12 @@ impl App {
         }
         // Finished: every transfer stage's arc, swept in from where the needle stood, and the first one's figure.
         let mut results = run.plan.iter().filter_map(|&(stage, _)| {
-            let mean = run.results.iter().rfind(|result| result.stage == stage)?.mean();
+            let mean = run
+                .results
+                .iter()
+                .rfind(|result| result.stage == stage)?
+                .throughput
+                .mean();
             (!stage.directions().is_empty() && mean > 0.0).then_some((stage, mean))
         });
         if let Some((stage, mean)) = results.next() {

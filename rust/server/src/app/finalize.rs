@@ -39,16 +39,20 @@ impl Access {
         }
     }
 
-    /// The headers of a preflight's answer; with authentication off every route answer carries them.
+    /// The headers of a measurement preflight's answer; with authentication off every route answer carries them.
     pub fn apply_measurement(&self, headers: &mut HeaderMap) {
-        self.apply(headers);
         let allowed = match self {
             Self::Public => "*",
             Self::Cookie(_) => "Authorization, Content-Type, X-CSRF-Token",
             Self::Bearer(_) => "Authorization, Content-Type",
         };
-        let methods = HeaderValue::from_static("GET, POST, DELETE, OPTIONS");
-        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, methods);
+        self.apply_preflight(headers, "GET, POST, DELETE, OPTIONS", allowed);
+    }
+
+    /// The headers of a preflight's answer granting `methods` with `allowed` request headers.
+    pub fn apply_preflight(&self, headers: &mut HeaderMap, methods: &'static str, allowed: &'static str) {
+        self.apply(headers);
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static(methods));
         headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static(allowed));
         headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
     }

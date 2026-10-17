@@ -20,7 +20,7 @@ struct Fields {
 impl Fields {
     /// Counts a field against the limit before any of it is kept.
     fn count(&mut self, name: &[u8], value: &[u8], limit: u64) -> Result<(), Invalid> {
-        self.size += (name.len() + value.len() + 32) as u64;
+        self.size += field_size(name, value);
         if self.size > limit { Err(Invalid::TooLarge) } else { Ok(()) }
     }
 
@@ -193,6 +193,11 @@ pub(crate) fn encode_response(response: &http::response::Parts, limit: Option<u6
     encode(&[(":status", response.status.as_str())], &response.headers, limit)
 }
 
+/// A field's size as the field section limit counts it (RFC 9114 §4.2.2).
+fn field_size(name: &[u8], value: &[u8]) -> u64 {
+    (name.len() + value.len() + 32) as u64
+}
+
 fn encode(pseudo: &[(&str, &str)], headers: &HeaderMap, limit: Option<u64>) -> Result<Vec<u8>, Invalid> {
     let fields = || {
         let regular = headers.iter().filter(|(name, _)| !connection_specific(name));
@@ -201,9 +206,7 @@ fn encode(pseudo: &[(&str, &str)], headers: &HeaderMap, limit: Option<u64>) -> R
             .map(|&(name, value)| (name.as_bytes(), value.as_bytes()))
             .chain(regular.map(|(name, value)| (name.as_str().as_bytes(), value.as_bytes())))
     };
-    let size = fields()
-        .map(|(name, value)| (name.len() + value.len() + 32) as u64)
-        .sum::<u64>();
+    let size = fields().map(|(name, value)| field_size(name, value)).sum::<u64>();
     if limit.is_some_and(|limit| size > limit) {
         return Err(Invalid::TooLarge);
     }

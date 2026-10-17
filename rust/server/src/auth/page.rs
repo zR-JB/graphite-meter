@@ -1,6 +1,7 @@
 //! The sign-in and approval pages around the assets `client/auth/build.ts` writes, and authentication answer headers.
 
 use super::approval::{Challenge, Refused};
+use crate::{app::response::escape, assets::sha256};
 use graphite_meter_proto::route::AuthRoute;
 use http::{HeaderMap, HeaderValue, header};
 use std::sync::LazyLock;
@@ -236,53 +237,24 @@ fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String
     )
 }
 
-/// Lets the page's forms post to the OIDC provider's authorization `origin` as well.
-pub(super) fn allow_form_action(headers: &mut HeaderMap, origin: &str) {
-    let declared = headers.get(header::CONTENT_SECURITY_POLICY);
-    let policy = declared.and_then(|policy| policy.to_str().ok());
-    let policy = policy.unwrap_or_default();
-    let policy = policy.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
-    if let Ok(policy) = HeaderValue::from_str(&policy) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, policy);
-    }
-}
-
-/// The headers of every authentication page and refusal, with HSTS once the request is known to be secure.
-pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use ring::digest::{SHA256, digest};
-    static POLICY: LazyLock<HeaderValue> = LazyLock::new(|| {
-        let hash = |asset: &str| STANDARD.encode(digest(&SHA256, asset.as_bytes()));
-        let (styles, theme, pending) = (hash(STYLES), hash(THEME), hash(PENDING));
-        let policy = format!(
-            "default-src 'none'; style-src 'sha256-{styles}'; font-src 'self'; script-src 'sha256-{theme}' \
-             'sha256-{pending}'; connect-src 'self'; img-src data:; form-action 'self'; frame-ancestors 'none'; \
-             base-uri 'none'"
-        );
-        HeaderValue::from_str(&policy).expect("hashes are base64")
-    });
+/// The headers of every authentication page and refusal, with HSTS once the request is known to be secure; forms
+/// may also post to `forms`, the OIDC provider's origin.
+pub(super) fn protect(headers: &mut HeaderMap, secure: bool, forms: Option<&str>) {
+    static HASHES: LazyLock<[String; 3]> = LazyLock::new(|| [STYLES, THEME, PENDING].map(sha256));
+    let [styles, theme, pending] = &*HASHES;
+    let forms = forms.map(|origin| format!(" {origin}")).unwrap_or_default();
+    let policy = format!(
+        "default-src 'none'; style-src 'sha256-{styles}'; font-src 'self'; script-src 'sha256-{theme}' \
+         'sha256-{pending}'; connect-src 'self'; img-src data:; form-action 'self'{forms}; frame-ancestors 'none'; \
+         base-uri 'none'"
+    );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     // A private server's sign-in and approval pages stay out of search indexes.
     headers.insert(crate::headers::X_ROBOTS_TAG, HeaderValue::from_static("noindex, nofollow"));
     crate::app::finalize::harden(headers, secure);
-    headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
-}
-
-/// `text` safe in HTML text and quoted attribute values.
-fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '"' => escaped.push_str("&#34;"),
-            '&' => escaped.push_str("&amp;"),
-            '\'' => escaped.push_str("&#39;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            character => escaped.push(character),
-        }
-    }
-    escaped
+    let policy = HeaderValue::try_from(policy).expect("hashes and origins are header-safe");
+    headers.insert(header::CONTENT_SECURITY_POLICY, policy);
 }
 
 #[cfg(test)]

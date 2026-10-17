@@ -558,7 +558,6 @@ dependencies = [
  "crossterm",
  "form_urlencoded",
  "futures-util",
- "getrandom 0.4.3",
  "graphite-meter-http3",
  "graphite-meter-legal",
  "graphite-meter-net",
@@ -603,6 +602,7 @@ name = "graphite-meter-http3"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "graphite-meter-proto",
  "graphite-meter-testkit",
  "http",
  "noq",
@@ -623,6 +623,7 @@ name = "graphite-meter-net"
 version = "0.0.0"
 dependencies = [
  "base64",
+ "getrandom 0.4.3",
  "graphite-meter-proto",
  "graphite-meter-testkit",
  "ipnet",

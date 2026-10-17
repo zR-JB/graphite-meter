@@ -209,9 +209,7 @@ impl Lanes {
 
 /// A random block, so no hop compresses the upload; a host without randomness cannot measure and panics.
 fn block() -> Bytes {
-    let mut block = vec![0; BLOCK_BYTES];
-    getrandom::fill(&mut block).expect("the system provides randomness");
-    block.into()
+    Bytes::copy_from_slice(&graphite_meter_net::random::<BLOCK_BYTES>())
 }
 
 /// A group's shared connection or session, replaced one dial at a time once unusable.

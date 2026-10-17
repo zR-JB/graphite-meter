@@ -407,12 +407,19 @@ fn cadence(text: &str) -> Result<Cadence, &'static str> {
     spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
 }
 
+/// The name of the preset `cadence` is.
+pub fn preset(cadence: Cadence) -> Option<&'static str> {
+    CADENCES
+        .iter()
+        .find(|(_, preset)| *preset == cadence)
+        .map(|(name, _)| *name)
+}
+
 /// A cadence as its flag spells it.
 fn cadence_name(cadence: Cadence) -> String {
-    match (CADENCES.iter().find(|(_, preset)| *preset == cadence), cadence) {
-        (Some((name, _)), _) => (*name).into(),
+    match (preset(cadence), cadence) {
         (None, Cadence::Every(spacing)) => duration::format(spacing),
-        (None, Cadence::ReplyDriven) => CADENCES[0].0.into(),
+        (name, _) => name.unwrap_or_default().into(),
     }
 }
 

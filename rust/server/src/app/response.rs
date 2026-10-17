@@ -2,7 +2,7 @@
 
 use crate::{limits::Refusal, transport::body::Body};
 use bytes::Bytes;
-use graphite_meter_proto::refusal::UploadRefusal;
+use graphite_meter_proto::refusal::{SIGN_IN_HEADER, UPLOAD_REFUSAL_HEADER, UploadRefusal};
 use http::{HeaderValue, Method, Response, StatusCode, header};
 use serde::Serialize;
 
@@ -51,16 +51,28 @@ pub fn json_of(document: &impl Serialize) -> Response<Body> {
     json(serde_json::to_vec(document).expect("documents serialize"))
 }
 
+/// `text` safe in HTML text and quoted attribute values.
+pub(crate) fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("&#34;"),
+            '&' => escaped.push_str("&amp;"),
+            '\'' => escaped.push_str("&#39;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
 /// A redirect to `location`; a GET answer links it in a short HTML body.
 pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> Response<Body> {
     let linked = matches!(*method, Method::GET | Method::HEAD);
     let mut response = match *method == Method::GET {
         true => {
-            let escaped = [("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("\"", "&#34;"), ("'", "&#39;")]
-                .iter()
-                .fold(location.to_str().unwrap_or_default().to_owned(), |text, (raw, entity)| {
-                    text.replace(raw, entity)
-                });
+            let escaped = escape(location.to_str().unwrap_or_default());
             let reason = status.canonical_reason().unwrap_or_default();
             Response::new(Body::full(format!("<a href=\"{escaped}\">{reason}</a>.\n\n")))
         }
@@ -105,13 +117,13 @@ pub fn ambiguous() -> Response<Body> {
 pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
     let mut response = text(refusal.status(), refusal.message());
     let headers = response.headers_mut();
-    headers.insert(crate::headers::X_GRAPHITE_UPLOAD_REFUSAL, HeaderValue::from_static(refusal.name()));
+    headers.insert(UPLOAD_REFUSAL_HEADER, HeaderValue::from_static(refusal.name()));
     match refusal {
         UploadRefusal::GlobalFull | UploadRefusal::ClientFull => {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         }
         UploadRefusal::Revoked => {
-            headers.insert(crate::headers::GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
+            headers.insert(SIGN_IN_HEADER, HeaderValue::from_static("required"));
         }
         UploadRefusal::Invalid | UploadRefusal::OwnerMismatch | UploadRefusal::Idle => {}
     }

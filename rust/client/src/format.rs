@@ -1,6 +1,6 @@
 //! Every figure, unit and label the report and the interface print (`api/format.testvectors.json`).
 use crate::{
-    config::{CADENCES, Config},
+    config::{Config, preset},
     model::{Cadence, Direction, Outcome, Stage, StageStatus},
     net::{LatencyPath, ThroughputPath},
 };
@@ -296,13 +296,10 @@ pub fn cadence(cadence: Cadence) -> String {
         true => format!("{} ms", spacing.as_millis()),
         false => stage_time(spacing),
     };
-    let named = CADENCES.iter().find(|(_, preset)| *preset == cadence);
-    let name = named.map(|(name, _)| crate::text::capitalized(name));
-    match (name, cadence) {
-        (Some(name), Cadence::ReplyDriven) => name,
-        (Some(name), Cadence::Every(every)) => format!("{name} ({})", spacing(every)),
-        (None, Cadence::Every(every)) => format!("Custom ({})", spacing(every)),
-        (None, Cadence::ReplyDriven) => "Reply-driven".into(),
+    let name = preset(cadence).map_or_else(|| "Custom".into(), crate::text::capitalized);
+    match cadence {
+        Cadence::ReplyDriven => name,
+        Cadence::Every(every) => format!("{name} ({})", spacing(every)),
     }
 }
 

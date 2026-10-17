@@ -42,7 +42,6 @@ pub struct Server {
     pool: Pool,
     listeners: Vec<Listening>,
     certificates: Option<Arc<Certificates>>,
-    shutdown: CancellationToken,
 }
 
 struct Listening {
@@ -87,7 +86,7 @@ impl Server {
             config.name()
         );
         let (tls, hosts) = (config.tls.clone(), tls::covered_hosts(&config));
-        let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods::Oidc(_)));
+        let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods { password: None, .. }));
         let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
         let endpoint = endpoint_bytes.clone();
@@ -108,8 +107,7 @@ impl Server {
             None => None,
         };
         let mut listeners = bind_all(&mut config, certificates.as_ref()).await?;
-        let shutdown = CancellationToken::new();
-        let app = Arc::new(App::new(config, shutdown.clone())?);
+        let app = Arc::new(App::new(config, CancellationToken::new())?);
         if oidc_only {
             let discovery = app.auth().discover();
             discovery
@@ -121,13 +119,7 @@ impl Server {
             .find(|listening| listening.endpoint == Endpoint::H3Companion);
         if let (Some(companion), Some(certificates)) = (companion, &certificates) {
             let fits = |bytes| terms.check(certificates.handshake_bytes(), bytes);
-            let binding = Binding {
-                app: &app,
-                limits: &app.config().limits,
-                certificates,
-                fits,
-                shutdown: &shutdown,
-            };
+            let binding = Binding { app: &app, certificates, fits };
             let local = companion.socket.local_addr();
             let local = local.map_err(|error| format!("could not read the HTTP/3 port: {error}"))?;
             let bound = binding.bind(local, &pool)?;
@@ -135,7 +127,7 @@ impl Server {
             let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
             listeners.push(Listening { endpoint, address, socket: Socket::Quic(Box::new(bound)) });
         }
-        Ok(Self { app, pool, listeners, certificates, shutdown })
+        Ok(Self { app, pool, listeners, certificates })
     }
 
     /// Where the listener of `endpoint` accepts.
@@ -159,27 +151,22 @@ impl Server {
 
     /// Serves until `stop`, then closes every listener at once, ends running lanes and drains connections.
     pub async fn serve(self, stop: impl Future<Output = ()>) -> Result<(), String> {
-        let Self { app, pool, listeners, certificates, shutdown } = self;
+        let Self { app, pool, listeners, certificates } = self;
+        let shutdown = app.shutdown().clone();
         let (pool, stopping, auth) = (&pool, &shutdown, app.auth().enabled());
         let mut accepting = FuturesUnordered::<Accepting<'_>>::new();
         for Listening { endpoint, address, socket } in listeners {
             let role = endpoint.protocol();
-            let (app, shutdown, next) = (app.clone(), shutdown.clone(), || pool.next());
+            let (app, next) = (app.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
-                    let http1 = Http1 {
-                        app: app.clone(),
-                        endpoint,
-                        tls,
-                        buses: Handle::current(),
-                        shutdown,
-                    };
+                    let http1 = Http1 { app: app.clone(), endpoint, tls, buses: Handle::current() };
                     let serve = move |socket, peer| http1.connection(socket, peer);
                     accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"
                 }
                 Socket::Http2(socket, tls) => {
-                    let http2 = Http2 { app: app.clone(), tls, shutdown };
+                    let http2 = Http2 { app: app.clone(), tls };
                     let serve = move |socket, peer| http2.connection(socket, peer);
                     accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
                     "tcp"
@@ -409,7 +396,7 @@ pub fn check_budget(config: &Config) -> Result<(), String> {
 fn configured_endpoint(config: &Config) -> Result<usize, String> {
     match config.listener(ListenerKind::H3) {
         Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections.get(), 0, 1)
-            .ok_or_else(|| "QUIC endpoint buffer size overflow".into()),
+            .ok_or_else(|| quic::OVERFLOW.into()),
         None => Ok(0),
     }
 }

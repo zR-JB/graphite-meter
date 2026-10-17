@@ -2,9 +2,14 @@
 use crate::{model::Failure, text::capitalized};
 use graphite_meter_net::ConnectError;
 use graphite_meter_proto::{
-    lane::LaneEnding, origin::Origin, reason::FailureReason, refusal::UploadRefusal, route::Route, text,
+    lane::LaneEnding,
+    origin::Origin,
+    reason::FailureReason,
+    refusal::{SIGN_IN_HEADER, UPLOAD_REFUSAL_HEADER, UploadRefusal},
+    route::Route,
+    text,
 };
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode, header};
 use rustls::CertificateError;
 use std::{fmt, time::Duration};
 
@@ -87,16 +92,15 @@ impl Fault {
         if status == StatusCode::OK {
             return None;
         }
-        if status == StatusCode::FORBIDDEN && header("graphite-meter-auth") == Some("required") {
+        if status == StatusCode::FORBIDDEN && header(SIGN_IN_HEADER) == Some("required") {
             return Some(Self::SignIn(issuer()));
         }
-        let seconds = header("retry-after").filter(|value| value.bytes().all(|byte| byte.is_ascii_digit()));
+        let seconds = header(header::RETRY_AFTER).filter(|value| value.bytes().all(|byte| byte.is_ascii_digit()));
         let retry_after = seconds
             .and_then(|value| value.parse().ok())
             .map(|seconds: u32| Duration::from_secs(seconds.into()));
         Some(
-            match header("x-graphite-upload-refusal").and_then(|name| UploadRefusal::find_by(UploadRefusal::name, name))
-            {
+            match header(UPLOAD_REFUSAL_HEADER).and_then(|name| UploadRefusal::find_by(UploadRefusal::name, name)) {
                 Some(refusal) => Self::refusal(refusal, from, retry_after, issuer),
                 None => Self::Status { status, from, retry_after },
             },

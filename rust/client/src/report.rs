@@ -102,9 +102,7 @@ impl Report<'_> {
             servers => vec![format!("{servers} test servers")],
         };
         facts.push(format::duration(self.run.elapsed));
-        let results = self.run.results.iter();
-        let directions = results.flat_map(|result| [result.throughput.down, result.throughput.up]);
-        let total: u64 = directions.flatten().map(|throughput| throughput.bytes).sum();
+        let total: u64 = self.run.results.iter().map(|result| result.throughput.bytes()).sum();
         facts.extend((total > 0).then(|| format::bytes(total)));
         let outcome = self.run.outcome.unwrap_or(Outcome::Failed);
         Line::styled("Graphite Meter", self.palette.heading)

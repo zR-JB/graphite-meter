@@ -12,6 +12,7 @@ use crate::{
     lock,
 };
 use bytes::Bytes;
+use graphite_meter_proto::lane::CONNECTION_IDLE;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
 use hyper::{
@@ -31,7 +32,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, ready},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -40,12 +40,9 @@ use tokio::{
     time::{Instant, Sleep, sleep_until},
 };
 use tokio_rustls::TlsAcceptor;
-use tokio_util::sync::CancellationToken;
 
 /// hyper's buffer: 128 KiB reads cost less CPU per uploaded byte than 64 KiB; it also bounds a head before parsing.
 const BUFFER_BYTES: usize = 128 << 10;
-/// A connection between requests closes after this long.
-const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(15);
 
 /// What an HTTP/1 listener's connections share.
 #[derive(Clone)]
@@ -56,7 +53,6 @@ pub struct Http1 {
     pub tls: Option<TlsAcceptor>,
     /// The runtime WebSocket buses move to, which runs no bulk transfer.
     pub buses: Handle,
-    pub shutdown: CancellationToken,
 }
 
 type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
@@ -76,7 +72,7 @@ impl Http1 {
             };
             let stream = tokio::select! {
                 biased;
-                () = listener.shutdown.cancelled() => return,
+                () = listener.app.shutdown().cancelled() => return,
                 stream = tls::accept(acceptor, socket, peer) => stream,
             };
             if let Some(stream) = stream {
@@ -105,7 +101,7 @@ impl Http1 {
                 .with_upgrades()
         );
         // A child token: polling it never takes the server-wide token's waiter lock.
-        let shutdown = self.shutdown.child_token();
+        let shutdown = self.app.shutdown().child_token();
         tokio::select! {
             biased;
             _ = serving.as_mut() => {}
@@ -313,7 +309,7 @@ impl<S> Io<S> {
             return Ok(());
         };
         bound.delivered()?;
-        self.deadline.as_mut().reset(Instant::now() + KEEP_ALIVE_IDLE);
+        self.deadline.as_mut().reset(Instant::now() + CONNECTION_IDLE);
         self.state = State::Waiting;
         Ok(())
     }

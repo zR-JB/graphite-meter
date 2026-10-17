@@ -55,9 +55,10 @@ pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
 impl Approval {
     /// A fresh approval at `origin` with a verifier from 32 random bytes.
     pub fn new(origin: &Origin) -> Self {
-        let mut entropy = [0; 32];
-        getrandom::fill(&mut entropy).expect("the system provides randomness");
-        let verifier: String = entropy.iter().map(|byte| format!("{byte:02x}")).collect();
+        let verifier: String = graphite_meter_net::random::<32>()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let challenge = challenge(&verifier);
         Self {
             origin: origin.clone(),

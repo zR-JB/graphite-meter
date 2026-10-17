@@ -58,7 +58,7 @@ impl ConnectionIdGenerator for ShardCids {
         let mut cid = [0; CID_BYTES];
         cid[0] = self.shard;
         let (nonce, signature) = cid[1..].split_at_mut(NONCE_BYTES);
-        getrandom::fill(nonce).expect("randomness for QUIC connection IDs");
+        nonce.copy_from_slice(&crate::random::<NONCE_BYTES>());
         signature.copy_from_slice(&self.signature(nonce)[..signature.len()]);
         ConnectionId::new(&cid)
     }

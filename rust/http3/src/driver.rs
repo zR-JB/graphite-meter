@@ -12,6 +12,7 @@ use crate::{
     webtransport::{RecvStream, Registry, SessionId, Sessions, Unrouted},
 };
 use bytes::Bytes;
+use graphite_meter_proto::lane::CONNECTION_IDLE;
 use std::{
     future::{Future, poll_fn},
     pin::{Pin, pin},
@@ -27,8 +28,6 @@ use tokio::{
     time::{Instant, Sleep},
 };
 
-/// A server connection without live requests for this long closes.
-const IDLE: Duration = Duration::from_secs(15);
 const DRAIN: Duration = Duration::from_secs(5);
 
 /// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
@@ -282,7 +281,7 @@ impl Driver {
             self.idle_since = None;
             return self.drain;
         }
-        let idle = *self.idle_since.get_or_insert(now) + IDLE;
+        let idle = *self.idle_since.get_or_insert(now) + CONNECTION_IDLE;
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
         let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Acquire);
         let done = (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
@@ -315,12 +314,8 @@ impl Driver {
     }
 }
 
-/// Hands a peer's session stream to the registry; one naming no possible session is refused at once, and one the
-/// budget cannot hold as unbuffered.
-fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
-    let Some(session) = SessionId::new(session) else {
-        return drop(stream.stop(Code::H3_ID_ERROR.into()));
-    };
+/// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
+fn route(shared: &Shared, session: SessionId, mut stream: noq::RecvStream, first: Bytes) {
     match Charge::new(&shared.budget, size_of::<RecvStream>()) {
         Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
         None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),
@@ -399,7 +394,7 @@ struct Incoming {
 }
 
 /// A WebTransport stream once its header is read: its session, the stream and the bytes after the header.
-type Classified = (u64, noq::RecvStream, Bytes);
+type Classified = (SessionId, noq::RecvStream, Bytes);
 
 struct PeerStream {
     stream: noq::RecvStream,
@@ -413,14 +408,14 @@ enum Kind {
     Control(Box<ControlReader>),
     Encoder,
     Decoder(qpack::DecoderStream),
-    Session(u64),
+    Session(SessionId),
 }
 
 /// What reading a stream came to.
 enum Read {
     Pending,
     Done,
-    Session(u64),
+    Session(SessionId),
 }
 
 impl Incoming {
@@ -524,12 +519,7 @@ fn classify(
     critical: &mut [bool; 3],
 ) -> Result<Option<Kind>, Code> {
     if let Some(session) = session {
-        // Only a client-initiated bidirectional stream can carry a session.
-        return if session.is_multiple_of(4) {
-            Ok(Some(Kind::Session(session)))
-        } else {
-            Err(Code::H3_ID_ERROR)
-        };
+        return Ok(Some(Kind::Session(SessionId::new(session).ok_or(Code::H3_ID_ERROR)?)));
     }
     let (slot, next) = match kind {
         StreamType::CONTROL => (0, Kind::Control(Box::default())),

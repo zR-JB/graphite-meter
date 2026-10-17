@@ -40,7 +40,6 @@ use tokio::{
     time::{Instant, Sleep, sleep, timeout},
 };
 use tokio_rustls::TlsAcceptor;
-use tokio_util::sync::CancellationToken;
 
 /// What a connection holds of the buffer budget from accept until its task ends.
 pub const FLOOR_BYTES: usize = TRANSPORT_BYTES + STATE_BYTES;
@@ -64,7 +63,6 @@ const NOTSENT_LOWAT: u32 = 64 << 10;
 pub struct Http2 {
     pub app: Arc<App>,
     pub tls: TlsAcceptor,
-    pub shutdown: CancellationToken,
 }
 
 impl Http2 {
@@ -81,7 +79,7 @@ impl Http2 {
             };
             let stream = tokio::select! {
                 biased;
-                () = listener.shutdown.cancelled() => return,
+                () = listener.app.shutdown().cancelled() => return,
                 stream = tls::accept(&listener.tls, socket, peer) => stream,
             };
             let Some(stream) = stream.filter(|stream| stream.get_ref().1.alpn_protocol() == Some(b"h2")) else {
@@ -114,7 +112,7 @@ impl Http2 {
         let mut lifecycle = Lifecycle::new(connection.work.clone(), Grace::Fresh);
         let mut streams = FuturesUnordered::new();
         // A child token: polling it never takes the server-wide token's waiter lock.
-        let shutdown = self.shutdown.child_token();
+        let shutdown = self.app.shutdown().child_token();
         let mut stopping = pin!(shutdown.cancelled());
         poll_fn(|cx| {
             if stopping.as_mut().poll(cx).is_ready() {

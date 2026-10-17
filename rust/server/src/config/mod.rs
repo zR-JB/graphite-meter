@@ -203,28 +203,11 @@ pub struct Auth {
     pub provider: String,
 }
 
+/// The enabled sign-in methods, at least one: the operator password hash source and OIDC.
 #[derive(Debug, Clone)]
-pub enum Methods {
-    Password(Secret),
-    Oidc(Oidc),
-    Hybrid(Secret, Oidc),
-}
-
-impl Methods {
-    /// The operator password hash source, when password sign-in is enabled.
-    pub fn password(&self) -> Option<&Secret> {
-        match self {
-            Self::Password(secret) | Self::Hybrid(secret, _) => Some(secret),
-            Self::Oidc(_) => None,
-        }
-    }
-
-    pub fn oidc(&self) -> Option<&Oidc> {
-        match self {
-            Self::Oidc(oidc) | Self::Hybrid(_, oidc) => Some(oidc),
-            Self::Password(_) => None,
-        }
-    }
+pub struct Methods {
+    pub password: Option<Secret>,
+    pub oidc: Option<Oidc>,
 }
 
 #[derive(Debug, Clone)]

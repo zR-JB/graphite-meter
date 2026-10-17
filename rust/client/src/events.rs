@@ -415,13 +415,9 @@ impl Run {
         self.issues.retain(|(stage, _)| *stage != result.stage);
         let failures = result.failures.iter().map(|failure| (result.stage, failure.clone()));
         self.issues.extend(failures);
-        self.peak = self.peak.max(result.mean());
+        self.peak = self.peak.max(result.throughput.mean());
         self.results.push(result.clone());
-        let counted = self
-            .results
-            .iter()
-            .flat_map(|result| [result.throughput.down, result.throughput.up]);
-        self.moved = counted.flatten().map(|throughput| throughput.bytes as f64).sum();
+        self.moved = self.results.iter().map(|result| result.throughput.bytes() as f64).sum();
         self.focus = focus(&self.results).or(self.focus.take());
         self.stage = None;
     }

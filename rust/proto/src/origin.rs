@@ -1,5 +1,6 @@
 //! HTTP(S) origins, compared parsed, never as text: Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
 
+use crate::text::decimal;
 use serde::{Serialize, Serializer};
 use std::{
     fmt,
@@ -105,7 +106,11 @@ impl Origin {
         };
         let port = match port {
             "" | ":" => scheme.default_port(),
-            _ => port.strip_prefix(':').and_then(decimal_port).ok_or(OriginError)?,
+            _ => port
+                .strip_prefix(':')
+                .and_then(|digits| decimal(digits, usize::MAX))
+                .filter(|&port: &u16| port != 0)
+                .ok_or(OriginError)?,
         };
         let refused = |byte: u8| byte <= b' ' || byte >= 0x7f || matches!(byte, b'#' | b'\\');
         if rest.len() > MAX_ORIGIN_BYTES || rest.bytes().any(refused) {
@@ -113,13 +118,6 @@ impl Origin {
         }
         Ok((Self { scheme, host, port }, rest))
     }
-}
-
-/// A nonzero port of decimal digits only.
-fn decimal_port(digits: &str) -> Option<u16> {
-    let decimal = digits.bytes().all(|byte| byte.is_ascii_digit());
-    let port: u16 = decimal.then(|| digits.parse().ok())??;
-    (port != 0).then_some(port)
 }
 
 impl fmt::Display for Origin {

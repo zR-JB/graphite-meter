@@ -98,7 +98,7 @@ impl App {
             let port = listener.address.port;
             HeaderValue::from_str(&format!("h3=\":{port}\"")).expect("a port is a header value")
         });
-        let password = config.auth.as_ref().and_then(|auth| auth.methods.password());
+        let password = config.auth.as_ref().and_then(|auth| auth.methods.password.as_ref());
         let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
         let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self {
@@ -127,6 +127,10 @@ impl App {
 
     pub fn budget(&self) -> &Budget {
         &self.budget
+    }
+
+    pub fn shutdown(&self) -> &CancellationToken {
+        &self.shutdown
     }
 
     pub fn quotas(&self) -> &Quotas {

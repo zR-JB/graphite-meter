@@ -6,6 +6,7 @@ mod request;
 mod shard;
 
 pub(crate) use budget::{endpoint_bytes, floor_bytes, noq_floor};
+pub(crate) use endpoint::OVERFLOW;
 pub use endpoint::{Binding, Endpoints};
 
 use super::{
@@ -18,8 +19,7 @@ use crate::{
     app::{App, Connection, Endpoint},
     limits::Lease,
 };
-use budget::ConnectionBudget;
-use budget::{QuicWindow, SendWindow};
+use budget::{ConnectionBudget, QuicWindow, SendWindow};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::lane::LaneEnding;
@@ -37,7 +37,6 @@ use tokio::{
     runtime::Handle,
     time::{MissedTickBehavior, interval, timeout},
 };
-use tokio_util::sync::CancellationToken;
 
 /// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
@@ -67,7 +66,6 @@ pub struct Http3 {
     config: noq::ServerConfig,
     certificates: Arc<Certificates>,
     max_requests: usize,
-    shutdown: CancellationToken,
 }
 
 impl Listener {
@@ -132,10 +130,10 @@ impl Http3 {
             let Ok(connecting) = incoming.accept_with(config) else {
                 return;
             };
-            let address = peer.ip().to_canonical();
+            let address = peer.ip();
             let quic = tokio::select! {
                 biased;
-                () = listener.shutdown.cancelled() => return,
+                () = listener.app.shutdown().cancelled() => return,
                 connected = timeout(HANDSHAKE_BOUND, connecting) => match connected {
                     Ok(Ok(quic)) => quic,
                     Ok(Err(error)) => {
@@ -184,7 +182,7 @@ impl Http3 {
         let mut tuning = interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // A child token: polling it never takes the server-wide token's waiter lock.
-        let shutdown = self.shutdown.child_token();
+        let shutdown = self.app.shutdown().child_token();
         let mut stopping = pin!(shutdown.cancelled());
         let mut stopped = false;
         loop {
