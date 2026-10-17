@@ -365,7 +365,7 @@ export function shapeSoFar(
   if (!seconds.size) return null;
   const rates = [...seconds.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([, lanes]) => [...lanes.values()].reduce((total, { sum, n }) => total + sum / n, 0));
+    .map(([, lanes]) => lanes.values().reduce((total, { sum, n }) => total + sum / n, 0));
   return { peak: Math.max(...rates), stability: rates.length >= 2 ? stabilityPct(rates) : null };
 }
 

@@ -64,10 +64,7 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   // The pattern matches whole words, longest first, so an ID never rewrites part of another word or name.
   const known = [...words.keys()].sort((a, b) => b.length - a.length);
   const pattern = known.length
-    ? new RegExp(
-        `(?<![\\w.-])(?:${known.map((word) => word.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")).join("|")})(?![\\w-])`,
-        "g",
-      )
+    ? new RegExp(`(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`, "g")
     : null;
   const scrub = (text: string) => {
     const out = text.replace(URLISH, (url) => {
