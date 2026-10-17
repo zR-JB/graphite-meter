@@ -1,18 +1,18 @@
 {
   "version": 1,
   "files": {
-    "e2e/faults.test.ts": 39475,
-    "e2e/app.test.ts": 38731,
-    "e2e/auth.test.ts": 37514,
-    "e2e/interaction.test.ts": 32326,
-    "e2e/controls.test.ts": 23906,
-    "e2e/multi-server.test.ts": 22470,
-    "e2e/access.test.ts": 21036,
-    "e2e/transports.test.ts": 21029,
-    "e2e/history.test.ts": 18557,
-    "e2e/readiness.test.ts": 16869,
-    "e2e/dropout.test.ts": 14571,
-    "e2e/discovery.test.ts": 12405,
-    "e2e/limits.test.ts": 528
+    "e2e/auth.test.ts": 39442,
+    "e2e/faults.test.ts": 38856,
+    "e2e/app.test.ts": 38618,
+    "e2e/interaction.test.ts": 31348,
+    "e2e/access.test.ts": 25100,
+    "e2e/controls.test.ts": 22683,
+    "e2e/multi-server.test.ts": 21879,
+    "e2e/transports.test.ts": 20683,
+    "e2e/readiness.test.ts": 16743,
+    "e2e/history.test.ts": 16738,
+    "e2e/dropout.test.ts": 14286,
+    "e2e/discovery.test.ts": 12211,
+    "e2e/limits.test.ts": 457
   }
 }
