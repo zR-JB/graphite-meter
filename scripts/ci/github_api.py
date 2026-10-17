@@ -149,6 +149,12 @@ def append_summary(text: str) -> None:
         handle.write(text.rstrip() + "\n")
 
 
+def table(rows: list[tuple[str, str]]) -> str:
+    """A Markdown table whose first row is its header; cells hold only validated values."""
+    lines = [f"| {left} | {right} |" for left, right in rows]
+    return "\n".join([lines[0], "|---|---|", *lines[1:]])
+
+
 def file_sha256(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()

@@ -202,15 +202,14 @@ jobs:
           retention-days: 7
 
   image:
-    name: Image
+    name: Build server image
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     needs: plan
     if: needs.plan.outputs.code == 'true'
     env:
       VERSION: 0.0.0-ci
-      REPOSITORY: ${{ github.repository }}
-      REVISION: ${{ github.sha }}
+      GM_CLIENT_REVISION: source
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -226,39 +225,27 @@ jobs:
           image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: arm64
           cache-image: 'false'
-      - name: Set up pinned Buildx
+      - name: Set up Buildx
         uses: ./.github/actions/setup-buildx
-      # One architecture at a time: two concurrent cargo builds here take longer than two in a row. The OCI archive
-      # and source offers reuse those layers; the ci profile leaves out LTO and PGO, the checks job checks the app.
-      - name: Build the amd64 and arm64 server image with reviewed notices and export its source offers
-        run: |
-          build() {
-            docker buildx build --file container/Dockerfile \
-              --build-arg VERSION="$VERSION" --build-arg PROFILE=ci --build-arg GM_CLIENT_VALIDATE=0 \
-              --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
-              --label "org.opencontainers.image.revision=$REVISION" \
-              --label "org.opencontainers.image.version=$VERSION" \
-              --label org.opencontainers.image.licenses=AGPL-3.0-or-later "$@" .
-          }
-          # Docker's image store cannot load the attestation manifests.
-          for arch in amd64 arm64; do
-            build --target server --platform "linux/$arch" --provenance false --load --tag "graphite-meter:$arch"
-          done
-          mkdir -p "$RUNNER_TEMP/image"
-          build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
-            --output "type=oci,dest=$RUNNER_TEMP/image/graphite-meter.oci.tar"
-          build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
-            --output "type=local,dest=$RUNNER_TEMP/image/server-export"
+      # The ci profile leaves out LTO and PGO; the checks job checks the browser app.
+      - name: Build image and source offers
+        env:
+          CONTEXT: .
+          PROFILE: ci
+          GM_CLIENT_VALIDATE: '0'
+          SOURCE_OFFERS: 'true'
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          OUT_DIR: ${{ runner.temp }}/image
+        run: scripts/ci/build-image.sh
       # The arm64 image runs under emulation.
       - wait: qemu
-      - name: Check both images' files, server, browser app and allocator setting
-        env:
-          GM_CLIENT_REVISION: source
+      - name: Check both images
         run: |
           for arch in amd64 arm64; do
             scripts/verify-container.sh "graphite-meter:$arch"
           done
-      - name: Upload the image and its source offers
+      - name: Upload image and source offers
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image
@@ -267,7 +254,7 @@ jobs:
           retention-days: 7
 
   tui:
-    name: Client archive (${{ matrix.platform }})
+    name: Build client (${{ matrix.platform }})
     runs-on: ubuntu-26.04
     timeout-minutes: 40
     needs: plan
@@ -283,25 +270,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - parallel:
-          - name: Set up pinned mise and Python
+          - name: Set up Python
             uses: ./.github/actions/setup-project
           - id: buildx
-            name: Set up pinned Buildx
+            name: Set up Buildx
             uses: ./.github/actions/setup-buildx
-      # The release build with the ci profile, as the image's: no LTO or PGO, no CI cache, the release request's BuildKit.
-      - name: Build the client archive and source offer in the pinned builder
+      # The release request's build with the ci profile, as the image's: no LTO or PGO, no CI cache.
+      - name: Build client archive and source offer
         env:
           BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
           PROFILE: ci
           RELEASE_DIST: ${{ runner.temp }}/tui
           TUI_PLATFORM: ${{ matrix.platform }}
         run: mise run tui-package "$VERSION"
-      - name: Run the amd64 client out of its archive on the runner
+      - name: Run amd64 client from its archive
         if: matrix.platform == 'linux/amd64'
         env:
           RELEASE_DIST: ${{ runner.temp }}/tui
         run: python3 -m scripts.package "$VERSION" --output "$RELEASE_DIST" --check
-      - name: Upload the client archive and source offer
+      - name: Upload client archive and source offer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tui-${{ strategy.job-index }}

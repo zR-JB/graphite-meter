@@ -3,6 +3,7 @@
 
     python3 scripts/ci/assets.py stage   # VERSION, OCI_ARCHIVE, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
     python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, STAGED_DIR, PROFILE
+    python3 scripts/ci/assets.py upload {request,image,client,bundle}   # SOURCE, OUT_DIR, VERSION, TUI_PLATFORM
 
 Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, the client archives
 out of TUI_EXPORT and the source offer merged from every build's part in both BuildKit exports. Verification reads
@@ -22,8 +23,8 @@ from pathlib import Path, PurePosixPath
 
 import verify_oci
 from github_api import (
-    TLS_NAME, ControlPlaneError, JsonObject, confined_path, decode_json, expect_array, expect_object, fail,
-    file_sha256, int_field, object_field, runner_path, str_field,
+    TLS_NAME, ControlPlaneError, JsonObject, append_summary, confined_path, decode_json, expect_array, expect_object,
+    fail, file_sha256, int_field, object_field, runner_path, str_field, table,
 )
 from trust import env, env_sha, exact_files
 from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, source_txt, tui_archive
@@ -111,11 +112,23 @@ def archive_names(path: Path) -> set[str]:
     return names
 
 
+def regular_files(root: Path) -> list[Path]:
+    """Every file under `root`, refusing links and special files, which an upload would follow or misread."""
+    files = []
+    for path in sorted(root.rglob("*")):
+        mode = path.lstat()
+        if stat.S_ISREG(mode.st_mode) and mode.st_nlink == 1:
+            files.append(confined_path(path, root))
+        elif not stat.S_ISDIR(mode.st_mode):
+            fail(f"{path.name} is a link or special file")
+    return files
+
+
 def find(export: Path, names: set[str]) -> dict[str, Path]:
     """Exactly `names` in a BuildKit export, wherever its platform directories hold them."""
     found: dict[str, Path] = {}
-    for path in sorted(export.rglob("*")):
-        if path.name in names and not path.is_symlink() and path.is_file():
+    for path in regular_files(export):
+        if path.name in names:
             if path.name in found:
                 fail(f"the export holds {path.name} twice")
             found[path.name] = confined_path(path, export)
@@ -360,6 +373,41 @@ def verify(version: str, revision: str, staged: Path, profile: str = "release",
     return verify_image(staged, version, revision, notices, root)
 
 
+def size(path: Path) -> str:
+    value = path.stat().st_size
+    return f"{value / 2**20:.1f} MiB" if value >= 2**20 else f"{value} B"
+
+
+def summarize(directory: Path, version: str) -> None:
+    append_summary(table([("File", "Size"), *((f"`{name}`", size(directory / name))
+                                              for name in sorted(staged_files(version)))]))
+
+
+def upload_names(kind: str) -> set[str]:
+    """What each release request job uploads."""
+    if kind == "request":
+        return {"request.json"}
+    version = release_version(env("VERSION"))
+    if kind == "bundle":
+        return {"request.json", *staged_files(version)}
+    if kind == "client":
+        platform = env("TUI_PLATFORM")
+        if platform not in load().tui:
+            fail(f"{platform} is not a TUI platform")
+        return {tui_archive(version, platform)[0], build_offer(CLIENT, platform)}
+    offers = {build_offer(SERVER, platform) for platform in load().server}
+    return {OCI, *(set() if prerelease(version) else offers)}
+
+
+def command_upload(kind: str) -> None:
+    """Move exactly the named regular files of this job's output into OUT_DIR, the one directory it uploads."""
+    names, out = upload_names(kind), runner_path("OUT_DIR")
+    out.mkdir(parents=True)
+    for name, path in find(runner_path("SOURCE"), names).items():
+        path.rename(confined_path(out / name, out))
+    exact_files(out, names)
+
+
 def command_stage() -> None:
     version, out = release_version(env("VERSION")), runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
@@ -367,7 +415,7 @@ def command_stage() -> None:
     (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n")
     if not prerelease(version):
         stage_assets(version, runner_path("SERVER_EXPORT"), runner_path("TUI_EXPORT"), out)
-    print(f"staged {sorted(staged_files(version))}")
+    summarize(out, version)
 
 
 def command_check() -> None:
@@ -381,13 +429,19 @@ def command_check() -> None:
 
 
 COMMANDS = {"stage": command_stage, "check": command_check}
+UPLOADS = ("request", "image", "client", "bundle")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=COMMANDS)
+    parser.add_argument("command", choices=[*COMMANDS, "upload"])
+    parser.add_argument("kind", nargs="?", choices=UPLOADS)
+    args = parser.parse_args()
     try:
-        COMMANDS[parser.parse_args().command]()
+        if args.command == "upload":
+            command_upload(args.kind or fail("upload needs a kind"))
+        else:
+            COMMANDS[args.command]()
     except (ControlPlaneError, OSError, ValueError) as exc:
         raise SystemExit(f"release files refused: {exc}") from exc
 

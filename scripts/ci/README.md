@@ -25,8 +25,8 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
-| Image | the linux/amd64 + linux/arm64 image with the ci profile (no LTO or PGO) and its server source offers; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
-| Client archive | one runner per TUI platform builds its archive in the pinned builder with the ci profile; the amd64 client runs out of its archive |
+| Build server image | `build-image.sh`, as a release request runs it, with the ci profile (no LTO or PGO); both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
+| Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Release staging | `assets.py stage` and `assets.py check` on the image and the client archives, as a release does |
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
@@ -52,20 +52,26 @@ shipped build, and `checksums.txt`. A prerelease takes a `vX.Y.Z-{alpha,beta,rc}
 `X.Y.Z-rc.N`, which no alias follows. `mode=validate` stops before any write. Approve the `ghcr-release` deployment
 when the Release run asks.
 
-1. Untrusted build. `release-request.yml` is one `workflow_dispatch` job on main with `contents: read`, no secrets
-   and no caches. Only `release.py prepare` sees the inputs, which GitHub also renders into the run title. The pinned
-   builder builds the image from main or, for a PR, from the exact commit BuildKit fetches without a token; a stable
-   build then exports the server's source offers and the client archives from the same fresh builder. Before its
-   reviewed builds the builder trains a PGO profile per architecture on loopback transfers, amd64 natively and arm64
-   under QEMU's user mode (`scripts/pgo.py`). `assets.py stage` copies the release files and merges every build's
-   part of the source offer into one archive; the job runs the amd64 client and uploads one artifact.
-2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never
-   executes the requested source. It binds `request.json` to the run title, the owner, the first attempt and the one
-   bounded artifact its one job wrote. It verifies the image, the archives and the source offer as data, and requires
-   every main CI job and CodeQL for a release of main or, for a PR prerelease, an open PR containing current main with
-   identical `.github`, `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check. A stable tag that
-   already has a published Release must carry exactly its assets. Publish mode also requires `ghcr-release` to have
-   reviewers and main-only deployments.
+1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
+   from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
+   inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which it
+   requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, *Build server
+   image* runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches without a token, and one
+   *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a prerelease's client jobs skip
+   their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile per
+   architecture on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`). *Assemble
+   request* runs `assets.py stage`, which copies the release files and merges every build's part of the source offer
+   into one archive. Only a stable release, built from main, exports file trees; every job uploads only the regular
+   files `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs
+   past a failure.
+2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never executes
+   the requested source; its run is named after the request's run number. It binds `request.json` to the run title, the
+   owner, the first attempt, exactly the jobs `release.py` names, each once and successful, and the one bounded artifact
+   *Assemble request* wrote. It verifies the image, the archives and the source offer as data, and requires every main
+   CI job and CodeQL for a release of main or, for a PR prerelease, an open PR containing current main with identical
+   `.github`, `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check. A stable tag that already has
+   a published Release must carry exactly its assets. Publish mode also requires `ghcr-release` to have reviewers and
+   main-only deployments.
 3. Approved publication. One `ghcr-release` job holds the only write credentials. It rechecks the handoff digests
    and all trust above and pushes the verified digest to its exact version tag. For a stable release it publishes the
    GitHub Release and points `X.Y` and `latest` at the highest published releases, which also repairs aliases a
@@ -75,16 +81,15 @@ The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are reta
 window; the recheck fails closed. A prerelease image names the repository in `SOURCE.txt` and the built commit in its
 `revision` label; that commit's lockfiles pin the third-party source it was built from.
 
-Image builds request `provenance: mode=max` and keep BuildKit's insecure entitlements disabled. The Dockerfile may not
-select a custom frontend, pins its base images by digest and installs exact apt package versions only from one
-snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification requires
-one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose source is
-the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's server and
-notices must be the reviewed build its source offer names, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`.
-Verification reads the archive as data and checks every blob the index reaches against its descriptor's size and
-digest; Skopeo runs only to publish. The untrusted
-build writes the provenance, so it shows which source was built but does not authenticate it. Build arguments carry no
-secrets because max provenance records them.
+The image archive requests `--provenance mode=max`; builds keep BuildKit's insecure entitlements disabled. The
+Dockerfile may not select a custom frontend, pins its base images by digest and installs exact apt package versions only
+from one snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification
+requires one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose
+source is the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's
+server and notices must be the reviewed build its source offer names, and nothing may carry `UNREVIEWED DEVELOPMENT
+BUILD`. Verification reads the archive as data and checks every blob the index reaches against its descriptor's size and
+digest; Skopeo runs only to publish. The untrusted build writes the provenance, so it shows which source was built but
+does not authenticate it. Build arguments carry no secrets because max provenance records them.
 
 ### Owner setup
 

@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from unittest.mock import patch
 
-from assets import CLIENT, OCI, SERVER, find, main, merge, native_executable, staged_files, verify, verify_client, \
+from assets import CLIENT, OCI, SERVER, command_upload, find, main, merge, native_executable, staged_files, verify, verify_client, \
     verify_offer
 from fixtures import (
     REPOSITORY_URL, executable, notices, outcome, reviewed, server_binary, write_client, write_exports, write_oci,
@@ -50,6 +50,7 @@ class Scratch(unittest.TestCase):
 
     def stage(self, version: str, out: Path, exports: Path) -> None:
         env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "OUT_DIR": str(out),
+               "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
                "OCI_ARCHIVE": str(exports / OCI), "SERVER_EXPORT": str(exports / "server-export"),
                "TUI_EXPORT": str(exports / "tui-export")}
         with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "stage"]):
@@ -115,9 +116,31 @@ class StagingTests(Scratch):
         for names, error in (({"a.tar.gz"}, "holds a.tar.gz twice"), ({"c.tar.gz"}, r"lacks \['c.tar.gz'\]")):
             with self.subTest(error=error), self.assertRaisesRegex(ControlPlaneError, error):
                 find(export, names)
-        (export / "linux_arm64/a.tar.gz").unlink()
-        (export / "linux_arm64/a.tar.gz").symlink_to(export / "other.txt")
-        self.assertEqual(find(export, {"a.tar.gz"})["a.tar.gz"].read_text(), "a")
+
+    def test_upload_moves_exactly_the_named_regular_files_and_refuses_links(self) -> None:
+        archive, offer = "graphite-meter-client_1.2.3_linux_amd64.tar.gz", f"{CLIENT_LINUX}_third-party-source.tar.gz"
+        links: dict[str, Callable[[Path], None]] = {
+            "symlink": lambda source: (source / "x").symlink_to("/proc/self/environ"),
+            "directory symlink": lambda source: (source / "x").symlink_to(self.root),
+            "hardlink": lambda source: (source / "x").hardlink_to(source / archive),
+            "fifo": lambda source: os.mkfifo(source / "x"),
+        }
+        for change, error in ((None, None), ("missing", "lacks"), *((name, "link or special file") for name in links)):
+            with self.subTest(change=change):
+                source, out = self.fresh(), self.root / f"upload-{len(list(self.root.iterdir()))}"
+                (source / "linux_amd64").mkdir()
+                (source / archive).write_text("archive")
+                (source / "provenance.json").write_text("{}")
+                if change != "missing":
+                    (source / "linux_amd64" / offer).write_text("offer")
+                if change in links:
+                    links[change](source)
+                env = {"RUNNER_TEMP": str(self.root), "VERSION": "1.2.3", "TUI_PLATFORM": "linux/amd64",
+                       "SOURCE": str(source), "OUT_DIR": str(out)}
+                with patch.dict(os.environ, env):
+                    outcome(self, error, lambda: command_upload("client"))
+                if error is None:
+                    self.assertEqual(sorted(path.name for path in out.iterdir()), sorted([archive, offer]))
 
     def test_the_commands_stage_into_and_check_from_runner_temp(self) -> None:
         # CI builds the image and the client archives with the ci profile, as 0.0.0-ci, which has no release tag.

@@ -1,30 +1,30 @@
 name: Request release
 run-name: >-
-  Release request · ${{ inputs.mode }} · ${{ inputs.tag }} ·
-  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }}
+  ${{ inputs.tag }} · ${{ inputs.mode }} ·
+  ${{ inputs.pr && format('PR #{0}@{1}', inputs.pr, inputs.sha) || github.ref_name }}
 
-# LOW AUTHORITY: dispatch may select any ref, so this build has read-only access,
-# no secrets or caches, and no path to publication. Release accepts its output
+# LOW AUTHORITY: dispatch may select any ref, so these builds have read-only access,
+# no secrets or caches, and no path to publication. Release accepts their output
 # only from a main run and treats it as untrusted data.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N for a prerelease
+        description: Tag, e.g. v0.13.0 or v0.13.0-rc.1
         required: true
         type: string
       pr:
-        description: Same-repository PR number for a PR prerelease; empty to build main
+        description: PR number, for a PR prerelease only
         required: false
         default: ''
         type: string
       sha:
-        description: Exact commit a prerelease builds, the PR head or current main; empty for a stable release
+        description: Commit to build, for a prerelease only (the PR head or current main)
         required: false
         default: ''
         type: string
       mode:
-        description: Validate only, or publish after protected-environment approval
+        description: validate builds and checks; publish also releases after approval
         required: true
         default: validate
         type: choice
@@ -34,26 +34,38 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build untrusted release candidate
-    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+  request:
+    name: Validate request
     runs-on: ubuntu-26.04
-    timeout-minutes: 120
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.request.outputs.version }}
+      sha: ${{ steps.request.outputs.sha }}
+      stable: ${{ steps.request.outputs.stable }}
+      client_validate: ${{ steps.request.outputs.client_validate }}
+      context: ${{ steps.source.outputs.context }}
     steps:
-      - name: Checkout main
+      - name: Require main
+        if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          echo "::error::Release requests run from main; pick main in 'Use workflow from'"
+          exit 1
+
+      - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Set up pinned mise and Python without caches
+      - name: Set up Python
         uses: ./.github/actions/setup-project
         with:
           cache: 'false'
 
       - id: request
-        name: Validate and record the request
+        name: Validate and record request
         env:
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           ACTOR: ${{ github.actor }}
@@ -74,7 +86,7 @@ jobs:
       # A prerelease never checks PR files out here: BuildKit fetches that exact
       # commit remotely and receives no GitHub credential.
       - id: source
-        name: Resolve the OCI build context
+        name: Resolve build context
         env:
           REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}
@@ -90,91 +102,175 @@ jobs:
           fi
           echo "context=$context" >>"$GITHUB_OUTPUT"
 
-      - name: Set up pinned Buildx
-        uses: ./.github/actions/setup-buildx
-
-      # The pinned builder cross-compiles arm64, so no build emulates it.
-      - name: Build the linux/amd64 + linux/arm64 OCI archive
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Check request record
         env:
-          # Avoid an extra build-record artifact from this untrusted build.
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+          SOURCE: ${{ runner.temp }}/release-request
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload request
+
+      - name: Upload request record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          context: ${{ steps.source.outputs.context }}
-          file: container/Dockerfile
-          target: server
-          platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/build/graphite-meter.oci.tar
-          no-cache: true
-          provenance: mode=max
-          # Public exact-commit Git contexts do not need a repository credential.
-          # Keeping this empty prevents the default github.token from entering BuildKit.
-          github-token: ''
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ steps.request.outputs.sha }}
-            org.opencontainers.image.version=${{ steps.request.outputs.version }}
-            org.opencontainers.image.licenses=AGPL-3.0-or-later
-          build-args: |
-            VERSION=${{ steps.request.outputs.version }}
-            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
-            GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
+          name: request
+          path: ${{ runner.temp }}/upload/
+          if-no-files-found: error
+          retention-days: 1
 
-      # This job's fresh builder holds only this request's layers, so the exports reuse the image build's.
-      - name: Export the server's source offers
-        if: steps.request.outputs.stable == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        env:
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  image:
+    name: Build server image
+    needs: request
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.request.outputs.version }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          context: ${{ steps.source.outputs.context }}
-          file: container/Dockerfile
-          target: server-artifacts
-          platforms: linux/amd64,linux/arm64
-          outputs: type=local,dest=${{ runner.temp }}/build/server-export
-          provenance: mode=max
-          github-token: ''
-          build-args: |
-            VERSION=${{ steps.request.outputs.version }}
-            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
-            GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
-
-      - name: Build the Linux and Windows client archives with their source offers
-        if: steps.request.outputs.stable == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # Each job's builder starts empty and imports no cache, so a build reuses only this job's layers.
+      - parallel:
+          - name: Set up Python
+            uses: ./.github/actions/setup-project
+            with:
+              cache: 'false'
+          - name: Set up Buildx
+            uses: ./.github/actions/setup-buildx
+      - name: Build image and source offers
         env:
-          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+          CONTEXT: ${{ needs.request.outputs.context }}
+          PROFILE: release
+          GM_CLIENT_REVISION: ${{ needs.request.outputs.sha }}
+          GM_CLIENT_VALIDATE: ${{ needs.request.outputs.client_validate }}
+          SOURCE_OFFERS: ${{ needs.request.outputs.stable }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ needs.request.outputs.sha }}
+          OUT_DIR: ${{ runner.temp }}/image
+        run: scripts/ci/build-image.sh
+      - name: Check image and source offers
+        env:
+          SOURCE: ${{ runner.temp }}/image
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload image
+      - name: Upload image and source offers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          context: ${{ steps.source.outputs.context }}
-          file: container/Dockerfile
-          target: tui-artifacts
-          platforms: linux/amd64
-          outputs: type=local,dest=${{ runner.temp }}/build/tui-export
-          provenance: mode=max
-          github-token: ''
-          build-args: |
-            VERSION=${{ steps.request.outputs.version }}
+          name: image
+          path: ${{ runner.temp }}/upload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
-      # The amd64 client runs here; the trusted consumer verifies the files and never executes candidates.
-      - name: Stage the release files and run the amd64 client
+  client:
+    name: Build client (${{ matrix.platform }})
+    needs: request
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64, windows/amd64]
+    env:
+      VERSION: ${{ needs.request.outputs.version }}
+      STABLE: ${{ needs.request.outputs.stable }}
+      TUI_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - parallel:
+          - name: Set up Python
+            uses: ./.github/actions/setup-project
+            with:
+              cache: 'false'
+          - id: buildx
+            name: Set up Buildx
+            uses: ./.github/actions/setup-buildx
+      - name: Build client archive and source offer
+        if: env.STABLE == 'true'
         env:
-          VERSION: ${{ steps.request.outputs.version }}
-          STABLE: ${{ steps.request.outputs.stable }}
-          OCI_ARCHIVE: ${{ runner.temp }}/build/graphite-meter.oci.tar
-          SERVER_EXPORT: ${{ runner.temp }}/build/server-export
-          TUI_EXPORT: ${{ runner.temp }}/build/tui-export
-          OUT_DIR: ${{ runner.temp }}/release-request
-        run: |
-          python3 scripts/ci/assets.py stage
-          if [[ "$STABLE" == true ]]; then
-            python3 -m scripts.package "$VERSION" --output "$OUT_DIR" --check
-          fi
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          PROFILE: release
+          RELEASE_DIST: ${{ runner.temp }}/client
+        run: mise run tui-package "$VERSION"
+      # The trusted consumer verifies the files as data and never executes a candidate.
+      - name: Run amd64 client from its archive
+        if: env.STABLE == 'true' && matrix.platform == 'linux/amd64'
+        env:
+          RELEASE_DIST: ${{ runner.temp }}/client
+        run: python3 -m scripts.package "$VERSION" --output "$RELEASE_DIST" --check
+      - name: Check client archive and source offer
+        if: env.STABLE == 'true'
+        env:
+          SOURCE: ${{ runner.temp }}/client
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload client
+      - name: Upload client archive and source offer
+        if: env.STABLE == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: client-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/upload/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
-      - name: Upload the untrusted request and release files
+  assemble:
+    name: Assemble request
+    needs: [request, image, client]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      STABLE: ${{ needs.request.outputs.stable }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - parallel:
+          - name: Set up Python
+            uses: ./.github/actions/setup-project
+            with:
+              cache: 'false'
+          - name: Download request record
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+            with:
+              name: request
+              path: ${{ runner.temp }}/staged
+          - name: Download image and source offers
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+            with:
+              name: image
+              path: ${{ runner.temp }}/image
+          - name: Download client archives and source offers
+            if: env.STABLE == 'true'
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+            with:
+              pattern: client-*
+              merge-multiple: true
+              path: ${{ runner.temp }}/client
+      - name: Stage release files
+        env:
+          VERSION: ${{ needs.request.outputs.version }}
+          OCI_ARCHIVE: ${{ runner.temp }}/image/graphite-meter.oci.tar
+          SERVER_EXPORT: ${{ runner.temp }}/image
+          TUI_EXPORT: ${{ runner.temp }}/client
+          OUT_DIR: ${{ runner.temp }}/staged
+        run: python3 scripts/ci/assets.py stage
+      - name: Check request
+        env:
+          VERSION: ${{ needs.request.outputs.version }}
+          SOURCE: ${{ runner.temp }}/staged
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload bundle
+      - name: Upload request
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-request-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-request/
+          path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

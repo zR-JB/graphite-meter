@@ -44,7 +44,7 @@ def exact_files(directory: Path, names: set[str]) -> None:
     if (found := {entry.name for entry in entries}) != names:
         gh.fail(f"{directory.name} files are {sorted(found)}; expected {sorted(names)}")
     for entry in entries:
-        if entry.is_symlink() or not entry.is_file():
+        if entry.is_symlink() or not entry.is_file() or entry.stat().st_nlink != 1:
             gh.fail(f"{entry.name} is not a regular file")
 
 
@@ -131,11 +131,11 @@ def timestamp(item: gh.JsonObject, key: str) -> datetime:
 
 
 def require_dispatch_run(
-    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str, job: str, artifact: str,
-    limit: int,
+    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str, jobs: set[str], writer: str,
+    artifact: str, limit: int,
 ) -> None:
     """Bind a request run to its workflow, inputs, main, one attempt and the owner, and require it to consist of the
-    single successful `job`, which wrote `artifact`, at most `limit` bytes, while it ran."""
+    successful `jobs`, each once, with `writer` writing `artifact`, at most `limit` bytes, while it ran."""
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -162,13 +162,15 @@ def require_dispatch_run(
         gh.fail(f"expected one unexpired artifact {artifact}, found {len(matches)}")
     if not 0 <= gh.int_field(matches[0], "size_in_bytes", artifact) <= limit:
         gh.fail(f"artifact {artifact} exceeds {limit} bytes")
-    jobs = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
-                                    per_page=100), paginate=True), "jobs")
-    if [(item.get("name"), item.get("status"), item.get("conclusion")) for item in jobs] != [(job, *DONE)]:
-        gh.fail(f"request run does not consist of the single successful job {job!r}")
+    ran = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                                   per_page=100), paginate=True), "jobs")
+    states = sorted(tuple(_text(item.get(key)) for key in ("name", "status", "conclusion")) for item in ran)
+    if states != sorted((name, *DONE) for name in jobs):
+        gh.fail(f"request run does not consist of the successful jobs {sorted(jobs)}")
+    job = next(item for item in ran if item.get("name") == writer)
     created, updated = timestamp(matches[0], "created_at"), timestamp(matches[0], "updated_at")
-    if not timestamp(jobs[0], "started_at") <= created <= updated <= timestamp(jobs[0], "completed_at"):
-        gh.fail(f"artifact {artifact} was not written while {job!r} ran")
+    if not timestamp(job, "started_at") <= created <= updated <= timestamp(job, "completed_at"):
+        gh.fail(f"artifact {artifact} was not written while {writer!r} ran")
 
 
 def require_ci_gate(
