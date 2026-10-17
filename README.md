@@ -1,84 +1,107 @@
 <div align="center">
 
+<img src="client/public/favicon.svg" width="64" alt="">
+
 # Graphite Meter
 
-Self-hosted speed and latency testing for your own network, from a browser or a terminal.
+Self-hosted speed and latency test. One container. Browser or terminal.
 
-[![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases) [![Container](https://img.shields.io/badge/container-ghcr.io%2Fzr--jb%2Fgraphite--meter-387d91)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/zR-JB/graphite-meter/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver&label=release&logo=github)](https://github.com/zR-JB/graphite-meter/releases/latest)
+[![Image](https://img.shields.io/badge/ghcr.io-zr--jb%2Fgraphite--meter-2496ED?logo=docker&logoColor=white)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter)
+[![License](https://img.shields.io/github/license/zR-JB/graphite-meter?label=license)](LICENSE)
 
-<img src="docs/assets/hero.png" alt="A laptop screen with a Wi-Fi 7 test mid-run, uploading at 1.81 Gbit/s with 2.2 ms idle latency, and a phone beside it with its finished Wi-Fi 6E result" width="1080">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img src="docs/assets/hero-light.png" width="100%" alt="A completed test on a desktop, 9.40 Gbit/s down and 9.39 up with 0.4 ms idle latency and 1.3 ms added under load, and the same app on a phone at 1197 Mbit/s">
+</picture>
 
-<sub>Real tests over shaped home-network paths · <a href="docs/SCREENSHOTS.md">screenshots</a></sub>
+<sub>0.13.0 in Chrome. Desktop: path shaped to 9.8 Gbit/s. Phone: 1.25 Gbit/s down, 0.9 up. The app sets no rate limit.</sub>
 
 </div>
 
-Graphite Meter measures download, upload and latency between your device and a server you run: across a LAN, over a
-VPN or to a remote host, up to multi-gigabit links. One container serves the browser app, and a native terminal
-client tests the same server.
-
-## Features
-
-- Receiver-timed throughput: downloads count the bytes the client consumed, uploads the bytes and time at the
-  server's receiver, so a sender's queue never inflates a result. Download, upload and bidirectional stages.
-- Latency under load: idle and loaded latency stay separate populations per stage, with median, P95, jitter and
-  timeouts. Added latency is the loaded median minus the idle median.
-- One to four test servers per test: an operator lists other servers in a server catalog, and a test runs them on
-  one schedule, together or shown one at a time. A server that drops out leaves a Partial result with its reason.
-- Your choice of path: throughput and latency paths are chosen independently over HTTP/1.1, HTTP/2, HTTP/3,
-  WebSocket and WebTransport, or automatically. Details show what the browser and the server each observed.
-- Browser and terminal: a responsive web app for phones and desktops, and a native client for Linux and Windows.
-- Self-hosted: one static binary in a small container, no database. Optional password or OIDC sign-in protects the
-  app and every measurement route.
-- History on your device: the browser can keep up to 2,000 results locally; the server stores none.
-
-## Quick start
+## Run it
 
 ```sh
-docker run -d --name graphite-meter --restart unless-stopped \
-  -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
+docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open <http://localhost:7246>, or `http://SERVER_IP:7246` from another device, and start a test. Without
-configuration the server offers HTTP/1.1 throughput and WebSocket latency.
+Open `http://SERVER_IP:7246`. One static binary in a scratch image, amd64 and arm64, no database.
 
-HTTP/2, HTTP/3 and WebTransport need TLS: see [native listeners](docs/DEPLOYMENT.md#native-listeners). Other setups:
-[Docker Compose](docs/DEPLOYMENT.md#docker-compose), [reverse proxies](docs/DEPLOYMENT.md#reverse-proxies),
-[sign-in](docs/DEPLOYMENT.md#authentication), [Podman Quadlet](container/quadlet/README.md) and a
-[Tailscale sidecar](container/quadlet/tailscale-sidecar/README.md).
+| You want                         | Read                                                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| HTTP/2, HTTP/3, WebTransport     | They need TLS: [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies) |
+| Compose, Podman Quadlet          | [Docker Compose](docs/DEPLOYMENT.md#docker-compose), [Quadlet](container/quadlet/README.md)                           |
+| Sign-in, password or OIDC        | [Authentication](docs/DEPLOYMENT.md#authentication)                                                                   |
+| More than one test server        | [Server catalog](docs/DEPLOYMENT.md#server-catalog)                                                                   |
 
-## Terminal client
+## What it measures
 
-<img src="docs/assets/tui.png" alt="The terminal client after a complete latency, download and upload test" width="1080">
+| Result     | How                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| Throughput | Download and upload, timed by the receiver: the browser for downloads, the server for uploads.                     |
+| Latency    | Idle and under load as separate populations: median, P95, jitter, timeouts. The difference is the queueing under load. |
+| Servers    | One to four test servers in one test, on one schedule.                                                              |
+| Paths      | Throughput and latency on separate paths: HTTP/1.1, HTTP/2, HTTP/3, WebSocket, WebTransport. Automatic or chosen.    |
 
-Download the archive for your platform from [Releases](https://github.com/zR-JB/graphite-meter/releases):
-`graphite-meter-client_X.Y.Z_linux_amd64.tar.gz`, `graphite-meter-client_X.Y.Z_linux_arm64.tar.gz` or
-`graphite-meter-client_X.Y.Z_windows_amd64.zip`.
+Every number is defined in [measurement definitions](docs/MEASUREMENTS.md). Nothing is graded.
+
+## Terminal
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/terminal-dark.png">
+  <img src="docs/assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
+</picture>
+
+<sub>graphite-meter-client 0.13.0, same server, path shaped to 2.46 Gbit/s.</sub>
 
 ```sh
-./graphite-meter-client --url http://192.168.1.20:7246
-./graphite-meter-client --url https://meter.example --server frankfurt --server amsterdam --report
+graphite-meter-client --url http://192.168.1.20:7246
+graphite-meter-client --url https://meter.example --server frankfurt --server amsterdam --report
 ```
 
-Without a terminal, or with `--report`, it runs one test, prints the report and sets its exit status from the
-outcome. On a server with sign-in, you approve the client's code in your browser; the client never sees the
-password. The [terminal client guide](docs/TERMINAL.md) covers flags, keys and exit codes.
+| Client        | Detail                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| Platforms     | Linux amd64, Linux arm64, Windows amd64. One static executable per [release](https://github.com/zR-JB/graphite-meter/releases). |
+| `--report`    | One test without the console; the report on stdout, the outcome in the exit status.               |
+| Guide         | [Flags, keys, report mode, exit codes](docs/TERMINAL.md)                                           |
+
+## Settings and History
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/phones-dark.png">
+  <img src="docs/assets/phones-light.png" width="700" alt="Two phone screens: Settings with three test servers and the throughput paths, and History with four results">
+</picture>
+</div>
+
+History keeps up to 2,000 results in the browser. The server stores none.
+
+## Trust
+
+| Area     | What the code does                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| Sign-in  | Off, a password, or your OIDC provider. It covers the app and every measurement route. The terminal client approves a code in the browser and never sees the password. |
+| Network  | No outbound connection unless OIDC is configured. The browser app loads nothing from a third party.          |
+| License  | AGPL-3.0. Every image and archive ships its license notices; every release attaches the third-party source. |
+
+> [!NOTE]
+> Upgrading from 0.12 or earlier: `latest` is now the Rust server. See [upgrading](docs/DEPLOYMENT.md#upgrading).
 
 ## Documentation
 
-- [Deployment and configuration](docs/DEPLOYMENT.md): containers, TLS, proxies, sign-in and every setting.
-- [Test servers](docs/SERVERS.md): the server catalog and tests across several servers.
-- [Terminal client](docs/TERMINAL.md): install, flags, keys, report mode and environment.
-- [Measurement definitions](docs/MEASUREMENTS.md): what each result measures and how.
-- [Development](docs/DEVELOPMENT.md): building, testing and releasing.
-- Contracts: [discovery](api/discovery.md), [uploads](api/upload.md) and [latency](api/wire.md).
+- [Deployment](docs/DEPLOYMENT.md): Compose, Quadlet, reverse proxies, TLS, sign-in, the server catalog, every
+  setting.
+- [Terminal client](docs/TERMINAL.md): install, flags, keys, report mode, exit codes.
+- [Measurement definitions](docs/MEASUREMENTS.md): what each result means and how it is computed.
+- [Development](docs/DEVELOPMENT.md): building, testing, the workspace, releasing.
 
 ## Contributing
 
-Set up a checkout with `mise run setup`, start it with `mise run dev`, and run `mise run check` before submitting a
-change. The [development guide](docs/DEVELOPMENT.md) has the details.
+`mise run setup`, then `mise run dev` on port 7246, then `mise run check` before a pull request. The rest is in the
+[development guide](docs/DEVELOPMENT.md).
 
 ## License
 
-Copyright © 2026 zR-JB. Licensed under AGPL-3.0-or-later; see [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT).
-Third-party notices ship in the browser's legal view, in the client archives and under
-`/usr/share/licenses/graphite-meter/` in the container.
+Copyright 2026 zR-JB. AGPL-3.0-or-later: [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT). Third-party notices ship in
+the browser's legal view, in the client archives and under `/usr/share/licenses/graphite-meter/` in the image.
