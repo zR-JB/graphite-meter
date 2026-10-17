@@ -14,7 +14,7 @@
     "localLegalFiles": [
       {
         "name": "legal/manual/rust/enum-assoc/Cargo.toml.upstream",
-        "sha256": "ac76a8e989ded142df50e3b796c8926e90c7e0f42d2428ff9ef62a359d38f582",
+        "sha256": "cbab43ef6f3d9fc83e82910f990f00580eb00389e6d4c4a9b78cca2b159a0918",
         "kind": "notice"
       },
       {
@@ -23,7 +23,7 @@
         "kind": "license"
       }
     ],
-    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
+    "reviewNotes": "The crate and exact upstream commit omit license files. Cargo.toml.upstream is the published Cargo.toml.orig with its CRLF line endings normalized to LF and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Selected: Apache-2.0, as its approved review records. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
   },
   {
     "ecosystem": "cargo",
