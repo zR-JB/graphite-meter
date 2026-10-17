@@ -1,5 +1,4 @@
 # Browser client
-client/node_modules
 client/dist
 client/test-results
 
@@ -13,8 +12,6 @@ legal/manual/musl/
 
 # General
 node_modules
-.DS_Store
-*.local
 *.pyc
 __pycache__
 .claude/settings.local.json

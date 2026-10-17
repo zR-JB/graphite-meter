@@ -2,7 +2,7 @@
 """Stage the image, the client archives and the one source offer of a release, and verify them as the release does.
 
     python3 scripts/ci/assets.py stage   # VERSION, OCI_ARCHIVE, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
-    python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, SKOPEO_IMAGE, STAGED_DIR, PROFILE
+    python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, STAGED_DIR, PROFILE
 
 Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, the client archives
 out of TUI_EXPORT and the source offer merged from every build's part in both BuildKit exports. Verification reads
@@ -345,6 +345,8 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
             fail(f"the image's {platform} server is not a reviewed build")
         if not prerelease(version) and digests != {hashlib.sha256(notices[build].encode()).hexdigest()}:
             fail(f"the image's {platform} server is not the reviewed build of its notices in the source offer")
+        if not native_executable(binary, server[platform]):
+            fail(f"the image's {platform} server is not a {server[platform]} executable")
 
     return digest, verify_oci.verify(version, revision, path, check_files)
 
