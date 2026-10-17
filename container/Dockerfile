@@ -8,10 +8,10 @@ ARG VERSION=0.0.0-dev
 ARG TARGETARCH
 ARG PROFILE=release
 
-FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS python
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.0-slim-trixie@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313 AS python
 
-# The reviewed builder: legal/rust-platform-debian-bookworm.json records what it links into each target.
-FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS rust-amd64
+# The reviewed builder: legal/rust-platform-debian-trixie.json records what it links into each target.
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90 AS rust-amd64
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib \
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
@@ -20,10 +20,10 @@ ENV LD_LIBRARY_PATH=/usr/local/lib \
 # Debian's archive serves one version of each package, so apt reads it as it was when the platform
 # records were reviewed: the pinned versions and every dependency stay installable. C dependencies
 # use musl headers; Rust's final link still uses its self-contained libc.
-RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20260927T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
-        debian 'bookworm bookworm-updates' debian-security bookworm-security >/etc/apt/sources.list.d/debian.sources \
+RUN printf 'Types: deb\nURIs: https://snapshot.debian.org/archive/%s/20261016T180000Z\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\n' \
+        debian 'trixie trixie-updates' debian-security trixie-security >/etc/apt/sources.list.d/debian.sources \
     && rm -f /etc/apt/sources.list \
-    && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.3-1 \
+    && apt-get update && apt-get install -y --no-install-recommends musl-dev:amd64=1.2.5-3.1~deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 # The pinned toolchain, checked against its channel manifest, with the standard library of every shipped target and
@@ -41,7 +41,7 @@ RUN cd rust && rustup toolchain install --no-self-update \
 FROM rust-amd64 AS rust-arm64
 RUN dpkg --add-architecture arm64 \
     && apt-get update && apt-get install -y --no-install-recommends \
-        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 musl-dev:arm64=1.2.3-1 \
+        gcc-aarch64-linux-gnu=4:14.2.0-1 libc6-dev-arm64-cross=2.41-11cross1 musl-dev:arm64=1.2.5-3.1~deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 ENV CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
 
@@ -59,11 +59,11 @@ RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linu
     && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
 
 FROM rust-arm64 AS pgo-arm64-release
-RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static=1:7.2+dfsg-7+deb12u18+b3 \
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user=1:10.0.13+ds-0+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=source / /src/
 RUN python3 -m scripts.pgo "$(python3 scripts/ci/workspace.py target server linux/arm64)" --profile release \
-        --runner qemu-aarch64-static \
+        --runner qemu-aarch64 \
     && mkdir /pgo && cp rust/target/pgo/*.profdata /pgo/
 
 FROM rust-amd64 AS pgo-ci
@@ -79,7 +79,7 @@ FROM pgo-${TARGETARCH} AS pgo
 # amd64's profile.
 FROM rust-arm64 AS tui-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
+        gcc-mingw-w64-x86-64-win32=14.2.0-19+27+b1 mingw-w64-x86-64-dev=12.0.0-5 \
     && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 COPY --from=source / /src/

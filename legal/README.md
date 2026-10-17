@@ -26,7 +26,7 @@ below.
   package their own.
 - `reviewed-components.json` and `provenance.json`: npm packages the browser bundle includes (none today), the fonts
   it ships and the image's CA roots.
-- `rust-platform-debian-bookworm.json`: one reviewed record per shipped target for what the toolchain and builder link
+- `rust-platform-debian-trixie.json`: one reviewed record per shipped target for what the toolchain and builder link
   beyond Cargo's packages: native inputs, system-library imports, the notice texts that cover them, and
   `noticesSha256`, their fingerprint.
 - `rust-notice-sources.json`: pinned upstream URLs and SHA-256 of notice texts the builder lacks, such as musl's and

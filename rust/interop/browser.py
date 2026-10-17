@@ -8,8 +8,6 @@ threads. It runs the first of BROWSERS on PATH against the static musl server it
 against the server the CI image job exports, which the job downloads to TMPDIR/image/graphite-meter-server.
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import hashlib
@@ -60,8 +58,6 @@ class Pages(http.server.ThreadingHTTPServer):
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    server: Pages
-
     def do_GET(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -71,12 +67,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        pages = self.server
+        assert isinstance(pages, Pages)
         if self.path == "/stop":
-            assert self.server.measured.process is not None
-            self.server.measured.process.send_signal(signal.SIGTERM)
+            assert pages.measured.process is not None
+            pages.measured.process.send_signal(signal.SIGTERM)
         else:
-            self.server.report = json.loads(body)
-            self.server.received.set()
+            pages.report = json.loads(body)
+            pages.received.set()
         self.send_response(204)
         self.end_headers()
 

@@ -1,5 +1,4 @@
 """Notices, the browser's legal index and deterministic archive members."""
-from __future__ import annotations
 
 import io
 import tarfile

@@ -5,17 +5,17 @@ locked = true
 
 [tools]
 bun = "1.4.3"
-python = "3.14.8"
+python = "3.15.0"
 "aqua:gitleaks/gitleaks" = "8.30.1"
-"aqua:astral-sh/ty" = "0.0.86"
-"github:jdx/jactionlint" = "2.1.0"
+"aqua:astral-sh/ty" = "0.0.87"
+"github:jdx/jactionlint" = "2.2.0"
 "aqua:zizmorcore/zizmor" = "1.30.1"
 "aqua:biomejs/biome" = "2.5.15"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.148"
 
 [vars]
-mise_version = "2026.10.7"
+mise_version = "2026.10.10"
 buildx_version = "v0.38.0"
 
 browser_chrome = "155.0.8059.84"
@@ -32,8 +32,8 @@ image_bun = "docker.io/oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d
 image_buildkit = "docker.io/moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 # The image's builder (container/Dockerfile).
-image_python = "docker.io/library/python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83"
-image_rust = "docker.io/library/rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6"
+image_python = "docker.io/library/python:3.15.0-slim-trixie@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313"
+image_rust = "docker.io/library/rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90"
 
 # SHA-256 of static.rust-lang.org/dist/channel-rust-<channel>.toml for rust/rust-toolchain.toml's channel.
 rust_manifest_sha256 = "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"

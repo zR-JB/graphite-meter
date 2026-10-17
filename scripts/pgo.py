@@ -7,7 +7,6 @@ directions and a loaded WebTransport latency stage; and merges what they recorde
 of TARGET's architecture use (scripts/legal/rust.py). RUNNER runs the binaries, such as an emulator for another
 architecture. The instrumented binaries are never shipped.
 """
-from __future__ import annotations
 
 import argparse
 import os

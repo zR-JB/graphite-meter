@@ -1,5 +1,4 @@
 """The npm packages a browser build bundles, from its module scan."""
-from __future__ import annotations
 
 import os
 from pathlib import Path

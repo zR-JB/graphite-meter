@@ -1,7 +1,5 @@
 """Builds, identities and bounded server processes for the browser interoperability run."""
 
-from __future__ import annotations
-
 import json
 import os
 import platform

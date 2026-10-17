@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Read repository tool pins and validate literals required before code can run."""
-from __future__ import annotations
 
 import argparse
 import hashlib
@@ -34,14 +33,14 @@ PIN_PATTERNS = {
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
         "buildkit": r"docker\.io/moby/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
         "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
-        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-bookworm@sha256:[0-9a-f]{64}",
-        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-bookworm@sha256:[0-9a-f]{64}",
+        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-trixie@sha256:[0-9a-f]{64}",
+        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-trixie@sha256:[0-9a-f]{64}",
     },
 }
 
 
 def rust_channel(root: Path = ROOT) -> str:
-    toolchain = tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]
+    toolchain = tomllib.loads((root / "rust/rust-toolchain.toml").read_text())["toolchain"]
     channel = toolchain.get("channel")
     if not isinstance(channel, str) or re.fullmatch(r"\d+\.\d+\.\d+", channel) is None:
         raise ValueError("rust/rust-toolchain.toml must select an exact Rust release")
@@ -49,7 +48,7 @@ def rust_channel(root: Path = ROOT) -> str:
 
 
 def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
-    data = tomllib.loads((root / "mise.toml").read_text(encoding="utf-8"))
+    data = tomllib.loads((root / "mise.toml").read_text())
     tools = data.get("tools", {})
     if not isinstance(tools, dict) or tools.keys() != set(TOOL_KEYS.values()):
         raise ValueError("mise.toml [tools] must contain exactly the reviewed runtime and checker backends")
@@ -90,7 +89,7 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
 
 
 def image_version(image: str) -> str:
-    """The release in an image tag such as `python:3.14.7-slim-bookworm@sha256:...`."""
+    """The release in an image tag such as `python:3.15.0-slim-trixie@sha256:...`."""
     return image.split(":")[1].split("@")[0].split("-")[0]
 
 
@@ -156,12 +155,12 @@ def latest_browsers(fetch: Callable[[str], bytes] = download) -> dict[str, str]:
 
 def write_browsers(browsers: dict[str, str], root: Path = ROOT) -> None:
     path = root / "mise.toml"
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text()
     for name, value in browsers.items():
         text, count = re.subn(rf'(?m)^browser_{name} = "[^"]*"$', f'browser_{name} = "{value}"', text)
         if count != 1:
             raise ValueError(f"mise.toml must set browser_{name} once")
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text)
 
 
 def literal_updates(root: Path = ROOT) -> dict[Path, str]:
@@ -191,14 +190,14 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     # Mise must bootstrap before Python can read project metadata. Keep this
     # unavoidable literal checked and synced in every direct action invocation.
     for path in (root / ".github").rglob("*.yml"):
-        content = path.read_text(encoding="utf-8")
+        content = path.read_text()
         if "uses: jdx/mise-action@" in content:
             name = str(path.relative_to(root))
             replacements.setdefault(name, []).append((MISE_VERSION, rf"\g<1>{pins['tools']['mise']}"))
     updates: dict[Path, str] = {}
     for name, patterns in replacements.items():
         path = root / name
-        original = path.read_text(encoding="utf-8")
+        original = path.read_text()
         expected = original
         for pattern, replacement in patterns:
             expected, count = re.subn(pattern, replacement, expected)
@@ -211,10 +210,10 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
 
 
 def check(root: Path = ROOT) -> None:
-    config = tomllib.loads((root / "mise.toml").read_text(encoding="utf-8"))
+    config = tomllib.loads((root / "mise.toml").read_text())
     if config.get("tool_config", {}).get("locked") is not True:
         raise ValueError("mise.toml must require locked tool installation")
-    lock = tomllib.loads((root / "mise.lock").read_text(encoding="utf-8"))
+    lock = tomllib.loads((root / "mise.lock").read_text())
     if extra := sorted(lock.get("tools", {}).keys() - config["tools"].keys()):
         raise ValueError(f"mise.lock pins tools mise.toml does not use: {', '.join(extra)}; run mise lock")
     for name, version in config["tools"].items():
@@ -269,7 +268,7 @@ def main() -> None:
                 check()
             case "sync":
                 for path, content in literal_updates().items():
-                    path.write_text(content, encoding="utf-8")
+                    path.write_text(content)
                     print(path.relative_to(ROOT))
             case "doctor":
                 doctor()

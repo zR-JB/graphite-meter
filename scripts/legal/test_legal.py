@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import tempfile
 import unittest
@@ -218,7 +216,7 @@ class LegalTests(unittest.TestCase):
                        reviews)
 
     def test_copyright_follows_the_project_record(self) -> None:
-        self.assertEqual((ROOT / "COPYRIGHT").read_text(encoding="utf-8"), copyright_notice(Project.read(ROOT)))
+        self.assertEqual((ROOT / "COPYRIGHT").read_text(), copyright_notice(Project.read(ROOT)))
 
     def test_about_links_each_component_to_its_source_and_a_fork_or_patch_to_its_upstream_and_changes(self) -> None:
         fork = "https://github.com/owner/quic"

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Print the mise checks that a commit of the staged paths needs; CI runs the Rust workspace checks."""
 
-from __future__ import annotations
-
 import os
 import subprocess
 from pathlib import Path
