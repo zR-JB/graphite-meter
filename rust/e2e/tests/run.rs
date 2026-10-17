@@ -3,7 +3,7 @@
 use graphite_meter_client::{
     config::Config,
     events::{Event, Events},
-    model::{Direction, Outcome, Scope, Stage, StageResult},
+    model::{Direction, Outcome, Scope, StageResult},
     net::Client,
     run::{coordinator, prepare::prepare},
 };
@@ -15,20 +15,23 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
-/// Every stage for 2 s.
+/// Every stage for 1 s, the shortest a stage takes.
 const SHORT: [&str; 11] = [
     "-stages",
     "latency,download,upload,bidirectional",
     "-latency-duration",
-    "2s",
+    "1s",
     "-download-duration",
-    "2s",
+    "1s",
     "-upload-duration",
-    "2s",
+    "1s",
     "-bidirectional-duration",
-    "2s",
+    "1s",
     "-insecure",
 ];
+
+/// The stages whose lanes differ by transport; the HTTP/1.1 run covers the rest once.
+const TRANSFERS: &str = "upload,bidirectional";
 
 /// `args` at `url` without warmup, two HTTP/1.1 lanes a direction.
 fn config(url: &Origin, args: &[&str]) -> Config {
@@ -41,7 +44,7 @@ fn pinned() -> Arc<Pool> {
     Arc::new(Pool::probing(&Handle::current()).unwrap())
 }
 
-/// Prepares and runs `config` on pinned runtimes, handing each event to `seen` as it arrives.
+/// Prepares and runs `config` on pinned runtimes within 30 s, handing each event to `seen` as it arrives.
 async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Event>) {
     let client = Client::new(config.insecure, pinned());
     let prepared = prepare(config, client).await.unwrap();
@@ -52,7 +55,8 @@ async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Ev
         drop(events);
         outcome
     };
-    tokio::join!(outcome, watched)
+    let ran = tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(outcome, watched) });
+    ran.await.expect("the run ends")
 }
 
 async fn watch(mut received: mpsc::UnboundedReceiver<Event>, mut seen: impl AsyncFnMut(&Event)) -> Vec<Event> {
@@ -79,13 +83,15 @@ fn results(events: &[Event]) -> Vec<&StageResult> {
     finished.collect()
 }
 
+/// A run of every stage, or of the `-stages` in `args`, completes with what each stage measures.
 async fn completes(server: &Server, args: &[&str]) {
     let args = [SHORT.as_slice(), args].concat();
-    let (outcome, events) = run(&config(&server.http1, &args), async |_| {}).await;
+    let config = config(&server.http1, &args);
+    let (outcome, events) = run(&config, async |_| {}).await;
     let results = results(&events);
     assert_eq!(outcome, Outcome::Complete, "{args:?}: {results:#?}");
     let stages: Vec<_> = results.iter().map(|result| result.stage).collect();
-    assert_eq!(stages, Stage::ALL);
+    assert_eq!(stages, config.stages);
     for result in results {
         let [server] = result.servers.as_slice() else {
             panic!("one server: {result:?}")
@@ -101,7 +107,7 @@ async fn completes(server: &Server, args: &[&str]) {
         Event::Measuring(stage) => Some(*stage),
         _ => None,
     });
-    assert_eq!(measuring.collect::<Vec<_>>(), Stage::ALL);
+    assert_eq!(measuring.collect::<Vec<_>>(), config.stages);
     let replied = |event: &Event| match event {
         Event::Probes { probes, latency, .. } => probes.iter().any(|probe| probe.rtt.is_some()) && latency.replies > 0,
         _ => false,
@@ -120,19 +126,28 @@ async fn a_run_completes_over_http1_with_websocket_latency() {
 async fn a_run_completes_over_http2_with_websocket_latency() {
     let server = Server::start().await;
     let origin = server.http2.to_string();
-    completes(&server, &["-throughput-origin", &origin, "-latency-transport", "websocket"]).await;
+    let args = ["-throughput-origin", &origin, "-latency-transport", "websocket", "-stages", TRANSFERS];
+    completes(&server, &args).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_http3_with_datagram_latency() {
     let server = Server::start().await;
     let origin = server.http3.to_string();
-    completes(&server, &["-throughput-origin", &origin, "-latency-transport", "webtransport"]).await;
+    let args = ["-throughput-origin", &origin, "-latency-transport", "webtransport", "-stages", TRANSFERS];
+    completes(&server, &args).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_completes_over_webtransport_with_datagram_latency() {
-    let args = ["-throughput-transport", "webtransport", "-latency-transport", "webtransport"];
+    let args = [
+        "-throughput-transport",
+        "webtransport",
+        "-latency-transport",
+        "webtransport",
+        "-stages",
+        TRANSFERS,
+    ];
     completes(&Server::start().await, &args).await;
 }
 
@@ -144,11 +159,10 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
         link.address
     );
     let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
-    let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "6s"];
+    let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "4s"];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {
-        if matches!(event, Event::Measuring(_)) {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        if matches!(event, Event::Sample { rates, .. } if rates.down.is_some_and(|rate| rate > 0.0)) {
             link.stall();
         }
     };

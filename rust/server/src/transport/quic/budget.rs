@@ -150,18 +150,17 @@ const SEND_WINDOW_STEP: u64 = 256 << 10;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
 /// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
-pub(super) struct Window {
+pub(super) struct QuicWindow {
     app: Arc<App>,
     quic: noq::Connection,
     budget: Arc<ConnectionBudget>,
 }
 
-impl Window {
+impl QuicWindow {
     pub(super) fn new(app: Arc<App>, quic: noq::Connection, budget: Arc<ConnectionBudget>) -> Self {
         Self { app, quic, budget }
     }
 
-    /// Whether an upload of `keys` reads at the raised window, raising it for the first.
     pub(super) fn fund(&self, keys: &ClientKeys) -> bool {
         let reserved = self.budget.reserve(&self.app, keys);
         if reserved {
@@ -170,13 +169,12 @@ impl Window {
         reserved
     }
 
-    /// Whether the window was raised.
     pub(super) fn raised(&self) -> bool {
         self.budget.reserved()
     }
 }
 
-impl ReceiveWindow for Window {
+impl ReceiveWindow for QuicWindow {
     type Stream = RecvHalf;
     type Error = http3::Error;
 

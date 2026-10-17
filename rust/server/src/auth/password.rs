@@ -142,7 +142,7 @@ impl Password {
         })
     }
 
-    /// Records an attempt by `keys`, five a minute; a known `device` skips the shared 60 wrong passwords a minute.
+    /// Records an attempt by `keys` within its rate; a known `device` skips the shared wrong-password rate.
     pub fn admit(&self, keys: Option<ClientKeys>, device: Option<&str>) -> bool {
         let known = device.is_some_and(|cookie| self.known(cookie));
         keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))

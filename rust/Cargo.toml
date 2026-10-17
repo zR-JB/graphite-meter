@@ -75,6 +75,13 @@ dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
 
+# Unoptimized, one Argon2id hash at the server's cost takes most of a second, and the tests hash many.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -88,4 +95,4 @@ codegen-units = 16
 
 [patch.crates-io]
 h2 = { git = "https://github.com/zR-JB/h2", rev = "7a7c2527475965cfd4da2130ef4bf5fe361f6431" }
-noq = { git = "https://github.com/zR-JB/noq", rev = "f6f553ebfbd5ae68c5bf64a3c346abc626e285ff" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "2aba4e49f5c73f43ed23c40677ec96508842aa3c" }

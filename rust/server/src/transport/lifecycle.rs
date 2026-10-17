@@ -1,17 +1,14 @@
-//! When a multiplexed connection goes away and closes, per streams, admitted work and credit; HTTP/2 and QUIC.
+//! When a multiplexed connection goes away and closes, by its streams, admitted work and credit; HTTP/2 and QUIC.
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
+use graphite_meter_http3::CONNECTION_IDLE;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 use tokio::time::{Instant, Sleep, sleep, sleep_until};
-
-/// A connection without streams, or one holding receive credit without admitted work, goes away after this long.
-pub const IDLE: Duration = Duration::from_secs(15);
 
 /// What a connection's driver does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +54,6 @@ pub struct Lifecycle {
 }
 
 impl Lifecycle {
-    /// The lifecycle of a connection whose admitted work is `work`.
     pub fn new(work: Work, grace: Grace) -> Self {
         Self {
             work,
@@ -106,17 +102,17 @@ impl Lifecycle {
             }
         }
         if let (None, true, Some(since)) = (&self.stale, credited, since) {
-            self.stale = Some(Box::pin(sleep_until(since + IDLE)));
+            self.stale = Some(Box::pin(sleep_until(since + CONNECTION_IDLE)));
         }
     }
 
-    /// Whether the connection has gone `IDLE` without a stream.
+    /// Whether the connection has gone `CONNECTION_IDLE` without a stream.
     fn quiet(&mut self, cx: &mut Context<'_>, streams: bool) -> bool {
         if streams {
             self.quiet = None;
             return false;
         }
-        let quiet = self.quiet.get_or_insert_with(|| Box::pin(sleep(IDLE)));
+        let quiet = self.quiet.get_or_insert_with(|| Box::pin(sleep(CONNECTION_IDLE)));
         quiet.as_mut().poll(cx).is_ready()
     }
 }
@@ -125,6 +121,7 @@ impl Lifecycle {
 mod tests {
     use super::*;
     use std::future::poll_fn;
+    use std::time::Duration;
     use tokio::time::advance;
 
     async fn poll(lifecycle: &mut Lifecycle, credited: bool, streams: bool) -> Poll<Event> {
@@ -138,11 +135,11 @@ mod tests {
         for grace in [Grace::Fresh, Grace::Once] {
             let work = Work::default();
             let mut lifecycle = Lifecycle::new(work.clone(), grace);
-            advance(IDLE * 2).await;
+            advance(CONNECTION_IDLE * 2).await;
             assert!(poll(&mut lifecycle, false, true).await.is_pending(), "no credit, no idle rule");
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(IDLE - MILLI).await;
+            advance(CONNECTION_IDLE - MILLI).await;
             assert!(poll(&mut lifecycle, true, true).await.is_pending(), "unadmitted streams do not count");
             advance(MILLI).await;
             assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
@@ -164,7 +161,7 @@ mod tests {
             let mut lifecycle = Lifecycle::new(work.clone(), grace);
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
-            advance(IDLE).await;
+            advance(CONNECTION_IDLE).await;
             assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
             let racing = work.start();
             advance(SHUTDOWN_GRACE * 4).await;
@@ -186,7 +183,7 @@ mod tests {
         let mut lifecycle = Lifecycle::new(work.clone(), Grace::Once);
         drop(work.start());
         assert!(poll(&mut lifecycle, false, true).await.is_pending());
-        advance(IDLE - MILLI).await;
+        advance(CONNECTION_IDLE - MILLI).await;
         assert!(poll(&mut lifecycle, true, true).await.is_pending(), "credited after its work ended");
         advance(MILLI).await;
         assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
@@ -196,10 +193,10 @@ mod tests {
     async fn a_connection_without_streams_goes_away_after_fifteen_seconds() {
         let mut lifecycle = Lifecycle::new(Work::default(), Grace::Fresh);
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
-        advance(IDLE - MILLI).await;
+        advance(CONNECTION_IDLE - MILLI).await;
         assert!(poll(&mut lifecycle, false, true).await.is_pending(), "a stream restarts the bound");
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
-        advance(IDLE - MILLI).await;
+        advance(CONNECTION_IDLE - MILLI).await;
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(MILLI).await;
         assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::GoAway));

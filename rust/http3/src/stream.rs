@@ -60,7 +60,7 @@ impl RequestStream {
                 payload: Bytes::new(),
                 shared: shared.clone(),
                 _charge: send_charge,
-                finished: false,
+                end: End::Open,
             },
             recv: RecvHalf {
                 stream: recv,
@@ -72,6 +72,7 @@ impl RequestStream {
                 charge: recv_charge,
                 method: http::Method::default(),
                 done: false,
+                left: u64::MAX,
             },
         }
     }
@@ -111,6 +112,8 @@ pub struct RecvHalf {
     pub(crate) method: http::Method,
     /// FIN arrived, or the stream was stopped.
     done: bool,
+    /// Wire bytes the peer may still send, beyond which the stream is H3_EXCESSIVE_LOAD.
+    pub(crate) left: u64,
 }
 
 impl RecvHalf {
@@ -162,7 +165,12 @@ impl RecvHalf {
 
     fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>, Error>> {
         loop {
+            let unread = self.input.len();
             let event = self.message.next(&mut self.input);
+            match self.left.checked_sub((unread - self.input.len()) as u64) {
+                Some(left) => self.left = left,
+                None => return Poll::Ready(Err(self.abort(Code::H3_EXCESSIVE_LOAD))),
+            }
             if !self.charge.resize(size_of::<Self>() + self.message.buffered()) {
                 // Refused before its head is read, a request was never processed (RFC 9114 §4.1.1).
                 let refusal = if self.message.has_head() {
@@ -235,7 +243,15 @@ pub struct SendHalf {
     payload: Bytes,
     shared: Arc<Shared>,
     _charge: Charge,
-    finished: bool,
+    end: End,
+}
+
+/// How a send half ended: open still, finished with FIN, or cut short by a reset or a failed write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum End {
+    Open,
+    Finished,
+    Cut,
 }
 
 impl SendHalf {
@@ -290,17 +306,16 @@ impl SendHalf {
         poll_fn(|cx| self.poll_ready(cx)).await
     }
 
-    /// Ends the stream once pending frames are written; a stream that already ended stays so.
+    /// Ends the stream once pending frames are written; a stream cut short stays an error.
     pub(crate) fn poll_finish(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        if !self.finished {
-            let written = ready!(self.poll_ready(cx));
-            self.finished = true;
-            written?;
-            self.stream
-                .finish()
-                .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))?;
+        match self.end {
+            End::Finished => return Poll::Ready(Ok(())),
+            End::Cut => return Poll::Ready(Err(Error::Closed)),
+            End::Open => {}
         }
-        Poll::Ready(Ok(()))
+        let finished = ready!(self.poll_ready(cx)).and_then(|()| self.stream.finish().map_err(|_| Error::Closed));
+        self.end = if finished.is_ok() { End::Finished } else { End::Cut };
+        Poll::Ready(finished)
     }
 
     pub async fn finish(&mut self) -> Result<(), Error> {
@@ -317,7 +332,8 @@ impl SendHalf {
     }
 
     pub(crate) fn reset(&mut self, code: Code) {
-        if !std::mem::replace(&mut self.finished, true) {
+        if self.end == End::Open {
+            self.end = End::Cut;
             let _ = self.stream.reset(code.into());
         }
     }

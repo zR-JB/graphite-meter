@@ -1,4 +1,9 @@
-use graphite_meter_proto::{lane::LaneEnding, reason::FailureReason, refusal::UploadRefusal, route::Route};
+use graphite_meter_proto::{
+    lane::LaneEnding,
+    reason::FailureReason,
+    refusal::UploadRefusal,
+    route::{AuthRoute, Route},
+};
 
 /// The fields of each row of a shared code list, comments and blank lines left out.
 fn rows(list: &str) -> Vec<Vec<String>> {
@@ -14,9 +19,12 @@ fn table<T: Copy>(all: &[T], row: impl Fn(T) -> Vec<String>) -> Vec<Vec<String>>
 
 #[test]
 fn routes_equal_the_route_list_row_for_row() {
-    let routes = table(Route::ALL, |route| {
+    let mut routes = table(Route::ALL, |route| {
         vec![route.name().into(), route.path().into(), route.kind().name().into()]
     });
+    routes.extend(table(AuthRoute::ALL, |route| {
+        vec![route.name().into(), route.path().into(), "auth".into()]
+    }));
     assert_eq!(routes, rows(include_str!("../../../api/routes.txt")));
 }
 
@@ -113,6 +121,7 @@ fn every_looked_up_column_is_unique() {
     }
     unique(Route::ALL, Route::path);
     unique(Route::ALL, Route::name);
+    unique(AuthRoute::ALL, AuthRoute::path);
     unique(LaneEnding::ALL, LaneEnding::websocket_code);
     unique(LaneEnding::ALL, LaneEnding::webtransport_code);
     unique(LaneEnding::ALL, LaneEnding::name);

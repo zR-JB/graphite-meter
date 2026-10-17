@@ -46,7 +46,7 @@ pub fn unreported(view: &View) -> Option<String> {
     Some(match (error, signed_out) {
         _ if run.at.is_some() => return signed_out.map(|_| EXPIRED.into()),
         (_, Some(error)) => error.text.clone(),
-        (Some(error), None) => format!("Test could not start. {}", crate::text::capitalized(&error.text)),
+        (Some(error), None) => format!("Could not start the test. {}", crate::text::capitalized(&error.text)),
         (None, None) => "Test stopped before it started.".into(),
     })
 }
@@ -96,15 +96,13 @@ impl Report<'_> {
     }
 
     fn header(&self) -> Line {
-        let mut facts = match self.view.servers.len() {
-            0 => Vec::new(),
-            1 => vec![format::server(&self.view.servers[0].name, &self.view.servers[0].location)],
-            servers => vec![format!("{servers} test servers")],
+        let mut facts = match &self.view.servers[..] {
+            [] => Vec::new(),
+            [server] => vec![format::server(&server.name, &server.location)],
+            servers => vec![format!("{} test servers", servers.len())],
         };
         facts.push(format::duration(self.run.elapsed));
-        let results = self.run.results.iter();
-        let directions = results.flat_map(|result| [result.throughput.down, result.throughput.up]);
-        let total: u64 = directions.flatten().map(|throughput| throughput.bytes).sum();
+        let total: u64 = self.run.results.iter().map(|result| result.throughput.bytes()).sum();
         facts.extend((total > 0).then(|| format::bytes(total)));
         let outcome = self.run.outcome.unwrap_or(Outcome::Failed);
         Line::styled("Graphite Meter", self.palette.heading)
@@ -384,12 +382,8 @@ fn latency_cells(population: &Population, idle: Option<Duration>) -> Vec<String>
         cells[0] = round_trip(median);
         cells[1] = added(Some(median), idle).map_or(MISSING.into(), |added| format!("{} ms", format::added(added)));
     }
-    if summary.replies > 0 {
-        cells[2] = summary.p95.map_or(MISSING.into(), round_trip);
-    }
-    if summary.jitter_pairs > 0 {
-        cells[3] = summary.jitter.map_or(MISSING.into(), round_trip);
-    }
+    cells[2] = summary.p95.map_or(MISSING.into(), round_trip);
+    cells[3] = summary.jitter.map_or(MISSING.into(), round_trip);
     if let Some(ratio) = summary.timeout_ratio() {
         cells[4] = format!("{} / {}", count(summary.timeouts), count(summary.replies + summary.timeouts));
         if ratio > 0.0 {

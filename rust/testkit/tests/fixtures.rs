@@ -6,7 +6,7 @@ use tokio::{net::UdpSocket, time::timeout};
 #[tokio::test]
 async fn udp_link_outlasts_a_target_that_is_not_bound_yet() -> Result<(), Error> {
     let target = UdpSocket::bind("127.0.0.1:0").await?.local_addr()?;
-    let link = Link::udp(target, Duration::ZERO).await?;
+    let link = Link::udp(target, Duration::ZERO, None).await?;
     let client = UdpSocket::bind("127.0.0.1:0").await?;
     client.connect(link.address).await?;
     // The relay's send draws ICMP port unreachable, which its next receive reports.

@@ -68,10 +68,15 @@ pub fn icon(stage: Stage) -> &'static str {
     }
 }
 
-/// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with 3% headroom, and from
+/// The browser's reference rate before any, 100 Mbit/s in bytes per second.
+const REFERENCE_RATE: f64 = 12.5e6;
+/// A scale's headroom over the rate it shows.
+const HEADROOM: f64 = 1.03;
+
+/// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with headroom, and from
 /// a megabit up never under 1 Gbit/s, where most connections fit.
 pub fn gauge_ceiling(bytes_per_sec: f64) -> f64 {
-    let bits = bytes_per_sec * 8.0 * 1.03;
+    let bits = bytes_per_sec * 8.0 * HEADROOM;
     let top = ceil_step(bits, &[1.0, 2.0, 5.0]);
     let top = if bits >= 1e6 { top.max(1e9) } else { top };
     top / 8.0
@@ -86,7 +91,7 @@ pub struct Unit {
 
 impl Unit {
     pub fn of(peak: f64) -> Self {
-        let peak = if peak > 0.0 { peak } else { 12.5e6 };
+        let peak = if peak > 0.0 { peak } else { REFERENCE_RATE };
         let (shown, name) = format::tier(peak * 8.0, 1.2);
         Self { divisor: peak * 8.0 / shown, name }
     }
@@ -378,7 +383,7 @@ impl App {
                     .map_or_else(missing, |m| Line::styled(round_trip(m), palette.value)),
             ];
             if jitter {
-                let value = summary.and_then(|s| s.jitter.filter(|_| s.jitter_pairs > 0));
+                let value = summary.and_then(|s| s.jitter);
                 cells.push(value.map_or_else(missing, |jitter| Line::styled(round_trip(jitter), palette.text)));
             }
             cells.push(summary.and_then(|s| s.timeout_ratio()).map_or_else(missing, |ratio| {
@@ -476,7 +481,7 @@ impl App {
     fn scales(&self) -> Scales {
         let run = self.view.run.as_ref();
         let peak = run.map_or(0.0, |run| run.peak);
-        let rate = ceil_step(peak.max(1.0) * 8.0 * 1.03, &CHART_STEPS) / 8.0;
+        let rate = ceil_step(peak.max(1.0) * 8.0 * HEADROOM, &CHART_STEPS) / 8.0;
         let series = run.and_then(|run| run.rtt.iter().find(|(id, _)| Some(id) == self.latency_server()));
         let plan = self.plan();
         let top = |idle: bool| {
@@ -588,7 +593,7 @@ impl App {
         let mut quiet = Line::default();
         let value = if stage.directions().is_empty() {
             let summary = self.population(stage);
-            if let Some(jitter) = summary.and_then(|s| s.jitter.filter(|_| s.jitter_pairs > 0)) {
+            if let Some(jitter) = summary.and_then(|s| s.jitter) {
                 quiet = Line::styled("Jitter ", palette.muted).and(round_trip(jitter), palette.text);
             }
             let median = summary.and_then(|summary| summary.p50);
@@ -622,7 +627,7 @@ impl App {
             }
         };
         if let Some(result) = result.filter(|_| state == State::Ended(StageStatus::Complete)) {
-            let mean = result.mean();
+            let mean = result.throughput.mean();
             if let Some(wire) = wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005) {
                 quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
@@ -742,7 +747,7 @@ impl App {
         let run = self.view.run.as_ref();
         let peak = run.map_or(0.0, |run| run.peak);
         let unit = Unit::of(peak);
-        let gauge = gauge_ceiling(if peak > 0.0 { peak } else { 12.5e6 });
+        let gauge = gauge_ceiling(if peak > 0.0 { peak } else { REFERENCE_RATE });
         let rate_ticks: [String; 5] =
             std::array::from_fn(|i| format::tick(gauge_value(i as f64 / 4.0, gauge) * 8.0 / unit.divisor));
         let ms_scale = self.live.rtt_scale.max(1.0);
@@ -813,7 +818,12 @@ impl App {
         }
         // Finished: every transfer stage's arc, swept in from where the needle stood, and the first one's figure.
         let mut results = run.plan.iter().filter_map(|&(stage, _)| {
-            let mean = run.results.iter().rfind(|result| result.stage == stage)?.mean();
+            let mean = run
+                .results
+                .iter()
+                .rfind(|result| result.stage == stage)?
+                .throughput
+                .mean();
             (!stage.directions().is_empty() && mean > 0.0).then_some((stage, mean))
         });
         if let Some((stage, mean)) = results.next() {

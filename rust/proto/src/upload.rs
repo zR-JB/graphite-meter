@@ -20,7 +20,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Reads the answer, refusing an upload ID that is empty or longer than 8192 bytes.
+    /// Reads the answer, refusing an upload ID that is not a token.
     pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
         let session: Self = json::decode(data)?;
         match token::valid(&session.upload_id) {

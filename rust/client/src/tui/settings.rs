@@ -142,7 +142,7 @@ impl App {
                     self.config.paths.protocol = None;
                 }
             }
-            Row::Latency => _ = self.cycle_path(&LATENCY, step),
+            Row::Latency => self.cycle_path(&LATENCY, step),
             Row::Protocol if fixed.is_none() => {
                 let versions = [None, Some(Protocol::Http1), Some(Protocol::Http2), Some(Protocol::Http3)];
                 let at = versions
@@ -246,7 +246,7 @@ fn span(config: &mut Config, row: Row) -> Option<(&mut Duration, RangeInclusive<
     }
 }
 
-/// The inline editor: up to 4096 characters, a cursor, and the error its last apply found.
+/// The inline editor: a bounded line, a cursor, and the error its last apply found.
 pub(super) struct Editor {
     pub row: Row,
     text: Vec<char>,

@@ -89,7 +89,7 @@ impl Client {
             return Err(Fault::Malformed("invalid WebSocket upgrade response".into()));
         }
         let upgraded = hyper::upgrade::on(answer).await;
-        let upgraded = upgraded.map_err(|error| Fault::Lost(error.to_string()))?;
+        let upgraded = upgraded.map_err(|_| Fault::Lost)?;
         let config = WebSocketConfig::default()
             .read_buffer_size(4096)
             .write_buffer_size(0)
@@ -121,7 +121,7 @@ impl Bus {
         match &mut self.0 {
             Channel::WebSocket { socket, .. } => {
                 let sent = socket.send(Message::text(ping.encode())).await;
-                sent.map_err(|error| Fault::Lost(error.to_string()))
+                sent.map_err(|_| Fault::Lost)
             }
             Channel::Datagrams(session) => session.send_datagram(ping.write(&mut [0; Ping::MAX_BYTES])).await,
         }
@@ -140,8 +140,8 @@ impl Bus {
                         Some(Ok(Message::Binary(bytes))) => Pong::decode(&bytes),
                         Some(Ok(Message::Close(frame))) => return Err(closed(client, origin, frame)),
                         Some(Ok(_)) => None,
-                        Some(Err(error)) => return Err(Fault::Lost(error.to_string())),
-                        None => return Err(Fault::Lost("latency bus closed".into())),
+                        Some(Err(_)) => return Err(Fault::Lost),
+                        None => return Err(Fault::Lost),
                     };
                     (pong, arrived)
                 }
@@ -162,6 +162,6 @@ impl Bus {
 fn closed(client: &Client, origin: &Origin, frame: Option<CloseFrame>) -> Fault {
     match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into())) {
         Some(ending) => client.ending(origin, ending),
-        None => Fault::Lost("latency bus closed".into()),
+        None => Fault::Lost,
     }
 }

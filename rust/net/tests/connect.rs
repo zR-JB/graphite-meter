@@ -1,7 +1,7 @@
 //! Connections through CONNECT tunnels, HTTP proxies in absolute form and SOCKS5, against in-test peers.
 use graphite_meter_net::{ConnectError, Connection, Connector, Proxy, RequestForm, Verify};
 use graphite_meter_proto::{discovery::Protocol, origin::Origin};
-use graphite_meter_testkit::Identity;
+use graphite_meter_testkit::{Identity, read_head};
 use std::{assert_matches, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -33,15 +33,6 @@ where
     (address, tokio::spawn(async move { serve(listener.accept().await.unwrap().0).await }))
 }
 
-/// An HTTP/1.1 head, read byte by byte so nothing after it is consumed.
-async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        head.push(stream.read_u8().await.unwrap());
-    }
-    String::from_utf8(head).unwrap()
-}
-
 /// Accepts TLS offering `alpn` and returns what the client offered and the stream.
 async fn accept<S: AsyncRead + AsyncWrite + Unpin>(stream: S, alpn: &[&[u8]]) -> (Option<Vec<u8>>, TlsStream<S>) {
     let acceptor = TlsAcceptor::from(Arc::new(Identity::generate().unwrap().server(alpn)));
@@ -52,7 +43,7 @@ async fn accept<S: AsyncRead + AsyncWrite + Unpin>(stream: S, alpn: &[&[u8]]) ->
 #[tokio::test]
 async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
     let (address, proxy) = peer(|mut stream| async move {
-        let head = read_head(&mut stream).await;
+        let head = read_head(&mut stream).await.unwrap();
         stream
             .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
             .await
@@ -78,7 +69,7 @@ async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
 /// A proxy that answers the CONNECT head it reads with `response` and returns the head.
 async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
     peer(|mut stream| async move {
-        let head = read_head(&mut stream).await;
+        let head = read_head(&mut stream).await.unwrap();
         let _ = stream.write_all(&response).await;
         head
     })
@@ -88,7 +79,7 @@ async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
 #[tokio::test]
 async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
     let (address, _proxy) = peer(|mut stream| async move {
-        read_head(&mut stream).await;
+        read_head(&mut stream).await.unwrap();
         stream.write_all(b"HTTP/1.1 200 OK\nVia: tiny\n\n").await.unwrap();
         accept(stream, &[]).await
     })
@@ -153,7 +144,7 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
 
 #[tokio::test]
 async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentials() {
-    let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await }).await;
+    let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await.unwrap() }).await;
     let connector = connector("http_proxy", &format!("user:secret@{address}"), Verify::trusted());
     let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
     let authorization = Some("Basic dXNlcjpzZWNyZXQ=".to_owned());

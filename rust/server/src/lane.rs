@@ -24,7 +24,6 @@ struct State {
     deadline: Instant,
     /// Nanoseconds from `start` to the peer's last movement.
     moved: AtomicU64,
-    /// The decided ending.
     ending: OnceLock<LaneEnding>,
     decided: CancellationToken,
     shutdown: CancellationToken,

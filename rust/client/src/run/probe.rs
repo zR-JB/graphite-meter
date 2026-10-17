@@ -4,7 +4,7 @@ use crate::{
     measure::latency::{Deadline, ProbeOutcome},
     model::{Cadence, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
-    run::engine::ProberEvent,
+    run::engine::{ProberEvent, READY_BOUND},
 };
 use futures_util::FutureExt;
 use graphite_meter_proto::bus::{Ping, Pong};
@@ -27,7 +27,7 @@ const EARLY_LOSS: Duration = Duration::from_millis(500);
 /// A timed-out probe's late reply still teaches the deadline this long after it went.
 const LATE_REPLIES: Duration = Duration::from_secs(10);
 
-/// The probes a prober keeps in flight: 16 idle at a fixed cadence, 4 reply-driven, 2 under load.
+/// The probes a prober keeps in flight, fewest under load.
 pub fn window(stage: Stage, cadence: Cadence) -> usize {
     match (stage, cadence) {
         (Stage::Latency, Cadence::Every(_)) => 16,
@@ -149,8 +149,7 @@ impl Schedule {
         self.due = None;
     }
 
-    /// When a lost channel is dialed again and by when it must open, within 2 s and the window's `end`; a channel lost
-    /// early waits 500 ms. None before the first reply or past the bound.
+    /// When a lost channel redials and by when it opens, capped at `end`, later if lost early; none before a reply.
     pub fn redial(&self, opened: Instant, now: Instant, end: Option<Instant>) -> Option<(Instant, Instant)> {
         let bound = end.map_or(now + REDIAL_WINDOW, |end| end.min(now + REDIAL_WINDOW));
         if !self.answered || now >= bound {
@@ -223,7 +222,7 @@ async fn probe(
     out: mpsc::UnboundedSender<ProberEvent>,
 ) {
     let emit = |probe| drop(out.send(probe));
-    let (mut at, mut bound) = (Instant::now(), Instant::now() + REDIAL_WINDOW);
+    let (mut at, mut bound) = (Instant::now(), Instant::now() + READY_BOUND);
     let fault = loop {
         sleep_until(at.into()).await;
         let dialed = timeout_at(bound.into(), retrying(|| client.bus(&path))).await;

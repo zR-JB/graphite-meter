@@ -2,8 +2,7 @@
 
 use super::{AuthLease, Decision, Store, Via, protect};
 use crate::headers::{
-    GRAPHITE_METER_AUTH, GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN,
-    X_FORWARDED_HOST,
+    GRAPHITE_METER_AUTH_URL, GRAPHITE_METER_BROWSER_AUTH, SEC_FETCH_SITE, X_CSRF_TOKEN, X_FORWARDED_HOST,
 };
 use crate::{
     app::{Endpoint, authority, finalize::Access, finalize::close, query, response},
@@ -12,7 +11,8 @@ use crate::{
 };
 use graphite_meter_proto::{
     origin::{Origin, Scheme},
-    route::{Kind, Route},
+    refusal::SIGN_IN_HEADER,
+    route::{AuthRoute, Kind, Route},
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority};
 
@@ -26,44 +26,14 @@ const SINGLE: [HeaderName; 6] = [
     header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
 
-/// When a controller route serves without a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Open {
-    Always,
-    /// While password sign-in is enabled.
-    Password,
-    /// While OIDC sign-in is enabled.
-    Oidc,
-    Never,
+/// The sign-in route `method` and `path` name exactly.
+pub(super) fn auth_route(method: &str, path: &str) -> Option<AuthRoute> {
+    AuthRoute::find_by(AuthRoute::path, path).filter(|route| route.method() == method)
 }
 
-graphite_meter_proto::table! {
-    /// The controller's routes: method, path, and when each serves without a session.
-    pub(super) enum AuthRoute {
-        method.0: &'static str,
-        path.1: &'static str,
-        open.2: Open,
-    } {
-        LoginPage => ("GET", "/login", Open::Always),
-        Password => ("POST", "/auth/password", Open::Password),
-        OidcStart => ("POST", "/auth/oidc/start", Open::Oidc),
-        OidcCallback => ("GET", "/auth/oidc/callback", Open::Oidc),
-        Session => ("GET", "/auth/session", Open::Never),
-        CliPage => ("GET", "/auth/cli", Open::Always),
-        BrowserPage => ("GET", "/auth/browser", Open::Always),
-        CliApprove => ("POST", "/auth/cli/approve", Open::Never),
-        BrowserApprove => ("POST", "/auth/browser/approve", Open::Never),
-        CliToken => ("POST", "/auth/cli/token", Open::Always),
-        BrowserToken => ("POST", "/auth/browser/token", Open::Always),
-        Logout => ("POST", "/auth/logout", Open::Never),
-    }
-}
-
-impl AuthRoute {
-    /// The route `method` and `path` name exactly.
-    pub(super) fn find(method: &str, path: &str) -> Option<Self> {
-        Self::find_by(Self::path, path).filter(|route| route.method() == method)
-    }
+/// Whether `path` lies in the sign-in controller's namespace, a route there or not.
+pub(super) fn controls(path: &str) -> bool {
+    path == AuthRoute::Login.path() || path.starts_with("/auth/")
 }
 
 graphite_meter_proto::table! {
@@ -112,9 +82,9 @@ pub struct Policy {
 impl Policy {
     pub(super) fn new(config: &config::Auth) -> Self {
         let origin = config.public_origin.to_string();
-        let login = HeaderValue::from_str(&format!("{origin}/login")).expect("origins are ASCII");
+        let login = HeaderValue::from_str(&format!("{origin}{}", AuthRoute::Login.path())).expect("origins are ASCII");
         let origin = HeaderValue::from_str(&origin).expect("origins are ASCII");
-        let (password, oidc) = (config.methods.password().is_some(), config.methods.oidc().is_some());
+        let (password, oidc) = (config.methods.password.is_some(), config.methods.oidc.is_some());
         Self {
             public: config.public_origin.clone(),
             origin,
@@ -146,8 +116,7 @@ impl Policy {
         if method == Method::OPTIONS && (route.is_some() || path == AuthRoute::BrowserToken.path()) {
             return self.preflight(headers, route, trust);
         }
-        let controller = path == "/login" || path.starts_with("/auth/");
-        if controller && (!endpoint.ui() || trust != Trust::Canonical) {
+        if controls(path) && (!endpoint.ui() || trust != Trust::Canonical) {
             return self.forbidden(secure);
         }
         if endpoint.ui() && self.public(method, path) {
@@ -254,13 +223,14 @@ impl Policy {
             return true;
         }
         let ours = origin == public;
-        match text(headers, &SEC_FETCH_SITE) {
+        let site = text(headers, &SEC_FETCH_SITE);
+        match site {
             Some("" | "same-origin" | "none") => {}
             Some("same-site") if ours => {}
             _ => return false,
         }
         let read = matches!(*request.method(), Method::GET | Method::HEAD);
-        let same_origin = text(headers, &SEC_FETCH_SITE) == Some("same-origin");
+        let same_origin = site == Some("same-origin");
         if route.is_some() && read && !ours && !same_origin || route == Some(Route::Ping) && !ours {
             return false;
         }
@@ -283,10 +253,7 @@ impl Policy {
             (None, Some(origin))
                 if trust == Trust::Canonical && method == "POST" && requested(headers, &[]).is_some() =>
             {
-                Access::Bearer(origin.header().clone()).apply(answered);
-                answered.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
-                answered.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Content-Type"));
-                answered.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
+                Access::Bearer(origin.header().clone()).apply_preflight(answered, "POST", "Content-Type");
             }
             (Some(route), Some(origin)) if secure && *origin.header() != self.origin && route != Route::Servers => {
                 let names = requested(headers, &["authorization"]);
@@ -314,17 +281,19 @@ impl Policy {
         if matches!(*method, Method::GET | Method::HEAD) && matches!(path, SANS | MONO) {
             return true;
         }
-        AuthRoute::find(method.as_str(), path).is_some_and(|route| match route.open() {
-            Open::Always => true,
-            Open::Password => self.password,
-            Open::Oidc => self.oidc,
-            Open::Never => false,
+        auth_route(method.as_str(), path).is_some_and(|route| match route {
+            AuthRoute::Login | AuthRoute::Cli | AuthRoute::Browser | AuthRoute::CliToken | AuthRoute::BrowserToken => {
+                true
+            }
+            AuthRoute::Password => self.password,
+            AuthRoute::OidcStart | AuthRoute::OidcCallback => self.oidc,
+            AuthRoute::Session | AuthRoute::CliApprove | AuthRoute::BrowserApprove | AuthRoute::Logout => false,
         })
     }
 
     fn forbidden(&self, secure: bool) -> Decision {
         let mut answer = response::empty(StatusCode::FORBIDDEN);
-        protect(answer.headers_mut(), secure);
+        protect(answer.headers_mut(), secure, None);
         Err(answer)
     }
 
@@ -336,7 +305,7 @@ impl Policy {
             false => response::empty(StatusCode::FORBIDDEN),
         };
         let headers = answer.headers_mut();
-        protect(headers, secure);
+        protect(headers, secure, None);
         let origin = request.headers().get(header::ORIGIN);
         if origin == Some(&self.origin) {
             Access::Cookie(self.origin.clone()).apply(headers);
@@ -345,7 +314,7 @@ impl Policy {
         {
             Access::Bearer(origin.header().clone()).apply(headers);
         }
-        headers.insert(GRAPHITE_METER_AUTH, HeaderValue::from_static("required"));
+        headers.insert(SIGN_IN_HEADER, HeaderValue::from_static("required"));
         headers.insert(GRAPHITE_METER_BROWSER_AUTH, HeaderValue::from_static("1"));
         headers.insert(GRAPHITE_METER_AUTH_URL, self.login.clone());
         close(headers, request.version());
@@ -401,14 +370,12 @@ pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLea
 pub(super) fn cookie(headers: &HeaderMap, cookie: Cookie) -> Option<&str> {
     let name = cookie.name();
     let values = headers.get_all(header::COOKIE).iter();
-    let pairs: Vec<_> = values
-        .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))
-        .collect();
-    if pairs.len() > 3000 {
-        return None;
-    }
+    let pairs = values.flat_map(|value| value.as_bytes().split(|&byte| byte == b';'));
     let mut found = None;
-    for pair in pairs {
+    for (index, pair) in pairs.enumerate() {
+        if index == 3000 {
+            return None;
+        }
         let pair = pair.trim_ascii();
         let (key, value) = match pair.iter().position(|&byte| byte == b'=') {
             Some(at) => (pair[..at].trim_ascii(), &pair[at + 1..]),

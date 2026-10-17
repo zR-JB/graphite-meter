@@ -1,4 +1,12 @@
-//! Text that reaches terminals and logs: safe characters, cleaning and quoting.
+//! Text that reaches terminals and logs: safe characters, cleaning and quoting; and decimal fields.
+
+use std::str::FromStr;
+
+/// A field of digits only, at most `digits` of them, that fits `T`.
+pub(crate) fn decimal<T: FromStr>(field: &str, digits: usize) -> Option<T> {
+    let digits_only = !field.is_empty() && field.len() <= digits && field.bytes().all(|byte| byte.is_ascii_digit());
+    digits_only.then(|| field.parse().ok()).flatten()
+}
 
 /// Whether `c` reaches a terminal as itself: no control or bidirectional formatting character.
 pub fn safe(c: char) -> bool {

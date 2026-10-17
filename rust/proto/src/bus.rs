@@ -1,9 +1,7 @@
 //! The latency bus messages (`api/wire.md`): one per WebSocket text message or WebTransport datagram.
 
-use std::{
-    fmt::NumBuffer,
-    str::{FromStr, from_utf8},
-};
+use crate::text::decimal;
+use std::{fmt::NumBuffer, str::from_utf8};
 
 /// `PING,<id>`: a client probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,10 +62,4 @@ impl Pong {
         let (id, nanos) = from_utf8(message).ok()?.strip_prefix("PONG,")?.split_once(',')?;
         Some(Self { id: decimal(id, 10)?, handling_nanos: decimal(nanos, 20)? })
     }
-}
-
-/// A field of digits only, at most `digits` of them, that fits `T`.
-fn decimal<T: FromStr>(field: &str, digits: usize) -> Option<T> {
-    let digits_only = !field.is_empty() && field.len() <= digits && field.bytes().all(|byte| byte.is_ascii_digit());
-    digits_only.then(|| field.parse().ok()).flatten()
 }

@@ -71,10 +71,9 @@ fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), St
             Buffer::Send => rustix::net::sockopt::set_socket_send_buffer_size_force(socket, bytes),
         };
     }
-    shortfall(name, size()?, bytes).map_or(Ok(()), Err)
-}
-
-/// The shortfall of a buffer that stayed below `bytes`.
-fn shortfall(name: &str, after: usize, bytes: usize) -> Option<String> {
-    (after < bytes).then(|| format!("{name} buffer {} KiB of {} KiB wanted", after / 1024, bytes / 1024))
+    let after = size()?;
+    match after < bytes {
+        true => Err(format!("{name} buffer {} KiB of {} KiB wanted", after / 1024, bytes / 1024)),
+        false => Ok(()),
+    }
 }

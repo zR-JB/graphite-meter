@@ -6,6 +6,7 @@ mod request;
 mod shard;
 
 pub(crate) use budget::{endpoint_bytes, floor_bytes, noq_floor};
+pub(crate) use endpoint::OVERFLOW;
 pub use endpoint::{Binding, Endpoints};
 
 use super::{
@@ -18,8 +19,7 @@ use crate::{
     app::{App, Connection, Endpoint},
     limits::Lease,
 };
-use budget::ConnectionBudget;
-use budget::{SendWindow, Window};
+use budget::{ConnectionBudget, QuicWindow, SendWindow};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::lane::LaneEnding;
@@ -37,7 +37,6 @@ use tokio::{
     runtime::Handle,
     time::{MissedTickBehavior, interval, timeout},
 };
-use tokio_util::sync::CancellationToken;
 
 /// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
@@ -67,7 +66,6 @@ pub struct Http3 {
     config: noq::ServerConfig,
     certificates: Arc<Certificates>,
     max_requests: usize,
-    shutdown: CancellationToken,
 }
 
 impl Listener {
@@ -132,10 +130,10 @@ impl Http3 {
             let Ok(connecting) = incoming.accept_with(config) else {
                 return;
             };
-            let address = peer.ip().to_canonical();
+            let address = peer.ip();
             let quic = tokio::select! {
                 biased;
-                () = listener.shutdown.cancelled() => return,
+                () = listener.app.shutdown().cancelled() => return,
                 connected = timeout(HANDSHAKE_BOUND, connecting) => match connected {
                     Ok(Ok(quic)) => quic,
                     Ok(Err(error)) => {
@@ -176,7 +174,7 @@ impl Http3 {
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
         let connection = Connection::new(Endpoint::Quic, peer.ip());
-        let window = Arc::new(Window::new(self.app.clone(), quic.clone(), budget.clone()));
+        let window = Arc::new(QuicWindow::new(self.app.clone(), quic.clone(), budget.clone()));
         let requests = Requests::new(self.app.clone(), connection.clone(), window.clone(), quic.clone());
         let mut http = server::Connection::new(quic.clone(), Some(budget));
         let mut lifecycle = Lifecycle::new(connection.work, Grace::Once);
@@ -184,7 +182,7 @@ impl Http3 {
         let mut tuning = interval(SEND_WINDOW_TUNING);
         tuning.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // A child token: polling it never takes the server-wide token's waiter lock.
-        let shutdown = self.shutdown.child_token();
+        let shutdown = self.app.shutdown().child_token();
         let mut stopping = pin!(shutdown.cancelled());
         let mut stopped = false;
         loop {
@@ -211,13 +209,11 @@ impl Http3 {
     }
 }
 
-/// Whether a connection ended without a failure worth logging: a peer's close or an idle timeout.
+/// Whether a connection ended without a failure worth logging: gracefully, by the peer's close, or idle.
 fn ended_normally(error: &http3::Error) -> bool {
-    use noq::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
-    match error {
-        http3::Error::Connection { local, .. } => !local,
-        http3::Error::Transport(TimedOut | LocallyClosed) => true,
-        http3::Error::Transport(ConnectionClosed(close)) => close.error_code == noq::TransportErrorCode::NO_ERROR,
-        _ => false,
-    }
+    error.graceful()
+        || matches!(
+            error,
+            http3::Error::Connection { local: false, .. } | http3::Error::Transport(noq::ConnectionError::TimedOut)
+        )
 }

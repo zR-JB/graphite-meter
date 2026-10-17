@@ -16,7 +16,7 @@ const KIB: usize = 1 << 10;
 #[tokio::test]
 async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
     let h3 = H3::start(&[]).await;
-    let link = Link::udp(h3.server.quic.unwrap(), Duration::from_millis(20))
+    let link = Link::udp(h3.server.quic.unwrap(), Duration::from_millis(20), None)
         .await
         .unwrap();
     let connection = h3.connect_via(link.address, transport(None)).await;
@@ -40,7 +40,7 @@ async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
 async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_link() {
     let h3 = H3::start(&[]).await;
     let bottleneck = Bottleneck { bits_per_second: 2_000_000, queue: Duration::from_millis(50) };
-    let link = Link::udp_through(h3.server.quic.unwrap(), Duration::from_millis(20), bottleneck)
+    let link = Link::udp(h3.server.quic.unwrap(), Duration::from_millis(20), Some(bottleneck))
         .await
         .unwrap();
     // A peer that never grows its connection credit past the first window on a path this slow.
@@ -53,7 +53,14 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
         assert_eq!(answer.status(), 200);
         downloads.spawn(async move { while let Ok(Some(_)) = body.data().await {} });
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    let exhausted = async {
+        while connection.quic.stats().udp_rx.bytes < u64::from(INITIAL_RECEIVE_WINDOW) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), exhausted)
+        .await
+        .expect("the downloads use the first window");
     for _ in 0..4 {
         let started = Instant::now();
         connection.json("GET", "/probe").await;
@@ -104,7 +111,7 @@ impl Lane {
 /// delaying each direction by `one_way`.
 async fn download_rate(webtransport: bool, one_way: Duration) -> f64 {
     let h3 = H3::start(&[]).await;
-    let link = Link::udp(h3.server.quic.unwrap(), one_way).await.unwrap();
+    let link = Link::udp(h3.server.quic.unwrap(), one_way, None).await.unwrap();
     let target = if one_way.is_zero() { h3.server.quic.unwrap() } else { link.address };
     let mut wide = transport(Some(64 << 20));
     wide.receive_window((64_u32 << 20).into());

@@ -60,8 +60,7 @@ impl Burst {
 pub(crate) trait Rehome {
     fn socket(&mut self) -> &mut TcpStream;
 
-    /// Registers the socket with the calling runtime's driver through a duplicate of its descriptor; on an error it
-    /// stays with its first runtime.
+    /// Registers the socket with the calling runtime's driver through a duplicate descriptor; on an error it stays put.
     fn rehome(&mut self) -> io::Result<()> {
         let socket = self.socket();
         let copy = std::net::TcpStream::from(socket2::SockRef::from(&*socket).try_clone()?);
