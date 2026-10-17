@@ -79,6 +79,9 @@ export async function launch({ bin, cert, key }: Launch, server: Server, env: Re
       GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT: "32",
       GM_MAX_ACTIVE_SESSIONS: "12",
       GM_MAX_SESSIONS_PER_CLIENT: "12",
+      // Every worker's browser connects from one address, and three Firefox workers came near the default 64, past
+      // which a server drops new connections and a navigation fails with NS_ERROR_NET_RESET.
+      GM_MAX_CONNECTIONS_PER_CLIENT: "192",
       ...env,
     },
     stdout: "ignore",
