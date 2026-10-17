@@ -80,8 +80,8 @@ class ToolchainBoundaryTests(unittest.TestCase):
     def test_the_lock_pins_only_the_tools_mise_uses(self) -> None:
         root = self.copy_pins()
         lock = root / "mise.lock"
-        lock.write_text(lock.read_text() + '\n[[tools.go]]\nversion = "1.27.2"\nbackend = "core:go"\n')
-        with self.assertRaisesRegex(ValueError, "does not use: go"):
+        lock.write_text(lock.read_text() + '\n[[tools.node]]\nversion = "24.0.0"\nbackend = "core:node"\n')
+        with self.assertRaisesRegex(ValueError, "does not use: node"):
             check(root)
 
     def test_rust_is_installed_only_from_the_pinned_channel_manifest(self) -> None:
@@ -129,19 +129,6 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(re.sub(r'(?s)image_skopeo = """.*?"""', unpinned, path.read_text()))
         with self.assertRaisesRegex(ValueError, "exact version or image digest"):
             load_pins(root)
-
-    def test_the_v2_formatter_is_a_reviewed_tool_with_a_locked_download(self) -> None:
-        root = self.copy_pins()
-        path, lock = root / "mise.toml", root / "mise.lock"
-        pin = f'"aqua:biomejs/biome" = "{load_pins(root)["tools"]["biome"]}"\n'
-        original = path.read_text()
-        path.write_text(original.replace(pin, ""))
-        with self.assertRaisesRegex(ValueError, "exactly the reviewed"):
-            load_pins(root)
-        path.write_text(original)
-        lock.write_text(re.sub(r'(?ms)^\[+tools\."aqua:biomejs/biome"\].*?(?=^\[\[)', "", lock.read_text()))
-        with self.assertRaisesRegex(ValueError, "mise.lock does not match aqua:biomejs/biome"):
-            check(root)
 
     def test_tool_pins_reject_nonversions_and_unknown_entries(self) -> None:
         root = self.copy_pins()

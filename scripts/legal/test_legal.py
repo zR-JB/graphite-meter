@@ -5,12 +5,11 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
 
 from scripts.legal.artifacts import about, copyright_notice
 from scripts.legal.discovery import discover_browser, package_license, package_root, repository_url
 from scripts.legal.model import (
-    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
+    Component, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
 )
 from scripts.legal.review import (
     add_provenance, component_from_files, component_legal_files, prepare_scopes,
@@ -137,7 +136,7 @@ class LegalTests(unittest.TestCase):
             with self.subTest(content=content):
                 legal = [LegalFile("LICENSE", text=content, kind="license"),
                          LegalFile("NOTICE", text="notice", kind="notice")]
-                component = component_from_files("go", "example", "1", "", legal)
+                component = component_from_files("cargo", "example", "1", "", legal)
                 self.assertEqual(component.selectedLicenseExpression, expected)
                 self.assertEqual(len(component.legalTexts), 1)
                 self.assertEqual(len(component.notices), 1)
@@ -235,7 +234,6 @@ class LegalTests(unittest.TestCase):
             Component("ring", "0.17.14", "cargo", "registry+https://github.com/rust-lang/crates.io-index"),
             Component("quic", "1.3.0", "cargo", f"git+{fork}?rev={'f' * 40}#{'f' * 40}", modified=True),
             Component("patched-lib", "5.0.0", "npm", "https://github.com/example/patched-lib", modified=True),
-            Component("Go standard library", "go1.27.1", "go-toolchain", "https://go.dev/"),
             Component("local", "1", "npm", "file:vendor/local"),
         ]
         project = Project(name="Graphite Meter", repository="https://github.com/owner/meter")
@@ -249,7 +247,6 @@ class LegalTests(unittest.TestCase):
                          {"label": "Changes", "url": f"{fork}/compare/{'b' * 40}...{'f' * 40}"}],
                 "patched-lib": [{"label": "Source", "url": "https://github.com/example/patched-lib"},
                            {"label": "Changes", "url": f"{blob}/client/patches/patched-lib%405.0.0.patch"}],
-                "Go standard library": [{"label": "Source", "url": "https://go.dev/"}],
                 "local": [],
             })
             # The review identity stays as reviewed.

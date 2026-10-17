@@ -32,27 +32,18 @@ class Paged(list[object]):
     """A response GitHub must serve through `--paginate --slurp`."""
 
 
-class Answers(list[object]):
-    """Successive responses to one call; the last one repeats."""
-
-
 def pages(*items: object) -> Paged:
     return Paged(items)
 
 
 def github(responses: Mapping[str, object]) -> AbstractContextManager[object]:
     """Answer exactly the given API paths, with pagination only where GitHub needs it."""
-    served: dict[str, int] = {}
-
     def api(path: str, *, paginate: bool = False) -> JsonValue:
         if path not in responses:
             raise AssertionError(f"unexpected API call {path}")
-        body = responses[path]
-        items = list(body) if isinstance(body, Answers) else [body]
-        if any(isinstance(item, Paged) != paginate for item in items):
+        if isinstance(responses[path], Paged) != paginate:
             raise AssertionError(f"{path} must {'not ' if paginate else ''}be paginated")
-        served[path] = served.get(path, -1) + 1
-        return cast(JsonValue, items[min(served[path], len(items) - 1)])
+        return cast(JsonValue, responses[path])
 
     return patch("github_api.api", api)
 

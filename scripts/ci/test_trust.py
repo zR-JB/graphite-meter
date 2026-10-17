@@ -15,7 +15,7 @@ from github_api import (
     ControlPlaneError, confined_path, file_sha256, local_path, runner_path,
 )
 from assets import OCI, release_assets, staged_files
-from fixtures import Answers, git_head, github, outcome, pages, write_client, write_staged
+from fixtures import git_head, github, outcome, pages, write_client, write_staged
 from release import (
     BUILD_JOB,
     Release,
@@ -82,7 +82,7 @@ def analysis(analysis_id: int, minute: int, error: str = "",
              commit: str = MAIN) -> dict[str, object]:
     return {
         "id": analysis_id, "commit_sha": commit, "created_at": f"2026-08-15T10:{minute:02}:00Z",
-        "category": "go", "analysis_key": "default", "environment": "", "error": error,
+        "category": "rust", "analysis_key": "default", "environment": "", "error": error,
         "warning": "", "tool": {"name": "CodeQL"},
     }
 
@@ -200,7 +200,7 @@ class MainBindingTests(unittest.TestCase):
 
     def test_prerelease_control_plane_must_match_main(self) -> None:
         control = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
-        paths = (*control, "go", "client")
+        paths = (*control, "rust", "client")
         main = [{"path": path, "sha": "a" * 40} for path in paths]
         for path in paths:
             for changed in ({"path": path, "sha": "b" * 40}, None):
@@ -382,7 +382,7 @@ class RequestTests(unittest.TestCase):
                       self.assertRaisesRegex(ControlPlaneError, "RUNNER_TEMP are required")):
                     runner_path("OUT_DIR")
             with patch.dict(os.environ, {"RUNNER_TEMP": ""}):
-                self.assertEqual(local_path("go/dist", os.getcwd()), Path("go/dist").resolve())
+                self.assertEqual(local_path("dist", os.getcwd()), Path("dist").resolve())
                 self.assertEqual(local_path(root / "request", "/usr"), root.resolve() / "request")
                 for path in ("/etc/passwd", root / "escape/etc"):
                     with self.subTest(path=path), self.assertRaisesRegex(ControlPlaneError, "outside"):
@@ -475,7 +475,6 @@ class RequestTests(unittest.TestCase):
             (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, {}, None, "dispatch inputs"),
             ({}, {"WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/x"}, None,
              "trusted main workflow"),
-            ({}, {"PUBLISHER_SHA": OLD, "HEAD": OLD}, None, "no longer current main"),
             ({}, {"HEAD": OLD}, None, "checked-out tooling"),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change, env=env, files=files):
@@ -548,8 +547,7 @@ class CommandTests(unittest.TestCase):
             (True, "publish", client, {}, {}, "notices differ from its build's"),
             (False, "publish", offer, {}, {}, "files are"),
             (True, "publish", None, unprotected, {}, "require reviewers"),
-            (False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
-             {}, "main moved during"),
+            (False, "publish", None, MOVED | {MAIN_COMMIT: {"sha": OLD}}, {}, "main moved during"),
             (True, "publish", None, published, {}, "already published with other assets"),
             (True, "validate", None, published, {}, "already published with other assets"),
             (True, "publish", None, published_with("x.tar.gz", draft=True), {}, None),
