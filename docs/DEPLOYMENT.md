@@ -362,8 +362,9 @@ The server logs to stderr and writes one line per event in UTC, or in the zone `
 
 Each line has a level of `DEBUG`, `INFO`, `WARN` or `ERROR`, then a topic and the message. Warnings and errors end
 with the module that wrote them. Lines a peer can repeat, such as failed handshakes, appear at most once a minute
-with a count of those held back. On a terminal the lines are colored unless `NO_COLOR` is set or `TERM=dumb`, and
-`FORCE_COLOR` colors them anywhere.
+with a count of those held back. Connections refused at a client's limit are logged once a minute per client, so an
+address many users share shows up by name. On a terminal the lines are colored unless `NO_COLOR` is set or
+`TERM=dumb`, and `FORCE_COLOR` colors them anywhere.
 
 `TZ` takes an IANA zone name such as `Europe/Berlin`, and each line then carries the offset in effect at that time,
 such as `2026-10-06T16:31:02+02:00`. The zone data is built into the server, so it needs no mounts and is as
@@ -453,7 +454,7 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
 | `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources-and-logs)).        |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
-| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client.                                                         |
+| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client; a trusted proxy counts only toward `GM_MAX_CONNECTIONS`. |
 | `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Lifetime of a request-shaped measurement. When unset, it grows to at least the stage limit plus 1 min. |
 | `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Lifetime of a WebTransport session. When unset, it grows to at least the operation lifetime. |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s`–`24h`; sent in `/preflight`.                      |
