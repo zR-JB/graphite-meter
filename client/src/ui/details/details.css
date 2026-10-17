@@ -19,7 +19,6 @@
       display: grid;
     }
     & .kv button.link-row {
-      min-height: var(--row-h);
       text-align: start;
     }
     /* Both labels share one cell, so the row never reflows. */

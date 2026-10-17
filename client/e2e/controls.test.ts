@@ -1,6 +1,7 @@
 import {
   baseConfig,
   catalog,
+  downloadOnly,
   frankfurt,
   open,
   openSettings,
@@ -77,9 +78,20 @@ test("an arrow key or a step key steps the time typed into a field, not the one 
 });
 
 test("a unit switch relabels the dial in place, on round ticks, without replaying the result", async (page) => {
-  await open(page);
+  await open(page, undefined, { config: downloadOnly });
   await ready(page);
+  // The run key is never marked busy, as a start it prepares can still be canceled.
+  await page.evaluate(() => {
+    const key = document.querySelector(".run-button")!;
+    const busy: (string | null)[] = [];
+    new MutationObserver((records) => busy.push(...records.map(() => key.getAttribute("aria-busy")))).observe(key, {
+      attributeFilter: ["aria-busy"],
+    });
+    Object.assign(window, { busy });
+  });
   await run(page);
+  expect(await page.evaluate(() => (window as any).busy)).toEqual([]);
+  expect(await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy"))).toBe(false);
   const sweeps = () =>
     page.evaluate(
       () =>
@@ -171,26 +183,9 @@ test("a docked panel's edge steps 16 px from the keyboard, within its limits", a
   }
 });
 
-test("the run key is never marked busy, as a start it prepares can still be cancelled", async (page) => {
-  await open(page);
-  await ready(page);
-  await page.evaluate(() => {
-    const key = document.querySelector(".run-button")!;
-    const busy: (string | null)[] = [];
-    new MutationObserver((records) => busy.push(...records.map(() => key.getAttribute("aria-busy")))).observe(key, {
-      attributeFilter: ["aria-busy"],
-    });
-    Object.assign(window, { busy });
-  });
-  await run(page);
-  expect(await page.evaluate(() => (window as any).busy)).toEqual([]);
-  expect(await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy"))).toBe(false);
-});
-
 test.chrome("a held shortcut acts on its press, and its repeats do nothing", async (page) => {
   await open(page);
-  await ready(page);
-  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await expect(page.locator("#console")).toHaveCount(1);
   const key = (type: string, autoRepeat = false) =>
     page.cdp("Input.dispatchKeyEvent", {
       type,
@@ -315,7 +310,6 @@ test("the first result saves after the application server becomes unreachable", 
 test("a docked sheet reopened while it leaves comes back from where it was", async (page) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page);
-  await ready(page);
   const travel = await page.evaluate(async () => {
     const key = (key: string) => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -344,7 +338,6 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
 test("two docked sheets open and close beside the stage in every frame", async (page) => {
   await page.setViewportSize({ width: 1700, height: 900 });
   await open(page);
-  await ready(page);
   const overlaps = await page.evaluate(async () => {
     const key = (key: string) => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -408,7 +401,8 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await expect(address).toHaveCount(0);
   await page.locator(".secret-mask").hover();
   await key.hover();
-  await Bun.sleep(1_000);
+  // The key's own tip opens on a rest, so the pointer has rested on it.
+  await expect(page.getByRole("tooltip")).toContainText("Show your address");
   await expect(address).toHaveCount(0);
   await key.click();
   await expect(key).toHaveAttribute("aria-pressed", "true");

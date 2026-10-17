@@ -1,5 +1,5 @@
-// Every number as text: rates in the page's unit, latency, bytes, durations and typed times, counts, shares, ranges,
-// progress and dial ticks. A value that is missing or not finite reads MISSING with no unit, never NaN or Infinity.
+// Turns every number into text, from rates in the page's unit, latency, bytes, durations, typed times, counts, shares
+// and ranges to progress and dial ticks. Missing or non-finite values read MISSING with no unit, never NaN or Infinity.
 import type { Preferences } from "../app/preferences";
 
 export const MISSING = "–";
@@ -39,10 +39,10 @@ function fixed(value: number, digits: number): string {
   return text.startsWith("-") && Number(text) === 0 ? text.slice(1) : text;
 }
 
-/** A figure and its unit as one text; a missing figure stays a bare MISSING. */
+/** A figure and its unit as one text. A missing figure stays a bare MISSING. */
 export const withUnit = (figure: string, unit: string) => (figure === MISSING ? MISSING : `${figure} ${unit}`);
 
-/** A rate's figure: two decimals below 100, one below 1000, none above, decided after rounding (99.996 → 100.0). */
+/** A rate's figure has two decimals below 100, one below 1000, none above, decided after rounding (99.996 → 100.0). */
 export const fmtSpeed = guarded((value) =>
   fixed(
     value,
@@ -52,20 +52,20 @@ export const fmtSpeed = guarded((value) =>
 
 const fixedMs = (ms: number) => fixed(ms, Math.abs(Math.round(ms * 10) / 10) < 100 ? 1 : 0);
 
-/** A latency figure: one decimal below 100 ms, decided after rounding. Browser timers resolve 0.1 ms, so a smaller
+/** A latency figure has one decimal below 100 ms, decided after rounding. Browser timers resolve 0.1 ms, so a smaller
     measured value reads as below it. */
 export const fmtMs = guarded((ms) => (ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms)));
 
 export const fmtLatency = (ms: Value) => withUnit(fmtMs(ms), "ms");
 
-/** Fastest to slowest, both ends even when they read the same: 12.3–12.3 ms. */
+/** Reads fastest to slowest, both ends even when they read the same: 12.3–12.3 ms. */
 export function fmtLatencyRange(fastest: Value, slowest: Value): string {
   const from = fmtMs(fastest);
   const to = fmtMs(slowest);
   return from === MISSING || to === MISSING ? MISSING : `${from}–${to} ms`;
 }
 
-/** The latency a load added, signed by its rounded figure, so a tiny reduction reads +0.0; a real one takes "−". */
+/** The latency a load added, signed by its rounded figure, so a tiny reduction reads +0.0 and a real one takes "−". */
 export const fmtAddedMs = guarded((ms) => `${Number(fixedMs(ms)) < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`);
 
 const STEP: Record<UnitBase, number> = { base10: 1000, base2: 1024 };
@@ -95,7 +95,7 @@ export function fmtBytes(bytes: Value, base: UnitBase): string {
 export const rateUnit = (units: Units, tier: number) =>
   `${PREFIX[units.base][tierOf(tier)]}${units.kind === "bits" ? "bit/s" : "B/s"}`;
 
-/** The tier a rate reads in on its own: the largest unit it reaches 1.2 of, as the terminal clients judge it. */
+/** The tier a rate reads in on its own, the largest unit it reaches 1.2 of, as the terminal clients judge it. */
 export function rateTier(bytesPerSec: number, units: Units): number {
   const value = inKind(bytesPerSec, units.kind);
   const step = STEP[units.base];
@@ -149,8 +149,8 @@ export const fmtStageTime = guarded((ms) => {
 const UNIT_MS = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
 const UNIT = /^(ms|s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/;
 
-/** A typed time in ms, or null: seconds unless a unit is named ("90", "2.5", "2h", "1 h 30 min", "500ms"), or a
-    clock ("1:30", "1:30:00"). A shown stage time reads back as itself. */
+/** A typed time in ms, or null. Seconds apply unless a unit is named ("90", "2.5", "2h", "1 h 30 min", "500ms"), or a
+    clock ("1:30", "1:30:00") is typed. A shown stage time reads back as itself. */
 export function parseDuration(text: string): number | null {
   const input = text.trim().toLowerCase();
   let total = 0;
@@ -177,7 +177,7 @@ export function fmtProgress(elapsedMs: Value, totalMs: Value): string {
   return `${fixed(Math.max(0, elapsedMs) / 1000, 1)} / ${fmtStageTime(totalMs)}`;
 }
 
-// en-US like every fixed figure, so no page mixes separators.
+// Counts use en-US like every fixed figure, so no page mixes separators.
 const COUNT = new Intl.NumberFormat("en-US", { signDisplay: "negative" });
 
 export const fmtCount = guarded((count) => COUNT.format(count));
@@ -188,11 +188,11 @@ export function fmtCounted(count: Value, one: string, other = `${one}s`): string
   return shown === MISSING ? MISSING : `${shown} ${shown === "1" ? one : other}`;
 }
 
-/** A share in percent as the terminal clients show it: two decimals below 1%, so a rare timeout stays legible, one
-    from there: 0.25%, 12.5%, 100.0%. */
+/** A share in percent as the terminal clients show it. Two decimals below 1% keep a rare timeout legible, one from
+    there: 0.25%, 12.5%, 100.0%. */
 export const fmtPercent = guarded((pct) => `${fixed(pct, pct > 0 && pct < 1 ? 2 : 1)}%`);
 
-/** A dial label: ungrouped, decimals down to the third significant figure, no trailing zeros: 0.25, 2.5, 1000. */
+/** A dial label is ungrouped, decimals down to the third significant figure, no trailing zeros: 0.25, 2.5, 1000. */
 export const fmtTick = guarded((value) => {
   if (value === 0) return "0";
   const text = fixed(value, Math.min(100, Math.max(0, 2 - Math.floor(Math.log10(Math.abs(value))))));

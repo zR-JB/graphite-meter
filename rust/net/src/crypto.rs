@@ -1,4 +1,4 @@
-//! The one crypto provider, ring, and the client TLS configurations built on it.
+//! Provides the one crypto provider, ring, and the client TLS configurations built on it.
 use crate::trust::{self, Trust};
 use graphite_meter_proto::discovery::Protocol;
 use rustls::{
@@ -13,7 +13,7 @@ use rustls::{
 use std::sync::{Arc, LazyLock};
 use tokio::sync::OnceCell;
 
-/// ring with TLS 1.3 first in the cheapest order: AES-128-GCM with AES hardware, ChaCha20-Poly1305 without.
+/// Puts ring's TLS 1.3 suites first, cheapest first: AES-128-GCM with AES hardware, ChaCha20-Poly1305 without.
 pub fn provider() -> Arc<CryptoProvider> {
     static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| {
         let order = if aes_hardware() {
@@ -30,7 +30,7 @@ pub fn provider() -> Arc<CryptoProvider> {
     PROVIDER.clone()
 }
 
-/// Whether AES-GCM runs in hardware on the architectures the binaries ship for.
+/// Tells whether AES-GCM runs in hardware on the architectures the binaries ship for.
 pub fn aes_hardware() -> bool {
     cfg_select! {
         any(target_arch = "x86", target_arch = "x86_64") => {
@@ -44,26 +44,26 @@ pub fn aes_hardware() -> bool {
     }
 }
 
-/// How a client checks server certificates.
+/// Says how a client checks server certificates.
 #[derive(Clone, Debug)]
 pub enum Verify {
-    /// Against these roots, which their first configuration loads.
+    /// The client checks against these roots, which their first configuration loads.
     Trusted(Arc<Trust>),
-    /// Not at all; handshake signatures are still checked.
+    /// The client does not check them. Handshake signatures are still checked.
     Insecure,
 }
 
 impl Verify {
-    /// Against the process's roots, which `SSL_CERT_FILE` and `SSL_CERT_DIR` adjust.
+    /// Checks against the process's roots, which `SSL_CERT_FILE` and `SSL_CERT_DIR` adjust.
     pub fn trusted() -> Self {
         Self::Trusted(Trust::system())
     }
 }
 
-/// Client configurations kept per trust: one offering no ALPN, then one per protocol in declaration order.
+/// Each trust keeps this many client configurations, one offering no ALPN and one per protocol in declaration order.
 pub(crate) const CONFIGS: usize = Protocol::ALL.len() + 1;
 
-/// The client configuration for `verify` offering `alpn`, built once so its connections share one session cache.
+/// Builds the client configuration for `verify` offering `alpn` once, so its connections share one session cache.
 pub async fn client_config(verify: &Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
     static INSECURE: [OnceCell<Arc<ClientConfig>>; CONFIGS] = [const { OnceCell::const_new() }; CONFIGS];
     let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
@@ -74,12 +74,12 @@ pub async fn client_config(verify: &Verify, alpn: Option<Protocol>) -> Arc<Clien
     };
     match configs[index].get_or_try_init(build).await {
         Ok(config) => config.clone(),
-        // A trust load that did not finish refuses this connection; the next call loads again.
+        // A trust load that did not finish refuses this connection. The next call loads again.
         Err(cut_short) => configure(trust::refusing(cut_short), alpn),
     }
 }
 
-/// `alpn` none offers nothing, for an HTTPS proxy's hop, so the proxy answers CONNECT in HTTP/1.1.
+/// A missing `alpn` offers nothing, for an HTTPS proxy's hop, so the proxy answers CONNECT in HTTP/1.1.
 fn configure(verifier: Arc<dyn ServerCertVerifier>, alpn: Option<Protocol>) -> Arc<ClientConfig> {
     let (versions, protocols): (&[&SupportedProtocolVersion], &[&[u8]]) = match alpn {
         None => (rustls::DEFAULT_VERSIONS, &[]),

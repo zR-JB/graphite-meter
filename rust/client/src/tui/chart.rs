@@ -1,5 +1,5 @@
-//! A stage's traces in braille over its window: the rate as a line, and the replies as one bar a cell from the fastest
-//! to the slowest, ending in an arrowhead where a reply passes the top.
+//! Draws a stage's traces in braille over its window, the rate as a line and the replies as one bar a cell from the
+//! fastest to the slowest, ending in an arrowhead where a reply passes the top.
 use super::paint::{Canvas, Dots};
 use crate::{
     events::Point,
@@ -7,8 +7,8 @@ use crate::{
 };
 use ratatui_core::layout::Rect;
 
-/// `points` over `window` seconds as a line up to `head`, the live value now, its tip in `tip` and the area under it
-/// fading into `field`; a gap breaks it.
+/// Draws `points` over `window` seconds as a line up to `head`, the live value now, its tip in `tip` and the area
+/// under it fading into `field`. A gap breaks it.
 pub fn line(
     canvas: &mut Canvas,
     area: Rect,
@@ -27,7 +27,7 @@ pub fn line(
     let last = points.last().map_or(f64::NEG_INFINITY, |point| point.at.as_secs_f64());
     let head = head.filter(|&(at, _)| at > last);
     let (mut next, mut previous, mut tipped) = (0, None::<isize>, None);
-    // Each cell column's highest dot of the line.
+    // Tracks each cell column's highest dot of the line.
     let mut crests = vec![None::<isize>; usize::from(area.width)];
     for x in 0..across {
         let at = window.0 + (x as f64 + 0.5) / across as f64 * span;
@@ -78,7 +78,7 @@ pub fn line(
     canvas.dots(&dots);
 }
 
-/// The value at `at` between `before` and a later point at `after_at`, along the line between them.
+/// Interpolates the value at `at` between `before` and a later point at `after_at`, along the line between them.
 fn between(before: &Point, after_at: f64, after: Option<f64>, at: f64) -> f64 {
     let (from, to) = (before.at.as_secs_f64(), after_at);
     match (before.value, after) {
@@ -88,8 +88,8 @@ fn between(before: &Point, after_at: f64, after: Option<f64>, at: f64) -> f64 {
     }
 }
 
-/// `points` over `window` seconds as one bar a cell from the fastest to the slowest value it holds, on a scale to
-/// `top`; a bar past it ends at the top in an arrowhead.
+/// Draws `points` over `window` seconds as one bar a cell from the fastest to the slowest value it holds, on a scale
+/// to `top`. A bar past it ends at the top in an arrowhead.
 pub fn bars(canvas: &mut Canvas, area: Rect, points: &[Point], (top, window): (f64, (f64, f64)), color: Color) {
     let mut dots = Dots::new(area);
     let (_, down) = dots.size();

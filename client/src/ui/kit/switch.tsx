@@ -1,4 +1,4 @@
-// A switch row: the label names it, an optional tip describes it; the owner decides whether the change applies.
+// The label names a switch row and an optional tip describes it. The owner decides whether the change applies.
 import { tip } from "./tip";
 
 let ids = 0;
@@ -22,7 +22,7 @@ export function Switch(props: {
         disabled={() => props.disabled?.() ?? false}
         onchange={(event) => {
           const next = event.currentTarget.checked;
-          // Controlled: the row shows what the owner keeps.
+          // The row is controlled, so it shows what the owner keeps.
           event.currentTarget.checked = props.checked();
           props.onToggle(next);
         }}

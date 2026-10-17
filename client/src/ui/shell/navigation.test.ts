@@ -13,7 +13,7 @@ import {
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
-test("hashes parse to routes and serialise to their shortest canonical form", () => {
+test("hashes parse to routes and serialize to their shortest canonical form", () => {
   for (const [hash, canonical] of [
     ["", "#/"],
     ["#/", "#/"],
@@ -109,7 +109,7 @@ function browser(hash = "#/", state: unknown = null) {
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-test("the first load is canonicalised in place and committed as the browser's navigation", () => {
+test("the first load is canonicalized in place and committed as the browser's navigation", () => {
   const page = browser("#/endpoint?panels=settings");
   page.navigator.start();
   expect(page.hashes()).toEqual(["#/?panels=endpoint,settings"]);

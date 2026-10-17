@@ -66,7 +66,7 @@ p {
 .card > h1 + p {
   margin-top: var(--space-1);
 }
-/* The sign-in card is a faceplate: the instrument at rest over a centred head. */
+/* The sign-in card is a faceplate: the instrument at rest over a centered head. */
 .face {
   display: grid;
   justify-items: center;

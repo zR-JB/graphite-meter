@@ -1,4 +1,4 @@
-//! Authentication over the app: refusals, trust, and cookie and grant access.
+//! Tests authentication over the app, its refusals, trust, and cookie and grant access.
 
 use super::*;
 use graphite_meter_server::{
@@ -10,7 +10,7 @@ use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
-/// `api/password.testvectors.json`: the operator's password and its pinned hash.
+/// `api/password.testvectors.json` holds the operator's password and its pinned hash.
 pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -38,7 +38,7 @@ pub(super) fn login(app: &App, principal: Principal) -> NewLogin {
         .unwrap()
 }
 
-/// A request naming the public host.
+/// Builds a request naming the public host.
 pub(super) fn public(method: &str, uri: &str) -> Builder {
     Request::builder()
         .method(method)
@@ -46,7 +46,7 @@ pub(super) fn public(method: &str, uri: &str) -> Builder {
         .header("host", "meter.example")
 }
 
-/// A request from the public origin with the cookie of `login`, proving its CSRF token.
+/// Builds a request from the public origin with the cookie of `login`, proving its CSRF token.
 pub(super) fn signed(method: &str, uri: &str, login: &NewLogin) -> Builder {
     public(method, uri)
         .header("origin", PUBLIC)

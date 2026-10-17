@@ -1,11 +1,11 @@
-// The diagnostic report: the state the page really holds, so a field added later is reported without listing it
-// here, with what identifies a person or a deployment taken out.
+// The diagnostic report carries the state the page really holds, so a field added later is reported without being
+// listed here. It takes out what identifies a person or a deployment.
 
-/** Keys never reported, at any depth: secrets, and the address the server saw for this browser. */
+/** These keys are never reported at any depth. They hold secrets and the address the server saw for this browser. */
 const WITHHELD = new Set(["credentials", "token", "authorization", "cookie", "clientIp"]);
 const URLISH = /\b(?:https?|wss?):\/\/[^\s"'<>]+/g;
 
-/** How a host reads without naming it. */
+/** Describes a host without naming it. */
 export function hostKind(host: string): string {
   const bare = host.replace(/^\[|\]$/g, "").toLowerCase();
   if (bare === "localhost" || bare.endsWith(".localhost")) return "loopback";
@@ -30,18 +30,18 @@ export function hostKind(host: string): string {
 }
 
 interface ReportSources {
-  /** The page's address, which relative server URLs resolve against. */
+  /** Relative server URLs resolve against this page address. */
   page: string;
-  /** Every server the report can mention: the catalog's, as discovery names them, and the run's. */
+  /** Holds every server the report can mention, the catalog's as discovery names them and the run's. */
   servers: readonly { id: string; url: string; name: string; location?: string }[];
-  /** The addresses servers saw for this browser, scrubbed from free text too. */
+  /** Holds the addresses servers saw for this browser, which are scrubbed from free text too. */
   clientIps: readonly string[];
-  /** Plain state: build, environment, settings, the servers' views and the run. */
+  /** Holds plain state, from the build, environment and settings to the servers' views and the run. */
   state: Record<string, unknown>;
 }
 
-/** Pretty JSON in which servers read "server-N", their names "Server N", this browser's address "client-address",
-    and secrets are gone. */
+/** Renders pretty JSON in which servers read "server-N", their names "Server N" and this browser's address
+    "client-address", with secrets gone. */
 export function diagnosticReport({ page, servers, clientIps, state }: ReportSources): string {
   const hosts = new Map<string, string>();
   const words = new Map<string, string>();
@@ -61,7 +61,7 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
     if (server.id !== "self") words.set(server.id, `server-${number}`);
   }
   for (const ip of clientIps) words.set(ip, "client-address");
-  // Whole words, longest first, so an ID never rewrites part of another word or name.
+  // The pattern matches whole words, longest first, so an ID never rewrites part of another word or name.
   const known = [...words.keys()].sort((a, b) => b.length - a.length);
   const pattern = known.length
     ? new RegExp(`(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`, "g")

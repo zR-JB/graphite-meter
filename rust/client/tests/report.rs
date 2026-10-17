@@ -1,4 +1,4 @@
-//! The printed report of a reduced view: its lines, plain and in the 16-color profile, and its width.
+//! Prints the report of a reduced view and checks its lines, plain and in the 16-color profile, and its width.
 use graphite_meter_client::{
     controller::Kind,
     events::{Event, View},
@@ -48,8 +48,8 @@ fn server(name: &str, left: bool, down: Option<f64>, median_ms: u64) -> ServerRe
     }
 }
 
-/// The view of a finished run of `plan` over `names`, each a prepared server named `<name> meter`, whose stages
-/// gave `results` from `at`.
+/// Builds the view of a finished run of `plan` over `names`, each a prepared server named `<name> meter`, whose
+/// stages gave `results` from `at`.
 fn viewed(names: &[&str], plan: &[(Stage, Duration)], results: Vec<StageResult>, end: Event, at: Instant) -> View {
     let origin = Origin::parse("https://meter.example").unwrap();
     let unchecked = Failure::new(FailureReason::Timeout, "unchecked");
@@ -84,7 +84,7 @@ fn result(stage: Stage, measured: Duration, down: Option<Throughput>, servers: V
     }
 }
 
-/// A latency and download run over `names`; the second leaves the download at 7.5 s.
+/// Views a latency and download run over `names`. The second leaves the download at 7.5 s.
 fn view(names: &[&str]) -> View {
     let at = Instant::now();
     let shares = |left: bool, down| {
@@ -194,7 +194,7 @@ fn the_16_color_and_ascii_profiles_write_their_codes_and_a_narrow_report_fits_it
     assert!(details.ends_with("\nb meter · Download throughput · at 7.5 …\n"), "{details}");
 }
 
-/// The report of a finished download run over the server `a`, which `result` describes.
+/// Prints the report of a finished download run over the server `a`, which `result` describes.
 fn sole(mut result: StageResult, outcome: Outcome, error: Option<Failure>) -> String {
     let at = Instant::now();
     for failure in &mut result.failures {
@@ -205,7 +205,7 @@ fn sole(mut result: StageResult, outcome: Outcome, error: Option<Failure>) -> St
     printed(&report(&view, WIDTH, &Palette::new(true)), Profile::Plain)
 }
 
-/// The download stage over `a`: measured for `measured` at 100 Mbit/s when `rate`, `a` leaving with `failure`.
+/// Builds the download stage over `a`, measured for `measured` at 100 Mbit/s when `rate`, `a` leaving with `failure`.
 fn download(measured: Duration, rate: bool, failure: Option<(Scope, FailureReason)>) -> StageResult {
     let rate = rate.then_some(Rate { mean: 1.25e7, peak: 1.5e7 });
     let throughput = (!measured.is_zero()).then_some(Throughput { rate, bytes: 125_000_000 });

@@ -1,6 +1,7 @@
 // The dial: the ring, the needle that follows the running stage, the result that takes the ring over, the readout and
 // the note. Per frame the painter writes three transforms, a text node and a class.
 import type { App } from "../../app/app";
+import { CHECK_FAILED } from "../../engine/net/checks";
 import { STAGES, type Stage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { pageMs } from "../../lib/frame";
@@ -39,7 +40,7 @@ import { Figure, inView, measure, painter } from "./paint";
 /** A result leaves as its arcs drain back to zero, so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
 const TRANSFER: readonly string[] = ["download", "upload", "bidirectional"];
-const LABELLED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
+const LABELED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
 
 let dials = 0;
 
@@ -100,7 +101,7 @@ export function Dial(props: {
   // Labels change in place with the scale or the unit; only a switch between rate and time ticks hands off.
   const ticks = handoff(
     () => {
-      if (unusable() || !LABELLED.includes(phase())) return [] as string[];
+      if (unusable() || !LABELED.includes(phase())) return [] as string[];
       if (live.msScale()) return DIAL_LABELS.map((f) => fmtTick(scaleMs() * f));
       return DIAL_LABELS.map((f) => fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)));
     },
@@ -181,7 +182,7 @@ export function Dial(props: {
     const throughput = view?.throughput.state === "failed";
     const latency = live.latencyEnabled() && view?.latency.state === "failed";
     if (!throughput && !latency) return { status: PHASE["start-failed"], detail };
-    return { status: DIAL.checkFailed, detail: DIAL.unavailable(throughput, latency) };
+    return { status: CHECK_FAILED, detail: DIAL.unavailable(throughput, latency) };
   });
   const ending = computed(() => {
     if (phase() === "aborted") return { status: PHASE.stopped, tone: "", hint: DIAL.restart };
@@ -308,7 +309,6 @@ export function Dial(props: {
     if (stage) needleLayer.style.setProperty("--accent", `var(--phase-${stage})`);
   });
 
-  // The figure is a box of fixed size laid out alone, so a new value lays out nothing around it.
   const number = new Figure("dial-figure", 5);
   number.set(MISSING);
   const value = (

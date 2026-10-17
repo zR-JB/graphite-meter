@@ -91,7 +91,7 @@ async function observe(page: Page, hold: string[] = []) {
   };
 }
 
-test.chrome("settings discovery is bounded, reused and cancelled on close", async (page) => {
+test.chrome("settings discovery is bounded, reused and canceled on close", async (page) => {
   const activity = await observe(page);
   await open(page, home.url, {
     config: {

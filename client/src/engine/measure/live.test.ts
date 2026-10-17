@@ -50,8 +50,8 @@ test("servers present independently, and only an irregular receiver is bridged b
 });
 
 test("a slow receiver counting 64 KiB reads never opens with a peak", () => {
-  // 9.3 Mbit/s into a server that counts whole reads, a record every 100 ms and the boundary's checkpoint 2 ms after
-  // the first record with a read completing between them: that pair alone once showed 28 times the rate.
+  // 9.3 Mbit/s flows into a server that counts whole reads, with a record every 100 ms and the boundary's checkpoint
+  // 2 ms after the first record. A read completes between them, and that pair alone once showed 28 times the rate.
   const rate = 1_162_500;
   const counted = (ms: number) => Math.floor((rate * (ms + 55)) / 1000 / 65_536) * 65_536;
   const live = new LiveRates();
@@ -71,7 +71,7 @@ test("an hour of 10 ms reports keeps a bounded window and the same steady rate",
   Bun.gc(true);
   const before = heapStats().heapSize;
   const estimator = new RateEstimator();
-  // 1,000 B/s in 10 ms reports for an hour.
+  // The estimator sees 1,000 B/s in 10 ms reports for an hour.
   for (let i = 0; i < 360_000; i++) estimator.observe(10, 10);
   Bun.gc(true);
   expect(heapStats().heapSize - before).toBeLessThan(4 * 1024 * 1024);

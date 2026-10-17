@@ -10,7 +10,7 @@ afterEach(() => {
     else Reflect.deleteProperty(globalThis, name);
 });
 
-/** A signed-in page whose History saves results, on storage that never answers; where it navigated to. */
+/** A signed-in page whose History saves results, on storage that never answers, and where it navigated to. */
 function signedInPage(): string[] {
   jest.useFakeTimers();
   const navigated: string[] = [];

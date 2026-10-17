@@ -1,7 +1,7 @@
-//! Key bindings: one table per context, which dispatch, the bottom bar and the keys sheet all read.
+//! Binds keys in one table per context, which dispatch, the bottom bar and the keys sheet all read.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// A pressed key as bindings name it; shift only changes the character.
+/// Names a pressed key as bindings do. Shift only changes the character.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Code(KeyCode),
@@ -9,7 +9,7 @@ pub enum Key {
 }
 
 impl Key {
-    /// The key `event` presses; none with alt or another modifier held.
+    /// Reads the key `event` presses, none with alt or another modifier held.
     pub fn of(event: KeyEvent) -> Option<Self> {
         match (event.code, event.modifiers - KeyModifiers::SHIFT) {
             (code, KeyModifiers::NONE) => Some(Self::Code(code)),
@@ -18,7 +18,7 @@ impl Key {
         }
     }
 
-    /// The step the key moves by: back for up, left, k and shift+tab.
+    /// The key moves by this step, back for up, left, k and shift+tab.
     pub fn step(self) -> isize {
         match self {
             Self::Code(KeyCode::Up | KeyCode::Left | KeyCode::BackTab | KeyCode::Char('k')) => -1,
@@ -58,7 +58,7 @@ pub enum Action {
 pub struct Binding {
     pub keys: &'static [Key],
     pub action: Action,
-    /// The key and what it does as the bar and the keys sheet name them; none keeps the binding out of both.
+    /// Names the key and what it does as the bar and the keys sheet show them. None keeps the binding out of both.
     pub help: Option<(&'static str, &'static str)>,
 }
 
@@ -67,7 +67,7 @@ impl Binding {
         Self { keys, action, help: Some((key, does)) }
     }
 
-    /// The binding with what it does named `does`.
+    /// Renames what the binding does to `does`.
     pub const fn does(self, does: &'static str) -> Self {
         let Some((key, _)) = self.help else { return self };
         Self { help: Some((key, does)), ..self }
@@ -146,13 +146,13 @@ pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, ABORT.hidde
 pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL.does("cancel sign-in"), QUIT, ABORT.hidden()];
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
 
-/// The first binding of `table` for `key` whose action is `offered`.
+/// Finds the first binding of `table` for `key` whose action is `offered`.
 pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Option<Action> {
     let bindings = table.iter().filter(|binding| binding.keys.contains(&key));
     bindings.map(|binding| binding.action).find(|&action| offered(action))
 }
 
-/// The bindings of `table` that help lists while their actions are `offered`.
+/// Lists the bindings of `table` that help shows while their actions are `offered`.
 pub fn listed(table: &[Binding], offered: impl Fn(Action) -> bool) -> Vec<Binding> {
     let listed = |binding: &&Binding| binding.help.is_some() && offered(binding.action);
     table.iter().filter(listed).copied().collect()

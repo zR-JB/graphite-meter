@@ -1,23 +1,29 @@
 // What a finished run reports and the rules that judge it: stage statuses, the outcome, and the coherence a saved
-// result must hold. History keeps these shapes as its schema 5.
+// result must hold. History keeps these shapes as its schema 6.
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
-import { coveredMs, directions, sufficient, type Interval, type ThroughputResult } from "../measure/aggregate";
+import {
+  coveredMs,
+  directions,
+  MIN_EVIDENCE_MS,
+  sufficient,
+  type Interval,
+  type ThroughputResult,
+} from "../measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../measure/latency";
 import type { WireModel } from "../measure/overhead";
 import { minCoverage } from "../measure/stability";
-import type { HttpProtocol, ServerIdentity } from "../types";
+import type { HttpProtocol, Role, ServerIdentity } from "../types";
 import { STAGES, type Stage } from "./schedule";
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
 export type Outcome = "complete" | "partial" | "incomplete";
-export type Scope = "throughput" | "latency";
 
 export interface ServerFailure {
   serverId: string;
   stage: Stage;
   /** Run ms. */
   atMs: number;
-  scope: Scope;
+  scope: Role;
   reason: FailureReason;
   /** At most 256 characters, empty when the server's text carried control characters. */
   message: string;
@@ -37,6 +43,7 @@ export interface StageResults {
 /** A server's share of the run; its throughput results come from its own full windows. */
 export interface ServerMeasurementSummary {
   server: ServerIdentity;
+  engineVersion?: string;
   throughput: {
     origin: string;
     transport: string;
@@ -88,7 +95,7 @@ export interface RunResult extends StageResults {
 /** What each stage was measured against when it settled; the settings may have changed since. */
 export type StagePlans = Record<Stage, { planned: boolean; durationMs: number; early: boolean }>;
 
-export const failureScope = (stage: Stage): Scope => (stage === "latency" ? "latency" : "throughput");
+export const failureScope = (stage: Stage): Role => (stage === "latency" ? "latency" : "throughput");
 
 export const lanes = (
   results: Record<"latency" | "download" | "upload", unknown> & {
@@ -113,7 +120,7 @@ export const movedBytes = (result: MultiServerResult) =>
 export function incoherence(result: RunResult, plans: StagePlans): string[] {
   const problems: string[] = [];
   const { failures, intervals, omittedIntervals } = result.multiServer;
-  // Past 128 intervals the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
+  // Past the interval limit the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
   const firstKept = intervals.length ? STAGES.indexOf(intervals[0]!.stage) : STAGES.length;
   for (const failure of failures)
     if (!Object.hasOwn(FAILURE_REASONS, failure.reason)) problems.push(`unknown failure reason ${failure.reason}`);
@@ -132,7 +139,7 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
     if (stage === "latency" || status !== "complete" || (omittedIntervals > 0 && STAGES.indexOf(stage) <= firstKept))
       continue;
     if (!directions(stage).every((dir) => spans.some(({ headline }) => sufficient(headline, dir))))
-      problems.push(`${stage} is complete without 800 ms of evidence`);
+      problems.push(`${stage} is complete without ${MIN_EVIDENCE_MS} ms of evidence`);
     const covered = coveredMs(intervals, stage);
     if (covered < durationMs * minCoverage(early))
       problems.push(`${stage} covers ${Math.round(covered)} of ${durationMs} ms`);

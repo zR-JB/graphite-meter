@@ -1,4 +1,4 @@
-//! Third-party notices: `embed` writes `legal.rs` at build time, defining `static NOTICES: Notices` for run time.
+//! Embeds third-party notices. `embed` writes `legal.rs` at build time, defining `static NOTICES: Notices` for runtime.
 
 #[cfg(feature = "build")]
 mod build;
@@ -11,22 +11,22 @@ use std::{
     sync::OnceLock,
 };
 
-/// The browser's notice path, which a server serves from the report's suffix.
+/// A server serves the browser's notice at this path from the report's suffix.
 pub const BROWSER_NOTICE: &str = "legal/THIRD_PARTY_NOTICES.txt";
 
-/// The notices a build embedded.
+/// Holds the notices a build embedded.
 pub struct Notices {
-    /// The zlib-compressed report and its length.
+    /// Holds the zlib-compressed report and its length.
     payload: Option<(&'static [u8], usize)>,
-    /// Where the browser's notice starts in the report.
+    /// The browser's notice starts here in the report.
     browser: Option<usize>,
-    /// The build's plain marker: a development build's, a reviewed build's with its report's SHA-256, or nothing.
+    /// The build's plain marker is a development build's, a reviewed build's with its report's SHA-256, or nothing.
     marker: &'static str,
     report: OnceLock<Vec<u8>>,
 }
 
 impl Notices {
-    /// Used by the generated `legal.rs`.
+    /// The generated `legal.rs` calls this.
     #[doc(hidden)]
     pub const fn new(payload: Option<(&'static [u8], usize)>, browser: Option<usize>, marker: &'static str) -> Self {
         Self { payload, browser, marker, report: OnceLock::new() }
@@ -37,7 +37,7 @@ impl Notices {
         std::hint::black_box(self.marker);
     }
 
-    /// The report, inflated on first use; `None` in a build without notices.
+    /// Inflates the report on first use. A build without notices gives `None`.
     pub fn report(&self) -> Option<&[u8]> {
         let (compressed, length) = self.payload?;
         let report = self.report.get_or_init(|| {
@@ -49,14 +49,14 @@ impl Notices {
         Some(report)
     }
 
-    /// The browser's notice, in a server build that embeds the browser app.
+    /// Returns the browser's notice in a server build that embeds the browser app.
     pub fn browser(&self) -> Option<&[u8]> {
         let start = self.browser?;
         Some(&self.report()?[start..])
     }
 }
 
-/// Writes `report`, returning the exit status: 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
+/// Writes `report` and returns the exit status, 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
 pub fn print(mut out: impl Write, report: &[u8]) -> io::Result<u8> {
     match out.write_all(report).and_then(|()| out.flush()) {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),

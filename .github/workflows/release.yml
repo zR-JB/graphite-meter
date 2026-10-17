@@ -19,7 +19,7 @@ jobs:
       && github.event.workflow_run.head_branch == 'main'
       && github.event.workflow_run.path == '.github/workflows/release-request.yml'
     name: Verify the untrusted candidate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -101,7 +101,7 @@ jobs:
     name: Publish after ghcr-release approval
     if: needs.verify.outputs.publish == 'true'
     needs: verify
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     environment: ghcr-release
     concurrency:

@@ -1,4 +1,4 @@
-//! Connections to HTTP(S) targets: direct, through a CONNECT tunnel, in absolute form or through SOCKS5.
+//! Opens connections to HTTP(S) targets directly, through a CONNECT tunnel, in absolute form or through SOCKS5.
 use crate::{
     Verify, client_config, dial,
     proxy::{Login, Proxy, UnusableProxy, Upstream},
@@ -15,33 +15,33 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 
-/// The longest CONNECT response head a proxy may send.
+/// A proxy may send a CONNECT response head at most this long.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
-/// The longest a proxy's handshake may take past the TCP connect.
+/// A proxy's handshake may take this long past the TCP connect.
 const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
-/// The longest the target's TLS handshake may take past the proxy.
+/// The target's TLS handshake may take this long past the proxy.
 const TLS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Socket reads beneath rustls, whose own 4 KiB reads keep Linux receive autotuning from growing the window.
+/// Reads beneath rustls are this big, since its own 4 KiB reads keep Linux receive autotuning from growing the window.
 pub const TLS_READ_BYTES: usize = 64 << 10;
 
 pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 
-/// An open connection to a target, past any proxy and through TLS for HTTPS.
+/// Holds an open connection to a target, past any proxy and through TLS for HTTPS.
 pub struct Connection {
     pub stream: Box<dyn Stream>,
-    /// The protocol the target's TLS handshake agreed on.
+    /// The target's TLS handshake agreed on this protocol.
     pub alpn: Option<Vec<u8>>,
     pub form: RequestForm,
 }
 
-/// How requests on a connection name their target; it prints without credentials.
+/// Says how requests on a connection name their target. It prints without credentials.
 #[derive(Clone, PartialEq, Eq)]
 pub enum RequestForm {
-    /// `GET /path`, to the target itself.
+    /// Requests go as `GET /path` to the target itself.
     Origin,
-    /// `GET http://host/path`, to an HTTP proxy, with its `Proxy-Authorization` value.
+    /// Requests go as `GET http://host/path` to an HTTP proxy, carrying its `Proxy-Authorization` value.
     Absolute { authorization: Option<String> },
 }
 
@@ -57,7 +57,7 @@ impl fmt::Debug for RequestForm {
     }
 }
 
-/// Why a connection could not be opened, decided where it failed.
+/// Says why a connection could not be opened, decided where it failed.
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
@@ -136,7 +136,7 @@ impl Connector {
         Ok(Connection { stream: Box::new(stream), alpn, form })
     }
 
-    /// The proxy's part on `stream`: its TLS for an HTTPS proxy, then SOCKS5, a CONNECT tunnel or nothing.
+    /// Runs the proxy's part on `stream`, first TLS for an HTTPS proxy, then SOCKS5, a CONNECT tunnel or nothing.
     async fn through(
         &self,
         upstream: &Upstream,
@@ -225,7 +225,7 @@ async fn tunnel(
     Ok(stream)
 }
 
-/// A response head ending in an empty line, CRs optional, read byte by byte so the tunnel's first bytes stay unread.
+/// Reads a response head up to its empty line, CRs optional, byte by byte so the tunnel's first bytes stay unread.
 async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError> {
     let mut head = Vec::new();
     while !(head.ends_with(b"\n\n") || head.ends_with(b"\n\r\n")) {
@@ -237,7 +237,7 @@ async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError>
     Ok(String::from_utf8_lossy(&head).into_owned())
 }
 
-/// A SOCKS5 CONNECT (RFC 1928, RFC 1929) on `stream` to `host`, offering username and password only with a login.
+/// Runs SOCKS5 CONNECT (RFC 1928, RFC 1929) on `stream` to `host`, offering username and password only with a login.
 async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port: u16) -> Result<(), ConnectError> {
     let greeting: &[u8] = if login.is_some() { &[5, 2, 0, 2] } else { &[5, 1, 0] };
     stream.write_all(greeting).await?;

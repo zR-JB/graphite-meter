@@ -55,6 +55,15 @@ cd client && GM_E2E_SERVER_BIN=../rust/target/ci/graphite-meter-server \
   bun run e2e bun test ./e2e --no-orphans --timeout=60000 -t "History"
 ```
 
+`GM_WEBVIEW_DEBUG=1` passes Chrome's own stderr through. Two manual Chrome benchmarks run on the same fleet.
+`mise run bench-ui` checks frame delivery during a run: `GM_PERF_SERVERS` lists the server counts (default `1,4`),
+`GM_PERF_BIDIRECTIONAL=1` adds that stage, `GM_PERF_CPU` throttles the CPU by a factor, `GM_PERF_VIEWPORT` (`WxH`)
+and `GM_PERF_DPR` emulate a screen, `GM_PERF_TARGET_MS`, `GM_PERF_P99_MS` and `GM_PERF_MAX_MS` set the frame budget
+(16.7, 16.7 or 33.4 when throttled, and 50 ms), and `GM_PERF_PROFILE` and `GM_PERF_METRICS` name file prefixes for a
+CPU profile and the measurements. `mise run bench-session` checks that repeated tests release their resources:
+`GM_PERF_RUNS` sets the count (12), `GM_PERF_BACKGROUND=1` minimizes the window during every tenth, and
+`GM_PERF_METRICS` and `GM_PERF_HEAP` name files for the samples and a final heap snapshot.
+
 For manual HTTPS and HTTP/3 runs, put certificates for the names you use in an untracked `.dev-certs/`. Chromium
 also needs the leaf's SPKI pin:
 
@@ -148,8 +157,8 @@ it. `src/app/app.ts`, mounted by `src/main.tsx`, is the one place that wires acr
 | `public`       | Fonts, the favicon and the legal notices, copied into the build as they are.                                             |
 
 Saved data and links from earlier releases keep working, so these are compatibility boundaries: `localStorage`
-`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 3
-with schema-5 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (Details is `endpoint` in
+`graphite-meter:v1` and `graphite-meter:server-selection:v1`, the IndexedDB database `graphite-meter` at version 4
+with schema-6 records, the BroadcastChannel `graphite-meter-history`, and the hash routes (Details is `endpoint` in
 URLs). The page keeps the server's shell contract, which `build.ts` checks: one `</head>`, one attribute-less inline
 script and style hashed into the content security policy, the `graphite-meter-trusted-types` meta naming the
 Trusted Types policy `src/lib/trusted.ts` creates, `<div id="app">` and hashed assets under `/assets/`.

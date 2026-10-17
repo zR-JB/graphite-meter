@@ -1,4 +1,4 @@
-//! The stage engine against scripted timelines.
+//! Runs the stage engine against scripted timelines.
 
 use graphite_meter_client::{
     measure::{
@@ -33,7 +33,7 @@ fn plan(stage: Stage, members: &[&str], latency: bool) -> StagePlan {
     }
 }
 
-/// Bytes of a server moving one kilobyte per millisecond until `stop`.
+/// Counts the bytes of a server moving one kilobyte per millisecond until `stop`.
 fn moved(at: Duration, stop: Duration) -> u64 {
     at.min(stop).as_millis() as u64 * 1000
 }
@@ -58,20 +58,20 @@ fn checkpoint(server: &str, bytes: u64, nanos: u64) -> Sample {
     with(sample(server), |reading| reading.up = Some(Receiver { id: 0, counters }))
 }
 
-/// A checkpoint whose receiver clock runs with the client's.
+/// Builds a checkpoint whose receiver clock runs with the client's.
 fn up(server: &str, bytes: u64, at: Duration) -> Sample {
     checkpoint(server, bytes, at.as_nanos() as u64 + 1)
 }
 
-/// An engine ticked at scripted times, with what it decided.
+/// Ticks an engine at scripted times and keeps what it decided.
 struct Script {
     engine: Engine,
     base: Instant,
     next: Duration,
     log: Vec<(Duration, Decision)>,
-    /// When the live trace got rates.
+    /// Records when the live trace got rates.
     live: Vec<Duration>,
-    /// Departures the next tick passes in.
+    /// The next tick passes these departures in.
     departed: Vec<(ServerId, Failure)>,
 }
 
@@ -102,7 +102,7 @@ impl Script {
         }
     }
 
-    /// A tick on time.
+    /// Ticks on time.
     fn step(&mut self, at: Duration, samples: &[Sample], probes: &[(ServerId, ProberEvent)]) {
         self.tick(at, Duration::ZERO, samples, probes);
     }
@@ -129,7 +129,7 @@ impl Script {
         found.map(|(at, _)| *at)
     }
 
-    /// When the window opened and when it closes.
+    /// Says when the window opened and when it closes.
     fn window(&self) -> Option<(Duration, Duration)> {
         self.log.iter().find_map(|(_, decision)| match decision {
             Decision::OpenWindow { start, end } => Some((*start - self.base, *end - self.base)),
@@ -145,7 +145,7 @@ impl Script {
         removals.collect()
     }
 
-    /// Failures the members stayed for.
+    /// Lists the failures the members stayed for.
     fn failed(&self) -> Vec<(Duration, &str, Scope, FailureReason)> {
         let failures = self.log.iter().filter_map(|(at, decision)| match decision {
             Decision::Failed(failure) => Some((*at, failure.server.as_str(), failure.scope, failure.failure.reason)),
@@ -192,7 +192,7 @@ fn a_lane_that_fails_as_the_window_closes_never_fails_a_moving_member() {
     script.run(|at| failing(at, ms(5000)));
     assert_eq!(script.removed(), [(ms(5000), "a", FailureReason::ConnectionLost)]);
 
-    // The final checkpoint answers within its budget after the window; silence counts to the window's end.
+    // The final checkpoint answers within its budget after the window. Silence counts to the window's end.
     let mut script = Script::new(plan(Stage::Upload, &["a"], false));
     let stop = STAGE - ms(1700);
     let samples = |at: Duration| vec![up("a", moved(at, stop), at.min(stop))];
@@ -322,7 +322,7 @@ fn a_stop_mid_window_keeps_what_was_measured() {
     assert_eq!(script.log.len(), decisions);
 }
 
-/// A latency stage where each server sends its replies, then a download stage where its bytes stop at its time.
+/// Runs a latency stage where each server sends its replies, then a download stage where its bytes stop at its time.
 fn run(servers: &[(&str, usize, Duration)]) -> Vec<StageResult> {
     let names: Vec<_> = servers.iter().map(|(name, ..)| *name).collect();
     let mut latency = Script::new(plan(Stage::Latency, &names, true));

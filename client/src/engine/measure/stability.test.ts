@@ -3,7 +3,7 @@ import { RateSeries, stabilityPct } from "./stability";
 
 test("a day-long series reads the spread of every 250 ms rate and keeps none of them", () => {
   const series = new RateSeries();
-  // A day at 1,000 B/s, alternating 900 and 1,100 every second: 250 ms rates 10% either side of the mean.
+  // A day at 1,000 B/s alternates 900 and 1,100 every second, so the 250 ms rates sit 10% either side of the mean.
   for (let second = 0; second < 86_400; second++) series.observe(second % 2 ? 1_100 : 900, 1_000);
   expect(series.stability()).toBeCloseTo(90, 6);
   expect(series.recent).toEqual([]);

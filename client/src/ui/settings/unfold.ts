@@ -44,7 +44,7 @@ export function Unfold(props: { when: () => boolean; children: () => Child }): N
     content = null;
     clear(start, end);
   };
-  // A cancelled animation lingers with the timeline until its next frame; without its effect it holds no row.
+  // A canceled animation lingers with the timeline until its next frame; without its effect it holds no row.
   const stop = () => {
     for (const animation of content?.motion ?? []) {
       animation.cancel();

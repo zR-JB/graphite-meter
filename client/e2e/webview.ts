@@ -488,7 +488,7 @@ export class Page {
         gauge: text(document.querySelector(".gauge-footer")),
         clicks: (window as any).clicks,
         pointer: (() => {
-          const { x, y, over } = (window as any).pointer ?? {};
+          const { x = -1, y = -1, over } = (window as any).pointer ?? {};
           const at = document.elementFromPoint(x, y);
           return {
             over,
@@ -592,7 +592,7 @@ function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: T
         if (page.errors.length) throw new Error(page.errors.join("\n"));
       } catch (error) {
         // Parallel runs drop a test's own output, so its failure carries the page state.
-        const summary = await within("summarising the page", page.summary(), 5_000).catch(String);
+        const summary = await within("summarizing the page", page.summary(), 5_000).catch(String);
         if (error instanceof Error) error.message += `\n${summary}`;
         await page.artifact(name).catch(() => {});
         throw error;

@@ -1,4 +1,4 @@
-// The interface's glyphs: strokes in the current color on a 24-unit grid, sized by their context.
+// Draws the interface's glyphs as strokes in the current color on a 24-unit grid, sized by their context.
 const GLYPHS = {
   server: () => [
     <rect x="3" y="3" width="18" height="6" rx="2" />,

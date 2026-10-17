@@ -1,4 +1,4 @@
-//! How a server tells its peer why a lane ended (`api/laneendings.txt`).
+//! Says how a server tells its peer why a lane ended (`api/laneendings.txt`).
 
 use crate::refusal::UploadRefusal;
 use std::time::Duration;
@@ -7,12 +7,12 @@ use std::time::Duration;
 pub const IDLE_BOUND: Duration = Duration::from_secs(30);
 
 table! {
-    /// Why a lane ended: its name, WebSocket close code, WebTransport session code and reason text.
+    /// Says why a lane ended, with its name, WebSocket close code, WebTransport session code and reason text.
     pub enum LaneEnding {
         name.0: &'static str,
         websocket_code.1: u16,
         webtransport_code.2: u32,
-        /// The close reason, also the text of an HTTP refusal for the same ending.
+        /// The close reason also serves as the text of an HTTP refusal for the same ending.
         reason.3: &'static str,
     } {
         Finished => ("finished", 1000, 0, ""),
@@ -24,7 +24,7 @@ table! {
 }
 
 impl LaneEnding {
-    /// The refusal that answers an HTTP upload ending so.
+    /// Picks the refusal that answers an HTTP upload ending so.
     pub const fn upload_refusal(self) -> Option<UploadRefusal> {
         match self {
             Self::Idle => Some(UploadRefusal::Idle),

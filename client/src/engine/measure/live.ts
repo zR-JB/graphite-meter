@@ -1,4 +1,4 @@
-// The live rate a stage shows while it runs. Results never read it; the terminal client shares its vectors
+// Computes the live rate a stage shows while it runs. Results never read it. The terminal client shares its vectors
 // (api/liverate.testvectors.json), so its arithmetic stays exactly as it is.
 import type { Checkpoint, Direction } from "../types";
 
@@ -9,14 +9,14 @@ const FAST_WINDOW_MS = 750;
 const REGIME_READY_MS = 2_000;
 const DOWNSHIFT_CONFIRM_MS = 750;
 const UPSHIFT_CONFIRM_MS = 500;
-/** Spans a window keeps before its older ones merge; the shared vectors stay below it. */
+/** A window keeps this many spans before its older ones merge. The shared vectors stay below it. */
 const MAX_SPANS = 4_096;
 
 interface Span {
   start: number;
   end: number;
   bytes: number;
-  /** Bytes up to and including this span. */
+  /** Sums the bytes up to and including this span. */
   total: number;
 }
 
@@ -26,11 +26,11 @@ const windowMs = (regimeAgeMs: number) => {
   return Math.min(age, Math.max(MIN_WINDOW_MS, age * 0.85));
 };
 
-/** A growing average that restarts on a confirmed 25% drop or 20% rise. The first delivery only anchors it: its
-    bytes arrived over a span no window bounds (a socket buffer drained at once, a receiver's 64 KiB read), and on a
-    slow link they alone would lift the first readings well above the rate. */
+/** Grows an average and restarts it on a confirmed 25% drop or 20% rise. The first delivery only anchors it, because
+    its bytes arrived over a span no window bounds (a socket buffer drained at once, a receiver's 64 KiB read), and on
+    a slow link they alone would lift the first readings well above the rate. */
 export class RateEstimator {
-  /** Bytes per second to show; 0 until there is evidence. */
+  /** Holds the bytes per second to show, 0 until there is evidence. */
   presented = 0;
   #anchored = false;
   #spans: Span[] = [];
@@ -41,7 +41,7 @@ export class RateEstimator {
   #fast = 0;
   #candidate: { up: boolean; start: number; reference: number } | null = null;
 
-  /** Adds `bytes` over `durationMs`; true when this confirmed a new regime. */
+  /** Adds `bytes` over `durationMs` and returns true when this confirmed a new regime. */
   observe(bytes: number, durationMs: number): boolean {
     if (!(durationMs > 0) || !Number.isFinite(durationMs)) return false;
     if (!this.#anchored) {
@@ -70,7 +70,7 @@ export class RateEstimator {
     return changed;
   }
 
-  /** Merges the older spans in pairs, all but the fast window and a pending regime change: a long steady regime's
+  /** Merges the older spans in pairs, all but the fast window and a pending regime change. A long steady regime's
       window edge then falls in a longer span, evenly spread, and memory stays bounded. */
   #coarsen(): void {
     const fine = Math.min(this.#evidence - 2 * FAST_WINDOW_MS, this.#candidate?.start ?? Infinity);
@@ -140,13 +140,13 @@ interface ServerRates {
   downBytes: number;
   downAt: number;
   frame: Checkpoint | null;
-  /** Page ms of the last five receiver records that grew. */
+  /** Records the page ms of the last five receiver records that grew. */
   arrivals: number[];
-  /** Each upload lane's last POST rate and when it completed. */
+  /** Maps each upload lane to its last POST rate and when it completed. */
   hints: Map<number, { rate: number; at: number }>;
 }
 
-/** Each server's presented rate, summed, so one lagging receiver never freezes the others. Page ms throughout. */
+/** Sums each server's presented rate, so one lagging receiver never freezes the others. Page ms throughout. */
 export class LiveRates {
   #servers = new Map<string, ServerRates>();
   #seen: Record<Direction, boolean> = { down: false, up: false };
@@ -174,7 +174,7 @@ export class LiveRates {
     this.#servers.delete(id);
   }
 
-  /** Client-consumed bytes over the page time since the previous sample. */
+  /** Observes client-consumed bytes over the page time since the previous sample. */
   download(id: string, cumulative: number, now: number): void {
     const server = this.#servers.get(id);
     if (!server) return;
@@ -183,7 +183,7 @@ export class LiveRates {
     server.downAt = now;
   }
 
-  /** Receiver bytes over receiver time between consecutive records of one upload id. */
+  /** Observes receiver bytes over receiver time between consecutive records of one upload id. */
   receiver(id: string, frame: Checkpoint, now: number): void {
     const server = this.#servers.get(id);
     if (!server) return;
@@ -196,13 +196,13 @@ export class LiveRates {
     server.hints.clear();
   }
 
-  /** One locally timed POST completion. */
+  /** Records one locally timed POST completion. */
   hint(id: string, lane: number, bytes: number, elapsedMs: number, now: number): void {
     if (lane >= 0 && bytes > 0 && elapsedMs > 0)
       this.#servers.get(id)?.hints.set(lane, { rate: bytes / (elapsedMs / 1000), at: now });
   }
 
-  /** Null until the direction's first bytes, so a new stage never presents zero. */
+  /** Returns null until the direction's first bytes, so a new stage never presents zero. */
   rate(dir: Direction): number | null {
     let sum = 0;
     for (const server of this.#servers.values()) sum += server[dir].presented;
@@ -210,8 +210,8 @@ export class LiveRates {
     return this.#seen[dir] ? sum : null;
   }
 
-  /** While a receiver pauses irregularly, fresh hints from every lane bridge it within ±25%; null when no server
-      needed it. `lanes` is a server's upload lane count. */
+  /** While a receiver pauses irregularly, fresh hints from every lane bridge it within ±25%. Returns null when no
+      server needed it. `lanes` is a server's upload lane count. */
   bridgedUpload(now: number, lanes: (id: string) => number): number | null {
     let total = 0;
     let bridged = false;

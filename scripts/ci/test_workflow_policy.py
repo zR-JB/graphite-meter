@@ -20,7 +20,7 @@ DOCKERFILE = "container/Dockerfile"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
-    (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "pin its runner image"),
+    (W + "ci.yml", "runs-on: ubuntu-26.04", "runs-on: ubuntu-latest", "pin its runner image"),
     (W + "ci.yml", "runs-on: windows-2025", "runs-on: windows-latest", "pin its runner image"),
     (W + "release.yml", "run: python3 scripts/ci/release.py recheck",
      'run: echo "${{ github.head_ref }}"', "through env"),
@@ -75,7 +75,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
     (REQUEST, "name: Build untrusted release candidate", "name: Build the release candidate",
      "as release.py expects"),
-    (REQUEST, "\njobs:\n", "\njobs:\n  other:\n    name: Another job\n    runs-on: ubuntu-24.04\n"
+    (REQUEST, "\njobs:\n", "\njobs:\n  other:\n    name: Another job\n    runs-on: ubuntu-26.04\n"
      "    steps:\n      - run: true\n", "one job named"),
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),

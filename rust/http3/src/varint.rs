@@ -1,14 +1,14 @@
-//! QUIC variable-length integers (RFC 9000 §16), whole or split across chunks.
+//! Reads and writes QUIC variable-length integers (RFC 9000 §16), whole or split across chunks.
 use bytes::{Buf, BufMut};
 
 pub(crate) const MAX: u64 = (1 << 62) - 1;
 
-/// Length of the encoding whose first byte is `first`.
+/// An encoding whose first byte is `first` has this length.
 pub(crate) fn size(first: u8) -> usize {
     1 << (first >> 6)
 }
 
-/// The integer starting `input` and its length, or `None` when incomplete; non-minimal encodings are valid.
+/// Decodes the integer starting `input` with its length, or `None` when incomplete. Non-minimal encodings are valid.
 pub(crate) fn decode(input: &[u8]) -> Option<(u64, usize)> {
     let bytes = input.get(..size(*input.first()?))?;
     let value = bytes[1..]
@@ -35,7 +35,7 @@ pub(crate) fn put(value: u64, output: &mut impl BufMut) {
     output.put_slice(&bytes[8 - size..]);
 }
 
-/// One varint, read from chunks split anywhere.
+/// Reads one varint from chunks split anywhere.
 #[derive(Default)]
 pub(crate) struct Partial {
     bytes: [u8; 8],
