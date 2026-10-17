@@ -18,6 +18,7 @@ from release import (
     ASSEMBLE_JOB,
     VALIDATE_JOB,
     Release,
+    client_job,
     assets_sha256,
     command_prepare,
     command_recheck,
@@ -127,10 +128,10 @@ def built(name: str, conclusion: str = "success") -> dict[str, object]:
     return job(name, conclusion, "09:00", "09:59")
 
 
-def request_run_jobs(stable: bool) -> object:
-    """A successful request run's jobs; a prerelease's clients show as one skipped matrix job."""
-    skipped = [] if stable else [built("Build client (${{ matrix.platform }})", "skipped")]
-    return pages({"jobs": [*map(built, sorted(request_jobs(stable) - {ASSEMBLE_JOB})), *skipped, job()]})
+def request_run_jobs(skipped: str = "") -> object:
+    """A request run's jobs, all successful but `skipped`."""
+    return pages({"jobs": [*(built(name, "skipped" if name == skipped else "success")
+                             for name in sorted(request_jobs() - {ASSEMBLE_JOB})), job()]})
 
 
 def release_of(stable: bool) -> Release:
@@ -143,7 +144,7 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable))),
         ARTIFACTS: artifacts("release-request-4242"), JOBS: pages({"jobs": [GATE]}),
-        REQUEST_JOBS: request_run_jobs(stable),
+        REQUEST_JOBS: request_run_jobs(),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -344,14 +345,15 @@ class RequestTests(unittest.TestCase):
             ("artifact", artifacts(name, created="10:00", updated="10:10"), None),
             ("artifact", artifacts("release-request-4243"), "expected one unexpired"),
             ("artifact", artifacts(name, created="09:30"), "not written while"),
-            # The run is its named jobs, each once and successful, and skipped ones, which run nothing.
+            # The run is exactly its named jobs, each once and successful.
             ("jobs", [], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB)], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB), job(), job()], "successful jobs"),
-            ("jobs", [built(VALIDATE_JOB), job(), built("Other", "skipped")], None),
             ("jobs", [built(VALIDATE_JOB), job(), built("Other")], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job(), built("Other", "skipped")], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB, "skipped"), job()], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB), job(conclusion="failure")], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job() | {"conclusion": None}], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB), job(), built("Other") | {"name": ["Other"]}], "successful jobs"),
             ("jobs", [built(VALIDATE_JOB), job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
         ):
@@ -426,13 +428,20 @@ class RequestTests(unittest.TestCase):
             ({"ACTOR": "other"}, "repository owner"),
             ({"TRIGGERING_ACTOR": "other"}, "repository owner"),
             ({"REQUEST_RUN_ATTEMPT": "2"}, "reruns"), ({"MODE": "force"}, "mode"),
+            (prerelease | {"PULL": "closed"}, "not open against main"),
+            (prerelease | {"PULL": "fork"}, "fork PRs"),
+            (prerelease | {"PULL": "moved"}, "head SHA changed"),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 output = Path(directory) / "output"
                 env = base | change | {"OUT_DIR": directory, "GITHUB_OUTPUT": str(output),
                                        "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
                                        "RUNNER_TEMP": tempfile.gettempdir()}
-                with patch.dict(os.environ, env):
+                head = {"sha": HEAD, "ref": "fix/test", "repo": {"full_name": REPO}}
+                pull = {"": {}, "closed": {"state": "closed"},
+                        "fork": {"head": head | {"repo": {"full_name": "fork/graphite-meter"}}},
+                        "moved": {"head": head | {"sha": OLD}}}[env.pop("PULL", "")]
+                with patch.dict(os.environ, env), github({PULL: PR | pull}):
                     outcome(self, error, command_prepare)
                 if error is not None:
                     continue
@@ -481,7 +490,7 @@ class RequestTests(unittest.TestCase):
             # The artifact holds exactly the request and the release's staged files.
             ({}, {}, staged_files("1.2.3-rc.1"), "files are"), (prerelease, {}, staged_files("1.2.3"), "files are"),
             ({}, {"EXTRA": "release-assets-4242"}, None, "downloaded artifacts"),
-            ({}, {"SKIPPED_CLIENTS": "1"}, None, "successful jobs"),
+            ({}, {"SKIPPED_CLIENT": "1"}, None, "successful jobs"),
             ({"schemaVersion": 3}, {}, None, "schemaVersion"),
             ({"rust": True}, {}, None, "keys are"),
             ({"sourceSha": HEAD}, {}, None, "trusted main commit"),
@@ -510,7 +519,7 @@ class RequestTests(unittest.TestCase):
                 title = request_title(str(inputs["mode"]), Release(
                     str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])))
                 checkout = git_head(Path(directory), env.get("HEAD", MAIN))
-                jobs = request_run_jobs("-" not in str(record["tag"]) and "SKIPPED_CLIENTS" not in env)
+                jobs = request_run_jobs(client_job("linux/amd64") if "SKIPPED_CLIENT" in env else "")
                 with (patch.dict(os.environ, base_env | env | checkout),
                       github(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title), REQUEST_JOBS: jobs})):
                     verified = outcome(self, error, lambda: verify_request(root))

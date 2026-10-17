@@ -63,7 +63,7 @@ ORDERED = {
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
 CONTEXT = {
     "run: python3 scripts/ci/release.py prepare": {
-        "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
+        "GH_TOKEN": "github.token", "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
         "ACTOR": "github.actor", "TRIGGERING_ACTOR": "github.triggering_actor",
         "EVENT_NAME": "github.event_name", "EVENT_SHA": "github.sha", "REF": "github.ref",
         "WORKFLOW_REF": "github.workflow_ref", "REQUEST_RUN_ID": "github.run_id",
@@ -90,9 +90,12 @@ CONTEXT = {
         "VERSION": "needs.verify.outputs.version", "DIGEST": "needs.verify.outputs.digest",
     },
 }
-# The image build CI and release requests share: its archive records max provenance.
 IMAGE_SCRIPT = "scripts/ci/build-image.sh"
-IMAGE_PROVENANCE = '--provenance mode=max \\\n  --output "type=oci,'
+PREPARE = "run: python3 scripts/ci/release.py prepare"
+EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+# Dispatch inputs, directly or through the event or context that carries them.
+INPUTS = re.compile(r"\binputs\b|\bgithub\.event\b(?!\.repository\.)|\bgithub\b(?![.\w])")
+STATUS = re.compile(r"\b(?:always|cancelled|failure|success)\s*\(")
 # Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
 SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|rust-toolchain(?:\.toml)?"
                           r"|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
@@ -101,9 +104,10 @@ SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|
 ECOSYSTEMS = {"Cargo.lock": "cargo", "bun.lock": "bun"}
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
-    # Builds import no cache and get no token.
+    # Builds import no cache or substitute stage and get no token; no job runs past a failure.
     "workflows/release-request.yml": (
-        "allow-insecure-entitlement", "cache-from", "cache-to", "GIT_AUTH_TOKEN", "github.token", "GITHUB_TOKEN",
+        "allow-insecure-entitlement", "cache-from", "cache-to", "--build-context", "build-contexts", "GIT_AUTH_TOKEN",
+        "GITHUB_TOKEN", "continue-on-error",
     ),
 }
 
@@ -120,11 +124,12 @@ def files(root: Path) -> list[str]:
     return [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()]
 
 
-def run_scripts(text: str) -> list[str]:
+def run_scripts(text: str, key: str = "run") -> list[str]:
+    """Each `key:` value, with the more-indented lines that continue it."""
     lines = text.splitlines()
     scripts: list[str] = []
     for number, line in enumerate(lines):
-        if (match := re.match(r"( *)(- )?run:(.*)", line)) is None:
+        if (match := re.match(rf"( *)(- )?{key}:(.*)", line)) is None:
             continue
         indent = len(match.group(1)) + len(match.group(2) or "")
         body = [match.group(3)]
@@ -174,6 +179,8 @@ def check_actions(root: Path) -> None:
         for needle in FORBIDDEN.get(name, ()):
             if needle in text:
                 fail(f"{name} must not contain {needle}")
+        if "--build-context" in text or "build-contexts:" in text:
+            fail(f"{name} must not substitute a build stage")
         # Comments do not count, so a guard cannot survive as text alone.
         code = re.sub(r"(?m)^\s*#.*\n", "", text)
         last = -1
@@ -216,33 +223,41 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text()
-    # release.py binds the request's artifact to its jobs by these names.
+    # release.py binds the request's artifact to its jobs by these names, each once.
     platforms = re.search(r"(?m)^        platform: \[(.*)\]$", request)
-    named = {name.replace("${{ matrix.platform }}", platform.strip())
-             for name in re.findall(r"(?m)^    name: (.*)$", request)
-             for platform in (platforms.group(1).split(",") if platforms else [""])}
-    if named != request_jobs(True):
-        fail(f"release-request.yml must run the jobs {sorted(request_jobs(True))}, as release.py expects")
+    named = sorted(name.replace("${{ matrix.platform }}", platform.strip())
+                   for name in re.findall(r"(?m)^    name: (.*)$", request)
+                   for platform in (platforms.group(1).split(",") if platforms and "matrix" in name else [""]))
+    if named != sorted(request_jobs()):
+        fail(f"release-request.yml must run the jobs {sorted(request_jobs())} once each, as release.py expects")
     jobs = [job for job in JOB.split(request.split("\njobs:\n", 1)[1]) if job.strip()]
     first = jobs[0].split(":", 1)[0]
-    for job in jobs[1:]:
+    for job in jobs:
         needs = re.search(r"(?m)^    needs: \[?([^]\n]*)\]?$", job)
-        if first not in {name.strip() for name in (needs.group(1) if needs else "").split(",")}:
+        if job != jobs[0] and first not in {name.strip() for name in (needs.group(1) if needs else "").split(",")}:
             fail(f"release-request.yml: every build must need {first}, which refuses other refs")
+        # An upload follows symlinks, so each sends only the regular files assets.py upload moved into its directory.
+        steps = [step for step in STEP.split(job) if step.strip()]
+        for before, step in zip(steps, steps[1:]):
+            if "uses: actions/upload-artifact@" in step and (
+                    "run: python3 scripts/ci/assets.py upload " not in before
+                    or "path: ${{ runner.temp }}/upload/\n" not in step):
+                fail("release-request.yml: every upload must directly follow assets.py upload and send its directory")
+    if STATUS.search(request):
+        fail("release-request.yml: a job or step must not run past a failure, skip or cancellation")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
-        if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
+        if PREPARE in step:
+            continue
+        if any(INPUTS.search(expression) for expression in [*EXPRESSION.findall(step), *run_scripts(step, "if")]):
             fail("release-request.yml: dispatch inputs may reach only the request validator")
+        if "github.token" in step:
+            fail("release-request.yml: only the request validator may read the token")
         if f"run: {IMAGE_SCRIPT}" in step and "CONTEXT: ${{ needs.request.outputs.context }}\n" not in step:
             fail("release-request.yml: the image must build the resolved CONTEXT")
-    script = read(root, IMAGE_SCRIPT)
-    for needle in (*FORBIDDEN["workflows/release-request.yml"], "--secret", "--allow"):
-        if needle in script:
-            fail(f"{IMAGE_SCRIPT} must not contain {needle}")
-    if IMAGE_PROVENANCE not in script:
-        fail(f"{IMAGE_SCRIPT}: the OCI archive must record provenance mode=max")
+    check_image_script(read(root, IMAGE_SCRIPT))
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
         for step in STEP.split((workflows / name).read_text()):
@@ -252,6 +267,21 @@ def check_workflows(root: Path) -> None:
         if ("uses: actions/cache@" in step and "inputs.cache == 'true'" not in step
                 or "uses: jdx/mise-action@" in step and "cache: ${{ inputs.cache }}" not in step):
             fail("setup-project: every cache must follow the cache input")
+
+
+def check_image_script(text: str) -> None:
+    """The image archive alone records max provenance; no build imports a cache, substitutes a stage or gets a
+    secret, an entitlement or other attestations."""
+    for needle in (*FORBIDDEN["workflows/release-request.yml"], "--secret", "--allow", "--attest"):
+        if needle in text:
+            fail(f"{IMAGE_SCRIPT} must not contain {needle}")
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    commands = code.replace("\\\n", " ").splitlines()
+    archives = [command for command in commands if "type=oci" in command]
+    provenance = {command: re.findall(r"--provenance[= ](\S+)", command) for command in commands}
+    if len(archives) != 1 or provenance[archives[0]] != ["mode=max"] or any(
+            values not in ([], ["false"]) for command, values in provenance.items() if command != archives[0]):
+        fail(f"{IMAGE_SCRIPT}: the one OCI archive export must record --provenance mode=max, every other build none")
 
 
 def check_ci(root: Path) -> None:

@@ -233,6 +233,7 @@ jobs:
           CONTEXT: .
           PROFILE: ci
           GM_CLIENT_VALIDATE: '0'
+          SOURCE_OFFERS: 'true'
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}
           OUT_DIR: ${{ runner.temp }}/image

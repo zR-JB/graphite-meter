@@ -76,10 +76,9 @@ def client_job(platform: str) -> str:
     return f"Build client ({platform})"
 
 
-def request_jobs(stable: bool) -> set[str]:
-    """The jobs a successful request runs; a prerelease skips the clients."""
-    clients = {client_job(platform) for platform in load().tui} if stable else set()
-    return {VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB, *clients}
+def request_jobs() -> set[str]:
+    """Every job of a request run; a prerelease's client jobs skip their builds."""
+    return {VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB, *(client_job(platform) for platform in load().tui)}
 
 
 def built_from(release: Release) -> str:
@@ -172,6 +171,8 @@ def command_prepare() -> None:
         gh.fail("prereleases name the exact commit they build in sha")
     if not pr and sha and sha != main:
         gh.fail(f"a prerelease without a PR builds main, which is {main}; sha must match")
+    if pr:
+        require_pr(repository, pr, sha)
     out = gh.runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     request = {
@@ -216,7 +217,7 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         gh.fail("a release without a PR must build the trusted main commit")
     exact_files(candidate, {"request.json", *assets.staged_files(release.version)})
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id, "release-request.yml",
-                         request_title(str(request["mode"]), release), request_jobs(release.stable), ASSEMBLE_JOB,
+                         request_title(str(request["mode"]), release), request_jobs(), ASSEMBLE_JOB,
                          candidate.name, REQUEST_LIMIT)
     return release, request["mode"] == "publish"
 

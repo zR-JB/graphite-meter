@@ -20,5 +20,8 @@ done
 mkdir -p "$OUT_DIR"
 build --target server --platform linux/amd64,linux/arm64 --provenance mode=max \
   --output "type=oci,dest=$OUT_DIR/graphite-meter.oci.tar"
-build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
-  --output "type=local,dest=$OUT_DIR/server-export"
+# A local export writes the build's file tree as it is, so only a stable release's own source exports one.
+if [[ "$SOURCE_OFFERS" == true ]]; then
+  build --target server-artifacts --platform linux/amd64,linux/arm64 --provenance false \
+    --output "type=local,dest=$OUT_DIR/server-export"
+fi

@@ -53,22 +53,25 @@ shipped build, and `checksums.txt`. A prerelease takes a `vX.Y.Z-{alpha,beta,rc}
 when the Release run asks.
 
 1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
-   from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees
-   the inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`). Then, in parallel,
-   *Build server image* runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches without a
-   token, and for a stable release one *Build client* job per TUI platform runs `tui-package`, the amd64 one also its
-   client; each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile per
-   architecture on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`).
-   *Assemble request* runs `assets.py stage`, which copies the release files and merges every build's part of the
-   source offer into one archive, and uploads the one artifact.
+   from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
+   inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which it
+   requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, *Build server
+   image* runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches without a token, and one
+   *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a prerelease's client jobs skip
+   their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile per
+   architecture on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`). *Assemble
+   request* runs `assets.py stage`, which copies the release files and merges every build's part of the source offer
+   into one archive. Only a stable release, built from main, exports file trees; every job uploads only the regular
+   files `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs
+   past a failure.
 2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never executes
    the requested source; its run is named after the request's run number. It binds `request.json` to the run title, the
-   owner, the first attempt, the jobs `release.py` names, each successful, every other one skipped, and the one bounded
-   artifact *Assemble request* wrote. It verifies the image, the archives and the source offer as data, and requires
-   every main CI job and CodeQL for a release of main or, for a PR prerelease, an open PR containing current main with
-   identical `.github`, `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check. A stable tag that
-   already has a published Release must carry exactly its assets. Publish mode also requires `ghcr-release` to have
-   reviewers and main-only deployments.
+   owner, the first attempt, exactly the jobs `release.py` names, each once and successful, and the one bounded artifact
+   *Assemble request* wrote. It verifies the image, the archives and the source offer as data, and requires every main
+   CI job and CodeQL for a release of main or, for a PR prerelease, an open PR containing current main with identical
+   `.github`, `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check. A stable tag that already has
+   a published Release must carry exactly its assets. Publish mode also requires `ghcr-release` to have reviewers and
+   main-only deployments.
 3. Approved publication. One `ghcr-release` job holds the only write credentials. It rechecks the handoff digests
    and all trust above and pushes the verified digest to its exact version tag. For a stable release it publishes the
    GitHub Release and points `X.Y` and `latest` at the highest published releases, which also repairs aliases a

@@ -65,6 +65,7 @@ jobs:
       - id: request
         name: Validate and record request
         env:
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           ACTOR: ${{ github.actor }}
@@ -101,11 +102,17 @@ jobs:
           fi
           echo "context=$context" >>"$GITHUB_OUTPUT"
 
+      - name: Check request record
+        env:
+          SOURCE: ${{ runner.temp }}/release-request
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload request
+
       - name: Upload request record
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: request
-          path: ${{ runner.temp }}/release-request/request.json
+          path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
 
@@ -114,6 +121,8 @@ jobs:
     needs: request
     runs-on: ubuntu-26.04
     timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.request.outputs.version }}
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,24 +130,34 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       # Each job's builder starts empty and imports no cache, so a build reuses only this job's layers.
-      - name: Set up Buildx
-        uses: ./.github/actions/setup-buildx
+      - parallel:
+          - name: Set up Python
+            uses: ./.github/actions/setup-project
+            with:
+              cache: 'false'
+          - name: Set up Buildx
+            uses: ./.github/actions/setup-buildx
       - name: Build image and source offers
         env:
           CONTEXT: ${{ needs.request.outputs.context }}
-          VERSION: ${{ needs.request.outputs.version }}
           PROFILE: release
           GM_CLIENT_REVISION: ${{ needs.request.outputs.sha }}
           GM_CLIENT_VALIDATE: ${{ needs.request.outputs.client_validate }}
+          SOURCE_OFFERS: ${{ needs.request.outputs.stable }}
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ needs.request.outputs.sha }}
           OUT_DIR: ${{ runner.temp }}/image
         run: scripts/ci/build-image.sh
+      - name: Check image and source offers
+        env:
+          SOURCE: ${{ runner.temp }}/image
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload image
       - name: Upload image and source offers
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image
-          path: ${{ runner.temp }}/image/
+          path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -146,7 +165,6 @@ jobs:
   client:
     name: Build client (${{ matrix.platform }})
     needs: request
-    if: needs.request.outputs.stable == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     strategy:
@@ -154,6 +172,8 @@ jobs:
         platform: [linux/amd64, linux/arm64, windows/amd64]
     env:
       VERSION: ${{ needs.request.outputs.version }}
+      STABLE: ${{ needs.request.outputs.stable }}
+      TUI_PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,23 +189,30 @@ jobs:
             name: Set up Buildx
             uses: ./.github/actions/setup-buildx
       - name: Build client archive and source offer
+        if: env.STABLE == 'true'
         env:
           BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
           PROFILE: release
           RELEASE_DIST: ${{ runner.temp }}/client
-          TUI_PLATFORM: ${{ matrix.platform }}
         run: mise run tui-package "$VERSION"
       # The trusted consumer verifies the files as data and never executes a candidate.
       - name: Run amd64 client from its archive
-        if: matrix.platform == 'linux/amd64'
+        if: env.STABLE == 'true' && matrix.platform == 'linux/amd64'
         env:
           RELEASE_DIST: ${{ runner.temp }}/client
         run: python3 -m scripts.package "$VERSION" --output "$RELEASE_DIST" --check
+      - name: Check client archive and source offer
+        if: env.STABLE == 'true'
+        env:
+          SOURCE: ${{ runner.temp }}/client
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload client
       - name: Upload client archive and source offer
+        if: env.STABLE == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: client-${{ strategy.job-index }}
-          path: ${{ runner.temp }}/client/
+          path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -193,10 +220,6 @@ jobs:
   assemble:
     name: Assemble request
     needs: [request, image, client]
-    # A prerelease skips the clients; a stable release needs every one.
-    if: >-
-      !cancelled() && needs.image.result == 'success'
-      && needs.client.result == (needs.request.outputs.stable == 'true' && 'success' || 'skipped')
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
@@ -216,7 +239,7 @@ jobs:
             uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
             with:
               name: request
-              path: ${{ runner.temp }}/release-request
+              path: ${{ runner.temp }}/staged
           - name: Download image and source offers
             uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
             with:
@@ -233,15 +256,21 @@ jobs:
         env:
           VERSION: ${{ needs.request.outputs.version }}
           OCI_ARCHIVE: ${{ runner.temp }}/image/graphite-meter.oci.tar
-          SERVER_EXPORT: ${{ runner.temp }}/image/server-export
+          SERVER_EXPORT: ${{ runner.temp }}/image
           TUI_EXPORT: ${{ runner.temp }}/client
-          OUT_DIR: ${{ runner.temp }}/release-request
+          OUT_DIR: ${{ runner.temp }}/staged
         run: python3 scripts/ci/assets.py stage
+      - name: Check request
+        env:
+          VERSION: ${{ needs.request.outputs.version }}
+          SOURCE: ${{ runner.temp }}/staged
+          OUT_DIR: ${{ runner.temp }}/upload
+        run: python3 scripts/ci/assets.py upload bundle
       - name: Upload request
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-request-${{ github.run_id }}
-          path: ${{ runner.temp }}/release-request/
+          path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
