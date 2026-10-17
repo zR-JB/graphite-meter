@@ -15,13 +15,15 @@ from github_api import (
 from assets import OCI, release_assets, staged_files
 from fixtures import git_head, github, outcome, pages, write_client, write_staged
 from release import (
-    BUILD_JOB,
+    ASSEMBLE_JOB,
+    VALIDATE_JOB,
     Release,
     assets_sha256,
     command_prepare,
     command_recheck,
     command_verify,
     parse_release,
+    request_jobs,
     request_title,
     require_compatible_release_tag,
     require_publishable,
@@ -113,11 +115,22 @@ def artifacts(*names: str, size: int = 1024, expired: bool = False, created: str
     return pages({"artifacts": written(*names, size=size, expired=expired, created=created, updated=updated)})
 
 
-def job(name: str = BUILD_JOB, conclusion: str = "success", started: str = "10:00",
+def job(name: str = ASSEMBLE_JOB, conclusion: str = "success", started: str = "10:00",
         completed: str = "10:10") -> dict[str, object]:
     """A request job that ran from 10:00 to 10:10."""
     return {"name": name, "status": "completed", "conclusion": conclusion,
             "started_at": f"2026-09-01T{started}:00Z", "completed_at": f"2026-09-01T{completed}:00Z"}
+
+
+def built(name: str, conclusion: str = "success") -> dict[str, object]:
+    """A request job that finished before the assembly started."""
+    return job(name, conclusion, "09:00", "09:59")
+
+
+def request_run_jobs(stable: bool) -> object:
+    """A successful request run's jobs; a prerelease's clients show as one skipped matrix job."""
+    skipped = [] if stable else [built("Build client (${{ matrix.platform }})", "skipped")]
+    return pages({"jobs": [*map(built, sorted(request_jobs(stable) - {ASSEMBLE_JOB})), *skipped, job()]})
 
 
 def release_of(stable: bool) -> Release:
@@ -128,9 +141,9 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
     """Every GitHub answer that authorizes a stable release or a PR #101 prerelease."""
     responses: dict[str, object] = {
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
-        REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
+        REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable))),
         ARTIFACTS: artifacts("release-request-4242"), JOBS: pages({"jobs": [GATE]}),
-        REQUEST_JOBS: pages({"jobs": [job()]}),
+        REQUEST_JOBS: request_run_jobs(stable),
     }
     if mode == "publish":
         responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
@@ -330,16 +343,20 @@ class RequestTests(unittest.TestCase):
             ("artifact", artifacts(name, created="10:07"), "not written while"),
             ("artifact", artifacts(name, created="10:00", updated="10:10"), None),
             ("artifact", artifacts("release-request-4243"), "expected one unexpired"),
-            # The run is its one job, which wrote the artifact.
-            ("jobs", [], "single successful job"),
-            ("jobs", [job("Build something else")], "single successful job"),
-            ("jobs", [job(), job()], "single successful job"),
-            ("jobs", [job(), job("Other", "skipped")], "single successful job"),
-            ("jobs", [job(conclusion="failure")], "single successful job"),
-            ("jobs", [job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
+            ("artifact", artifacts(name, created="09:30"), "not written while"),
+            # The run is its named jobs, each once and successful, and skipped ones, which run nothing.
+            ("jobs", [], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB)], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job(), job()], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job(), built("Other", "skipped")], None),
+            ("jobs", [built(VALIDATE_JOB), job(), built("Other")], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB, "skipped"), job()], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job(conclusion="failure")], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job(), built("Other") | {"name": ["Other"]}], "successful jobs"),
+            ("jobs", [built(VALIDATE_JOB), job() | {"started_at": "yesterday"}], "not an ISO 8601 time"),
         ):
             run = dispatch_run(7001, 4242)
-            files, jobs = artifacts(name), [job()]
+            files, jobs = artifacts(name), [built(VALIDATE_JOB), job()]
             if field == "artifact":
                 files = value
             elif field == "jobs":
@@ -350,7 +367,8 @@ class RequestTests(unittest.TestCase):
                   github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run,
                           REQUEST_JOBS: pages({"jobs": jobs})})):
                 outcome(self, error, lambda: require_dispatch_run(
-                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", BUILD_JOB, name, 4096))
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {VALIDATE_JOB, ASSEMBLE_JOB},
+                    ASSEMBLE_JOB, name, 4096))
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -412,6 +430,7 @@ class RequestTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 output = Path(directory) / "output"
                 env = base | change | {"OUT_DIR": directory, "GITHUB_OUTPUT": str(output),
+                                       "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
                                        "RUNNER_TEMP": tempfile.gettempdir()}
                 with patch.dict(os.environ, env):
                     outcome(self, error, command_prepare)
@@ -462,6 +481,7 @@ class RequestTests(unittest.TestCase):
             # The artifact holds exactly the request and the release's staged files.
             ({}, {}, staged_files("1.2.3-rc.1"), "files are"), (prerelease, {}, staged_files("1.2.3"), "files are"),
             ({}, {"EXTRA": "release-assets-4242"}, None, "downloaded artifacts"),
+            ({}, {"SKIPPED_CLIENTS": "1"}, None, "successful jobs"),
             ({"schemaVersion": 3}, {}, None, "schemaVersion"),
             ({"rust": True}, {}, None, "keys are"),
             ({"sourceSha": HEAD}, {}, None, "trusted main commit"),
@@ -488,10 +508,11 @@ class RequestTests(unittest.TestCase):
                     (root / env["EXTRA"]).mkdir()
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
-                    str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])), MAIN)
+                    str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])))
                 checkout = git_head(Path(directory), env.get("HEAD", MAIN))
+                jobs = request_run_jobs("-" not in str(record["tag"]) and "SKIPPED_CLIENTS" not in env)
                 with (patch.dict(os.environ, base_env | env | checkout),
-                      github(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})):
+                      github(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title), REQUEST_JOBS: jobs})):
                     verified = outcome(self, error, lambda: verify_request(root))
                 if verified is not None:
                     release, publish = verified
@@ -621,8 +642,7 @@ class CommandTests(unittest.TestCase):
                 with patch.dict(os.environ, variables), github(trusted(stable) | responses):
                     outcome(self, error, command_recheck)
                 if error is None:
-                    self.assertIn(f"authorized on main `{MAIN}`",
-                                  (Path(directory) / "summary").read_text())
+                    self.assertIn(f"| Main | `{MAIN}` |", (Path(directory) / "summary").read_text())
 
 
 if __name__ == "__main__":

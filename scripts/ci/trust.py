@@ -12,6 +12,7 @@ import github_api as gh
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 CONTROL_PLANE = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
 DONE = ("completed", "success")
+SKIPPED = ("completed", "skipped")
 ENVIRONMENT = "ghcr-release"
 
 
@@ -131,11 +132,11 @@ def timestamp(item: gh.JsonObject, key: str) -> datetime:
 
 
 def require_dispatch_run(
-    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str, job: str, artifact: str,
-    limit: int,
+    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str, jobs: set[str], writer: str,
+    artifact: str, limit: int,
 ) -> None:
     """Bind a request run to its workflow, inputs, main, one attempt and the owner, and require it to consist of the
-    single successful `job`, which wrote `artifact`, at most `limit` bytes, while it ran."""
+    successful `jobs` and skipped ones, with `writer` writing `artifact`, at most `limit` bytes, while it ran."""
     workflow_id = gh.int_field(gh.expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = gh.expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -162,13 +163,17 @@ def require_dispatch_run(
         gh.fail(f"expected one unexpired artifact {artifact}, found {len(matches)}")
     if not 0 <= gh.int_field(matches[0], "size_in_bytes", artifact) <= limit:
         gh.fail(f"artifact {artifact} exceeds {limit} bytes")
-    jobs = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
-                                    per_page=100), paginate=True), "jobs")
-    if [(item.get("name"), item.get("status"), item.get("conclusion")) for item in jobs] != [(job, *DONE)]:
-        gh.fail(f"request run does not consist of the single successful job {job!r}")
+    ran = _objects(gh.api(gh.query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                                   per_page=100), paginate=True), "jobs")
+    # A skipped job runs no step, so it cannot write anything.
+    if sorted(name for item in ran if (name := _text(item.get("name"))) in jobs) != sorted(jobs) or any(
+            (item.get("status"), item.get("conclusion")) != (DONE if _text(item.get("name")) in jobs else SKIPPED)
+            for item in ran):
+        gh.fail(f"request run does not consist of the successful jobs {sorted(jobs)} and skipped ones")
+    job = next(item for item in ran if _text(item.get("name")) == writer)
     created, updated = timestamp(matches[0], "created_at"), timestamp(matches[0], "updated_at")
-    if not timestamp(jobs[0], "started_at") <= created <= updated <= timestamp(jobs[0], "completed_at"):
-        gh.fail(f"artifact {artifact} was not written while {job!r} ran")
+    if not timestamp(job, "started_at") <= created <= updated <= timestamp(job, "completed_at"):
+        gh.fail(f"artifact {artifact} was not written while {writer!r} ran")
 
 
 def require_ci_gate(

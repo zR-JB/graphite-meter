@@ -50,6 +50,7 @@ class Scratch(unittest.TestCase):
 
     def stage(self, version: str, out: Path, exports: Path) -> None:
         env = {"RUNNER_TEMP": str(self.root), "VERSION": version, "OUT_DIR": str(out),
+               "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
                "OCI_ARCHIVE": str(exports / OCI), "SERVER_EXPORT": str(exports / "server-export"),
                "TUI_EXPORT": str(exports / "tui-export")}
         with patch.dict(os.environ, env), patch("sys.argv", ["assets.py", "stage"]):

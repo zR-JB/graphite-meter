@@ -14,6 +14,8 @@ PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-cred
 REQUEST = W + "release-request.yml"
 PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
 RELEASE = W + "release.yml"
+IMAGE = "scripts/ci/build-image.sh"
+BUILD = '"$@" "$CONTEXT"'
 DOCKERFILE = "container/Dockerfile"
 PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
@@ -42,21 +44,21 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "follow the cache input"),
     # rustup would replace itself from the network before it installs and checks a toolchain.
     (SETUP, "install --no-self-update", "install", "--no-self-update"),
-    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          allow: network.host\n"
-     "          # allow-insecure-entitlement\n", "insecure-entitlement"),
+    (REQUEST, None, "# allow-insecure-entitlement\n", "insecure-entitlement"),
+    (IMAGE, BUILD, '--allow network.host ' + BUILD, "--allow"),
     (W + "release.yml", "TARGET_SHA: ${{ github.sha }}",
      "TARGET_SHA: ${{ needs.verify.outputs.sha }}", "TARGET_SHA"),
-    (REQUEST, "provenance: mode=max", "provenance: false", "provenance"),
-    (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
-    (REQUEST, "context: ${{ steps.source.outputs.context }}\n", "context: .\n", "context"),
-    (REQUEST, "no-cache: true", "no-cache: false", "first image build must declare no-cache"),
-    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          cache-from: type=gha\n",
-     "cache-from"),
-    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          cache-to: type=gha\n",
-     "cache-to"),
-    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          secrets: GIT_AUTH_TOKEN=x\n",
-     "GIT_AUTH_TOKEN"),
-    (REQUEST, "if: ${{ github.ref == format(", "if: ${{ true || (", "misorders invariant: if:"),
+    (IMAGE, "--provenance mode=max", "--provenance false", "provenance mode=max"),
+    (REQUEST, "PROFILE: release\n", "PROFILE: release\n          TOKEN: ${{ github.token }}\n", "github.token"),
+    (REQUEST, "CONTEXT: ${{ needs.request.outputs.context }}\n", "CONTEXT: .\n", "resolved CONTEXT"),
+    (REQUEST, None, "# cache-from: type=gha\n", "cache-from"),
+    (IMAGE, BUILD, "--cache-from type=gha " + BUILD, "cache-from"),
+    (IMAGE, BUILD, "--cache-to type=gha " + BUILD, "cache-to"),
+    (IMAGE, BUILD, "--secret id=GIT_AUTH_TOKEN " + BUILD, "GIT_AUTH_TOKEN"),
+    (IMAGE, BUILD, "--secret id=token " + BUILD, "--secret"),
+    (REQUEST, "if: github.ref != format(", "if: false && (", "misorders invariant: if:"),
+    (REQUEST, "          exit 1\n", "", "misorders invariant: if:"),
+    (REQUEST, "run: scripts/ci/build-image.sh", "run: true", "misorders invariant: run: scripts/ci/build-image.sh"),
     (REQUEST, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
     (RELEASE, "        run: python3 scripts/ci/release.py recheck\n", "        run: true\n",
      "misorders invariant: run: python3 scripts/ci/release.py recheck"),
@@ -71,10 +73,13 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, PREPARE, PREPARE + "\n      - run: echo \"$RAW\"\n        env:\n"
      "          RAW: ${{ inputs.sha }}\n", "only the request validator"),
     (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
-    (REQUEST, "name: Build untrusted release candidate", "name: Build the release candidate",
+    (REQUEST, "name: Assemble request", "name: Assemble the request", "as release.py expects"),
+    (REQUEST, "platform: [linux/amd64, linux/arm64, windows/amd64]", "platform: [linux/amd64, linux/arm64]",
      "as release.py expects"),
     (REQUEST, "\njobs:\n", "\njobs:\n  other:\n    name: Another job\n    runs-on: ubuntu-26.04\n"
-     "    steps:\n      - run: true\n", "one job named"),
+     "    steps:\n      - run: true\n", "as release.py expects"),
+    (REQUEST, "    needs: request\n    if:", "    if:", "every build must need request"),
+    (REQUEST, "    needs: [request, image, client]\n", "    needs: [image, client]\n", "every build must need request"),
     (REQUEST, "  contents: read", "  contents: write", "write permission"),
     (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),
     (REQUEST, "    runs-on:", "    permissions: read-all\n    runs-on:", "only read contents"),

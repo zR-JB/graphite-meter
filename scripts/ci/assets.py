@@ -22,8 +22,8 @@ from pathlib import Path, PurePosixPath
 
 import verify_oci
 from github_api import (
-    TLS_NAME, ControlPlaneError, JsonObject, confined_path, decode_json, expect_array, expect_object, fail,
-    file_sha256, int_field, object_field, runner_path, str_field,
+    TLS_NAME, ControlPlaneError, JsonObject, append_summary, confined_path, decode_json, expect_array, expect_object,
+    fail, file_sha256, int_field, object_field, runner_path, str_field, table,
 )
 from trust import env, env_sha, exact_files
 from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, source_txt, tui_archive
@@ -360,6 +360,16 @@ def verify(version: str, revision: str, staged: Path, profile: str = "release",
     return verify_image(staged, version, revision, notices, root)
 
 
+def size(path: Path) -> str:
+    value = path.stat().st_size
+    return f"{value / 2**20:.1f} MiB" if value >= 2**20 else f"{value} B"
+
+
+def summarize(directory: Path, version: str) -> None:
+    append_summary(table([("File", "Size"), *((f"`{name}`", size(directory / name))
+                                              for name in sorted(staged_files(version)))]))
+
+
 def command_stage() -> None:
     version, out = release_version(env("VERSION")), runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
@@ -367,7 +377,7 @@ def command_stage() -> None:
     (out / f"{OCI}.sha256").write_text(f"{file_sha256(out / OCI)}  {OCI}\n")
     if not prerelease(version):
         stage_assets(version, runner_path("SERVER_EXPORT"), runner_path("TUI_EXPORT"), out)
-    print(f"staged {sorted(staged_files(version))}")
+    summarize(out, version)
 
 
 def command_check() -> None:

@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from release import BUILD_JOB
+from release import request_jobs
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +30,7 @@ TRIGGERS = {
 ALLOWED_USES = {
     "release-request.yml": {
         "actions/checkout", "./.github/actions/setup-project", "./.github/actions/setup-buildx",
-        "docker/build-push-action", "actions/upload-artifact",
+        "actions/upload-artifact", "actions/download-artifact",
     },
     "release.yml": {
         "actions/checkout", "jdx/mise-action", "actions/download-artifact",
@@ -40,9 +40,11 @@ ALLOWED_USES = {
 # Steps each file must contain, in this order: deleting or reordering one weakens a trust boundary.
 ORDERED = {
     "workflows/release-request.yml": (
-        "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
+        "if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)\n"
+        "        run: |\n          echo \"::error::Release requests run from main; pick main in 'Use workflow from'\"\n"
+        "          exit 1\n",
         "run: python3 scripts/ci/release.py prepare", '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
-        "uses: docker/build-push-action@", "python3 scripts/ci/assets.py stage\n",
+        "run: scripts/ci/build-image.sh\n", "run: python3 scripts/ci/assets.py stage\n",
     ),
     # The trusted consumer acts only on a successful main dispatch of the request workflow, one publish at a time.
     "workflows/release.yml": (
@@ -88,8 +90,9 @@ CONTEXT = {
         "VERSION": "needs.verify.outputs.version", "DIGEST": "needs.verify.outputs.digest",
     },
 }
-# Every image build of the untrusted request records max provenance, gets no token and builds the resolved source.
-IMAGE_BUILD = ("provenance: mode=max\n", "github-token: ''\n", "context: ${{ steps.source.outputs.context }}\n")
+# The image build CI and release requests share: its archive records max provenance.
+IMAGE_SCRIPT = "scripts/ci/build-image.sh"
+IMAGE_PROVENANCE = '--provenance mode=max \\\n  --output "type=oci,'
 # Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
 SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|rust-toolchain(?:\.toml)?"
                           r"|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
@@ -98,8 +101,9 @@ SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|
 ECOSYSTEMS = {"Cargo.lock": "cargo", "bun.lock": "bun"}
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
+    # Builds import no cache and get no token.
     "workflows/release-request.yml": (
-        "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
+        "allow-insecure-entitlement", "cache-from", "cache-to", "GIT_AUTH_TOKEN", "github.token", "GITHUB_TOKEN",
     ),
 }
 
@@ -212,23 +216,33 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text()
-    # release.py binds the request's artifact to its one job by this name.
-    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
-        fail(f"release-request.yml must run one job named {BUILD_JOB!r}, as release.py expects")
+    # release.py binds the request's artifact to its jobs by these names.
+    platforms = re.search(r"(?m)^        platform: \[(.*)\]$", request)
+    named = {name.replace("${{ matrix.platform }}", platform.strip())
+             for name in re.findall(r"(?m)^    name: (.*)$", request)
+             for platform in (platforms.group(1).split(",") if platforms else [""])}
+    if named != request_jobs(True):
+        fail(f"release-request.yml must run the jobs {sorted(request_jobs(True))}, as release.py expects")
+    jobs = [job for job in JOB.split(request.split("\njobs:\n", 1)[1]) if job.strip()]
+    first = jobs[0].split(":", 1)[0]
+    for job in jobs[1:]:
+        needs = re.search(r"(?m)^    needs: \[?([^]\n]*)\]?$", job)
+        if first not in {name.strip() for name in (needs.group(1) if needs else "").split(",")}:
+            fail(f"release-request.yml: every build must need {first}, which refuses other refs")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
-    builds = []
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
-        if "uses: docker/build-push-action@" in step:
-            builds.append(step)
-            if missing := [item for item in IMAGE_BUILD if item not in step]:
-                fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
-    # The job's own builder then holds only the first build's layers, which the exports after it reuse.
-    if not builds or "no-cache: true\n" not in builds[0]:
-        fail("release-request.yml: the first image build must declare no-cache")
+        if f"run: {IMAGE_SCRIPT}" in step and "CONTEXT: ${{ needs.request.outputs.context }}\n" not in step:
+            fail("release-request.yml: the image must build the resolved CONTEXT")
+    script = read(root, IMAGE_SCRIPT)
+    for needle in (*FORBIDDEN["workflows/release-request.yml"], "--secret", "--allow"):
+        if needle in script:
+            fail(f"{IMAGE_SCRIPT} must not contain {needle}")
+    if IMAGE_PROVENANCE not in script:
+        fail(f"{IMAGE_SCRIPT}: the OCI archive must record provenance mode=max")
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
         for step in STEP.split((workflows / name).read_text()):

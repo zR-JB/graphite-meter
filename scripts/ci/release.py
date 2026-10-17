@@ -32,11 +32,11 @@ from trust import (
     require_pr,
     require_protected_environment,
 )
-from workspace import PRERELEASE, STABLE, offer_name
+from workspace import PRERELEASE, STABLE, load, offer_name
 
 REQUEST_LIMIT = 2 * assets.OCI_LIMIT
-# The release request's one job, which writes its one artifact.
-BUILD_JOB = "Build untrusted release candidate"
+# The release request's jobs; the last writes its one artifact.
+VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB = "Validate request", "Build server image", "Assemble request"
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 REQUEST_KEYS = {"schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId", "requestRunAttempt"}
@@ -67,10 +67,27 @@ def parse_release(tag: str, sha: str, pr: int) -> Release:
     return Release(tag, sha, pr)
 
 
-def request_title(mode: str, release: Release, main: str) -> str:
+def request_title(mode: str, release: Release) -> str:
     """The run-name that release-request.yml derives from its dispatch inputs."""
-    source = f"PR #{release.pr} @ {release.sha}" if release.pr else "main"
-    return f"Release request · {mode} · {release.tag} · {source} · {main}"
+    return f"{release.tag} · {mode} · {f'PR #{release.pr}@{release.sha}' if release.pr else 'main'}"
+
+
+def client_job(platform: str) -> str:
+    return f"Build client ({platform})"
+
+
+def request_jobs(stable: bool) -> set[str]:
+    """The jobs a successful request runs; a prerelease skips the clients."""
+    clients = {client_job(platform) for platform in load().tui} if stable else set()
+    return {VALIDATE_JOB, IMAGE_JOB, ASSEMBLE_JOB, *clients}
+
+
+def built_from(release: Release) -> str:
+    return f"`{release.sha}` of PR #{release.pr}" if release.pr else f"`{release.sha}` on main"
+
+
+def checks(ci_run_id: int, codeql_id: str) -> str:
+    return f"CI Gate in run {ci_run_id}, CodeQL {f'check {codeql_id}' if codeql_id else 'on main'}"
 
 
 def main_workflow(repository: str, name: str) -> str:
@@ -162,6 +179,7 @@ def command_prepare() -> None:
         "mode": mode, "requestRunId": env_int("REQUEST_RUN_ID"), "requestRunAttempt": 1,
     }
     (out / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
+    gh.append_summary(gh.table([("Tag", f"`{release.tag}`"), ("Mode", mode), ("Commit", built_from(release))]))
     gh.append_output(
         tag=release.tag, version=release.version, sha=release.sha,
         stable=str(release.stable).lower(), remote_sha=release.sha if release.pr else "",
@@ -198,8 +216,8 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
         gh.fail("a release without a PR must build the trusted main commit")
     exact_files(candidate, {"request.json", *assets.staged_files(release.version)})
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id, "release-request.yml",
-                         request_title(str(request["mode"]), release, publisher), BUILD_JOB, candidate.name,
-                         REQUEST_LIMIT)
+                         request_title(str(request["mode"]), release), request_jobs(release.stable), ASSEMBLE_JOB,
+                         candidate.name, REQUEST_LIMIT)
     return release, request["mode"] == "publish"
 
 
@@ -281,13 +299,13 @@ def command_verify() -> None:
         oci_sha256=digest, digest=manifest,
         assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
     )
-    gh.append_summary(
-        f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
-        f"\n\n`{release.tag}` from `{release.sha}` on main `{main}`: CI run `{ci_run_id}`, "
-        f"CodeQL {codeql_id or 'on main'}, OCI SHA-256 `{digest}`. "
-        + ("Publication still requires `ghcr-release` approval." if publish
-           else "Validation mode cannot reach a write-permission job.")
-    )
+    gh.append_summary(gh.table([
+        ("Tag", f"`{release.tag}`"),
+        ("Mode", "publish, after `ghcr-release` approval" if publish else "validate, publishes nothing"),
+        ("Commit", built_from(release)), ("Main", f"`{main}`"), ("Image", f"`{manifest}`"),
+        ("Checks", f"request run {env_int('REQUEST_RUN_ID')}, files, image, {checks(ci_run_id, codeql_id)}"),
+    ]))
+    assets.summarize(candidate, release.version)
 
 
 def command_recheck() -> None:
@@ -306,11 +324,10 @@ def command_recheck() -> None:
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
         gh.fail("main moved after verification; start a fresh request")
-    gh.append_summary(
-        f"### Final release recheck passed\n\n`{release.tag}` from `{release.sha}` is still "
-        f"authorized on main `{main}` after approval: CI run `{ci_run_id}`, "
-        f"CodeQL {codeql_id or 'on main'}."
-    )
+    gh.append_summary(gh.table([
+        ("Tag", f"`{release.tag}`"), ("Commit", built_from(release)), ("Main", f"`{main}`"),
+        ("Checks", f"handoff digests, {checks(ci_run_id, codeql_id)}"),
+    ]))
 
 
 def source_notice(release: Release) -> str:
