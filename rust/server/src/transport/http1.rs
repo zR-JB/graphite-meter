@@ -148,7 +148,7 @@ async fn respond(
     connection: Connection,
     shared: Arc<Shared>,
     bus: Bus,
-) -> io::Result<Response<Reply>> {
+) -> io::Result<Response<H1Reply>> {
     let head = request.method() == Method::HEAD;
     let upgrade = hyper::upgrade::on(&mut request);
     let exchange = shared.exchange();
@@ -157,7 +157,7 @@ async fn respond(
         Outcome::WebSocket(response, lane) => {
             *lock(&bus) = Some((upgrade, lane));
             shared.post(State::Open);
-            Ok(response.map(|body| Reply { body, shared }))
+            Ok(response.map(|body| H1Reply { body, shared }))
         }
         Outcome::WebTransport(..) | Outcome::Abort => Err(io::ErrorKind::ConnectionAborted.into()),
     }
@@ -190,21 +190,21 @@ impl Shared {
     }
 
     /// Bounds the connection by the reply's bound; a reply without a body to send is complete at once.
-    fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<Reply> {
+    fn reply(self: &Arc<Self>, response: Response<Body>, head: bool) -> Response<H1Reply> {
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
         self.post(State::Reply(ReplyBound::of(response.body())));
-        response.map(|body| Reply { body, shared: self.clone() })
+        response.map(|body| H1Reply { body, shared: self.clone() })
     }
 }
 
 /// A reply as hyper writes it, whose end completes it.
-struct Reply {
+struct H1Reply {
     body: Body,
     shared: Arc<Shared>,
 }
 
-impl http_body::Body for Reply {
+impl http_body::Body for H1Reply {
     type Data = Bytes;
     type Error = Aborted;
 

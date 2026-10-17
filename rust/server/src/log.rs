@@ -215,11 +215,11 @@ pub struct RateLimited {
     /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     module: &'static str,
-    state: Mutex<Window>,
+    state: Mutex<Pace>,
 }
 
 #[derive(Default)]
-struct Window {
+struct Pace {
     next: Option<Instant>,
     held: u64,
 }
@@ -232,7 +232,7 @@ impl RateLimited {
             topic,
             what,
             module,
-            state: Mutex::new(Window { next: None, held: 0 }),
+            state: Mutex::new(Pace { next: None, held: 0 }),
         }
     }
 

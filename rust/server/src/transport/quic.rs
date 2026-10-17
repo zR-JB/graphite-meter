@@ -19,7 +19,7 @@ use crate::{
     limits::Lease,
 };
 use budget::ConnectionBudget;
-use budget::{SendWindow, Window};
+use budget::{QuicWindow, SendWindow};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_http3::{self as http3, server};
 use graphite_meter_proto::lane::LaneEnding;
@@ -176,7 +176,7 @@ impl Http3 {
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
         let connection = Connection::new(Endpoint::Quic, peer.ip());
-        let window = Arc::new(Window::new(self.app.clone(), quic.clone(), budget.clone()));
+        let window = Arc::new(QuicWindow::new(self.app.clone(), quic.clone(), budget.clone()));
         let requests = Requests::new(self.app.clone(), connection.clone(), window.clone(), quic.clone());
         let mut http = server::Connection::new(quic.clone(), Some(budget));
         let mut lifecycle = Lifecycle::new(connection.work, Grace::Once);

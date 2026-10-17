@@ -50,7 +50,7 @@ const TRANSPORT_BYTES: usize = 512 << 10;
 const STATE_BYTES: usize = 1 << 20;
 /// Each stream's receive window; the connection's opens to 24 MiB for admitted uploads.
 const STREAM_WINDOW: u32 = 8 << 20;
-const MAX_STREAMS: u32 = 250;
+const MAX_CONCURRENT_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
 /// The client preface and first SETTINGS arrive within this.
@@ -103,14 +103,14 @@ impl Http2 {
             .initial_window_size(STREAM_WINDOW)
             .max_frame_size(FRAME_BYTES as u32)
             .max_header_list_size(MAX_HEAD_BYTES as u32)
-            .max_concurrent_streams(MAX_STREAMS)
+            .max_concurrent_streams(MAX_CONCURRENT_STREAMS)
             .max_send_buffer_size(4 * FRAME_BYTES)
             .data_frame_budget(STATE_BYTES)
             .shared_budget(self.app.budget().h2(), STATE_BYTES);
         let Ok(Ok(mut h2)) = timeout(PREFACE_BOUND, builder.handshake::<_, Bytes>(stream)).await else {
             return;
         };
-        let window = Arc::new(Window::new(self.app.clone()));
+        let window = Arc::new(Http2Window::new(self.app.clone()));
         let mut lifecycle = Lifecycle::new(connection.work.clone(), Grace::Fresh);
         let mut streams = FuturesUnordered::new();
         // A child token: polling it never takes the server-wide token's waiter lock.
@@ -124,7 +124,7 @@ impl Http2 {
             while let Poll::Ready(Some(())) = streams.poll_next_unpin(cx) {}
             loop {
                 match h2.poll_accept(cx) {
-                    Poll::Ready(Some(Ok((request, respond)))) if streams.len() < MAX_STREAMS as usize => {
+                    Poll::Ready(Some(Ok((request, respond)))) if streams.len() < MAX_CONCURRENT_STREAMS as usize => {
                         streams.push(self.stream(request, respond, &connection, &window));
                         cx.waker().wake_by_ref();
                     }
@@ -155,7 +155,7 @@ impl Http2 {
         request: Request<RecvStream>,
         mut respond: SendResponse<Bytes>,
         connection: &Connection,
-        window: &Arc<Window>,
+        window: &Arc<Http2Window>,
     ) -> impl Future<Output = ()> + Send + use<> {
         let (app, connection, window) = (self.app.clone(), connection.clone(), window.clone());
         async move {
@@ -166,7 +166,7 @@ impl Http2 {
             let served = async {
                 match app.handle(request, &connection, exchange).await {
                     Outcome::Response(response) => {
-                        let mut reply = Reply { respond: &mut respond, stream: None };
+                        let mut reply = H2Reply { respond: &mut respond, stream: None };
                         pump(&mut reply, response, head).await
                     }
                     Outcome::WebSocket(..) | Outcome::WebTransport(..) | Outcome::Abort => Err(Aborted),
@@ -180,18 +180,18 @@ impl Http2 {
 }
 
 /// An HTTP/2 stream's reply: its head ends the stream when nothing follows, data goes in frames flow control admits.
-struct Reply<'a> {
+struct H2Reply<'a> {
     respond: &'a mut SendResponse<Bytes>,
     stream: Option<SendStream<Bytes>>,
 }
 
-impl Reply<'_> {
+impl H2Reply<'_> {
     fn stream(&mut self) -> Result<&mut SendStream<Bytes>, Aborted> {
         self.stream.as_mut().ok_or(Aborted)
     }
 }
 
-impl Sink for Reply<'_> {
+impl Sink for H2Reply<'_> {
     async fn head(&mut self, head: Parts, end: bool, _: &mut ReplyBound) -> Result<(), Aborted> {
         let stream = self.respond.send_response(Response::from_parts(head, ()), end);
         self.stream = Some(stream.map_err(|_| Aborted)?);
@@ -353,7 +353,7 @@ const DEFAULT_WINDOW: u32 = 65_535;
 const WINDOW: u32 = 24 << 20;
 
 /// The receive window: 64 KiB, 24 MiB while admitted uploads read, held to the end in the first raiser's share.
-pub(super) struct Window {
+pub(super) struct Http2Window {
     app: Arc<App>,
     credit: Mutex<Option<Hold>>,
     /// Admitted uploads reading, funded or not: running transfers keep the window they read at.
@@ -361,7 +361,7 @@ pub(super) struct Window {
     raised: AtomicBool,
 }
 
-impl Window {
+impl Http2Window {
     pub(super) fn new(app: Arc<App>) -> Self {
         Self {
             app,
@@ -378,7 +378,7 @@ impl Window {
 }
 
 /// Under pressure, or past its client's share, an upload reads at the current window.
-impl ReceiveWindow for Window {
+impl ReceiveWindow for Http2Window {
     type Stream = RecvStream;
     type Error = h2::Error;
 

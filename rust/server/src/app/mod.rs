@@ -362,7 +362,7 @@ enum WtRoute {
 }
 
 /// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.
-const READ_BATCH: usize = 32;
+const FRAMES_PER_READ: usize = 32;
 
 /// The data bytes of the frames one read took, and how the upload ended after them, if it did.
 struct Batch {
@@ -376,10 +376,10 @@ enum End {
     Lane(LaneEnding),
 }
 
-/// Up to `READ_BATCH` frames of `body` that are ready now, then `lane`'s check; pending only while none is.
+/// Up to `FRAMES_PER_READ` frames of `body` that are ready now, then `lane`'s check; pending only while none is.
 fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
     let mut bytes = 0;
-    for taken in 0..READ_BATCH {
+    for taken in 0..FRAMES_PER_READ {
         let end = match body.as_mut().poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 bytes += frame.data_ref().map_or(0, Buf::remaining);

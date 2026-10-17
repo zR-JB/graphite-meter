@@ -2,6 +2,7 @@
 
 use super::drain;
 use crate::{
+    app::query::MAX_LANE_STREAMS,
     engine::{ProgressFeed, UploadSink, Uploads},
     lane::Lane,
     peer::ClientKeys,
@@ -18,10 +19,8 @@ use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Rec
 use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
-/// Client streams read at once; more are stopped.
-const MAX_STREAMS: usize = 16;
 /// A client stream's chunks taken in one read, recorded at once.
-const READ_BATCH: usize = 32;
+const CHUNKS_PER_READ: usize = 32;
 /// A session refused at connect closes this long after its `error` record.
 const REFUSAL_LINGER: Duration = Duration::from_secs(2);
 
@@ -81,7 +80,7 @@ impl Upload {
                 stream = session.accept_uni() => {
                     let Some(stream) = stream else { return };
                     // Dropping a stream stops it with code 0.
-                    if streams.len() < MAX_STREAMS {
+                    if streams.len() < MAX_LANE_STREAMS {
                         match join() {
                             Ok(sink) => streams.push(receive(stream, sink)),
                             Err(refused) if refusal.is_terminated() => refusal.set(refuse(session, refused).fuse()),
@@ -96,7 +95,7 @@ impl Upload {
 
 /// A client stream's bytes, a batch at a time, until its FIN or `IDLE_BOUND` without any.
 async fn receive(mut stream: RecvStream, mut sink: UploadSink) {
-    let mut chunks = [const { Bytes::new() }; READ_BATCH];
+    let mut chunks = [const { Bytes::new() }; CHUNKS_PER_READ];
     while let Ok(Ok(Some(count))) = timeout(IDLE_BOUND, stream.read_chunks(&mut chunks)).await {
         sink.record(chunks[..count].iter_mut().map(|chunk| mem::take(chunk).len()).sum());
     }

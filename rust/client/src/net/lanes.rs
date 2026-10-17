@@ -34,7 +34,7 @@ const SESSION_LANES: usize = 16;
 /// The block an upload repeats; an attempt that handed on more than one moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
-const READ_BATCH: usize = 32;
+const CHUNKS_PER_READ: usize = 32;
 
 /// A server's throughput path as preparation chose it, its protocol resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,7 +371,7 @@ impl Group {
 /// One server stream of the session, counted as it arrives; the lane opens at its first bytes.
 async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
     let mut stream = session.accept_uni().await?;
-    let (mut chunks, mut received) = ([const { Bytes::new() }; READ_BATCH], 0);
+    let (mut chunks, mut received) = ([const { Bytes::new() }; CHUNKS_PER_READ], 0);
     while let Some(count) = stream
         .read_chunks(&mut chunks)
         .await
