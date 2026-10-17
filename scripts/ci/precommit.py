@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the mise checks that a commit of the staged paths needs."""
+"""Print the mise checks that a commit of the staged paths needs; CI runs the Rust workspace checks."""
 
 from __future__ import annotations
 
@@ -7,10 +7,9 @@ import os
 import subprocess
 from pathlib import Path
 
-LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/", "scripts/legal/")
-LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/tui-targets.txt"}
-# The client's checks cover the auth page assets it generates.
-CLIENT_INPUTS = ("client/", "go/internal/auth/assets/")
+TOOLING = (".github/", ".githooks/", "scripts/", "container/", "legal/")
+# The client's checks cover the sign-in page assets it generates.
+CLIENT_INPUTS = ("client/", "rust/server/src/auth/assets/")
 
 
 def staged_paths(cwd: Path | None = None) -> tuple[str, ...]:
@@ -27,14 +26,10 @@ def plan_checks(paths: tuple[str, ...]) -> tuple[str, ...]:
     if {"mise.toml", "mise.lock"} & set(paths) or touched("api/"):
         return ("check",)
     recipes: list[str] = []
-    if touched(".github/", ".githooks/", "scripts/"):
+    if touched(*TOOLING):
         recipes += ["workflow-check", "pipeline-test"]
-    if touched("go/"):
-        recipes += ["server-check", "server-test"]
     if touched(*CLIENT_INPUTS):
         recipes.append("client-ci")
-    if touched(*LEGAL_PREFIXES) or LEGAL_FILES & set(paths):
-        recipes.append("legal-check")
     return tuple(recipes)
 
 

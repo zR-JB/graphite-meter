@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
@@ -11,167 +10,32 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from fixtures import (
-    AMD,
-    ARM,
-    ATTESTED,
-    RUNNABLE,
-    descriptor,
-    engine,
-    index,
-    outcome,
-    source_members,
-    write_checksums,
-    write_release_assets,
-    SLSA,
-    write_oci,
-    write_tar,
-)
-from verify_oci import (
-    BLOB_LIMIT,
-    select_engine,
-    validate_index_descriptors,
-    verify as verify_oci,
-)
+from assets import archive_names
+from fixtures import AMD, ARM, ATTESTED, RUNNABLE, SLSA, descriptor, engine, index, outcome, write_oci, write_tar
 from github_api import ControlPlaneError
-from verify_release_assets import (
-    archive_names,
-    tui_archives,
-    verify_artifacts,
-    verify_checksums,
-    verify_client_archives,
-    verify_release_file_set,
-    verify_third_party_source_archive,
-    verify as verify_release,
-)
-
-SOURCE = "graphite-meter_1.2.3_third-party-source"
-LINUX = "graphite-meter-client_1.2.3_linux_amd64"
+from verify_oci import BLOB_LIMIT, select_engine, validate_index_descriptors, verify as verify_oci
 
 
-class ReleaseAssetTests(unittest.TestCase):
-    def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.dist = Path(directory.name)
-
-    def test_checksums_cover_exactly_safe_regular_artifacts(self) -> None:
-        payload = self.dist / "artifact.bin"
-        payload.write_bytes(b"graphite-meter")
-        digest = hashlib.sha256(b"graphite-meter").hexdigest()
-        (self.dist / "checksums.txt").write_text(f"{digest}  artifact.bin\n")
-        verify_release_file_set(self.dist, verify_checksums(self.dist))
-        (self.dist / "extra.bin").write_bytes(b"not checksummed")
-        with self.assertRaisesRegex(ControlPlaneError, r"unexpected=\['extra.bin'\]"):
-            verify_release_file_set(self.dist, {"artifact.bin"})
-        (self.dist / "extra.bin").unlink()
-        (self.dist / "link.bin").symlink_to(payload)
-        (self.dist / "directory").mkdir()
-        with self.assertRaisesRegex(ControlPlaneError, r"non-regular entries: \['directory', 'l"):
-            verify_release_file_set(self.dist, {"artifact.bin", "link.bin", "directory"})
-        for line, error in ((f"{digest}  ../artifact.bin", "unsafe"),
-                            (f"{digest}  artifact\tname.bin", "unsafe"),
-                            (f"{digest}  artifact.bin\n{digest}  artifact.bin", "duplicate"),
-                            (f"{digest}  link.bin", "not a regular file: link.bin"),
-                            (f"{digest}  directory", "not a regular file: directory"),
-                            ("0" * 64 + "  artifact.bin", "checksum mismatch"),
-                            ("", "empty")):
-            (self.dist / "checksums.txt").write_text(line + "\n" if line else "")
-            with self.subTest(line=line), self.assertRaisesRegex(ControlPlaneError, error):
-                verify_checksums(self.dist)
-
+class ArchiveTests(unittest.TestCase):
     def test_archives_reject_traversal_links_and_special_files(self) -> None:
         link = tarfile.TarInfo("bundle/link")
         link.type, link.linkname = tarfile.SYMTYPE, "../../outside"
         device = zipfile.ZipInfo("bundle/device")
         device.create_system, device.external_attr = 3, (stat.S_IFCHR | 0o600) << 16
-        for name, error in (("escape.tar.gz", "unsafe archive path"),
-                            ("link.tar.gz", "link or special"),
-                            ("escape.zip", "unsafe archive path"),
-                            ("device.zip", "link or special")):
-            path = self.dist / name
-            if name == "escape.tar.gz":
-                write_tar(path, {"../escape": b"x"})
-            elif name == "link.tar.gz":
-                with tarfile.open(path, "w:gz") as tar:
-                    tar.addfile(link)
-            else:
-                with zipfile.ZipFile(path, "w") as archive:
-                    archive.writestr("..\\escape" if name == "escape.zip" else device, b"")
-            with self.subTest(name=name), self.assertRaisesRegex(ControlPlaneError, error):
-                archive_names(path)
-
-    def test_third_party_source_offer_excludes_project_source_and_manual_keys(self) -> None:
-        root = SOURCE
-        base = source_members("1.2.3") | {
-            f"{root}/third_party/npm/example/cert.pem": b"upstream fixture"}
-        for extra, error in (
-            ({}, None),
-            ({f"{root}/third_party/manual/sample/private.key": b"x"}, "outside upstream"),
-            ({f"{root}/project/LICENSE": b"x"}, "unexpected non-third-party"),
-            ({f"{root}/README.txt": b"source is elsewhere"}, "describe the source offer"),
-        ):
-            write_tar(self.dist / f"{root}.tar.gz", base | extra)
-            with self.subTest(error=error):
-                outcome(self, error, lambda: verify_third_party_source_archive(self.dist, "1.2.3"))
-
-    def test_tui_archives_follow_targets_and_require_the_binary(self) -> None:
-        targets = self.dist / "targets.txt"
-        targets.write_text("linux/amd64\nwindows/amd64\n")
-        linux = "graphite-meter-client_1.2.3_linux_amd64"
-        windows = "graphite-meter-client_1.2.3_windows_amd64"
-        self.assertEqual(tui_archives("1.2.3", targets), {
-            f"{linux}.tar.gz": (linux, "graphite-meter-client"),
-            f"{windows}.zip": (windows, "graphite-meter-client.exe"),
-        })
-        targets.write_text("linux/amd64\n")
-        legal = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
-        write_tar(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
-        with self.assertRaisesRegex(ControlPlaneError, "graphite-meter-client"):
-            verify_client_archives(self.dist, "1.2.3", targets)
-
-    def test_release_is_exactly_the_checksummed_source_offer_and_tui_archives(self) -> None:
-        def add_extra(dist: Path) -> None:
-            (dist / "extra.bin").write_text("x")
-
-        def checksum_extra(dist: Path) -> None:
-            add_extra(dist)
-            write_checksums(dist)
-
-        def key_in_tui(dist: Path) -> None:
-            members = {f"{LINUX}/{name}": b"x" for name in (
-                "graphite-meter-client", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
-                "SOURCE.txt", "certs/server.key")}
-            write_tar(dist / f"{LINUX}.tar.gz", members)
-            write_checksums(dist)
-
-        def no_binary(dist: Path) -> None:
-            write_tar(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
-            write_checksums(dist)
-
-        def bad_offer(dist: Path) -> None:
-            write_tar(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
-                f"{SOURCE}/README.txt": b"source is elsewhere"})
-            write_checksums(dist)
-
-        for edit, error in ((None, None), (add_extra, r"release files: .*unexpected=\['extra"),
-                            (checksum_extra, r"checksummed release artifacts: .*'extra.bin'"),
-                            (key_in_tui, "certificate/key material"),
-                            (no_binary, "missing: .*graphite-meter-client'"),
-                            (bad_offer, "describe the source offer")):
-            dist = self.dist / (edit.__name__ if edit else "valid")
-            write_release_assets(dist, "1.2.3")
-            if edit is not None:
-                edit(dist)
-            with self.subTest(error=error):
-                outcome(self, error, lambda: verify_artifacts("1.2.3", dist))
-
-    def test_the_host_tui_archive_reports_the_release_version(self) -> None:
-        write_release_assets(self.dist / "valid", "1.2.3")
-        verify_release("1.2.3", self.dist / "valid")
-        write_release_assets(self.dist / "stale", "1.2.3", reported="1.2.2")
-        with self.assertRaisesRegex(ControlPlaneError, "reports 'graphite-meter-client 1.2.2'"):
-            verify_release("1.2.3", self.dist / "stale")
+        with tempfile.TemporaryDirectory() as directory:
+            for name, error in (("escape.tar.gz", "unsafe archive path"), ("link.tar.gz", "link or special"),
+                                ("escape.zip", "unsafe archive path"), ("device.zip", "link or special")):
+                path = Path(directory) / name
+                if name == "escape.tar.gz":
+                    write_tar(path, {"../escape": b"x"})
+                elif name == "link.tar.gz":
+                    with tarfile.open(path, "w:gz") as tar:
+                        tar.addfile(link)
+                else:
+                    with zipfile.ZipFile(path, "w") as archive:
+                        archive.writestr("..\\escape" if name == "escape.zip" else device, b"")
+                with self.subTest(name=name), self.assertRaisesRegex(ControlPlaneError, error):
+                    archive_names(path)
 
 
 class OCITests(unittest.TestCase):

@@ -1,72 +1,21 @@
-# Rust implementation
+# Rust workspace
 
-`rust/` holds a second implementation of the server (`graphite-meter-server`) and of the native terminal client
-(`graphite-meter-client`). Both follow the shared contracts in [`api/`](../api/), Go's flags, usage text, `GM_*`
-settings, report output and exit codes, and the Go TUI's look and keys; either client works with either server.
-
-Go stays the default. The Rust builds are opt-in: stable releases can add a linux/amd64 + linux/arm64 server image
-tagged `X.Y.Z-rust` (with `X.Y-rust` and `latest-rust` following the newest such release) and TUI archives for Linux
-amd64/arm64 and Windows amd64 named like Go's with a `_rust` marker; prereleases can add the image alone, tagged
-`X.Y.Z-{alpha,beta,rc}.N-rust`. There is no Rust build for macOS.
-[Deployment](../docs/DEPLOYMENT.md#experimental-rust-image) covers the image and its tags.
-
-## Building and running
-
-The workspace pins Rust 1.99.0 (`rust-toolchain.toml`); mise pins cargo-deny and cargo-nextest. Tests need OpenSSL;
-the interoperability tasks also need Go and `musl-tools`. From the repository root:
-
-```sh
-GM_IMPLEMENTATION=rust mise run dev          # Rust server with the development browser app
-GM_IMPLEMENTATION=rust mise run tui -- --url https://meter.example
-mise run rust-server-run -- --h1-addr :8080  # arguments after -- go to the server
-mise run rust-client-run -- --report --url https://meter.example
-```
-
-| Task | Does |
-|---|---|
-| `rust-server-run`, `rust-client-run` | Build with the `ci` profile (no LTO, 16 codegen units) and run. |
-| `rust-server-build`, `rust-client-build` | Build `target/release/graphite-meter-{server,client}` with the release profile (fat LTO, one codegen unit). |
-| `rust-check` | Formatting, fork pins, legal reviews and crate budgets, `cargo deny --locked check`, clippy, nextest. |
-| `rust-check-targets` | Check the shipped musl and Windows targets (needs mingw-w64, musl-tools and an aarch64 GNU compiler). |
-| `rust-format` | `cargo fmt --all`. |
-| `rust-interop` | Go's QUIC, HTTP/3 and WebTransport peers and the Go TUI against the static Rust server. |
-| `rust-client-interop` | The Rust TUI against Go's server, signed in through Go's approval pages. |
-| `rust-delayed-downloads` | The delayed-link HTTP/3 and WebTransport download gate; a run that measures nothing fails. |
-| `rust-e2e SERVER [GROUP]` | The browser suite against a Rust server executable; `reversals`, `heavy`, `rest-1` or `rest-2` runs a shard, as CI does. |
-| `rust-container-build` | The server image `graphite-meter:latest-rust` (amd64 build host). |
-| `rust-client-package` | The Linux and Windows TUI archives and their source offers in the pinned builder (amd64 build host). |
-
-- CI checks the Rust server's browser path in Chromium only (Chrome for Testing); the Go server's runs in Chrome and
-  Firefox. A WebKitGTK negative control is not run.
-- CI's Rust image and TUI package checks build without a Cargo cache; only the jobs that build in the runner
-  workspace (rust, rust-interop, rust-windows) cache Cargo.
-
-`GM_IMPLEMENTATION=rust` switches `dev`, `prod` and `tui` to the Rust server or TUI; `prod` uses the release
-profile, `dev` and `tui` the `ci` profile. Plain `cargo build` uses the unoptimized debug profile; compare
-performance only between equal optimized profiles.
-
-Local builds embed development notices, so their executables say `UNREVIEWED DEVELOPMENT BUILD` and are not
-distributable; the pinned builder in `container/Dockerfile.rust` makes reviewed release builds
-([legal pipeline](../legal/README.md#rust-notices)). The server's browser app is built once per profile into
-`target/browser/` and reused until a browser input changes.
+`rust/` holds the server (`graphite-meter-server`) and the terminal client (`graphite-meter-client`). Both follow the
+shared contracts in [`api/`](../api/). The server ships as a linux/amd64 and linux/arm64 image, the client as archives
+for Linux amd64/arm64 and Windows amd64. Commands, tests and toolchain pins are in the
+[development guide](../docs/DEVELOPMENT.md).
 
 Build-time variables:
 
 | Variable | Meaning |
 |---|---|
-| `GM_ENGINE_VERSION` | The version the binaries report; the build tasks set `VERSION-rust`, plain `cargo build` leaves `0.0.0-rust-dev`. |
+| `GM_ENGINE_VERSION` | The version the binaries report; the build tasks set it, plain `cargo build` leaves `0.0.0-dev`. |
 | `GM_RUST_LEGAL_DIR` | Reviewed notices to embed; without it a build embeds none. |
 | `GM_RUST_ASSET_DIR` | The browser app the server embeds; reviewed builds take it from the legal directory. |
 | `CC_<target>`, `CFLAGS_<target>` | musl cross compilers; flags a caller sets replace `.cargo/config.toml`'s `-DMI_DEFAULT_ALLOW_THP=0`. |
 
-Run-time settings beyond Go's:
-
-| Setting | Meaning |
-|---|---|
-| `GM_MAX_BUFFER_BYTES` / `--max-buffer-bytes` | Buffer budget of the HTTP/2 and QUIC listeners, default 8 GiB (below). |
-| `TOKIO_WORKER_THREADS` | Worker threads, default the available CPUs; each adds one pinned connection thread. |
-| `MIMALLOC_ALLOW_THP=2` | Restores mimalloc's transparent huge pages, off by default in musl builds. |
-| `--legal` (server) | Prints the project's copyright, source and reviewed third-party notices, as Go's TUI does. |
+Plain `cargo build` uses the unoptimized debug profile; compare performance only between equal optimized profiles.
+`MIMALLOC_ALLOW_THP=2` restores mimalloc's transparent huge pages, off by default in the static builds.
 
 ## Architecture
 
@@ -130,7 +79,7 @@ resident-memory bound.
 - A connection and its streams stay on one pinned runtime on both sides (`e2e/tests/lanes.rs` checks the pinning);
   two HTTP/3 endpoints on four workers cost less CPU per byte than one or four.
 - QUIC receive windows autotune from 768 KiB to 48 MiB per connection and 32 MiB per stream, sends from 2 to 16 MiB,
-  with receive batches of four GRO messages (`mise run rust-delayed-downloads`).
+  with receive batches of four GRO messages (`mise run delayed-downloads`).
 - noq's Cubic follows RFC 9438's Reno-friendly region and K. Under 0.5 % per-packet loss quic-go stays ahead, 6.4–6.7
   against 5.0–5.7 Mbit/s, because it runs Reno with a 0.7 backoff, which is less fair to TCP; at 0.1 % the two are
   within 15 % (campaign run 38663551289).

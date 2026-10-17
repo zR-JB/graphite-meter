@@ -58,7 +58,7 @@ fn main() -> ExitCode {
 /// Prints the notices; the status is 141 into a closed pipe on Unix.
 fn legal() -> Result<u8, String> {
     let report = NOTICES.report().ok_or(
-        "this build embeds no notices; mise run rust-server-run -- --legal builds the server with dependency notices \
+        "this build embeds no notices; mise run dev -- --legal builds the server with dependency notices \
          and prints them",
     )?;
     graphite_meter_legal::print(io::stdout().lock(), report).map_err(|error| error.to_string())

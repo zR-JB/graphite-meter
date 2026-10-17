@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import tomllib
 from pathlib import Path, PurePosixPath
 
 from github_api import PEM, TLS_NAME, ControlPlaneError, fail
-from release import REQUEST_JOBS, RUST_TUI_JOB
+from release import BUILD_JOB
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,8 +18,8 @@ WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z0-9-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
-# How a build gets unreviewed development notices: the collector's flag or a local Rust build.
-DEVELOPMENT_BUILDS = ("--development", "scripts.rust_build")
+# How a build gets unreviewed development notices: the collector's flag or a local build.
+DEVELOPMENT_BUILDS = ("--development", "scripts.build")
 # The collector, which defines --development, and this policy name the markers without building.
 NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
@@ -32,49 +31,34 @@ TRIGGERS = {
 }
 ALLOWED_USES = {
     "release-request.yml": {
-        "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
-        "docker/setup-qemu-action", "docker/setup-buildx-action", "docker/build-push-action",
-        "actions/upload-artifact",
+        "actions/checkout", "./.github/actions/setup-project", "./.github/actions/setup-buildx",
+        "docker/build-push-action", "actions/upload-artifact",
     },
     "release.yml": {
         "actions/checkout", "jdx/mise-action", "actions/download-artifact",
         "actions/upload-artifact", "actions/create-github-app-token",
     },
 }
+# Steps each file must contain, in this order: deleting or reordering one weakens a trust boundary.
 ORDERED = {
-    "workflows/advisories.yml": ("run: cargo deny --locked check advisories\n",),
-    "actions/setup-project/action.yml": (
-        "rustup toolchain install", "python3 scripts/ci/toolchains.py verify-rust",
-    ),
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "\n      context: ${{ steps.source.outputs.context }}\n", "run: python3 scripts/ci/release.py prepare",
-        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
-        "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
-        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
-        "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
-        "run: python3 scripts/ci/rust_release.py stage-image\n",
-        "python3 scripts/ci/rust_release.py stage-tui\n",
-        'python3 -m scripts.package_rust "$VERSION" --output "$OUT_DIR" --check\n',
+        "run: python3 scripts/ci/release.py prepare", '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
+        "uses: docker/build-push-action@", "python3 scripts/ci/assets.py stage\n",
     ),
-    # CI exports the image's source offers, builds the TUI archives with the release request's BuildKit, then stages
-    # and verifies its Rust builds as releases do.
-    "workflows/ci.yml": (
-        "--target server-artifacts", "BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}\n",
-        'run: mise run rust-client-package "$VERSION"\n', "python3 scripts/ci/rust_release.py stage-image\n",
-        "python3 scripts/ci/rust_release.py stage-tui\n", "python3 scripts/ci/rust_release.py check\n",
-    ),
+    # The trusted consumer acts only on a successful main dispatch of the request workflow, one publish at a time.
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
         "&& github.event.workflow_run.head_branch == 'main'\n",
         "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
-        "run: python3 scripts/ci/release.py verify",
-        "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
-        "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
-        "IMAGE_TAG: ${{ needs.verify.outputs.version }}-rust\n",
-        "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
+        "run: python3 scripts/ci/release.py verify", "group: release-publish-${{ github.repository }}\n",
+        "cancel-in-progress: false\n", "run: python3 scripts/ci/release.py recheck",
+        "run: scripts/ci/publish.sh image", "run: python3 scripts/ci/release.py publish",
+        "run: scripts/ci/publish.sh aliases",
     ),
+    "actions/setup-project/action.yml": ("rustup toolchain install", "python3 scripts/ci/toolchains.py verify-rust"),
+    "workflows/advisories.yml": ("run: cargo deny --locked check advisories\n",),
 }
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
 CONTEXT = {
@@ -98,39 +82,22 @@ CONTEXT = {
         "TAG": "needs.verify.outputs.tag", "SOURCE_SHA": "needs.verify.outputs.sha",
         "MAIN_SHA": "needs.verify.outputs.main_sha", "PR": "needs.verify.outputs.pr",
         "OCI_SHA256": "needs.verify.outputs.oci_sha256", "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
-        "RUST": "needs.verify.outputs.rust", "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
     },
-    "ARCHIVE_DIR: ${{ runner.temp }}/handoff/rust-image\n": {"DIGEST": "needs.verify.outputs.rust_digest"},
+    "run: scripts/ci/publish.sh image": {
+        "IMAGE_TAG": "needs.verify.outputs.version", "DIGEST": "needs.verify.outputs.digest",
+    },
     "run: scripts/ci/publish.sh aliases": {
         "VERSION": "needs.verify.outputs.version", "DIGEST": "needs.verify.outputs.digest",
-        "RUST_DIGEST": "needs.verify.outputs.rust_digest",
     },
 }
-# Every image build of the untrusted request records max provenance and gets no token.
-IMAGE_BUILD = ("provenance: mode=max\n", "github-token: ''\n")
-# Each starts empty but an export of the server's source offers, which reuses the image build before it.
-OFFERS_EXPORT = "target: server-artifacts\n"
-# Every image build of the untrusted request builds the source its build job validated and resolved.
-IMAGE_CONTEXTS = ("${{ steps.source.outputs.context }}", "${{ needs.build.outputs.context }}")
-# The plan output that selects each CI job; the jobs ALWAYS names run on every change.
-SELECTED_BY = {
-    "e2e": "code", "rust": "rust", "rust-windows": "rust", "rust-interop": "rust-interop",
-    "rust-image": "rust-image", "rust-e2e": "rust-image", "rust-tui": "rust-release", "rust-release": "rust-release",
-}
-ALWAYS = ("plan", "checks", "gate")
-# The plan output that selects each task of the checks job; its other tasks run on every change.
-CHECKS_SELECTED_BY = {
-    "legal-check": "code", "release-check": "code", "container-smoke": "code", "core-check": "code",
-    "server-race": "go", "security": "deps", "client-audit": "deps",
-}
-# Repository paths a Rust source includes: relative to the file, or to its crate's manifest directory.
-RUST_INCLUDE = re.compile(r'include_(?:str|bytes)!\("([^"]+)"\)|concat!\(env!\("CARGO_MANIFEST_DIR"\), "([^"]+)"\)')
+# Every image build of the untrusted request records max provenance, gets no token and builds the resolved source.
+IMAGE_BUILD = ("provenance: mode=max\n", "github-token: ''\n", "context: ${{ steps.source.outputs.context }}\n")
 # Dependency manifests and lockfiles, toolchain pins, Cargo configuration and build scripts.
 SUPPLY_CHAIN = re.compile(r"(?:^|/)(?:Cargo\.(?:toml|lock)|deny\.toml|build\.rs|rust-toolchain(?:\.toml)?"
-                          r"|go\.(?:mod|sum)|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
+                          r"|package\.json|bun\.lock|bunfig\.toml|mise\.(?:toml|lock))$"
                           r"|(?:^|/)\.cargo/")
 # The Dependabot ecosystem that updates each lockfile's directory.
-ECOSYSTEMS = {"Cargo.lock": "cargo", "go.sum": "gomod", "bun.lock": "bun"}
+ECOSYSTEMS = {"Cargo.lock": "cargo", "bun.lock": "bun"}
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "workflows/release-request.yml": (
@@ -169,18 +136,18 @@ def run_scripts(text: str) -> list[str]:
 
 def check_actions(root: Path) -> None:
     github = root / ".github"
-    files = sorted([*github.glob("workflows/*.y*ml"), *github.glob("actions/**/action.y*ml")])
+    paths = sorted([*github.glob("workflows/*.y*ml"), *github.glob("actions/**/action.y*ml")])
     mise = f"version: {pin('tools.mise', root)}"
-    for path in files:
+    for path in paths:
         name = str(path.relative_to(github))
         text = path.read_text(encoding="utf-8")
-        needles = ["ubuntu-latest"]
+        if floating := re.findall(r"runs-on: (\S+-latest)", text):
+            fail(f"{name} must pin its runner image, not {floating[0]}")
         if name != "workflows/release.yml":
-            needles += ["secrets.", "secrets[", "environment:"]
-        for needle in needles:
-            if needle in text:
-                fail(f"{name} must not use {needle}")
-        if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun)@", text):
+            for needle in ("secrets.", "secrets[", "environment:"):
+                if needle in text:
+                    fail(f"{name} must not use {needle}")
+        if re.search(r"uses: (?:actions/setup-(?:go|python|node)|oven-sh/setup-bun)@", text):
             fail(f"{name} must provision project tools through mise")
         installs = re.findall(r"rustup\W+toolchain\W+install\b.*", text)
         if any("--no-self-update" not in line for line in installs):
@@ -205,10 +172,12 @@ def check_actions(root: Path) -> None:
         for needle in FORBIDDEN.get(name, ()):
             if needle in text:
                 fail(f"{name} must not contain {needle}")
+        # Comments do not count, so a guard cannot survive as text alone.
+        code = re.sub(r"(?m)^\s*#.*\n", "", text)
         last = -1
         for needle in ORDERED.get(name, ()):
-            if (position := text.find(needle)) <= last:
-                fail(f"{name} is missing or misorders invariant: {needle}")
+            if (position := code.find(needle, last + 1)) < 0:
+                fail(f"{name} is missing or misorders invariant: {needle.strip()}")
             last = position
 
 
@@ -245,42 +214,23 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
-    # release.py takes each artifact only from the request job that wrote it.
-    if re.findall(r"(?m)^    name: (.*)$", request) != list(REQUEST_JOBS):
-        fail(f"release-request.yml: its jobs must be named {list(REQUEST_JOBS)}, as release.py expects")
-    # The Rust jobs run only for a validated request that selected them, the TUI archives only for a stable one and
-    # after the image, so no two jobs run at once and each artifact binds to the one job that ran when it was written.
-    for job in JOB.split(request.split("\njobs:\n", 1)[1]):
-        tui = f"    name: {RUST_TUI_JOB}\n" in job
-        needs = "[build, rust-image]" if tui else "build"
-        stable = " && needs.build.outputs.stable == 'true'" if tui else ""
-        selected = f"    needs: {needs}\n    if: needs.build.outputs.rust == 'true'{stable}\n"
-        if job and not job.startswith("build:\n") and selected not in job:
-            fail("release-request.yml: Rust jobs must run one after another, only when the validated request "
-                 "selects them, and the TUI archives only for a stable release")
+    # release.py binds the request's artifact to its one job by this name.
+    if re.findall(r"(?m)^    name: (.*)$", request) != [BUILD_JOB]:
+        fail(f"release-request.yml must run one job named {BUILD_JOB!r}, as release.py expects")
     scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
     if scopes != ["permissions:\n  contents: read"]:
         fail("release-request.yml: the untrusted build may only read contents")
+    builds = []
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
-        if "uses: docker/build-push-action@" not in step:
-            continue
-        if missing := [item for item in IMAGE_BUILD if item not in step]:
-            fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
-        contexts = re.findall(r"(?m)^ +context: (.*)$", step)
-        if len(contexts) != 1 or contexts[0] not in IMAGE_CONTEXTS:
-            fail("release-request.yml: every image build must build the source the build job resolved")
-    for job in JOB.split(request.split("\njobs:\n", 1)[1]):
-        builds = [step for step in STEP.split(job) if "uses: docker/build-push-action@" in step]
-        for previous, step in zip(["", *builds], builds):
-            # The job's own builder then holds only the image build's layers, so both outputs come from one build.
-            reuses = (OFFERS_EXPORT in step and "target: server\n" in previous and "no-cache: true\n" in previous
-                      and job.count("uses: docker/setup-buildx-action@") == 1
-                      and build_inputs(step) == build_inputs(previous))
-            if "no-cache: true\n" not in step and not reuses:
-                fail("release-request.yml: every image build must declare no-cache, but the source offers' export "
-                     "right after its image build with the same inputs")
+        if "uses: docker/build-push-action@" in step:
+            builds.append(step)
+            if missing := [item for item in IMAGE_BUILD if item not in step]:
+                fail(f"release-request.yml: every image build must declare {missing[0].strip()}")
+    # The job's own builder then holds only the first build's layers, which the exports after it reuse.
+    if not builds or "no-cache: true\n" not in builds[0]:
+        fail("release-request.yml: the first image build must declare no-cache")
     # Caches are keyed by job; only CI writes them.
     for name in sorted(names - {"ci.yml"}):
         for step in STEP.split((workflows / name).read_text(encoding="utf-8")):
@@ -290,26 +240,22 @@ def check_workflows(root: Path) -> None:
         if ("uses: actions/cache@" in step and "inputs.cache == 'true'" not in step
                 or "uses: jdx/mise-action@" in step and "cache: ${{ inputs.cache }}" not in step):
             fail("setup-project: every cache must follow the cache input")
-    if "VERSION= mise run legal-check\n" not in request:
-        fail("release-request.yml: stable builds must check committed legal outputs first")
-
-
-def build_inputs(step: str) -> tuple[list[str], str]:
-    """The Dockerfile, context, platforms and build arguments of a build-push-action step."""
-    keys = re.findall(r"(?m)^ +(?:file|context|platforms): .*$", step)
-    arguments = re.search(r"(?m)^( +)build-args: \|\n((?:\1 +\S.*\n)*)", step)
-    return keys, arguments[2] if arguments else ""
 
 
 def check_ci(root: Path) -> None:
     ci = read(root, ".github/workflows/ci.yml")
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
 
-    def steps(task: str) -> list[str]:
-        return [step["task"] for step in tasks[task]["run"] if isinstance(step, dict)]
+    def runs(task: str) -> bool:
+        """Whether CI runs `task`, itself or every task it consists of."""
+        steps = [step["task"] for step in tasks[task]["run"] if isinstance(step, dict)]
+        ran = re.search(rf"mise run {re.escape(task)}(?![\w-])", ci) is not None
+        return ran or bool(steps) and len(steps) == len(tasks[task]["run"]) and all(map(runs, steps))
 
-    for task in steps("ci"):
-        if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
+    # A local build is the one step CI replaces, with the image's reviewed server.
+    local = {name for name, task in tasks.items() if any(marker in str(task.get("run", "")) for marker in DEVELOPMENT_BUILDS)}
+    for task in (step["task"] for step in tasks["ci"]["run"] if step["task"] not in local):
+        if not runs(task):
             fail(f"CI must run the local gate step {task}")
     if "run: python3 -m scripts.legal.check_git_sources --verify\n" not in ci:
         fail("CI must verify the Cargo fork pins with check_git_sources --verify")
@@ -321,11 +267,10 @@ def check_ci(root: Path) -> None:
 
 def check_development_notices(root: Path) -> None:
     """Nothing CI or a release runs builds with unreviewed development notices: no workflow, image build, mise
-    task, scripts/*.sh or Python driver they reach starts the collector's --development mode or a local Rust
-    build."""
+    task, scripts/*.sh or Python driver they reach starts the collector's --development mode or a local build."""
     tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
     texts = [path.read_text(encoding="utf-8")
-             for path in sorted([*(root / ".github").rglob("*.y*ml"), *(root / "container").glob("Dockerfile*")])]
+             for path in sorted([*(root / ".github").rglob("*.y*ml"), root / "container/Dockerfile"])]
     reached = set(NAMING)
     while texts:
         text = texts.pop()
@@ -350,87 +295,6 @@ def check_development_notices(root: Path) -> None:
                 for step in steps if isinstance(steps, list) else [steps]:
                     texts.append(step if key == "run" and isinstance(step, str)
                                  else f"mise run {step if isinstance(step, str) else step['task']}")
-
-
-def path_filters(text: str) -> dict[str, list[str]]:
-    """The globs of each .github/ci-paths.yml filter, with its aliases expanded."""
-    filters: dict[str, list[str]] = {}
-    anchors: dict[str, list[str]] = {}
-    current: list[str] = []
-    for line in text.splitlines():
-        if match := re.fullmatch(r"([\w-]+):(?: &([\w-]+))?", line):
-            current = filters[match[1]] = []
-            if match[2]:
-                anchors[match[2]] = current
-        elif match := re.fullmatch(r"  - '([^']+)'|  - \*([\w-]+)", line):
-            current.extend([match[1]] if match[1] else anchors[match[2]])
-    return filters
-
-
-def check_paths(root: Path) -> None:
-    """A change to any input of the Rust image selects the jobs that build it; one to any input of the TUI archives,
-    which every stage but the browser app's provides, or of the browser's locked dependencies, whose sources the
-    server's source offers carry, selects their export and staging; and one to a file a Rust source includes selects
-    the Rust checks."""
-    filters = path_filters(read(root, ".github/ci-paths.yml"))
-    stages = [(match[1] if (match := re.match(r"FROM .* AS (\S+)", text)) else "", text)
-              for text in re.split(r"(?m)^(?=FROM )", read(root, "container/Dockerfile.rust"))]
-    # Each filter covers a stage's inputs up to the instruction named for it.
-    for name, until in (("rust-image", {}), ("rust-release", {"browser": "RUN bun --bun install"})):
-        # A copied directory stands for every file below it.
-        inputs = [".dockerignore", "container/Dockerfile.rust", *(
-            source + "x" if source.endswith("/") else source
-            for stage, text in stages
-            for line in re.findall(r"(?m)^COPY (?!--)(.+)$", text.split(until[stage])[0] if stage in until else text)
-            for source in line.split()[:-1])]
-        if missing := [path for path in inputs
-                       if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
-            fail(f".github/ci-paths.yml {name} misses {missing}")
-    for name in files(root):
-        if not name.startswith("rust/") or not name.endswith(".rs"):
-            continue
-        for relative, manifest in RUST_INCLUDE.findall(read(root, name)):
-            base = PurePosixPath(name).parent if relative else PurePosixPath(*PurePosixPath(name).parts[:2])
-            included = PurePosixPath(os.path.normpath(base / (relative or manifest.lstrip("/"))))
-            if not any(included.full_match(glob) for glob in filters["rust"]):
-                fail(f".github/ci-paths.yml rust misses {included}, which {name} includes")
-
-
-def check_selection(root: Path) -> None:
-    """Every push runs every job, and a pull request each job whose reviewed filter matches; a job's needs run
-    whenever it does, since the Gate passes a job skipped for a skipped prerequisite."""
-    ci = read(root, ".github/workflows/ci.yml")
-    filters = path_filters(read(root, ".github/ci-paths.yml"))
-    outputs = re.findall(r"(?m)^      ([\w-]+): \$\{\{ github\.event_name == 'push' \|\| "
-                         r"steps\.filter\.outputs\.([\w-]+) == 'true' \}\}$", ci)
-    if any(name != source or name not in filters for name, source in outputs):
-        fail("CI's plan must output .github/ci-paths.yml filters by their names, and every one on push")
-    selected: dict[str, str | None] = {}
-    needs: dict[str, list[str]] = {}
-    for job in filter(None, JOB.split(ci.split("\njobs:\n", 1)[1])):
-        name = job.split(":", 1)[0]
-        output = re.search(r"(?m)^    if: needs\.plan\.outputs\.([\w-]+) == 'true'$", job)
-        selected[name] = output[1] if output else None
-        listed = re.search(r"(?m)^    needs: \[?([^]\n]*)", job)
-        needs[name] = [item.strip() for item in listed[1].split(",")] if listed else []
-    expected = {**SELECTED_BY, **dict.fromkeys(ALWAYS)}
-    if wrong := sorted(name for name in selected.keys() | expected.keys()
-                       if selected.get(name, "") != expected.get(name, "")):
-        fail(f"CI jobs must run on their reviewed filters: {wrong}")
-    if unknown := sorted(name for name, output in selected.items() if output and output not in dict(outputs)):
-        fail(f"CI jobs run on filters the plan does not output: {unknown}")
-    checks = re.search(r"(?ms)^  checks:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", ci)
-    for step in re.split(r"(?m)^(?=\s+- )", checks[1] if checks else ""):
-        step_output = re.search(r"(?m)^\s+if: needs\.plan\.outputs\.([\w-]+) == 'true'$", step)
-        for task in re.findall(r"mise run ([\w-]+)", step):
-            if (step_output[1] if step_output else None) != CHECKS_SELECTED_BY.get(task):
-                fail(f"the checks job must run {task} on its reviewed filter")
-    for name, output in selected.items():
-        for needed in needs[name]:
-            # A glob lies within another that matches it as a path.
-            if output and (other := selected.get(needed)) and not all(
-                    any(PurePosixPath(glob).full_match(cover) for cover in filters[other]) for glob in filters[output]):
-                fail(f"CI job {name} may run without {needed}: filter {output} is not within {other}")
 
 
 def owned(path: str, patterns: list[str]) -> bool:
@@ -498,13 +362,10 @@ def check_repository(root: Path = ROOT) -> None:
         check_toolchain_literals(root)
     except (ValueError, OSError) as exc:
         fail(str(exc))
-    for name in ("container/Dockerfile", "container/Dockerfile.rust"):
-        check_dockerfile(name, read(root, name))
+    check_dockerfile("container/Dockerfile", read(root, "container/Dockerfile"))
     check_actions(root)
     check_workflows(root)
     check_ci(root)
-    check_paths(root)
-    check_selection(root)
     check_dependencies(root)
     check_development_notices(root)
     check_certificates(root)

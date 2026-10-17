@@ -5,7 +5,7 @@
 **Self-hosted network testing for fast local networks, from any browser or terminal.**
 
 Measure download, upload, and latency before and during transfers, up to multi-gigabit links.\
-One Go server, a responsive web interface, and a native terminal client.
+One server, a responsive web interface, and a native terminal client.
 
 [![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases) [![Container](https://img.shields.io/badge/container-ghcr.io%2Fzr--jb%2Fgraphite--meter-387d91)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
@@ -51,8 +51,7 @@ both the interface and measurement routes on public deployments.
 WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
 UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
 estimate is separate from measured payload throughput. See [measurement definitions](docs/MEASUREMENTS.md)
-for exact timing, statistics, and interpretation, or the [benchmark harness](docs/BENCHMARKS.md)
-for controlled performance testing.
+for exact timing, statistics, and interpretation.
 
 ## Browser client
 
@@ -84,7 +83,7 @@ result replays on the dial when the run ends.
 
 ## Native terminal client
 
-**The same server, directly from your terminal.** `graphite-meter-client` is an interactive Go TUI
+**The same server, directly from your terminal.** `graphite-meter-client` is an interactive terminal client
 with server selection, stage and timing controls, independent connection paths, stream settings,
 and live throughput and latency results. It lets you test without browser runtime constraints.
 
@@ -99,7 +98,7 @@ then run:
 ./graphite-meter-client --url https://meter.example.net --server frankfurt --server amsterdam
 ```
 
-Prebuilt clients are available for **Linux and macOS on amd64/arm64**, and **Windows on amd64**
+Prebuilt clients are available for **Linux on amd64/arm64** and **Windows on amd64**
 (`graphite-meter-client.exe`). On authenticated servers, approve the terminal's short code in your
 browser. The client keeps its measurement grant in memory and never asks for the operator password.
 Without a terminal, or with `--report`, it runs once and prints the report; the exit status
@@ -114,10 +113,9 @@ reflects the outcome. Such a headless run cannot sign in, so it fails on a prote
 - [Deployment and configuration](docs/DEPLOYMENT.md): TLS, authentication, containers, proxies, and troubleshooting.
 - [Measurement definitions](docs/MEASUREMENTS.md): what each result measures and how it is calculated.
 - [Development](docs/DEVELOPMENT.md): architecture, toolchain, testing, and releases.
-- [Benchmark harness](docs/BENCHMARKS.md): controlled throughput testing.
 - Client contracts: [discovery](api/discovery.md), [uploads](api/upload.md), and [latency / WebTransport](api/wire.md).
 - [Server catalogue and independent authorization](docs/SERVERS.md): configure available servers and interpret simultaneous results.
-- [Rust implementation](rust/README.md): the opt-in Rust server and terminal client; Go remains the default.
+- [Rust workspace](rust/README.md): architecture, threading, memory and measured decisions.
 
 ## Contributing
 

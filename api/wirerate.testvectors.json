@@ -1,5 +1,5 @@
 {
-  "comment": "Wire bytes per payload byte at a 1,500 B MTU, the central estimate of client/src/engine/measure/overhead.ts for a fetch stream or WebTransport path over IPv4 or IPv6. Generated from the TypeScript; the Go and Rust terminal clients must match within 1e-6.",
+  "comment": "Wire bytes per payload byte at a 1,500 B MTU, the central estimate of client/src/engine/measure/overhead.ts for a fetch stream or WebTransport path over IPv4 or IPv6. Generated from the TypeScript; the terminal client must match within 1e-6.",
   "cases": [
     {"scheme": "http", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 4, "multiplier": 1.062154696},
     {"scheme": "https", "transport": "fetch-stream", "protocol": "http1", "ipVersion": 4, "multiplier": 1.063580929},

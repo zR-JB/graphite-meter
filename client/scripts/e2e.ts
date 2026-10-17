@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { describe, host, launch } from "../e2e/servers";
 
+const named = process.env.GM_E2E_SERVER_BIN;
+if (!named) throw new Error("GM_E2E_SERVER_BIN names the server executable; mise run e2e sets it");
 // Paths resolve from the client folder, which the suite runs in.
-const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("test-results/graphite-meter");
-if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing; build it with mise run e2e`);
+const bin = resolve(named);
+if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing`);
 // CI runs the browser mise.toml pins; a local run takes whichever is installed.
 for (const [path, expected, name] of [
   [process.env.BUN_CHROME_PATH ?? "chrome", process.env.GM_EXPECTED_CHROME_VERSION, "Google Chrome for Testing"],

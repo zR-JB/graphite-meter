@@ -1,4 +1,4 @@
-"""Builds, identities and bounded server processes for runs against the Rust server or with the Rust client."""
+"""Builds, identities and bounded server processes for the browser interoperability run."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from types import TracebackType
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/ci"))
-import rust_workspace  # noqa: E402
+import workspace  # noqa: E402
 
 # Image platforms by the machine names Python reports.
 PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}
@@ -29,7 +29,7 @@ PASSWORD_HASH = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z
 
 def musl_target() -> str:
     """The shipped server target for this machine."""
-    return rust_workspace.load().server[PLATFORMS[platform.machine()]]
+    return workspace.load().server[PLATFORMS[platform.machine()]]
 
 
 def build_server(profile: str) -> Path:
@@ -72,23 +72,6 @@ def udp_sockets(port: int) -> int:
     return sum(1 for line in lines if line.split()[1] == local)
 
 
-def native(client: Path, server: Server, listener: str, transport: str, stages: str, seconds: int,
-           *extra: str) -> list[str]:
-    """A native client's report run against `server`'s `listener`."""
-    protocol = "http1" if listener.startswith("http1") else listener
-    durations = [f"--{stage}-duration={seconds}s" for stage in ("latency", "download", "upload", "bidirectional")]
-    return [str(client), "--report", "--url", server.origin("http1"), "--throughput-origin", server.origin(listener),
-            "--throughput-protocol", protocol, "--throughput-transport", transport, "--stages", stages,
-            "--warmup=250ms", *durations, *extra]
-
-
-def record(result: subprocess.CompletedProcess[str], log: Path, label: str) -> None:
-    """Keeps and prints a finished peer's output, then fails if the peer failed."""
-    log.write_text(result.stdout + result.stderr)
-    print(f"{label}:\n{result.stdout}{result.stderr}", end="", flush=True)
-    result.check_returncode()
-
-
 class Fixture:
     """Evidence directory and trust material for one run."""
 
@@ -99,14 +82,6 @@ class Fixture:
                             if not key.startswith(("GM_", "MIMALLOC_"))}
         self.ca, self.cert, self.key = self.identity()
         print(f"Evidence: {self.directory}", flush=True)
-
-    def go_build(self, output: str, *arguments: str, modfile: Path | None = None) -> Path:
-        """Builds a Go program against go/go.mod, or `modfile`, into the evidence directory."""
-        binary = self.directory / output
-        flags = [f"-modfile={modfile}"] if modfile else []
-        subprocess.run(["go", "build", *flags, "-trimpath", "-o", str(binary), *arguments], cwd=ROOT / "go",
-                       env=self.environment, check=True)
-        return binary
 
     def identity(self) -> tuple[Path, Path, Path]:
         """A CA and its P-256 loopback leaf, short-lived enough for serverCertificateHashes."""

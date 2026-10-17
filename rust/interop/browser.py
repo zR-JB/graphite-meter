@@ -5,7 +5,7 @@
 Chromium must fetch over HTTP/3, use WebTransport datagrams and streams, and see the close code and reason of
 a session the server ends at its lifetime and when it stops. The server shards HTTP/3 over this host's runtime
 threads. It runs the first of BROWSERS on PATH against the static musl server it builds with the ci profile, or
-against the server the CI image job exports, which the job downloads to TMPDIR/rust-image/graphite-meter-server.
+against the server the CI image job exports, which the job downloads to TMPDIR/image/graphite-meter-server.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from fixture import ROOT, Fixture, Server, build_server, planned_endpoints, udp_
 PAGE = (Path(__file__).parent / "browser.html").read_bytes()
 # Chrome for Testing as setup-chrome puts it on PATH, then a distribution's Chromium.
 BROWSERS = ("chrome", "chromium")
-IMAGE_SERVER = Path(tempfile.gettempdir()) / "rust-image" / "graphite-meter-server"
+IMAGE_SERVER = Path(tempfile.gettempdir()) / "image" / "graphite-meter-server"
 MIB = 1024 * 1024
 CHECKS: dict[str, Callable[[Any], bool]] = {
     "download": lambda d: d == {"bytes": MIB, "protocol": "h3"},

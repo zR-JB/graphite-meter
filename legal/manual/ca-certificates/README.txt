@@ -1,5 +1,5 @@
 The final scratch image copies /etc/ssl/certs/ca-certificates.crt from the
-same Debian-based Go builder that supplies this metadata. The Dockerfile
+pinned Debian-based Rust builder that supplies this metadata. The Dockerfile
 must copy /usr/share/doc/ca-certificates/copyright from that builder without
 rewriting it. This record identifies the package and the exact build-time
 source; the final image carries the package copyright file verbatim.

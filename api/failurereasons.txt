@@ -1,4 +1,4 @@
-# Graphite Meter — failure reason pin (shared across Go / TS / Rust).
+# Graphite Meter failure reason pin, shared by the Rust workspace and the browser client.
 #
 # Format (one reason per non-comment, non-blank line):
 #   <reason> | <label>
@@ -6,7 +6,7 @@
 #   reason = the key every implementation uses for the failure
 #   label  = the text every view shows for it
 #
-# Read by client/src/view/words.test.ts and go/cmd/graphite-meter-client/main_test.go.
+# Read by rust/proto/tests/codes.rs and client/src/view/words.test.ts.
 
 preparation-failed | Couldn't prepare the connection
 connection-lost | Connection lost

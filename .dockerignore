@@ -1,25 +1,20 @@
-# Build context is the repo root (docker build -f container/Dockerfile .). Keep it lean.
+# The build context is the repository root (docker build -f container/Dockerfile .); keep it lean.
 .git
+.claude
 **/node_modules
+**/.DS_Store
+**/__pycache__
 client/dist
-client/.e2e-dist
 client/test-results
 # The image's check covers what it builds, not the browser suite, its launcher or the benchmarks.
 client/e2e
 client/scripts
 client/bench
-go/graphite-meter
-go/graphite-meter-client
-go/graphite-meter-client.exe
-go/cover.out
-go/*.test
-go/dist
-go/internal/static/dist
-.go-cache
-.tools
-**/.DS_Store
-**/__pycache__
-.claude
+rust/target
+dist
+# Image builds fetch and check the pinned platform notices themselves.
+legal/manual/llvm
+legal/manual/musl
 
 # Never send local TLS material to the image builder.
 **/.dev-certs
@@ -37,7 +32,3 @@ go/internal/static/dist
 **/*.pkcs8
 **/*.jks
 **/*.keystore
-rust/target
-# Image builds fetch and check the pinned platform notices themselves.
-legal/manual/llvm
-legal/manual/musl

@@ -1,5 +1,6 @@
 name: Advisories
 
+# Live advisory databases change without a commit, so they run on a schedule instead of gating pull requests.
 on:
   schedule:
     - cron: '43 5 * * *'
@@ -8,18 +9,23 @@ on:
 permissions:
   contents: read
 
+env:
+  MISE_AUTO_INSTALL: '0'
+
 jobs:
   advisories:
-    name: Rust advisories
+    name: Dependency advisories
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Rust and pinned cargo-deny
+      - name: Set up Rust, pinned cargo-deny and the client's dependencies
         uses: ./.github/actions/setup-project
-        with: {rust: 'true', cargo-deny: 'true', cache: 'false'}
+        with: {rust: 'true', cargo-deny: 'true', bun: 'true', client-deps: 'true', cache: 'false'}
       - name: Check the locked Rust dependencies against the live advisory database
         working-directory: rust
         run: cargo deny --locked check advisories
+      - name: Check the client's locked dependencies against the registry advisory database
+        run: mise run client-audit

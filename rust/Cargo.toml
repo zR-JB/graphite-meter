@@ -2,7 +2,7 @@
 members = ["proto", "net", "http3", "server", "client", "legal", "testkit", "e2e"]
 resolver = "3"
 
-# Shipped platforms, their Rust targets and the platform record, read through scripts/ci/rust_workspace.py.
+# Shipped platforms, their Rust targets and the platform record, read through scripts/ci/workspace.py.
 [workspace.metadata.graphite-meter]
 tui = ["linux/amd64", "linux/arm64", "windows/amd64"]
 server = ["linux/amd64", "linux/arm64"]

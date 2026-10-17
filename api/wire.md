@@ -1,13 +1,13 @@
-# Graphite Meter — Message-Bus Wire Protocol (normative)
+# Graphite Meter message-bus wire protocol
 
 This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the WebTransport
 datagram bus (`/wt/ping`), plus the **WebTransport session routes**, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
-`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are **not** covered here —
+`/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
 they use normal HTTP (query params, status codes, streaming bodies).
 
-The Go server/native client and TypeScript browser client share the conformance corpus `api/wire.testvectors.txt`.
+The Rust server and terminal client and the TypeScript browser client share the conformance corpus `api/wire.testvectors.txt`.
 
 Related contracts: [discovery and control responses](discovery.md),
 [upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
@@ -75,13 +75,13 @@ content it defines. Streams are raw bytes end to end.
 `streams=` and `bytes=` are **clamped, never rejected**: a missing, non-numeric, or sub-1 `streams`
 is read as 1 and one above 16 as 16; a missing, non-numeric or negative `bytes` is read as 25 MiB
 (26214400) and one above 64 GiB as 64 GiB, the same rule as `GET /download?bytes=`. `/wt/upload`
-enforces the stream ceiling from the receiving side — the server stops reading the 17th concurrent
+enforces the stream ceiling from the receiving side: the server stops reading the 17th concurrent
 client stream with `STOP_SENDING` code 0, without an error frame, since a byte stream carries no
 channel to report one on.
 
 `datagrams=` is **presence-based**: the bare `datagrams=` spelled above is the request, and so is
-any value the server cannot read. A spelling of zero or false — `0`, `false`, `off`, `no`, matched
-case-insensitively with surrounding whitespace ignored — is a request for **no** datagrams and is
+any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched
+case-insensitively with surrounding whitespace ignored) is a request for no datagrams and is
 served none, the same rule `bytes=0` follows.
 
 Under authentication a CONNECT must present a credential before the upgrade:

@@ -1,4 +1,4 @@
-# Graphite Meter — upload refusal pin (shared across Go / TS / Rust).
+# Graphite Meter upload refusal pin, shared by the Rust workspace and the browser client.
 #
 # Format (one refusal per non-comment, non-blank line):
 #   <name> | <message> | <http status>
@@ -11,24 +11,18 @@
 #
 # These strings are a wire contract, not internal diagnostics. A refused upload
 # reports its reason twice over, in two shapes that must stay in step:
-#   HTTP — /upload and /upload/progress send the message as the response body.
-#   WT   — the progress stream carries it as {"type":"error","code":"...",
+#   HTTP: /upload and /upload/progress send the message as the response body.
+#   WT:   the progress stream carries it as {"type":"error","code":"...",
 #          "message":"..."}. A stream has no status line, so `code` gives the
 #          client the recovery disposition without inferring it from prose.
-#   HTTP — the same code is present in X-Graphite-Upload-Refusal.
+#   HTTP: the same code is present in X-Graphite-Upload-Refusal.
 # Every refusal test loads THIS file as its fixture:
-#   Go — go/internal/endpoint/upload_owner_test.go (uploadAccessInfos through
-#        writeUploadAccessError, i.e. both the text and the status); the lane
-#        endings idle and revoked through the server's real answers in
-#        go/internal/server/lanes_test.go and revocation_test.go
-#   TS — client/src/engine/lanes/endings.test.ts (the fatal records the
-#        progress feed surfaces)
+#   Rust: rust/proto/tests/codes.rs (proto::refusal, both the text and the status)
+#   TS:   client/src/engine/lanes/endings.test.ts (the fatal records the progress feed surfaces)
 #
 # The failure reason each refusal ends a stage with is pinned in uploadrefusalreasons.txt.
 #
-# uploadAccessOK is the deliberate omission: it is not a refusal, carries no
-# message, and never reaches writeUploadAccessError. Its absence below is the
-# documented exception, not a missing row.
+# An accepted upload is not a refusal and carries no message, so it has no row.
 
 invalid | unknown upload id | 400
 globalFull | upload capacity exhausted | 503

@@ -174,7 +174,7 @@ fn legal() -> ExitCode {
     match NOTICES.report() {
         Some(report) => written(report),
         None => fail(
-            "this build embeds no notices; mise run rust-client-run -- --legal builds the TUI with dependency notices and \
+            "this build embeds no notices; mise run tui -- --legal builds the client with dependency notices and \
              prints them",
         ),
     }

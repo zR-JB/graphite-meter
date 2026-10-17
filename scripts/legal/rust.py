@@ -6,10 +6,10 @@ prepare: the crates the build may compile (a conservative superset that keeps bu
 macros), their reviewed notices, the platform's reviewed notices, and snapshots of the inputs these derive from,
 in the directory rust/legal's build side reads as GM_RUST_LEGAL_DIR. build_verify: one `cargo rustc` build
 that embeds them, then checks that it compiled only prepared crates with unchanged notices, linked and imported
-only reviewed platform inputs, and embedded exactly the prepared report. source_offer: the third-party source
-of a reviewed build and the SOURCE.txt that names it. --development notices need every dependency review but no
-platform record, so any host builds them; they say they are unreviewed, and so does the executable
-(legal/README.md).
+only reviewed platform inputs, and embedded exactly the prepared report. source_offer: a reviewed build's part of
+the release's third-party source offer and the SOURCE.txt that names it. --development notices need every
+dependency review but no platform record, so any host builds them; they say they are unreviewed, and so does the
+executable (legal/README.md).
 """
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ import argparse
 import gzip
 import json
 import os
-import re
 import subprocess
 import sys
 import tarfile
@@ -28,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ci.github_api import ControlPlaneError, local_path
-from ..ci.rust_workspace import ROOT, load, offer_name, source_url
+from ..ci.workspace import ROOT, VERSION, build_name, build_offer, load, offer_name, source_txt, source_url
 from ..ci.toolchains import rust_channel
 from . import rust_platform as platform
 from .artifacts import about, add_bytes, add_tree, legal_header, notices
@@ -43,9 +42,6 @@ PACKAGES = ("graphite-meter-client", "graphite-meter-server")
 PROFILES = ("ci", "release")
 # Trained profiles, one per architecture, which reviewed builds use when present (scripts/pgo.py).
 PGO = ROOT / "rust/target/pgo"
-VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
-# A PR prerelease, which publishes only its image: no tag, GitHub Release or source offer.
-PRERELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-(?:alpha|beta|rc)\.[0-9]+")
 # Opens the notices of a --development build; rust/legal keeps it in that build's executable too.
 DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
 # Precedes LEGAL.sha256, the SHA-256 of a reviewed build's notices, in its executable (rust/legal).
@@ -120,7 +116,7 @@ def stage_browser(source: Path, destination: Path) -> None:
 
 
 def report(project: Project, version: str, body: str, development: bool) -> bytes:
-    """A binary's `-legal` report: Go's TUI report layout, opened by the development notice if unreviewed."""
+    """A binary's `--legal` report, opened by the development notice if unreviewed."""
     header = legal_header(project, source_url(project.repository, version), (ROOT / "LICENSE").read_bytes())
     return (DEVELOPMENT_NOTICE.encode() if development else b"") + header + b"\n" + body.encode()
 
@@ -198,7 +194,7 @@ def browser_notices(build: Build, state: Prepared, project: Project) -> str:
     scopes = {"server/browser": add_provenance(ROOT, discover_browser(scan, browser_reviews), state.provenance,
                                                "server/browser")}
     shipped = {component_key(component) for component in scopes["server/browser"]}
-    # The image adds what Go's image adds to its server, such as the CA roots.
+    # The image adds files beside its server, such as the CA roots.
     scopes["container"] = [component for component in add_provenance(ROOT, scopes["server/browser"],
                                                                       state.provenance, "container")
                            if component_key(component) not in shipped]
@@ -235,7 +231,7 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     rust = ROOT / "rust"
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GM_RUST_")}
     environment |= {"CARGO_TARGET_DIR": str(build.target_dir or rust / "target"), "GM_RUST_LEGAL_DIR": str(build.out),
-                    "GM_ENGINE_VERSION": f"{build.version}-rust"}
+                    "GM_ENGINE_VERSION": build.version}
     if build.browser is not None:
         environment["GM_RUST_ASSET_DIR"] = str(build.out / "browser-assets")
     command = ["cargo", "rustc", "--locked", "--package", build.package, "--bin", build.package,
@@ -288,53 +284,44 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
 
 
 def browser_packages(state: Prepared) -> list[Component]:
-    """The npm packages of the server's browser build, once each; their source ships in its source offer."""
+    """The npm packages of the server's browser build, once each; their source ships in the source offer."""
     return list({(item.name, item.version): item for item in state.browser if item.ecosystem == "npm"}.values())
 
 
-def source_notice(project: Project, version: str, offer: str, target: str) -> str:
-    """SOURCE.txt of a reviewed build, in its TUI archive or image: its source, release, source offer and target; a
-    prerelease's names only the repository, as the SOURCE.txt in Go's prerelease image does."""
-    if PRERELEASE.fullmatch(version):
-        return f"{project.repository}\n"
-    return (f"Graphite Meter source: {source_url(project.repository, version)}\nMatching release: v{version}\n"
-            f"Dependency source archive: {offer}\nRust target: {target}\n")
-
-
 def source_offer(build: Build, state: Prepared, actual: list[Component]) -> None:
-    """The source offer, named by offer_name, of the compiled crates' and browser packages' sources and the manual
-    material, as Go's under one directory; and the SOURCE.txt that names it."""
+    """This build's part of the source offer, laid out as the merged offer: the compiled crates' and browser
+    packages' sources, the build's inventory and notices under builds/, and the manual material; and its SOURCE.txt."""
     assert build.target is not None
     shipped = load().server if build.package == "graphite-meter-server" else load().tui
     platform_name = next(name for name, target in shipped.items() if target == build.target)
-    offer = offer_name(build.package, build.version, platform_name)
-    root = offer.removesuffix(".tar.gz")
-    # One offer per directory, so the image build copies exactly this one.
+    name, part = build_name(build.package, platform_name), build_offer(build.package, platform_name)
+    root = offer_name(build.version).removesuffix(".tar.gz")
+    # One part per directory, so the image build exports exactly this one.
     for stale in build.out.glob("*_third-party-source.tar.gz"):
         stale.unlink()
     with tempfile.TemporaryDirectory(prefix="rust-sources-") as scratch:
         vendor = Path(scratch) / "vendor"
         subprocess.run(["cargo", "vendor", "--locked", "--versioned-dirs", str(vendor)], cwd=ROOT / "rust",
                        stdout=subprocess.DEVNULL, check=True, timeout=600)
-        with (build.out / offer).open("wb") as raw, \
+        with (build.out / part).open("wb") as raw, \
                 gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
                 tarfile.open(fileobj=compressed, mode="w") as archive:
             for component in actual:
-                name = f"{component.name}-{component.version}"
-                add_tree(archive, vendor / name, f"{root}/third_party/cargo/{name}", vendor / name)
+                crate = f"{component.name}-{component.version}"
+                add_tree(archive, vendor / crate, f"{root}/third_party/cargo/{crate}", vendor / crate)
             for component in browser_packages(state):
                 if component.source_path is None:
                     raise LegalError(f"source directory unavailable for npm {component.name}@{component.version}")
                 add_tree(archive, component.source_path, f"{root}/third_party/npm/{component.name}-{component.version}",
                          component.source_path)
-            for name in ("inventory.json", "LEGAL.txt"):
-                add_bytes(archive, f"{root}/{name}", (build.out / name).read_bytes())
+            for file in ("inventory.json", "LEGAL.txt"):
+                add_bytes(archive, f"{root}/builds/{name}/{file}", (build.out / file).read_bytes())
             add_bytes(archive, f"{root}/legal/rust-forks.json", (ROOT / "legal/rust-forks.json").read_bytes())
             # Entries can share a file, such as one license for two fonts; the archive holds it once.
             for path in dict.fromkeys(path for entry in state.provenance for path in manual_files(entry)):
                 add_tree(archive, ROOT / path, f"{root}/{path}", ROOT / path)
-    write_changed(build.out / "SOURCE.txt", source_notice(Project.read(ROOT), build.version, offer,
-                                                          build.target).encode())
+    write_changed(build.out / "SOURCE.txt",
+                  source_txt(Project.read(ROOT).repository, build.version, name, build.target).encode())
 
 
 def collect(build: Build) -> Path:

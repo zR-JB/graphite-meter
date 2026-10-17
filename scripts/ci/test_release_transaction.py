@@ -17,13 +17,13 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
+from assets import release_assets
 from github_api import ControlPlaneError
 from release import command_publish
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
 VERIFIED = "sha256:" + "a" * 64
 OTHER = "sha256:" + "b" * 64
-RUST = "sha256:" + "c" * 64
 # Skopeo keeps registry tags as TAG=DIGEST lines in $TAGS.
 SKOPEO = """#!/bin/sh
 case "$1 $4" in
@@ -42,17 +42,11 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-# Releases list RUST_RELEASES when asked for those with a Rust server source offer.
-gh() {
-  case "$*" in
-    *_rust_third-party-source*) printf '%s\\n' $RUST_RELEASES ;;
-    *) printf '%s\\n' $RELEASES ;;
-  esac
-}
+gh() { printf '%s\\n' $RELEASES; }
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
-ASSETS = {SOURCE: b"third-party source", "checksums.txt": b"checksums"}
+ASSETS = {name: name.encode() for name in (*release_assets("1.2.3"), "checksums.txt")}
 # GitHub's tags, annotated tags, releases and uploads behind `gh api`. A write becomes readable
 # only after `lag` reads of a new tag or `publish_lag` reads of a published release; a publish
 # request can fail after it `commit`s or `drop`s the change.
@@ -170,7 +164,6 @@ class RegistryTests(unittest.TestCase):
                 "REGISTRY_TOKEN": "secret-token", "REPOSITORY": "Owner/Repo",
                 "REGISTRY_ACTOR": "owner", "VERSION": "1.2.3", "IMAGE_TAG": "1.2.3",
                 "ARCHIVE_DIR": directory, "SKOPEO_IMAGE": "skopeo", "RELEASES": releases,
-                "RUST_RELEASES": "",
             } | fakes
             result = subprocess.run(["bash", "-c", f"{SHIM}source {SCRIPT} {command}"], env=env,
                                     capture_output=True, text=True)
@@ -207,10 +200,10 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(status, 0, output)
                 self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
 
-    def test_the_rust_image_is_tagged_version_rust_for_stable_releases_and_prereleases(self) -> None:
-        for tag, error in (("1.2.3-rust", None), ("1.2.3-rc.1-rust", None), ("1.2.3-alpha.0-rust", None),
-                           ("1.2.3-rust-rc.1", "invalid image tag"), ("1.2.3-rc.1-rust-rust", "invalid image tag"),
-                           ("1.2.3-rust.1", "invalid image tag"), ("1.2.3-RUST", "invalid image tag")):
+    def test_the_image_is_tagged_with_its_stable_or_prerelease_version_only(self) -> None:
+        for tag, error in (("1.2.3-rc.1", None), ("1.2.3-alpha.0", None), ("1.2.3-rust", "invalid image tag"),
+                           ("1.2.3-rc.1-rust", "invalid image tag"), ("1.2.3-preview.1", "invalid image tag"),
+                           ("01.2.3", "invalid image tag"), ("latest", "invalid image tag")):
             with self.subTest(tag=tag):
                 status, output, tags = self.run_script("image", {}, IMAGE_TAG=tag)
                 if error is None:
@@ -219,29 +212,6 @@ class RegistryTests(unittest.TestCase):
                     self.assertNotEqual(status, 0)
                     self.assertIn(error, output)
                     self.assertEqual(tags, {})
-
-    def test_rust_aliases_follow_only_stable_releases_that_shipped_a_rust_source_offer(self) -> None:
-        registry = {"1.2.3": VERIFIED, "1.3.0": OTHER, "1.2.3-rust": RUST, "1.2.2-rust": OTHER}
-        for rust_releases, series, latest in (("v1.2.3", RUST, RUST), ("v1.2.2 v1.2.3", RUST, RUST)):
-            with self.subTest(rust_releases=rust_releases):
-                status, output, tags = self.run_script("aliases", registry, "v1.2.2 v1.2.3 v1.3.0",
-                                                       RUST_RELEASES=rust_releases, RUST_DIGEST=RUST)
-                self.assertEqual(status, 0, output)
-                # Go's aliases still follow every stable release.
-                self.assertEqual((tags["1.2"], tags["latest"]), (VERIFIED, OTHER))
-                self.assertEqual((tags["1.2-rust"], tags["latest-rust"]), (series, latest))
-        for rust_releases, digest, error in (("v1.2.2", RUST, "not a published stable release with a Rust image"),
-                                             ("v1.2.3", OTHER, "1.2.3-rust is not the verified")):
-            with self.subTest(error=error):
-                status, output, tags = self.run_script("aliases", registry, "v1.2.2 v1.2.3",
-                                                       RUST_RELEASES=rust_releases, RUST_DIGEST=digest)
-                self.assertNotEqual(status, 0)
-                self.assertIn(error, output)
-                self.assertNotIn("latest-rust", tags)
-        # A release without the Rust image leaves the -rust aliases alone.
-        status, output, tags = self.run_script("aliases", registry, "v1.2.3", RUST_RELEASES="v1.2.3")
-        self.assertEqual(status, 0, output)
-        self.assertNotIn("latest-rust", tags)
 
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
@@ -279,23 +249,13 @@ class ReleasePublicationTests(unittest.TestCase):
                     error = str(exc)
             return error, output.getvalue(), json.loads((root / "state.json").read_text())
 
-    def test_release_without_the_third_party_source_offer_is_refused(self) -> None:
-        error, _, after = self.publish(copy.deepcopy(EMPTY), {"checksums.txt": b"checksums"})
-        self.assertIn(f"missing the third-party source asset {SOURCE}", error or "")
-        self.assertEqual(after["writes"], [])
-
-    def test_a_rust_release_offers_each_rust_build_s_source_beside_go_s(self) -> None:
-        offers = [f"graphite-meter-{package}_1.2.3_linux_amd64_rust_third-party-source.tar.gz"
-                  for package in ("client", "server")]
-        error, output, published = self.publish(copy.deepcopy(EMPTY), ASSETS | {name: b"rust" for name in offers})
-        self.assertIsNone(error, output)
-        body = published["releases"][0]["body"]
-        self.assertIn(f"included in the Go artifacts is attached as **{SOURCE}**", body)
-        self.assertIn(", ".join(f"**{name}**" for name in offers), body)
-        error, output, published = self.publish(copy.deepcopy(EMPTY))
-        self.assertIsNone(error, output)
-        self.assertIn("included in the distributed artifacts", published["releases"][0]["body"])
-        self.assertNotIn("Rust", published["releases"][0]["body"])
+    def test_a_release_publishes_exactly_the_client_archives_the_source_offer_and_checksums(self) -> None:
+        for assets in ({name: data for name, data in ASSETS.items() if name != SOURCE},
+                       ASSETS | {"graphite-meter-client_1.2.3_darwin_arm64.tar.gz": b"x"}):
+            with self.subTest(assets=sorted(assets)):
+                error, _, after = self.publish(copy.deepcopy(EMPTY), assets)
+                self.assertIn("release handoff holds", error or "")
+                self.assertEqual(after["writes"], [])
 
     def test_release_publishes_only_exact_assets_at_the_exact_tag(self) -> None:
         error, output, published = self.publish(copy.deepcopy(EMPTY))
@@ -307,9 +267,10 @@ class ReleasePublicationTests(unittest.TestCase):
             sorted((asset["name"], asset["digest"]) for asset in release["assets"]),
             sorted((name, "sha256:" + hashlib.sha256(data).hexdigest())
                    for name, data in ASSETS.items()))
-        # The notice names what the third-party source archive's README points to.
-        for phrase in ("**Source code (zip)**", "**Source code (tar.gz)**", SOURCE, SHA):
-            self.assertIn(phrase, release["body"])
+        self.assertTrue(release["body"].startswith(
+            f"## Source\n\nThe source for this release is the repository at tag **{TAG}** (commit **{SHA}**), "
+            "attached by GitHub as Source code (zip/tar.gz). The source of the third-party components in the image "
+            f"and the client archives is attached as **{SOURCE}**."))
 
         def edit(**change: object) -> Callable[[State], State]:
             return lambda state: state | {"releases": [state["releases"][0] | change]}
@@ -344,8 +305,7 @@ class ReleasePublicationTests(unittest.TestCase):
             (EMPTY, lambda state: state | {"race": OTHER_SHA}, f"resolves to {OTHER_SHA}", False),
             (EMPTY, lambda state: state | rejected, "GitHub rejected creation", False),
             (EMPTY, lambda state: state | {"tamper": "x"}, "draft release asset names", False),
-            (published, edit(draft=True, body="## Source availability\nold"),
-             "stale source-availability notice", True),
+            (published, edit(draft=True, body="## Source availability\nold"), "stale source notice", True),
         )
         for base, change, expected, read_only in rows:
             before: State = change(copy.deepcopy(base))

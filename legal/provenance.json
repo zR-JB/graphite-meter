@@ -83,7 +83,7 @@
     "name": "ca-certificates",
     "version": "builder package",
     "upstream": "https://salsa.debian.org/debian/ca-certificates",
-    "upstreamRevision": "builder image package metadata; verified 2026-08-14",
+    "upstreamRevision": "rust:1.99.0-bookworm builder package metadata; verified 2026-10-16",
     "licenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
     "modified": false,
     "artifactScopes": ["container"],
@@ -91,7 +91,7 @@
     "localLegalFiles": [
       {
         "name": "legal/manual/ca-certificates/README.txt",
-        "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
+        "sha256": "4a27734480f238bdff01629a5373cd39dd9771265575c5d6a756a5d51607d013"
       }
     ],
     "correspondingSource": "third_party/manual/ca-certificates",

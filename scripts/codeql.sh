@@ -13,13 +13,10 @@ quiet() { "$@" >"$out/log" 2>&1 || { cat "$out/log" >&2; return 1; }; }
 # Like the hosted scan, analyze tracked files only, not local build output.
 mkdir "$out/src"
 git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$out/src"
-for language in go javascript-typescript python actions rust; do
+for language in javascript-typescript python actions rust; do
     echo "CodeQL $language" >&2
     pack=${language%-typescript}
     build=(--build-mode=none)
-    # The Rust interop peer lives outside the Go module but builds against it.
-    [ "$language" != go ] || build=(--command="go build ./..." --command="go build -o /dev/null ../rust/interop/peer.go"
-        --working-dir="$out/src/go")
     if [ "$language" = rust ]; then
         # Resolve OUT_DIR includes and macro expansions from a real build; also extract #[path] modules.
         toolchain=+$(python3 -m scripts.ci.toolchains get rust.channel)

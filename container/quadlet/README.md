@@ -1,26 +1,17 @@
 # Podman Quadlet units
 
 Run Graphite Meter as a systemd-managed Podman service. Quadlet turns these
-`.container` / `.build` files into generated systemd services.
+`.container` files into generated systemd services.
 
 [Deployment overview](../../docs/DEPLOYMENT.md) · [Native TLS](graphite-meter-tls/README.md) · [Tailscale](tailscale-sidecar/README.md)
 
-Use the published image for a normal installation. Choose the source build only when you need
-changes from a checkout. Commands below run from `container/quadlet`:
+Commands below run from `container/quadlet`:
 
 ```sh
 cd container/quadlet
 ```
 
-Two ways to run it:
-
-- **`graphite-meter.container` - the default.** Pulls the published release
-  image (`ghcr.io/zr-jb/graphite-meter`); nothing is built locally, no checkout
-  needed beyond this one file.
-- **`graphite-meter.container` + `graphite-meter.build` - build from
-  source.** For developers or custom builds. Pointing the `.container` at the
-  `.build` unit with `Image=graphite-meter.build` makes a start build first,
-  then run. Requires **Podman 5.0+** (`.build` unit support).
+`graphite-meter.container` pulls the published image (`ghcr.io/zr-jb/graphite-meter`).
 
 Two complete multi-unit deployments live in subdirectories:
 
@@ -45,32 +36,6 @@ Then open <http://localhost:7246>.
 
 **Rootful:** copy to `/etc/containers/systemd/`, then
 `sudo systemctl daemon-reload && sudo systemctl start graphite-meter.service`.
-
-## Alternative: build from source
-
-### 1. Edit the build unit
-
-Quadlet units live in a systemd search directory, not in the repo, so replace
-both `/path/to/graphite-meter` occurrences in `graphite-meter.build` with your
-checkout's absolute path: `SetWorkingDirectory=` (the build context) and the
-`cd` in `ExecStartPre=` (which stamps the source revision). Keep
-`File=container/Dockerfile`, and check `Arch=` (default arm64).
-
-### 2. Install the units
-
-The container unit is the default one with its image replaced by the build:
-
-```sh
-mkdir -p ~/.config/containers/systemd
-cp graphite-meter.build ~/.config/containers/systemd/
-sed 's/^Image=.*/Image=graphite-meter.build/' graphite-meter.container \
-  > ~/.config/containers/systemd/graphite-meter.container
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user start graphite-meter.service
-```
-
-The build runs as `graphite-meter-build.service` before the container starts.
 
 ## Enable authentication
 
@@ -107,12 +72,9 @@ See [Podman's Quadlet documentation](https://docs.podman.io/en/latest/markdown/p
 Upgrade native clients with the server and reload browser tabs; see
 [upgrading](../../docs/DEPLOYMENT.md#upgrading).
 
-## Build and networking
+## Networking
 
-- Override the build identity (`VERSION`, `CLIENT_VERSION`,
-  `GM_CLIENT_REVISION`) with the commented `BuildArg=` lines in
-  `graphite-meter.build`.
-- On rootless Podman, pasta user-mode networking can significantly limit
-  measured throughput - uncomment `Network=host` in the `.container` unit for
-  LAN tests that need to avoid that overhead. Host networking gives up the container network
-  namespace; apply firewall policy on the host.
+On rootless Podman, pasta user-mode networking can significantly limit
+measured throughput: uncomment `Network=host` in the `.container` unit for
+LAN tests that need to avoid that overhead. Host networking gives up the container network
+namespace; apply firewall policy on the host.

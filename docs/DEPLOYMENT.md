@@ -69,7 +69,7 @@ docker compose -f container/docker-compose.yml -f container/docker-compose.auth.
 
 ```sh
 docker compose -f container/docker-compose.yml -f container/docker-compose.build.yml up --build -d  # image
-mise run server-build-prod && ./go/graphite-meter                                                  # binary
+mise run server-build && rust/target/release/graphite-meter-server                                # binary
 ```
 
 Stop any container already bound to 7246 first. Source builds carry a development identity; release automation
@@ -95,33 +95,20 @@ Rootful Docker gives container root the host's root. _Rootless Podman already ma
 non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
 files; the keep-id units run as your user, as root did before.
 
-### Experimental Rust image
+### Resources and logs
 
-Stable releases can also publish an experimental Rust server image for linux/amd64 and linux/arm64, beside Linux and
-Windows Rust TUI archives marked `_rust`; prereleases can publish the image alone. Go's image and archives remain the
-default, and there is no Rust build for macOS. The Rust tags share `ghcr.io/zr-jb/graphite-meter` with Go's:
-`:X.Y.Z-rust` for each stable release that shipped one, `:X.Y-rust` and `:latest-rust` for the newest such release,
-and `:X.Y.Z-{alpha,beta,rc}.N-rust` for a prerelease, which no alias follows. To try it, change the tag in the
-`docker run` command, Compose file or Quadlet unit, or pin a digest.
+`GM_MAX_BUFFER_BYTES` (default 8 GiB) bounds the connection buffers the HTTP/2 and HTTP/3 listeners share. It must
+cover every allowed connection's floor: 1.5 MiB with the HTTP/2 listener on, about 0.5 MiB with HTTP/3 alone, none
+for HTTP/1.1. The default `GM_MAX_CONNECTIONS` of 4096 therefore needs up to 6 GiB; a small host lowers both, such
+as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the server at start
+with the values that fit. Connections run on one thread per runtime worker, a CPU each by default;
+`TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run five nice
+steps lower, so transfers yield to the host's other services and to the server's own probes.
 
-Semver-range updaters such as Flux, Argo CD Image Updater, Renovate or WUD read `X.Y.Z-rust` as a prerelease of Go's
-`X.Y.Z`, so they may skip it or move a Rust pin to Go's next release. Follow `:latest-rust`, or restrict the updater
-to tags matching `-rust$` and compare the version before that suffix.
-
-The Rust image keeps the Go image's ports, `GM_*` settings, `hash-password` command, [container user](#container-user)
-and layout: one static binary on `scratch` with its notices and CA roots. It reports its version as `X.Y.Z-rust`,
-adds `--legal` and `GM_MAX_BUFFER_BYTES` (default 8 GiB), which bounds the connection buffers its HTTP/2 and HTTP/3
-listeners share. It must cover every allowed connection's floor, about 1.5 MiB each with HTTP/3 on, so the default
-`GM_MAX_CONNECTIONS` of 4096 needs about 6 GiB: a small host that lowers the budget lowers the connections with
-it, such as `GM_MAX_BUFFER_BYTES=1073741824` with `GM_MAX_CONNECTIONS=512`. A budget that falls short stops the
-server at start with the values that fit. Connections run on one pinned thread per runtime worker, a CPU each by
-default; `TOKIO_WORKER_THREADS` sets that count on a host shared with other services. On Linux those threads run
-five nice steps lower, so transfers yield to the host's other services and to the server's own probes. Its log lines
-carry a level, a topic and local time; the image has no zone data, so mount
+Log lines carry a level, a topic and local time; the image has no zone data, so mount
 `/etc/localtime:/etc/localtime:ro` or set `TZ` to a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3` for local time
-instead of UTC. The [Rust README](../rust/README.md#differences-from-go) lists every behaviour that differs from Go.
-On an amd64 host `mise run rust-container-build` builds it from a checkout as `graphite-meter:latest-rust`; its
-pinned builder also cross-compiles arm64, so on arm64 hosts run a published tag.
+instead of UTC. The image's builder needs an amd64 host and cross-compiles arm64, so on arm64 hosts run a published
+tag.
 
 ## Native listeners
 
@@ -304,7 +291,7 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 server's address. Nothing is kept unless asked: with **Remember server** on (Tab on that card, or in the settings) it
 keeps the address in `graphite-meter/server` under the user's configuration directory (`~/.config` on Linux), so the
 next start needs none, and turning it off deletes the file. Releases attach archives for
-Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the container image or a
+Linux (amd64, arm64) and Windows (amd64); the server ships as the container image or a
 [source build](#build-from-source).
 
 | Flag                                             | Default                   | Meaning                                                                                         |
@@ -371,9 +358,12 @@ add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#
 schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
 defaults.
 
-The image now runs as [`65532:65532`](#container-user). Before pulling it, make Docker-mounted keys and secrets
-readable by that user and reinstall the TLS and Tailscale Quadlet units; their old copies, auto-updated or not,
-cannot read their keys.
+Releases up to 0.12 shipped a Go server as `latest` and an experimental Rust server as `latest-rust`. The Rust server
+is now the only one and carries the plain tags; the `-rust` tags stay where they were and no longer move. It keeps the
+ports, `GM_*` settings, `hash-password` command, [container user](#container-user) and layout, and adds
+[`GM_MAX_BUFFER_BYTES`](#resources-and-logs): a host that raised `GM_MAX_CONNECTIONS` far above its default may need
+to lower it, or the server stops at start and names the values that fit. Log lines read
+`2026-10-06T16:31:02+02:00 WARN  tls:       message (module)`; adjust log parsers that matched the old format.
 
 ## Troubleshooting
 
@@ -390,10 +380,9 @@ cannot read their keys.
 
 ### UDP buffers
 
-HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers per socket; the Rust server's HTTP/3 endpoints share
-7 MiB, at least 2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
-server then logs one line at startup: the Go server prints quic-go's "failed to sufficiently increase receive buffer
-size …", the Rust server `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
+HTTP/3 and WebTransport ask the kernel for 7 MiB UDP buffers, shared by the server's HTTP/3 endpoints with at least
+2 MiB each. Linux caps an unprivileged request at `net.core.rmem_max` and `net.core.wmem_max`, and the
+server then logs one line at startup, `WARN  udp:       UDP buffer too small for QUIC above about 1 Gbit/s: …`. Below about 1 Gbit/s
 of QUIC the smaller buffer is enough; above it, bursts can overflow the socket and lower HTTP/3 and WebTransport
 results. Raise the caps on the host, which also covers containers:
 

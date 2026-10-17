@@ -239,17 +239,12 @@ test("a completed run fits every layout and theme without serious violations", a
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   expect(await dialog.evaluate((el) => el.matches(":modal"))).toBe(true);
   await expect(dialog).toContainText("AGPL-3.0-or-later");
-  // Each server lists what it ships: Rust's its crates, never Go's modules.
+  // The server lists the crates it ships, under the version it reports.
   const identity = await (await fetch(`${home.http}/preflight`)).json();
   const legal: LegalAbout & { sourceVersion: string } = await (await fetch(`${home.http}/legal/about.json`)).json();
-  const rust = identity.engineVersion.endsWith("-rust");
-  const ecosystems = new Set(legal.components.map((c) => c.ecosystem));
-  expect(ecosystems.has(rust ? "cargo" : "go")).toBe(true);
-  if (rust) {
-    expect(ecosystems.has("go")).toBe(false);
-    expect(identity.engineVersion).toBe(`${legal.sourceVersion}-rust`);
-  }
-  await expect(dialog).toContainText(rust ? "Rust crates" : "Go modules");
+  expect(new Set(legal.components.map((c) => c.ecosystem)).has("cargo")).toBe(true);
+  expect(identity.engineVersion).toBe(legal.sourceVersion);
+  await expect(dialog).toContainText("Rust crates");
   // Every component reads one way: where it comes from (a fork's upstream), then a modified one's shipped copy and
   // changes.
   const links = legal.components.flatMap((component) => {
@@ -276,12 +271,10 @@ test("a completed run fits every layout and theme without serious violations", a
       href,
     })),
   ).toEqual(links);
-  if (rust) {
-    const fork = legal.components.find((c) => c.name === "noq")!;
-    expect(fork.links.map((l) => l.label)).toEqual(["Source", "Upstream", "Changes"]);
-    expect(fork.links[0]!.url).toMatch(/^https:\/\/github\.com\/zR-JB\/noq\/tree\/[0-9a-f]{40}$/);
-    expect(fork.links[1]!.url).toMatch(/^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/);
-  }
+  const fork = legal.components.find((c) => c.name === "noq")!;
+  expect(fork.links.map((l) => l.label)).toEqual(["Source", "Upstream", "Changes"]);
+  expect(fork.links[0]!.url).toMatch(/^https:\/\/github\.com\/zR-JB\/noq\/tree\/[0-9a-f]{40}$/);
+  expect(fork.links[1]!.url).toMatch(/^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/);
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.press("Escape");
   await expect(dialog).toHaveCount(0);
