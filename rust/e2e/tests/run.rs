@@ -15,18 +15,18 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
-/// Every stage for 1 s, the shortest a stage takes.
+/// Short stages; transfers get 2 s so a slow lane start on a loaded runner still leaves 800 ms of evidence.
 const SHORT: [&str; 11] = [
     "-stages",
     "latency,download,upload,bidirectional",
     "-latency-duration",
     "1s",
     "-download-duration",
-    "1s",
+    "2s",
     "-upload-duration",
-    "1s",
+    "2s",
     "-bidirectional-duration",
-    "1s",
+    "2s",
     "-insecure",
 ];
 

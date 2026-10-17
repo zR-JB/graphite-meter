@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import pathlib
 import re
 import shutil
 import tempfile
 import unittest
 
-from toolchains import ROOT, check, check_rust_manifest, literal_updates, load_pins
+from toolchains import ROOT, check, check_rust_manifest, latest_browsers, literal_updates, load_pins, write_browsers
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -143,6 +144,36 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(original.replace("[tools]", '[tools]\nunexpected="1.2.3"'))
         with self.assertRaisesRegex(ValueError, "exactly"):
             load_pins(root)
+
+    def test_latest_browsers_come_only_from_exact_stable_releases(self) -> None:
+        digest = "ab" * 32
+        chrome = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json"
+        firefox = "https://product-details.mozilla.org/1.0/firefox_versions.json"
+        sums = "https://ftp.mozilla.org/pub/firefox/releases/158.0/SHA256SUMS"
+        released = {
+            chrome: json.dumps({"channels": {"Stable": {"version": "155.0.8059.84"},
+                                             "Canary": {"version": "158.0.8110.0"}}}).encode(),
+            firefox: json.dumps({"LATEST_FIREFOX_VERSION": "158.0", "FIREFOX_NIGHTLY": "160.0a1"}).encode(),
+            sums: (f"{'cd' * 32}  linux-x86_64/en-US/firefox-158.0.tar.bz2\n"
+                   f"{digest}  linux-x86_64/en-US/firefox-158.0.tar.xz\n"
+                   f"{'ef' * 32}  update/linux-x86_64/en-US/firefox-158.0.tar.xz\n").encode(),
+        }
+        root = self.copy_pins()
+        browsers = latest_browsers(released.__getitem__)
+        self.assertEqual(browsers, {"chrome": "155.0.8059.84", "firefox": "158.0", "firefox_sha256": digest})
+        write_browsers(browsers, root)
+        self.assertEqual(load_pins(root)["browser"], browsers)
+        check(root)
+        for url, body, error in (
+            (chrome, b'{"channels": {"Stable": {"version": "stable"}}}', "chrome is not an exact release"),
+            (chrome, b'{"channels": []}', "unexpected browser release metadata"),
+            (firefox, b'{"LATEST_FIREFOX_VERSION": "../158.0"}', "firefox is not an exact release"),
+            (firefox, b"<html>", "Expecting value"),
+            (sums, released[sums] * 2, "must list linux-x86_64/en-US/firefox-158.0.tar.xz once"),
+            (sums, released[sums].replace(digest.encode(), b"latest"), "firefox_sha256 is not an exact"),
+        ):
+            with self.subTest(body=body), self.assertRaisesRegex(ValueError, error):
+                latest_browsers((released | {url: body}).__getitem__)
 
 
 if __name__ == "__main__":
