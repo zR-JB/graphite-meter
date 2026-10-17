@@ -10,7 +10,7 @@ Each layer imports only from the layers above it in this table; the composition 
 
 | Folder | Owns |
 | --- | --- |
-| `auth` | Sources of the sign-in pages' assets; `bun run build:auth` writes `rust/server/src/auth/assets`, which the server embeds. |
+| `auth` | Sources of the sign-in pages' assets; `bun run build:auth` writes them minified to `rust/server/src/auth/assets`, which the server embeds, and makes `public/favicon.svg`. |
 | `src/lib` | Signals (push-pull, owners, batched effects), a JSX runtime that builds real DOM, keyed lists, the one frame clock, motion (glides, hand-offs, springs), decoders. |
 | `src/protocol` | Server documents and their decoders, routes, wire and progress records, failure reasons, worker messages. |
 | `src/engine` | Measurement without a DOM: `net` (catalog, selection, credentials, connection checks, readiness, sign-in), `lanes` + `workers` (fetch and WebTransport lanes, the probe channel, the upload receiver), `measure` (aggregation, latency, live rates, stability), `run` (schedule, clocks, the coordinator, results). |
