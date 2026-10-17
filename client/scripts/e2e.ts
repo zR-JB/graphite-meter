@@ -8,7 +8,7 @@ import { describe, host, launch, logs } from "../e2e/servers";
 // Paths resolve from the client folder, which the suite runs in.
 const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("../rust/target/ci/graphite-meter-server");
 if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing; mise run e2e-server builds it`);
-// CI runs the browser mise.toml pins; a local run takes whichever is installed.
+// CI runs the browsers its Plan job selects; a local run takes whichever is installed.
 for (const [path, expected, name] of [
   [process.env.BUN_CHROME_PATH ?? "chrome", process.env.GM_EXPECTED_CHROME_VERSION, "Google Chrome for Testing"],
   [process.env.GM_FIREFOX_PATH ?? "firefox", process.env.GM_EXPECTED_FIREFOX_VERSION, "Mozilla Firefox"],
