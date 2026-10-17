@@ -1,7 +1,7 @@
 //! The path choices the checked servers offer, and how ready each selected server is.
 use super::App;
 use crate::{
-    config::PathChoice,
+    config::{LATENCY_TRANSPORTS, PathChoice, THROUGHPUT_TRANSPORTS},
     events::Check,
     format,
     run::prepare::{Paths, ServerPath},
@@ -165,7 +165,7 @@ pub(super) struct Kind<T> {
 }
 
 pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
-    shared: [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
+    shared: THROUGHPUT_TRANSPORTS,
     label: format::throughput_transport,
     chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
     choose: |paths, origin, transport| (paths.throughput_origin, paths.throughput_transport) = (origin, transport),
@@ -180,7 +180,7 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
 };
 
 pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
-    shared: [LatencyTransport::WebSocket, LatencyTransport::WebTransport],
+    shared: LATENCY_TRANSPORTS,
     label: format::latency_transport,
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
     choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),

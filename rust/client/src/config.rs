@@ -530,9 +530,10 @@ const FLAGS: [Flag<Flags>; 22] = [
 ];
 
 const PROTOCOLS: [Protocol; 3] = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
-const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
+/// The transports a path can be set to by name.
+pub const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
     [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
-const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
+pub const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
 
 #[cfg(test)]
 mod tests {

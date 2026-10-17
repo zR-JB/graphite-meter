@@ -43,8 +43,8 @@ use std::{
 
 /// How long settings rest before their paths are checked again.
 const RECHECK: Duration = Duration::from_millis(350);
-/// Animation repaints at 120 fps, so the needle and readouts glide on fast displays; input paints at once.
-const FRAME: Duration = Duration::from_micros(8_333);
+/// Animation repaints at 60 fps: 120 wrote the same terminal output for twice the idle CPU. Input paints at once.
+const FRAME: Duration = Duration::from_micros(16_667);
 /// How long the spinner shows each of its glyphs.
 const SPIN: Duration = Duration::from_millis(80);
 /// How long a notice stays.

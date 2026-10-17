@@ -6,11 +6,11 @@ use graphite_meter_http3::{
     self as http3, Code, client,
     webtransport::{self, RecvStream, SendStream, SessionClose},
 };
-use graphite_meter_net::{ConnectError, RequestForm, Verify, bind_udp, client_config, quic::client_transport, resolve};
+use graphite_meter_net::{RequestForm, Verify, quic};
 use graphite_meter_proto::{
     discovery::{MAX_RESPONSE_BYTES, Protocol},
     lane::LaneEnding,
-    origin::{Host, Origin, Scheme},
+    origin::{Origin, Scheme},
     route::Route,
 };
 use http::{HeaderValue, Method, Version, header};
@@ -20,11 +20,8 @@ use hyper::{
     client::conn::{http1, http2},
 };
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use noq::crypto::rustls::QuicClientConfig;
 use std::{
     convert::Infallible,
-    io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{
         Arc,
@@ -385,11 +382,6 @@ fn http3_failed(error: http3::Error) -> Failed {
     Failed { fault: http3_fault(error), again }
 }
 
-/// How long an address may stay silent: lost handshake packets on a lossy path take seconds.
-const SILENT: Duration = Duration::from_secs(3);
-/// How long an answering address may take to finish the handshake.
-const ANSWERING: Duration = Duration::from_secs(5);
-
 /// A QUIC connection with its endpoint and HTTP/3 driver; dropping it closes them.
 pub struct Quic {
     connection: noq::Connection,
@@ -431,47 +423,9 @@ impl Drop for Dialing {
     }
 }
 
-/// Each address in turn, IPv4 first; the last address's fault if none connects.
+/// Connects and starts the HTTP/3 driver on the current runtime.
 async fn connect(origin: &Origin, verify: Verify) -> Result<Dialed, Fault> {
-    let crypto =
-        QuicClientConfig::try_from(client_config(&verify, Some(Protocol::Http3)).await).map_err(io::Error::other);
-    let mut config = noq::ClientConfig::new(Arc::new(crypto.map_err(ConnectError::Io)?));
-    config.transport_config(Arc::new(client_transport()));
-    let resolved = resolve(&origin.host, origin.port).await;
-    let mut addresses = resolved.map_err(ConnectError::Unreachable)?;
-    addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
-    let name = match &origin.host {
-        Host::Name(name) => name.clone(),
-        Host::Ip(ip) => ip.to_string(),
-    };
-    let mut last = ConnectError::Unreachable(io::Error::new(io::ErrorKind::NotFound, "no address resolved")).into();
-    for address in addresses {
-        match attempt(&config, address, &name).await {
-            Ok(dialed) => return Ok(dialed),
-            Err(fault) => last = fault,
-        }
-    }
-    Err(last)
-}
-
-async fn attempt(config: &noq::ClientConfig, address: SocketAddr, name: &str) -> Result<Dialed, Fault> {
-    let local = match address {
-        SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
-        SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
-    };
-    let (socket, _) = bind_udp(local, 1).map_err(ConnectError::Io)?;
-    let runtime = noq::default_runtime().ok_or_else(|| io::Error::other("no runtime for QUIC"));
-    let endpoint = noq::Endpoint::new(noq::EndpointConfig::default(), None, socket, runtime.map_err(ConnectError::Io)?);
-    let endpoint = endpoint.map_err(ConnectError::Io)?;
-    let connecting = endpoint.connect_with(config.clone(), address, name);
-    let mut connecting = connecting.map_err(|error| ConnectError::Io(io::Error::other(error)))?;
-    let silent = || ConnectError::Unreachable(io::Error::new(io::ErrorKind::TimedOut, "no QUIC answer"));
-    let answered = timeout(SILENT, connecting.handshake_data()).await;
-    answered.map_err(|_| silent())?.map_err(refused)?;
-    let finished = timeout(ANSWERING, connecting).await;
-    let connection = finished
-        .map_err(|_| Fault::TimedOut("QUIC handshake"))?
-        .map_err(refused)?;
+    let (endpoint, connection) = quic::dial(&origin.host, origin.port, &verify).await?;
     let (mut driver, requests) = client::new(connection.clone());
     let driver = tokio::spawn(async move {
         let _ = driver.drive().await;
@@ -483,18 +437,6 @@ async fn attempt(config: &noq::ClientConfig, address: SocketAddr, name: &str) ->
         home: Handle::current(),
     };
     Ok((Arc::new(quic), requests))
-}
-
-/// A handshake's failure, with the TLS error a certificate check raised.
-fn refused(error: noq::ConnectionError) -> Fault {
-    let tls = match &error {
-        noq::ConnectionError::TransportError(transport) => transport.crypto.as_deref(),
-        _ => None,
-    };
-    match tls.and_then(|tls| tls.downcast_ref::<rustls::Error>()) {
-        Some(tls) => ConnectError::Tls(tls.clone()).into(),
-        None => ConnectError::Io(io::Error::other(error)).into(),
-    }
 }
 
 /// A WebTransport session with its connection; dropping it closes both.
