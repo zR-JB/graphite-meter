@@ -20,6 +20,7 @@ services:
       # GM_PUBLIC_ORIGINS: "self"
       # GM_RESULT_HISTORY_DEFAULT: "false" # default browser history preference
       # GM_VERBOSE: "1"                  # throughput, admission and auth debug logs
+      # TZ: Europe/Berlin                # log times in this zone instead of UTC
     # The server writes nothing and binds unprivileged ports.
     read_only: true
     cap_drop: [ALL]

@@ -11,8 +11,9 @@ use graphite_meter_proto::{
     origin::{BaseUrl, Origin, Scheme},
 };
 use ipnet::IpNet;
+use jiff::tz::{TimeZone, TimeZoneDatabase};
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt,
     fs::File,
     io::{Read, Write},
@@ -46,7 +47,9 @@ pub fn load(
     match settings::load(&env, args, usage)? {
         None => Ok(Loaded::Help),
         Some(settings) => {
-            validate::config(settings, Outbound::from_lookup(&env)).map(|config| Loaded::Config(Box::new(config)))
+            let log_zone = log_zone(env("TZ"))?;
+            validate::config(settings, Outbound::from_lookup(&env), log_zone)
+                .map(|config| Loaded::Config(Box::new(config)))
         }
     }
 }
@@ -69,6 +72,20 @@ pub struct Config {
     /// The published catalog: `self` first, carrying the server's name and location.
     pub catalog: ServerCatalog,
     pub outbound: Outbound,
+    /// The zone log lines show, from `TZ`; `None` is UTC.
+    pub log_zone: Option<TimeZone>,
+}
+
+/// `TZ` names a zone of the bundled database, so the host's zone files are never read; unset, empty or UTC is UTC.
+fn log_zone(value: Option<OsString>) -> Result<Option<TimeZone>, String> {
+    match value.as_deref().map(OsStr::to_str) {
+        None | Some(Some("" | "UTC" | "Etc/UTC")) => Ok(None),
+        Some(name) => name
+            .and_then(|name| TimeZoneDatabase::bundled().get(name).ok())
+            .filter(|zone| !zone.is_unknown())
+            .map(Some)
+            .ok_or_else(|| "TZ must be a time zone name such as Europe/Berlin".into()),
+    }
 }
 
 /// How OIDC requests leave: the proxies and trust roots the settings' environment names.

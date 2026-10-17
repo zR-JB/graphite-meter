@@ -43,6 +43,7 @@ http-body-util = "0.1.5"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 ipnet = "2.12.2"
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 nix = { version = "0.31.3", default-features = false, features = ["socket"] }
 noq = { version = "1.3.0", default-features = false }
