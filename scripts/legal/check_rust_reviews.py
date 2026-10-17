@@ -55,7 +55,7 @@ def manual_problems(root: Path) -> list[str]:
 
 def dead(reviews: list[Review], used: set[Crate]) -> list[Review]:
     """The reviews no compiled crate is checked against."""
-    covered = [*covering(*crate, reviews) for crate in used]
+    covered = [review for crate in used for review in covering(*crate, reviews)]
     return [review for review in reviews if review not in covered]
 
 
