@@ -80,11 +80,11 @@ async function shareOneRun(page: Page, four: Server[]) {
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  const servers = page.locator(".result-detail section.group", {
-    hasText: "Address",
-  });
-  await expect(servers).toHaveCount(4);
-  await expect(servers.nth(1)).toContainText(new URL(four[1]!.url).host);
+  const facts = page.locator(".result-detail section.group", { hasText: "Address" });
+  const picker = facts.getByRole("combobox", { name: "Server", exact: true });
+  await expect(picker.locator("option")).toHaveCount(4);
+  await picker.fill(four[1]!.id);
+  await expect(facts).toContainText(new URL(four[1]!.url).host);
   expect(await savedResult(page)).toEqual(saved);
 }
 
