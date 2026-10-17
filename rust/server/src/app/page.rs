@@ -17,12 +17,7 @@ impl App {
     pub(super) fn page<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Response<Body> {
         let head = request.method() == Method::HEAD;
         let mut response = match self.assets.get(request.uri().path(), request.headers()) {
-            _ if request.method() != Method::GET && !head => {
-                let mut response = response::text(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
-                let allow = HeaderValue::from_static("GET, HEAD");
-                response.headers_mut().insert(header::ALLOW, allow);
-                response
-            }
+            _ if request.method() != Method::GET && !head => response::method_not_allowed("GET, HEAD"),
             Some(served) => {
                 let mut response = Response::new(Body::full(served.bytes));
                 *response.status_mut() = served.status;

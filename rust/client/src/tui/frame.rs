@@ -126,7 +126,9 @@ impl App {
             _ if self.view.check == Check::SignIn || self.view.sign_in.is_some() => {
                 (dot(palette.warn), "Sign in".into(), palette.warn)
             }
-            _ if matches!(self.view.check, Check::Failed(_)) || self.view.servers.iter().all(|s| s.path.is_err()) => {
+            _ if matches!(self.view.check, Check::Failed(_))
+                || !self.view.servers.is_empty() && self.view.servers.iter().all(|s| s.path.is_err()) =>
+            {
                 let unreached = if self.view.servers.is_empty() { "Failed".into() } else { names };
                 (dot(Style { bold: false, ..palette.err }), unreached, palette.text)
             }
@@ -250,7 +252,7 @@ impl App {
                 Overlay::SignIn(sign_in) if sign_in.opened => ("Checking sign-in", palette.muted),
                 Overlay::SignIn(_) => ("Sign in", palette.warn),
                 _ if self.view.check == Check::SignIn => ("Sign in", palette.warn),
-                _ if self.could_not_start() => ("Test could not start", palette.warn),
+                _ if self.could_not_start() => ("Could not start the test", palette.warn),
                 _ => ("Not started", palette.muted),
             },
         }
@@ -398,7 +400,7 @@ impl App {
             ],
             (None, Some(text)) => {
                 let said = match text == crate::net::UNREACHABLE {
-                    true => warn(format!("Could not reach {host}.")),
+                    true => warn(format!("Could not reach {host}")),
                     false => warn(format!("{host}: {text}")),
                 };
                 [
@@ -539,15 +541,7 @@ impl App {
                     .filter(|result| !result.stage.directions().is_empty());
                 for result in results {
                     let own = result.servers.iter().find(|own| own.server == server.id);
-                    let rate: f64 = own.map_or(0.0, |own| {
-                        own.throughput
-                            .down
-                            .iter()
-                            .chain(own.throughput.up.iter())
-                            .filter_map(|t| t.rate)
-                            .map(|r| r.mean)
-                            .sum()
-                    });
+                    let rate = own.map_or(0.0, |own| own.throughput.mean());
                     if rate > 0.0 {
                         let label = format!("{} {}", icon(result.stage), format::label(result.stage));
                         entries.push(item(&label, format::rate(rate)));

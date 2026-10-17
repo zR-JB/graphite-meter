@@ -51,6 +51,25 @@ impl<T> Dir<T> {
     }
 }
 
+impl Dir<Option<Throughput>> {
+    /// The measured mean rates in bytes per second, its directions added.
+    pub fn mean(&self) -> f64 {
+        [self.down, self.up]
+            .into_iter()
+            .flatten()
+            .filter_map(|throughput| Some(throughput.rate?.mean))
+            .sum()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        [self.down, self.up]
+            .into_iter()
+            .flatten()
+            .map(|throughput| throughput.bytes)
+            .sum()
+    }
+}
+
 impl<T> Index<Direction> for Dir<T> {
     type Output = T;
 
@@ -158,12 +177,6 @@ pub enum StageStatus {
 }
 
 impl StageResult {
-    /// The measured mean rate in bytes per second, its directions added.
-    pub fn mean(&self) -> f64 {
-        let directions = [self.throughput.down, self.throughput.up].into_iter().flatten();
-        directions.filter_map(|throughput| Some(throughput.rate?.mean)).sum()
-    }
-
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
         let missing =
             |direction: &Direction| self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none());

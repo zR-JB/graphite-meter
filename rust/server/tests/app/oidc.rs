@@ -106,7 +106,7 @@ async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookie
     let form_action = format!("form-action 'self' {}; ", provider.issuer());
     assert!(header(&page, "content-security-policy").unwrap().contains(&form_action));
     let html = text(page).await;
-    let button = "<button type=\"submit\" >Continue with Id</button>";
+    let button = "<button type=\"submit\">Continue with Id</button>";
     assert!(html.contains(button) && !html.contains("current-password"));
 
     let approval = challenge("a-verifier-that-never-leaves-the-terminal");
@@ -255,9 +255,15 @@ async fn a_provider_signing_only_with_algorithms_this_server_cannot_verify_is_re
     let message = "provider advertises no ID token algorithm this server verifies: [\"ES512\", \"HS256\"]";
     assert_eq!(refused.unwrap_err(), message);
     let app = oidc_app(provider.issuer(), &provider.trust(), true);
-    let discovery = app.auth().background_discovery().unwrap();
-    let retrying = tokio::time::timeout(Duration::from_millis(1200), discovery).await;
-    assert!(retrying.is_err(), "hybrid retries past the first backoff");
+    let retried = async {
+        while provider.discoveries() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::select! {
+        () = app.auth().background_discovery().unwrap() => panic!("a refused provider is never discovered"),
+        retried = tokio::time::timeout(Duration::from_secs(5), retried) => retried.expect("hybrid retries after its backoff"),
+    }
     let html = text(tls(&app, empty(public("GET", "/login"))).await).await;
     assert!(html.contains("disabled>Continue with Id</button>") && html.contains("current-password"));
 }
@@ -328,7 +334,7 @@ fn crowded(keys: Value) -> String {
     json!({ "keys": all }).to_string()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
     let provider = Provider::start().await;
     let rsa = || json!({"alg": "RS256", "kid": "rsa"});
@@ -375,8 +381,11 @@ async fn token_key_and_key_set_rules_decide_a_fresh_sign_in() {
         ("the 64th usable key", key_set(crowded, rsa()), true),
         ("the 65th", key_set(crowded, json!({})), false),
     ];
-    for (row, twist, accepted) in rows {
-        assert_eq!(signs_in_with(&provider, twist).await, accepted, "{row}");
+    let rows = rows.map(|(row, twist, accepted)| {
+        tokio::spawn(async move { assert_eq!(signs_in_with(&Provider::start().await, twist).await, accepted, "{row}") })
+    });
+    for row in rows {
+        row.await.unwrap();
     }
     provider.twist(Twist::default());
     let app = discovered(&provider).await;

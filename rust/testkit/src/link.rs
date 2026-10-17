@@ -84,16 +84,8 @@ impl Link {
         Ok(Self { address, stalled, _tasks: tasks })
     }
 
-    pub async fn udp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
-        Self::udp_relay(target, one_way, None).await
-    }
-
-    /// Relays through `bottleneck` in each direction before the delay.
-    pub async fn udp_through(target: SocketAddr, one_way: Duration, bottleneck: Bottleneck) -> io::Result<Self> {
-        Self::udp_relay(target, one_way, Some(bottleneck)).await
-    }
-
-    async fn udp_relay(target: SocketAddr, one_way: Duration, bottleneck: Option<Bottleneck>) -> io::Result<Self> {
+    /// Relays through `bottleneck`, if any, in each direction before the delay.
+    pub async fn udp(target: SocketAddr, one_way: Duration, bottleneck: Option<Bottleneck>) -> io::Result<Self> {
         if bottleneck.is_some_and(|bottleneck| bottleneck.bits_per_second == 0) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "a bottleneck passes at least 1 bit/s"));
         }

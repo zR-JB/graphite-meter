@@ -1,8 +1,8 @@
 """Client release archives, each with its build's part of the source offer.
 
-    python3 -m scripts.package VERSION [--profile {ci,release}] [--output DIR] [--check]
+    python3 -m scripts.package VERSION [--profile {ci,release}] [--platform P] [--output DIR] [--check]
 
-Builds the client with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata. It runs in
+Builds the client with reviewed notices for every TUI platform of rust/Cargo.toml's workspace metadata, or one. It runs in
 the pinned builder image (container/Dockerfile), which provides the toolchain and the cross compilers; a build for
 the builder's own system and architecture is run to check its version and allocator setting. Archives are
 reproducible: fixed times, owners and modes. --check builds nothing: it runs the client built for this machine out
@@ -130,6 +130,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("version")
     parser.add_argument("--profile", choices=PROFILES, default="release")
+    parser.add_argument("--platform", choices=sorted(load().tui), help="build only this TUI platform")
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--check", action="store_true", help="run this machine's TUI out of --output instead of building")
     args = parser.parse_args()
@@ -144,7 +145,7 @@ def main() -> None:
         # Each platform builds in its own target directory, so their single-threaded LTO links run at once.
         with ThreadPoolExecutor() as pool:
             builds = [pool.submit(package, args.version, args.profile, name, target, output)
-                      for name, target in load().tui.items()]
+                      for name, target in load().tui.items() if args.platform in (None, name)]
             for built in builds:
                 built.result()
     except (ControlPlaneError, LegalError, OSError, ValueError, KeyError, subprocess.CalledProcessError,

@@ -50,7 +50,7 @@ pub struct Certificates {
 }
 
 /// A QUIC handshake's hold for a C-byte, N-certificate chain: five flights of C + 5N + 609 bytes, a copy of C + 48N.
-pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
+fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
     let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
     5 * (bytes + 5 * count + 609) + bytes + 48 * count
 }

@@ -1,4 +1,4 @@
-//! The command line: the client's 22 flags, their validation and the `Config` they give.
+//! The command line: the client's flags, their validation and the `Config` they give.
 
 use crate::model::{Cadence, Dir, Direction, Stage};
 use graphite_meter_proto::{
@@ -361,7 +361,6 @@ pub fn kept_server() -> Option<PathBuf> {
     let home = || var("HOME");
     let directory = match () {
         _ if cfg!(windows) => var("APPDATA"),
-        _ if cfg!(target_os = "macos") => home().map(|home| home.join("Library/Application Support")),
         _ => var("XDG_CONFIG_HOME").or_else(|| home().map(|home| home.join(".config"))),
     };
     Some(directory?.join("graphite-meter").join("server"))
@@ -407,12 +406,19 @@ fn cadence(text: &str) -> Result<Cadence, &'static str> {
     spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
 }
 
+/// The name of the preset `cadence` is.
+pub fn preset(cadence: Cadence) -> Option<&'static str> {
+    CADENCES
+        .iter()
+        .find(|(_, preset)| *preset == cadence)
+        .map(|(name, _)| *name)
+}
+
 /// A cadence as its flag spells it.
 fn cadence_name(cadence: Cadence) -> String {
-    match (CADENCES.iter().find(|(_, preset)| *preset == cadence), cadence) {
-        (Some((name, _)), _) => (*name).into(),
+    match (preset(cadence), cadence) {
         (None, Cadence::Every(spacing)) => duration::format(spacing),
-        (None, Cadence::ReplyDriven) => CADENCES[0].0.into(),
+        (name, _) => name.unwrap_or_default().into(),
     }
 }
 
@@ -530,9 +536,10 @@ const FLAGS: [Flag<Flags>; 22] = [
 ];
 
 const PROTOCOLS: [Protocol; 3] = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
-const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
+/// The transports a path can be set to by name.
+pub const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
     [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
-const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
+pub const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
 
 #[cfg(test)]
 mod tests {

@@ -99,9 +99,8 @@ impl Reader {
         if length > MAX_LENGTH {
             return Err(Code::H3_EXCESSIVE_LOAD);
         }
-        let pair = frame::Pair::default();
         Ok(Self {
-            pair,
+            pair: frame::Pair::default(),
             remaining: length,
             seen: [0; MAX_IDS],
             count: 0,

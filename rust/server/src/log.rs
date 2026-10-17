@@ -54,7 +54,7 @@ impl Level {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
+enum Style {
     /// `2026-10-06T14:31:02Z WARN  tls:       message; advice (transport::tls)`, for files, pipes and `docker logs`.
     Plain,
     /// The plain line in color; a warning's or error's advice on a `help:` line.
@@ -73,8 +73,7 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
     }
 });
 
-/// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled log pipe never
-/// blocks the thread that logs.
+/// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled pipe never blocks.
 const QUEUE: usize = 1024;
 /// How long `flush` waits for the queue to drain.
 const FLUSH_WAIT: Duration = Duration::from_secs(2);
@@ -153,9 +152,8 @@ fn now() -> String {
 /// Topics are padded to the longest, `admission:`, so messages start in one column.
 const TOPIC_WIDTH: usize = 10;
 
-/// One log line; control characters are escaped so no peer text drives a terminal. Warnings and errors name the
-/// module that wrote them, such as `transport::tls`.
-pub fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, time: &str, style: Style) -> String {
+/// One log line, control characters escaped against peer text; warnings and errors name their module.
+fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, time: &str, style: Style) -> String {
     let mut text = String::new();
     for character in message.to_string().chars() {
         if character.is_control() {
@@ -215,11 +213,11 @@ pub struct RateLimited {
     /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     module: &'static str,
-    state: Mutex<Window>,
+    state: Mutex<Pace>,
 }
 
 #[derive(Default)]
-struct Window {
+struct Pace {
     next: Option<Instant>,
     held: u64,
 }
@@ -232,7 +230,7 @@ impl RateLimited {
             topic,
             what,
             module,
-            state: Mutex::new(Window { next: None, held: 0 }),
+            state: Mutex::new(Pace { next: None, held: 0 }),
         }
     }
 

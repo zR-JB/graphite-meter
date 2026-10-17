@@ -83,14 +83,7 @@ async fn an_approval_nobody_gives_expires_after_two_minutes_and_a_broken_answer_
 #[tokio::test(start_paused = true)]
 async fn network_failures_last_until_the_deadline_which_reports_one_unless_the_last_poll_recovered() {
     let (approval, started) = (fresh(), Instant::now());
-    let mut polls = 0;
-    let failed = approval
-        .wait(|| {
-            polls += 1;
-            let fault = Fault::Lost(format!("reset {polls}"));
-            async { Err(fault) }
-        })
-        .await;
+    let failed = approval.wait(|| async { Err(Fault::Lost) }).await;
     assert_eq!(started.elapsed(), Duration::from_mins(2));
     match failed {
         Err(Unapproved::Failed(failure)) => assert_eq!(failure.reason, FailureReason::ConnectionLost),
@@ -101,7 +94,7 @@ async fn network_failures_last_until_the_deadline_which_reports_one_unless_the_l
         .wait(|| {
             polls += 1;
             let recovered = polls == 120;
-            async move { if recovered { Ok(None) } else { Err(Fault::Lost("reset".into())) } }
+            async move { if recovered { Ok(None) } else { Err(Fault::Lost) } }
         })
         .await;
     assert_eq!(recovered, Err(Unapproved::Expired));

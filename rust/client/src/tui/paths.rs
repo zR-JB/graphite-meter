@@ -1,7 +1,7 @@
 //! The path choices the checked servers offer, and how ready each selected server is.
 use super::App;
 use crate::{
-    config::PathChoice,
+    config::{LATENCY_TRANSPORTS, PathChoice, THROUGHPUT_TRANSPORTS},
     events::Check,
     format,
     run::prepare::{Paths, ServerPath},
@@ -118,15 +118,14 @@ impl App {
         }
     }
 
-    /// Steps a path row to the next choice, or to the first when the chosen one is not offered: its label.
-    pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) -> String {
+    /// Steps a path row to the next choice, or to the first when the chosen one is not offered.
+    pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) {
         let choices = self.choices(kind);
         let chosen = (kind.chosen)(&self.config.paths);
         let at = choices.iter().position(|choice| choice.selects(chosen));
         let next = at.map_or(0, |at| (at as isize + step).rem_euclid(choices.len() as isize) as usize);
         let choice = &choices[next];
         (kind.choose)(&mut self.config.paths, choice.origin.clone(), choice.transport);
-        choice.label.clone()
     }
 
     /// The HTTP version of the chosen throughput path when it does not negotiate one.
@@ -165,7 +164,7 @@ pub(super) struct Kind<T> {
 }
 
 pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
-    shared: [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
+    shared: THROUGHPUT_TRANSPORTS,
     label: format::throughput_transport,
     chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
     choose: |paths, origin, transport| (paths.throughput_origin, paths.throughput_transport) = (origin, transport),
@@ -180,7 +179,7 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
 };
 
 pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
-    shared: [LatencyTransport::WebSocket, LatencyTransport::WebTransport],
+    shared: LATENCY_TRANSPORTS,
     label: format::latency_transport,
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
     choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),

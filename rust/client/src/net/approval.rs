@@ -1,4 +1,4 @@
-//! Native sign-in: a PKCE approval page, then its token exchange polled up to 120 s; the grant stays in memory.
+//! Native sign-in: a PKCE approval page, then its token exchange polled to a deadline; the grant stays in memory.
 use super::{
     CONTROL_TIMEOUT, Client,
     conn::{Conn, Payload, ReadBuffer},
@@ -12,6 +12,7 @@ use graphite_meter_proto::{
     json,
     origin::{Origin, Scheme},
     reason::FailureReason,
+    route::AuthRoute,
     token,
 };
 use http::{HeaderValue, Method, StatusCode, header};
@@ -27,7 +28,7 @@ const POLL: Duration = Duration::from_secs(1);
 /// A sign-in at a server waiting for the operator's approval.
 pub struct Approval {
     pub origin: Origin,
-    /// The approval page: `<origin>/auth/cli?challenge=…`.
+    /// The approval page with the challenge.
     pub url: String,
     /// The code the page shows too.
     pub code: String,
@@ -54,13 +55,14 @@ pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
 impl Approval {
     /// A fresh approval at `origin` with a verifier from 32 random bytes.
     pub fn new(origin: &Origin) -> Self {
-        let mut entropy = [0; 32];
-        getrandom::fill(&mut entropy).expect("the system provides randomness");
-        let verifier: String = entropy.iter().map(|byte| format!("{byte:02x}")).collect();
+        let verifier: String = graphite_meter_net::random::<32>()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let challenge = challenge(&verifier);
         Self {
             origin: origin.clone(),
-            url: format!("{origin}/auth/cli?challenge={challenge}"),
+            url: format!("{origin}{}?challenge={challenge}", AuthRoute::Cli.path()),
             code: verification_code(&challenge).expect("a S256 challenge has a code"),
             deadline: Instant::now() + LIFETIME,
             verifier,
@@ -131,7 +133,7 @@ impl Approval {
     fn head(&self, length: usize) -> Result<http::Request<()>, Fault> {
         http::Request::builder()
             .method(Method::POST)
-            .uri(format!("{}/auth/cli/token", self.origin))
+            .uri(format!("{}{}", self.origin, AuthRoute::CliToken.path()))
             .header(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))
             .header(header::CONTENT_LENGTH, length)
             .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))

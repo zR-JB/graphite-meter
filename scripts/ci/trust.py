@@ -50,16 +50,6 @@ def exact_files(directory: Path, names: set[str]) -> None:
             gh.fail(f"{entry.name} is not a regular file")
 
 
-def read_record(path: Path, keys: set[str], expected: gh.JsonObject) -> gh.JsonObject:
-    record = gh.expect_object(gh.decode_json(path.read_text(encoding="utf-8"), path.name), path.name)
-    if set(record) != keys:
-        gh.fail(f"{path.name} keys are {sorted(record)}; expected {sorted(keys)}")
-    for key, value in expected.items():
-        if type(record[key]) is not type(value) or record[key] != value:
-            gh.fail(f"{path.name} {key} does not match its trusted request run")
-    return record
-
-
 def _objects(pages: gh.JsonValue, key: str | None = None) -> list[gh.JsonObject]:
     items: list[gh.JsonObject] = []
     for page in gh.expect_array(pages, "GitHub pages"):

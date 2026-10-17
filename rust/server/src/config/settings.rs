@@ -281,12 +281,12 @@ pub(super) fn load(
     let from_env = settings.load_env(env);
     match flag::parse(SETTINGS, &mut settings, args) {
         Ok(Parsed::Help) => {
-            let _ = write_usage(usage, SETTINGS);
+            let _ = write_usage(usage);
             return Ok(None);
         }
         Ok(Parsed::Arguments(_)) => {}
         Err(error) => {
-            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage, SETTINGS));
+            let _ = writeln!(usage, "{error}").and_then(|()| write_usage(usage));
             return Err(error);
         }
     }
@@ -334,7 +334,7 @@ impl Settings {
     }
 }
 
-fn write_usage(usage: &mut dyn Write, flags: &[Flag<Settings>]) -> std::io::Result<()> {
+fn write_usage(usage: &mut dyn Write) -> std::io::Result<()> {
     const COMMANDS: &str = "Usage: graphite-meter-server [options]
        graphite-meter-server <command>
 
@@ -345,5 +345,5 @@ Commands:
 
 Options:
 ";
-    write!(usage, "{COMMANDS}{}", flag::options(flags, &Settings::default()))
+    write!(usage, "{COMMANDS}{}", flag::options(SETTINGS, &Settings::default()))
 }

@@ -32,7 +32,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (DOCKERFILE, "musl-dev:amd64=1.2.3-1", "musl-dev:amd64", "exact apt package versions"),
     (DOCKERFILE, "RUN printf 'Types: deb", "RUN apt-get update\nRUN printf 'Types: deb", "snapshot.debian.org"),
     (DOCKERFILE, "/20260927T180000Z", "", "snapshot.debian.org"),
-    (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
+    (W + "ci.yml", None, PINNED_STEP.format("actions/setup-node"), "through mise"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
     (W + "release.yml", "cache: false", "cache: true", "cache: false"),
     (SETUP, "install_args:", "args:", "install_args"),
@@ -142,37 +142,44 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
 
 
 class WorkflowPolicyTests(unittest.TestCase):
-    def tree(self) -> Path:
+    @classmethod
+    def setUpClass(cls) -> None:
         directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
-        shutil.copytree(ROOT / ".github", root / ".github")
+        cls.addClassCleanup(directory.cleanup)
+        cls.root = Path(directory.name)
+        shutil.copytree(ROOT / ".github", cls.root / ".github")
         for name in ("scripts", "rust/interop"):
-            shutil.copytree(ROOT / name, root / name, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(ROOT / name, cls.root / name, ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "client/bun.lock", "container/Dockerfile", "rust/rust-toolchain.toml",
                      "rust/Cargo.lock"):
-            (root / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, root / name)
-        return root
+            (cls.root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, cls.root / name)
+
+    def refused(self, name: str, text: str, error: str) -> None:
+        """Check the copy with `name` holding `text`, then restore it."""
+        path = self.root / name
+        original = path.read_text() if path.exists() else None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        try:
+            with self.assertRaisesRegex(ControlPlaneError, error):
+                check_repository(self.root)
+        finally:
+            if original is None:
+                path.unlink()
+            else:
+                path.write_text(original)
 
     def test_repository_satisfies_policy(self) -> None:
-        check_repository(self.tree())
+        check_repository(self.root)
 
     def test_each_violation_is_rejected(self) -> None:
         for name, old, new, error in MUTATIONS:
             with self.subTest(name=name, error=error):
-                root = self.tree()
-                path = root / name
-                text = path.read_text() if path.exists() else ""
-                if old is None:
-                    text += new
-                else:
+                text = (ROOT / name).read_text() if (ROOT / name).exists() else ""
+                if old is not None:
                     self.assertIn(old, text)
-                    text = text.replace(old, new, 1)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text)
-                with self.assertRaisesRegex(ControlPlaneError, error):
-                    check_repository(root)
+                self.refused(name, text + new if old is None else text.replace(old, new, 1), error)
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
         for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
@@ -181,11 +188,8 @@ class WorkflowPolicyTests(unittest.TestCase):
             step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
             for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z_]+): \$\{\{ github\.", step):
                 with self.subTest(marker=marker, variable=variable):
-                    root = self.tree()
                     rebound = re.sub(rf"(?m)^( +{variable}): .*$", r"\1: ${{ github.job }}", step)
-                    (root / name).write_text(text.replace(step, rebound))
-                    with self.assertRaisesRegex(ControlPlaneError, f" {variable} must be exactly"):
-                        check_repository(root)
+                    self.refused(name, text.replace(step, rebound), f" {variable} must be exactly")
 
 
 if __name__ == "__main__":

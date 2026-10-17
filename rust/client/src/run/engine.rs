@@ -16,8 +16,8 @@ use graphite_meter_proto::{catalog::ServerId, reason::FailureReason};
 use std::time::{Duration, Instant};
 
 /// The sampler's period.
-pub const TICK: Duration = Duration::from_millis(250);
-const READY_BOUND: Duration = Duration::from_secs(10);
+const TICK: Duration = Duration::from_millis(250);
+pub(crate) const READY_BOUND: Duration = Duration::from_secs(10);
 const CHECKPOINT_BUDGET: Duration = Duration::from_millis(1500);
 const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 /// A tick this late resumes evidence.
@@ -647,13 +647,13 @@ pub fn lateness(fired: Instant, due: Instant, returned: Instant) -> Duration {
     fired.saturating_duration_since(due.max(returned))
 }
 
-/// A server's warmup: `base` stretched to ten of its idle round trips, at most 4 s.
+/// A server's warmup: `base` stretched to ten of its idle round trips, capped.
 pub fn warmup(base: Duration, idle_rtt: Option<Duration>) -> Duration {
     base.max(idle_rtt.map_or(Duration::ZERO, |rtt| rtt.saturating_mul(10)))
         .min(MAX_WARMUP)
 }
 
-/// The spacing between lane starts: half the server's own warmup spread over its lanes, at most 75 ms.
+/// The spacing between lane starts: half the server's own warmup spread over its lanes, capped.
 pub fn stagger(warmup: Duration, lanes: usize) -> Duration {
     match lanes {
         0 | 1 => Duration::ZERO,

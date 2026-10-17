@@ -149,7 +149,6 @@ pub(super) fn browse(url: &str) {
     }
     let (opener, args): (&str, &[&str]) = match () {
         _ if cfg!(windows) => ("rundll32", &["url.dll,FileProtocolHandler"]),
-        _ if cfg!(target_os = "macos") => ("open", &[]),
         _ => ("xdg-open", &[]),
     };
     let mut command = std::process::Command::new(opener);

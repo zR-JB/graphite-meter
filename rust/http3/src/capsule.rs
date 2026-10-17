@@ -64,7 +64,7 @@ impl Reader {
     }
 }
 
-/// A CLOSE_WEBTRANSPORT_SESSION capsule; the reason is cut at a character boundary within 1024 bytes.
+/// A CLOSE_WEBTRANSPORT_SESSION capsule; the reason is cut at a character boundary within its limit.
 pub(crate) fn close(code: u32, reason: &str) -> Vec<u8> {
     let end = reason.floor_char_boundary(MAX_REASON);
     let mut capsule = Vec::with_capacity(end + 12);
@@ -83,12 +83,10 @@ pub(crate) fn datagram(mut payload: Bytes) -> Result<(SessionId, Bytes), Code> {
 }
 
 /// The prefix of every datagram in session `id`.
-pub(crate) fn datagram_prefix(id: SessionId) -> ([u8; 8], usize) {
-    let mut prefix = [0; 8];
-    let mut rest = &mut prefix[..];
-    varint::put(id.quarter(), &mut rest);
-    let length = 8 - rest.len();
-    (prefix, length)
+pub(crate) fn datagram_prefix(id: SessionId) -> Vec<u8> {
+    let mut prefix = Vec::with_capacity(8);
+    varint::put(id.quarter(), &mut prefix);
+    prefix
 }
 
 #[cfg(test)]
@@ -148,8 +146,7 @@ mod tests {
     fn datagrams_route_by_quarter_stream_id() {
         for quarter in [0, 1, 63, 64, 16384, (1 << 60) - 1] {
             let session = SessionId::from_quarter(quarter).unwrap();
-            let (prefix, length) = datagram_prefix(session);
-            let bytes = [&prefix[..length], b"PING,42"].concat();
+            let bytes = [&datagram_prefix(session)[..], b"PING,42"].concat();
             assert_eq!(datagram(bytes.into()), Ok((session, Bytes::from_static(b"PING,42"))));
         }
         for invalid in [&b""[..], b"\x40", b"\xd0\x00\x00\x00\x00\x00\x00\x00"] {

@@ -192,7 +192,7 @@ fn password_auth() -> Vec<(&'static str, &'static str)> {
 fn authentication_settings_are_complete_and_canonical() {
     let auth = config(&password_auth(), &[]).auth.unwrap();
     assert_eq!(auth.public_origin.to_string(), "https://meter.example:8443");
-    assert_matches!(auth.methods, Methods::Password(Secret::File(ref path)) if path.to_str() == Some("/hash"));
+    assert_matches!(auth.methods, Methods { password: Some(Secret::File(ref path)), oidc: None } if path.to_str() == Some("/hash"));
     let mut env = password_auth();
     env.extend([
         ("GM_AUTH_MODE", "hybrid"),
@@ -203,12 +203,12 @@ fn authentication_settings_are_complete_and_canonical() {
     ]);
     let env = dedupe(env);
     let auth = config(&env, &[]).auth.unwrap();
-    let oidc = auth.methods.oidc().unwrap();
+    let oidc = auth.methods.oidc.as_ref().unwrap();
     assert_eq!(
         (oidc.allowed_groups.as_slice(), auth.provider.as_str()),
         (&["ops".into(), "admins".into()][..], "Authelia")
     );
-    assert!(auth.methods.password().is_some());
+    assert!(auth.methods.password.is_some());
     assert!(!format!("{:?}", auth.methods).contains("s3cret"), "secrets stay out of Debug");
 }
 

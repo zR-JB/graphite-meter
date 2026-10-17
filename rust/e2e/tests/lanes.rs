@@ -100,9 +100,9 @@ async fn fourteen_webtransport_lanes_outgrow_the_first_connection_window_without
 #[tokio::test]
 async fn a_silent_quic_address_waits_at_least_3_s_while_a_delayed_answering_one_finishes() {
     let (server, client) = (Server::start().await, client());
-    let silent = Link::udp(server.quic, Duration::ZERO).await.unwrap();
+    let silent = Link::udp(server.quic, Duration::ZERO, None).await.unwrap();
     silent.stall();
-    let delayed = Link::udp(server.quic, Duration::from_secs(1)).await.unwrap();
+    let delayed = Link::udp(server.quic, Duration::from_secs(1), None).await.unwrap();
     let timed = async |link: &Link| {
         let (started, origin) = (Instant::now(), Origin::parse(&format!("https://{}", link.address)).unwrap());
         let request = Request::new(Method::GET, &origin, Route::Probe);

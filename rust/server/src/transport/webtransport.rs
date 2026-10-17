@@ -15,8 +15,6 @@ use http::HeaderMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// A CONNECT that opens no session is answered within this long.
-pub const ANSWER_BOUND: Duration = Duration::from_secs(10);
 /// An establish-only download session closes after this long; its answer is the handshake.
 const VERIFY_LINGER: Duration = Duration::from_secs(5);
 /// A download datagram carries this much.

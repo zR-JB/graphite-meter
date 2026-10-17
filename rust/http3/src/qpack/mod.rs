@@ -7,9 +7,7 @@ use crate::code::Code;
 /// Why a field section was refused; a stream answers each differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
-    /// QPACK_DECOMPRESSION_FAILED.
     Qpack,
-    /// H3_MESSAGE_ERROR.
     Malformed,
     /// Over the size limit: a 431 response to requests.
     TooLarge,
