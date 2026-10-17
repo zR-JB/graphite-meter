@@ -211,13 +211,11 @@ impl Http3 {
     }
 }
 
-/// Whether a connection ended without a failure worth logging: a peer's close or an idle timeout.
+/// Whether a connection ended without a failure worth logging: gracefully, by the peer's close, or idle.
 fn ended_normally(error: &http3::Error) -> bool {
-    use noq::ConnectionError::{ConnectionClosed, LocallyClosed, TimedOut};
-    match error {
-        http3::Error::Connection { local, .. } => !local,
-        http3::Error::Transport(TimedOut | LocallyClosed) => true,
-        http3::Error::Transport(ConnectionClosed(close)) => close.error_code == noq::TransportErrorCode::NO_ERROR,
-        _ => false,
-    }
+    error.graceful()
+        || matches!(
+            error,
+            http3::Error::Connection { local: false, .. } | http3::Error::Transport(noq::ConnectionError::TimedOut)
+        )
 }

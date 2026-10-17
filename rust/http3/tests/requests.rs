@@ -47,8 +47,8 @@ async fn requests_round_trip_and_bodiless_responses_may_declare_a_length() -> Re
     }
     drop((send, recv));
     settled(&peers.budget).await;
-    peers.client.close(0_u32.into(), b"done");
-    assert!(driver.await?.is_ok() && serving.await?.is_ok(), "a peer's close code 0 is graceful");
+    peers.client.close(0x100_u32.into(), b"done");
+    assert!(driver.await?.is_ok() && serving.await?.is_ok(), "a peer's H3_NO_ERROR is graceful");
     Ok(())
 }
 

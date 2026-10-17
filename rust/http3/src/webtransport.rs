@@ -58,7 +58,7 @@ async fn unless_ended<T>(session: &watch::Receiver<Phase>, work: impl Future<Out
     tokio::select! {
         biased;
         done = work, if !gone => Ok(done),
-        _ = async { session.clone().wait_for(Phase::is_ended).await.map(drop) } => Err(Error::Refused),
+        _ = async { session.clone().wait_for(Phase::is_ended).await.map(drop) } => Err(Error::SessionEnded),
     }
 }
 
@@ -214,7 +214,7 @@ impl Session {
         let mut phase = self.phase.clone();
         let opened = phase.wait_for(|phase| !matches!(phase, Phase::Opening)).await;
         if opened.map_or(true, |phase| phase.is_ended()) {
-            return Err(Error::Refused);
+            return Err(Error::SessionEnded);
         }
         unless_ended(&self.phase, SendStream::open(&self.shared, self.id, self.phase.clone())).await?
     }
@@ -222,7 +222,7 @@ impl Session {
     /// A datagram's bytes, refused once the session ended: the drafts send none after it.
     fn datagram(&self, payload: &[u8]) -> Result<Bytes, Error> {
         if self.phase.borrow().is_ended() {
-            return Err(Error::Refused);
+            return Err(Error::SessionEnded);
         }
         let (prefix, length) = &self.datagram_prefix;
         Ok([&prefix[..*length], payload].concat().into())
@@ -297,28 +297,38 @@ async fn dialect(shared: &Shared, wait: Option<Duration>) -> Result<Option<Diale
 
 /// How long a closing session waits for the peer's FIN, and a sessions-only connection for the CLOSE.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
-/// Control data a peer may send on its CONNECT stream.
-const MAX_CONNECT_BYTES: u64 = 1024 * 1024;
-const MAX_CONNECT_CHUNKS: u64 = 1024;
+/// Control data a peer may send on its CONNECT stream, where its CLOSE takes at most 1 KiB.
+const MAX_CONNECT_BYTES: u64 = 64 * 1024;
 const MAX_DEFERRED_RESETS: usize = 64;
 
 #[derive(Default)]
 pub(crate) struct Sessions {
     connects: Vec<Connect>,
     resets: Vec<PendingReset>,
+    /// Whether the connection carried a session.
+    pub(crate) carried: bool,
+    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
+    pub(crate) linger: Option<Instant>,
 }
 
 impl Sessions {
     /// Runs every CONNECT stream and pending reset; `Ready` once one is done with.
     pub(crate) fn poll(&mut self, cx: &mut Context<'_>, shared: &Shared) -> Poll<()> {
         let (connects, resets) = shared.sessions().take();
+        self.carried |= !connects.is_empty();
         self.connects.extend(connects);
         for reset in resets {
             self.defer(reset, shared);
         }
         let now = Instant::now();
         let before = self.connects.len() + self.resets.len();
-        self.connects.retain_mut(|connect| !connect.poll(cx, now, shared));
+        self.connects.retain_mut(|connect| {
+            let done = connect.poll(cx, now, shared);
+            if done && connect.closed_here {
+                self.linger = Some(now + CLOSE_WAIT);
+            }
+            !done
+        });
         self.resets.retain_mut(|reset| !reset.poll(cx, now));
         if self.connects.len() + self.resets.len() < before {
             Poll::Ready(())
@@ -359,8 +369,8 @@ pub(crate) struct Connect {
     stream: RequestStream,
     capsules: capsule::Reader,
     input: Bytes,
-    /// Control data the peer sent: bytes and chunks.
-    received: (u64, u64),
+    /// Control data bytes the peer sent.
+    received: u64,
     pub(super) phase: watch::Sender<Phase>,
     /// Once the session ended: when the wait for the peer's FIN gives up.
     deadline: Option<Instant>,
@@ -379,7 +389,7 @@ impl Connect {
             stream,
             capsules: capsule::Reader::default(),
             input: Bytes::new(),
-            received: (0, 0),
+            received: 0,
             phase,
             deadline: None,
             peer_finished: false,
@@ -409,7 +419,7 @@ impl Connect {
         };
         if let Some(error) = failed {
             self.end(Err(error));
-            return self.done(now, shared);
+            return self.done(shared);
         }
         let Some(deadline) = self.deadline.or_else(|| self.close(now, shared)) else {
             return false;
@@ -421,7 +431,7 @@ impl Connect {
         // Browsers drop the code of a CLOSE whose STOP_SENDING arrives first.
         self.stream.send.reset(Code::WT_SESSION_GONE);
         self.stream.recv.stop(Code::WT_SESSION_GONE);
-        self.done(now, shared)
+        self.done(shared)
     }
 
     /// Starts the close once the session ended or this side asked; returns when the wait for FIN ends.
@@ -439,12 +449,8 @@ impl Connect {
         Some(*self.deadline.insert(now + CLOSE_WAIT))
     }
 
-    fn done(&self, now: Instant, shared: &Shared) -> bool {
-        let mut sessions = shared.sessions();
-        sessions.unregister(self.id);
-        if self.closed_here {
-            sessions.linger = Some(now + CLOSE_WAIT);
-        }
+    fn done(&self, shared: &Shared) -> bool {
+        shared.sessions().unregister(self.id);
         true
     }
 
@@ -463,8 +469,8 @@ impl Connect {
                 Ok(None) => match self.stream.recv.poll_data(cx) {
                     Poll::Pending => break,
                     Poll::Ready(Ok(Some(data))) => {
-                        self.received = (self.received.0 + data.len() as u64, self.received.1 + 1);
-                        if self.received.0 > MAX_CONNECT_BYTES || self.received.1 > MAX_CONNECT_CHUNKS {
+                        self.received += data.len() as u64;
+                        if self.received > MAX_CONNECT_BYTES {
                             return Err(self.stream.abort(Code::H3_EXCESSIVE_LOAD));
                         }
                         self.input = data;
@@ -519,11 +525,6 @@ pub(crate) struct Registry {
     gone_through: Option<SessionId>,
     /// The close every session gets once the server shuts down.
     shutdown: Option<SessionClose>,
-    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended arrives first.
-    pub(crate) linger: Option<Instant>,
-    /// Whether the connection carried a session, and served anything else.
-    pub(crate) carried: bool,
-    pub(crate) served: bool,
     /// CONNECT streams and cancelled streams the driver has yet to take.
     handed: (Vec<Connect>, Vec<PendingReset>),
     ended: bool,
@@ -615,7 +616,6 @@ impl Registry {
         let (datagrams, datagram_queue) = mpsc::channel(DATAGRAM_QUEUE);
         let (id, phase, close) = (connect.id, connect.phase.subscribe(), self.shutdown.clone());
         self.active = Some(Active { id, streams, datagrams, phase, close });
-        self.carried = true;
         self.handed.0.push(connect);
         for (deadline, session, stream) in std::mem::take(&mut self.early) {
             if session == id {
@@ -687,7 +687,7 @@ impl RecvStream {
         };
         let Ok(read) = unless_ended(&self.session, read).await else {
             self.stop(Code::WT_SESSION_GONE);
-            return Err(Error::Refused);
+            return Err(Error::SessionEnded);
         };
         self.done |= !matches!(read, Ok(Some(_)));
         Ok(read?)
@@ -736,7 +736,7 @@ impl SendStream {
     /// The stream, refused once its session ended.
     fn stream(&mut self) -> Result<(&mut noq::SendStream, &watch::Receiver<Phase>), Error> {
         if self.session.borrow().is_ended() {
-            return Err(Error::Refused);
+            return Err(Error::SessionEnded);
         }
         Ok((&mut self.lane.as_mut().expect("open stream").stream, &self.session))
     }
@@ -761,9 +761,7 @@ impl SendStream {
     pub fn finish(mut self) -> Result<(), Error> {
         self.stream()?;
         let mut lane = self.lane.take().expect("open stream");
-        lane.stream
-            .finish()
-            .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
+        lane.stream.finish().map_err(|_| Error::Closed)
     }
 }
 

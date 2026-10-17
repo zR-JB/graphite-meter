@@ -65,6 +65,8 @@ pub(crate) struct Shared {
     /// Request stream halves alive.
     live: AtomicUsize,
     going_away: AtomicBool,
+    /// A request other than a CONNECT arrived.
+    pub(crate) served: AtomicBool,
     /// The code this side closed the connection with.
     closed: OnceLock<Code>,
     wake: Notify,
@@ -120,7 +122,7 @@ impl Shared {
     pub(crate) fn close_error(&self) -> Error {
         match (self.quic.close_reason(), self.closed.get()) {
             (Some(noq::ConnectionError::LocallyClosed), Some(&code)) => Error::local(code),
-            (reason, _) => reason.map_or(Error::Refused, Error::from),
+            (reason, _) => reason.map_or(Error::SessionEnded, Error::from),
         }
     }
 
@@ -165,6 +167,7 @@ impl Driver {
             peer: watch::Sender::new(None),
             live: AtomicUsize::new(0),
             going_away: AtomicBool::new(false),
+            served: AtomicBool::new(false),
             closed: OnceLock::new(),
             wake: Notify::new(),
             sessions: Mutex::default(),
@@ -279,10 +282,9 @@ impl Driver {
             return self.drain;
         }
         let idle = *self.idle_since.get_or_insert(now) + IDLE;
-        let sessions = self.shared.sessions();
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let only_sessions = sessions.carried && !sessions.served;
-        let done = (self.goaway.is_some() || only_sessions).then(|| sessions.linger.unwrap_or(now));
+        let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Relaxed);
+        let done = (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 

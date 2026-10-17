@@ -137,12 +137,11 @@ async fn prepared_datagrams_repeat_and_the_last_session_ends_its_connection() ->
     Ok(())
 }
 
-/// Control data on a CONNECT stream is bounded to 1 MiB in at most 1024 chunks.
+/// Control data on a CONNECT stream is bounded to 64 KiB.
 #[tokio::test]
 async fn connect_stream_control_data_is_bounded() -> Result<(), TestError> {
     let grease = |length: usize| frame(0x00, &frame(0x21, &vec![0; length]));
-    // A DATA frame split across packets counts once per part.
-    for (data, bounded) in [(grease(1).repeat(1025), true), (grease(512 * 1024), false), (grease(1024 * 1024), true)] {
+    for (data, bounded) in [(grease(1).repeat(1025), false), (grease(32 * 1024), false), (grease(64 * 1024), true)] {
         let Served { peers, mut outcomes, .. } = pair(DRAFT02).await?.sessions(until_closed);
         peers.get().await?;
         let (mut connect, _response) = peers.connect().await?;
@@ -301,6 +300,6 @@ async fn a_lane_waiting_for_stream_credit_ends_with_its_session() -> Result<(), 
     yields().await;
     connect.write_all(&close_capsule(7, "bye")).await?;
     let outcome = tokio::time::timeout(Duration::from_secs(5), outcomes.recv()).await?;
-    assert_eq!(outcome, Some(Some(Error::Refused)));
+    assert_eq!(outcome, Some(Some(Error::SessionEnded)));
     Ok(())
 }
