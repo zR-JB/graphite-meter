@@ -1,7 +1,6 @@
 # Supply-chain-sensitive repository controls and release inputs.
 /.github/                        @zR-JB
 /.githooks/                      @zR-JB
-/.gitattributes                  @zR-JB
 /.dockerignore                   @zR-JB
 /mise.toml                       @zR-JB
 /mise.lock                       @zR-JB
