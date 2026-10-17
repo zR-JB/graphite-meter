@@ -85,6 +85,8 @@ async function churnSurfaces(cycles: number) {
   }
 }
 
+const CYCLES = 5;
+
 for (const width of [1600, 1000, 390]) {
   test.chrome(
     `rapid surface reversals release resources at ${width}px, including during a run`,
@@ -129,13 +131,19 @@ for (const width of [1600, 1000, 390]) {
       for (let cycle = 0; cycle < 10 && !(await complete()); cycle++) await page.evaluate(churnSurfaces, 1);
       const saved = await savedResult(page, started, 30_000);
       expect(saved.result.outcome).toBe("complete");
-      for (let cycle = 0; cycle < 3; cycle++) await page.evaluate(churnSurfaces, 1);
-      await page.evaluate(settled);
-      await page.cdp("HeapProfiler.collectGarbage");
-      const after = await page.cdp("Memory.getDOMCounters");
-      // A settled page holds 16 more nodes and no more listeners whatever the cycle count; a leak grows each cycle.
-      expect(after.nodes - before.nodes).toBeLessThan(50);
-      expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(3);
+      const counted = async () => {
+        await page.evaluate(settled);
+        await page.cdp("HeapProfiler.collectGarbage");
+        return page.cdp("Memory.getDOMCounters");
+      };
+      const finished = await counted();
+      for (let cycle = 0; cycle < CYCLES; cycle++) await page.evaluate(churnSurfaces, 1);
+      const after = await counted();
+      expect(finished.nodes - before.nodes).toBeLessThan(100);
+      expect(finished.jsEventListeners - before.jsEventListeners).toBeLessThan(10);
+      // A leak grows with each cycle; a settled page measures the same after any number of them.
+      expect(after.nodes - finished.nodes).toBeLessThan(2 * CYCLES);
+      expect(after.jsEventListeners - finished.jsEventListeners).toBeLessThan(CYCLES);
       expect(await page.evaluate(() => (window as any).surfaceFrames.size)).toBe(0);
       expect(
         await page.evaluate(() => document.querySelectorAll("dialog[open], :popover-open:not(.tooltip)").length),

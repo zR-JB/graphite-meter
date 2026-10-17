@@ -15,7 +15,7 @@ import {
 } from "./fleet";
 import { browser, seriousViolations, expect, settled, test, type Page } from "./webview";
 
-test("an HTTP/1.1 and WebSocket run is saved and listed after reload, logging nothing", async (page) => {
+test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (page) => {
   const version = await fetch(`${home.http}/version.json`);
   expect((await version.json()).label).toBe("prod");
   await open(page, home.http, {
@@ -28,17 +28,7 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload, logging no
     },
   });
   await ready(page);
-  // Chrome also reports what pages never see: failed loads, deprecations and rendering errors.
-  const logged: string[] = [];
-  if (browser === "chrome") {
-    await page.cdp("Log.enable");
-    await page.onCdp("Log.entryAdded", (event: any) => {
-      const entry = event.data?.entry;
-      if (entry?.level === "error" || entry?.level === "warning") logged.push(`${entry.source}: ${entry.text}`);
-    });
-  }
   const saved = await run(page);
-  expect(logged).toEqual([]);
   expect(readHistoryRecord(saved)).toEqual(saved);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
@@ -135,7 +125,10 @@ test("the page requires Trusted Types and refuses script it did not make", async
 
 test("stopping during download freezes elapsed time and a rerun completes", async (page) => {
   await open(page, home.url, {
-    config: { ...downloadOnly, duration: { ...baseConfig.duration, downloadMs: 4000 } },
+    config: {
+      stages: { ...downloadOnly.stages, latency: true },
+      duration: { ...baseConfig.duration, downloadMs: 3000 },
+    },
   });
   await ready(page);
   await runButton(page, "Start test").click();
@@ -208,10 +201,20 @@ const viewports = [
   [1920, 1080],
 ] as const;
 
-test("a completed run draws its arcs and fits every layout and theme without serious violations", async (page) => {
+test("a completed run logs nothing, draws its arcs and fits every layout and theme without serious violations", async (page) => {
   await open(page);
   await ready(page);
+  // Chrome also reports what pages never see: failed loads, deprecations and rendering errors.
+  const logged: string[] = [];
+  if (browser === "chrome") {
+    await page.cdp("Log.enable");
+    await page.onCdp("Log.entryAdded", (event: any) => {
+      const entry = event.data?.entry;
+      if (entry?.level === "error" || entry?.level === "warning") logged.push(`${entry.source}: ${entry.text}`);
+    });
+  }
   await run(page);
+  expect(logged).toEqual([]);
   await arcsDrawn(page);
   expect(await page.locator(".phase-toast.visible").state()).toEqual([]);
   for (const [width, height] of viewports)

@@ -118,8 +118,10 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   await expect.poll(async () => (await network(page)).preflights[frankfurt.url]).toBeGreaterThan(before);
   expect(await selection(page)).toEqual(["self", "server-1"]);
   await settings.getByRole("checkbox", { name: /^Frankfurt/ }).click();
-  await expect(settings.locator('[data-readiness="verified"]')).toBeVisible();
+  await closeSettings(page);
+  await ready(page);
   expect(await selection(page)).toEqual(["self"]);
+  expect((await run(page)).result.multiServer.participants).toEqual(["self"]);
 });
 
 test("a blocked latency probe fails only its path and Retry stays scoped", async (page) => {

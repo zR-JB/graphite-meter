@@ -27,7 +27,6 @@ async function signIn(page: Page) {
 test.chrome("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths", async (page) => {
   await open(page, `${locked.url}/login`, {
     servers: [{ id: "self", url: locked.url }],
-    config: { stages: { ...baseConfig.stages, latency: false } },
   });
   await signIn(page);
   for (const [path, kind, protocol] of [
