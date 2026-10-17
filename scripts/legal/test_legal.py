@@ -5,12 +5,11 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
 
 from scripts.legal.artifacts import about, copyright_notice
 from scripts.legal.discovery import discover_browser, package_license, package_root, repository_url
 from scripts.legal.model import (
-    Component, Json, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
+    Component, LegalError, LegalFile, LocalArtifact, Project, Provenance, Review, array, read_json, sha256,
 )
 from scripts.legal.review import (
     add_provenance, component_from_files, component_legal_files, prepare_scopes,
@@ -60,7 +59,6 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(files[0].text, contents)
         self.assertEqual(files[0].sha256, sha256(contents.encode()))
         self.assertEqual([item.kind for item in files], ["license", "notice", "notice", "license"])
-        self.assertEqual(len(read_legal_files(self.root, recursive=False)), 3)
 
     def test_missing_legal_material_fails(self) -> None:
         self.write("README.md", "no license")
@@ -137,7 +135,7 @@ class LegalTests(unittest.TestCase):
             with self.subTest(content=content):
                 legal = [LegalFile("LICENSE", text=content, kind="license"),
                          LegalFile("NOTICE", text="notice", kind="notice")]
-                component = component_from_files("go", "example", "1", "", legal)
+                component = component_from_files("cargo", "example", "1", "", legal)
                 self.assertEqual(component.selectedLicenseExpression, expected)
                 self.assertEqual(len(component.legalTexts), 1)
                 self.assertEqual(len(component.notices), 1)
@@ -147,12 +145,10 @@ class LegalTests(unittest.TestCase):
     def test_scoped_review_selection(self) -> None:
         component, review = self.reviewed()
         scopes = {"tui": [replace(component, version="2", selectedLicenseExpression="MIT OR GPL-3.0")]}
-        prepare_scopes(scopes, [review], "check")
+        prepare_scopes(scopes, [review])
         self.assertEqual(scopes["tui"][0].selectedLicenseExpression, "MIT")
-        unresolved = {"tui": [Component("new", ecosystem="npm")]}
-        prepare_scopes(unresolved, [], "review-template")
         with self.assertRaisesRegex(LegalError, "tui:"):
-            prepare_scopes(unresolved, [], "generate")
+            prepare_scopes({"tui": [Component("new", ecosystem="npm")]}, [])
 
     def test_provenance_checks_artifact_bytes_and_flows_into_container(self) -> None:
         asset = self.write("font.woff2", "font bytes")
@@ -219,7 +215,7 @@ class LegalTests(unittest.TestCase):
         reviews = [Review.parse(item) for item in array(read_json(ROOT / "legal/reviewed-components.json"))]
         entries = [Provenance.parse(item) for item in array(read_json(ROOT / "legal/provenance.json"))]
         prepare_scopes({scope: add_provenance(ROOT, [], entries, scope) for scope in ("server/browser", "container")},
-                       reviews, "check")
+                       reviews)
 
     def test_copyright_follows_the_project_record(self) -> None:
         self.assertEqual((ROOT / "COPYRIGHT").read_text(encoding="utf-8"), copyright_notice(Project.read(ROOT)))
@@ -235,7 +231,6 @@ class LegalTests(unittest.TestCase):
             Component("ring", "0.17.14", "cargo", "registry+https://github.com/rust-lang/crates.io-index"),
             Component("quic", "1.3.0", "cargo", f"git+{fork}?rev={'f' * 40}#{'f' * 40}", modified=True),
             Component("patched-lib", "5.0.0", "npm", "https://github.com/example/patched-lib", modified=True),
-            Component("Go standard library", "go1.27.1", "go-toolchain", "https://go.dev/"),
             Component("local", "1", "npm", "file:vendor/local"),
         ]
         project = Project(name="Graphite Meter", repository="https://github.com/owner/meter")
@@ -249,7 +244,6 @@ class LegalTests(unittest.TestCase):
                          {"label": "Changes", "url": f"{fork}/compare/{'b' * 40}...{'f' * 40}"}],
                 "patched-lib": [{"label": "Source", "url": "https://github.com/example/patched-lib"},
                            {"label": "Changes", "url": f"{blob}/client/patches/patched-lib%405.0.0.patch"}],
-                "Go standard library": [{"label": "Source", "url": "https://go.dev/"}],
                 "local": [],
             })
             # The review identity stays as reviewed.

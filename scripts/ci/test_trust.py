@@ -12,10 +12,10 @@ from typing import cast
 from unittest.mock import patch
 
 from github_api import (
-    ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
+    ControlPlaneError, confined_path, file_sha256, local_path, runner_path,
 )
 from assets import OCI, release_assets, staged_files
-from fixtures import AMD, Answers, engine, git_head, github, outcome, pages, write_client, write_staged
+from fixtures import git_head, github, outcome, pages, write_client, write_staged
 from release import (
     BUILD_JOB,
     Release,
@@ -82,7 +82,7 @@ def analysis(analysis_id: int, minute: int, error: str = "",
              commit: str = MAIN) -> dict[str, object]:
     return {
         "id": analysis_id, "commit_sha": commit, "created_at": f"2026-08-15T10:{minute:02}:00Z",
-        "category": "go", "analysis_key": "default", "environment": "", "error": error,
+        "category": "rust", "analysis_key": "default", "environment": "", "error": error,
         "warning": "", "tool": {"name": "CodeQL"},
     }
 
@@ -200,7 +200,7 @@ class MainBindingTests(unittest.TestCase):
 
     def test_prerelease_control_plane_must_match_main(self) -> None:
         control = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
-        paths = (*control, "go", "client")
+        paths = (*control, "rust", "client")
         main = [{"path": path, "sha": "a" * 40} for path in paths]
         for path in paths:
             for changed in ({"path": path, "sha": "b" * 40}, None):
@@ -382,7 +382,7 @@ class RequestTests(unittest.TestCase):
                       self.assertRaisesRegex(ControlPlaneError, "RUNNER_TEMP are required")):
                     runner_path("OUT_DIR")
             with patch.dict(os.environ, {"RUNNER_TEMP": ""}):
-                self.assertEqual(local_path("go/dist", os.getcwd()), Path("go/dist").resolve())
+                self.assertEqual(local_path("dist", os.getcwd()), Path("dist").resolve())
                 self.assertEqual(local_path(root / "request", "/usr"), root.resolve() / "request")
                 for path in ("/etc/passwd", root / "escape/etc"):
                     with self.subTest(path=path), self.assertRaisesRegex(ControlPlaneError, "outside"):
@@ -475,7 +475,6 @@ class RequestTests(unittest.TestCase):
             (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, {}, None, "dispatch inputs"),
             ({}, {"WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/x"}, None,
              "trusted main workflow"),
-            ({}, {"PUBLISHER_SHA": OLD, "HEAD": OLD}, None, "no longer current main"),
             ({}, {"HEAD": OLD}, None, "checked-out tooling"),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change, env=env, files=files):
@@ -500,17 +499,17 @@ class RequestTests(unittest.TestCase):
                     self.assertEqual((release.sha, publish), ((request | change)["sourceSha"], True))
 
 
-def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject]:
-    """Write a request's artifact; return its directory and the image's index."""
+def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, str]:
+    """Write a request's artifact; return its directory and the image index digest."""
     release = release_of(stable)
     request_dir = root / "request"
     candidate = request_dir / "release-request-4242"
-    oci = write_staged(candidate, release.version, release.sha, REPO)
+    digest = write_staged(candidate, release.version, release.sha, REPO)
     (candidate / "request.json").write_text(json.dumps({
         "schemaVersion": 4, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
         "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
     }))
-    return request_dir, oci
+    return request_dir, digest
 
 
 def outputs(path: Path) -> dict[str, str]:
@@ -547,10 +546,9 @@ class CommandTests(unittest.TestCase):
             (True, "publish", None, {}, {"LIMIT": "10"}, "exceeds 10 bytes"),
             (True, "publish", client, {}, {}, "notices differ from its build's"),
             (False, "publish", offer, {}, {}, "files are"),
-            (True, "publish", None, {}, {"FAKE_DIGEST": "latest"}, "digest is 'latest'"),
             (True, "publish", None, unprotected, {}, "require reviewers"),
-            (False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
-             {}, "main moved during"),
+            (True, "publish", None, {MAIN_COMMIT: {"sha": OLD}}, {}, "no longer current main"),
+            (False, "publish", None, MOVED | {MAIN_COMMIT: {"sha": OLD}}, {}, "main moved during"),
             (True, "publish", None, published, {}, "already published with other assets"),
             (True, "validate", None, published, {}, "already published with other assets"),
             (True, "publish", None, published_with("x.tar.gz", draft=True), {}, None),
@@ -558,7 +556,7 @@ class CommandTests(unittest.TestCase):
         for stable, mode, edit, responses, env, error in rows:
             with self.subTest(stable=stable, mode=mode, error=error):
                 root = self.root / str(len(list(self.root.iterdir())))
-                request_dir, oci = write_request(root, stable, mode)
+                request_dir, digest = write_request(root, stable, mode)
                 if edit is not None:
                     edit(request_dir / "release-request-4242")
                 release = release_of(stable)
@@ -569,7 +567,7 @@ class CommandTests(unittest.TestCase):
                     "HANDOFF_DIR": str(root / "handoff"),
                     "GITHUB_OUTPUT": str(root / "output"),
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
-                } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | env
+                } | git_head(root, MAIN) | env
                 limit = int(env.get("LIMIT", 1 << 30))
                 with (patch.dict(os.environ, variables), patch("assets.OCI_LIMIT", limit),
                       github(trusted(stable, mode) | responses)):
@@ -579,7 +577,7 @@ class CommandTests(unittest.TestCase):
                     continue
                 result = outputs(root / "output")
                 self.assertEqual((result["digest"], result["publish"], result["sha"]),
-                                 (AMD, str(mode == "publish").lower(), release.sha))
+                                 (digest, str(mode == "publish").lower(), release.sha))
                 self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
                 if not stable:
                     self.assertEqual({path.name for path in (root / "handoff").iterdir()}, {"image"})

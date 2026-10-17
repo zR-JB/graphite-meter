@@ -75,10 +75,9 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
             if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
                 raise ValueError(f"mise.toml {section}.{name} must be an exact version or image digest")
             pins[section][name] = value
-    pins["runtime"] = {name: pins["tools"][name] for name in ("bun", "python")}
-    for name, runtime in (("bun", "bun"), ("python", "python")):
-        if image_version(pins["images"][name]) != pins["runtime"][runtime]:
-            raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
+    for name in ("bun", "python"):
+        if image_version(pins["images"][name]) != pins["tools"][name]:
+            raise ValueError(f"mise.toml images.{name} must use the tools.{name} version")
     manifest = metadata.get("rust_manifest_sha256")
     if not isinstance(manifest, str) or re.fullmatch(r"[0-9a-f]{64}", manifest) is None:
         raise ValueError("mise.toml vars.rust_manifest_sha256 must be a SHA-256")
@@ -124,13 +123,9 @@ def verify_rust_toolchain(root: Path = ROOT) -> None:
     check_rust_manifest(Path(sysroot) / "lib/rustlib/multirust-channel-manifest.toml", manifest, root)
 
 
-def runtime_pins(root: Path = ROOT) -> dict[str, str]:
-    return load_pins(root)["runtime"]
-
-
 def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     """Return expected source for unavoidable pre-execution literals; never execute pin data."""
-    pins, runtimes = load_pins(root), runtime_pins(root)
+    pins = load_pins(root)
     replacements = {
         "container/Dockerfile": [
             (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/python:\S+( AS python)$",
@@ -193,22 +188,16 @@ def check(root: Path = ROOT) -> None:
 
 def doctor(root: Path = ROOT) -> None:
     check(root)
-    expected = runtime_pins(root) | {"mise": pin("tools.mise", root)}
-    commands = {
-        "bun": (["bun", "--version"], "", root),
-        "mise": (["mise", "--version"], "", root),
-    }
-    actual = {"python": platform.python_version()}
-    for name, (command, prefix, directory) in commands.items():
-        result = subprocess.run(command, cwd=directory, capture_output=True, text=True, check=True)
-        actual[name] = result.stdout.strip().removeprefix(prefix)
-    actual["mise"] = actual["mise"].split()[0]
-    mismatch = []
-    for name, version in expected.items():
-        print(f"{name}: {actual[name]} (expected {version})")
-        if actual[name] != version:
-            mismatch.append(name)
-    if mismatch:
+    tools = load_pins(root)["tools"]
+
+    def version(*command: str) -> str:
+        return subprocess.run(command, cwd=root, capture_output=True, text=True, check=True).stdout.split()[0]
+
+    actual = {"python": platform.python_version(), "bun": version("bun", "--version"),
+              "mise": version("mise", "--version")}
+    for name, found in actual.items():
+        print(f"{name}: {found} (expected {tools[name]})")
+    if mismatch := [name for name, found in actual.items() if found != tools[name]]:
         raise ValueError(f"toolchain mismatch: {', '.join(mismatch)}")
 
 
@@ -225,7 +214,7 @@ def main() -> None:
                     parser.error("get requires a section.name")
                 print(pin(args.name))
             case "python-target":
-                print(".".join(runtime_pins()["python"].split(".")[:2]))
+                print(".".join(pin("tools.python").split(".")[:2]))
             case "check":
                 check()
             case "sync":

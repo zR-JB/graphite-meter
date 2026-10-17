@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import NoReturn, TypeAlias, cast
@@ -24,6 +25,9 @@ TLS_NAME = re.compile(
     re.IGNORECASE,
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
+JSON_STRING = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
+# Far deeper than any GitHub or OCI document, so the limit and not the interpreter's stack refuses one.
+JSON_DEPTH = 64
 
 
 class ControlPlaneError(RuntimeError):
@@ -59,10 +63,27 @@ def query(path: str, **params: str | int) -> str:
     return f"{path}?{urlencode(params)}"
 
 
+def distinct_keys(pairs: list[tuple[str, JsonValue]]) -> JsonObject:
+    # Case-insensitive decoders bind every case variant of a key to one field, so variants must not coexist.
+    folded = Counter(key.casefold() for key, _ in pairs)
+    if repeated := sorted(key for key, _ in pairs if folded[key.casefold()] > 1):
+        raise ValueError(f"keys {repeated} repeat ignoring case")
+    return dict(pairs)
+
+
+def nonfinite(name: str) -> NoReturn:
+    raise ValueError(f"{name} is not a JSON number")
+
+
 def decode_json(text: str, context: str) -> JsonValue:
+    depth = 0
+    for bracket in re.findall(r"[][{}]", JSON_STRING.sub("", text)):
+        depth += 1 if bracket in "[{" else -1
+        if depth > JSON_DEPTH:
+            fail(f"{context} nests deeper than {JSON_DEPTH} levels")
     try:
-        return cast(JsonValue, json.loads(text))
-    except json.JSONDecodeError as exc:
+        return cast(JsonValue, json.loads(text, object_pairs_hook=distinct_keys, parse_constant=nonfinite))
+    except ValueError as exc:
         raise ControlPlaneError(f"{context} is not valid JSON: {exc}") from exc
 
 

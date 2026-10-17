@@ -13,7 +13,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
 from urllib.parse import quote
 
 import assets
@@ -24,7 +23,6 @@ from trust import (
     env_int,
     env_sha,
     exact_files,
-    read_record,
     require_check_run,
     require_checkout,
     require_ci_gate,
@@ -43,7 +41,6 @@ REQUEST_LIMIT = 2 * assets.OCI_LIMIT
 BUILD_JOB = "Build untrusted release candidate"
 # Seconds between reads while GitHub's read path catches up with a write.
 DELAYS = (0.25, 0.5, 1, 2, 4, 8)
-T = TypeVar("T")
 REQUEST_KEYS = {"schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId", "requestRunAttempt"}
 
 
@@ -60,14 +57,6 @@ class Release:
     @property
     def version(self) -> str:
         return self.tag[1:]
-
-
-def assets_sha256(directory: Path) -> str:
-    """Hash the sorted name and SHA-256 of every regular file in `directory`."""
-    entries = sorted(directory.iterdir())
-    exact_files(directory, {entry.name for entry in entries})
-    listing = "".join(f"{entry.name}\t{gh.file_sha256(entry)}\n" for entry in entries)
-    return hashlib.sha256(listing.encode()).hexdigest()
 
 
 def parse_release(tag: str, sha: str, pr: int) -> Release:
@@ -114,7 +103,7 @@ def require_compatible_release_tag(repository: str, tag: str, expected_sha: str)
         gh.fail(f"{tag} already exists at {sha}, expected {expected_sha}")
 
 
-def converge(what: str, probe: Callable[[], T | None]) -> T:
+def converge[T](what: str, probe: Callable[[], T | None]) -> T:
     """Return the first value `probe` reads, waiting for GitHub's read path to show a write."""
     for delay in (0, *DELAYS):
         if delay:
@@ -183,20 +172,25 @@ def command_prepare() -> None:
 
 
 def verify_request(request_dir: Path) -> tuple[Release, bool]:
-    """Bind the untrusted request artifact to its run, current main and the release rules."""
+    """Bind the untrusted request artifact to its run on the publishing main commit and to the release rules."""
     repository = env("REPOSITORY")
     publisher = env_sha("PUBLISHER_SHA")
     run_id = env_int("REQUEST_RUN_ID")
     if env("WORKFLOW_REF") != main_workflow(repository, "release.yml"):
         gh.fail("release consumer is not the trusted main workflow")
-    require_exact_current_main(repository, publisher)
     require_checkout(publisher)
     candidate = request_dir / f"release-request-{run_id}"
     if (downloaded := {path.name for path in request_dir.iterdir()}) != {candidate.name}:
         gh.fail(f"downloaded artifacts are {sorted(downloaded)}; expected {candidate.name}")
-    request = read_record(candidate / "request.json", REQUEST_KEYS, {
-        "schemaVersion": 4, "repository": repository, "requestRunId": run_id, "requestRunAttempt": 1,
-    })
+    path = candidate / "request.json"
+    request = gh.expect_object(gh.decode_json(path.read_text(encoding="utf-8"), path.name), path.name)
+    if set(request) != REQUEST_KEYS:
+        gh.fail(f"request.json keys are {sorted(request)}; expected {sorted(REQUEST_KEYS)}")
+    trusted: gh.JsonObject = {"schemaVersion": 4, "repository": repository, "requestRunId": run_id,
+                              "requestRunAttempt": 1}
+    for key, value in trusted.items():
+        if type(request[key]) is not type(value) or request[key] != value:
+            gh.fail(f"request.json {key} does not match its trusted request run")
     release = parse_release(gh.str_field(request, "tag", "request"),
                             gh.str_field(request, "sourceSha", "request"),
                             gh.int_field(request, "pr", "request"))
@@ -226,6 +220,11 @@ def local_digests(directory: Path) -> dict[str, str]:
     """Each file's digest as GitHub reports a release asset's."""
     exact_files(directory, names := {entry.name for entry in directory.iterdir()})
     return {name: "sha256:" + gh.file_sha256(directory / name) for name in names}
+
+
+def assets_sha256(directory: Path) -> str:
+    """One digest of every file's name and digest in `directory`."""
+    return hashlib.sha256(json.dumps(local_digests(directory), sort_keys=True).encode()).hexdigest()
 
 
 def tag_release(repository: str, tag: str) -> gh.JsonObject | None:
@@ -342,22 +341,22 @@ def command_publish() -> None:
             gh.fail(f"{tag} resolves to {sha}, expected {release.sha}")
 
     require_compatible_release_tag(repository, tag, release.sha)
-    matches = [found] if (found := tag_release(repository, tag)) is not None else []
-    if matches and matches[0].get("prerelease") is not False:
+    existing = tag_release(repository, tag)
+    if existing is not None and existing.get("prerelease") is not False:
         gh.fail(f"{tag} already exists as a prerelease")
-    if matches and matches[0].get("draft") is False:
-        if asset_digests(repository, gh.int_field(matches[0], "id", "release")) != local:
+    if existing is not None and existing.get("draft") is False:
+        if asset_digests(repository, gh.int_field(existing, "id", "release")) != local:
             gh.fail(f"{tag} is published but asset names/digests differ")
         require_tag()
-        if not str(matches[0].get("body") or "").startswith(notice):
+        if not str(existing.get("body") or "").startswith(notice):
             gh.fail(f"{tag} is published but its source notice is missing or stale")
         print(f"::notice::{tag} is already published with the expected source, assets and notice")
         return
-    if not matches:
+    if existing is None:
         draft: gh.JsonObject = {"tag_name": tag, "target_commitish": release.sha, "draft": True,
-                             "prerelease": False, "generate_release_notes": True, "body": notice}
-        matches = [gh.expect_object(gh.api(f"{base}/releases", method="POST", body=draft), "release")]
-    release_id = gh.int_field(matches[0], "id", "release")
+                                "prerelease": False, "generate_release_notes": True, "body": notice}
+        existing = gh.expect_object(gh.api(f"{base}/releases", method="POST", body=draft), "release")
+    release_id = gh.int_field(existing, "id", "release")
 
     current = gh.expect_object(gh.api(f"{base}/releases/{release_id}"), "release")
     if current.get("tag_name") != tag or current.get("draft") is not True:
