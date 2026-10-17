@@ -9,7 +9,7 @@ import type { PingCadence, TestConfig } from "../../engine/types";
 import { Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
 import { fromRateUnit, rateUnit, toRateUnit } from "../../view/format";
-import { CADENCE, READINESS, READINESS_TIP, stageLimitError, TIP } from "../../view/words";
+import { CADENCE, READINESS, READINESS_TIP, TIP } from "../../view/words";
 import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { Icon } from "../kit/icon";
@@ -94,7 +94,6 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     if (!shell.shown("settings")) confirming.set(false);
   });
 
-  const limitError = computed(() => stageLimitError(config(), servers.stageLimit()));
   const readiness = computed(() => (app.blocker() ? "blocked" : servers.selectionState()));
   const badge = computed(() => READINESS[readiness()]);
   // Settings stays mounted: only a problem is worth interrupting for.
@@ -177,7 +176,7 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
           {edits.notice("connection")}
         </section>
 
-        <DurationGroup app={app} edits={edits} custom={custom} limitError={limitError} />
+        <DurationGroup app={app} edits={edits} custom={custom} limitError={app.limitError} />
 
         <section class="group">
           <h3>Display</h3>

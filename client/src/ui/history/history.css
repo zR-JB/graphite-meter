@@ -397,7 +397,7 @@
         right: 0;
       }
     }
-    /* Five columns at the list's minimum leave a status like "Down only" two lines, not the neighbour's room. */
+    /* Five columns at the list's minimum leave a status like "Down only" two lines, not the neighbor's room. */
     & .missing .value {
       text-align: end;
       white-space: normal;

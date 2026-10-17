@@ -1,8 +1,6 @@
-// The marks preferences leave on the page: the resolved theme, the browser bar's colour, and how explanations open.
-import { computed, effect, signal, type Read } from "../lib/signal";
-import type { PreferenceSignals, Theme } from "./preferences";
-
-export const THEME_CYCLE: Record<Theme, Theme> = { light: "dark", dark: "auto", auto: "light" };
+// The marks preferences leave on the page: the resolved theme, the browser bar's color, and how explanations open.
+import type { PreferenceSignals } from "../../app/preferences";
+import { computed, effect, signal, type Read } from "../../lib/signal";
 
 /** Keeps `<html data-theme>`, the theme-color metas and `data-explanations` in step with the preferences; `auto`
     follows the system live. Returns the resolved theme. */

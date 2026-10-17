@@ -1,8 +1,5 @@
 // Saving finished results to History, one write at a time and in order. A write carries the clear count read when it
 // was queued and is dropped when History was cleared since, in any tab; a refusal is final, anything else retried.
-// A write whose count could not be read when it was queued takes the last count this tab read and knows to be current,
-// else a count read later while no tab has changed History since; failing both, it is refused rather than brought back
-// after a clear.
 import { batch, effect, signal, type Read } from "../../lib/signal";
 import type { HistoryRecord } from "./records";
 import { HistoryRefusal, type HistoryRepository } from "./repository";

@@ -55,7 +55,7 @@ export function ResultsList(props: {
   selectedId: Read<string | null>;
   /** Epoch ms, a minute apart. */
   now: Read<number>;
-}): { element: HTMLElement; fitTo(width: number): void; neighbour(id: string, by: 1 | -1): string | null } {
+}): { element: HTMLElement; fitTo(width: number): void; neighbor(id: string, by: 1 | -1): string | null } {
   const { app } = props;
   const columns = app.preferences.historyColumns;
   const units = computed(() => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
@@ -335,7 +335,7 @@ export function ResultsList(props: {
   ]);
 
   // Rows fold once the table's columns no longer fit their content, judged on width alone. The content's own width
-  // differs on either side of BARS_PX, so each side keeps what it learnt until the rows change.
+  // differs on either side of BARS_PX, so each side keeps what it learned until the rows change.
   let folded = false;
   let sides = [unknown(), unknown()];
   /** The list's scrollbar gutter, which its expected width includes. */
@@ -413,7 +413,7 @@ export function ResultsList(props: {
       if (fits !== null) fold(!fits);
     },
     /** The result `by` rows from `id` in the list's order, its page added to those shown; null past either end. */
-    neighbour(id, by) {
+    neighbor(id, by) {
       const order = ordered.peek();
       const at = order.findIndex((entry) => entry.id === id);
       const next = at < 0 ? undefined : order[at + by];

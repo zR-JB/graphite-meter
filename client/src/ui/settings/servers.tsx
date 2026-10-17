@@ -1,7 +1,8 @@
 // The Test servers checklist and what stands in its way: a catalog that did not load, a saved selection that
 // changed, and each selected server's problem with its Retry or Sign in.
 import type { App } from "../../app/app";
-import { MAX_SELECTED, type Approval } from "../../engine/net/servers";
+import type { Approval } from "../../engine/net/servers";
+import { MAX_SELECTED } from "../../engine/types";
 import type { CatalogEntry } from "../../protocol/documents";
 import { For, Show } from "../../lib/dom";
 import { computed, onCleanup, signal, type Read } from "../../lib/signal";

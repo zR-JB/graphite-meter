@@ -36,7 +36,7 @@ async function ours() {
 }
 
 let stopping: Promise<void> | undefined;
-let signalled: number | undefined;
+let signaled: number | undefined;
 function stop() {
   return (stopping ??= (async () => {
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {
@@ -54,8 +54,8 @@ for (const [signal, code] of [
   ["SIGTERM", 143],
 ] as const)
   process.on(signal, () => {
-    signalled ??= code;
-    void stop().then(() => process.exit(signalled));
+    signaled ??= code;
+    void stop().then(() => process.exit(signaled));
   });
 
 let status = 1;
@@ -127,4 +127,4 @@ try {
 } finally {
   await stop();
 }
-process.exit(signalled ?? status);
+process.exit(signaled ?? status);

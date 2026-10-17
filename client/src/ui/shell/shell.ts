@@ -1,7 +1,7 @@
 // The shell's state and moves: the route and the URL behind it, which panels show and how wide, where focus returns
 // when a surface closes, what each key does, the theme, and starting over. The console's markup only renders it.
 import type { App } from "../../app/app";
-import { THEME_CYCLE } from "../../app/document";
+import type { Theme } from "../../app/preferences";
 import { reducedMotion } from "../../lib/motion";
 import { batch, computed, effect, onCleanup, signal, untrack, type Signal } from "../../lib/signal";
 import { flip } from "../flip";
@@ -87,6 +87,8 @@ export function focusMove(facts: {
 }
 
 export type Controller = ReturnType<typeof createShell>;
+
+const NEXT_THEME: Record<Theme, Theme> = { light: "dark", dark: "auto", auto: "light" };
 
 /** The shell for one console. Must run inside an owner: its listeners and effects go with it. */
 export function createShell(app: App, layout: Layout) {
@@ -291,7 +293,7 @@ export function createShell(app: App, layout: Layout) {
   /** Light, dark, auto: each press steps from the theme applied when its change runs, so presses during a fade each
       count. The new theme fades in over the old on the compositor; a fade a newer press skips is no error. */
   function toggleTheme(): void {
-    const update = () => app.preferences.set({ theme: THEME_CYCLE[app.preferences.theme.peek()] });
+    const update = () => app.preferences.set({ theme: NEXT_THEME[app.preferences.theme.peek()] });
     if (reducedMotion.peek() || !document.startViewTransition) return update();
     try {
       document.startViewTransition({ update, types: ["theme"] }).ready.catch(() => {});

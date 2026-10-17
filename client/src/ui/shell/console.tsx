@@ -2,7 +2,7 @@
 // Details, in Tab order; the phase toast, the live region and the shell's dialogs. Views come from their owners.
 import "./shell.css";
 import type { App } from "../../app/app";
-import { markDocument } from "../../app/document";
+import { markDocument } from "./document";
 import { Show } from "../../lib/dom";
 import { nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";

@@ -63,7 +63,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const sort = signal<Sort>({ by: "date", descending: true });
   const pages = signal(1);
   let list: HTMLElement | null = null;
-  let neighbour: ((id: string, by: 1 | -1) => string | null) | null = null;
+  let neighbor: ((id: string, by: 1 | -1) => string | null) | null = null;
   const setSort = (by: HistorySort, descending: boolean) => {
     batch(() => {
       sort.set({ by, descending });
@@ -214,7 +214,7 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     if (event.shiftKey || isEditable(target) || target.closest(OWNS_ARROWS)) return;
     if (activeModal() || document.querySelector(":popover-open:not(.tooltip)")) return;
     event.preventDefault();
-    const next = neighbour?.(id, by);
+    const next = neighbor?.(id, by);
     if (next) shell.swapResult(next);
   };
   window.addEventListener("keydown", step);
@@ -300,10 +300,10 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
       now,
     });
     list = results.element;
-    neighbour = results.neighbour;
+    neighbor = results.neighbor;
     onCleanup(() => {
       list = null;
-      neighbour = null;
+      neighbor = null;
     });
     const body = (
       <div class="workspace-body">

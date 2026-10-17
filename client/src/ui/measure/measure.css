@@ -340,7 +340,7 @@
       --y: 0;
     }
   }
-  /* The readout centres on the ring's centre; its figure rises into place as each stage's value arrives. */
+  /* The readout centers on the ring's center; its figure rises into place as each stage's value arrives. */
   .metric-wrap {
     --rise: 6px;
     display: flex;

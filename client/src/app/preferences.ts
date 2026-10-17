@@ -4,6 +4,7 @@ import { STORAGE_KEY } from "../../auth/theme";
 import { normalizeStreamCount } from "../engine/net/streams";
 import { CADENCE_MS, type PingCadence, type TestConfig } from "../engine/types";
 import { batch, signal, type Read, type Signal } from "../lib/signal";
+import { isRecord } from "../lib/decode";
 import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
 
 const SAVE_DELAY_MS = 250;
@@ -70,8 +71,7 @@ export interface Preferences {
   historySplit: number;
 }
 
-const record = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+const record = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 const choice = <T extends string>(value: unknown, values: readonly T[], fallback: T): T =>
   values.includes(value as T) ? (value as T) : fallback;
 const flag = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);

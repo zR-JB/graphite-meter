@@ -1,6 +1,7 @@
 // Every chart and dial axis: the throughput ceilings and the page's rate tier, and the latency ladder with its live
 // window. Every ceiling is a step of a ladder that repeats each decade.
 import type { LatencyBucket } from "../engine/measure/buckets";
+import { nearestRank } from "../engine/measure/latency";
 import type { StageResults } from "../engine/run/result";
 import type { TransferStage } from "../engine/run/schedule";
 import { fromRateUnit, rateTier, type Units } from "./format";
@@ -88,14 +89,13 @@ const ascending = (values: readonly (number | null)[]) =>
   values
     .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b);
-const nearestRank = (sorted: readonly number[], p: number) =>
-  sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))]!;
+const rank = (sorted: readonly number[], p: number) => sorted[nearestRank(p, sorted.length)]!;
 
 /** A latency axis: the ladder step over the p95 of `values` with headroom, at least 1 ms; 20 ms without values. */
 export function latencyCeilingMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
   if (!sorted.length) return EMPTY_LATENCY_MS;
-  return Math.max(1, ceilStep(nearestRank(sorted, 0.95) * LATENCY_HEADROOM, LATENCY_STEPS));
+  return Math.max(1, ceilStep(rank(sorted, 0.95) * LATENCY_HEADROOM, LATENCY_STEPS));
 }
 
 /** A reply track's top: the ladder step over 2.5× the p75, so the body of the replies keeps its shape and an outlier
@@ -103,7 +103,7 @@ export function latencyCeilingMs(values: readonly (number | null)[]): number {
 export function replyTrackMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
   if (!sorted.length) return EMPTY_LATENCY_MS;
-  return Math.max(TRACK_FLOOR_MS, ceilStep(nearestRank(sorted, 0.75) * 2.5, LATENCY_STEPS));
+  return Math.max(TRACK_FLOOR_MS, ceilStep(rank(sorted, 0.75) * 2.5, LATENCY_STEPS));
 }
 
 /** The shared latency axis over the buckets' medians: the last 8 s while live, all of them once finished. */

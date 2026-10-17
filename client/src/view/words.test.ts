@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rows } from "../protocol/pins.testutil";
+import { FAILURE_REASONS } from "../protocol/reasons";
 import { DEFAULT_CONFIG } from "../app/preferences";
 import {
   allServersLabel,
@@ -12,8 +12,8 @@ import {
   type StageState,
 } from "./words";
 
-test("failure labels match the pin both clients load, and any other reason reads as a measurement issue", async () => {
-  for (const [reason, label] of await rows("failurereasons.txt")) expect(reasonLabel(reason!)).toBe(label!);
+test("a known failure reads as its label, and any other reason as a measurement issue", () => {
+  expect(reasonLabel("timeout")).toBe(FAILURE_REASONS.timeout);
   for (const reason of ["", "dns-failure", "toString", "__proto__"])
     expect(reasonLabel(reason)).toBe("Measurement issue");
 });

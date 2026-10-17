@@ -96,7 +96,7 @@ test("a reload History refuses for good, such as a newer version's database, lea
   reads[0]!.resolve({ records: [record("a", 2)], malformedCount: 0 });
   await settle();
   change({ type: "elsewhere" });
-  reads[1]!.reject(new HistoryRefusal("Unsupported history database version. Saved data has not been changed."));
+  reads[1]!.reject(new HistoryRefusal("Unsupported History database version. Saved data has not been changed."));
   await settle();
   expect(archive.state()).toBe("error");
   dispose();

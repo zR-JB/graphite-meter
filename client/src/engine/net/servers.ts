@@ -16,6 +16,7 @@ import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
 import { activities as stageActivities } from "../run/schedule";
 import type { DroppedServer } from "../run/run";
 import {
+  MAX_SELECTED,
   ROLES,
   type Discovery,
   type FailureReason,
@@ -27,6 +28,7 @@ import {
   type TestConfig,
 } from "../types";
 import { ApprovalLimitError, beginApproval, exchangeGrant, grantAuth, initialAuth, type Grant } from "./auth";
+import { CHECK_FAILED } from "./checks";
 import { createConnection, FRESH_MS, type Connection, type ConnectionEnv, type ServerView } from "./connection";
 import { createLimiter } from "./limiter";
 import { CoverageError, type PageConfig, type PageSession } from "./page";
@@ -118,7 +120,6 @@ export interface Servers {
 
 const IDLE: Approval = { state: "idle" };
 const SAVED_KEY = "graphite-meter:server-selection:v1";
-export const MAX_SELECTED = 4;
 const CATALOG_TIMEOUT_MS = 5_000;
 export const TRANSPORT_KEY = { throughput: "throughputTarget", latency: "latencyTarget" } as const;
 
@@ -292,13 +293,13 @@ export function createServers(env: ServersEnv): Servers {
     const { ids, unresolved: rows } = reconcile(next, readSaved());
     const chosen = next.servers.filter((entry) => ids.includes(entry.id));
     // Exact origins can be chosen only with a single server, and only one it allows.
-    const travelling = ROLES.filter((role) => {
+    const traveling = ROLES.filter((role) => {
       const selection = selections[role].peek();
       const origin = selection.kind === "origin" ? selection.origin : null;
       return chosen.length > 1 || (origin !== null && chosen.some((entry) => !allowsOrigin(entry, origin)));
     });
     batch(() => {
-      travel(travelling);
+      travel(traveling);
       for (const connection of connections.peek().values()) connection.dispose();
       for (const [id, held] of grants)
         if (next.servers.find((entry) => entry.id === id)?.url !== held.url) grants.delete(id);
@@ -468,7 +469,7 @@ export function createServers(env: ServersEnv): Servers {
 
   async function prepare(signal: AbortSignal) {
     const chosen = chosenConnections();
-    // One judgement of freshness: what the checks keep is what the run may use, however long they take.
+    // One judgment of freshness: what the checks keep is what the run may use, however long they take.
     const since = now() - FRESH_MS;
     await Promise.all(chosen.map((connection) => connection.check({ since, signal })));
     signal.throwIfAborted();
@@ -485,7 +486,7 @@ export function createServers(env: ServersEnv): Servers {
       const view = connection.view.peek();
       const reason = view.readiness === "sign-in" ? "sign-in-required" : "preparation-failed";
       // Evidence lost while the checks ran, as to a network change, leaves no message of its own.
-      dropped.push({ server: view.server, reason, message: view.message ?? "Connection check failed" });
+      dropped.push({ server: view.server, reason, message: view.message ?? CHECK_FAILED });
     }
     const shown = servers.find(({ server }) => server.id === latencyServer.peek()) ?? servers[0];
     return { servers, dropped, focus: shown?.server.id ?? "" };

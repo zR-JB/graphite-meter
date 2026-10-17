@@ -114,7 +114,7 @@ test("version 2 rows are upgraded once, in place; unreadable ones stay as stored
   const refused = await storage(1, [unreadable]);
   const other = new HistoryRepository();
   await expect(other.clears()).rejects.toThrow(
-    "Unsupported history database version. Saved data has not been changed.",
+    "Unsupported History database version. Saved data has not been changed.",
   );
   other.close();
   expect(await refused()).toEqual({ version: 1, rows: [unreadable] });
@@ -210,7 +210,7 @@ test("a late answer is let go, other versions are refused, and without storage n
   openings[1]!.onupgradeneeded!({ oldVersion: 1 });
   openings[1]!.onerror!();
   expect(aborted).toHaveBeenCalledTimes(1);
-  await expect(refused).rejects.toThrow("Unsupported history database version. Saved data has not been changed.");
+  await expect(refused).rejects.toThrow("Unsupported History database version. Saved data has not been changed.");
 
   delete (globalThis as { indexedDB?: unknown }).indexedDB;
   await expect(history.put(record("a"), 0)).rejects.toBeInstanceOf(HistoryRefusal);

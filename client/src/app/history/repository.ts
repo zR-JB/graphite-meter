@@ -14,7 +14,7 @@ const BLOCKED_MS = 1_000;
 const UNSAVABLE = "This result could not be saved in browser storage.";
 const FULL = "Browser storage is full. This result was not saved.";
 const UNAVAILABLE = "This browser has no storage for History: results are not saved.";
-const UNSUPPORTED = "Unsupported history database version. Saved data has not been changed.";
+const UNSUPPORTED = "Unsupported History database version. Saved data has not been changed.";
 const CLOSED = "History storage was closed before it opened.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
@@ -47,8 +47,6 @@ const clearCount = (row: unknown): number => {
   const value = (row as { value?: unknown } | undefined)?.value;
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
 };
-
-const clearedSince = (row: unknown, clears: number): boolean => clearCount(row) > clears;
 
 /** Walking rows newest first, the id of each readable row past the limit; unreadable rows are never counted. */
 function pastLimit(): (row: unknown) => string | null {
@@ -139,7 +137,7 @@ export class HistoryRepository {
     let refused: unknown;
     const pruned: string[] = [];
     stored.onsuccess = () => {
-      if (clearedSince(stored.result, clears)) return;
+      if (clearCount(stored.result) > clears) return;
       try {
         results.put(record);
       } catch (error) {

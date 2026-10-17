@@ -39,7 +39,7 @@ import { Figure, inView, measure, painter } from "./paint";
 /** A result leaves as its arcs drain back to zero, so the next run starts empty. */
 const RESULT_DRAIN_MS = 160;
 const TRANSFER: readonly string[] = ["download", "upload", "bidirectional"];
-const LABELLED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
+const LABELED: readonly string[] = ["latency", "warmup", ...TRANSFER, "complete"];
 
 let dials = 0;
 
@@ -100,7 +100,7 @@ export function Dial(props: {
   // Labels change in place with the scale or the unit; only a switch between rate and time ticks hands off.
   const ticks = handoff(
     () => {
-      if (unusable() || !LABELLED.includes(phase())) return [] as string[];
+      if (unusable() || !LABELED.includes(phase())) return [] as string[];
       if (live.msScale()) return DIAL_LABELS.map((f) => fmtTick(scaleMs() * f));
       return DIAL_LABELS.map((f) => fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)));
     },

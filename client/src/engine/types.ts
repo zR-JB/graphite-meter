@@ -8,6 +8,8 @@ import type { Activity, Stage } from "./run/schedule";
 export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage, TicketRecipe };
 export type Direction = "down" | "up";
 export const ROLES = ["throughput", "latency"] as const;
+/** A test measures up to this many servers at once. */
+export const MAX_SELECTED = 4;
 export type Role = (typeof ROLES)[number];
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
@@ -232,6 +234,17 @@ export interface StageResources {
 export type OpenStage = (setup: StageSetup) => StageResources;
 
 export class ServerBusyError extends Error {}
+
+/** An error and its causes, outermost first. */
+export function* causes(error: unknown): Generator<Error> {
+  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++) yield error;
+}
+
+const NETWORK_FAILURE =
+  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
+/** Engines word one network failure differently. */
+export const isNetworkFailure = (error: unknown) =>
+  [...causes(error)].some(({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message));
 
 /** A failure that ended a stage's preparation, with the reason it would have reported as an event. */
 export class StageFailure extends Error {

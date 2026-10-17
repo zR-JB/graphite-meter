@@ -1,4 +1,4 @@
-// Dialling a socket from a worker: its single-use ticket (api/wire.md#socket-credentials), minted right before a dial.
+// Dialing a socket from a worker: its single-use ticket (api/wire.md#socket-credentials), minted right before a dial.
 // The server spends one on any answer, a refusal too; one whose dial lapsed unanswered may never have reached it, so
 // close dials share it, keeping a worker's retries inside the server's outstanding tickets per sign-in.
 import { DecodeError } from "../../lib/decode";
@@ -10,7 +10,7 @@ import { refused } from "./endings";
 /** Two dial budgets and a restart pause. */
 const REUSE_MS = 6_300;
 
-export type Ticket = { type: "token"; token: string } | EndReport;
+type Ticket = { type: "token"; token: string } | EndReport;
 
 /** One worker's held ticket. Its lifetime is wall-clock time, as the server states `expires`. */
 export class Tickets {

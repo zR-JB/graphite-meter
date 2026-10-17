@@ -18,7 +18,7 @@ import { createRun } from "./run";
 import { IDLE_LIMIT, idleBucket, upsertLatency } from "./series";
 import { stageLimitError } from "../view/words";
 
-/** Ending for a lapsed sign-in waits this long for the result to reach History. */
+/** Leaving waits at most this long for the result to reach History. */
 const SIGN_OUT_SAVE_MS = 3_000;
 
 export type App = ReturnType<typeof createApp>;
@@ -75,15 +75,14 @@ export function createApp() {
     now: pageMs,
   });
 
+  const limitError = computed(() => stageLimitError(preferences.config(), servers.stageLimit()));
   // What Start waits for: the servers, then each planned stage within every server's limit, then lanes that fit.
-  const blocker = computed(
-    () => servers.blocker() || stageLimitError(preferences.config(), servers.stageLimit()) || servers.streamPlanError(),
-  );
+  const blocker = computed(() => servers.blocker() || limitError() || servers.streamPlanError());
   const run = createRun({
     preferences,
     blocker,
     refusal: computed(() => {
-      if (servers.loading()) return "Servers are still loading. Try again in a moment.";
+      if (servers.loading()) return "Test servers are still loading. Try again in a moment.";
       const { state } = servers.approval();
       return state === "preparing" || state === "waiting"
         ? "Finish signing in to the selected server before starting."
@@ -133,6 +132,10 @@ export function createApp() {
   window.addEventListener("offline", onOnline);
 
   const signingOut = signal(false);
+  const leave = () => {
+    signingOut.set(true);
+    run.end("sign-in-required", "Signed out during the test");
+  };
   /** Resolves, within a few seconds, once no run is live and the result shown is saved. */
   const settled = () =>
     new Promise<void>((resolve) => {
@@ -150,10 +153,9 @@ export function createApp() {
   const stopSessionEnd = effect(() => {
     const reason = session.ended();
     if (!reason || signingOut.peek()) return;
-    signingOut.set(true);
     untrack(() => {
       leaving.set(true);
-      run.end("sign-in-required", "Signed out during the test");
+      leave();
     });
     void settled().then(() => {
       dispose();
@@ -185,6 +187,8 @@ export function createApp() {
     saving,
     /** Why Start cannot run now, or "". */
     blocker,
+    /** Why a planned stage outlasts a selected server's limit, or "". */
+    limitError,
     /** The running test's length, else the next one's, its warmup adapted to the latency server's round trip. */
     plannedMs,
     latencyPin,
@@ -198,8 +202,7 @@ export function createApp() {
     /** Before the sign-out form leaves: a running test ends as a lapsed sign-in ends it, the result's write gets its
         few seconds, and the sign-in the form ends is no reason to leave for sign-in. */
     async signOut(): Promise<void> {
-      signingOut.set(true);
-      run.end("sign-in-required", "Signed out during the test");
+      leave();
       await settled();
     },
     /** Leaving for sign-out or an ended sign-in, which unload no longer asks about. */

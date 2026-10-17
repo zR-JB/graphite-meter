@@ -11,7 +11,7 @@ const TICKS = 8;
 export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
 const LABEL_CLEARANCE = 8;
 const NOTE_GAP = 8;
-/** The share of the labelled ring's height its centring moves it down. */
+/** The share of the labeled ring's height its centering moves it down. */
 const DROP = (1 - Math.SQRT1_2) / 2;
 /** Tick ends over the radius: half an arc of 0.13 r, a 3 px gap, then 0.08 r of tick. */
 const TICK_REACH = 1.145;
@@ -56,7 +56,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
       width * 0.37,
       (width / 2 - 25) / TICK_REACH,
       ((height - 42) / (1 + Math.SQRT1_2) - 11) / TICK_REACH,
-      // The labelled ring stays centred and its note still fits under the tick ends.
+      // The labeled ring stays centered and its note still fits under the tick ends.
       note
         ? ((height / 2 - DROP * LABEL_CLEARANCE - NOTE_GAP - note) / (DROP + Math.SQRT1_2) - 3) / TICK_REACH
         : Number.POSITIVE_INFINITY,
@@ -65,7 +65,7 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
   const arcWidth = Math.max(6, radius * 0.13);
   const tickInner = radius + arcWidth / 2 + 3;
   const tickOuter = tickInner + radius * 0.08;
-  // The ring with its labels, centred in the face.
+  // The ring with its labels, centered in the face.
   const center = { x: width / 2, y: height / 2 + DROP * (tickOuter + LABEL_CLEARANCE) };
   const at = (angle: number, distance: number) => ({
     x: center.x + Math.cos(angle) * distance,
@@ -181,8 +181,8 @@ export const arcLabel = (arc: ResultArc) =>
 type Bead = "bead" | "stacked" | "split";
 
 /** How each head sits on the ring, judged against the heads painted before it (the higher results): one nearly
-    level with a neighbour shows only its trailing half, so the pair reads as one bead in both hues; one that
-    overlaps is cut out of the neighbour by a halo in the ground. Heads never leave the ring. */
+    level with a neighbor shows only its trailing half, so the pair reads as one bead in both hues; one that
+    overlaps is cut out of the neighbor by a halo in the ground. Heads never leave the ring. */
 export function beadKinds(fractions: readonly number[], radius: number, headRadius: number): Bead[] {
   const along = (fraction: number) => (Number.isFinite(fraction) ? fraction : 0) * ARC_SWEEP * radius;
   return fractions.map((fraction, index) => {

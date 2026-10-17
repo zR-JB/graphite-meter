@@ -180,7 +180,9 @@ test("a session's id is backed up by a DELETE at finish, unless a terminal recor
   // A regressing terminal record is no evidence that the id finalized.
   stale.receiver.record({ type: "complete", bytes: 50, nanos: 500 });
   await stale.receiver.finish();
-  expect(stale.deletes).toEqual([{ method: "DELETE", cache: "no-store", keepalive: true }]);
+  expect(stale.deletes).toEqual([
+    { method: "DELETE", cache: "no-store", keepalive: true, signal: expect.any(AbortSignal) },
+  ]);
   const complete = follow([], [], true);
   complete.receiver.record(progress);
   complete.receiver.record({ ...progress, type: "complete" });

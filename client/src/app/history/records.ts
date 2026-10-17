@@ -14,6 +14,7 @@ import {
 } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import type { HttpProtocol } from "../../engine/types";
+import { isRecord } from "../../lib/decode";
 
 /** Readable records kept and listed: the newest by completion. */
 export const HISTORY_LIMIT = 2_000;
@@ -74,8 +75,6 @@ function plain(value: unknown, depth = 0): boolean {
 // Checked in place rather than decoded: a record keeps every field, and only those History's views dereference
 // are checked.
 type Check = (value: unknown) => boolean;
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const finite: Check = (value) => Number.isFinite(value);
 const text: Check = (value) => typeof value === "string";
 const nullable =
@@ -96,7 +95,7 @@ const list =
     Array.isArray(value) && value.every((entry) => check(entry));
 const shape = (fields: Record<string, Check>): Check => {
   const checks = Object.entries(fields);
-  return (value) => isObject(value) && checks.every(([key, check]) => check(value[key]));
+  return (value) => isRecord(value) && checks.every(([key, check]) => check(value[key]));
 };
 const perStage = (check: Check) => shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
 const STATUSES: readonly StageStatus[] = ["complete", "partial", "failed", "not-run"];
@@ -129,7 +128,7 @@ function recordShape(upgraded: boolean): Check {
     upload: rate,
     bidirectional: nullable(shape({ down: rate, up: rate })),
   };
-  const stages = upgraded ? perStage(among(STATUSES)) : isObject;
+  const stages = upgraded ? perStage(among(STATUSES)) : isRecord;
   return shape({
     schemaVersion: (value) => value === 5,
     id: text,
@@ -165,13 +164,13 @@ const stored = recordShape(false);
 
 /** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  return isObject(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
+  return isRecord(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
 }
 
 /** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
     either, and it is then left as stored. */
 export function upgradeRecord(value: unknown): HistoryRecord | null {
-  if (!isObject(value) || !plain(value)) return null;
+  if (!isRecord(value) || !plain(value)) return null;
   try {
     const saved = value.schemaVersion === 4 && liftable(value) ? lift(value) : value;
     return stored(saved) ? readHistoryRecord(current(saved as HistoryRecord)) : null;
@@ -292,16 +291,16 @@ interface Lane4 {
 const liftable = shape({
   id: text,
   stages: shape({
-    latency: shape({ lanes: perStage(nullable(isObject)) }),
-    download: isObject,
-    upload: isObject,
-    bidirectional: isObject,
+    latency: shape({ lanes: perStage(nullable(isRecord)) }),
+    download: isRecord,
+    upload: isRecord,
+    bidirectional: isRecord,
   }),
-  server: isObject,
-  client: isObject,
-  transport: shape({ throughput: isObject, latency: isObject }),
-  wireEstimates: nullable(shape({ breakdown: isObject })),
-  multiServer: nullable(shape({ servers: list(isObject) })),
+  server: isRecord,
+  client: isRecord,
+  transport: shape({ throughput: isRecord, latency: isRecord }),
+  wireEstimates: nullable(shape({ breakdown: isRecord })),
+  multiServer: nullable(shape({ servers: list(isRecord) })),
 }) as (value: unknown) => value is Schema4;
 
 const summary = (lane: Lane4 | null): LatencySummary | null =>
@@ -443,7 +442,7 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
   const { result } = record;
   const down = result.bidirectional?.down?.reportedBytesPerSec;
   const up = result.bidirectional?.up?.reportedBytesPerSec;
-  // The highest loaded median, as the detail's lanes centre on it, with or without idle latency.
+  // The highest loaded median, as the detail's lanes center on it, with or without idle latency.
   let loadedStage: TransferStage | null = null;
   for (const stage of LOADED) {
     const median = result.latencyByStage[stage]?.p50Ms;
