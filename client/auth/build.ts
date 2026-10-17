@@ -8,7 +8,6 @@ const here = import.meta.dir;
 const output = join(here, "../../rust/server/src/auth/assets");
 // The only faces the server serves before sign-in (rust/server/src/auth/policy.rs).
 const FACES = ["/fonts/ibm-plex-sans-var-latin1.woff2", "/fonts/ibm-plex-mono-600-latin1.woff2"];
-const TEMPLATES = ["login.tmpl", "cli.tmpl", "cli-done.tmpl", "continue.tmpl"];
 const STYLES = join(here, "../src/styles");
 // The app's rules the pages use, by selector, in cascade order: unlayered there, the tones beat .notice.
 const SHARED = [
@@ -155,16 +154,10 @@ async function generated(): Promise<Map<string, string>> {
     "auth.css": css,
     "theme.js": `/* ${GENERATED} */\n${await themeScript()}\n`,
     "pending.js": `/* ${GENERATED} */\n${await classicScript(`import { install } from "./pending"; install(window);`)}\n`,
+    // Markup fragments the server's pages place as they are: no banner.
+    "icon.html": `<link rel="icon" href="data:image/svg+xml;base64,${btoa(svg)}">`,
+    "brand.html": BRAND_LINE,
   };
-  for (const name of TEMPLATES) {
-    const source = await Bun.file(join(here, name)).text();
-    for (const marker of ["<!-- icon -->", "<!-- brand -->"])
-      if (source.split(marker).length !== 2) throw new Error(`${name} must hold ${marker} once`);
-    // The server strips the banner; nothing may stand before the doctype once they have.
-    assets[name] = `<!-- ${GENERATED} -->${source
-      .replace("<!-- icon -->", () => `<link rel="icon" href="data:image/svg+xml;base64,${btoa(svg)}">`)
-      .replace("<!-- brand -->", () => BRAND_LINE)}`;
-  }
   const files = new Map(Object.entries(assets).map(([name, text]) => [join(output, name), text]));
   return files.set(join(here, "../public/favicon.svg"), `<!-- ${GENERATED} -->\n${svg}\n`);
 }

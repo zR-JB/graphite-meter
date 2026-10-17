@@ -16,7 +16,7 @@ export const ROUTES = {
   wtPing: "/wt/ping",
 } as const;
 
-/** The sign-in routes, which the measurement route pin leaves out. */
+/** The sign-in routes the browser reaches, as api/routes.txt pins them. */
 export const AUTH_ROUTES = {
   session: "/auth/session",
   browser: "/auth/browser",

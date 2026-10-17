@@ -83,6 +83,9 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
         let [_, path, kind] = line.split('|').map(str::trim).collect::<Vec<_>>()[..] else {
             panic!("{line}")
         };
+        if kind == "auth" {
+            continue;
+        }
         let route = Route::find_by(Route::path, path).unwrap();
         let endpoint = Endpoint::ALL
             .into_iter()

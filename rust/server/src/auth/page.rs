@@ -1,23 +1,25 @@
-//! The sign-in and approval pages from the assets `client/auth/build.ts` writes, and authentication answer headers.
+//! The sign-in and approval pages around the assets `client/auth/build.ts` writes, and authentication answer headers.
 
+use super::approval::{Challenge, Refused};
+use graphite_meter_proto::route::AuthRoute;
 use http::{HeaderMap, HeaderValue, header};
-use std::{fmt::Write as _, sync::LazyLock};
+use std::sync::LazyLock;
 
 const STYLES: &str = include_str!("assets/auth.css");
 const THEME: &str = include_str!("assets/theme.js");
 const PENDING: &str = include_str!("assets/pending.js");
-static LOGIN: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/login.tmpl")));
-static CLI: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/cli.tmpl")));
-static CLI_DONE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/cli-done.tmpl")));
-static CONTINUE: LazyLock<Template> = LazyLock::new(|| Template::parse(include_str!("assets/continue.tmpl")));
+const ICON: &str = include_str!("assets/icon.html");
+const BRAND: &str = include_str!("assets/brand.html");
 
 /// The sign-in page.
 pub(super) struct Login<'a> {
     pub csrf: &'a str,
     pub provider: &'a str,
     pub challenge: Option<&'a str>,
-    pub notice: &'a str,
-    pub status: &'a str,
+    /// The `error` query: a `Reason::notice`, anything else unnamed.
+    pub error: &'a str,
+    /// The `reason` query.
+    pub reason: &'a str,
     pub password: bool,
     pub oidc: bool,
     pub oidc_ready: bool,
@@ -25,18 +27,94 @@ pub(super) struct Login<'a> {
 
 impl Login<'_> {
     pub(super) fn render(&self) -> String {
-        LOGIN.render(&[
-            ("CSRF", self.csrf),
-            ("Provider", self.provider),
-            ("Challenge", self.challenge.unwrap_or_default()),
-            ("Notice", self.notice),
-            ("Status", self.status),
-            ("Password", flag(self.password)),
-            ("OIDC", flag(self.oidc)),
-            ("OIDCReady", flag(self.oidc_ready)),
-        ])
+        let provider = escape(self.provider);
+        let unavailable = format!("{provider} is unavailable right now.");
+        let mut main = String::from(FACE);
+        let status = match self.reason {
+            "signed_out" => "You are signed out.",
+            "expired" => "Your session ended. Sign in again.",
+            "renew" => "Sign in again before starting this long test.",
+            _ => "",
+        };
+        if !status.is_empty() {
+            main += &format!("<p class=\"notice\" data-tone=\"neutral\" role=\"status\">{status}</p>\n");
+        }
+        let (tone, alert) = match self.error {
+            "" => ("", String::new()),
+            "password" => ("err", "Incorrect password. Check it and try again.".into()),
+            "throttled" => ("warn", "Too many attempts. Wait a minute and try again.".into()),
+            "proxy" => (
+                "err",
+                "This server cannot tell your address from its reverse proxy. Ask its operator to check the proxy's \
+                 X-Real-IP."
+                    .into(),
+            ),
+            "provider" if self.password => ("warn", format!("{unavailable} Sign in with the operator password.")),
+            "provider" => ("warn", unavailable.clone()),
+            "busy" => ("warn", "The server is busy. Try again in a moment.".into()),
+            "stale" => ("warn", "This sign-in form expired. Try again.".into()),
+            _ => ("err", "Sign-in failed. Try again.".into()),
+        };
+        let mistyped = self.error == "password";
+        if !alert.is_empty() {
+            let id = if mistyped { " id=\"password-error\"" } else { "" };
+            main += &format!("<p class=\"notice\"{id} data-tone=\"{tone}\" role=\"alert\">{alert}</p>\n");
+        }
+        let fields = format!(
+            "<input type=\"hidden\" name=\"csrf\" value=\"{}\">\n<input type=\"hidden\" name=\"challenge\" value=\"{}\">",
+            escape(self.csrf),
+            escape(self.challenge.unwrap_or_default()),
+        );
+        if self.oidc {
+            let disabled = if self.oidc_ready { "" } else { " disabled" };
+            main += &format!(
+                "<form method=\"post\" action=\"{}\">\n{fields}\n<button type=\"submit\"{disabled}>Continue with \
+                 {provider}</button>\n</form>\n",
+                AuthRoute::OidcStart.path()
+            );
+            if !self.oidc_ready && self.error != "provider" {
+                main += &format!("<p class=\"notice\" data-tone=\"neutral\">{unavailable}</p>\n");
+            }
+        }
+        if self.oidc && self.password {
+            main += "<div class=\"separator\">or</div>\n";
+        }
+        if self.password {
+            let invalid = if mistyped {
+                " aria-invalid=\"true\" aria-describedby=\"password-error\""
+            } else {
+                ""
+            };
+            // Beside a working provider the caret stays out of the operator's field.
+            let autofocus = if self.oidc && self.oidc_ready { "" } else { " autofocus" };
+            // The username field names the one account for password managers; the server ignores it.
+            main += &format!(
+                r#"<form method="post" action="{action}">
+{fields}
+<input class="sr-only" name="username" type="text" value="operator" autocomplete="username" readonly tabindex="-1" aria-hidden="true">
+<div class="field">
+<label for="password">Operator password</label>
+<div class="entry">
+<input id="password" name="password" type="password"{invalid} maxlength="1024" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false"{autofocus} required>
+<button class="reveal" type="button" data-reveal="password" aria-label="Show password" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path class="strike" d="M4 4l16 16"/></svg></button>
+</div>
+</div>
+<button type="submit">Sign in</button>
+</form>
+"#,
+                action = AuthRoute::Password.path()
+            );
+        }
+        page("Sign in", "", "card", &main, true)
     }
 }
+
+/// The locked meter above the sign-in form.
+const FACE: &str = r#"<div class="face" aria-hidden="true"><svg viewBox="0 0 120 104"><path class="ticks" d="M23.94 96.06L21.11 98.89M9.98 69.95L6.06 70.73M12.88 40.48L9.19 38.95M31.67 17.60L29.44 14.27M60 9L60 5M88.33 17.60L90.56 14.27M107.12 40.48L110.81 38.95M110.02 69.95L113.94 70.73M96.06 96.06L98.89 98.89"/><path class="track" d="M28.89 91.11A44 44 0 1 1 91.11 91.11"/><path class="sweep" d="M28.89 91.11A44 44 0 1 1 91.11 91.11" pathLength="1"/><g class="needle"><circle cx="28.89" cy="91.11" r="5"/></g><path class="lock" d="M54 55v-5a6 6 0 0 1 12 0v5M51.5 55h17v12h-17z"/></svg></div>
+<h1>Sign in</h1>
+<p>This measurement server is private.</p>
+<p class="host" data-host></p>
+"#;
 
 /// The approval page: an approval to confirm, a refusal, or a login at its client limit.
 pub(super) enum Cli<'a> {
@@ -44,9 +122,10 @@ pub(super) enum Cli<'a> {
         code: &'a str,
         challenge: &'a str,
         csrf: &'a str,
-        browser_origin: &'a str,
+        /// The browser origin asking, or none for a terminal.
+        browser_origin: Option<&'a str>,
     },
-    Refused(&'static str),
+    Refused(Refused),
     Capacity {
         limit: usize,
     },
@@ -54,47 +133,107 @@ pub(super) enum Cli<'a> {
 
 impl Cli<'_> {
     pub(super) fn render(&self) -> String {
-        match self {
-            Self::Approval { code, challenge, csrf, browser_origin } => CLI.render(&[
-                ("Code", code),
-                ("Challenge", challenge),
-                ("CSRF", csrf),
-                ("BrowserOrigin", browser_origin),
-            ]),
-            Self::Refused(refused) => CLI.render(&[("Refused", refused)]),
-            Self::Capacity { limit } => {
-                CLI.render(&[("BrowserCapacity", flag(true)), ("ClientLimit", &limit.to_string())])
+        let (title, main) = match self {
+            Self::Refused(refused) => {
+                // One fixed sentence per refusal kind: nothing from the request is echoed.
+                let why = match refused {
+                    Refused::Busy => "Too many approvals are open. Try again from the client in a few minutes.",
+                    Refused::Link => "This approval link is not valid. Start sign-in again from the client.",
+                };
+                ("Approval unavailable", format!("<h1>Approval unavailable</h1>\n<p>{why}</p>\n"))
             }
-        }
+            Self::Capacity { limit } => (
+                "Client limit reached",
+                format!(
+                    "<h1>Client limit reached</h1>\n<p>This sign-in already has {limit} approved clients, the most it \
+                     can have.</p>\n<p>Renewing the sign-in ends their access and any tests they are running.</p>\n\
+                     <p><a href=\"{}\">Renew this sign-in</a>, then choose Sign in again on the site that asked.</p>\n",
+                    AuthRoute::Login.path()
+                ),
+            ),
+            Self::Approval { code, challenge, csrf, browser_origin } => {
+                let (title, intro, action) = match browser_origin {
+                    Some(origin) => (
+                        "Approve browser client",
+                        format!(
+                            "<p>Approve only a site you opened yourself. The site below can then run tests as you \
+                             until you sign out or this sign-in expires.</p>\n<p class=\"origin\"><strong>{}</strong>\
+                             </p>\n<p>Confirm that this code matches the code on that site.</p>",
+                            escape(origin)
+                        ),
+                        AuthRoute::BrowserApprove,
+                    ),
+                    None => (
+                        "Approve terminal client",
+                        "<p>Approve only a terminal you started yourself. It can then run tests as you until you sign \
+                         out or this sign-in expires.</p>\n<p>Confirm that this code matches the code in your \
+                         terminal.</p>"
+                            .into(),
+                        AuthRoute::CliApprove,
+                    ),
+                };
+                let main = format!(
+                    "<h1>{title}</h1>\n{intro}\n<code class=\"code\">{}</code>\n<form method=\"post\" action=\"{}\">\n\
+                     <input type=\"hidden\" name=\"csrf\" value=\"{}\">\n<input type=\"hidden\" name=\"challenge\" \
+                     value=\"{}\">\n<button type=\"submit\">Approve this client</button>\n</form>\n",
+                    escape(code),
+                    action.path(),
+                    escape(csrf),
+                    escape(challenge),
+                );
+                (title, main)
+            }
+        };
+        page(title, "", "card", &main, true)
     }
 }
 
 /// An approval's confirmation, for a browser or a terminal.
-pub(super) struct CliDone {
-    pub browser: bool,
-}
-
-impl CliDone {
-    pub(super) fn render(&self) -> String {
-        CLI_DONE.render(&[("Browser", flag(self.browser))])
-    }
+pub(super) fn cli_done(browser: bool) -> String {
+    let (title, text) = match browser {
+        true => ("Browser client approved", "The site you approved can now run tests as you."),
+        false => ("Terminal client approved", "Your terminal can now run tests as you."),
+    };
+    let main = format!("<h1>{title}</h1>\n<p>{text} You can close this tab and return to it.</p>\n");
+    page(title, "", "card completion", &main, false)
 }
 
 /// The step back from a provider or another site to this one, opening the approval when `opening`.
-pub(super) struct Continue<'a> {
-    pub challenge: Option<&'a str>,
-    pub opening: bool,
+pub(super) fn continuing(challenge: Option<&Challenge>, opening: bool) -> String {
+    let title = if opening { "Continue sign-in" } else { "Signed in" };
+    let (next, place) = match challenge {
+        Some(challenge) => (escape(&challenge.page()), "the approval page"),
+        None => ("/".into(), "Graphite&nbsp;Meter"),
+    };
+    let head = format!("<meta http-equiv=\"refresh\" content=\"0; url={next}\">\n");
+    let main = format!("<h1>{title}</h1>\n<p>Taking you to {place}…</p>\n<p><a href=\"{next}\">Continue</a></p>\n");
+    page(title, &head, "card completion", &main, false)
 }
 
-impl Continue<'_> {
-    pub(super) fn render(&self) -> String {
-        CONTINUE.render(&[("Challenge", self.challenge.unwrap_or_default()), ("Opening", flag(self.opening))])
-    }
-}
-
-/// A template flag: `"true"` or empty.
-fn flag(on: bool) -> &'static str {
-    if on { "true" } else { "" }
+/// A whole page: `title` before the product name, `head` and `main` markup, and the pending script beside forms.
+fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String {
+    let pending = if forms { format!("<script>{PENDING}</script>\n") } else { String::new() };
+    format!(
+        r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+{ICON}
+{head}<title>{title} · Graphite Meter</title>
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1013">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f1f2f5">
+<script>{THEME}</script>
+<style>{STYLES}</style>
+</head>
+<body>
+<main class="{class}">
+{BRAND}
+{main}</main>
+{pending}</body>
+</html>
+"##
+    )
 }
 
 /// Lets the page's forms post to the OIDC provider's authorization `origin` as well.
@@ -130,112 +269,20 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool) {
     headers.insert(header::CONTENT_SECURITY_POLICY, POLICY.clone());
 }
 
-/// A template's actions, each with the text after it; the first action is empty.
-struct Template(Vec<(String, String)>);
-
-impl Template {
-    /// Splits `source` at its actions, without its HTML comments.
-    fn parse(source: &str) -> Self {
-        let mut source = source.to_owned();
-        while let Some(start) = source.find("<!--") {
-            let end = source[start..].find("-->").map_or(source.len(), |end| start + end + 3);
-            source.replace_range(start..end, "");
-        }
-        let mut parts = source.split("{{");
-        let first = (String::new(), parts.next().unwrap_or_default().to_owned());
-        let actions = parts.map(|part| {
-            let (action, text) = part.split_once("}}").expect("templates close their actions");
-            (action.to_owned(), text.to_owned())
-        });
-        Self(std::iter::once(first).chain(actions).collect())
-    }
-
-    /// Template actions: `href`-escaped fields, theme and pending scripts, `if`/`else`/`end` on `not`/`and`/`eq`/`ne`.
-    fn render(&self, fields: &[(&str, &str)]) -> String {
-        let field = |name: &str| {
-            let name = name.trim_start_matches('.');
-            let found = fields.iter().find(|(key, _)| *key == name);
-            found.map_or("", |(_, value)| *value)
-        };
-        let (mut page, mut branches) = (String::new(), Vec::<(bool, bool)>::new());
-        let shown = |branches: &[(bool, bool)]| branches.iter().all(|&(_, on)| on);
-        for (action, text) in &self.0 {
-            if let Some(test) = action.strip_prefix("if ") {
-                let on = condition(test, &field);
-                branches.push((on, on));
-            } else if let Some(rest) = action.strip_prefix("else") {
-                let (taken, on) = branches.last_mut().expect("an else follows an if");
-                *on = !*taken && rest.strip_prefix(" if ").is_none_or(|test| condition(test, &field));
-                *taken |= *on;
-            } else if action == "end" {
-                branches.pop();
-            } else if shown(&branches) {
-                match action.as_str() {
-                    "" => {}
-                    "template \"theme\"" => {
-                        page.push_str(concat!(
-                            "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"#0d1013\">",
-                            "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"#f1f2f5\">"
-                        ));
-                        page.extend(["<script>", THEME, "</script>"]);
-                    }
-                    "template \"pending\"" => page.extend(["<script>", PENDING, "</script>"]),
-                    ".Styles" => page.push_str(STYLES),
-                    name if page.rfind("href=\"").is_some_and(|at| !page[at + 6..].contains('"')) => {
-                        for byte in field(name).bytes() {
-                            match byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                                true => page.push(byte.into()),
-                                false => write!(page, "%{byte:02x}").expect("strings take writes"),
-                            }
-                        }
-                    }
-                    name => escape(&mut page, field(name)),
-                }
-            }
-            if shown(&branches) {
-                page.push_str(text);
-            }
-        }
-        page
-    }
-}
-
-/// Whether a condition holds: a field or flag is true when nonempty.
-fn condition<'a>(test: &'a str, field: &impl Fn(&'a str) -> &'a str) -> bool {
-    fn value<'a>(words: &mut impl Iterator<Item = &'a str>, field: &impl Fn(&'a str) -> &'a str) -> &'a str {
-        let flag = |on: bool| if on { "true" } else { "" };
-        match words.next().expect("conditions are complete") {
-            "not" => flag(value(words, field).is_empty()),
-            operator @ ("and" | "eq" | "ne") => {
-                let (first, second) = (value(words, field), value(words, field));
-                flag(match operator {
-                    "and" => !first.is_empty() && !second.is_empty(),
-                    "eq" => first == second,
-                    _ => first != second,
-                })
-            }
-            quoted if quoted.starts_with('"') => quoted.trim_matches('"'),
-            name => field(name),
-        }
-    }
-    let mut words = test.split(['(', ')', ' ']).filter(|word| !word.is_empty());
-    !value(&mut words, field).is_empty()
-}
-
-/// Escapes text and quoted attribute values.
-fn escape(page: &mut String, text: &str) {
+/// `text` safe in HTML text and quoted attribute values.
+fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         match character {
-            '\0' => page.push('\u{fffd}'),
-            '"' => page.push_str("&#34;"),
-            '&' => page.push_str("&amp;"),
-            '\'' => page.push_str("&#39;"),
-            '+' => page.push_str("&#43;"),
-            '<' => page.push_str("&lt;"),
-            '>' => page.push_str("&gt;"),
-            character => page.push(character),
+            '"' => escaped.push_str("&#34;"),
+            '&' => escaped.push_str("&amp;"),
+            '\'' => escaped.push_str("&#39;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            character => escaped.push(character),
         }
     }
+    escaped
 }
 
 #[cfg(test)]
@@ -248,19 +295,18 @@ mod tests {
             csrf: "a+b\"<",
             provider: "Id",
             challenge: None,
-            notice: "password",
-            status: "",
+            error: "password",
+            reason: "",
             password: true,
             oidc: false,
             oidc_ready: false,
         }
         .render();
-        assert!(page.contains("<input type=\"hidden\" name=\"csrf\" value=\"a&#43;b&#34;&lt;\">"));
+        assert!(page.contains("<input type=\"hidden\" name=\"csrf\" value=\"a+b&#34;&lt;\">"));
         assert!(page.contains("Incorrect password. Check it and try again."));
         assert!(!page.contains("Too many attempts") && !page.contains("Sign-in failed"));
         assert!(page.contains("action=\"/auth/password\"") && !page.contains("/auth/oidc/start"));
         assert!(page.contains("spellcheck=\"false\" autofocus required"));
-        assert!(!page.contains("<!--") && !page.replace(PENDING, "").contains("{{"));
         assert!(
             page.contains(&format!("<style>{STYLES}</style>")) && page.contains(&format!("<script>{PENDING}</script>"))
         );

@@ -106,7 +106,7 @@ async fn a_sign_in_runs_from_the_form_through_the_provider_to_the_login_s_cookie
     let form_action = format!("form-action 'self' {}; ", provider.issuer());
     assert!(header(&page, "content-security-policy").unwrap().contains(&form_action));
     let html = text(page).await;
-    let button = "<button type=\"submit\" >Continue with Id</button>";
+    let button = "<button type=\"submit\">Continue with Id</button>";
     assert!(html.contains(button) && !html.contains("current-password"));
 
     let approval = challenge("a-verifier-that-never-leaves-the-terminal");

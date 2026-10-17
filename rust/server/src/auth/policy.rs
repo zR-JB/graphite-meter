@@ -12,7 +12,7 @@ use crate::{
 };
 use graphite_meter_proto::{
     origin::{Origin, Scheme},
-    route::{Kind, Route},
+    route::{AuthRoute, Kind, Route},
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority};
 
@@ -26,44 +26,14 @@ const SINGLE: [HeaderName; 6] = [
     header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
 
-/// When a controller route serves without a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Open {
-    Always,
-    /// While password sign-in is enabled.
-    Password,
-    /// While OIDC sign-in is enabled.
-    Oidc,
-    Never,
+/// The sign-in route `method` and `path` name exactly.
+pub(super) fn auth_route(method: &str, path: &str) -> Option<AuthRoute> {
+    AuthRoute::find_by(AuthRoute::path, path).filter(|route| route.method() == method)
 }
 
-graphite_meter_proto::table! {
-    /// The controller's routes: method, path, and when each serves without a session.
-    pub(super) enum AuthRoute {
-        method.0: &'static str,
-        path.1: &'static str,
-        open.2: Open,
-    } {
-        LoginPage => ("GET", "/login", Open::Always),
-        Password => ("POST", "/auth/password", Open::Password),
-        OidcStart => ("POST", "/auth/oidc/start", Open::Oidc),
-        OidcCallback => ("GET", "/auth/oidc/callback", Open::Oidc),
-        Session => ("GET", "/auth/session", Open::Never),
-        CliPage => ("GET", "/auth/cli", Open::Always),
-        BrowserPage => ("GET", "/auth/browser", Open::Always),
-        CliApprove => ("POST", "/auth/cli/approve", Open::Never),
-        BrowserApprove => ("POST", "/auth/browser/approve", Open::Never),
-        CliToken => ("POST", "/auth/cli/token", Open::Always),
-        BrowserToken => ("POST", "/auth/browser/token", Open::Always),
-        Logout => ("POST", "/auth/logout", Open::Never),
-    }
-}
-
-impl AuthRoute {
-    /// The route `method` and `path` name exactly.
-    pub(super) fn find(method: &str, path: &str) -> Option<Self> {
-        Self::find_by(Self::path, path).filter(|route| route.method() == method)
-    }
+/// Whether `path` lies in the sign-in controller's namespace, a route there or not.
+pub(super) fn controls(path: &str) -> bool {
+    path == AuthRoute::Login.path() || path.starts_with("/auth/")
 }
 
 graphite_meter_proto::table! {
@@ -112,7 +82,7 @@ pub struct Policy {
 impl Policy {
     pub(super) fn new(config: &config::Auth) -> Self {
         let origin = config.public_origin.to_string();
-        let login = HeaderValue::from_str(&format!("{origin}/login")).expect("origins are ASCII");
+        let login = HeaderValue::from_str(&format!("{origin}{}", AuthRoute::Login.path())).expect("origins are ASCII");
         let origin = HeaderValue::from_str(&origin).expect("origins are ASCII");
         let (password, oidc) = (config.methods.password().is_some(), config.methods.oidc().is_some());
         Self {
@@ -146,8 +116,7 @@ impl Policy {
         if method == Method::OPTIONS && (route.is_some() || path == AuthRoute::BrowserToken.path()) {
             return self.preflight(headers, route, trust);
         }
-        let controller = path == "/login" || path.starts_with("/auth/");
-        if controller && (!endpoint.ui() || trust != Trust::Canonical) {
+        if controls(path) && (!endpoint.ui() || trust != Trust::Canonical) {
             return self.forbidden(secure);
         }
         if endpoint.ui() && self.public(method, path) {
@@ -314,11 +283,13 @@ impl Policy {
         if matches!(*method, Method::GET | Method::HEAD) && matches!(path, SANS | MONO) {
             return true;
         }
-        AuthRoute::find(method.as_str(), path).is_some_and(|route| match route.open() {
-            Open::Always => true,
-            Open::Password => self.password,
-            Open::Oidc => self.oidc,
-            Open::Never => false,
+        auth_route(method.as_str(), path).is_some_and(|route| match route {
+            AuthRoute::Login | AuthRoute::Cli | AuthRoute::Browser | AuthRoute::CliToken | AuthRoute::BrowserToken => {
+                true
+            }
+            AuthRoute::Password => self.password,
+            AuthRoute::OidcStart | AuthRoute::OidcCallback => self.oidc,
+            AuthRoute::Session | AuthRoute::CliApprove | AuthRoute::BrowserApprove | AuthRoute::Logout => false,
         })
     }
 

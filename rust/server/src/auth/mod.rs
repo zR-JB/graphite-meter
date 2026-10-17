@@ -145,7 +145,7 @@ impl Auth {
 
     /// Whether `path` is one of the routes `handle` answers on the endpoints serving the app; none when off.
     pub fn claims(&self, path: &str) -> bool {
-        self.enabled() && (path == "/login" || path.starts_with("/auth/"))
+        self.enabled() && policy::controls(path)
     }
 
     /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.

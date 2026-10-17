@@ -5,15 +5,17 @@
 #
 #   name = the key every implementation uses for the route
 #   path = the exact path the server mounts and the client requests
-#   kind = http | ws | wt, the transport that reaches the route. A wt route is
-#          an HTTP/3 extended-CONNECT session; under authentication it carries a
-#          bearer grant or a single-use token minted at /wt/session.
+#   kind = http | ws | wt | auth, the transport that reaches the route. A wt
+#          route is an HTTP/3 extended-CONNECT session; under authentication it
+#          carries a bearer grant or a single-use token minted at /wt/session.
+#          An auth route is a sign-in route, answered at the public HTTPS origin
+#          only while authentication is on.
 #
 # Routes are never transmitted: preflight advertises origins and transports only,
 # so each site carries its own table and this file keeps the tables identical.
 # Every route test loads THIS file as its fixture:
-#   Rust: rust/proto/tests/codes.rs (proto::route, the table the server mounts and the client requests)
-#   TS:   client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES)
+#   Rust: rust/proto/tests/codes.rs (proto::route Route and AuthRoute)
+#   TS:   client/src/protocol/pins.test.ts (protocol/routes.ts ROUTES and AUTH_ROUTES)
 #
 preflight | /preflight | http
 probe | /probe | http
@@ -29,3 +31,15 @@ wtUpload | /wt/upload | wt
 wtPing | /wt/ping | wt
 servers | /servers | http
 uploadCheckpoint | /upload/checkpoint | http
+login | /login | auth
+password | /auth/password | auth
+oidcStart | /auth/oidc/start | auth
+oidcCallback | /auth/oidc/callback | auth
+session | /auth/session | auth
+cli | /auth/cli | auth
+browser | /auth/browser | auth
+cliApprove | /auth/cli/approve | auth
+browserApprove | /auth/browser/approve | auth
+cliToken | /auth/cli/token | auth
+browserToken | /auth/browser/token | auth
+logout | /auth/logout | auth
