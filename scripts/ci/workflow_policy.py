@@ -25,7 +25,7 @@ NAMING = ("scripts/legal/rust.py", "scripts/ci/workflow_policy.py")
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
-    "ci.yml": {"pull_request", "push"},
+    "ci.yml": {"pull_request", "push", "schedule"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
@@ -259,6 +259,10 @@ def check_ci(root: Path) -> None:
             fail(f"CI must run the local gate step {task}")
     if "run: python3 -m scripts.legal.check_git_sources --verify\n" not in ci:
         fail("CI must verify the Cargo fork pins with check_git_sources --verify")
+    e2e = next((job for job in JOB.split(ci) if job.startswith("e2e:\n")), "")
+    setups = [step for step in STEP.split(e2e) if "setup-project" in step]
+    if not setups or any("cache: ${{ github.event_name != 'schedule' }}\n" not in step for step in setups):
+        fail("CI: the E2E job must not cache on schedule, where it tests unpinned browsers")
     jobs = set(re.findall(r"(?m)^  ([a-z0-9-]+):$", ci.split("\njobs:\n", 1)[1])) - {"gate"}
     gate = re.search(r"(?ms)^  gate:\n.*?^    needs: \[([^]]*)\]", ci)
     if missing := sorted(jobs - {name.strip() for name in (gate.group(1) if gate else "").split(",")}):

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import platform
 import re
 import subprocess
 import tomllib
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +125,45 @@ def verify_rust_toolchain(root: Path = ROOT) -> None:
     check_rust_manifest(Path(sysroot) / "lib/rustlib/multirust-channel-manifest.toml", manifest, root)
 
 
+def download(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=30) as reply:
+        return reply.read(16 * 1024 * 1024)
+
+
+def latest_browsers(fetch: Callable[[str], bytes] = download) -> dict[str, str]:
+    """The newest stable Chrome for Testing and Firefox, with Mozilla's SHA-256 of Firefox's Linux archive."""
+    def exact(name: str, value: object) -> str:
+        if not isinstance(value, str) or re.fullmatch(PIN_PATTERNS["browser"][name], value) is None:
+            raise ValueError(f"the latest {name} is not an exact release: {value!r}")
+        return value
+
+    try:
+        chrome = json.loads(fetch("https://googlechromelabs.github.io/chrome-for-testing/"
+                                  "last-known-good-versions.json"))["channels"]["Stable"]["version"]
+        firefox = json.loads(fetch("https://product-details.mozilla.org/1.0/firefox_versions.json"))[
+            "LATEST_FIREFOX_VERSION"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"unexpected browser release metadata: {exc!r}") from exc
+    firefox = exact("firefox", firefox)
+    sums = fetch(f"https://ftp.mozilla.org/pub/firefox/releases/{firefox}/SHA256SUMS").decode()
+    archive = f"linux-x86_64/en-US/firefox-{firefox}.tar.xz"
+    digests = [line.split()[0] for line in sums.splitlines() if line.split()[1:] == [archive]]
+    if len(digests) != 1:
+        raise ValueError(f"Firefox {firefox}'s SHA256SUMS must list {archive} once")
+    return {"chrome": exact("chrome", chrome), "firefox": firefox,
+            "firefox_sha256": exact("firefox_sha256", digests[0])}
+
+
+def write_browsers(browsers: dict[str, str], root: Path = ROOT) -> None:
+    path = root / "mise.toml"
+    text = path.read_text(encoding="utf-8")
+    for name, value in browsers.items():
+        text, count = re.subn(rf'(?m)^browser_{name} = "[^"]*"$', f'browser_{name} = "{value}"', text)
+        if count != 1:
+            raise ValueError(f"mise.toml must set browser_{name} once")
+    path.write_text(text, encoding="utf-8")
+
+
 def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     """Return expected source for unavoidable pre-execution literals; never execute pin data."""
     pins = load_pins(root)
@@ -204,15 +245,24 @@ def doctor(root: Path = ROOT) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command",
-                        choices=("get", "check", "sync", "doctor", "python-target", "verify-rust"))
+                        choices=("get", "browsers", "latest-browsers", "check", "sync", "doctor", "python-target",
+                                 "verify-rust"))
     parser.add_argument("name", nargs="?")
+    parser.add_argument("--write", action="store_true", help="pin the latest browsers in mise.toml")
     args = parser.parse_args()
+    if args.write and args.command != "latest-browsers":
+        parser.error("--write applies to latest-browsers")
     try:
         match args.command:
             case "get":
                 if not args.name:
                     parser.error("get requires a section.name")
                 print(pin(args.name))
+            case "browsers" | "latest-browsers":
+                browsers = load_pins()["browser"] if args.command == "browsers" else latest_browsers()
+                if args.write:
+                    write_browsers(browsers)
+                print("\n".join(f"{name}={value}" for name, value in browsers.items()))
             case "python-target":
                 print(".".join(pin("tools.python").split(".")[:2]))
             case "check":
