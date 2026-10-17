@@ -94,7 +94,7 @@ pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
 /// Probes an idle peer as the keep-alive constants say; a socket refusing the options still connects.
 fn keep_alive(stream: &TcpStream) {
     let probes = socket2::TcpKeepalive::new().with_time(KEEP_ALIVE_IDLE);
-    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    #[cfg(any(target_os = "linux", windows))]
     let probes = probes
         .with_interval(KEEP_ALIVE_INTERVAL)
         .with_retries(KEEP_ALIVE_PROBES);
