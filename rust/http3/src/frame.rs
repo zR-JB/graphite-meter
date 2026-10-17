@@ -1,15 +1,15 @@
-//! HTTP/3 frame and stream types (RFC 9114 §6.2, §7.2), read incrementally from chunks of any size.
+//! Reads HTTP/3 frame and stream types (RFC 9114 §6.2, §7.2) incrementally from chunks of any size.
 use crate::varint::{self, Partial};
 use bytes::{Buf, BufMut, Bytes};
 use std::marker::PhantomData;
 
-/// The type that leads a frame, a capsule or a unidirectional stream, each its own space of varint codes.
+/// A type leads a frame, a capsule or a unidirectional stream, each with its own space of varint codes.
 pub(crate) trait Kind: Copy {
     fn from_wire(code: u64) -> Self;
     fn wire(self) -> u64;
 }
 
-/// A frame type (RFC 9114 §7.2); peers may send ones not named here.
+/// Identifies a frame type (RFC 9114 §7.2). Peers may send ones not named here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FrameType(pub(crate) u64);
 
@@ -21,10 +21,10 @@ impl FrameType {
     pub(crate) const PUSH_PROMISE: Self = Self(0x05);
     pub(crate) const GOAWAY: Self = Self(0x07);
     pub(crate) const MAX_PUSH_ID: Self = Self(0x0d);
-    /// Opens a peer's WebTransport bidirectional stream in place of a frame type; elsewhere it is H3_FRAME_ERROR.
+    /// Opens a peer's WebTransport bidirectional stream in place of a frame type. Elsewhere it is H3_FRAME_ERROR.
     pub(crate) const WEBTRANSPORT_BIDI: Self = Self(0x41);
 
-    /// Reserved for its HTTP/2 meaning; receipt is H3_FRAME_UNEXPECTED.
+    /// The type is reserved for its HTTP/2 meaning, and receiving it is H3_FRAME_UNEXPECTED.
     pub(crate) fn is_http2(self) -> bool {
         matches!(self.0, 0x02 | 0x06 | 0x08 | 0x09)
     }
@@ -40,7 +40,7 @@ impl Kind for FrameType {
     }
 }
 
-/// A unidirectional stream type (RFC 9114 §6.2); peers may open ones not named here.
+/// Identifies a unidirectional stream type (RFC 9114 §6.2). Peers may open ones not named here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StreamType(pub(crate) u64);
 
@@ -67,7 +67,7 @@ pub(crate) fn put_header(kind: impl Kind, length: u64, output: &mut impl BufMut)
     varint::put(length, output);
 }
 
-/// Two varints, such as a frame header, a stream header or a setting, written in as many parts as it takes.
+/// Writes two varints, such as a frame header, a stream header or a setting, in as many parts as it takes.
 #[derive(Default)]
 pub(crate) struct Header {
     bytes: [u8; 16],
@@ -76,7 +76,7 @@ pub(crate) struct Header {
 }
 
 impl Header {
-    /// `kind`, then a frame's length, or the session ID after a WebTransport stream's type.
+    /// Lays out `kind`, then a frame's length, or the session ID after a WebTransport stream's type.
     pub(crate) fn new(kind: impl Kind, second: u64) -> Self {
         let mut bytes = [0; 16];
         let mut rest = &mut bytes[..];
@@ -103,7 +103,7 @@ impl Header {
     }
 }
 
-/// Two varints read in sequence.
+/// Reads two varints in sequence.
 #[derive(Default)]
 pub(crate) struct Pair {
     first: Option<u64>,
@@ -125,7 +125,7 @@ impl Pair {
         self.first.is_none() && self.varint.is_empty()
     }
 
-    /// A unidirectional stream's type, followed by a session ID on WebTransport streams.
+    /// Reads a unidirectional stream's type, followed by a session ID on WebTransport streams.
     pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(StreamType, Option<u64>)> {
         match StreamType(self.first.map_or_else(|| self.varint.read(input), Some)?) {
             StreamType::WEBTRANSPORT => {
@@ -144,7 +144,7 @@ pub(crate) enum Piece<K> {
         kind: K,
         length: u64,
     },
-    /// Part of the current frame's payload, sliced from the input without copying.
+    /// Holds part of the current frame's payload, sliced from the input without copying.
     Payload(Bytes),
 }
 
@@ -152,7 +152,7 @@ pub(crate) enum Piece<K> {
 #[derive(Default)]
 pub(crate) struct Reader<K> {
     header: Pair,
-    /// Payload bytes the current frame still owes.
+    /// The current frame still owes this many payload bytes.
     pub(crate) remaining: u64,
     kind: PhantomData<K>,
 }
@@ -172,7 +172,7 @@ impl<K: Kind> Reader<K> {
         Some(Piece::Payload(input.split_to(take)))
     }
 
-    /// Whether the stream may end here without truncating a frame.
+    /// Reports whether the stream may end here without truncating a frame.
     pub(crate) fn at_boundary(&self) -> bool {
         self.remaining == 0 && self.header.is_empty()
     }

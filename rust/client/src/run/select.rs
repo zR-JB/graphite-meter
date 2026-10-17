@@ -1,4 +1,4 @@
-//! Which servers a run takes, the paths to check on each in the order to try them, and the stage limit they share.
+//! Picks the servers a run takes, the paths to check on each in the order to try them, and the stage limit they share.
 use super::prepare::ServerPath;
 use crate::{
     config::{Config, PathChoice},
@@ -14,14 +14,14 @@ use graphite_meter_proto::{
 };
 use std::time::Duration;
 
-/// A server's paths, each list in the order to check them.
+/// Lists a server's paths, each list in the order to check them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidates {
     pub throughput: Vec<ThroughputPath>,
     pub latency: Vec<LatencyPath>,
 }
 
-/// The selected entries in catalog order: the `--server` IDs, else the operator's default.
+/// Selects the `--server` IDs, else the operator's default, as entries in catalog order.
 pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a ServerEntry>, String> {
     let chosen = |id: &str| config.servers.iter().any(|server| server.as_str() == id);
     if let Some(left) = received.rejected.iter().find(|rejected| chosen(&rejected.id)) {
@@ -47,7 +47,7 @@ pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a Se
     Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
 
-/// Paths on `entry`'s server: throughput by fetch-stream then WebTransport, latency by WebTransport then WebSocket.
+/// Orders `entry`'s paths, throughput by fetch-stream then WebTransport, latency by WebTransport then WebSocket.
 pub fn candidates(
     choice: &PathChoice,
     entry: &ServerEntry,
@@ -108,7 +108,7 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
     ))
 }
 
-/// The paths that resolved, in order; the first refusal when none did.
+/// Keeps the paths that resolved, in order, or the first refusal when none did.
 fn resolved<T>(results: impl Iterator<Item = Result<T, String>>) -> Result<Vec<T>, String> {
     let (mut found, mut refused) = (Vec::new(), None);
     for result in results {
@@ -120,7 +120,7 @@ fn resolved<T>(results: impl Iterator<Item = Result<T, String>>) -> Result<Vec<T
     refused.filter(|_| found.is_empty()).map_or(Ok(found), Err)
 }
 
-/// The target at `wanted`; with an automatic origin the one at `served`, else the only one.
+/// Picks the target at `wanted`, or with an automatic origin the one at `served`, else the only one.
 fn pick<'a, T>(
     kind: &str,
     eligible: impl Iterator<Item = &'a T>,
@@ -145,12 +145,12 @@ fn pick<'a, T>(
     }
 }
 
-/// Whether a target of `offered` protocol serves a `forced` one: as it, or negotiated.
+/// Tells whether a target of `offered` protocol serves a `forced` one, as it or negotiated.
 fn serves(offered: Protocol, forced: Option<Protocol>) -> bool {
     forced.is_none_or(|forced| offered == forced || offered == Protocol::Negotiated)
 }
 
-/// `target` as a path; a forced protocol replaces a negotiated one and refuses a fixed other.
+/// Turns `target` into a path. A forced protocol replaces a negotiated one and refuses a fixed other.
 fn throughput_path(
     target: &ThroughputTarget,
     forced: Option<Protocol>,
@@ -243,7 +243,7 @@ mod tests {
         preflight(&throughput, &[(SERVED, "websocket"), ("https://meter.example:7249", "webtransport")])
     }
 
-    /// The candidates as `transport protocol port` and `transport port` lines.
+    /// Renders the candidates as `transport protocol port` and `transport port` lines.
     fn paths(args: &str, served: &str, preflight: &Preflight, entry: &ServerEntry) -> Result<String, String> {
         let config = config(args);
         let served = Origin::parse(served).unwrap();
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(elsewhere("-throughput-transport fetch-stream").unwrap_err(), several);
     }
 
-    /// A server named after its ID in capitals with a stage limit of `seconds`, prepared unless `failure`.
+    /// Builds a server named after its ID in capitals with a stage limit of `seconds`, prepared unless `failure`.
     fn server(name: &str, seconds: u64, failure: Option<Failure>) -> ServerPath {
         let origin = Origin::parse(SERVED).unwrap();
         let (transport, protocol) = (ThroughputTransport::FetchStream, Protocol::Http1);

@@ -5,7 +5,7 @@ import { Receiver } from "./receiver";
 
 const encoder = new TextEncoder();
 
-/** An NDJSON body arriving in these chunks. */
+/** Builds an NDJSON body that arrives in these chunks. */
 const ndjson = (...chunks: string[]) =>
   new Response(
     new ReadableStream({
@@ -16,8 +16,8 @@ const ndjson = (...chunks: string[]) =>
     }),
   );
 
-/** A receiver following an HTTP feed whose answers come from `script`, one per request, and whose checkpoints answer
-    `counters` in turn; `carried` leaves the feed to a session. */
+/** Builds a receiver that follows an HTTP feed. The feed answers from `script`, one per request, and its checkpoints
+    answer `counters` in turn. `carried` leaves the feed to a session. */
 function follow(
   script: ((init: RequestInit) => Response)[],
   counters: { bytes: number; nanos: number }[] = [],
@@ -42,7 +42,7 @@ function follow(
     {
       now: () => 0,
       observed: ({ bytes, nanos }: Checkpoint, grew) => observed.push([bytes, nanos, grew]),
-      // The stage reopens what may retry; the test skips the pause.
+      // The stage reopens what may retry. The test skips the pause.
       ended: async (ending, broken, delayMs) => (endings.push([ending, broken, delayMs]), ending.retry),
       signIn: () => (signedIn = true),
     },
@@ -80,7 +80,7 @@ test("only advancing receiver observations pass, across split records, a replace
   );
   await settled(() => feed.observed.length === 4);
   await feed.receiver.opened(AbortSignal.timeout(100));
-  // Bytes and receiver time only ever count together: a regression in either is a stale observation.
+  // Bytes and receiver time only ever count together, so a regression in either is a stale observation.
   expect(feed.observed).toEqual([
     [100, 1_000, true],
     [300, 2_000, true],
@@ -125,7 +125,7 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
     ["connection-lost", undefined, "TypeError: Failed to fetch", true, 300],
     ["server-busy", undefined, "progress returned HTTP 503", false, 1_000],
     ["server-busy", undefined, "progress returned HTTP 429", false, 600],
-    // The feed opened, ending the busy streak; the run decides the one replacement.
+    // The feed opened, which ended the busy streak. The run decides the one replacement.
     ["server-busy", undefined, "server full", false, 300],
     ["protocol-error", true, "unknown upload id", false, 300],
   ]);
@@ -143,7 +143,7 @@ test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet on
   jest.useFakeTimers();
   try {
     const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-    // As a browser's, the answer's body errors when its request is aborted.
+    // The answer's body errors when its request is aborted, as a browser's does.
     const open = ({ signal }: RequestInit) =>
       new Response(
         new ReadableStream({

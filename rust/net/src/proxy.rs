@@ -1,9 +1,9 @@
-//! Proxies from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, chosen per target.
+//! Reads proxies from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` and picks one per target.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_proto::origin::{Host, Origin, Scheme};
 use std::{fmt, net::IpAddr};
 
-/// The proxies a process's environment names; `ALL_PROXY` is never read.
+/// Holds the proxies a process's environment names. `ALL_PROXY` is never read.
 #[derive(Clone, Debug, Default)]
 pub struct Proxy {
     http: Option<Result<Upstream, UnusableProxy>>,
@@ -11,7 +11,7 @@ pub struct Proxy {
     bypass: Vec<Rule>,
 }
 
-/// A proxy variable this client cannot use; each request it would carry fails with it.
+/// Names a proxy variable this client cannot use. Each request it would carry fails with this error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnusableProxy {
     variable: &'static str,
@@ -29,12 +29,12 @@ impl std::error::Error for UnusableProxy {}
 /// A SOCKS5 username and password.
 pub(crate) type Login = (Vec<u8>, Vec<u8>);
 
-/// A proxy a request goes through; it prints without its credentials.
+/// A request goes through this proxy. It prints without its credentials.
 #[derive(Clone)]
 pub enum Upstream {
-    /// An `http://` or `https://` proxy, with its `Proxy-Authorization` value.
+    /// Names an `http://` or `https://` proxy with its `Proxy-Authorization` value.
     Http { origin: Origin, authorization: Option<String> },
-    /// A `socks5://` or `socks5h://` proxy, which resolves host names itself, with its login.
+    /// Names a `socks5://` or `socks5h://` proxy with its login. The proxy resolves host names itself.
     Socks { host: Host, port: u16, login: Option<Login> },
 }
 
@@ -47,7 +47,7 @@ impl Upstream {
     }
 }
 
-/// Without credentials.
+/// Prints without credentials.
 impl fmt::Debug for Upstream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -68,7 +68,7 @@ enum Bypass {
     All,
     Network(ipnet::IpNet),
     Address(IpAddr),
-    /// A name ending in `suffix`, which begins with a dot, or equal to it without the dot when `apex` is set.
+    /// Matches a name ending in `suffix`, which begins with a dot, or equal to it without the dot when `apex` is set.
     Domain {
         suffix: String,
         apex: bool,
@@ -80,7 +80,7 @@ impl Proxy {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
-    /// Each variable before its lowercase spelling, empty values unset.
+    /// Reads each variable before its lowercase spelling and treats empty values as unset.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Self {
         let set = |name: &'static str| Some((name, lookup(name).filter(|value| !value.is_empty())?));
         let read = |names: [&'static str; 2]| names.into_iter().find_map(set);
@@ -95,7 +95,7 @@ impl Proxy {
         }
     }
 
-    /// The proxy `target` goes through, if any.
+    /// Picks the proxy `target` goes through, if any.
     pub fn route(&self, target: &Origin) -> Result<Option<&Upstream>, UnusableProxy> {
         let setting = match target.scheme {
             Scheme::Https => &self.https,
@@ -131,7 +131,7 @@ impl Proxy {
     }
 }
 
-/// A proxy URL, `http://` when it names no scheme.
+/// Parses a proxy URL, assuming `http://` when it names no scheme.
 fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     const INVALID: &str = "invalid proxy URL";
     let (scheme, rest) = raw.split_once("://").unwrap_or(("http", raw));
@@ -160,13 +160,13 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     }
 }
 
-/// Whether a `host[:port]` authority writes a port.
+/// Tells whether a `host[:port]` authority writes a port.
 fn explicit_port(authority: &str) -> bool {
     let tail = authority.rsplit_once(']').map_or(authority, |(_, tail)| tail);
     tail.split_once(':').is_some_and(|(_, port)| !port.is_empty())
 }
 
-/// `NO_PROXY`'s entries; a lone `*` anywhere bypasses every target.
+/// Parses `NO_PROXY`'s entries. A lone `*` anywhere bypasses every target.
 fn rules(list: &str) -> Vec<Rule> {
     let entries: Vec<String> = list.split(',').map(|entry| entry.trim().to_ascii_lowercase()).collect();
     if entries.iter().any(|entry| entry == "*") {
@@ -175,7 +175,7 @@ fn rules(list: &str) -> Vec<Rule> {
     entries.iter().filter_map(|entry| rule(entry)).collect()
 }
 
-/// One entry; an entry that names no host or port a target can have is left out.
+/// Parses one entry and drops one that names no host or port a target can have.
 fn rule(entry: &str) -> Option<Rule> {
     let rule = |target, port: &str| match port {
         "" => Some(Rule { target, port: None }),
@@ -207,7 +207,7 @@ fn rule(entry: &str) -> Option<Rule> {
     rule(Bypass::Domain { suffix, apex }, port)
 }
 
-/// An IPv4-mapped network as the IPv4 network it maps, which IPv4 targets fall in.
+/// Turns an IPv4-mapped network into the IPv4 network it maps, which IPv4 targets fall in.
 fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
     let ipnet::IpNet::V6(v6) = network else {
         return network;

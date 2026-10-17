@@ -1,4 +1,4 @@
-//! The shared measurement vectors in `api/`.
+//! Checks the shared measurement vectors in `api/`.
 
 use graphite_meter_client::{
     format,
@@ -28,7 +28,7 @@ fn id(text: &str) -> ServerId {
     ServerId::parse(text).unwrap()
 }
 
-/// Receivers named in a case, numbered in order of appearance.
+/// Numbers the receivers named in a case in order of appearance.
 #[derive(Default)]
 struct Receivers(Vec<String>);
 
@@ -72,13 +72,13 @@ fn reading<'a>(readings: &'a mut Vec<Reading>, server: &str) -> &'a mut Reading 
         .unwrap()
 }
 
-/// A vector's headline as mean and peak.
+/// Reads a vector's headline as mean and peak.
 fn expected(value: &Value) -> Option<Rate> {
     let rate = |field: &str| value[field].as_f64();
     Some(Rate { mean: rate("bytesPerSec")?, peak: rate("peakBytesPerSec")? })
 }
 
-/// A vector's window as its bounds in milliseconds and its rates.
+/// Reads a vector's window as its bounds in milliseconds and its rates.
 fn expected_window(value: &Value) -> Option<(u64, u64, Option<f64>, Option<f64>)> {
     let ms = |field: &str| value[field].as_u64();
     Some((

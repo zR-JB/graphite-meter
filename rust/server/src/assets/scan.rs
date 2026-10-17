@@ -1,18 +1,18 @@
-//! The browser build's files as the server embeds them: safe names, regular files, known types and a checked index.
+//! Scans the browser build's files for embedding. It needs safe names, regular files, known types and a checked index.
 
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
 
-/// A file to embed.
+/// Holds a file to embed.
 pub struct File {
     pub name: String,
     pub content_type: &'static str,
     pub bytes: Vec<u8>,
 }
 
-/// The files under `root` by name; unreviewed builds omit the browser's notices, reviewed ones serve the report's.
+/// Lists `root`'s files by name. Unreviewed builds omit the browser's notices, reviewed ones serve the report's.
 pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     let mut paths = Vec::new();
     collect(root, "", &mut paths)?;
@@ -40,7 +40,7 @@ pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     Ok(files)
 }
 
-/// The regular files below `directory` as names relative to the root; a symlink or special file is refused.
+/// Gathers the regular files below `directory` as names relative to the root. A symlink or special file is refused.
 fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
     for entry in fs::read_dir(directory).map_err(failed(directory))? {
         let entry = entry.map_err(failed(directory))?;
@@ -65,7 +65,7 @@ fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -
     Ok(())
 }
 
-/// One `</head>`, at most one terminated inline script and style for the policy hashes, and no server-owned meta tags.
+/// Needs one `</head>`, at most one closed inline script and style for the policy hashes and no server-owned meta tags.
 fn check_index(bytes: &[u8]) -> Result<(), String> {
     let html = std::str::from_utf8(bytes).map_err(|_| "index.html is not UTF-8")?;
     if html.matches("</head>").count() != 1 {

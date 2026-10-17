@@ -1,4 +1,4 @@
-//! Who a request comes from: socket or trusted-proxy address, sign-in, and the client keys limits and uploads use.
+//! Names a request's client by socket or trusted-proxy address and sign-in, and the client keys limits and uploads use.
 
 use crate::auth::{AuthLease, Holder, Principal};
 use crate::log::{Level, RateLimited};
@@ -10,19 +10,19 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 /// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
 static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests", module_path!());
 
-/// A client's address and where it was read.
+/// Pairs a client's address with where it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Address {
-    /// The socket peer, which is no trusted proxy.
+    /// The socket peer is no trusted proxy.
     Socket(IpAddr),
-    /// The single `X-Real-IP` a trusted proxy sent.
+    /// A trusted proxy sent this single `X-Real-IP`.
     Forwarded(IpAddr),
-    /// A trusted proxy's request naming no single client; the address is the proxy's.
+    /// A trusted proxy's request named no single client, so the address is the proxy's.
     Ambiguous(IpAddr),
 }
 
 impl Address {
-    /// A trusted peer's client is its one `X-Real-IP` (see `forwarded_client`); else the peer.
+    /// A trusted peer's client is its one `X-Real-IP` (see `forwarded_client`). Any other peer is the client itself.
     pub fn resolve(socket: IpAddr, headers: &HeaderMap, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
         if !is_trusted(socket, trusted) {
@@ -46,7 +46,7 @@ impl Address {
         }
     }
 
-    /// Where a usable address was read; `None` when it is ambiguous.
+    /// Tells where a usable address was read, or `None` when it is ambiguous.
     pub fn source(self) -> Option<ClientIpSource> {
         match self {
             Self::Socket(_) => Some(ClientIpSource::Socket),
@@ -56,9 +56,9 @@ impl Address {
     }
 }
 
-/// A trusted proxy's single `X-Real-IP`. `X-Forwarded-For`, when sent, must end in that address: a proxy appends the
-/// peer it saw, so a different last hop means the `X-Real-IP` came from further out, such as a client whose own header
-/// the proxy passed on. `Forwarded` is ignored: no common proxy writes it, and some pass a client's on.
+/// Reads a trusted proxy's single `X-Real-IP`. `X-Forwarded-For`, when sent, must end in that address, as a proxy
+/// appends the peer it saw. A different last hop means the `X-Real-IP` came from further out, such as a client whose
+/// own header the proxy passed on. `Forwarded` is ignored, as no common proxy writes it and some pass a client's on.
 fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
     let mut real = headers.get_all(crate::headers::X_REAL_IP).iter();
     let (Some(value), None) = (real.next(), real.next()) else {
@@ -80,7 +80,7 @@ fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
     Ok(client)
 }
 
-/// An `X-Forwarded-For` entry, which some proxies write with a port.
+/// Parses an `X-Forwarded-For` entry, which some proxies write with a port.
 fn hop(text: &str) -> Option<IpAddr> {
     let ip = text
         .parse::<IpAddr>()
@@ -88,7 +88,7 @@ fn hop(text: &str) -> Option<IpAddr> {
     ip.ok().map(|ip| ip.to_canonical())
 }
 
-/// A field present once with one comma-free value.
+/// Reads a field that is present once with one comma-free value.
 pub(crate) fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
@@ -99,7 +99,7 @@ fn is_trusted(ip: IpAddr, trusted: &[IpNet]) -> bool {
     trusted.iter().any(|prefix| prefix.contains(&ip))
 }
 
-/// One request's client: its address and, when signed in, its lease.
+/// A peer is one request's client, with its address and, when signed in, its lease.
 #[derive(Debug, Clone)]
 pub struct Peer {
     address: Address,
@@ -123,13 +123,13 @@ impl Peer {
         self.auth.as_ref()
     }
 
-    /// Whether a trusted proxy says the client connected over TLS; Traefik names a WebSocket upgrade's TLS `wss`.
+    /// Tells whether a trusted proxy says the client connected over TLS. Traefik names a WebSocket upgrade's TLS `wss`.
     pub fn forwarded_tls(&self, headers: &HeaderMap) -> bool {
         let proto = single(headers, &crate::headers::X_FORWARDED_PROTO);
         !matches!(self.address, Address::Socket(_)) && matches!(proto, Some("https" | "wss"))
     }
 
-    /// The identity limits charge and uploads belong to: sign-in, else address; `None` for ambiguous proxy evidence.
+    /// Limits charge, and uploads belong to, the sign-in or else the address. Ambiguous proxy evidence gives `None`.
     pub fn keys(&self) -> Option<ClientKeys> {
         match (&self.auth, self.address) {
             (Some(auth), _) => Some(auth.keys()),
@@ -139,7 +139,7 @@ impl Peer {
     }
 }
 
-/// One key a client's share is counted under.
+/// A client's share is counted under one key of this kind.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ClientKey {
     V4(Ipv4Addr),
@@ -148,15 +148,15 @@ pub enum ClientKey {
     Principal(Principal),
 }
 
-/// A client's keys, narrowest first; each holds twice the share of the one before it.
+/// Lists a client's keys, narrowest first. Each holds twice the share of the one before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientKeys {
-    /// No keys, charging only totals: the connections of a trusted proxy.
+    /// A trusted proxy's connections carry no keys and charge only totals.
     Exempt,
     V4(Ipv4Addr),
-    /// An IPv6 client: its /64, then the /56 and /48 holding it.
+    /// An IPv6 client keys its /64, then the /56 and /48 holding it.
     V6(Ipv6Addr),
-    /// A login or grant, then the principal it belongs to.
+    /// A login or grant comes first, then the principal it belongs to.
     Auth(Holder, Principal),
 }
 
@@ -168,13 +168,13 @@ impl ClientKeys {
         }
     }
 
-    /// The keys a connection counts under: its socket address, or none for a trusted proxy.
+    /// Keys a connection by its socket address, or by nothing for a trusted proxy.
     pub fn connection(socket: IpAddr, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
         if is_trusted(socket, trusted) { Self::Exempt } else { Self::address(socket) }
     }
 
-    /// The key an owner is compared by: the address, IPv6 /64, login or grant.
+    /// Returns the key an owner is compared by, which is the address, IPv6 /64, login or grant.
     pub fn narrowest(&self) -> Option<ClientKey> {
         self.iter().next()
     }
@@ -234,8 +234,8 @@ mod tests {
         ] {
             assert_eq!(resolve("10.1.2.3", pairs), proxy, "{pairs:?}");
         }
-        // Traefik, Caddy and nginx's $proxy_add_x_forwarded_for append the peer they saw: the same address. A client's
-        // own Forwarded passes some proxies untouched, so it never counts.
+        // Traefik, Caddy and nginx's $proxy_add_x_forwarded_for append the peer they saw, which is the same address. A
+        // client's own Forwarded passes some proxies untouched, so it never counts.
         for pairs in [
             &[real, ("x-forwarded-for", "")][..],
             &[real, ("x-forwarded-for", "192.0.2.1, 2001:db8::1")],

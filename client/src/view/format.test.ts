@@ -90,7 +90,7 @@ test("a prefix is promoted only from 1.2× its step, as the terminal clients jud
   // A page that sets a tier reads every rate in it, zero included.
   expect(fmtRate(0, { base: "base10", kind: "bits", tier: 2 })).toBe("0.00 Mbit/s");
   expect(fmtRate(gigabit(1.1), { base: "base10", kind: "bits" })).toBe("1100 Mbit/s");
-  // The terminal clients judge the tier before rounding; the browser reads the same.
+  // The terminal clients judge the tier before rounding. The browser reads the same.
   expect([gigabit(1.1996), gigabit(1.2)].map((rate) => fmtRate(rate, BITS))).toEqual(["1200 Mbit/s", "1.20 Gbit/s"]);
 });
 

@@ -1,5 +1,5 @@
-// − value +: the value rolls as it changes and takes typed text like a spin button; the owner decides whether a value
-// applies. A held key repeats its step.
+// The stepper reads − value +. The value rolls as it changes and takes typed text like a spin button. The owner
+// decides whether a value applies. A held key repeats its step.
 import { computed, onCleanup } from "../../lib/signal";
 import { Roll } from "../kit/roll";
 import { stepOnGrid, typedValue, type Direction } from "./model";
@@ -15,21 +15,21 @@ const KEYS: Record<string, [Direction, number]> = {
 };
 
 export function Stepper(props: {
-  /** The field's name, which its keys' names start with: "Warmup time". */
+  /** The field's name, such as "Warmup time", which its keys' names start with. */
   label: () => string;
   value: () => number;
   min: number;
   max: () => number;
-  /** The step size from `value` in `direction`. */
+  /** Gives the step size from `value` in `direction`. */
   step(value: number, direction: Direction): number;
   format(value: number): string;
   parse(text: string): number | null;
-  /** The spoken value's unit in `value`'s: 1000 for milliseconds read as seconds. */
+  /** Divides `value` into the spoken unit, so 1000 reads milliseconds as seconds. */
   unit?: number;
-  /** A few digits: the field keeps 3ch and phones offer digits. */
+  /** The value is a few digits, so the field keeps 3ch and phones offer digits. */
   count?: boolean;
   disabled: () => boolean;
-  /** Applies a value; false when it is refused. */
+  /** Applies a value, or returns false when it is refused. */
   onChange(value: number): boolean;
 }): Node {
   const unit = props.unit ?? 1;
@@ -37,7 +37,7 @@ export function Stepper(props: {
   // Handlers run outside any effect, so their reads subscribe to nothing.
   const clamp = (value: number) => Math.min(props.max(), Math.max(props.min, value));
   let hold = 0;
-  /** A touch that has not yet stepped: it steps as it lifts, unless the browser took it for a scroll. */
+  /** A touch that has not yet stepped steps as it lifts, unless the browser took it for a scroll. */
   let tap = false;
   const release = () => {
     clearTimeout(hold);
@@ -45,29 +45,29 @@ export function Stepper(props: {
     tap = false;
   };
   onCleanup(release);
-  /** The value `times` steps from `from`; a limit holds it in place. */
+  /** Steps `times` times from `from`. A limit holds the value in place. */
   const stepped = (from: number, direction: Direction, times = 1) => {
     let next = from;
     for (let i = 0; i < times; i++) next = clamp(stepOnGrid(next, props.step(next, direction), direction));
     return next;
   };
   let field!: HTMLInputElement;
-  /** What a step starts from: a typed draft, 9 typed over 10 stepping up to 10, else the value; text that reads as
-      no value steps the value as it was. */
+  /** Gives what a step starts from, a typed draft (9 typed over 10 steps up to 10) or else the value. Text that reads
+      as no value steps the value as it was. */
   const origin = () => {
     const current = props.value();
     if (field.value === text.peek()) return current;
     const { min, format, parse } = props;
     return typedValue(field.value, current, { min, max: props.max(), format, parse });
   };
-  /** Applies `next` and shows what holds, which a typed draft gives way to; whether it applied. */
+  /** Applies `next` and shows what holds, which a typed draft gives way to. Returns whether it applied. */
   const apply = (next: number) => {
     const current = props.value();
     const applied = next === current || props.onChange(next);
     field.value = props.format(applied ? next : current);
     return applied;
   };
-  /** Whether the value after `times` steps, from a typed draft or the value, applied. */
+  /** Applies the value `times` steps from a typed draft or the value, and tells whether it applied. */
   const nudge = (direction: Direction, times = 1) => apply(stepped(origin(), direction, times));
   const atLimit = (direction: Direction) => (direction > 0 ? props.value() >= props.max() : props.value() <= props.min);
 
@@ -99,7 +99,7 @@ export function Stepper(props: {
       onpointercancel={release}
       onlostpointercapture={release}
       oncontextmenu={(event) => event.preventDefault()}
-      // A keyboard's or assistive activation arrives as a click without a pointer; a pointer's press already stepped.
+      // A keyboard's or assistive activation arrives as a click without a pointer. A pointer's press already stepped.
       onclick={(event) => {
         if (event.detail === 0) nudge(direction);
       }}
@@ -138,7 +138,7 @@ export function Stepper(props: {
           }}
           onkeydown={(event) => {
             const input = event.currentTarget;
-            // Escape drops typed text first and keeps the sheet open; the next one closes it.
+            // Escape drops typed text first and keeps the sheet open. The next one closes it.
             if (event.key === "Escape") {
               if (input.value === text.peek()) return;
               input.value = text.peek();

@@ -1,6 +1,6 @@
-//! Error codes: HTTP/3 (RFC 9114 §8.1), QPACK (RFC 9204 §6), HTTP datagrams and WebTransport.
+//! Defines the error codes of HTTP/3 (RFC 9114 §8.1), QPACK (RFC 9204 §6), HTTP datagrams and WebTransport.
 
-/// An application error code carried by RESET_STREAM, STOP_SENDING or CONNECTION_CLOSE; always a varint.
+/// An application error code travels in RESET_STREAM, STOP_SENDING or CONNECTION_CLOSE and is always a varint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Code(pub(crate) u64);
 
@@ -24,7 +24,7 @@ impl Code {
     pub const H3_DATAGRAM_ERROR: Self = Self(0x33);
     pub const WT_BUFFERED_STREAM_REJECTED: Self = Self(0x3994bd84);
     pub const WT_SESSION_GONE: Self = Self(0x170d7b68);
-    /// WebTransport application code 0, which a cancelled lane resets with.
+    /// A cancelled lane resets with this, WebTransport application code 0.
     pub const WT_CANCELLED: Self = Self(0x52e4a40fa8db);
 }
 

@@ -1,5 +1,5 @@
-// About & legal: the project's license and warranty, and every third-party component the server ships with where it
-// comes from. The notices load on first open and their rows are kept across closes.
+// About & legal shows the project's license and warranty, and every third-party component the server ships with
+// where it comes from. The notices load on first open and their rows are kept across closes.
 import "./legal.css";
 import { Show } from "../../lib/dom";
 import { effect, signal, untrack, type Read } from "../../lib/signal";
@@ -13,8 +13,8 @@ const ECOSYSTEM: Record<string, string> = {
   font: "Fonts",
 };
 
-/** A location as people know it: a repository or crate by its first two path parts, any other page by its host and
-    path. Revisions, compare ranges and versions stay in the link. */
+/** Names a location as people know it, a repository or crate by its first two path parts and any other page by its
+    host and path. Revisions, compare ranges and versions stay in the link. */
 function place(url: string): string {
   const { host, pathname } = new URL(url, document.baseURI);
   const parts = pathname.split("/").filter(Boolean);
@@ -29,8 +29,8 @@ const Out = (props: { href: string; text: string; name: string }) => (
   </a>
 );
 
-// Every component reads one way: where it comes from (a fork's upstream), then, when modified, the shipped copy and
-// what changed.
+// Every component reads one way. It shows where it comes from (a fork's upstream), then, when modified, the shipped
+// copy and what changed.
 function Component({ component }: { component: LegalComponent }): Node {
   const url = (label: string) => component.links.find((link) => link.label === label)?.url;
   const [source, upstream, changes] = [url("Source"), url("Upstream"), url("Changes")];

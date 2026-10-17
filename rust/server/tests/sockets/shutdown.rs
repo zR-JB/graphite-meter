@@ -1,5 +1,5 @@
-//! Every listener at once: a stop closes them all, ends the running work of each transport with its shutdown ending,
-//! and the server returns once their connections drained.
+//! Tests every listener at once. A stop closes them all, ends the running work of each transport with its shutdown
+//! ending, and the server returns once their connections drained.
 
 use super::{
     http3::{H3, pass, read, transport},
@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{client_async, tungstenite::Message};
 
-/// The reason a stream's reset carried, after the bytes before it.
+/// Reads the reason a stream's reset carried, after the bytes before it.
 async fn reset(mut body: h2::RecvStream) -> Option<h2::Reason> {
     while let Some(chunk) = body.data().await {
         match chunk {

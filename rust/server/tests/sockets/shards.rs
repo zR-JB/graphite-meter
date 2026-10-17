@@ -1,5 +1,5 @@
-//! The Linux endpoint set: HTTP/3 on half of the runtime threads, connections that follow a client whose address
-//! changes, and limits that stay server-wide.
+//! Tests the Linux endpoint set, with HTTP/3 on half of the runtime threads, connections that follow a client whose
+//! address changes, and limits that stay server-wide.
 #![cfg(target_os = "linux")]
 
 use super::{

@@ -12,7 +12,7 @@ afterEach(() => {
   globalThis.requestAnimationFrame = saved;
 });
 
-/** Runs the display's frames at `hz` for `count` frames; the times `draw` ran. */
+/** Runs the display's frames at `hz` for `count` frames and returns the times `draw` ran. */
 function display(hz: number, count: number): number[] {
   const drawn: number[] = [];
   const [, dispose] = scope(() => painter((now) => (drawn.push(Math.round(now)), true))());

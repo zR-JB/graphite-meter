@@ -17,7 +17,7 @@ fn golden(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
-/// `document` as JSON with the member at `pointer` set to `value`, or removed for `None`.
+/// Encodes `document` as JSON with the member at `pointer` set to `value`, or removed for `None`.
 fn edited(document: impl Serialize, pointer: &str, value: Option<Value>) -> Vec<u8> {
     let mut document = serde_json::to_value(document).unwrap();
     let (parent, name) = pointer.rsplit_once('/').unwrap();
@@ -49,7 +49,7 @@ fn latency(base_url: &str, transport: LatencyTransport) -> LatencyTarget {
     LatencyTarget { base_url: BaseUrl::parse(base_url).unwrap(), transport }
 }
 
-/// The preflight `preflight.golden.json` describes.
+/// Builds the preflight `preflight.golden.json` describes.
 fn preflight() -> Preflight {
     let tls = "https://speed.example:7249";
     Preflight {
@@ -75,7 +75,7 @@ fn preflight() -> Preflight {
     }
 }
 
-/// The probe `probe.golden.json` describes.
+/// Builds the probe `probe.golden.json` describes.
 fn probe() -> Probe {
     Probe {
         client_ip: "198.51.100.4".into(),

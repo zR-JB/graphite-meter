@@ -1,4 +1,4 @@
-//! The WebSocket bus: PONGs and the close codes of its endings.
+//! Tests the WebSocket bus, its PONGs and the close codes of its endings.
 
 use super::*;
 use futures_util::{SinkExt, StreamExt};
@@ -24,7 +24,7 @@ async fn ping(socket: &mut WebSocketStream<TcpStream>, message: Message) -> u32 
     Pong::decode(pong.to_text().unwrap().as_bytes()).unwrap().id
 }
 
-/// The close code and reason the server ends the bus with.
+/// Reads the close code and reason the server ends the bus with.
 async fn closed(socket: &mut WebSocketStream<TcpStream>) -> (u16, String) {
     match socket.next().await {
         Some(Ok(Message::Close(Some(frame)))) => (frame.code.into(), frame.reason.to_string()),
@@ -49,7 +49,7 @@ async fn a_quiet_bus_closes_idle_within_the_contract_bound() {
     let started = Instant::now();
     assert_eq!(closed(&mut socket).await, (4001, "idle".into()));
     let elapsed = started.elapsed();
-    // Paused time may run ahead while the close frame is in flight; the contract allows 30–45 s.
+    // Paused time may run ahead while the close frame is in flight. The contract allows 30–45 s.
     assert!(elapsed > Duration::from_secs(29) && elapsed <= Duration::from_secs(45), "{elapsed:?}");
 }
 

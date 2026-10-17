@@ -1,4 +1,4 @@
-/* The element defaults every component starts from: a reset, reduced motion, scrollbars, focus, links and fields. */
+/* Every component starts from these element defaults, a reset, reduced motion, scrollbars, focus, links and fields. */
 @layer reset {
   *,
   ::before,
@@ -82,12 +82,12 @@
   html,
   body {
     height: 100%;
-    /* The center workspace scrolls; browser chrome changes resize the shell. */
+    /* The center workspace scrolls. Browser chrome changes resize the shell. */
     overflow: clip;
     overscroll-behavior: none;
   }
-  /* One thin scrollbar for every scroll area. Chromium draws step buttons for the
-     standard properties on Linux, so engines with the pseudo-elements use those. */
+  /* Every scroll area gets one thin scrollbar. Chromium draws step buttons for the standard properties on Linux, so
+     engines with the pseudo-elements use those. */
   @supports not selector(::-webkit-scrollbar) {
     :root {
       scrollbar-color: var(--border-strong) transparent;
@@ -96,7 +96,7 @@
       scrollbar-width: thin;
     }
   }
-  /* A finger keeps the platform's overlay bars; a styled bar would take 10 px of every touch screen's width. */
+  /* A finger keeps the platform's overlay bars. A styled bar would take 10 px of every touch screen's width. */
   @media (pointer: fine) {
     ::-webkit-scrollbar {
       width: 10px;
@@ -263,7 +263,7 @@
   ::selection {
     background: color-mix(in oklab, var(--brand) 32%, transparent);
   }
-  /* An explained word brightens as it is read; a component's own transition, if it has one, wins. */
+  /* An explained word brightens as it is read. A component's own transition, if it has one, wins. */
   @media (hover: hover) {
     [data-tip] {
       transition:

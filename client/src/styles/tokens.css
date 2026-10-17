@@ -1,5 +1,5 @@
-/* The design tokens. Every color is one light-dark() pair, so a theme switch changes only
-   color-scheme. The one copy outside this file: the canvas in index.html's theme-color metas. */
+/* The design tokens. Every color is one light-dark() pair, so a theme switch changes only color-scheme. The one copy
+   outside this file is the canvas in index.html's theme-color metas. */
 @layer reset, tokens, base, primitives, components, utilities, overrides;
 
 /* Unmodified upstream IBM Plex subsets, self-hosted so the meter renders offline. */
@@ -75,7 +75,7 @@
     U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
-/* How far the dial's result sweep has run on an arc, 0 to 1; at rest every arc shows whole. */
+/* The dial's result sweep has run this far on an arc, 0 to 1. At rest every arc shows whole. */
 @property --sweep {
   syntax: "<number>";
   inherits: false;
@@ -87,20 +87,20 @@
   inherits: false;
   initial-value: 0;
 }
-/* The running stage's hue lighting the console; a typed color, so a stage change glides between hues. */
+/* The running stage's hue lights the console. It is a typed color, so a stage change glides between hues. */
 @property --ambient {
   syntax: "<color>";
   inherits: true;
   initial-value: transparent;
 }
-/* How much of its hue a stage area's wash carries; a typed percentage, so it transitions. */
+/* A stage area's wash carries this much of its hue. It is a typed percentage, so it transitions. */
 @property --wash {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 0%;
 }
-/* Values a parent hands to the one child that reads them (`inherit` there); not inherited further, so a resize
-   or a sheet drag restyles that child rather than everything inside it. */
+/* A parent hands these values to the one child that reads them (`inherit` there). They are not inherited further, so
+   a resize or a sheet drag restyles that child rather than everything inside it. */
 @property --sheet-w {
   syntax: "<length>";
   inherits: false;
@@ -131,15 +131,15 @@
     --statusbar-h: 28px;
 
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-    /* The same curve cut where 98 % of its change is done, 54 % of the way: a slow fade in a tint or a hairline
+    /* The same curve cut where 98 % of its change is done, 54 % of the way. A slow fade in a tint or a hairline
        keeps its look in 0.54 of its time, without the frames that change nothing. */
     --ease-out-head: cubic-bezier(0.215, 0.743, 0.41, 0.945);
-    /* What arrives overshoots its place a little and settles; the instrument's readings never overshoot. */
+    /* What arrives overshoots its place a little and settles. The instrument's readings never overshoot. */
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-settle: cubic-bezier(0.22, 1.2, 0.36, 1);
     --dur-hover: 100ms;
     --dur-handoff-in: 150ms;
-    /* A stage event travels as one wave: chip, dial, lanes, card, a beat apart. */
+    /* A stage event travels as one wave through chip, dial, lanes and card, a beat apart. */
     --dur-stage: 380ms;
     --beat: 40ms;
     --dur-slide: 150ms;
@@ -168,7 +168,7 @@
     /* One device pixel. */
     --hairline: 1px;
 
-    /* 10 px is the floor for any text; only headings scale with the viewport. */
+    /* 10 px is the floor for any text. Only headings scale with the viewport. */
     --type-2xs: 10px;
     --type-xs: 11px;
     --type-sm: 12px;
@@ -199,7 +199,7 @@
     --row-h: 42px;
     --kv-label: 6.75rem;
     --panel-pad: var(--space-4);
-    /* The console's side gutter: the bars' text and the panels' edges share it. */
+    /* The bars' text and the panels' edges share the console's side gutter. */
     --gutter: var(--space-5);
     --row-inset: var(--space-3);
     --check: 18px;
@@ -212,7 +212,7 @@
     --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.205 0.009 258));
     --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
     --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
-    /* What floats over the instrument. Opaque: a blur costs every frame on a slow GPU. */
+    /* The surface for what floats over the instrument, opaque because a blur costs every frame on a slow GPU. */
     --sheet: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
 
     --border-subtle: light-dark(oklch(0.3 0.02 255 / 0.08), oklch(0.92 0.02 255 / 0.07));
@@ -224,12 +224,12 @@
     --text-soft: light-dark(oklch(0.5 0.012 258), oklch(0.66 0.011 258));
     --text-inverse: light-dark(oklch(0.995 0 0), oklch(0.17 0.008 258));
 
-    /* Graphite: controls and selection are ink, so a hue on screen always names a stage or a state. */
+    /* Graphite makes controls and selection ink, so a hue on screen always names a stage or a state. */
     --brand: light-dark(oklch(0.26 0.012 258), oklch(0.93 0.005 258));
     --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
     --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
 
-    /* Four hue families a quarter turn apart; latency and bidirectional also part in lightness. */
+    /* Four hue families sit a quarter turn apart. Latency and bidirectional also part in lightness. */
     --phase-warmup: light-dark(oklch(0.52 0.012 258), oklch(0.66 0.012 258));
     --phase-latency: light-dark(oklch(0.6 0.105 182), oklch(0.82 0.105 178));
     --phase-download: light-dark(oklch(0.5 0.18 263), oklch(0.72 0.145 262));
@@ -244,14 +244,14 @@
     --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
     --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
     --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);
-    /* The edge that identifies a field or check: 3:1 on every surface, no brighter. */
+    /* The edge that identifies a field or check holds 3:1 on every surface, no brighter. */
     --field-edge: light-dark(oklch(0.48 0.014 255 / 0.7), oklch(0.7 0.014 255 / 0.62));
     --check-edge: 1.5px solid var(--field-edge);
     --track: color-mix(in oklab, var(--text) 8%, transparent);
     --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
     --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
-    /* Only what floats casts a shadow; panels and keys are flat fills with a hairline. */
+    /* Only what floats casts a shadow. Panels and keys are flat fills with a hairline. */
     --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
     /* The color of every shadow. */
     --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
@@ -304,8 +304,8 @@
   }
 }
 
-/* Unlayered, so the tone an element names beats every recipe's default. A tone's variants come from its one
-   hue: the line, a wash, an edge and ink for small text on the wash. */
+/* This stays unlayered, so the tone an element names beats every recipe's default. A tone's one hue yields its
+   variants, the line, a wash, an edge and ink for small text on the wash. */
 [data-tone] {
   --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
   --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);

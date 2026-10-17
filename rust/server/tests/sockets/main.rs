@@ -1,5 +1,5 @@
-//! The running server over real sockets: HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection bounds,
-//! delayed links, WebSocket buses, WebTransport sessions and TLS.
+//! Tests the running server over real sockets, with HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection
+//! bounds, delayed links, WebSocket buses, WebTransport sessions and TLS.
 
 mod auth;
 mod connection;
@@ -30,7 +30,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-/// A download no test waits to finish.
+/// No test waits for this download to finish.
 const ENDLESS: &str = "/download?bytes=68719476736";
 
 /// Moves paused time on by `duration` while real network waits keep the running clock.
@@ -53,19 +53,19 @@ fn config(env: &[(&str, &str)]) -> Config {
     }
 }
 
-/// Pinned runtimes beside a multi-thread test runtime, else none.
+/// Makes pinned runtimes beside a multi-thread test runtime, else none.
 fn pool() -> Pool {
     Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline())
 }
 
-/// A server serving on local ports until stopped.
+/// A server serves on local ports until stopped.
 struct Running {
     address: SocketAddr,
     tls: Option<SocketAddr>,
     h2: Option<SocketAddr>,
     quic: Option<SocketAddr>,
     companion: Option<SocketAddr>,
-    /// The endpoints sharing the HTTP/3 port.
+    /// This many endpoints share the HTTP/3 port.
     endpoints: usize,
     budget: Budget,
     app: Arc<App>,
@@ -73,7 +73,7 @@ struct Running {
     task: JoinHandle<Result<(), String>>,
 }
 
-/// Binds a server; an HTTP/3 port that another test took between its TCP and UDP binds is tried again.
+/// Binds a server. An HTTP/3 port that another test took between its TCP and UDP binds is tried again.
 async fn bind(env: &[(&str, &str)]) -> Server {
     for _ in 0..8 {
         match Server::bind(config(env), pool()).await {
@@ -109,7 +109,7 @@ async fn start(env: &[(&str, &str)]) -> Running {
 }
 
 impl Running {
-    /// Starts the shutdown; the task ends once connections drained.
+    /// Starts the shutdown. The task ends once connections drained.
     fn stop(self) -> JoinHandle<Result<(), String>> {
         self.stop.send(()).unwrap();
         self.task
@@ -119,7 +119,7 @@ impl Running {
         Client::new(TcpStream::connect(self.address).await.unwrap())
     }
 
-    /// One request on a connection of its own that the server closes after answering.
+    /// Sends one request on a connection of its own that the server closes after answering.
     async fn get(&self, path: &str) -> Answer {
         let mut client = self.connect().await;
         client
@@ -128,7 +128,7 @@ impl Running {
         client.answer().await.unwrap()
     }
 
-    /// The handlers in use, as `/probe` reports them.
+    /// Reads the handlers in use, as `/probe` reports them.
     async fn active(&self) -> u64 {
         let probe: serde_json::Value = serde_json::from_slice(&self.get("/probe").await.body).unwrap();
         probe["load"]["active"].as_u64().unwrap()
@@ -152,7 +152,7 @@ impl Running {
     }
 }
 
-/// An answer's status line, header fields with lower-case names, and body.
+/// An answer holds its status line, header fields with lower-case names, and body.
 #[derive(Debug)]
 struct Answer {
     status: u16,
@@ -169,7 +169,7 @@ impl Answer {
     }
 }
 
-/// An HTTP/1.1 client over a raw stream.
+/// A client speaks HTTP/1.1 over a raw stream.
 struct Client<S> {
     stream: BufReader<S>,
     /// The next answer has no body, as the answer to HEAD.
@@ -186,7 +186,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         self.stream.get_mut().write_all(bytes.as_bytes()).await.unwrap();
     }
 
-    /// `line` (method and target) with `body`, on this connection.
+    /// Sends `line` (method and target) with `body` on this connection.
     async fn request(&mut self, line: &str, body: &str) -> Answer {
         let length = body.len();
         self.send(&format!("{line} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{body}"))
@@ -194,7 +194,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         self.answer().await.unwrap()
     }
 
-    /// The next answer head; `None` when the connection ends first.
+    /// Reads the next answer head, or `None` when the connection ends first.
     async fn head(&mut self) -> Option<Answer> {
         let mut line = String::new();
         if self.stream.read_line(&mut line).await.ok()? == 0 {
@@ -213,7 +213,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         Some(Answer { status, headers, body: Vec::new() })
     }
 
-    /// The next whole answer; `None` when the connection ends first.
+    /// Reads the next whole answer, or `None` when the connection ends first.
     async fn answer(&mut self) -> Option<Answer> {
         let mut answer = self.head().await?;
         if self.bodiless || matches!(answer.status, 101 | 204) {
@@ -232,7 +232,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         Some(answer)
     }
 
-    /// The next chunk of a chunked body; `None` at its end.
+    /// Reads the next chunk of a chunked body, or `None` at its end.
     async fn chunk(&mut self) -> Option<Vec<u8>> {
         let mut line = String::new();
         self.stream.read_line(&mut line).await.ok()?;

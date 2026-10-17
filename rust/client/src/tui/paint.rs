@@ -1,4 +1,4 @@
-//! Drawing into a frame's buffer, and the regions a pointer can press.
+//! Draws into a frame's buffer and records the regions a pointer can press.
 use super::Target;
 use crate::text::{Color, Line, Profile, Style};
 use graphite_meter_proto::text::safe;
@@ -9,10 +9,10 @@ use ratatui_core::{
 };
 use std::borrow::Cow;
 
-/// The dot of each row and column within a braille cell.
+/// Maps each row and column within a braille cell to its dot.
 const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
-/// A frame being drawn, and where its pressable regions landed, the topmost last.
+/// Draws a frame and records where its pressable regions landed, the topmost last.
 pub struct Canvas<'a> {
     buffer: &'a mut Buffer,
     profile: Profile,
@@ -32,14 +32,14 @@ impl<'a> Canvas<'a> {
         self.profile
     }
 
-    /// Fills `area` with a tile's color from 256 colors on; with fewer the canvas stays flat.
+    /// Fills `area` with a tile's color from 256 colors on. With fewer the canvas stays flat.
     pub fn fill(&mut self, area: Rect, color: Color) {
         if self.profile >= Profile::Ansi256 {
             self.plate(area, Style { bg: Some(color), ..Style::default() });
         }
     }
 
-    /// Paints `area` in `style`'s background in every profile that has color: a key's plate.
+    /// Paints `area` in `style`'s background in every profile that has color, as a key's plate.
     pub fn plate(&mut self, area: Rect, style: Style) {
         let Some(bg) = paint(style.bg, self.profile) else { return };
         for (x, y) in cells(area.intersection(self.buffer.area)) {
@@ -54,7 +54,7 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Writes `line` at `x`, `y` in at most `width` cells, unsafe characters blanked; the column after it.
+    /// Writes `line` at `x`, `y` in at most `width` cells, unsafe characters blanked, and returns the column after it.
     pub fn line(&mut self, x: u16, y: u16, width: u16, line: &Line) -> u16 {
         let area = self.buffer.area;
         if y < area.y || y >= area.bottom() || x >= area.right() {
@@ -76,13 +76,13 @@ impl<'a> Canvas<'a> {
         at
     }
 
-    /// `line` ending at the right edge of the `width` cells from `x`.
+    /// Writes `line` ending at the right edge of the `width` cells from `x`.
     pub fn right(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + width - shown, y, shown, line);
     }
 
-    /// `line` centred in the `width` cells from `x`.
+    /// Writes `line` centred in the `width` cells from `x`.
     pub fn center(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + (width - shown) / 2, y, shown, line);
@@ -109,7 +109,7 @@ impl<'a> Canvas<'a> {
         self.hits.push((area, target));
     }
 
-    /// The backdrop under a sheet: `area` mixed toward `canvas` by `share`, unstyled text taking `soft`.
+    /// Dims the backdrop under a sheet, mixing `area` toward `canvas` by `share`, unstyled text taking `soft`.
     pub fn dim(&mut self, area: Rect, canvas: Color, soft: Color, share: f64) {
         if self.profile != Profile::TrueColor {
             return;
@@ -137,7 +137,7 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// `style` as this profile paints it: a span without a foreground takes the terminal's, bold only when asked.
+    /// Paints `style` as this profile does. A span without a foreground takes the terminal's, bold only when asked.
     fn painted(&self, style: Style) -> ratatui_core::style::Style {
         let mut painted = ratatui_core::style::Style {
             fg: Some(paint(style.fg, self.profile).unwrap_or(Paint::Reset)),
@@ -152,7 +152,7 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// `color` as `profile` writes it; the 16-color profile writes indexed colors 0–15.
+/// Writes `color` as `profile` does. The 16-color profile writes indexed colors 0–15.
 pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     let color = color?;
     let [_, red, green, blue] = color.rgb.to_be_bytes();
@@ -164,13 +164,13 @@ pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     }
 }
 
-/// Every cell of `area`, row by row.
+/// Walks every cell of `area`, row by row.
 fn cells(area: Rect) -> impl Iterator<Item = (u16, u16)> {
     (area.y..area.bottom()).flat_map(move |y| (area.x..area.right()).map(move |x| (x, y)))
 }
 
-/// Braille dots over an area, two across and four down a cell; a cell shows its highest rank's dots in that rank's
-/// first color, so a mark drawn over a trace stays whole.
+/// Lays braille dots over an area, two across and four down a cell. A cell shows its highest rank's dots in that
+/// rank's first color, so a mark drawn over a trace stays whole.
 pub struct Dots {
     area: Rect,
     cells: Vec<(u8, Option<Color>, u8)>,
@@ -184,12 +184,12 @@ impl Dots {
         }
     }
 
-    /// Dots across and down the area.
+    /// Counts the dots across and down the area.
     pub fn size(&self) -> (usize, usize) {
         (usize::from(self.area.width) * 2, usize::from(self.area.height) * 4)
     }
 
-    /// Lights the dot `x` across and `y` down in `color` at `rank`; one off the area is dropped.
+    /// Lights the dot `x` across and `y` down in `color` at `rank`. One off the area is dropped.
     pub fn set(&mut self, x: isize, y: isize, color: Color, rank: u8) {
         let (width, height) = self.size();
         let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else { return };

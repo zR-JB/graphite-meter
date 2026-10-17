@@ -6,7 +6,7 @@ import { openProbeChannel } from "./probes";
 
 useFakeWorkers();
 
-/** A WebSocket bus whose sign-in check answers `ended`; its events are kept in order. */
+/** Opens a WebSocket bus whose sign-in check answers `ended`, and keeps its events in order. */
 function channel(ended: boolean) {
   const events: [keyof ProbeChannelEvents, ...unknown[]][] = [];
   const auth: ServerAuth = {
