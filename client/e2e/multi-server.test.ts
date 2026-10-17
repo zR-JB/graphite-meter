@@ -1,11 +1,10 @@
 import { readHistoryRecord } from "../src/app/history/records";
 import type { ServerMeasurementSummary } from "../src/engine/run/result";
 import {
-  amsterdam,
   baseConfig,
+  catalog,
   countSaves,
   frankfurt,
-  helsinki,
   home,
   open,
   phase,
@@ -13,18 +12,35 @@ import {
   run,
   runButton,
   savedResult,
+  spawnPeer,
 } from "./fleet";
-import { expect, test } from "./webview";
+import type { Server } from "./servers";
+import { expect, test, type Page } from "./webview";
 
 export const combined = {
   ...baseConfig,
   duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: 1000 },
 };
 
+// Four loopback servers at GB/s saturate Firefox's one network thread, which then feeds one connection and starves the
+// rest for a second; on a link of 200 Mbit/s each way, as across the internet, every browser shares evenly.
+const LINK_BYTES_PER_SEC = 25e6;
+
 test("four servers share one run and keep separate receiver windows", async (page) => {
-  const four = [home, frankfurt, amsterdam, helsinki];
-  await open(page, home.url, {
-    servers: four,
+  const peers = await Promise.all(
+    ["Frankfurt", "Amsterdam", "Helsinki"].map((name) => spawnPeer(name, {}, LINK_BYTES_PER_SEC)),
+  );
+  const self = await spawnPeer("Home", catalog(...peers.map(({ server }) => server)), LINK_BYTES_PER_SEC);
+  try {
+    await shareOneRun(page, [{ ...self.server, id: "self" }, ...peers.map(({ server }) => server)]);
+  } finally {
+    for (const server of [self, ...peers]) server.kill();
+  }
+});
+
+async function shareOneRun(page: Page, four: Server[]) {
+  await open(page, four[0]!.url, {
+    servers: four.map(({ id, url }) => ({ id, url })),
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
@@ -57,8 +73,8 @@ test("four servers share one run and keep separate receiver windows", async (pag
     name: "Servers shown in the results",
   });
   await expect(scope).toBeVisible();
-  await scope.fill("server-1");
-  await expect(scope).toHaveValue("server-1");
+  await scope.fill(four[1]!.id);
+  await expect(scope).toHaveValue(four[1]!.id);
   expect(await savedResult(page)).toEqual(saved);
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
@@ -67,9 +83,9 @@ test("four servers share one run and keep separate receiver windows", async (pag
     hasText: "Address",
   });
   await expect(servers).toHaveCount(4);
-  await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
+  await expect(servers.nth(1)).toContainText(new URL(four[1]!.url).host);
   expect(await savedResult(page)).toEqual(saved);
-});
+}
 
 test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
   await page.addInitScript(() => Object.defineProperty(window, "WebTransport", { value: undefined }));
@@ -168,9 +184,13 @@ test("every server's latency is saved; the lens and the dial read the chosen ser
   expect(saved.result.multiServer.latencyFocus).toBe("self");
   for (const server of saved.result.multiServer.servers)
     expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
-  const lens = page.getByRole("combobox", { name: "Servers shown in the results" });
+  const lens = page.getByRole("combobox", {
+    name: "Servers shown in the results",
+  });
   const picker = page.getByRole("combobox", { name: "Show latency to" });
-  const latency = page.getByRole("region", { name: "Latency, jitter and probe timeouts by stage" });
+  const latency = page.getByRole("region", {
+    name: "Latency, jitter and probe timeouts by stage",
+  });
   const figure = (selector: string) =>
     page.evaluate(
       (selector: string) => Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),
