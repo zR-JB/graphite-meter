@@ -4,6 +4,7 @@ import {
   closeSettings,
   frankfurt,
   home,
+  latencyOnly,
   locked,
   open,
   openSettings,
@@ -26,6 +27,7 @@ async function signIn(page: Page) {
 test.chrome("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths", async (page) => {
   await open(page, `${locked.url}/login`, {
     servers: [{ id: "self", url: locked.url }],
+    config: { stages: { ...baseConfig.stages, latency: false } },
   });
   await signIn(page);
   for (const [path, kind, protocol] of [
@@ -112,7 +114,7 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
   try {
     await open(page, `${vault.server.url}/login`, {
       servers: [{ id: "self", url: vault.server.url }],
-      config: { ...baseConfig, stages: { latency: true, download: false, upload: false, bidirectional: false } },
+      config: latencyOnly,
     });
     await signIn(page);
     await ready(page);
@@ -224,7 +226,7 @@ test("an HTTP interface explains a protected HTTPS refusal", async (page) => {
   await expect(feedback(page, "Private")).toContainText("If it requires sign-in, open this interface over HTTPS");
   await expect(settings.getByRole("button", { name: "Retry Private" })).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Sign in/ })).toHaveCount(0);
-  await expect(feedback(page, "Amsterdam")).toContainText("Connection check failed");
+  await expect(feedback(page, "Amsterdam")).toContainText("Could not check the connection");
   await expect(settings.locator('.server-status[data-state="verified"]')).toHaveCount(2, { timeout: 15_000 });
 });
 
@@ -266,9 +268,8 @@ test("a failed approval offers only a new sign-in", async (page) => {
   await open(page, home.url, { servers: [home, locked] });
   await openSettings(page);
   const row = feedback(page, "Private");
-  const signIn = row.getByRole("button", { name: "Sign in to Private" });
-  await signIn.click();
-  await expect(signIn).toHaveText("Sign in again");
+  await row.getByRole("button", { name: "Sign in to Private" }).click();
+  await expect(row.getByRole("button", { name: "Sign in again to Private" })).toHaveText("Sign in again");
   await expect(row).toContainText("The approval's answer was lost on the way. Sign in again.");
   await expect(row.getByRole("link")).toHaveCount(0);
   await expect(row.locator(".approval-code")).toHaveCount(0);
@@ -346,16 +347,14 @@ test.chrome("a protected WebSocket peer approved through the sign-in link joins 
   });
   await openSettings(page);
   const row = feedback(page, "Private");
-  const signInButton = row.getByRole("button", {
-    name: "Sign in to Private",
-  });
+  const signInButton = row.getByRole("button", { name: /^Sign in( again)? to Private$/ });
   await signInButton.click();
   const link = row.getByRole("link", { name: "Open sign-in page" });
-  const cancelled = await link.getAttribute("href");
+  const canceled = await link.getAttribute("href");
   await row.getByRole("button", { name: "Cancel sign-in" }).click();
   await signInButton.click();
   await expect(link).toBeVisible();
-  expect(await link.getAttribute("href")).not.toBe(cancelled);
+  expect(await link.getAttribute("href")).not.toBe(canceled);
   await page.evaluate((origin) => {
     const original = window.fetch.bind(window);
     let outage = true;
@@ -393,7 +392,7 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   });
   await openSettings(page);
   const row = feedback(page, "Private");
-  const signInButton = row.getByRole("button", { name: "Sign in to Private" });
+  const signInButton = row.getByRole("button", { name: /^Sign in( again)? to Private$/ });
   await signInButton.click();
   const approval = await approve(row);
   let startedAt = 0;

@@ -95,7 +95,7 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
   const path = (role: string) => info.locator(`.path[data-role="${role}"] dd`);
-  await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
+  await info.getByRole("combobox", { name: "Server", exact: true }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(path("throughput")).toContainText("Used");
   await expect(path("latency")).toContainText("Used");
@@ -116,7 +116,7 @@ test("the lanes switch servers mid-run and Details inspects another without movi
   await lanes.fill("server-1");
   await expect(lanes).toHaveValue("server-1");
   await page.getByRole("button", { name: "Details" }).click();
-  const inspect = page.locator(".infra").getByRole("combobox", { name: "Inspect server" });
+  const inspect = page.locator(".infra").getByRole("combobox", { name: "Server", exact: true });
   await expect(inspect).toBeEnabled();
   await inspect.fill("self");
   await expect(page.locator(".infra .server-card")).toContainText(home.url);
@@ -125,7 +125,7 @@ test("the lanes switch servers mid-run and Details inspects another without movi
   await expect(lanes).toHaveValue("server-1");
 });
 
-test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
+test("a missed final upload checkpoint is retried, and the lens and the dial read each server's saved latency", async (page) => {
   await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
   // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt's checkpoints may go to any of its origins.
@@ -146,6 +146,7 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, origins);
+  const saves = await countSaves(page);
   const saved = await run(page);
   expect(await page.evaluate(() => (window as any).checkpoints)).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
@@ -158,13 +159,6 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
     participants: ["self", "server-1"],
   });
   expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-});
-
-test("every server's latency is saved; the lens and the dial read the chosen server and keep the record", async (page) => {
-  await open(page, home.url, { servers: [home, frankfurt], config: combined });
-  await ready(page);
-  const saves = await countSaves(page);
-  const saved = await run(page);
   expect(await saves()).toBe(1);
   expect(saved.result.multiServer.latencyFocus).toBe("self");
   for (const server of saved.result.multiServer.servers)

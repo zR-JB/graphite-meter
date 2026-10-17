@@ -1,5 +1,5 @@
 import { upgradeRecord } from "../src/app/history/records";
-import { countSaves, home, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
+import { countSaves, home, latencyOnly, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
@@ -153,7 +153,7 @@ function stored(page: Page) {
   );
 }
 
-const fixturePage = (page: Page) => open(page, `${home.url}/version.json`);
+const fixturePage = (page: Page) => open(page, `${home.url}/version.json`, { config: latencyOnly });
 async function history(page: Page, selected = "") {
   await page.goto(`${home.url}/#/history${selected && `/${selected}`}`);
 }
@@ -452,7 +452,7 @@ test("History refuses other database versions at once and on Retry, and never ch
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible(OPEN_BOUND);
   await page.evaluate(() => (window as any).older.close());
-  // An open cannot be cancelled: read once History's queued upgrade has been refused and left version 1.
+  // An open cannot be canceled: read once History's queued upgrade has been refused and left version 1.
   await expect
     .poll(
       async () => {
@@ -692,12 +692,12 @@ test("closing a linked result far down the list returns to its row", async (page
   // Beside the list, and over it.
   for (const [width, close] of [
     [1280, "Close result"],
-    [700, "Back to results"],
+    [700, "Results"],
   ] as const) {
     await page.setViewportSize({ width, height: 800 });
     await history(page, id(60));
     await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
-    await page.getByRole("button", { name: close }).click();
+    await page.getByRole("button", { name: close, exact: true }).click();
     const row = page.locator(`a[data-history-id="${id(60)}"]`);
     await expect(row).toBeFocused();
     expect(

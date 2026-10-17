@@ -1,9 +1,9 @@
-import { baseConfig, closeSettings, home, open, openSettings, phase, ready, run } from "./fleet";
+import { baseConfig, closeSettings, downloadOnly, home, open, openSettings, phase, ready, run } from "./fleet";
 import { expect, settled, test, type Locator, type Page } from "./webview";
 
 const tip = (page: Page) => page.locator('[role="tooltip"]');
 
-async function centre(locator: Locator) {
+async function center(locator: Locator) {
   return locator.evaluate(async (el: Element) => {
     // A web font that arrives late reflows the top bar, moving the control from under a measured point.
     await document.fonts.ready;
@@ -29,7 +29,7 @@ async function sweep(page: Page, from: Point, to: Point) {
 }
 
 async function tap(page: Page, locator: Locator) {
-  const { x, y } = await centre(locator);
+  const { x, y } = await center(locator);
   await page.touch("start", x, y);
   await page.touch("end");
 }
@@ -37,7 +37,7 @@ async function tap(page: Page, locator: Locator) {
 test("a pause on a control opens its tip while the hand drifts, and leaving closes it", async (page) => {
   await open(page, home.http);
   const settings = page.getByRole("button", { name: "Settings", exact: true });
-  const { x, y } = await centre(settings);
+  const { x, y } = await center(settings);
   // A reading hand never holds still: the tip must open while it drifts a few pixels every step. A busy runner's
   // timers fire late, so the hand drifts for a while rather than a number of steps.
   let opened = false;
@@ -55,7 +55,7 @@ test("a pause on a control opens its tip while the hand drifts, and leaving clos
 
 test("a hand sweeping across tips opens none, even just after one showed, and a rest opens one", async (page) => {
   await open(page, home.http);
-  const icon = (name: string) => centre(page.getByRole("button", { name, exact: true }));
+  const icon = (name: string) => center(page.getByRole("button", { name, exact: true }));
   const history = await icon("History");
   const details = await icon("Details");
   await page.evaluate(() => {
@@ -75,7 +75,7 @@ test("a hand sweeping across tips opens none, even just after one showed, and a 
   expect(await opened()).toEqual([]);
   await moveMouse(page, history.x, history.y);
   await expect(tip(page)).toContainText("History");
-  // Its neighbours need a rest of their own, so sweeping on across them opens neither.
+  // Its neighbors need a rest of their own, so sweeping on across them opens neither.
   await sweep(page, history, right);
   await expect(tip(page)).toHaveCount(0);
   expect((await opened()).length).toBe(1);
@@ -90,27 +90,28 @@ test("explanations on click open only when asked, while a control still names it
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.explanations)).toBe("click");
 
   const fact = page.locator('.results .card[data-tone="latency"] dt[data-tip]');
-  const { x, y } = await centre(fact);
+  const { x, y } = await center(fact);
   await moveMouse(page, x, y);
-  await Bun.sleep(1_000);
+  // A page timer set after the hover fires after any rest timer the hover set.
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 700)));
   await expect(tip(page)).toHaveCount(0);
   await fact.click();
   await expect(tip(page)).toContainText("Stability");
   await fact.click();
   await expect(tip(page)).toHaveCount(0);
 
-  const key = await centre(page.getByRole("button", { name: "Settings", exact: true }));
+  const key = await center(page.getByRole("button", { name: "Settings", exact: true }));
   await moveMouse(page, key.x, key.y);
   await expect(tip(page)).toContainText("Settings");
 });
 
 test.chrome("a stage chip explains itself over its cut label, on a rest and on a long press", async (page) => {
-  await open(page, home.http);
+  await open(page, home.http, { config: downloadOnly });
   await run(page);
   const label = page.locator('.stage-track [data-tone="download"] .chip-label');
   await label.evaluate((node: HTMLElement) => Object.assign(node.style, { flex: "none", maxWidth: "2ch" }));
   await expect.poll(() => label.evaluate((node: HTMLElement) => node.dataset.tip)).toBe("");
-  const { x, y } = await centre(label);
+  const { x, y } = await center(label);
   await moveMouse(page, x, y);
   await expect(tip(page)).toContainText("Complete");
   await moveMouse(page, x, y + 240);
@@ -186,7 +187,7 @@ test.chrome(
     const graph = page.locator(".results .graph");
 
     const before = await stage.evaluate((el: Element) => el.scrollTop);
-    const from = await centre(graph);
+    const from = await center(graph);
     const scrolled = await stage.evaluate((el: Element) => {
       el.addEventListener("scrollend", () => Object.assign(window, { restedAt: el.scrollTop }));
       return el.scrollTop;
@@ -200,7 +201,7 @@ test.chrome(
       .toBeGreaterThan(Math.max(before, scrolled));
     await expect(readout).toHaveCount(0);
 
-    const at = await centre(graph);
+    const at = await center(graph);
     await page.touch("start", at.x - 40, at.y);
     for (let step = 1; step <= 8; step++) await page.touch("move", at.x - 40 + step * 10, at.y);
     await expect(readout).toHaveCount(1);

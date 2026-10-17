@@ -115,6 +115,11 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
     },
     screenshot: async () => Buffer.from((await view.cdp<{ data: string }>("Page.captureScreenshot")).data, "base64"),
     async close() {
+      // A page with a test still running asks before it is left; leaving answers yes.
+      await view.cdp("Page.enable");
+      view.addEventListener("Page.javascriptDialogOpening", () =>
+        view.cdp("Page.handleJavaScriptDialog", { accept: true }).catch(() => {}),
+      );
       await view.navigate("about:blank");
       view.close();
     },

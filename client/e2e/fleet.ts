@@ -61,6 +61,10 @@ export const baseConfig = {
   adaptive: false,
   transferStreams: { mode: "forced", count: 1 },
 };
+/** The shortest tests that save a result, without and with a throughput card. */
+export const latencyOnly = { stages: { latency: true, download: false, upload: false, bidirectional: false } };
+export const downloadOnly = { stages: { latency: false, download: true, upload: false, bidirectional: false } };
+
 export interface Seed {
   servers?: Pick<Server, "id" | "url">[];
   config?: Partial<Record<keyof RunnerConfig, unknown>>;
