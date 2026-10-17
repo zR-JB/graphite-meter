@@ -1,9 +1,9 @@
-// Lists and conditional content for the JSX runtime: rows and branches are built once and kept or moved, never
+// Adds lists and conditional content to the JSX runtime. Rows and branches are built once and kept or moved, never
 // rebuilt for changes that do not concern them.
 import { clear, insert, type Child } from "./jsx-runtime";
 import { computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "./signal";
 
-/** Content that rebuilds only when `when` turns truthy or falsy; the branch reads the current value. */
+/** Content that rebuilds only when `when` turns truthy or falsy. The branch reads the current value. */
 export function Show<T>(props: {
   when: () => T;
   children: (value: Read<NonNullable<T>>) => Child;
@@ -30,7 +30,7 @@ interface Row<T> {
 /** A keyed list. Each row is built once, follows its item through signals, and moves as the order changes. */
 export function For<T>(props: {
   each: () => readonly T[];
-  /** The row's identity. (Not `key`: the JSX transform keeps that name for itself.) */
+  /** The row's identity. It is not `key`, because the JSX transform keeps that name for itself. */
   by: (item: T) => unknown;
   children: (item: Read<T>, index: Read<number>) => Child;
 }): Node {
@@ -53,7 +53,7 @@ export function For<T>(props: {
           const state = { item: signal(item), index: signal(index) };
           const content = document.createDocumentFragment();
           const start = content.appendChild(document.createComment(""));
-          // A row that cannot build shows empty; the list stays whole.
+          // A row that cannot build shows empty, and the list stays whole.
           const [, dispose] = scope(() => {
             try {
               insert(content, props.children(state.item, state.index));

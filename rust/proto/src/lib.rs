@@ -1,6 +1,6 @@
-//! Shared wire contracts: routes, messages, discovery types, codes and their parsers.
+//! Holds the shared wire contracts, from routes and messages to discovery types, codes and their parsers.
 
-/// A fieldless enum listed once: its variants in table order as `ALL`, and an accessor per column of their rows.
+/// Declares a fieldless enum once, with its variants in table order as `ALL` and an accessor per column of their rows.
 #[macro_export]
 macro_rules! table {
     (
@@ -12,10 +12,10 @@ macro_rules! table {
         $vis enum $name { $($(#[$vmeta])* $variant,)+ }
 
         impl $name {
-            /// Every variant, in table order.
+            /// Lists every variant in table order.
             pub const ALL: &[Self] = &[$(Self::$variant),+];
 
-            /// The variant's place in `ALL`: variants are declared in table order without explicit discriminants.
+            /// Gives the variant's place in `ALL`. Variants are declared in table order without explicit discriminants.
             pub const fn index(self) -> usize {
                 self as usize
             }
@@ -26,7 +26,7 @@ macro_rules! table {
 
             $($(#[$cmeta])* pub const fn $column(self) -> $type { self.row().$index })+
 
-            /// The first variant whose `column` equals `value`.
+            /// Finds the first variant whose `column` equals `value`.
             pub fn find_by<V: PartialEq>(column: fn(Self) -> V, value: V) -> Option<Self> {
                 Self::ALL.iter().copied().find(|&variant| column(variant) == value)
             }
@@ -34,7 +34,7 @@ macro_rules! table {
     };
 }
 
-/// A `table!` enum whose row is its wire name, which it serializes as.
+/// Declares a `table!` enum whose row is its wire name, which it serializes as.
 macro_rules! named {
     ($(#[$meta:meta])* pub enum $name:ident { $($variant:ident => $value:expr,)+ }) => {
         table! { $(#[$meta])* pub enum $name { name.0: &'static str, } { $($variant => ($value,),)+ } }

@@ -1,10 +1,10 @@
-// The marks preferences leave on the page: the resolved theme, the browser bar's colour, and how explanations open.
+// Marks the page as preferences say, with the resolved theme, the browser bar's colour, and how explanations open.
 import { computed, effect, signal, type Read } from "../lib/signal";
 import type { PreferenceSignals, Theme } from "./preferences";
 
 export const THEME_CYCLE: Record<Theme, Theme> = { light: "dark", dark: "auto", auto: "light" };
 
-/** Keeps `<html data-theme>`, the theme-color metas and `data-explanations` in step with the preferences; `auto`
+/** Keeps `<html data-theme>`, the theme-color metas and `data-explanations` in step with the preferences, and `auto`
     follows the system live. Returns the resolved theme. */
 export function markDocument(preferences: Pick<PreferenceSignals, "theme" | "explanations">): Read<"light" | "dark"> {
   const query = matchMedia("(prefers-color-scheme: light)");

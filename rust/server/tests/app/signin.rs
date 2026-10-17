@@ -1,5 +1,5 @@
-//! Password sign-in over the app: the page, cookies, refusals and their notices, the attempt budgets, renewal
-//! and the security log's counts.
+//! Tests password sign-in over the app, with the page, cookies, refusals and their notices, the attempt budgets,
+//! renewal and the security log's counts.
 
 use super::{
     auth::{PUBLIC, assert_headers, auth_app, login, public, store, tls},
@@ -21,7 +21,7 @@ fn wrong() -> String {
     right().chars().rev().collect()
 }
 
-/// A password sign-in from `peer` with the form token `csrf`, the cookies `cookies` and further form `fields`.
+/// Posts a password sign-in from `peer` with the form token `csrf`, the cookies `cookies` and further form `fields`.
 async fn post(app: &App, peer: &str, csrf: &str, cookies: &str, fields: &str) -> Response<Body> {
     let request = public("POST", "/auth/password")
         .header("origin", PUBLIC)
@@ -32,7 +32,7 @@ async fn post(app: &App, peer: &str, csrf: &str, cookies: &str, fields: &str) ->
     send_from(app, Endpoint::H1Tls, peer, request).await
 }
 
-/// A sign-in from `peer` whose form token its login cookie holds.
+/// Posts a sign-in from `peer` whose form token its login cookie holds.
 async fn sign_in(app: &App, peer: &str, password: &str) -> Response<Body> {
     post(app, peer, NONCE, &format!("__Host-gm_login={NONCE}"), &format!("password={password}")).await
 }

@@ -1,5 +1,5 @@
-//! Revocation over real sockets: sign-out closes a WebSocket bus with 1008 and a WebTransport session with 3, and a
-//! CONNECT presents its grant before the upgrade and an upload's owner before its feed.
+//! Tests revocation over real sockets. Sign-out closes a WebSocket bus with 1008 and a WebTransport session with 3, and
+//! a CONNECT presents its grant before the upgrade and an upload's owner before its feed.
 
 use super::{
     http3::{Connection, H3, read, transport},

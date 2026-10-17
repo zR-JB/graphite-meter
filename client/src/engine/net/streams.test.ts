@@ -27,7 +27,7 @@ const stage = (transfer: Activity["transfer"], loadedLatency = true): Activity =
 const auto = (count: number): TestConfig["transferStreams"] => ({ mode: "auto", count });
 const forced = (count: number): TestConfig["transferStreams"] => ({ mode: "forced", count });
 
-/** Each server's lanes as [planned, gating] per direction. */
+/** Lists each server's lanes as [planned, gating] per direction. */
 const lanes = (servers: PlanServer[], activity: Activity, policy: TestConfig["transferStreams"]) =>
   servers.map(({ server }) => {
     const plan = planStreams(servers, activity, policy).get(server.id)!;
@@ -124,14 +124,14 @@ test("servers sharing an HTTP/1.1 origin share its pool, or the stage is refused
     { down: [2, 2], up: [0, 0] },
     { down: [2, 2], up: [0, 0] },
   ]);
-  // Forced lanes open exactly; readiness waits only for those the shared pool runs.
+  // Forced lanes open exactly. Readiness waits only for those the shared pool runs.
   const trio = ["A", "B", "C"].map((name) => server(name, "http1", { latency: null }));
   expect(lanes(trio, stage(["down"]), forced(3)).map(({ down }) => down)).toEqual([
     [3, 2],
     [3, 2],
     [3, 2],
   ]);
-  // One connection serves both uploads' checkpoints; each HTTP feed keeps its own.
+  // One connection serves both uploads' checkpoints. Each HTTP feed keeps its own.
   const uploads = [
     server("A", "http1", { latency: null }),
     server("B", "http3", { transport: "webtransport", latency: null }),

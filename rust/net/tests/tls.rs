@@ -1,4 +1,4 @@
-//! Client TLS trust from `SSL_CERT_FILE` and `SSL_CERT_DIR`.
+//! Checks client TLS trust built from `SSL_CERT_FILE` and `SSL_CERT_DIR`.
 use graphite_meter_net::{Trust, Verify, client_config};
 use graphite_meter_proto::discovery::Protocol;
 use graphite_meter_testkit::{Identity, Scratch};
@@ -39,7 +39,7 @@ fn untrusted(result: Result<rustls::CipherSuite, Error>) -> bool {
     matches!(result, Err(Error::InvalidCertificate(UnknownIssuer)))
 }
 
-/// Trust in only the roots of `file` and `directory`, as their variables would name them.
+/// Trusts only the roots of `file` and `directory`, as their variables would name them.
 fn trust(file: &Path, directory: &Path) -> Verify {
     let (file, directory) = (file.as_os_str().to_owned(), directory.as_os_str().to_owned());
     Verify::Trusted(Arc::new(Trust::from_lookup(|name| match name {

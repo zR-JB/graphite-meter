@@ -1,4 +1,4 @@
-//! Strict JSON objects: control responses and progress records.
+//! Decodes strict JSON objects, the control responses and progress records.
 
 use serde::de::{DeserializeOwned, Error as _};
 use std::collections::HashSet;
@@ -15,7 +15,7 @@ fn check(text: &str) -> Result<(), serde_json::Error> {
     if !text.trim_start().starts_with('{') {
         return Err(serde_json::Error::custom("expected a JSON object"));
     }
-    // Each open container: an object's member names, or `None` for an array.
+    // Each open container holds an object's member names, or `None` for an array.
     let mut open: Vec<Option<HashSet<String>>> = Vec::new();
     let (mut at, mut name_next) = (0, false);
     while let Some(&byte) = text.as_bytes().get(at) {

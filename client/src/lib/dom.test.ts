@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { For } from "./dom";
 import { onCleanup, scope, signal } from "./signal";
 
-/** Just enough of the DOM for markers, fragments and text; it counts nodes taken out of a page to be put back. */
+/** Just enough of the DOM for markers, fragments and text. It counts nodes taken out of a page to be put back. */
 class FakeNode {
   static moves = 0;
   parentNode: FakeNode | null = null;

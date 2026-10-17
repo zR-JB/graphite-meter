@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { install } from "./pending";
 
-// Just the DOM the script touches: elements found by tag, class, id and attribute.
+// Fakes just the DOM the script touches, finding elements by tag, class, id and attribute.
 let focused: El | null = null;
 class El {
   parent: El | null = null;
@@ -92,7 +92,7 @@ const signIn = (action = "/auth/password") =>
       h("button", { type: "submit" }),
     ),
   );
-// The form's aria-busy and its submit key's aria-disabled: a busy key keeps its focus.
+// Reads the form's aria-busy and its submit key's aria-disabled. A busy key keeps its focus.
 const busy = (form: El) => [
   form.getAttribute("aria-busy"),
   form.querySelector("[type=submit]")!.getAttribute("aria-disabled"),
@@ -121,7 +121,7 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     createElement: (tag: string) => h(tag),
   };
   let answer: Reply | undefined;
-  // A clock the test moves by hand.
+  // The test moves this clock by hand.
   let now = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
   let ids = 0;
@@ -185,7 +185,7 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
   };
 }
 
-// A wrong password's swap, the host line and the show key run in a real browser in e2e/auth.test.ts.
+// e2e/auth.test.ts covers a wrong password's swap, the host line and the show key in a real browser.
 test("a sign-in posts in place, then swaps in the answer's card or follows it off the page", async () => {
   const cases: { reply: Reply; effects: string[] }[] = [
     { reply: { redirected: true, url: "https://meter.example/" }, effects: ["assign https://meter.example/"] },

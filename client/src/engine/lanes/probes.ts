@@ -1,6 +1,6 @@
-// A latency bus to one server, driven by a probe worker: the worker paces, times and resolves probes and reconnects
-// itself; this side translates their times, asks whether a broken bus was the sign-in ending, bounds each window's
-// drain and hands the bus from one owner to the next.
+// Opens a latency bus to one server, driven by a probe worker. The worker paces, times and resolves probes and
+// reconnects itself. This side translates their times, asks whether a broken bus was the sign-in ending, bounds each
+// window's drain and hands the bus from one owner to the next.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { workerScript } from "../../lib/trusted";
 import { ROUTES } from "../../protocol/routes";
@@ -21,7 +21,7 @@ export function openProbeChannel(
   /** A window is open or draining, so cutting the bus off leaves its population incomplete. */
   let measured = false;
   let drain: { promise: Promise<void>; acknowledged: AbortController } | null = null;
-  /** What a new owner is told at once: the bus answers on its connection, or why it stalled. */
+  /** A new owner is told at once that the bus answers on its connection, or why it stalled. */
   let answering = false;
   let stall: string | null = null;
   const worker = new Worker(workerScript(WORKERS.probe), { type: "module" });

@@ -1,16 +1,16 @@
-// Latency presentation: one server's probe outcomes grouped into time buckets on the run's timeline. Results never
-// read them; a late outcome may still revise the buckets of the last ten seconds.
+// Presents latency by grouping one server's probe outcomes into time buckets on the run's timeline. Results never
+// read them. A late outcome may still revise the buckets of the last ten seconds.
 import type { Stage } from "../run/schedule";
 import { midpointMedian, nearestRank } from "./latency";
 
-/** Points a presented series keeps. */
+/** A presented series keeps this many points. */
 export const SERIES_LIMIT = 1_200;
 const MIN_WIDTH_MS = 200;
-/** How far back a late outcome may still revise a closed bucket. */
+/** A late outcome may still revise a closed bucket this far back. */
 export const REVISION_MS = 10_000;
 
 export interface LatencyBucket {
-  /** The stage the probes belong to; "idle" between runs. */
+  /** Names the stage the probes belong to, or "idle" between runs. */
   phase: Stage | "idle";
   /** Buckets with different ids belong to separate lines. */
   continuityId: number;
@@ -21,13 +21,13 @@ export interface LatencyBucket {
   minRttMs: number | null;
   p95RttMs: number | null;
   maxRttMs: number | null;
-  /** Resolved probes; a timeout is a probe, never an RTT. */
+  /** Counts resolved probes. A timeout is a probe, never an RTT. */
   pingCount: number;
   timeoutCount: number;
 }
 
-/** Wide enough for a stage of `spanMs` to fit the series; with a fixed probe spacing a whole number of probes, so
-    no bucket is empty by construction. */
+/** Returns a width at which a stage of `spanMs` fits the series. With a fixed probe spacing it holds a whole number
+    of probes, so no bucket is empty by construction. */
 export function bucketWidth(spanMs: number, intervalMs: number | null): number {
   const base = Math.max(MIN_WIDTH_MS, Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS);
   return intervalMs ? Math.ceil(base / intervalMs) * intervalMs : base;
@@ -47,9 +47,9 @@ export class LatencyBuckets {
   #width = MIN_WIDTH_MS;
   #intervalMs: number | null = null;
   #pending: Open | null = null;
-  /** Closed buckets a late outcome may still revise. */
+  /** A late outcome may still revise these closed buckets. */
   #closed: Open[] = [];
-  /** Closed buckets revised since the last report: reported once per tick, not once per outcome. */
+  /** Holds closed buckets revised since the last report. They go out once per tick, not once per outcome. */
   #revised = new Set<Open>();
 
   /** `emit` receives every bucket that closes with probes in it, and every revision of one at the next
@@ -63,7 +63,7 @@ export class LatencyBuckets {
     this.restart(t, continuity);
   }
 
-  /** A new line from `t`, with the same stage and width. */
+  /** Starts a new line from `t` with the same stage and width. */
   restart(t: number, continuity: number): void {
     this.#continuity = continuity;
     this.#pending = this.#open(t);
@@ -103,7 +103,7 @@ export class LatencyBuckets {
   #close(t: number): void {
     while (this.#pending && t >= this.#pending.endT) {
       const pending = this.#pending;
-      // A page suspended for hours skips the empty time: only the revision horizon can still take late outcomes.
+      // A page suspended for hours skips the empty time, since only the revision horizon can still take late outcomes.
       const skipped = pending.pings ? 0 : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
       if (skipped > 0) {
         // Everything closed before the pause ends outside the horizon.
@@ -118,7 +118,7 @@ export class LatencyBuckets {
     }
   }
 
-  /** When the open bucket closes; the run's timer wakes then. */
+  /** The open bucket closes at this time, and the run's timer wakes then. */
   get nextEnd(): number | null {
     return this.#pending?.endT ?? null;
   }

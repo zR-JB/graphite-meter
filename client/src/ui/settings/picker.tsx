@@ -1,5 +1,5 @@
-// A path picker: the role's choices on the selected servers, unavailable ones folded under one line, and the line
-// that states the role's check with what fixes it.
+// A path picker lists the role's choices on the selected servers, unavailable ones folded under one line, and the
+// line that states the role's check with what fixes it.
 import type { App } from "../../app/app";
 import type { Role } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
@@ -29,7 +29,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
       app.page,
     );
   });
-  // Unavailable choices fold into one line after the available ones; the chosen one always shows.
+  // Unavailable choices fold into one line after the available ones. The chosen one always shows.
   const unfolded = signal(false);
   const folded = computed(() =>
     options().filter((option) => option.unavailable !== null && option.value !== selected()),
@@ -69,7 +69,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
     </label>
   );
 
-  // The servers a failure or sign-in is listed for above are left out; the paths speak for the rest.
+  // The servers a failure or sign-in is listed for above are left out. The paths speak for the rest.
   const considered = computed(() => {
     const ids = servers.selected();
     const views = servers.views();
@@ -103,7 +103,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
         </span>
       </div>
       <div class="kv choices">
-        {/* The list follows the servers and their checks at once; only rows a person unfolds unfold. */}
+        {/* The list follows the servers and their checks at once. Only rows a person unfolds unfold. */}
         <For each={listed} by={(option) => option.value}>
           {row}
         </For>
@@ -152,7 +152,7 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
             </Show>
             <Show when={offerRetry}>
               {() => (
-                // Both pickers show at once and a group's name does not name its buttons: "Retry Latency path".
+                // Both pickers show at once, and a group's name does not name its buttons, hence "Retry Latency path".
                 <button
                   class="btn"
                   type="button"

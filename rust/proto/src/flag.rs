@@ -1,24 +1,24 @@
-//! Command-line options from one table per binary: `--name value`, `--name=value` or `-name`, and their usage.
+//! One table per binary gives its options, `--name value`, `--name=value` or `-name`, and their usage.
 
 use crate::text::{clean, quote};
 use std::{ffi::OsString, iter};
 
-/// One row of a binary's option table.
+/// Holds one row of a binary's option table.
 pub struct Flag<T> {
-    /// Empty for a row only the environment sets.
+    /// Stays empty for a row only the environment sets.
     pub name: &'static str,
-    /// The value's placeholder in usage; empty for a switch, which its name alone turns on.
+    /// Stands in for the value in usage. It is empty for a switch, which its name alone turns on.
     pub value: &'static str,
     pub usage: &'static str,
-    /// The environment variable that sets the same value.
+    /// This environment variable sets the same value.
     pub env: Option<&'static str>,
     /// Applies a value, or tells why it is refused.
     pub set: fn(&mut T, &str) -> Result<(), String>,
-    /// The value as usage shows a default; empty shows none.
+    /// Formats the value as usage shows a default. Empty shows none.
     pub show: fn(&T) -> String,
 }
 
-/// What follows the options on a command line.
+/// Says what follows the options on a command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
     /// `-h` or `--help` asked for the usage.
@@ -62,7 +62,7 @@ fn utf8(arg: OsString) -> Result<String, String> {
         .map_err(|arg| format!("argument {} is not valid UTF-8", quote(&arg.to_string_lossy())))
 }
 
-/// One usage line per named row in table order: the option, its description, variable and default.
+/// Writes one usage line per named row in table order, with the option, its description, variable and default.
 pub fn options<T>(flags: &[Flag<T>], defaults: &T) -> String {
     let named = || flags.iter().filter(|flag| !flag.name.is_empty());
     let spelled = |flag: &Flag<T>| match flag.value {
@@ -85,7 +85,7 @@ pub fn options<T>(flags: &[Flag<T>], defaults: &T) -> String {
     lines
 }
 
-/// `true`, `false`, `1` or `0`, in any case.
+/// Reads `true`, `false`, `1` or `0`, in any case.
 pub fn parse_bool(text: &str) -> Result<bool, &'static str> {
     match text {
         "1" => Ok(true),

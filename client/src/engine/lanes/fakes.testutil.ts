@@ -1,4 +1,4 @@
-// Fakes for the lanes' owners: workers the test speaks for, created by the code under test, on a fake clock.
+// Gives the lanes' owners fake workers, which the code under test creates and the test speaks for, on a fake clock.
 import { afterEach, beforeEach, jest } from "bun:test";
 import type { LaneReport, ProbeReport, SessionReport } from "../../protocol/messages";
 
@@ -52,7 +52,7 @@ export async function elapse(ms: number): Promise<void> {
   }
 }
 
-/** Settles `promise` into when, on the fake clock, and how it ended. */
+/** Records when, on the fake clock, and how `promise` settled. */
 export function outcome(promise: Promise<unknown>): { at?: number; error?: unknown } {
   const start = performance.now();
   const ended: { at?: number; error?: unknown } = {};

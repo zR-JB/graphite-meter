@@ -1,5 +1,5 @@
-// One direction's carrier for a stage: fetch lanes, a worker each, or one WebTransport session worker. A worker lives
-// as long as its carrier, so a lane that ends reopens on it and a session's unspent ticket survives its redials.
+// Carries one stage direction over fetch lanes, a worker each, or one WebTransport session worker. A worker lives as
+// long as its carrier, so a lane that ends reopens on it and a session's unspent ticket survives its redials.
 import type {
   FeedRecord,
   Flushed,
@@ -22,13 +22,13 @@ const STAGGER_MS = 75;
 const SPREAD_MS = 1_000;
 
 export interface CarrierHost {
-  /** Download bytes of the current measurement epoch. */
+  /** Counts download bytes of the current measurement epoch. */
   bytes(bytes: number): void;
   posted(lane: number, bytes: number, elapsedMs: number): void;
   record(record: FeedRecord): void;
   /** A lane delivered for the first time since it opened. */
   delivered(): void;
-  /** Settles a lane's ending; true when the lane should reopen, after `delayMs`. */
+  /** Settles a lane's ending. Returns true when the lane should reopen, after `delayMs`. */
   ended(lane: number, ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
 }
 
@@ -39,7 +39,7 @@ export interface CarrierPlan {
   /** Lanes that must deliver before the carrier is ready. */
   gating: number;
   session: boolean;
-  /** A (re)opening's command, with credentials read afresh; null once they ended. */
+  /** Builds a (re)opening's command with credentials read afresh, or null once they ended. */
   open(lane: number, epoch: number): LaneCommand | SessionCommand | null;
 }
 
@@ -50,11 +50,11 @@ interface Lane {
   backoff: Backoff;
   /** Download bytes of the current epoch passed on to the host. */
   counted: number;
-  /** Bytes reported while a flush awaits this lane's answer, which counts them itself; null when none awaits. */
+  /** Bytes reported while a flush awaits this lane's answer, which counts them itself. Null when none awaits. */
   held: number | null;
   /** Resolves the flush awaiting this lane's answer. */
   flushed: ((answer: Flushed) => void) | null;
-  /** Answered the final flush: what it counts later lies past the boundary. */
+  /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
 }
 
@@ -62,7 +62,7 @@ export class Carrier {
   readonly #plan: CarrierPlan;
   readonly #host: CarrierHost;
   readonly #lanes: Lane[] = [];
-  /** Stopping or released: no lane reopens. */
+  /** No lane reopens once the carrier is stopping or released. */
   readonly #done = new AbortController();
   readonly #acknowledged = new AbortController();
   #epoch = 0;
@@ -98,12 +98,12 @@ export class Carrier {
     return delivered >= this.#plan.gating;
   }
 
-  /** Refused as busy and not delivering since: why the carrier may not be ready. */
+  /** A lane refused as busy that has not delivered since explains why the carrier may not be ready. */
   get busy(): boolean {
     return this.#lanes.some((lane) => !lane.delivered && lane.backoff.busy);
   }
 
-  /** A new epoch: download bytes counted before it no longer count. */
+  /** Starts a new epoch, so download bytes counted before it no longer count. */
   measure(): void {
     this.#epoch++;
     for (const lane of this.#lanes) {
@@ -113,8 +113,8 @@ export class Carrier {
   }
 
   /** Resolves once every lane answered the download bytes it had counted by `cutoff` (page time), within 250 ms,
-      with the latest page time those counts stand at: the cutoff, unless a lane no longer kept it, or now for a lane
-      that did not answer and counts on. Null without lanes. The rate a boundary there reads never overstates. */
+      with the latest page time those counts stand at. That is the cutoff, unless a lane no longer kept it, or now for
+      a lane that did not answer and counts on. Null without lanes. The rate a boundary there reads never overstates. */
   async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;
@@ -145,7 +145,7 @@ export class Carrier {
     return latest;
   }
 
-  /** A session finalizes and acknowledges within its grace; fetch lanes end at once. */
+  /** A session finalizes and acknowledges within its grace. Fetch lanes end at once. */
   async stop(): Promise<void> {
     this.#done.abort();
     const session = this.#plan.session && this.#lanes[0];

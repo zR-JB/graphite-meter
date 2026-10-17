@@ -1,4 +1,4 @@
-//! Uploads into their aggregate and checkpoints.
+//! Tests uploads into their aggregate and checkpoints.
 
 use super::*;
 use futures_util::{Stream, StreamExt, stream};
@@ -9,7 +9,7 @@ use http_body_util::StreamBody;
 
 type Frames = StreamBody<std::pin::Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, Infallible>> + Send>>>;
 
-/// An upload body of `chunks`, then an end, or a stall when `stalls`.
+/// Builds an upload body of `chunks`, then an end, or a stall when `stalls`.
 fn chunks(chunks: &'static [&'static [u8]], stalls: bool) -> Frames {
     let data = stream::iter(chunks.iter().map(|chunk| Ok(Frame::data(Bytes::from_static(chunk)))));
     let rest = if stalls { stream::pending().boxed() } else { stream::empty().boxed() };

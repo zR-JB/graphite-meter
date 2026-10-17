@@ -58,7 +58,7 @@ test("only whole positive counts of lost probes count", () => {
 test("a stage past 65,536 distinct RTTs keeps its percentiles to four significant digits", () => {
   const population = new Population();
   const rtts: number[] = [];
-  // Three hundred thousand replies spread over 10-110 ms, nearly all distinct to the nanosecond.
+  // Three hundred thousand replies spread over 10-110 ms, and nearly all are distinct to the nanosecond.
   for (let i = 0; i < 300_000; i++) {
     const rttMs = 10 + ((i * 7_919) % 100_000) / 1_000 + (i % 997) / 1e6;
     rtts.push(rttMs);

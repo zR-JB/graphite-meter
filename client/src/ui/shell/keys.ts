@@ -1,4 +1,4 @@
-// The keyboard's one map: Escape closes the topmost surface it reaches, and the shortcut keys act where they apply.
+// Maps the keyboard once. Escape closes the topmost surface it reaches, and the shortcut keys act where they apply.
 import type { Panel } from "./navigation";
 
 export interface KeyFacts {
@@ -12,7 +12,7 @@ export interface KeyFacts {
   workspace: "measurement" | "history" | "not-found";
   /** A History result is open. */
   detail: boolean;
-  /** The visible panels, the last opened last. */
+  /** Lists the visible panels, the last opened last. */
   panels: readonly Panel[];
   /** The panel holding focus. */
   focused: Panel | null;
@@ -34,10 +34,10 @@ export type Command =
 
 export interface Binding {
   key: string;
-  /** The keycap the hints and tips name. */
+  /** The hints and tips name this keycap. */
   cap: string;
   label: string;
-  /** Whether the key acts at all; the History key acts only while results are saved. */
+  /** Tells whether the key acts at all. The History key acts only while results are saved. */
   when(facts: Pick<KeyFacts, "saving">): boolean;
   command: Command;
   /** The status strip names it. */
@@ -73,10 +73,10 @@ export const BINDINGS = {
   theme: { key: "t", cap: "T", label: "Theme", when: always, command: { kind: "theme" }, hint: false },
 } as const satisfies Record<string, Binding>;
 
-/** Space runs the test where no focused control takes it; R does wherever text entry does not. */
+/** Space runs the test where no focused control takes it. R does wherever text entry does not. */
 export const RUN_CAP = "Space";
 
-/** What a key press does, or null when the page leaves it alone. Escape never stops a running test. */
+/** Decides what a key press does, or null when the page leaves it alone. Escape never stops a running test. */
 export function command(facts: KeyFacts): Command | null {
   if (facts.key === "Escape") return dismiss(facts);
   if (facts.editable || !facts.shortcuts) return null;
@@ -87,7 +87,7 @@ export function command(facts: KeyFacts): Command | null {
   return binding?.when(facts) ? binding.command : null;
 }
 
-// The panel holding focus, then a flyout even from a text field; text entry keeps every later layer.
+// Escape closes the panel holding focus, then a flyout even from a text field. Text entry keeps every later layer.
 function dismiss(facts: KeyFacts): Command | null {
   const last = facts.panels.at(-1);
   if (facts.focused) return { kind: "close", panel: facts.focused };

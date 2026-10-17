@@ -1,4 +1,4 @@
-//! The build-script side: checks the notice inputs, then writes the compressed report and `legal.rs`.
+//! Serves the build script. It checks the notice inputs, then writes the compressed report and `legal.rs`.
 
 use crate::BROWSER_NOTICE;
 use std::{
@@ -12,9 +12,9 @@ use std::{
 const DEVELOPMENT: &str = "UNREVIEWED DEVELOPMENT BUILD";
 /// Precedes the SHA-256 of a reviewed build's report in its executable, where release verification reads it.
 const REVIEWED: &str = "graphite-meter reviewed notices sha256:";
-/// The longest report a build embeds.
+/// A build embeds a report at most this long.
 const MAX_REPORT_BYTES: usize = 16 << 20;
-/// The browser build that a reviewed legal directory's notices cover.
+/// A reviewed legal directory's notices cover the browser build in this subdirectory.
 const BROWSER_ASSETS: &str = "browser-assets";
 
 /// Checks `GM_ENGINE_VERSION` and, if set, the reviewed notices in `GM_LEGAL_DIR`, then writes `legal.rs` to
@@ -32,13 +32,13 @@ pub fn out_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "missing OUT_DIR".into())
 }
 
-/// The repository checkout, two levels above the building package; build inputs never lie outside it.
+/// Finds the repository checkout, two levels above the building package. Build inputs never lie outside it.
 pub fn checkout() -> Result<PathBuf, String> {
     let package = env::var_os("CARGO_MANIFEST_DIR").ok_or("missing CARGO_MANIFEST_DIR")?;
     canonical(&Path::new(&package).join("../.."))
 }
 
-/// `path` resolved, which must lie inside the resolved `root`.
+/// Resolves `path`, which must lie inside the resolved `root`.
 pub fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let resolved = canonical(path)?;
     match resolved.starts_with(root) {
@@ -97,7 +97,7 @@ fn embed_with(
     browser.then(|| canonical(&assets)).transpose()
 }
 
-/// Every input the notices were prepared from still matches its snapshot.
+/// Checks that every input the notices were prepared from still matches its snapshot.
 fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
     let inputs = String::from_utf8(read(&directory.join("inputs.txt"))?).map_err(|_| "inputs.txt is not UTF-8")?;
     if !inputs.lines().any(|line| line == "rust/Cargo.lock") {
@@ -114,7 +114,7 @@ fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The SHA-256 of a reviewed `LEGAL.txt`, which the collector writes to `LEGAL.sha256` and checks the executable for.
+/// Reads a reviewed `LEGAL.txt`'s SHA-256, which the collector writes to `LEGAL.sha256` and checks the executable for.
 fn digest(directory: &Path) -> Result<String, String> {
     let digest = String::from_utf8(read(&directory.join("LEGAL.sha256"))?).unwrap_or_default();
     match digest.len() == 64 && digest.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
@@ -131,7 +131,7 @@ fn generate(output: &Path, payload: &str, browser: Option<usize>, marker: &str) 
     write(&output.join("legal.rs"), source.as_bytes())
 }
 
-/// The bytes of `path`, which Cargo then watches.
+/// Reads `path`, which Cargo then watches.
 fn read(path: &Path) -> Result<Vec<u8>, String> {
     println!("cargo:rerun-if-changed={}", path.display());
     fs::read(path).map_err(|error| format!("{}: {error}", path.display()))
@@ -151,10 +151,10 @@ mod tests {
     use graphite_meter_testkit::Scratch;
 
     const REPORT: &str = "UNREVIEWED DEVELOPMENT BUILD\n\nproject\nrust crates\nbrowser notice\n";
-    /// The collector's digest file, which only a reviewed report's marker carries.
+    /// The collector writes this digest file, which only a reviewed report's marker carries.
     const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    /// A checkout holding a reviewed legal directory for the server's x86_64 musl build.
+    /// Builds a checkout holding a reviewed legal directory for the server's x86_64 musl build.
     fn checkout() -> (Scratch, PathBuf) {
         let scratch = Scratch::new().unwrap();
         for (name, contents) in [
