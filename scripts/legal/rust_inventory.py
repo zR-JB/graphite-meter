@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from ..ci.workspace import ROOT
-from .check_rust_reviews import compiled as tree
 from .model import Component, LegalError, Provenance, Review, array, obj, read_json, strings, text
 from .review import add_provenance, component_legal_files, validate_review
 
@@ -17,9 +16,17 @@ Units = dict[str, list[Any]]  # the compiled targets and native libraries of one
 Crate = tuple[str, str, str]  # name, version, Cargo source
 
 
-def cargo_metadata(host: str, target: str) -> Metadata:
-    """Locked metadata of every package a build for `target` may compile, host build dependencies included."""
-    filters = [f"--filter-platform={platform}" for platform in dict.fromkeys((target, host))]
+def tree(package: str, target: str) -> set[tuple[str, str]]:
+    """The name and version of every crate a build of `package` for `target` compiles."""
+    lines = subprocess.run(["cargo", "tree", "--locked", "--edges", "normal,build", "--target", target,
+                            "--prefix", "none", "--format", "{p}", "--package", package],
+                           cwd=ROOT / "rust", check=True, stdout=subprocess.PIPE, text=True).stdout
+    return {(name, version.removeprefix("v")) for name, version, *_ in map(str.split, lines.splitlines())}
+
+
+def cargo_metadata(*platforms: str) -> Metadata:
+    """Locked metadata of every package a build for `platforms` may compile."""
+    filters = [f"--filter-platform={platform}" for platform in dict.fromkeys(platforms)]
     return json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version=1", *filters],
                                               cwd=ROOT / "rust", text=True))
 
@@ -98,17 +105,34 @@ def components(metadata: Metadata, builds: dict[str, Units], reviews: list[Revie
             review(component, directory, item.get("license_file"), reviews, provenance)
         except LegalError as error:
             failures[component.name, component.version, source] = str(error)
+        except OSError as error:
+            failures[component.name, component.version, source] = f"its source is unreadable: {error}"
         found.append(component)
         inventory.append({"component": component.json(), "repository": item.get("repository") or "",
                           "upstreamRevision": revision, **builds[identity]})
     return found, inventory, failures
 
 
+def covering(name: str, version: str, source: str, reviews: list[Review]) -> list[Review]:
+    """The reviews a crate's legal files must match: its exact one, else for a registry crate the one of its name and
+    source, narrowed to its semver-compatible versions when there are several."""
+    def compatible(value: str) -> list[str]:
+        parts = value.split(".")
+        return parts[:next((index for index, part in enumerate(parts) if part != "0"), len(parts) - 1) + 1]
+
+    same = [item for item in reviews if (item.ecosystem, item.name, item.upstream) == ("cargo", name, source)]
+    exact = [item for item in same if item.reviewedVersion == version]
+    if exact or not source.startswith("registry+"):
+        return exact
+    if len(same) > 1:
+        return [item for item in same if compatible(item.reviewedVersion) == compatible(version)]
+    return same
+
+
 def review(component: Component, directory: Path, license_file: str | None, reviews: list[Review],
            provenance: list[Provenance]) -> None:
     """Fill `component`'s legal files from `directory` or manual provenance and check them against its review."""
-    matching = [item for item in reviews if (item.ecosystem, item.name, item.reviewedVersion, item.upstream)
-                == ("cargo", component.name, component.version, component.source)]
+    matching = covering(component.name, component.version, component.source, reviews)
     if len(matching) > 1:
         raise LegalError("ambiguous review")
     manual = [entry for entry in provenance if (entry.ecosystem, entry.name, entry.version, entry.upstream)

@@ -61,19 +61,20 @@ class InventoryTests(Scratch):
             with self.subTest(crates=crates), self.assertRaisesRegex(LegalError, "missing or ambiguous"):
                 selected(metadata, crates)
 
-    def test_reviews_bind_the_exact_version_and_source_and_workspace_crates_need_none(self) -> None:
+    def test_registry_reviews_span_versions_git_reviews_bind_the_fork_and_workspace_crates_need_none(self) -> None:
         packages = [self.package("ring", "0.17.15", REGISTRY), self.package("noq", "1.3.0", NOQ),
                     self.package("graphite-meter-net", "0.0.0", None)]
         metadata = {"packages": packages, "workspace_members": ["graphite-meter-net@0.0.0"]}
         builds: dict[str, Any] = {item["id"]: {} for item in packages}
-        found, inventory, failures = components(metadata, builds, [self.review("ring", "0.17.15"),
-                                                                   self.review("noq", "1.3.0", NOQ, True)], [])
+        reviews = [self.review("ring", "0.16.20"), self.review("ring", "0.17.14"),
+                   self.review("noq", "1.3.0", NOQ, True)]
+        found, inventory, failures = components(metadata, builds, reviews, [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
         self.assertEqual(inventory[0]["upstreamRevision"], "2aba4e49f5c73f43ed23c40677ec96508842aa3c")
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
                                                        self.review("noq", "1.2.0", NOQ, True)], [])
-        self.assertEqual(sorted(failures), [("noq", "1.3.0", NOQ), ("ring", "0.17.15", REGISTRY)])
+        self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
         other = NOQ.replace(NOQ[-40:], "0" * 40)
         with self.assertRaisesRegex(LegalError, "unreviewed Cargo git source"):
             components({"packages": [self.package("noq", "1.3.0", other)], "workspace_members": []},
@@ -83,7 +84,7 @@ class InventoryTests(Scratch):
         packages = [self.package("ring", "0.17.15", REGISTRY)]
         self.write("ring-0.17.15/LICENSE-MIT", "changed\n")
         _, _, failures = components({"packages": packages, "workspace_members": []}, {"ring@0.17.15": {}},
-                                    [self.review("ring", "0.17.15")], [])
+                                    [self.review("ring", "0.17.14")], [])
         self.assertIn("legal fingerprint changed", failures["ring", "0.17.15", REGISTRY])
 
     def messages(self) -> list[dict[str, Any]]:

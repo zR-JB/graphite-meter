@@ -12,13 +12,15 @@ below.
 | Change                                 | Action                                                                       |
 | -------------------------------------- | ---------------------------------------------------------------------------- |
 | Application or documentation only      | None beyond the normal gate.                                                 |
-| Crate version, unchanged legal files   | Move its review to the locked version, revision and archive SHA-256.         |
+| Crate version, unchanged legal files   | None beyond the normal gate.                                                 |
 | New component or changed legal facts   | Review it and add a record (below); `mise run rust-check` refuses it until then. |
 
 ## Review files
 
-- `rust-reviewed-components.json`: one approved review per line for each crate a shipped binary compiles, bound to its
-  name, locked version and source; a review of any other crate fails the check.
+- `rust-reviewed-components.json`: one approved review per line for each crate a shipped binary compiles.
+  `reviewedVersion` is the version whose legal files were reviewed; another registry version passes only with the
+  same license expression and legal-file SHA-256 (against the review of its semver line when a crate has several),
+  while a git review binds the exact fork revision. A review that covers no compiled crate fails.
   `python3 -m scripts.legal.check_rust_reviews --format` rewrites the file in its layout.
 - `rust-provenance.json` and `manual/rust/`: legal texts, with their SHA-256 and review notes, for crates that do not
   package their own.
@@ -34,15 +36,16 @@ below.
   `mise run pipeline-test` checks.
 
 New components are never approved by matching a familiar license template: inspect the exact upstream revision and
-its legal files, then add the record. A failed check prints what it found; for a build,
-`python3 -m scripts.legal.rust --package NAME --development --out DIR --review-template` prints pending review
-records of the crates that lack one.
+its legal files, then add the record. A failed check prints what it found and the
+`python3 -m scripts.legal.rust --package NAME --target TARGET --out DIR --review-template` command that prints pending
+review records of the crates that fail.
 
 `mise run rust-check` runs `scripts.legal.check_rust_reviews`. The client ships on every TUI platform and the server
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
-check lists the compiled crates with `cargo tree` over normal and build edges and requires an approved review for
-each and no other, and every shipped target needs an approved platform record. The static x86_64 Linux server and
-client compile at most 143 and 150 crates, a dependency policy rather than a license requirement.
+check lists the compiled crates with `cargo tree` over normal and build edges, checks each against its approved review
+and refuses reviews of no compiled crate, and every shipped target needs an approved platform record. The static
+x86_64 Linux server and client compile at most 143 and 150 crates, a dependency policy rather than a license
+requirement.
 
 ## Updating pinned forks
 

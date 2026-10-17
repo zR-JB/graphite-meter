@@ -1,25 +1,24 @@
 """Require an approved review for every crate a shipped Rust binary compiles.
 
 The client ships on every TUI platform and the server on every server platform of rust/Cargo.toml's
-workspace metadata; cargo tree over normal and build edges lists the crates each build compiles. Each
-review names one compiled crate by name, locked version and source. Every shipped target also needs an
-approved platform record, and the static x86_64 Linux binaries stay within their crate budgets. The manual
-license texts of legal/rust-provenance.json keep their reviewed SHA-256, and the notice sources stay
-reviewed for the pinned Rust release.
+workspace metadata; cargo tree over normal and build edges lists the crates each build compiles, and each
+must match its review's license expression and legal files. A review of no compiled crate fails. Every
+shipped target also needs an approved platform record, and the static x86_64 Linux binaries stay within
+their crate budgets. The manual license texts of legal/rust-provenance.json keep their reviewed SHA-256,
+and the notice sources stay reviewed for the pinned Rust release.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
-import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 from ..ci.workspace import ROOT, Workspace, load
-from .model import LegalError, Provenance, array, read_json
+from .model import LegalError, Provenance, Review, array, read_json
 from .review import add_provenance
+from .rust_inventory import cargo_metadata, components, covering, selected, tree
 from .rust_platform import check_notice_sources
 
 REVIEWS = ROOT / "legal/rust-reviewed-components.json"
@@ -41,14 +40,6 @@ def shipped(workspace: Workspace) -> list[tuple[str, str]]:
             + [("graphite-meter-server", target) for target in workspace.server.values()])
 
 
-def compiled(package: str, target: str) -> set[tuple[str, str]]:
-    """The name and version of every crate a build of `package` for `target` compiles."""
-    tree = subprocess.run(["cargo", "tree", "--locked", "--edges", "normal,build", "--target", target,
-                           "--prefix", "none", "--format", "{p}", "--package", package],
-                          cwd=ROOT / "rust", check=True, stdout=subprocess.PIPE, text=True).stdout
-    return {(name, version.removeprefix("v")) for name, version, *_ in map(str.split, tree.splitlines())}
-
-
 def manual_problems(root: Path) -> list[str]:
     """Incomplete or changed manual Rust provenance, or notice sources not reviewed for the pinned Rust."""
     try:
@@ -63,13 +54,10 @@ def manual_problems(root: Path) -> list[str]:
     return []
 
 
-def review_problems(reviews: list[dict], used: set[Crate]) -> list[str]:
-    """Compiled crates without an approved review, and reviews of no compiled crate."""
-    named = {(review["name"], review["reviewedVersion"], review["upstream"]): review.get("reviewDecision")
-             for review in reviews}
-    approved = {crate for crate, decision in named.items() if decision == "approved"}
-    return ([f"no approved review names {' '.join(crate)}" for crate in sorted(used - approved)]
-            + [f"the review of {' '.join(crate)} names no compiled crate" for crate in sorted(named.keys() - used)])
+def dead(reviews: list[Review], used: set[Crate]) -> list[Review]:
+    """The reviews no compiled crate is checked against."""
+    covered = [review for crate in used for review in covering(*crate, reviews)]
+    return [review for review in reviews if review not in covered]
 
 
 def unreviewed_platforms(records: list[dict], targets: set[str]) -> list[str]:
@@ -101,15 +89,23 @@ def main() -> None:
     problems = [f"{workspace.platform_record} has no approved record for {target}"
                 for target in unreviewed_platforms(records, {target for _, target in builds})]
     problems += manual_problems(ROOT)
-    sources: dict[tuple[str, str], set[str]] = {}
-    for package in tomllib.loads((ROOT / "rust/Cargo.lock").read_text(encoding="utf-8"))["package"]:
-        if "source" in package:
-            sources.setdefault((package["name"], package["version"]), set()).add(package["source"])
-    trees = {build: compiled(*build) for build in builds}
-    # Workspace members have no lock source and need no review.
-    used = {(name, version, source) for crates in trees.values() for name, version in crates
-            for source in sources.get((name, version), ())}
-    problems += review_problems(reviews, used) + over_budget(trees)
+    trees = {build: tree(*build) for build in builds}
+    metadata = cargo_metadata(*(target for _, target in builds))
+    parsed = [Review.parse(review) for review in reviews]
+    provenance = [Provenance.parse(item) for item in array(read_json(ROOT / "legal/rust-provenance.json"))]
+    try:
+        found, _, failures = components(metadata, {identity: {} for identity in selected(
+            metadata, set().union(*trees.values()))}, parsed, provenance)
+    except LegalError as error:
+        sys.exit(f"The shipped Rust builds fail the review policy: {error}")
+    used = {(item.name, item.version, item.source) for item in found}
+    problems += [f"{' '.join(crate)}: {error}" for crate, error in sorted(failures.items())]
+    failing = dict.fromkeys(next(build for build, crates in trees.items() if (name, version) in crates)
+                            for name, version, _ in failures)
+    problems += [f"pending reviews: python3 -m scripts.legal.rust --package {package} --target {target} "
+                 "--out rust/target/legal --review-template" for package, target in failing]
+    problems += [f"the review of {item.name} {item.reviewedVersion} {item.upstream} covers no compiled crate"
+                 for item in dead(parsed, used)] + over_budget(trees)
     if problems:
         sys.exit("The shipped Rust builds fail the review policy:\n" + "\n".join(f"  {item}" for item in problems))
     counts = ", ".join(f"{package} [{target}] {len(crates)}" for (package, target), crates in trees.items())
