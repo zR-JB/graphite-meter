@@ -102,10 +102,10 @@ fn carries_body<B: http_body::Body>(request: &Request<B>) -> bool {
     request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown)
 }
 
-/// The methods a route answers: those it dispatches, HEAD with GET, and OPTIONS on plain HTTP routes.
+/// The methods a route answers: those it dispatches, HEAD with GET except on a feed, and OPTIONS on plain HTTP routes.
 fn methods(route: Route) -> impl Iterator<Item = &'static str> {
     let dispatched = route.methods();
-    let head = dispatched.contains(&"GET").then_some("HEAD");
+    let head = (dispatched.contains(&"GET") && route != Route::UploadProgress).then_some("HEAD");
     let options = (route.kind() == Kind::Http).then_some("OPTIONS");
     dispatched.iter().copied().chain(head).chain(options)
 }

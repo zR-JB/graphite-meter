@@ -111,3 +111,17 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
         assert_eq!(header(&response, "access-control-allow-credentials"), None);
     }
 }
+
+#[tokio::test]
+async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() {
+    let app = app(&ALL_LISTENERS);
+    for (method, path, allow) in [
+        ("HEAD", "/upload/progress", "DELETE, GET, OPTIONS"),
+        ("PUT", "/upload/progress", "DELETE, GET, OPTIONS"),
+        ("POST", "/probe", "GET, HEAD, OPTIONS"),
+    ] {
+        let response = send(&app, Endpoint::H2, empty(request(method, path))).await;
+        let refusal = (response.status(), header(&response, "allow"));
+        assert_eq!(refusal, (StatusCode::METHOD_NOT_ALLOWED, Some(allow)), "{method} {path}");
+    }
+}

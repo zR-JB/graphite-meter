@@ -72,6 +72,7 @@ impl RequestStream {
                 charge: recv_charge,
                 method: http::Method::default(),
                 done: false,
+                left: u64::MAX,
             },
         }
     }
@@ -111,6 +112,8 @@ pub struct RecvHalf {
     pub(crate) method: http::Method,
     /// FIN arrived, or the stream was stopped.
     done: bool,
+    /// Wire bytes the peer may still send, beyond which the stream is H3_EXCESSIVE_LOAD.
+    pub(crate) left: u64,
 }
 
 impl RecvHalf {
@@ -162,7 +165,12 @@ impl RecvHalf {
 
     fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>, Error>> {
         loop {
+            let unread = self.input.len();
             let event = self.message.next(&mut self.input);
+            match self.left.checked_sub((unread - self.input.len()) as u64) {
+                Some(left) => self.left = left,
+                None => return Poll::Ready(Err(self.abort(Code::H3_EXCESSIVE_LOAD))),
+            }
             if !self.charge.resize(size_of::<Self>() + self.message.buffered()) {
                 // Refused before its head is read, a request was never processed (RFC 9114 §4.1.1).
                 let refusal = if self.message.has_head() {

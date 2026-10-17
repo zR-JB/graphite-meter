@@ -222,7 +222,7 @@ pub(super) fn id_token(
     let payload = &verified.payload;
     let now = SystemTime::now().duration_since(UNIX_EPOCH);
     let now = now.unwrap_or_default().as_secs_f64();
-    let current = |period: &Period| now <= period.exp && period.nbf.is_none_or(|nbf| nbf <= now + SKEW);
+    let current = |period: &Period| now < period.exp && period.nbf.is_none_or(|nbf| nbf <= now + SKEW);
     let period = serde_json::from_slice::<Period>(payload).ok().filter(current);
     let Some(period) = period.filter(|_| addressed(payload, issuer, client)) else {
         return Err(Reason::IdTokenVerification);

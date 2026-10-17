@@ -95,7 +95,7 @@ fn admit(stream: &mut RequestStream, head: fields::Head<http::Request<()>>) -> R
     };
     let mut request = head.message;
     if request.method() != http::Method::CONNECT {
-        stream.shared().served.store(true, std::sync::atomic::Ordering::Relaxed);
+        stream.shared().served.store(true, std::sync::atomic::Ordering::Release);
     }
     request.extensions_mut().insert(Arc::new(charge));
     stream.recv.message.owed = head.content_length;

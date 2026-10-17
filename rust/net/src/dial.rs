@@ -3,8 +3,8 @@ use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 
-/// A second under the client's 10 s control deadline, so a dial ends with its own error first.
-const TIMEOUT: Duration = Duration::from_secs(9);
+/// A whole TCP or QUIC dial, lookup included, under the client's control deadline so it ends with its own error first.
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(9);
 /// RFC 8305's recommended wait before the other address family joins.
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
 /// The least share of the remaining time for each address in a family, so one dead address leaves time for others.
@@ -15,7 +15,7 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
 
 /// The addresses `host` names, without a lookup for an IP address.
-pub async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
+pub(crate) async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     match host {
         Host::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),
         Host::Name(name) => Ok(tokio::net::lookup_host((name.as_str(), port)).await?.collect()),

@@ -109,12 +109,13 @@ impl Shared {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Closes on a violation or with H3_NO_ERROR when done; noq reports any earlier close, the peer's too, as local.
+    /// Closes on a violation or with H3_NO_ERROR when done; a connection already closed keeps why it closed.
     pub(crate) fn close(&self, code: Code) -> Error {
-        if self.quic.close_reason().is_none() {
-            let _ = self.closed.set(code);
-            self.quic.close(code.into(), b"");
+        if self.quic.close_reason().is_some() {
+            return self.close_error();
         }
+        let _ = self.closed.set(code);
+        self.quic.close(code.into(), b"");
         Error::local(code)
     }
 
@@ -283,7 +284,7 @@ impl Driver {
         }
         let idle = *self.idle_since.get_or_insert(now) + IDLE;
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Relaxed);
+        let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Acquire);
         let done = (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }

@@ -297,7 +297,7 @@ async fn dialect(shared: &Shared, wait: Option<Duration>) -> Result<Option<Diale
 
 /// How long a closing session waits for the peer's FIN, and a sessions-only connection for the CLOSE.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
-/// Control data a peer may send on its CONNECT stream, where its CLOSE takes at most 1 KiB.
+/// Wire bytes a peer may send on its CONNECT stream after the head, where its CLOSE takes at most 1 KiB.
 const MAX_CONNECT_BYTES: u64 = 64 * 1024;
 const MAX_DEFERRED_RESETS: usize = 64;
 
@@ -369,8 +369,6 @@ pub(crate) struct Connect {
     stream: RequestStream,
     capsules: capsule::Reader,
     input: Bytes,
-    /// Control data bytes the peer sent.
-    received: u64,
     pub(super) phase: watch::Sender<Phase>,
     /// Once the session ended: when the wait for the peer's FIN gives up.
     deadline: Option<Instant>,
@@ -383,13 +381,13 @@ pub(crate) struct Connect {
 }
 
 impl Connect {
-    pub(super) fn new(id: SessionId, stream: RequestStream, phase: watch::Sender<Phase>, charge: Charge) -> Self {
+    pub(super) fn new(id: SessionId, mut stream: RequestStream, phase: watch::Sender<Phase>, charge: Charge) -> Self {
+        stream.recv.left = MAX_CONNECT_BYTES;
         Self {
             id,
             stream,
             capsules: capsule::Reader::default(),
             input: Bytes::new(),
-            received: 0,
             phase,
             deadline: None,
             peer_finished: false,
@@ -468,13 +466,7 @@ impl Connect {
                 }
                 Ok(None) => match self.stream.recv.poll_data(cx) {
                     Poll::Pending => break,
-                    Poll::Ready(Ok(Some(data))) => {
-                        self.received += data.len() as u64;
-                        if self.received > MAX_CONNECT_BYTES {
-                            return Err(self.stream.abort(Code::H3_EXCESSIVE_LOAD));
-                        }
-                        self.input = data;
-                    }
+                    Poll::Ready(Ok(Some(data))) => self.input = data,
                     Poll::Ready(Ok(None)) if self.capsules.at_boundary() => {
                         self.peer_finished = true;
                         self.end(Ok(SessionClose { code: 0, reason: String::new() }));

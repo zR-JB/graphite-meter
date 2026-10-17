@@ -133,7 +133,7 @@ impl App {
         }
     }
 
-    /// `GET` attaches the upload's progress feed and `DELETE` finalizes it; `HEAD` claims nothing.
+    /// `GET` attaches the upload's progress feed and `DELETE` finalizes it.
     pub(super) fn progress<B>(
         &self,
         request: &Request<B>,
@@ -141,9 +141,6 @@ impl App {
         connection: &Connection,
         exchange: Exchange,
     ) -> Result<Response<Body>, Response<Body>> {
-        if request.method() == Method::HEAD {
-            return Ok(response::method_not_allowed("GET, DELETE"));
-        }
         let lane = self.admit(peer, connection, exchange, false)?;
         let (id, owner) = (query::get(request.uri().query(), "id").unwrap_or_default(), peer.keys());
         let attached = match *request.method() {

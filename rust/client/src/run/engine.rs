@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 /// The sampler's period.
 pub const TICK: Duration = Duration::from_millis(250);
-const READY_BOUND: Duration = Duration::from_secs(10);
+pub(crate) const READY_BOUND: Duration = Duration::from_secs(10);
 const CHECKPOINT_BUDGET: Duration = Duration::from_millis(1500);
 const FINAL_CHECKPOINT_BUDGET: Duration = Duration::from_millis(500);
 /// A tick this late resumes evidence.

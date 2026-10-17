@@ -4,7 +4,7 @@ use crate::{
     measure::latency::{Deadline, ProbeOutcome},
     model::{Cadence, Stage},
     net::{Bus, Class, Client, Fault, LatencyPath, REDIAL_WINDOW, retrying},
-    run::engine::ProberEvent,
+    run::engine::{ProberEvent, READY_BOUND},
 };
 use futures_util::FutureExt;
 use graphite_meter_proto::bus::{Ping, Pong};
@@ -223,7 +223,7 @@ async fn probe(
     out: mpsc::UnboundedSender<ProberEvent>,
 ) {
     let emit = |probe| drop(out.send(probe));
-    let (mut at, mut bound) = (Instant::now(), Instant::now() + REDIAL_WINDOW);
+    let (mut at, mut bound) = (Instant::now(), Instant::now() + READY_BOUND);
     let fault = loop {
         sleep_until(at.into()).await;
         let dialed = timeout_at(bound.into(), retrying(|| client.bus(&path))).await;

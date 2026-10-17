@@ -126,7 +126,9 @@ impl App {
             _ if self.view.check == Check::SignIn || self.view.sign_in.is_some() => {
                 (dot(palette.warn), "Sign in".into(), palette.warn)
             }
-            _ if matches!(self.view.check, Check::Failed(_)) || self.view.servers.iter().all(|s| s.path.is_err()) => {
+            _ if matches!(self.view.check, Check::Failed(_))
+                || !self.view.servers.is_empty() && self.view.servers.iter().all(|s| s.path.is_err()) =>
+            {
                 let unreached = if self.view.servers.is_empty() { "Failed".into() } else { names };
                 (dot(Style { bold: false, ..palette.err }), unreached, palette.text)
             }

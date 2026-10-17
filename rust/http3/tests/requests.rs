@@ -53,6 +53,16 @@ async fn requests_round_trip_and_bodiless_responses_may_declare_a_length() -> Re
 }
 
 #[tokio::test]
+async fn a_peer_close_with_code_0_is_no_graceful_end() -> Result<(), TestError> {
+    let Served { peers, serving, .. } = pair(PLAIN).await?.serve(respond);
+    peers.get().await?;
+    peers.client.close(0_u32.into(), b"");
+    let code = Code::from(noq::VarInt::from_u32(0));
+    assert_eq!(serving.await?, Err(Error::Connection { local: false, code, reason: Bytes::new() }));
+    Ok(())
+}
+
+#[tokio::test]
 async fn abandoned_streams_carry_the_codes_table() -> Result<(), TestError> {
     let Served { peers, .. } = pair(PLAIN).await?.serve(|request, stream| async move {
         let (mut send, recv) = stream.split();
@@ -76,6 +86,8 @@ async fn abandoned_streams_carry_the_codes_table() -> Result<(), TestError> {
         }
     };
     assert_eq!(stopped, Error::Stopped(Code::H3_NO_ERROR));
+    let finished = (send.finish().await, send.finish().await);
+    assert_eq!(finished, (Err(Error::Stopped(Code::H3_NO_ERROR)), Err(Error::Closed)));
     // RESET_STREAM may discard the head along with the body.
     let (_send, mut recv) = requests.send_request(get("/unfinished")).await?.split();
     let received = async {

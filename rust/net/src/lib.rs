@@ -10,7 +10,6 @@ mod udp;
 
 pub use connect::{ConnectError, Connection, Connector, RequestForm, Stream, TLS_READ_BYTES};
 pub use crypto::{Verify, aes_hardware, client_config, provider};
-pub use dial::resolve;
 pub use proxy::{Proxy, UnusableProxy};
 pub use runtime::Pool;
 pub use trust::Trust;
