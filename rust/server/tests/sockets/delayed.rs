@@ -53,7 +53,14 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
         assert_eq!(answer.status(), 200);
         downloads.spawn(async move { while let Ok(Some(_)) = body.data().await {} });
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    let exhausted = async {
+        while connection.quic.stats().udp_rx.bytes < u64::from(INITIAL_RECEIVE_WINDOW) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), exhausted)
+        .await
+        .expect("the downloads use the first window");
     for _ in 0..4 {
         let started = Instant::now();
         connection.json("GET", "/probe").await;

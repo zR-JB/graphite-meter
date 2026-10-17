@@ -282,4 +282,45 @@ mod tests {
             page.contains(&format!("<style>{STYLES}</style>")) && page.contains(&format!("<script>{PENDING}</script>"))
         );
     }
+
+    #[test]
+    fn every_page_s_inline_code_is_in_its_policy_and_peer_text_stays_text() {
+        let hostile = "\"><script>alert(1)</script>";
+        let login = Login {
+            csrf: hostile,
+            provider: hostile,
+            challenge: Some(hostile),
+            error: "",
+            reason: "",
+            password: true,
+            oidc: true,
+            oidc_ready: true,
+        };
+        let approval = Cli::Approval {
+            code: hostile,
+            challenge: hostile,
+            csrf: hostile,
+            browser_origin: Some(hostile),
+        };
+        let pages = [
+            login.render(),
+            approval.render(),
+            Cli::Refused(Refused::Busy).render(),
+            Cli::Capacity { limit: 8 }.render(),
+            cli_done(true),
+            continuing(None, true),
+        ];
+        let mut headers = HeaderMap::new();
+        protect(&mut headers, true, None);
+        let policy = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        for page in pages {
+            assert!(!page.contains(hostile), "{page}");
+            for tag in ["script", "style"] {
+                for inline in page.split(&format!("<{tag}>")).skip(1) {
+                    let (code, _) = inline.split_once(&format!("</{tag}>")).unwrap();
+                    assert!(policy.contains(&format!("'sha256-{}'", sha256(code))), "{tag} in {page}");
+                }
+            }
+        }
+    }
 }

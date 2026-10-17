@@ -13,7 +13,7 @@ async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duratio
     tokio::task::yield_now().await;
     std::thread::sleep(Duration::from_millis(1));
     assert!(client.answer().now_or_never().is_none(), "open after {open:?}");
-    loop {
+    for _ in 0..400 {
         tokio::time::advance(Duration::from_millis(50)).await;
         tokio::task::yield_now().await;
         // The close reaches the client's socket in real time.
@@ -24,6 +24,7 @@ async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duratio
             return started.elapsed();
         }
     }
+    panic!("still open {:?} after it opened", started.elapsed());
 }
 
 /// Sends part of a head after `idle` seconds without traffic, and returns how long the server then took to close.
@@ -109,8 +110,18 @@ async fn connections_beyond_a_client_share_are_closed_unserved() {
     refused.send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").await;
     assert!(refused.answer().await.is_none());
     drop(held);
-    sleep(Duration::from_millis(50)).await;
-    assert_eq!(server.get("/probe").await.status, 200, "closed connections release their shares");
+    let served = async {
+        loop {
+            let mut client = server.connect().await;
+            client.send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").await;
+            if client.answer().await.is_some() {
+                return;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), served)
+        .await
+        .expect("closed connections release their shares");
 }
 
 #[tokio::test]

@@ -57,6 +57,7 @@ struct Shared {
     codes: Mutex<HashMap<String, (String, String)>>,
     twist: Mutex<Twist>,
     key_sets: AtomicUsize,
+    discoveries: AtomicUsize,
     /// Where token and user information requests announce themselves while held.
     held: Mutex<Option<Held>>,
 }
@@ -97,6 +98,7 @@ impl Provider {
             codes: Mutex::default(),
             twist: Mutex::default(),
             key_sets: AtomicUsize::new(0),
+            discoveries: AtomicUsize::new(0),
             held: Mutex::default(),
         });
         let serving = shared.clone();
@@ -129,6 +131,11 @@ impl Provider {
         let (announce, held) = mpsc::unbounded_channel();
         *self.0.held.lock().unwrap() = Some(announce);
         held
+    }
+
+    /// How many times the server fetched the provider's metadata.
+    pub fn discoveries(&self) -> usize {
+        self.0.discoveries.load(Ordering::Relaxed)
     }
 
     /// How many times the server fetched the key set.
@@ -172,6 +179,9 @@ impl Shared {
             let _ = released.await;
         }
         let issuer = &self.issuer;
+        if head.uri.path() == "/.well-known/openid-configuration" {
+            self.discoveries.fetch_add(1, Ordering::Relaxed);
+        }
         let (status, document) = match head.uri.path() {
             "/.well-known/openid-configuration" => (
                 200,

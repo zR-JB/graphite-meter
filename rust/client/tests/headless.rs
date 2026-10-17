@@ -4,7 +4,7 @@
 
 use std::{process::Stdio, time::Duration};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     process::{Child, Command},
     time::timeout,
@@ -37,11 +37,11 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
 
 /// The path of the next request on `stream`, once its head arrived.
 async fn path(stream: &mut TcpStream) -> Option<String> {
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        head.push(stream.read_u8().await.ok()?);
-    }
-    String::from_utf8_lossy(&head).split(' ').nth(1).map(str::to_owned)
+    graphite_meter_testkit::read_head(stream)
+        .await?
+        .split(' ')
+        .nth(1)
+        .map(str::to_owned)
 }
 
 /// A peer at the returned URL answering each request by its path: a 200 JSON body, or `refusal`.

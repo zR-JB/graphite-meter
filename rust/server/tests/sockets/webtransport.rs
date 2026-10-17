@@ -72,7 +72,8 @@ async fn a_connection_that_carried_only_sessions_closes_when_the_peer_ends_its_l
     let serving = h3.connect(transport(None)).await;
     assert_eq!(serving.send("GET", "/probe", b"").await.0.status(), 200);
     serving.session("/wt/ping").await.close(0, "").await;
-    assert_eq!(serving.closed_within(Duration::from_millis(200)).await, None, "it served a request too");
+    assert_eq!(serving.send("GET", "/probe", b"").await.0.status(), 200, "it served a request too");
+    assert_eq!(serving.quic.close_reason(), None);
 }
 
 #[tokio::test]

@@ -41,7 +41,18 @@ fn serving(env: &[(&str, &str)]) -> (std::process::Child, impl Iterator<Item = S
 fn terminate(mut child: std::process::Child) {
     let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
     assert!(killed.unwrap().success());
-    assert!(child.wait().unwrap().success());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the server outlived SIGTERM by 10 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert!(status.success());
 }
 
 /// The level, topic and message of a plain log line after its RFC 3339 UTC time.
@@ -149,22 +160,19 @@ fn transfers(message: &str) -> usize {
 #[test]
 fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     use std::io::Read;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let address = format!("127.0.0.1:{port}");
-    let (child, lines) = serving(&[("GM_H1_ADDR", &address), ("GM_VERBOSE", "true"), ("TOKIO_WORKER_THREADS", "2")]);
+    let env = [("GM_H1_ADDR", "127.0.0.1:0"), ("GM_VERBOSE", "true"), ("TOKIO_WORKER_THREADS", "2")];
+    let (child, lines) = serving(&env);
     let (sender, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || lines.map(|line| sender.send(line)).take_while(Result::is_ok).count());
     let next = || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-    let place = format!("{address}/tcp");
     assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
     assert!(next().starts_with("serving as "));
-    assert_eq!(next(), format!("{place:<21} HTTP/1.1  UI, discovery, probe, transfers, WebSockets"));
+    let listen = next();
+    let (place, roles) = listen.split_once(' ').unwrap();
+    assert_eq!(roles.trim_start(), "HTTP/1.1  UI, discovery, probe, transfers, WebSockets");
+    let address = place.strip_suffix("/tcp").unwrap();
     assert_eq!(next(), "ready");
-    let mut download = std::net::TcpStream::connect(&address).unwrap();
+    let mut download = std::net::TcpStream::connect(address).unwrap();
     download
         .write_all(b"GET /download?bytes=68719476736 HTTP/1.1\r\nHost: test\r\n\r\n")
         .unwrap();

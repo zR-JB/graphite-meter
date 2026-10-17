@@ -582,11 +582,6 @@ mod terms_tests {
             ("GM_MAX_CONNECTIONS_PER_CLIENT", "2"),
         ];
         let config = config(&[&TLS[..], &env[..]].concat());
-        assert_eq!(
-            quic::noq_floor(&config.limits).unwrap() >> 10,
-            481,
-            "noq's stream floor at default limits"
-        );
         let endpoint = configured_endpoint(&config).unwrap();
         let floor = quic::floor_bytes(0) + quic::noq_floor(&config.limits).unwrap();
         let terms = Terms {

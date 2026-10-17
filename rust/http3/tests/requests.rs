@@ -80,11 +80,14 @@ async fn abandoned_streams_carry_the_codes_table() -> Result<(), TestError> {
     let (mut send, mut recv) = requests.send_request(get("/unread")).await?.split();
     assert_eq!(recv.response().await?.status(), http::StatusCode::OK);
     assert_eq!(body(&mut recv).await, Ok(b"done".to_vec()));
-    let stopped = loop {
-        if let Err(error) = send.send_data(Bytes::from(vec![0; 64 * 1024])).await {
-            break error;
+    let stopped = async {
+        loop {
+            if let Err(error) = send.send_data(Bytes::from(vec![0; 64 * 1024])).await {
+                return error;
+            }
         }
     };
+    let stopped = tokio::time::timeout(Duration::from_secs(5), stopped).await?;
     assert_eq!(stopped, Error::Stopped(Code::H3_NO_ERROR));
     let finished = (send.finish().await, send.finish().await);
     assert_eq!(finished, (Err(Error::Stopped(Code::H3_NO_ERROR)), Err(Error::Closed)));
