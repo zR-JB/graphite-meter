@@ -43,7 +43,7 @@ records of the crates that lack one.
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
 check lists the compiled crates with `cargo tree` over normal and build edges and requires an approved review for
 each, and every shipped target needs an approved platform record. The static x86_64 Linux server and client compile
-at most 143 and 150 crates, a dependency policy rather than a license requirement.
+at most 143 and 150 crates. That ceiling is a dependency policy rather than a license requirement.
 
 ## Updating pinned forks
 

@@ -7,7 +7,8 @@ receiver-progress stream. The plain request/response HTTP endpoints (`/servers`,
 `/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
 they use normal HTTP (query params, status codes, streaming bodies).
 
-The Rust server and terminal client and the TypeScript browser client share the conformance corpus `api/wire.testvectors.txt`.
+The Rust server and terminal client and the TypeScript browser client share the conformance corpus
+`api/wire.testvectors.txt`.
 
 Related contracts: [discovery and control responses](discovery.md),
 [upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
@@ -40,7 +41,7 @@ ready, goodbye, capability, or error frames.
 
 Each client owns a per-bus `uint32` counter, `id = (id + 1) >>> 0`; the server keeps no per-probe state and echoes
 the parsed id. Only the in-flight window (at most 16 probes) is live, so a wrapped id never matches a pending one.
-Cadence, deadlines, the in-flight window and probe timeouts are client behaviour, defined in
+Cadence, deadlines, the in-flight window and probe timeouts are client behavior, defined in
 [latency probing](../docs/MEASUREMENTS.md#latency-probing).
 
 ## Reflector handling time
@@ -116,7 +117,7 @@ the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN 
 Firefox drop the code of a close whose `STOP_SENDING` arrives first. A QUIC connection that carried only WebTransport
 sessions closes with `H3_NO_ERROR` once its last session ends (a second later when the server ended it, so the
 session's code arrives first), so it does not hold one of the client's connection slots. At shutdown the server gives
-those connections up to 5 s to close so, then closes every remaining QUIC connection with `H3_NO_ERROR` too.
+those connections up to 5 s to close on their own, then closes every remaining QUIC connection with `H3_NO_ERROR` too.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |

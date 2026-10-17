@@ -28,22 +28,24 @@ Open `http://SERVER_IP:7246`. The image holds one static binary, for amd64 and a
 
 | Setup                        | Guide                                                                                                                              |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| HTTP/2, HTTP/3, WebTransport | They need TLS: [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies). |
-| Compose, Podman Quadlet      | [Docker Compose](docs/DEPLOYMENT.md#docker-compose) and [Quadlet](container/quadlet/README.md).                                  |
-| Sign-in                      | A password or your OIDC provider: [authentication](docs/DEPLOYMENT.md#authentication).                                            |
-| More than one test server    | A [server catalog](docs/DEPLOYMENT.md#server-catalog).                                                                            |
+| HTTP/2, HTTP/3, WebTransport | These need TLS, from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies). |
+| Compose, Podman Quadlet      | See [Docker Compose](docs/DEPLOYMENT.md#docker-compose) and [Quadlet](container/quadlet/README.md).                              |
+| Sign-in                      | A password or your OIDC provider protects the app and every measurement route; see [authentication](docs/DEPLOYMENT.md#authentication). |
+| More than one test server    | List them in a [server catalog](docs/DEPLOYMENT.md#server-catalog).                                                               |
+
+> [!NOTE]
+> If you upgrade from 0.12 or earlier, `latest` now runs the Rust server. See [upgrading](docs/DEPLOYMENT.md#upgrading).
 
 ## Measurements
 
 | Result     | Method                                                                                                                  |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Throughput | Download and upload, timed by the receiver: the browser for downloads, the server for uploads.                         |
-| Latency    | Idle and under load as separate populations: median, P95, jitter, timeouts. The difference is the queueing under load. |
-| Servers    | One to four test servers in one test, on one schedule.                                                                  |
-| Paths      | Throughput and latency on separate paths: HTTP/1.1, HTTP/2, HTTP/3, WebSocket, WebTransport. Automatic or chosen.       |
+| Throughput | The receiver times each transfer, so the browser times downloads and the server times uploads.                        |
+| Latency    | Idle latency and latency under load are separate populations, each with median, P95, jitter and timeouts. Their difference is the queueing that load adds. |
+| Servers    | A test runs against one to four servers on one schedule.                                                                |
+| Paths      | Throughput and latency travel on separate paths over HTTP/1.1, HTTP/2, HTTP/3, WebSocket or WebTransport, picked automatically or by hand. |
 
-Each result is defined in the [measurement definitions](docs/MEASUREMENTS.md); the app reports numbers and grades
-nothing.
+The [measurement definitions](docs/MEASUREMENTS.md) define each result. The app reports numbers and grades nothing.
 
 ## Terminal
 
@@ -57,15 +59,18 @@ nothing.
 </div>
 
 ```sh
+# The console, against a server on the LAN
 graphite-meter-client --url http://192.168.1.20:7246
-graphite-meter-client --url https://meter.example --server frankfurt --server amsterdam --report
+
+# One test against two catalog servers, printed as a report; the exit status says how it ended
+graphite-meter-client --url https://meter.example.net --server frankfurt --server amsterdam --report
 ```
 
 | Client     | Detail                                                                                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Platforms  | Linux amd64, Linux arm64, Windows amd64. One static executable per [release](https://github.com/zR-JB/graphite-meter/releases). |
-| `--report` | One test without the console; the report on stdout, the outcome in the exit status.                                             |
-| Guide      | [Flags, keys, report mode and exit codes](docs/TERMINAL.md).                                                                    |
+| Platforms  | Every [release](https://github.com/zR-JB/graphite-meter/releases) attaches one static executable for Linux amd64, Linux arm64 and Windows amd64. |
+| Sign-in    | The client approves a short code in the browser and never sees the password.                                                   |
+| Guide      | The [terminal client guide](docs/TERMINAL.md) lists the flags, keys, report mode and exit codes.                                |
 
 ## Settings and History
 
@@ -80,27 +85,21 @@ graphite-meter-client --url https://meter.example --server frankfurt --server am
 
 | Sheet    | Content                                                                                  |
 | -------- | ---------------------------------------------------------------------------------------- |
-| Settings | The test servers, the throughput and latency paths, the stages and the advanced settings. |
-| History  | Up to 2,000 results, stored in the browser only; the server keeps none.                   |
+| Settings | Settings picks the test servers, the throughput and latency paths, the stages and the advanced options. |
+| History  | History keeps up to 2,000 results and shows the columns you choose.                       |
 
-## Trust
+## Privacy
 
-| Area    | Guarantee                                                                                                                                                      |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sign-in | Off, a password, or your OIDC provider. It covers the app and every measurement route. The terminal client approves a code in the browser and never sees the password. |
-| Network | No outbound connection unless OIDC is configured. The browser app loads nothing from a third party.                                                            |
-| License | AGPL-3.0. Every image and archive ships its license notices; every release attaches the third-party source.                                                    |
-
-> [!NOTE]
-> Upgrading from 0.12 or earlier: `latest` is now the Rust server. See [upgrading](docs/DEPLOYMENT.md#upgrading).
+The server makes no outbound connection unless OIDC is configured, and the browser app loads nothing from a third
+party. Results stay in the browser's History; the server stores none.
 
 ## Documentation
 
-- [Deployment](docs/DEPLOYMENT.md): Compose, Quadlet, reverse proxies, TLS, sign-in, the server catalog, every
-  setting.
-- [Terminal client](docs/TERMINAL.md): install, flags, keys, report mode, exit codes.
-- [Measurement definitions](docs/MEASUREMENTS.md): what each result means and how it is computed.
-- [Development](docs/DEVELOPMENT.md): building, testing, the workspace, releasing.
+- [Deployment](docs/DEPLOYMENT.md) covers Compose, Quadlet, reverse proxies, TLS, sign-in, the server catalog and
+  every setting.
+- [Terminal client](docs/TERMINAL.md) covers installing, the flags, the keys, report mode and the exit codes.
+- [Measurement definitions](docs/MEASUREMENTS.md) say what each result means and how it is computed.
+- [Development](docs/DEVELOPMENT.md) covers building, testing, the workspace and releasing.
 
 ## Contributing
 
@@ -109,5 +108,6 @@ graphite-meter-client --url https://meter.example --server frankfurt --server am
 
 ## License
 
-Copyright 2026 zR-JB. AGPL-3.0-or-later: [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT). Third-party notices ship in
-the browser's legal view, in the client archives and under `/usr/share/licenses/graphite-meter/` in the image.
+Copyright 2026 zR-JB, AGPL-3.0-or-later; see [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT). Every image and archive
+ships its third-party notices: the browser shows them in its legal view, the client archives carry them as files, and
+the image keeps them under `/usr/share/licenses/graphite-meter/`. Every release attaches the third-party source.

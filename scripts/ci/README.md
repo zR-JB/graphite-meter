@@ -27,8 +27,8 @@ checks job alone; every other change, and every push to main, runs every job:
 | Browser E2E | Chrome in four shards and Firefox against the image's server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
-toolchain and `Cargo.lock`; only CI writes caches. Setup installs the Rust release `rust/rust-toolchain.toml` pins with
-`--no-self-update` and refuses it unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins
+toolchain and `Cargo.lock`; only CI writes caches. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with
+`--no-self-update`, and refuses it unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins
 as `rust_manifest_sha256`. `advisories.yml` checks the locked crates and client packages against the live advisory
 databases daily, so a new advisory never fails an unrelated pull request.
 
