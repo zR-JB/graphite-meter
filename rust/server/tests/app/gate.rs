@@ -116,12 +116,25 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
 async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() {
     let app = app(&ALL_LISTENERS);
     for (method, path, allow) in [
-        ("HEAD", "/upload/progress", "DELETE, GET, OPTIONS"),
-        ("PUT", "/upload/progress", "DELETE, GET, OPTIONS"),
+        ("PUT", "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
         ("POST", "/probe", "GET, HEAD, OPTIONS"),
     ] {
         let response = send(&app, Endpoint::H2, empty(request(method, path))).await;
         let refusal = (response.status(), header(&response, "allow"));
         assert_eq!(refusal, (StatusCode::METHOD_NOT_ALLOWED, Some(allow)), "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn head_answers_an_upload_feed_s_head_alike_on_every_listener() {
+    let app = app(&ALL_LISTENERS);
+    for endpoint in [Endpoint::H1, Endpoint::H2] {
+        let minted = json(send(&app, endpoint, empty(request("POST", "/upload/session"))).await).await;
+        let id = minted["uploadId"].as_str().unwrap();
+        let head = send(&app, endpoint, empty(request("HEAD", &format!("/upload/progress?id={id}")))).await;
+        assert_eq!(header(&head, "content-type"), Some("application/x-ndjson"), "{endpoint:?}");
+        assert_eq!((head.status(), text(head).await), (StatusCode::OK, String::new()), "{endpoint:?}");
+        let unknown = send(&app, endpoint, empty(request("HEAD", "/upload/progress?id=gmu_x"))).await;
+        assert_eq!(header(&unknown, "x-graphite-upload-refusal"), Some("invalid"), "{endpoint:?}");
     }
 }

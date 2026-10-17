@@ -307,7 +307,7 @@ async fn read(
             let end = chunk.iter().position(|&byte| byte == b'\n');
             let taken = chunk.split_to(end.map_or(chunk.len(), |end| end + 1));
             if line.len() + taken.len() > MAX_RECORD_BYTES {
-                return Err(Fault::Malformed(format!("upload progress record exceeds {MAX_RECORD_BYTES} bytes")));
+                return Err(Fault::Malformed(format!("upload progress record exceeds {} KiB", MAX_RECORD_BYTES >> 10)));
             }
             line.extend_from_slice(&taken);
             if end.is_none() {

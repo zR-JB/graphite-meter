@@ -12,7 +12,7 @@ use crate::{
     lock,
 };
 use bytes::Bytes;
-use graphite_meter_proto::lane::CONNECTION_IDLE;
+use graphite_meter_http3::CONNECTION_IDLE;
 use http::{Method, Request, Response};
 use http_body::{Frame, SizeHint};
 use hyper::{

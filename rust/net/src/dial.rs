@@ -86,7 +86,7 @@ async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpSt
 }
 
 /// An equal part of `left` for each of `addresses`, but at least `MIN_SHARE` while it lasts.
-fn share(left: Duration, addresses: usize) -> Duration {
+pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
     let equal = left / u32::try_from(addresses).unwrap_or(u32::MAX);
     equal.max(MIN_SHARE.min(left))
 }

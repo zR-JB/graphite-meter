@@ -602,7 +602,6 @@ name = "graphite-meter-http3"
 version = "0.0.0"
 dependencies = [
  "bytes",
- "graphite-meter-proto",
  "graphite-meter-testkit",
  "http",
  "noq",

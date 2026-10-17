@@ -163,6 +163,7 @@ fn joined<'a>(parts: impl Iterator<Item = &'a str>, separator: &str, cells: usiz
     let mut lines: Vec<String> = Vec::new();
     for part in parts {
         match lines.last_mut() {
+            Some(line) if line.is_empty() => line.push_str(part),
             Some(line) if width(line) + width(separator) + width(part) <= cells => {
                 line.push_str(separator);
                 line.push_str(part);
@@ -206,4 +207,17 @@ fn sgr(style: Style, profile: Profile) -> Option<String> {
     let codes = [bold, color(style.fg, 30), color(style.bg, 40)];
     let codes: Vec<_> = codes.into_iter().flatten().collect();
     (!codes.is_empty()).then(|| codes.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parts_join_while_they_fit_and_an_empty_line_takes_no_separator() {
+        let parts = |parts: &[&str]| parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>();
+        assert_eq!(wrap(&parts(&["", "a", "bb"]), 6), ["a · bb"]);
+        assert_eq!(wrap(&parts(&["aaa", "bbb"]), 8), ["aaa", "bbb"]);
+        assert_eq!(wrap(&[], 8), [""]);
+    }
 }

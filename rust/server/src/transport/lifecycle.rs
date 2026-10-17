@@ -2,7 +2,7 @@
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
-use graphite_meter_proto::lane::CONNECTION_IDLE;
+use graphite_meter_http3::CONNECTION_IDLE;
 use std::{
     future::Future,
     pin::Pin,

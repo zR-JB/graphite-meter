@@ -272,6 +272,21 @@ impl Uploads {
         Ok(ProgressFeed::new(self.clone(), aggregate, reader))
     }
 
+    /// Whether `subscribe` would attach the feed, creating and replacing nothing.
+    pub fn watchable(&self, id: &str, owner: Option<&ClientKeys>) -> Result<(), UploadRefusal> {
+        let narrowest = owner
+            .and_then(ClientKeys::narrowest)
+            .ok_or(UploadRefusal::OwnerMismatch)?;
+        let id = UploadId::parse(id).ok_or(UploadRefusal::Invalid)?;
+        let entries = self.entries();
+        match entries.live.get(&id) {
+            Some(entry) if entry.aggregate.owner != narrowest => Err(UploadRefusal::OwnerMismatch),
+            Some(_) => Ok(()),
+            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => Err(UploadRefusal::Invalid),
+            None => Ok(()),
+        }
+    }
+
     /// An existing aggregate's counters, without refreshing its retention.
     pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, UploadRefusal> {
         Ok(self.reach(id, owner, Reach::Read)?.counters())

@@ -334,7 +334,7 @@ impl Incoming {
 
     /// The bounded body, read by `decode`.
     pub async fn json<T>(mut self, decode: Decode<T>) -> Result<T, Fault> {
-        let oversized = || Fault::Malformed(format!("control response exceeds {MAX_RESPONSE_BYTES} bytes"));
+        let oversized = || Fault::Malformed(format!("control response exceeds {} KiB", MAX_RESPONSE_BYTES >> 10));
         if let Source::Hyper(body) = &self.source
             && hyper::body::Body::size_hint(body).exact() > Some(MAX_RESPONSE_BYTES as u64)
         {

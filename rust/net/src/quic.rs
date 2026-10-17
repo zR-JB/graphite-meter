@@ -1,7 +1,7 @@
 //! QUIC transport settings for both roles, with the shared receive and send windows, and the client's dial.
 use crate::{
     ConnectError, Verify, bind_udp, client_config,
-    dial::{TIMEOUT, resolve},
+    dial::{TIMEOUT, resolve, share},
 };
 use graphite_meter_proto::{discovery::Protocol, lane::IDLE_BOUND, origin::Host};
 use noq::{IdleTimeout, TransportConfig, VarInt, crypto::rustls::QuicClientConfig};
@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout, timeout_at};
 
 /// The receive window autotuning grows each stream to.
 const STREAM_RECEIVE_WINDOW: u32 = 32 << 20;
@@ -73,8 +73,8 @@ const SILENT: Duration = Duration::from_secs(3);
 /// How long an answering address may take to finish the handshake.
 const ANSWERING: Duration = Duration::from_secs(5);
 
-/// A client connection to `host` with its own endpoint: each address in turn, IPv4 first, all within the dial timeout;
-/// the last one's error if none connects.
+/// A client connection to `host` with its own endpoint: each address in turn, IPv4 first, each given its share of the
+/// dial timeout as a TCP dial gives it; the last one's error if none connects.
 pub async fn dial(host: &Host, port: u16, verify: &Verify) -> Result<(noq::Endpoint, noq::Connection), ConnectError> {
     let crypto = QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await);
     let mut config =
@@ -84,20 +84,23 @@ pub async fn dial(host: &Host, port: u16, verify: &Verify) -> Result<(noq::Endpo
         Host::Name(name) => name.clone(),
         Host::Ip(ip) => ip.to_string(),
     };
+    let overran = || ConnectError::Unreachable(io::ErrorKind::TimedOut.into());
+    let deadline = Instant::now() + TIMEOUT;
     let dialing = async {
         let mut addresses = resolve(host, port).await.map_err(ConnectError::Unreachable)?;
         addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
         let mut last = ConnectError::Unreachable(io::Error::new(io::ErrorKind::NotFound, "no address resolved"));
-        for address in addresses {
-            match attempt(&config, address, &name).await {
-                Ok(dialed) => return Ok(dialed),
-                Err(error) => last = error,
+        for (index, &address) in addresses.iter().enumerate() {
+            let share = share(deadline.saturating_duration_since(Instant::now()), addresses.len() - index);
+            match timeout(share, attempt(&config, address, &name)).await {
+                Ok(Ok(dialed)) => return Ok(dialed),
+                Ok(Err(error)) => last = error,
+                Err(_) => last = overran(),
             }
         }
         Err(last)
     };
-    let dialed = timeout(TIMEOUT, dialing).await;
-    dialed.unwrap_or_else(|_| Err(ConnectError::Unreachable(io::ErrorKind::TimedOut.into())))
+    timeout_at(deadline, dialing).await.unwrap_or_else(|_| Err(overran()))
 }
 
 async fn attempt(

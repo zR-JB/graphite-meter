@@ -58,7 +58,7 @@ struct Entry {
 /// Parses either catalog form, with `self` added first.
 pub(super) fn parse(data: &[u8]) -> Result<ServerCatalog, String> {
     if data.len() > MAX_INPUT_BYTES {
-        return Err("server catalog exceeds 64 KiB".into());
+        return Err(format!("server catalog exceeds {} KiB", MAX_INPUT_BYTES >> 10));
     }
     let mut catalog = ServerCatalog::singleton();
     if data.trim_ascii_start().starts_with(b"[") {
@@ -79,7 +79,10 @@ pub(super) fn parse(data: &[u8]) -> Result<ServerCatalog, String> {
     }
     let normalized = serde_json::to_vec(&catalog).map_err(|error| error.to_string())?;
     if normalized.len() > MAX_NORMALIZED_BYTES {
-        return Err("normalized server catalog exceeds 48 KiB; leave room for this server's transport origins".into());
+        return Err(format!(
+            "normalized server catalog exceeds {} KiB; leave room for this server's transport origins",
+            MAX_NORMALIZED_BYTES >> 10
+        ));
     }
     catalog.validate().map_err(|error| error.to_string())?;
     Ok(catalog)

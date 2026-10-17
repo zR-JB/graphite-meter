@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 bytes.workspace = true
-graphite-meter-proto.workspace = true
 http.workspace = true
 noq.workspace = true
 tokio = { workspace = true, features = ["macros", "sync", "time"] }

@@ -12,7 +12,6 @@ use crate::{
     webtransport::{RecvStream, Registry, SessionId, Sessions, Unrouted},
 };
 use bytes::Bytes;
-use graphite_meter_proto::lane::CONNECTION_IDLE;
 use std::{
     future::{Future, poll_fn},
     pin::{Pin, pin},
@@ -29,6 +28,9 @@ use tokio::{
 };
 
 const DRAIN: Duration = Duration::from_secs(5);
+
+/// A server connection without requests or streams closes after this long, whatever its HTTP version.
+pub const CONNECTION_IDLE: Duration = Duration::from_secs(15);
 
 /// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
 pub const CONNECTION_BYTES: usize = size_of::<Driver>()

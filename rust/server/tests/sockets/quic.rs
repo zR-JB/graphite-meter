@@ -61,12 +61,12 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     assert!(retried(&h3, "127.0.0.3").await, "a quarter of the connections are used");
 }
 
-/// The budget's usage once it held still for two 20 ms windows in a row.
+/// The budget's usage once it held still for three 30 ms windows in a row.
 pub(super) async fn settled(budget: &Budget) -> usize {
     let settling = async {
         let (mut last, mut still) = (budget.usage().used, 0);
-        while still < 2 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+        while still < 3 {
+            tokio::time::sleep(Duration::from_millis(30)).await;
             let used = budget.usage().used;
             still = if used == last { still + 1 } else { 0 };
             last = used;
