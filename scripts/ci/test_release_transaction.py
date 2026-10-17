@@ -218,7 +218,9 @@ class ReleasePublicationTests(unittest.TestCase):
     def publish(self, before: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
         state = copy.deepcopy(before)
 
-        def gh(argv: list[str], *, input: str | None = None, **_: object) -> subprocess.CompletedProcess[str]:
+        def gh(argv: list[str], *, input: str | None = None, env: dict[str, str] | None = None,
+               **_: object) -> subprocess.CompletedProcess[str]:
+            self.assertEqual((os.environ if env is None else env).get("GH_TOKEN"), "secret-token")
             try:
                 out = github(state, argv, input)
             except Refused as exc:

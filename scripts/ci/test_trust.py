@@ -547,6 +547,7 @@ class CommandTests(unittest.TestCase):
             (True, "publish", client, {}, {}, "notices differ from its build's"),
             (False, "publish", offer, {}, {}, "files are"),
             (True, "publish", None, unprotected, {}, "require reviewers"),
+            (True, "publish", None, {MAIN_COMMIT: {"sha": OLD}}, {}, "no longer current main"),
             (False, "publish", None, MOVED | {MAIN_COMMIT: {"sha": OLD}}, {}, "main moved during"),
             (True, "publish", None, published, {}, "already published with other assets"),
             (True, "validate", None, published, {}, "already published with other assets"),
