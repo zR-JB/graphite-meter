@@ -30,11 +30,8 @@ let session: Session | null = null;
 
 onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch);
-  else if (data.type === "flush") {
-    reports.flush();
-    const { total, at } = reports.totalAt(data.at - performance.timeOrigin);
-    post({ type: "flushed", total, at: performance.timeOrigin + at });
-  } else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
+  else if (data.type === "flush") post(reports.flushed(data.at));
+  else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
   else session = new Session(data);
 };
 

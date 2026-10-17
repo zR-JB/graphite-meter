@@ -84,7 +84,7 @@ test("a start that prepares no server fails with words", async () => {
   const h = setup(only({ download: true }), { servers: [] });
   h.run.toggle();
   await h.clock.advance(10);
-  expect([h.run.preparation(), h.run.startError()]).toEqual(["failed", "Connection check failed"]);
+  expect([h.run.preparation(), h.run.startError()]).toEqual(["failed", "Could not check the connection"]);
 });
 
 test("a gauge-only change mid-run never reaches the run", async () => {

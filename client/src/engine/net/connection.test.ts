@@ -71,7 +71,7 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
   const { connection } = connect(peer, { auth: grantAuth(peer, grant, net.now) });
   await net.advance(20_000);
   expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000]);
-  expect(connection.view.peek().message).toBe("Server could not be reached");
+  expect(connection.view.peek().message).toBe("Could not reach this test server");
   connection.resume();
   await net.advance(0);
   expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000, 20_000]);
@@ -135,7 +135,7 @@ test("a selected server re-reads discovery every 5 s without a checking flash or
   expect(connection.view.peek().throughput.path?.fetch).toMatchObject({ origin: page.origin, protocol: "http2" });
   alive = false;
   await net.advance(5_000);
-  expect(connection.view.peek().message).toBe("Server could not be reached");
+  expect(connection.view.peek().message).toBe("Could not reach this test server");
   expect(readiness).toEqual(["checking", "verified", "failed"]);
 });
 
@@ -156,7 +156,7 @@ test("a timer that fires before a coarse page clock reaches its time still re-re
   alive = false;
   await net.advance(5_000);
   expect(net.sent("/preflight")).toEqual([0, 5_001]);
-  expect(connection.view.peek().message).toBe("Server could not be reached");
+  expect(connection.view.peek().message).toBe("Could not reach this test server");
 });
 
 test("a server selected again keeps evidence up to 2 min old and proves older evidence again", async () => {

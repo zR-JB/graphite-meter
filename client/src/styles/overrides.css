@@ -82,9 +82,9 @@
   mix-blend-mode: normal;
 }
 :root:active-view-transition-type(theme)::view-transition-new(root) {
-  animation: theme-fade var(--dur-graph) var(--ease-out);
+  animation: fade-in var(--dur-graph) var(--ease-out);
 }
-@keyframes theme-fade {
+@keyframes fade-in {
   from {
     opacity: 0;
   }

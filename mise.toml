@@ -18,10 +18,10 @@ python = "3.14.8"
 mise_version = "2026.10.7"
 buildx_version = "v0.38.0"
 
-browser_chrome = "154.0.8037.92"
-browser_firefox = "157.0.1"
+browser_chrome = "155.0.8059.84"
+browser_firefox = "158.0"
 # SHA-256 of ftp.mozilla.org's linux-x86_64/en-US/firefox-<version>.tar.xz, from the release's SHA256SUMS.
-browser_firefox_sha256 = "0d92bf39cdd174f5f361008509310bdefbce72a57ca10523a43b32d62dc699b6"
+browser_firefox_sha256 = "9549b054ec4cf85f50f6a19d8c6fb79580312e71ebc4ec2cb217ec9af09dc12a"
 
 codeql = "2.27.2"
 
@@ -55,6 +55,10 @@ run = "bun install --frozen-lockfile --prefer-offline"
 [tasks.doctor]
 description = "Check local, CI, and Docker toolchain drift"
 run = "python3 scripts/ci/toolchains.py doctor"
+
+[tasks.browser-bump]
+description = "Pin the latest stable Chrome for Testing and Firefox"
+run = "python3 scripts/ci/toolchains.py latest-browsers --write"
 
 [tasks.toolchain-sync]
 description = "Update required toolchain literals from mise.toml"

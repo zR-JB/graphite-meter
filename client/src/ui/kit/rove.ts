@@ -4,6 +4,14 @@ import { onCleanup } from "../../lib/signal";
 
 const ROVE: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
+/** Where `key` moves from `at` among `length` items, arrows wrapping; -1 for a key that does not move. */
+export function roveTo(key: string, at: number, length: number, steps = ROVE): number {
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+  const step = steps[key];
+  return step ? (at + step + length) % length : -1;
+}
+
 /** Use as `ref` on a list of facts; its facts are the explained words inside it. */
 export function tipGroup(list: HTMLElement): void {
   // Explained words inside a group leave the tab order to it (tip.ts).
@@ -23,15 +31,7 @@ export function tipGroup(list: HTMLElement): void {
   list.addEventListener("keydown", (event) => {
     const found = facts();
     const at = found.indexOf(event.target as HTMLElement);
-    const step = ROVE[event.key];
-    const to =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? found.length - 1
-          : step
-            ? (at + step + found.length) % found.length
-            : -1;
+    const to = roveTo(event.key, at, found.length);
     if (at < 0 || to < 0) return;
     event.preventDefault();
     found[at]!.tabIndex = -1;

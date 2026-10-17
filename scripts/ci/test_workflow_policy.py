@@ -122,6 +122,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "mise run delayed-downloads\n", "true\n", "local gate step delayed-downloads"),
     (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),
     (W + "ci.yml", "plan, checks, rust", "plan, rust", r"Gate must need every job: \['checks'\]"),
+    (W + "ci.yml", "cache: ${{ github.event_name != 'schedule' }}", "cache: 'true'", "must not cache on schedule"),
     # Development notices stay out of CI and releases, directly or through a task, script or driver a job runs.
     (W + "ci.yml", None, "# mise run dev\n", "development notices"),
     ("mise.toml", "[tasks.rust-check]\n", '[tasks.rust-check]\ndepends = ["tui-build"]\n', "development notices"),

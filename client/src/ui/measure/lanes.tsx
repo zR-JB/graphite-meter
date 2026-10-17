@@ -347,12 +347,12 @@ function Lane(props: {
     if (box) place(band, p10, p90 - p10);
     // Under the box, clear of the whisker: a bracket from the idle median to a loaded median, what the load added.
     const base = props.idle();
-    const centre = at("center");
+    const middle = at("center");
     const from = base !== null && props.several() && (values.center ?? 0) > base ? pct(base) : null;
-    attach(span, from !== null && centre !== null);
-    if (from !== null && centre !== null) place(span, from, centre - from);
-    attach(center, centre !== null);
-    if (centre !== null) place(center, centre);
+    attach(span, from !== null && middle !== null);
+    if (from !== null && middle !== null) place(span, from, middle - from);
+    attach(center, middle !== null);
+    if (middle !== null) place(center, middle);
     const latest = props.live ? at("current") : null;
     attach(current, latest !== null);
     if (latest !== null) place(current, latest);

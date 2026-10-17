@@ -8,7 +8,7 @@ import { describe, host, launch, logs } from "../e2e/servers";
 // Paths resolve from the client folder, which the suite runs in.
 const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("../rust/target/ci/graphite-meter-server");
 if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing; mise run e2e-server builds it`);
-// CI runs the browser mise.toml pins; a local run takes whichever is installed.
+// CI runs the browsers its Plan job selects; a local run takes whichever is installed.
 for (const [path, expected, name] of [
   [process.env.BUN_CHROME_PATH ?? "chrome", process.env.GM_EXPECTED_CHROME_VERSION, "Google Chrome for Testing"],
   [process.env.GM_FIREFOX_PATH ?? "firefox", process.env.GM_EXPECTED_FIREFOX_VERSION, "Mozilla Firefox"],
@@ -36,7 +36,7 @@ async function ours() {
 }
 
 let stopping: Promise<void> | undefined;
-let signalled: number | undefined;
+let signaled: number | undefined;
 function stop() {
   return (stopping ??= (async () => {
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {
@@ -54,8 +54,8 @@ for (const [signal, code] of [
   ["SIGTERM", 143],
 ] as const)
   process.on(signal, () => {
-    signalled ??= code;
-    void stop().then(() => process.exit(signalled));
+    signaled ??= code;
+    void stop().then(() => process.exit(signaled));
   });
 
 let status = 1;
@@ -127,4 +127,4 @@ try {
 } finally {
   await stop();
 }
-process.exit(signalled ?? status);
+process.exit(signaled ?? status);

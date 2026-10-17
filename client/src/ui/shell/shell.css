@@ -167,7 +167,7 @@
     overscroll-behavior: contain;
     /* A workspace appears in one quick fade, never piece by piece. */
     @media (prefers-reduced-motion: no-preference) {
-      animation: appear var(--dur-slide) var(--ease-out) backwards;
+      animation: fade-in var(--dur-slide) var(--ease-out) backwards;
     }
     & > .gauge-panel {
       flex: 1 1 0;
@@ -351,8 +351,6 @@
     height: auto;
     margin: 0;
     overflow: hidden;
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-surface);
     background: var(--sheet);
     box-shadow: var(--elev-float);
     color: var(--text);
@@ -502,11 +500,6 @@
   }
 }
 
-@keyframes appear {
-  from {
-    opacity: 0;
-  }
-}
 @keyframes glyph-turn {
   from {
     opacity: 0;

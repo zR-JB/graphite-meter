@@ -51,8 +51,8 @@ export const changeable = (current: Stage | null, stage: Stage) =>
   STAGES.indexOf(stage) > (current ? STAGES.indexOf(current) : -1);
 
 /** Slow start fills a typical bandwidth-delay product within ten round trips. */
-const SLOW_START_RTTS = 10;
-const WARMUP_CEILING_MS = 4_000;
+export const SLOW_START_RTTS = 10;
+export const WARMUP_CEILING_MS = 4_000;
 
 /** `plan` with its configured warmup stretched to ten round trips of `rttMs` but never past 4 s. */
 export const adaptWarmup = <T extends Pick<Plan, "duration">>(plan: T, rttMs: number): T => {

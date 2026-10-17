@@ -1,4 +1,4 @@
-/* The kit's own blocks: dialog geometry, confirmations, the overflow menu and the switch. */
+/* The kit's own blocks. */
 @layer components {
   /* The width owns the gutter; the UA's own max-width would leave 19 px. */
   dialog.float {

@@ -12,6 +12,7 @@ import type {
   StageStatus,
 } from "../engine/run/result";
 import { Run, type DroppedServer, type LiveSample, type Phase, type RunOptions, type RunPlan } from "../engine/run/run";
+import { CHECK_FAILED } from "../engine/net/checks";
 import { adaptWarmup, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
 import { batch, computed, effect, signal, untrack, type Read, type Signal } from "../lib/signal";
@@ -42,7 +43,7 @@ interface RunEnvironment {
   /** A server failed during the run, or with null the whole run did: its paths are checked again. */
   recheck(failure: ServerFailure | null): void;
   /** Hands a finished run to History; null withdraws the one shown. */
-  finished(run: { result: RunResult; plans: StagePlans; engine: string } | null): void;
+  finished(run: { result: RunResult; plans: StagePlans } | null): void;
   open: OpenStage;
   streams: RunOptions["streams"];
   clock?: Clock;
@@ -223,8 +224,6 @@ export function createRun(env: RunEnvironment) {
           });
         case "complete": {
           const { result: finished, plans } = event;
-          const servers = prepared.peek();
-          const focus = servers.find(({ server }) => server.id === finished.multiServer.latencyFocus) ?? servers[0];
           batch(() => {
             live.set(null);
             stall.set(null);
@@ -236,7 +235,7 @@ export function createRun(env: RunEnvironment) {
             step.set(null);
             phase.set("complete");
           });
-          env.finished({ result: finished, plans, engine: focus?.discovery.engineVersion ?? "unknown" });
+          env.finished({ result: finished, plans });
           return releaseRun();
         }
         case "error":
@@ -271,7 +270,7 @@ export function createRun(env: RunEnvironment) {
       throw new Error(
         ready.dropped
           .map(({ server, message }) => (ready.dropped.length > 1 ? `${server.name}: ${message}` : message))
-          .join("; ") || "Connection check failed",
+          .join("; ") || CHECK_FAILED,
       );
     const focus = ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
     const runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
@@ -284,7 +283,7 @@ export function createRun(env: RunEnvironment) {
       streams: env.streams,
       clock: env.clock,
     });
-    // The previous result clears only now: cancelling earlier keeps it. One batch, so Start never looks idle.
+    // The previous result clears only now: canceling earlier keeps it. One batch, so Start never looks idle.
     batch(() => {
       releaseRun();
       env.finished(null);
@@ -329,7 +328,7 @@ export function createRun(env: RunEnvironment) {
       .catch((cause) => {
         if (!current() || (cause instanceof DOMException && cause.name === "AbortError")) return;
         batch(() => {
-          startError.set(cause instanceof Error ? cause.message : "Connection check failed");
+          startError.set(cause instanceof Error ? cause.message : CHECK_FAILED);
           preparation.set(preparation.peek() === "authenticating" ? "blocked" : "failed");
         });
       })
@@ -380,9 +379,11 @@ export function createRun(env: RunEnvironment) {
       Object.values(candidate.duration).some((ms) => !Number.isFinite(ms) || ms < 0)
     )
       return false;
-    // The gauge's maximum is the page's alone: the run never hears of it.
     if (current && keys.some((key) => key !== "visualization")) {
-      const runPlan = adaptWarmup({ ...current.plan, ...pick(candidate) }, rttMs);
+      const runPlan = adaptWarmup(
+        { ...current.plan, stages: candidate.stages, duration: candidate.duration, adaptive: candidate.adaptive },
+        rttMs,
+      );
       const refuse = (message: string) => (refusal.set(message), false);
       const remainingMs = totalMs(runPlan) - shownAt.peek() - progress.peek().elapsedMs;
       if (totalMs(runPlan) > totalMs(current.plan) && !env.fits(remainingMs + SESSION_MARGIN_MS))
@@ -463,9 +464,3 @@ export function createRun(env: RunEnvironment) {
     },
   };
 }
-
-const pick = ({ stages, duration, adaptive }: Pick<TestConfig, "stages" | "duration" | "adaptive">) => ({
-  stages,
-  duration,
-  adaptive,
-});
