@@ -89,7 +89,7 @@ jobs:
     if: needs.plan.outputs.code == 'true'
     env:
       CARGO_INCREMENTAL: '0'
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,8 +97,39 @@ jobs:
       - name: Set up Rust, pinned cargo-deny and cargo-nextest
         uses: ./.github/actions/setup-project
         with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
+      - name: Check Rust formatting, dependency policy, lints and tests
+        run: mise run rust-check
+
+  rust-delayed:
+    name: Delayed-link download gate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Rust and pinned cargo-nextest
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true', cargo-nextest: 'true'}
+      - name: Gate delayed-link HTTP/3 and WebTransport downloads
+        run: mise run delayed-downloads
+
+  rust-targets:
+    name: Rust target checks
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
       # Target build scripts compile C; only these checks use Ubuntu's unpinned cross compilers, which install while
-      # the workspace checks run. A stalled mirror fails the step in minutes instead of holding the job to its limit.
+      # Rust sets up. A stalled mirror fails the step in minutes instead of holding the job to its limit.
       - id: cross-compilers
         name: Install C cross compilers for the target checks
         background: true
@@ -107,12 +138,11 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
             musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-      - name: Check Rust formatting, dependency policy, lints and tests
-        run: mise run rust-check
+      - name: Set up Rust
+        uses: ./.github/actions/setup-project
+        with: {rust: 'true'}
       - name: Verify the fork pins against their branches, upstream tags and reviewed change sets
         run: python3 -m scripts.legal.check_git_sources --verify
-      - name: Gate delayed-link HTTP/3 and WebTransport downloads
-        run: mise run delayed-downloads
       - wait: cross-compilers
       - name: Check the shipped client and server targets
         run: mise run rust-check-targets
@@ -127,7 +157,7 @@ jobs:
       run: {shell: bash}
     env:
       CARGO_INCREMENTAL: '0'
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       # Tests compare checked-in text byte for byte.
       - name: Check out text with its committed line endings
@@ -416,7 +446,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     if: always()
-    needs: [plan, checks, rust, rust-windows, server, image, tui, release-staging, e2e]
+    needs: [plan, checks, rust, rust-delayed, rust-targets, rust-windows, server, image, tui, release-staging, e2e]
     steps:
       - name: Require every selected job
         env:

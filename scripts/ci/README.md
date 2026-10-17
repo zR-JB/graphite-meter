@@ -20,7 +20,9 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Job | Runs |
 |---|---|
 | Checks | workflow policy, tooling tests, Gitleaks, the browser client's checks |
-| Rust checks | `rust-check`, `check_git_sources --verify`, the delayed-download gate, `rust-check-targets` |
+| Rust checks | `rust-check` |
+| Delayed-link download gate | `delayed-downloads` |
+| Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
 | Image | the linux/amd64 + linux/arm64 image with the ci profile (no LTO or PGO) and its server source offers; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
@@ -29,7 +31,8 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
-toolchain and `Cargo.lock`; only CI writes caches. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with
+toolchain and `Cargo.lock`, and a new `Cargo.lock` starts from the job's last build on the same toolchain; only CI
+writes caches. Setup installs the Rust release that `rust/rust-toolchain.toml` pins, with
 `--no-self-update`, and refuses it unless rustup installed it from the channel manifest whose SHA-256 `mise.toml` pins
 as `rust_manifest_sha256`. `advisories.yml` checks the locked crates and client packages against the live advisory
 databases daily, so a new advisory never fails an unrelated pull request. Pull requests and pushes test the browsers
