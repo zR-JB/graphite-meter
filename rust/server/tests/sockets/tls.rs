@@ -9,8 +9,10 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// A certificate and key in `scratch` from `identity`.
 fn files(scratch: &Scratch, identity: &Identity) -> (PathBuf, PathBuf) {
-    let cert = scratch.file("cert.pem", &identity.certificate).unwrap();
-    (cert, scratch.file("key.pem", &identity.key).unwrap())
+    let (cert, key) = (scratch.path().join("cert.pem"), scratch.path().join("key.pem"));
+    std::fs::write(&cert, &identity.certificate).unwrap();
+    std::fs::write(&key, &identity.key).unwrap();
+    (cert, key)
 }
 
 fn tls_env<'a>(cert: &'a str, key: &'a str) -> Vec<(&'static str, &'a str)> {
