@@ -439,7 +439,6 @@
       z-index: 2;
       overflow: visible;
       scrollbar-gutter: auto;
-      padding-inline-end: calc(var(--panel-pad) - 12px);
     }
     & .title {
       display: flex;
@@ -447,12 +446,6 @@
       align-items: center;
       gap: var(--space-1) var(--space-3);
       min-width: 0;
-    }
-    /* The result's time is what the pane is about, so it takes a sheet title's size; the facts sit beside it. */
-    & .title > h2 {
-      min-width: 0;
-      font: var(--role-panel-title);
-      letter-spacing: var(--track-tight);
     }
     /* Pulled out by its padding, so the arrow starts on the title's edge. */
     & .back {

@@ -259,7 +259,7 @@
     z-index: 1;
     width: 24px;
     height: 24px;
-    border-radius: 50%;
+    border-radius: var(--r-full);
     translate: -50% -50%;
   }
   /* A result's arc draws its share of the ring up to the sweep's front, in lengths: Firefox drops a dash array that
@@ -604,8 +604,6 @@
   .lane-jitter,
   .lane-timeouts,
   .lane-added {
-    font-style: normal;
-    font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
   }
@@ -697,7 +695,6 @@
         bottom: var(--space-1);
         color: var(--text-soft);
         font: 500 var(--type-2xs) / 1 var(--font-mono);
-        font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
       &::after {
@@ -789,7 +786,6 @@
       translate: -50%;
       color: var(--text-soft);
       font: 500 var(--type-2xs) / 1.2 var(--font-mono);
-      font-variant-numeric: tabular-nums;
       white-space: nowrap;
       &:first-child {
         translate: none;
@@ -1130,7 +1126,6 @@
   .run-button .duration {
     font: var(--role-figure-sm);
     line-height: 1;
-    font-variant-numeric: tabular-nums;
     opacity: 0.85;
   }
 
@@ -1652,7 +1647,6 @@
     & .readout {
       color: var(--text-muted);
       font: var(--role-figure-sm);
-      font-variant-numeric: tabular-nums;
     }
     & .remaining[data-tone] {
       color: var(--tone-ink);

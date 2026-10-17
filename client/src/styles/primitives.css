@@ -283,7 +283,7 @@
     scrollbar-gutter: stable;
     border-bottom: var(--hairline) solid transparent;
   }
-  .sheet-head > :is(h1, h2) {
+  .sheet-head :is(h1, h2) {
     min-width: 0;
     font: var(--role-panel-title);
     letter-spacing: var(--track-tight);
@@ -779,7 +779,6 @@
 
   .tooltip,
   .inspect-card {
-    padding: 6px var(--space-2);
     border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-chrome);
     color: var(--text);
@@ -897,7 +896,7 @@
     }
   }
   .menu > button:disabled {
-    opacity: 0.55;
+    opacity: 0.5;
   }
   /* A two-line item is a row, like a choice; coarse pointers grow every item to a hit. */
   .menu > :has(small) {
@@ -947,7 +946,8 @@
     font-weight: var(--w-strong);
   }
   /* A tip's pairs: a quieter label, its figure aligned at the right; a line after them is a footnote. */
-  .tooltip .inspect-row > :first-child {
+  .tooltip .inspect-row > :first-child,
+  .tooltip .inspect-row + :not(.inspect-row) {
     color: color-mix(in oklab, var(--text-inverse) 72%, transparent);
   }
   .tooltip .inspect-row > :last-child {
@@ -956,7 +956,6 @@
   }
   .tooltip .inspect-row + :not(.inspect-row) {
     margin-top: var(--space-1);
-    color: color-mix(in oklab, var(--text-inverse) 72%, transparent);
   }
   .tooltip[data-show="true"] {
     opacity: 1;
