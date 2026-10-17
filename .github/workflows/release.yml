@@ -19,7 +19,7 @@ jobs:
       && github.event.workflow_run.head_branch == 'main'
       && github.event.workflow_run.path == '.github/workflows/release-request.yml'
     name: Verify the untrusted candidate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -47,11 +47,11 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned mise and Python
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.10.7
+          version: 2026.10.10
           install_args: --locked python
           cache: false
 
@@ -101,7 +101,7 @@ jobs:
     name: Publish after ghcr-release approval
     if: needs.verify.outputs.publish == 'true'
     needs: verify
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     environment: ghcr-release
     concurrency:
@@ -124,11 +124,11 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned mise and Python
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.10.7
+          version: 2026.10.10
           install_args: --locked python
           cache: false
 
@@ -171,7 +171,7 @@ jobs:
       - id: app
         name: Mint the release App token
         if: needs.verify.outputs.stable == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
