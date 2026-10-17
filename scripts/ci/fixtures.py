@@ -147,8 +147,11 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
             "frontend": "dockerfile.v0", "args": args}}},
         "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}},
         "application/vnd.in-toto+json", annotations={"in-toto.io/predicate-type": predicate})
-    unknown = add_json({"architecture": "unknown", "os": "unknown", "config": {}}, CONFIG_TYPE)
-    attested = [add_json({"schemaVersion": 2, "mediaType": MANIFEST_TYPE, "config": unknown, "layers": [statement]},
+    empty = add(b"{}", "application/vnd.oci.empty.v1+json") | {"data": "e30="}
+    attested = [add_json({"schemaVersion": 2, "mediaType": MANIFEST_TYPE,
+                          "artifactType": "application/vnd.docker.attestation.manifest.v1+json",
+                          "config": empty, "layers": [statement],
+                          "subject": {key: image[key] for key in ("mediaType", "digest", "size")}},
                          MANIFEST_TYPE, platform={"architecture": "unknown", "os": "unknown"},
                          annotations={"vnd.docker.reference.type": "attestation-manifest",
                                       "vnd.docker.reference.digest": image["digest"]})

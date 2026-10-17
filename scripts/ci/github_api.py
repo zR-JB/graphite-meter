@@ -25,6 +25,9 @@ TLS_NAME = re.compile(
     re.IGNORECASE,
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
+JSON_STRING = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
+# Far deeper than any GitHub or OCI document, so the limit and not the interpreter's stack refuses one.
+JSON_DEPTH = 64
 
 
 class ControlPlaneError(RuntimeError):
@@ -73,9 +76,14 @@ def nonfinite(name: str) -> NoReturn:
 
 
 def decode_json(text: str, context: str) -> JsonValue:
+    depth = 0
+    for bracket in re.findall(r"[][{}]", JSON_STRING.sub("", text)):
+        depth += 1 if bracket in "[{" else -1
+        if depth > JSON_DEPTH:
+            fail(f"{context} nests deeper than {JSON_DEPTH} levels")
     try:
         return cast(JsonValue, json.loads(text, object_pairs_hook=distinct_keys, parse_constant=nonfinite))
-    except (ValueError, RecursionError) as exc:
+    except ValueError as exc:
         raise ControlPlaneError(f"{context} is not valid JSON: {exc}") from exc
 
 

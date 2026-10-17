@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tarfile
 import tempfile
@@ -58,7 +59,8 @@ class OCITests(unittest.TestCase):
 
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         attestations, images = validate_index_descriptors(index(*RUNNABLE, *ATTESTED))
-        self.assertEqual([item["digest"] for item in attestations], [item["digest"] for item in ATTESTED])
+        self.assertEqual([(item["digest"], image) for item, image in attestations],
+                         [(ATTESTED[0]["digest"], AMD), (ATTESTED[1]["digest"], ARM)])
         self.assertEqual({arch: item["digest"] for arch, item in images.items()}, {"amd64": AMD, "arm64": ARM})
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
@@ -105,6 +107,7 @@ class OCITests(unittest.TestCase):
     def test_documents_are_exactly_the_oci_types_publication_reads(self) -> None:
         manifest = '{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"'
         docker = "application/vnd.docker.distribution.manifest.v2+json"
+        attestation = "application/vnd.docker.attestation.manifest.v1+json"
         for where, old, new, error in (
             ("blob", '"layers": [', '"Layers": [], "layers": [', r"\['Layers', 'layers'\] repeat ignoring case"),
             ("blob", '"config": {"Labels"', '"Config": {"Labels": {}}, "config": {"Labels"', r"\['Config', 'config'\]"),
@@ -113,8 +116,7 @@ class OCITests(unittest.TestCase):
             ("index.json", '"manifests": [', '"MANIFESTſ": [], "manifests": [', r"\['MANIFESTſ', 'manifests'\]"),
             ("index.json", '"manifests": [', '"layers": [], "manifests": [', r"index.json has \['layers'"),
             ("index.json", '"manifests": [', '"size": -Infinity, "manifests": [', "-Infinity is not a JSON number"),
-            ("index.json", '"manifests": [', '"manifests": ' + "[" * 100_000,
-             "index.json is not valid JSON: .* decoding a JSON array"),
+            ("index.json", '"manifests": [', '"manifests": ' + "[" * 65, "index.json nests deeper than 64 levels"),
             ("index.json", '"digest": "sha256:', '"digest": "sha512:', "by its sha256 digest"),
             ("blob", '"layers": [', '"manifests": [], "layers": [', r"has \['config', 'layers', 'manifests'"),
             ("blob", manifest, manifest.replace("application/vnd.oci.image.manifest.v1+json", docker),
@@ -124,7 +126,12 @@ class OCITests(unittest.TestCase):
              f'"mediaType": "{docker}", "digest"', "must name a application/vnd.oci.image.manifest"),
             ("blob", "layer.v1.tar+gzip", "layer.nondistributable.v1.tar+gzip",
              "must name a application/vnd.oci.image.layer"),
-            ("blob", '"layers": [', '"subject": {}, "layers": [', r"has \['config', 'layers', 'mediaType', 'sche"),
+            ("blob", manifest + ', "config"', manifest + ', "subject": {}, "config"',
+             r"has \['config', 'layers', 'mediaType', 'schemaVersion', 'subject'\]"),
+            ("blob", manifest + ', "config"', f'{manifest}, "artifactType": "{attestation}", "config"',
+             r"has \['artifactType', 'config', 'layers', 'mediaType', 'schemaVersion'\]"),
+            ("blob", attestation, "application/vnd.in-toto+json", "is not BuildKit's empty"),
+            ("blob", '"data": "e30="', '"data": "e31="', "is not BuildKit's empty"),
             ("blob", '"layers": [', '"annotations": {"x": 1}, "layers": [', "with string annotations"),
             ("blob", 'tar+gzip"', 'tar+gzip", "urls": ["https://example.com/layer"]', r"has \['digest', .*'urls'\]"),
             ("blob", '"os": "linux"}', '"os": "linux", "variant": "v8"}', r"has \['architecture', 'os', 'variant'\]"),
@@ -140,6 +147,10 @@ class OCITests(unittest.TestCase):
                 if where == "index.json":
                     rewrite(self.archive, lambda members: members.update({"index.json": edit(members["index.json"])}))
                 self.verify(error)
+        other = re.compile(rb'("subject": {"mediaType": "[^"]+", "digest": "sha256:)[0-9a-f]{64}')
+        write_oci(self.archive, "example/repo", "f" * 40, remote=False,
+                  edit=lambda data: other.sub(rb"\g<1>" + b"0" * 64, data))
+        self.verify("is not BuildKit's empty")
         rewrite(self.archive, lambda members: members.update({"./index.json": members["index.json"]}))
         self.verify("member names must be canonical and unique")
 

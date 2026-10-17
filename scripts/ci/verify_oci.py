@@ -31,10 +31,14 @@ MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 CONFIG_TYPE = "application/vnd.oci.image.config.v1+json"
 LAYER_TYPE = "application/vnd.oci.image.layer.v1.tar+gzip"
 STATEMENT_TYPE = "application/vnd.in-toto+json"
+ATTESTATION_TYPE = "application/vnd.docker.attestation.manifest.v1+json"
+EMPTY: JsonObject = {"mediaType": "application/vnd.oci.empty.v1+json", "size": 2,
+                     "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"}
 # The fields our build emits; publication may read any other as one of them, or act on it.
 FIELDS = {
     INDEX_TYPE: {"schemaVersion", "mediaType", "manifests", "annotations"},
     MANIFEST_TYPE: {"schemaVersion", "mediaType", "config", "layers", "annotations"},
+    ATTESTATION_TYPE: {"schemaVersion", "mediaType", "artifactType", "config", "layers", "subject"},
     "descriptor": {"mediaType", "digest", "size", "annotations", "platform"},
     "platform": {"os", "architecture"},
 }
@@ -63,18 +67,18 @@ def only(value: JsonObject, kind: str, context: str) -> JsonObject:
     return value
 
 
-def document(value: JsonObject, media: str, context: str) -> JsonObject:
-    """`value` as a schemaVersion 2 OCI `media` document with only the fields our build emits."""
+def document(value: JsonObject, media: str, context: str, kind: str | None = None) -> JsonObject:
+    """`value` as a schemaVersion 2 OCI `media` document with only the fields our build emits for `kind`."""
     if int_field(value, "schemaVersion", context) != 2 or value.get("mediaType") != media:
         fail(f"{context} must be a schemaVersion 2 {media}")
-    return only(value, media, context)
+    return only(value, kind or media, context)
 
 
-def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dict[str, JsonObject]]:
-    """Return the provenance manifests, exactly one linked to each runnable image, and the images by architecture."""
+def validate_index_descriptors(index: JsonObject) -> tuple[list[tuple[JsonObject, str]], dict[str, JsonObject]]:
+    """Return the provenance manifests, exactly one linked to each runnable image, with the image digest each
+    attests, and the images by architecture."""
     runnable: dict[str, JsonObject] = {}
-    attested: list[str] = []
-    attestations: list[JsonObject] = []
+    attestations: list[tuple[JsonObject, str]] = []
     for position, value in enumerate(expect_array(index.get("manifests"), "OCI manifests")):
         context = f"OCI index.manifests[{position}]"
         manifest = expect_object(value, context)
@@ -86,13 +90,13 @@ def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dic
             annotations = object_field(manifest, "annotations", context)
             if annotations.get("vnd.docker.reference.type") != "attestation-manifest":
                 fail(f"{context} is not a provenance attestation manifest")
-            attested.append(str_field(annotations, "vnd.docker.reference.digest", context))
-            attestations.append(manifest)
+            attestations.append((manifest, str_field(annotations, "vnd.docker.reference.digest", context)))
         else:
             fail(f"unexpected or duplicate OCI platform {system}/{arch}")
     if runnable.keys() != PLATFORMS:
         fail(f"OCI archive needs linux/amd64 and linux/arm64, got {sorted(runnable)}")
-    if sorted(attested) != sorted(str_field(image, "digest", "OCI image") for image in runnable.values()):
+    images = sorted(str_field(image, "digest", "OCI image") for image in runnable.values())
+    if sorted(digest for _, digest in attestations) != images:
         fail("OCI archive needs one provenance attestation per image")
     return attestations, dict(sorted(runnable.items()))
 
@@ -119,12 +123,12 @@ def member(archive: tarfile.TarFile, descriptor: JsonObject, media: str, limit: 
     return data
 
 
-def blob(archive: tarfile.TarFile, descriptor: JsonObject, media: str) -> JsonObject:
+def blob(archive: tarfile.TarFile, descriptor: JsonObject, media: str, kind: str | None = None) -> JsonObject:
     """A JSON `media` blob of the OCI layout after checking its size and digest."""
     digest = str(descriptor.get("digest"))
     value = expect_object(decode_json(member(archive, descriptor, media, BLOB_LIMIT).decode(errors="replace"), digest),
                           digest)
-    return document(value, media, digest) if media in FIELDS else value
+    return document(value, media, digest, kind) if media in FIELDS else value
 
 
 def layers(manifest: JsonObject, context: str) -> list[JsonObject]:
@@ -188,10 +192,15 @@ def source_commit(statement: JsonObject, repository: str) -> str:
     return commit
 
 
-def provenance_sources(archive: tarfile.TarFile, attestation: JsonObject, repository: str) -> set[str]:
-    """Return the commits that the SLSA statements in `attestation` say BuildKit built."""
-    manifest = blob(archive, attestation, MANIFEST_TYPE)
-    member(archive, object_field(manifest, "config", "attestation"), CONFIG_TYPE, BLOB_LIMIT)
+def provenance_sources(archive: tarfile.TarFile, attestation: JsonObject, image: JsonObject,
+                       repository: str) -> set[str]:
+    """Return the commits that the SLSA statements in `attestation` of `image` say BuildKit built."""
+    manifest = blob(archive, attestation, MANIFEST_TYPE, ATTESTATION_TYPE)
+    subject = {key: image[key] for key in ("mediaType", "digest", "size")}
+    if manifest.get("artifactType") != ATTESTATION_TYPE or manifest.get("subject") != subject \
+            or manifest.get("config") != EMPTY | {"data": "e30="}:
+        fail(f"{attestation['digest']} is not BuildKit's empty {ATTESTATION_TYPE} of {image['digest']}")
+    member(archive, EMPTY, str(EMPTY["mediaType"]), BLOB_LIMIT)
     sources = set()
     for layer in layers(manifest, "attestation"):
         statement = blob(archive, layer, STATEMENT_TYPE)
@@ -232,7 +241,6 @@ def verify(version: str, revision: str, archive: Path,
                 fail("OCI index.json must list exactly one image index")
             index = expect_object(listed[0], "index.json")
             attestations, images = validate_index_descriptors(blob(tar, index, INDEX_TYPE))
-            sources = set().union(*(provenance_sources(tar, item, repository) for item in attestations))
             for arch, image in images.items():
                 manifest = blob(tar, image, MANIFEST_TYPE)
                 config = blob(tar, object_field(manifest, "config", arch), CONFIG_TYPE)
@@ -244,6 +252,9 @@ def verify(version: str, revision: str, archive: Path,
                 source, server = check_image_files(tar, manifest, str(image["digest"]))
                 if check_files is not None:
                     check_files(arch, source, server)
+            described = {str(image["digest"]): image for image in images.values()}
+            sources = set().union(*(provenance_sources(tar, item, described[attested], repository)
+                                    for item, attested in attestations))
     except (KeyError, tarfile.TarError) as exc:
         raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
     if sources != {revision}:
