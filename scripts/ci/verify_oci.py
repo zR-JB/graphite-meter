@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import posixpath
 import re
 import tarfile
 from collections.abc import Callable
@@ -30,10 +31,12 @@ MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 CONFIG_TYPE = "application/vnd.oci.image.config.v1+json"
 LAYER_TYPE = "application/vnd.oci.image.layer.v1.tar+gzip"
 STATEMENT_TYPE = "application/vnd.in-toto+json"
-# The fields the OCI spec gives each document; publication may read any other as one of them or reject it.
+# The fields our build emits; publication may read any other as one of them, or act on it.
 FIELDS = {
-    INDEX_TYPE: {"schemaVersion", "mediaType", "artifactType", "manifests", "subject", "annotations"},
-    MANIFEST_TYPE: {"schemaVersion", "mediaType", "artifactType", "config", "layers", "subject", "annotations"},
+    INDEX_TYPE: {"schemaVersion", "mediaType", "manifests", "annotations"},
+    MANIFEST_TYPE: {"schemaVersion", "mediaType", "config", "layers", "annotations"},
+    "descriptor": {"mediaType", "digest", "size", "annotations", "platform"},
+    "platform": {"os", "architecture"},
 }
 SLSA = "https://slsa.dev/provenance/v1"
 BLOB_LIMIT = 4 * 1024 * 1024
@@ -46,12 +49,25 @@ DEVELOPMENT = "UNREVIEWED DEVELOPMENT BUILD"
 STAGE = ("container/Dockerfile", "server")
 
 
-def document(value: JsonObject, media: str, context: str) -> JsonObject:
-    """`value` as a schemaVersion 2 OCI `media` document with only the fields the spec gives it."""
-    if int_field(value, "schemaVersion", context) != 2 or value.get("mediaType") != media \
-            or not value.keys() <= FIELDS[media]:
-        fail(f"{context} must be a schemaVersion 2 {media} with only its fields, not {sorted(value)}")
+def canonical(name: str) -> bool:
+    """Whether an archive member's name is the one path every reader resolves it to."""
+    return name == posixpath.normpath(name) and name[:1] != "/" and name.split("/", 1)[0] not in (".", "..")
+
+
+def only(value: JsonObject, kind: str, context: str) -> JsonObject:
+    """`value` with only the FIELDS of `kind`, and annotations from strings to strings."""
+    annotations = value.get("annotations", {})
+    if not value.keys() <= FIELDS[kind] or not isinstance(annotations, dict) \
+            or not all(isinstance(item, str) for item in annotations.values()):
+        fail(f"{context} has {sorted(value)}, not only {sorted(FIELDS[kind])} with string annotations")
     return value
+
+
+def document(value: JsonObject, media: str, context: str) -> JsonObject:
+    """`value` as a schemaVersion 2 OCI `media` document with only the fields our build emits."""
+    if int_field(value, "schemaVersion", context) != 2 or value.get("mediaType") != media:
+        fail(f"{context} must be a schemaVersion 2 {media}")
+    return only(value, media, context)
 
 
 def validate_index_descriptors(index: JsonObject) -> tuple[list[JsonObject], dict[str, JsonObject]]:
@@ -86,6 +102,9 @@ def member(archive: tarfile.TarFile, descriptor: JsonObject, media: str, limit: 
     digest = str_field(descriptor, "digest", "OCI descriptor")
     if DIGEST_RE.fullmatch(digest) is None or descriptor.get("mediaType") != media:
         fail(f"OCI descriptor {digest!r} must name a {media} by its sha256 digest")
+    only(descriptor, "descriptor", digest)
+    if "platform" in descriptor:
+        only(object_field(descriptor, "platform", digest), "platform", digest)
     try:
         entry = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
     except KeyError:
@@ -113,19 +132,27 @@ def layers(manifest: JsonObject, context: str) -> list[JsonObject]:
 
 
 def check_image_files(archive: tarfile.TarFile, manifest: JsonObject, image: str) -> tuple[str, bytes]:
-    """The image ships the server and its notices, and no copy is a development build's; return its last
-    SOURCE.txt, or nothing, and its last server."""
+    """The image's layers hold only distinct files and shared directories, each in a directory declared before it,
+    among them the server and its notices of a reviewed build; return its SOURCE.txt, or nothing, and its server."""
     shipped: dict[str, bytes] = {}
+    directories: set[str] = set()
     for layer in layers(manifest, image):
         with tarfile.open(fileobj=io.BytesIO(member(archive, layer, LAYER_TYPE, LAYER_LIMIT)), mode="r:gz") as files:
             for entry in files:
-                name = entry.name.removeprefix("./").removeprefix("/")
-                if name not in FILE_LIMITS or (handle := files.extractfile(entry)) is None:
+                name, regular = entry.name, entry.type in (tarfile.REGTYPE, tarfile.AREGTYPE)
+                if not canonical(name) or posixpath.basename(name).startswith(".wh.") or name in shipped \
+                        or posixpath.dirname(name) not in directories | {""} \
+                        or not (entry.isdir() or regular and name not in directories):
+                    fail(f"image {image} layer entry {name!r} is not a canonical, unique file or directory")
+                if entry.isdir():
+                    directories.add(name)
                     continue
-                if len(data := handle.read(FILE_LIMITS[name] + 1)) > FILE_LIMITS[name]:
-                    fail(f"image {image} ships {name} beyond {FILE_LIMITS[name]} bytes")
-                if name != SOURCE and DEVELOPMENT.encode() in data:
-                    fail(f"image {image} ships an unreviewed development build's {name}")
+                data = b""
+                if name in FILE_LIMITS and (handle := files.extractfile(entry)) is not None:
+                    if len(data := handle.read(FILE_LIMITS[name] + 1)) > FILE_LIMITS[name]:
+                        fail(f"image {image} ships {name} beyond {FILE_LIMITS[name]} bytes")
+                    if name != SOURCE and DEVELOPMENT.encode() in data:
+                        fail(f"image {image} ships an unreviewed development build's {name}")
                 shipped[name] = data
     if missing := sorted({SERVER, NOTICES} - shipped.keys()):
         fail(f"image {image} lacks {missing}")
@@ -191,6 +218,9 @@ def verify(version: str, revision: str, archive: Path,
     # Every blob the index reaches is read once and checked against its descriptor, so the archive is complete.
     try:
         with tarfile.open(archive, mode="r:") as tar:
+            names = tar.getnames()
+            if len(set(names)) != len(names) or not all(map(canonical, names)):
+                fail("OCI archive member names must be canonical and unique")
             entry = tar.getmember("index.json")
             layout = tar.extractfile(entry) if entry.isfile() and entry.size <= BLOB_LIMIT else None
             if layout is None:
@@ -205,9 +235,11 @@ def verify(version: str, revision: str, archive: Path,
             sources = set().union(*(provenance_sources(tar, item, repository) for item in attestations))
             for arch, image in images.items():
                 manifest = blob(tar, image, MANIFEST_TYPE)
-                config = object_field(blob(tar, object_field(manifest, "config", arch), CONFIG_TYPE), "config", arch)
+                config = blob(tar, object_field(manifest, "config", arch), CONFIG_TYPE)
+                if (config.get("os"), config.get("architecture")) != ("linux", arch):
+                    fail(f"linux/{arch} image is configured for {config.get('os')}/{config.get('architecture')}")
                 for key, value in labels.items():
-                    if (found := object_field(config, "Labels", arch).get(key)) != value:
+                    if (found := object_field(object_field(config, "config", arch), "Labels", arch).get(key)) != value:
                         fail(f"OCI label {key} for linux/{arch} is {found!r}; expected {value!r}")
                 source, server = check_image_files(tar, manifest, str(image["digest"]))
                 if check_files is not None:

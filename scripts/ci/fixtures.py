@@ -80,19 +80,21 @@ def descriptor(os_name: str, arch: str, digest: str, attests: str | None = None)
 
 
 RUNNABLE = (descriptor("linux", "amd64", AMD), descriptor("linux", "arm64", ARM))
-IMAGE_FILES = {"./graphite-meter": b"server", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt": b"notices"}
+IMAGE_FILES = {"graphite-meter": b"server", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt": b"notices"}
 ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
 def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3", *, remote: bool,
-              predicate: str = SLSA, files: Mapping[str, bytes] = IMAGE_FILES,
+              predicate: str = SLSA, files: Mapping[str, bytes | str] = IMAGE_FILES,
               arch_files: Mapping[str, Mapping[str, bytes]] | None = None,
+              extra_layer: Mapping[str, bytes] | None = None,
               stage: tuple[str, str | None] = STAGE, arch_labels: Mapping[str, Mapping[str, str]] | None = None,
               edit: Callable[[bytes], bytes] = lambda data: data) -> str:
-    """Write the OCI layout BuildKit exports for two labelled images of `files`, each with its `arch_files` and
-    `arch_labels`, and provenance of building `stage`, a Dockerfile and target, with `edit` applied to each JSON
-    blob; return the digest of its image index."""
+    """Write the OCI layout BuildKit exports for two labelled images of `files`, a str naming a symlink's target,
+    each with its `arch_files` and `arch_labels` and then an `extra_layer` without directories, and provenance of
+    building `stage`, a Dockerfile and target, with `edit` applied to each JSON blob; return the digest of its
+    image index."""
     blobs: dict[str, bytes] = {}
 
     def add(data: bytes, media: str, **extra: JsonValue) -> JsonObject:
@@ -103,13 +105,22 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
     def add_json(value: JsonValue, media: str, **extra: JsonValue) -> JsonObject:
         return add(edit(json.dumps(value).encode()), media, **extra)
 
-    def layer(contents: Mapping[str, bytes]) -> JsonObject:
+    def layer(contents: Mapping[str, bytes | str], directories: bool = True) -> JsonObject:
         data = io.BytesIO()
         with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            parents = {str(parent) for name in contents for parent in PurePosixPath(name).parents}
+            for directory in sorted(parents - {"."} if directories else ()):
+                info = tarfile.TarInfo(directory)
+                info.type = tarfile.DIRTYPE
+                archive.addfile(info)
             for name, payload in contents.items():
                 info = tarfile.TarInfo(name)
-                info.size = len(payload)
-                archive.addfile(info, io.BytesIO(payload))
+                if isinstance(payload, str):
+                    info.type, info.linkname = tarfile.SYMTYPE, payload
+                    archive.addfile(info)
+                else:
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
         return add(data.getvalue(), "application/vnd.oci.image.layer.v1.tar+gzip")
 
     labels = {"org.opencontainers.image.source": f"https://github.com/{repository}",
@@ -120,7 +131,8 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
         "schemaVersion": 2, "mediaType": MANIFEST_TYPE,
         "config": add_json({"architecture": arch, "os": "linux", "config": {
             "Labels": labels | dict((arch_labels or {}).get(arch, {}))}}, CONFIG_TYPE),
-        "layers": [layer({**files, **(arch_files or {}).get(arch, {})})],
+        "layers": [layer({**files, **(arch_files or {}).get(arch, {})}),
+                   *([layer(extra_layer, directories=False)] if extra_layer else [])],
     }, MANIFEST_TYPE, platform={"architecture": arch, "os": "linux"}) for arch in ("amd64", "arm64")}
 
     # A local context's Dockerfile is named without its directory.
@@ -179,7 +191,7 @@ def notices(build: str) -> bytes:
 
 def server_binary(platform: str) -> bytes:
     """The image's server for `platform`, the reviewed build of its notices in the source offer."""
-    return b"server\0" + reviewed(notices(build_name(SERVER, platform)))
+    return executable(load().server[platform], b"server\0" + reviewed(notices(build_name(SERVER, platform))))
 
 
 def write_part(path: Path, version: str, package: str, platform: str, profile: str = "release",

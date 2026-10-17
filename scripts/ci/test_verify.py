@@ -111,11 +111,12 @@ class OCITests(unittest.TestCase):
             ("blob", '"Labels": {', '"labels": {}, "Labels": {', r"\['Labels', 'labels'\]"),
             ("blob", '"manifests": [', '"Manifests": [], "manifests": [', r"\['Manifests', 'manifests'\]"),
             ("index.json", '"manifests": [', '"MANIFESTſ": [], "manifests": [', r"\['MANIFESTſ', 'manifests'\]"),
-            ("index.json", '"manifests": [', '"layers": [], "manifests": [', "index.json must be .* only its fields"),
+            ("index.json", '"manifests": [', '"layers": [], "manifests": [', r"index.json has \['layers'"),
             ("index.json", '"manifests": [', '"size": -Infinity, "manifests": [', "-Infinity is not a JSON number"),
-            ("index.json", '"manifests": [', '"manifests": ' + "[" * 100_000, "index.json is not valid JSON: .* decoding a JSON array"),
+            ("index.json", '"manifests": [', '"manifests": ' + "[" * 100_000,
+             "index.json is not valid JSON: .* decoding a JSON array"),
             ("index.json", '"digest": "sha256:', '"digest": "sha512:', "by its sha256 digest"),
-            ("blob", '"layers": [', '"manifests": [], "layers": [', r"only its fields, not \['config', 'layers', 'man"),
+            ("blob", '"layers": [', '"manifests": [], "layers": [', r"has \['config', 'layers', 'manifests'"),
             ("blob", manifest, manifest.replace("application/vnd.oci.image.manifest.v1+json", docker),
              "must be a schemaVersion 2"),
             ("blob", manifest, manifest.replace("2", "1", 1), "must be a schemaVersion 2"),
@@ -123,6 +124,12 @@ class OCITests(unittest.TestCase):
              f'"mediaType": "{docker}", "digest"', "must name a application/vnd.oci.image.manifest"),
             ("blob", "layer.v1.tar+gzip", "layer.nondistributable.v1.tar+gzip",
              "must name a application/vnd.oci.image.layer"),
+            ("blob", '"layers": [', '"subject": {}, "layers": [', r"has \['config', 'layers', 'mediaType', 'sche"),
+            ("blob", '"layers": [', '"annotations": {"x": 1}, "layers": [', "with string annotations"),
+            ("blob", 'tar+gzip"', 'tar+gzip", "urls": ["https://example.com/layer"]', r"has \['digest', .*'urls'\]"),
+            ("blob", '"os": "linux"}', '"os": "linux", "variant": "v8"}', r"has \['architecture', 'os', 'variant'\]"),
+            ("blob", '{"architecture": "arm64", "os": "linux", "config"',
+             '{"architecture": "amd64", "os": "linux", "config"', "linux/arm64 image is configured for linux/amd64"),
         ):
             def edit(data: bytes) -> bytes:
                 return data.replace(old.encode(), new.encode(), 1)
@@ -133,6 +140,8 @@ class OCITests(unittest.TestCase):
                 if where == "index.json":
                     rewrite(self.archive, lambda members: members.update({"index.json": edit(members["index.json"])}))
                 self.verify(error)
+        rewrite(self.archive, lambda members: members.update({"./index.json": members["index.json"]}))
+        self.verify("member names must be canonical and unique")
 
     def test_each_image_carries_the_release_labels(self) -> None:
         for arch, label, value in (
@@ -166,16 +175,27 @@ class OCITests(unittest.TestCase):
     def test_each_image_ships_the_server_and_notices_of_a_reviewed_build(self) -> None:
         server, notices = "graphite-meter", "usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt"
         marked = b"\0UNREVIEWED DEVELOPMENT BUILD\0"
-        for files, error in (
-            ({server: b"server", notices: b"notices"}, None),
-            ({server: bytes(33), notices: b"notices"}, "graphite-meter beyond 32 bytes"),
-            ({server: b"server"}, r"lacks \['usr/share"),
-            ({notices: b"notices", "bin/graphite-meter": b"server"}, r"lacks \['graphite-meter'\]"),
-            ({server: marked, notices: b"notices"}, "development build's graphite-meter"),
-            ({server: b"server", notices: b"UNREVIEWED DEVELOPMENT BUILD\n\nnotices"}, "development build's usr"),
+        licenses = "usr/share/licenses/graphite-meter"
+        for files, extra, error in (
+            ({server: b"server", notices: b"notices"}, {f"{licenses}/LICENSE": b"license"}, None),
+            ({server: b"server", notices: b"notices"}, {"usr/share/licenses/ca-certificates/COPYRIGHT": b"ca"},
+             "'usr/share/licenses/ca-certificates/COPYRIGHT' is not a can"),
+            ({server: b"server", notices: b"notices"}, {"usr/share": b"file"}, "'usr/share' is not a can"),
+            ({server: b"server", notices: b"notices", "bin/../graphite-meter": marked}, None, "'bin/..' is not a can"),
+            ({server: b"server", notices: b"notices", f"{licenses}/./THIRD_PARTY_NOTICES.txt": marked}, None,
+             "is not a canonical"),
+            ({server: b"server", notices: b"notices", ".wh..wh..opq": b""}, None, "'.wh..wh..opq' is not a can"),
+            ({notices: b"notices", "bin/server": b"server", server: "bin/server"}, None,
+             "'graphite-meter' is not a canonical, unique file"),
+            ({server: b"server", notices: b"notices"}, {server: b"other server"}, "'graphite-meter' is not a can"),
+            ({server: bytes(33), notices: b"notices"}, None, "graphite-meter beyond 32 bytes"),
+            ({server: b"server"}, None, r"lacks \['usr/share"),
+            ({notices: b"notices", "bin/graphite-meter": b"server"}, None, r"lacks \['graphite-meter'\]"),
+            ({server: marked, notices: b"notices"}, None, "development build's graphite-meter"),
+            ({server: b"server", notices: b"UNREVIEWED DEVELOPMENT BUILD\n\nnotices"}, None, "development build's usr"),
         ):
             with self.subTest(files=list(files), error=error):
-                write_oci(self.archive, "example/repo", "f" * 40, remote=False, files=files)
+                write_oci(self.archive, "example/repo", "f" * 40, remote=False, files=files, extra_layer=extra)
                 with patch.dict("verify_oci.FILE_LIMITS", {server: 32}):
                     self.verify(error)
 

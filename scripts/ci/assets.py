@@ -345,6 +345,8 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
             fail(f"the image's {platform} server is not a reviewed build")
         if not prerelease(version) and digests != {hashlib.sha256(notices[build].encode()).hexdigest()}:
             fail(f"the image's {platform} server is not the reviewed build of its notices in the source offer")
+        if not native_executable(binary, server[platform]):
+            fail(f"the image's {platform} server is not a {server[platform]} executable")
 
     return digest, verify_oci.verify(version, revision, path, check_files)
 

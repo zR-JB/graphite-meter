@@ -292,17 +292,19 @@ class VerifyTests(Scratch):
         self.assertEqual({path.name for path in out.iterdir()}, staged_files(version))
         self.assertEqual(verify(version, SHA, out)[0], file_sha256(out / OCI))
         repository = f"{REPOSITORY_URL}\n".encode()
+        arm64 = server_binary("linux/arm64")
         for sources, binary, error in (
-            (repository, server_binary("linux/amd64"), None),
-            (source_txt(REPOSITORY_URL, "1.2.3", SERVER_AMD64, AMD64).encode(), server_binary("linux/amd64"),
-             "SOURCE.txt does not name"),
-            (f"{REPOSITORY_URL}/tree/v{version}\n".encode(), server_binary("linux/amd64"), "SOURCE.txt does not name"),
-            (repository, b"server", "server is not a reviewed build"),
+            (repository, arm64, None),
+            (source_txt(REPOSITORY_URL, "1.2.3", SERVER_AMD64, AMD64).encode(), arm64, "SOURCE.txt does not name"),
+            (f"{REPOSITORY_URL}/tree/v{version}\n".encode(), arm64, "SOURCE.txt does not name"),
+            (repository, b"server", "linux/arm64 server is not a reviewed build"),
+            (repository, server_binary("linux/amd64"), "linux/arm64 server is not a aarch64"),
         ):
             with self.subTest(sources=sources, binary=binary):
                 image = self.fresh()
-                files = {"usr/share/licenses/graphite-meter/SOURCE.txt": sources, "graphite-meter": binary}
-                write_oci(image / OCI, REPO, SHA, version, remote=True, arch_files={"amd64": files, "arm64": files})
+                files = {arch: {"usr/share/licenses/graphite-meter/SOURCE.txt": sources, "graphite-meter": server}
+                         for arch, server in (("amd64", server_binary("linux/amd64")), ("arm64", binary))}
+                write_oci(image / OCI, REPO, SHA, version, remote=True, arch_files=files)
                 (image / f"{OCI}.sha256").write_text(f"{file_sha256(image / OCI)}  {OCI}\n")
                 outcome(self, error, lambda: verify(version, SHA, image))
 
