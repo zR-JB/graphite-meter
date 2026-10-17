@@ -15,18 +15,18 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 
-/// Every stage for 2 s.
+/// Every stage for 1 s, the shortest a stage takes.
 const SHORT: [&str; 11] = [
     "-stages",
     "latency,download,upload,bidirectional",
     "-latency-duration",
-    "2s",
+    "1s",
     "-download-duration",
-    "2s",
+    "1s",
     "-upload-duration",
-    "2s",
+    "1s",
     "-bidirectional-duration",
-    "2s",
+    "1s",
     "-insecure",
 ];
 
@@ -144,7 +144,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
         link.address
     );
     let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
-    let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "6s"];
+    let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "5s"];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {
         if matches!(event, Event::Measuring(_)) {

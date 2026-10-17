@@ -75,6 +75,13 @@ dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
 
+# Unoptimized, one Argon2id hash at the server's cost takes most of a second, and the tests hash many.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"
