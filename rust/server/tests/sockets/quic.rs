@@ -61,18 +61,17 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     assert!(retried(&h3, "127.0.0.3").await, "a quarter of the connections are used");
 }
 
-/// The budget's usage once it held still for a while.
+/// The budget's usage once it held still for three 30 ms windows in a row.
 pub(super) async fn settled(budget: &Budget) -> usize {
     let settling = async {
-        let mut last = budget.usage().used;
-        loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        let (mut last, mut still) = (budget.usage().used, 0);
+        while still < 3 {
+            tokio::time::sleep(Duration::from_millis(30)).await;
             let used = budget.usage().used;
-            if used == last {
-                return used;
-            }
+            still = if used == last { still + 1 } else { 0 };
             last = used;
         }
+        last
     };
     tokio::time::timeout(Duration::from_secs(10), settling)
         .await
@@ -149,12 +148,13 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
 
 /// Leases what the budget has left past `spare` bytes.
 fn exhaust(budget: &Budget, spare: usize) -> graphite_meter_server::limits::Lease {
-    loop {
+    for _ in 0..1000 {
         let left = budget.usage().limit - budget.usage().used;
         if let Some(lease) = budget.lease(left.saturating_sub(spare)) {
             return lease;
         }
     }
+    panic!("the budget never held still for a lease");
 }
 
 #[tokio::test]

@@ -37,15 +37,10 @@ impl Server {
 
     /// The server with `settings` over the test configuration.
     pub async fn with(settings: &[(&str, &str)]) -> Self {
-        Self::serve(settings, &Identity::generate().unwrap()).await
+        Self::try_serve(settings, &Identity::generate().unwrap()).await.unwrap()
     }
 
-    /// The server with `settings` over the test configuration, presenting `identity`.
-    pub async fn serve(settings: &[(&str, &str)], identity: &Identity) -> Self {
-        Self::try_serve(settings, identity).await.unwrap()
-    }
-
-    /// `serve`, or why the server could not bind.
+    /// The server with `settings` over the test configuration presenting `identity`, or why it could not bind.
     pub async fn try_serve(settings: &[(&str, &str)], identity: &Identity) -> Result<Self, String> {
         let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();

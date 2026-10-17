@@ -19,7 +19,7 @@ from types import TracebackType
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/ci"))
-import workspace  # noqa: E402
+import workspace
 
 # Image platforms by the machine names Python reports.
 PLATFORMS = {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}

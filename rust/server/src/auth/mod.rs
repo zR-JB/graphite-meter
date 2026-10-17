@@ -11,10 +11,10 @@ mod rate;
 mod routes;
 mod store;
 
-pub use policy::{BrowserOrigin, Policy};
-pub use store::{
-    CsrfToken, GrantRefusal, GrantToken, Identity, LOGIN_LIFETIME, LoginKey, NewLogin, SessionToken, Store,
-};
+pub use policy::BrowserOrigin;
+use policy::Policy;
+pub use store::{Identity, NewLogin, Store};
+use store::{LOGIN_LIFETIME, LoginKey};
 
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
@@ -44,13 +44,13 @@ use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
 /// What the policy decided: serve it, as the lease's holder when signed in, or its own answer from the head.
-pub type Decision = Result<Option<AuthLease>, Response<Body>>;
+pub(crate) type Decision = Result<Option<AuthLease>, Response<Body>>;
 
 /// The configured authentication; without it every request is allowed, anonymously.
 pub struct Auth(Option<Box<Enabled>>);
 
 /// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
-pub struct Enabled {
+pub(crate) struct Enabled {
     policy: Policy,
     store: Store,
     sign_in: SignIn,
@@ -65,10 +65,11 @@ impl Auth {
     /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
     pub fn new(config: Option<&config::Auth>, outbound: &config::Outbound, verbose: bool) -> Result<Self, String> {
         let Some(config) = config else { return Ok(Self(None)) };
-        let (mode, settings) = match &config.methods {
-            Methods::Password(_) => ("password", None),
-            Methods::Oidc(oidc) => ("OIDC", Some(oidc)),
-            Methods::Hybrid(_, oidc) => ("password and OIDC", Some(oidc)),
+        let Methods { password, oidc: settings } = &config.methods;
+        let mode = match (password, settings) {
+            (_, None) => "password",
+            (None, Some(_)) => "OIDC",
+            (Some(_), Some(_)) => "password and OIDC",
         };
         let security = Security::new(verbose);
         let load = |secret: &config::Secret| {
@@ -82,10 +83,12 @@ impl Auth {
             let secret = secret.map_err(|error| format!("OIDC client secret: {error}"))?;
             Oidc::new(&config.public_origin, settings, secret, outbound)
         };
-        let sign_in = match &config.methods {
-            Methods::Password(secret) => SignIn::Password(load(secret)?),
-            Methods::Oidc(settings) => SignIn::Oidc(Box::new(oidc(settings)?)),
-            Methods::Hybrid(secret, settings) => SignIn::Hybrid(load(secret)?, Box::new(oidc(settings)?)),
+        let sign_in = SignIn {
+            password: password.as_ref().map(load).transpose()?,
+            oidc: settings
+                .as_ref()
+                .map(|settings| oidc(settings).map(Box::new))
+                .transpose()?,
         };
         let lifetime = log::span(LOGIN_LIFETIME);
         log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
@@ -108,7 +111,7 @@ impl Auth {
 
     /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
-        match self.0.as_ref().and_then(|auth| auth.sign_in.oidc()) {
+        match self.0.as_ref().and_then(|auth| auth.sign_in.oidc.as_deref()) {
             Some(oidc) => oidc.discover().await,
             None => Ok(()),
         }
@@ -117,7 +120,9 @@ impl Auth {
     /// Hybrid mode's discovery, retried in the background until the provider answers.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
-        let SignIn::Hybrid(_, oidc) = &auth.sign_in else { return None };
+        let SignIn { password: Some(_), oidc: Some(oidc) } = &auth.sign_in else {
+            return None;
+        };
         Some(oidc.retry())
     }
 
@@ -145,7 +150,7 @@ impl Auth {
 
     /// Whether `path` is one of the routes `handle` answers on the endpoints serving the app; none when off.
     pub fn claims(&self, path: &str) -> bool {
-        self.enabled() && (path == "/login" || path.starts_with("/auth/"))
+        self.enabled() && policy::controls(path)
     }
 
     /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.
@@ -181,26 +186,9 @@ impl Auth {
 }
 
 /// How people sign in, as configured: the password, OIDC or both.
-enum SignIn {
-    Password(Password),
-    Oidc(Box<Oidc>),
-    Hybrid(Password, Box<Oidc>),
-}
-
-impl SignIn {
-    fn password(&self) -> Option<&Password> {
-        match self {
-            Self::Password(password) | Self::Hybrid(password, _) => Some(password),
-            Self::Oidc(_) => None,
-        }
-    }
-
-    fn oidc(&self) -> Option<&Oidc> {
-        match self {
-            Self::Oidc(oidc) | Self::Hybrid(_, oidc) => Some(oidc),
-            Self::Password(_) => None,
-        }
-    }
+struct SignIn {
+    password: Option<Password>,
+    oidc: Option<Box<Oidc>>,
 }
 
 /// Who a login belongs to, the key its admission share and uploads count under.
@@ -259,7 +247,6 @@ impl AuthLease {
         }
     }
 
-    /// The login it belongs to.
     pub fn login(&self) -> LoginKey {
         self.login
     }

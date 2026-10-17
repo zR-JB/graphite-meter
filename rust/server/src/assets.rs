@@ -199,7 +199,12 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, content) = html.split_once(&format!("<{tag}>"))?;
     let (content, _) = content.split_once(&format!("</{tag}>"))?;
-    Some(STANDARD.encode(digest(&SHA256, content.as_bytes())))
+    Some(sha256(content))
+}
+
+/// `text`'s base64 SHA-256, as a CSP hash source names it.
+pub(crate) fn sha256(text: &str) -> String {
+    STANDARD.encode(digest(&SHA256, text.as_bytes()))
 }
 
 /// The policy name the index's Trusted Types marker carries.

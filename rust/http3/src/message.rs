@@ -5,6 +5,7 @@ use crate::{
     fields,
     frame::{FrameType, Piece, Reader},
     qpack,
+    webtransport::SessionId,
 };
 use bytes::Bytes;
 
@@ -92,7 +93,7 @@ impl Message {
             (FrameType::HEADERS, Phase::Head | Phase::Body) if length == 0 => Ok(Some(self.fields(Bytes::new()))),
             (FrameType::HEADERS, Phase::Head | Phase::Body) | (FrameType::DATA, Phase::Body) => Ok(None),
             (FrameType::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
-            (FrameType::WEBTRANSPORT_BIDI, _) if !length.is_multiple_of(4) => Err(Code::H3_ID_ERROR),
+            (FrameType::WEBTRANSPORT_BIDI, _) if SessionId::new(length).is_none() => Err(Code::H3_ID_ERROR),
             // No route takes a peer's WebTransport stream: it is refused like a cancelled lane.
             (FrameType::WEBTRANSPORT_BIDI, _) => Err(Code::WT_CANCELLED),
             // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).

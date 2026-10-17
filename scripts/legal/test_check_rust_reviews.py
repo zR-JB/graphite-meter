@@ -5,13 +5,14 @@ import unittest
 from pathlib import Path
 
 from scripts.ci.workspace import Workspace
-from scripts.legal.check_rust_reviews import BUDGET, layout, over_budget, shipped, unreviewed, unreviewed_platforms
+from scripts.legal.check_rust_reviews import BUDGET, dead, layout, over_budget, shipped, unreviewed_platforms
+from scripts.legal.model import Review
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 
 
-def review(name: str, version: str, upstream: str = REGISTRY, decision: str = "approved") -> dict:
-    return {"name": name, "reviewedVersion": version, "upstream": upstream, "reviewDecision": decision}
+def review(name: str, version: str, upstream: str = REGISTRY) -> Review:
+    return Review("cargo", name, version, upstream)
 
 
 class ReviewTests(unittest.TestCase):
@@ -22,18 +23,11 @@ class ReviewTests(unittest.TestCase):
             ("graphite-meter-client", "x86_64-unknown-linux-musl"), ("graphite-meter-client", "x86_64-pc-windows-gnu"),
             ("graphite-meter-server", "x86_64-unknown-linux-musl")])
 
-    def test_registry_versions_share_coverage_but_unapproved_and_other_sources_do_not(self) -> None:
-        reviews = [review("ring", "0.17.14"), review("windows-sys", "0.61.1"),
-                   review("dlmalloc", "0.2.14", decision="pending")]
-        other = "registry+https://example.invalid/index"
-        used = {("ring", "0.17.14", REGISTRY), ("ring", "0.17.14", other),
-                ("windows-sys", "0.61.2", REGISTRY), ("dlmalloc", "0.2.14", REGISTRY)}
-        self.assertEqual(unreviewed(reviews, used), [("dlmalloc", "0.2.14", REGISTRY), ("ring", "0.17.14", other)])
-
-    def test_git_reviews_bind_the_exact_version_and_revision(self) -> None:
-        fork, other = (f"git+https://example.invalid/noq?rev={rev * 40}#{rev * 40}" for rev in "ab")
-        used = {("noq", "0.1.0", fork), ("noq", "0.2.0", fork), ("noq", "0.1.0", other)}
-        self.assertEqual(unreviewed([review("noq", "0.1.0", fork)], used), sorted(used - {("noq", "0.1.0", fork)}))
+    def test_a_review_no_compiled_crate_is_checked_against_is_dead(self) -> None:
+        fork, refork = (f"git+https://example.invalid/noq?rev={rev * 40}#{rev * 40}" for rev in "ab")
+        used = {("libc", "0.2.190", REGISTRY), ("noq", "0.1.0", refork)}
+        reviews = [review("libc", "0.2.189"), review("hmac", "0.13.0"), review("noq", "0.1.0", fork)]
+        self.assertEqual(dead(reviews, used), reviews[1:])
 
     def test_the_static_linux_binaries_stay_within_their_crate_budgets(self) -> None:
         def crates(count: int) -> set[tuple[str, str]]:
@@ -61,7 +55,7 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(unreviewed_platforms(records, targets), ["x86_64-pc-windows-gnu"])
 
     def test_the_layout_holds_one_review_per_line(self) -> None:
-        reviews = [review("ring", "0.17.14") | {"reviewNotes": 'é "quoted"\n'}, review("noq", "0.1.0")]
+        reviews = [{"name": "ring", "reviewNotes": 'é "quoted"\n'}, {"name": "noq"}]
         lines = layout(reviews).decode().splitlines()
         self.assertEqual(lines[0], "[")
         self.assertEqual(lines[-1], "]")

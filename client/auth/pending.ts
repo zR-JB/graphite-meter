@@ -1,6 +1,8 @@
 // The sign-in and approval pages' script: the host line, the show-password keys, and forms that stay on the page
 // while the server checks them. Without it every form still posts natively.
 
+import { AUTH_ROUTES } from "../src/protocol/routes";
+
 type Page = Pick<
   Window & typeof globalThis,
   "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
@@ -8,7 +10,7 @@ type Page = Pick<
 
 // A native POST would freeze the busy animation for the whole deliberately slow password check; other forms, such as a
 // provider's sign-in, submit natively.
-const IN_PLACE = new Set(["/auth/password", "/auth/cli/approve", "/auth/browser/approve"]);
+const IN_PLACE = new Set<string>([AUTH_ROUTES.password, AUTH_ROUTES.cliApprove, AUTH_ROUTES.browserApprove]);
 /** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
 const SUBMIT_MS = 20_000;
 const UNREACHABLE = "Could not reach the server. Try again.";

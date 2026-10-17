@@ -35,7 +35,6 @@ pub enum Pressure {
 pub struct Usage {
     pub limit: usize,
     pub used: usize,
-    pub reserved: usize,
 }
 
 impl Budget {
@@ -93,7 +92,6 @@ impl Budget {
         Usage {
             limit: self.0.limit,
             used: self.0.used.load(Ordering::Relaxed),
-            reserved: self.0.held(),
         }
     }
 
@@ -116,11 +114,6 @@ impl Shared {
 
     fn give_back(&self, bytes: usize) {
         self.used.fetch_sub(bytes, Ordering::Relaxed);
-    }
-
-    fn held(&self) -> usize {
-        let released = self.released.load(Ordering::Relaxed);
-        self.reserved.load(Ordering::Relaxed).wrapping_sub(released)
     }
 
     /// The limit past reservations and its use; totals read around `used` may overcount, only lowering pressure.
@@ -187,10 +180,7 @@ mod tests {
         drop((more, one, quarter));
         assert_eq!(budget.pressure(), Pressure::Normal);
         drop(reserved);
-        assert_eq!(
-            (budget.usage(), budget.client_windows()),
-            (Usage { limit: 1000, used: 0, reserved: 0 }, 500)
-        );
+        assert_eq!((budget.usage(), budget.client_windows()), (Usage { limit: 1000, used: 0 }, 500));
     }
 
     #[test]

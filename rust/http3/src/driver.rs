@@ -27,9 +27,10 @@ use tokio::{
     time::{Instant, Sleep},
 };
 
-/// A server connection without live requests for this long closes.
-const IDLE: Duration = Duration::from_secs(15);
 const DRAIN: Duration = Duration::from_secs(5);
+
+/// A server connection without requests or streams closes after this long, whatever its HTTP version.
+pub const CONNECTION_IDLE: Duration = Duration::from_secs(15);
 
 /// The layer's fixed per-connection state, for the floor: driver, shared stream state, critical streams, futures.
 pub const CONNECTION_BYTES: usize = size_of::<Driver>()
@@ -65,6 +66,8 @@ pub(crate) struct Shared {
     /// Request stream halves alive.
     live: AtomicUsize,
     going_away: AtomicBool,
+    /// A request other than a CONNECT arrived.
+    pub(crate) served: AtomicBool,
     /// The code this side closed the connection with.
     closed: OnceLock<Code>,
     wake: Notify,
@@ -107,12 +110,13 @@ impl Shared {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Closes on a violation or with H3_NO_ERROR when done; noq reports any earlier close, the peer's too, as local.
+    /// Closes on a violation or with H3_NO_ERROR when done; a connection already closed keeps why it closed.
     pub(crate) fn close(&self, code: Code) -> Error {
-        if self.quic.close_reason().is_none() {
-            let _ = self.closed.set(code);
-            self.quic.close(code.into(), b"");
+        if self.quic.close_reason().is_some() {
+            return self.close_error();
         }
+        let _ = self.closed.set(code);
+        self.quic.close(code.into(), b"");
         Error::local(code)
     }
 
@@ -120,7 +124,7 @@ impl Shared {
     pub(crate) fn close_error(&self) -> Error {
         match (self.quic.close_reason(), self.closed.get()) {
             (Some(noq::ConnectionError::LocallyClosed), Some(&code)) => Error::local(code),
-            (reason, _) => reason.map_or(Error::Refused, Error::from),
+            (reason, _) => reason.map_or(Error::SessionEnded, Error::from),
         }
     }
 
@@ -131,7 +135,7 @@ impl Shared {
                 peer.check(self.quic.max_datagram_size().is_some())?;
                 self.peer.send_replace(Some(peer));
             }
-            ControlEvent::Goaway(_) => self.going_away.store(true, Ordering::Relaxed),
+            ControlEvent::Goaway => self.going_away.store(true, Ordering::Relaxed),
         }
         Ok(())
     }
@@ -165,6 +169,7 @@ impl Driver {
             peer: watch::Sender::new(None),
             live: AtomicUsize::new(0),
             going_away: AtomicBool::new(false),
+            served: AtomicBool::new(false),
             closed: OnceLock::new(),
             wake: Notify::new(),
             sessions: Mutex::default(),
@@ -201,7 +206,7 @@ impl Driver {
         }
     }
 
-    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and 5 s bound the rest.
+    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and a drain bounds the rest.
     pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
         self.goaway();
         if self.drain.is_none() && !self.ended {
@@ -278,11 +283,10 @@ impl Driver {
             self.idle_since = None;
             return self.drain;
         }
-        let idle = *self.idle_since.get_or_insert(now) + IDLE;
-        let sessions = self.shared.sessions();
+        let idle = *self.idle_since.get_or_insert(now) + CONNECTION_IDLE;
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let only_sessions = sessions.carried && !sessions.served;
-        let done = (self.goaway.is_some() || only_sessions).then(|| sessions.linger.unwrap_or(now));
+        let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Acquire);
+        let done = (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 
@@ -312,12 +316,8 @@ impl Driver {
     }
 }
 
-/// Hands a peer's session stream to the registry; one naming no possible session is refused at once, and one the
-/// budget cannot hold as unbuffered.
-fn route(shared: &Shared, session: u64, mut stream: noq::RecvStream, first: Bytes) {
-    let Some(session) = SessionId::new(session) else {
-        return drop(stream.stop(Code::H3_ID_ERROR.into()));
-    };
+/// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
+fn route(shared: &Shared, session: SessionId, mut stream: noq::RecvStream, first: Bytes) {
     match Charge::new(&shared.budget, size_of::<RecvStream>()) {
         Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
         None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),
@@ -387,7 +387,7 @@ const TYPE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Streams covered by the connection floor, where peers open their critical ones.
 const FLOOR: u8 = 3;
 
-/// The peer's unidirectional streams: classified within 10 s, then read as control or QPACK, or handed to WebTransport.
+/// The peer's unidirectional streams: classified in time, then read as control or QPACK, or handed to WebTransport.
 struct Incoming {
     streams: Vec<PeerStream>,
     /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
@@ -396,7 +396,7 @@ struct Incoming {
 }
 
 /// A WebTransport stream once its header is read: its session, the stream and the bytes after the header.
-type Classified = (u64, noq::RecvStream, Bytes);
+type Classified = (SessionId, noq::RecvStream, Bytes);
 
 struct PeerStream {
     stream: noq::RecvStream,
@@ -410,14 +410,14 @@ enum Kind {
     Control(Box<ControlReader>),
     Encoder,
     Decoder(qpack::DecoderStream),
-    Session(u64),
+    Session(SessionId),
 }
 
 /// What reading a stream came to.
 enum Read {
     Pending,
     Done,
-    Session(u64),
+    Session(SessionId),
 }
 
 impl Incoming {
@@ -521,12 +521,7 @@ fn classify(
     critical: &mut [bool; 3],
 ) -> Result<Option<Kind>, Code> {
     if let Some(session) = session {
-        // Only a client-initiated bidirectional stream can carry a session.
-        return if session.is_multiple_of(4) {
-            Ok(Some(Kind::Session(session)))
-        } else {
-            Err(Code::H3_ID_ERROR)
-        };
+        return Ok(Some(Kind::Session(SessionId::new(session).ok_or(Code::H3_ID_ERROR)?)));
     }
     let (slot, next) = match kind {
         StreamType::CONTROL => (0, Kind::Control(Box::default())),
@@ -546,8 +541,8 @@ fn classify(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControlEvent {
     Settings(Peer),
-    /// The server's GOAWAY: requests from this stream ID on go unprocessed.
-    Goaway(u64),
+    /// The server's GOAWAY: no new request.
+    Goaway,
 }
 
 #[derive(Default)]
@@ -589,8 +584,8 @@ impl ControlReader {
                             self.settings = None;
                             event(ControlEvent::Settings(peer))?;
                         }
-                    } else if let Some(goaway) = self.value(&mut payload, peer)? {
-                        event(ControlEvent::Goaway(goaway))?;
+                    } else if self.value(&mut payload, peer)?.is_some() {
+                        event(ControlEvent::Goaway)?;
                     }
                 }
             }
@@ -662,7 +657,7 @@ mod control_tests {
         let goaway = |id| frame(FrameType::GOAWAY, &[id]);
         assert_eq!(
             events(Role::Server, &[goaway(8), goaway(4)]),
-            Ok(vec![settings, ControlEvent::Goaway(8), ControlEvent::Goaway(4)])
+            Ok(vec![settings, ControlEvent::Goaway, ControlEvent::Goaway])
         );
         assert_eq!(events(Role::Server, &[goaway(4), goaway(8)]), Err(Code::H3_ID_ERROR));
         assert_eq!(events(Role::Server, &[goaway(2)]), Err(Code::H3_ID_ERROR));

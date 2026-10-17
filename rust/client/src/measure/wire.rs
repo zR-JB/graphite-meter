@@ -1,10 +1,6 @@
 //! The wire rate a payload rate takes: every layer's headers at a 1,500 B MTU, as the browser estimates it
 //! (`client/src/engine/measure/overhead.ts`, its central estimate).
-use crate::{
-    model::{Direction, StageResult},
-    net::ThroughputPath,
-    run::prepare::ServerPath,
-};
+use crate::{model::StageResult, net::ThroughputPath, run::prepare::ServerPath};
 use graphite_meter_proto::{
     discovery::{IpFamily, Protocol, ThroughputTransport},
     origin::Scheme,
@@ -41,10 +37,7 @@ pub fn multiplier(path: &ThroughputPath, family: IpFamily) -> f64 {
 pub fn wire_rate(result: &StageResult, servers: &[ServerPath]) -> Option<f64> {
     let mut wire = 0.0;
     for server in &result.servers {
-        let rate: f64 = Direction::BOTH
-            .iter()
-            .filter_map(|&direction| Some(server.throughput[direction]?.rate?.mean))
-            .sum();
+        let rate = server.throughput.mean();
         if rate > 0.0 {
             let prepared = servers.iter().find(|prepared| prepared.id == server.server)?;
             let paths = prepared.path.as_ref().ok()?;

@@ -10,6 +10,7 @@ use graphite_meter_proto::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     origin::Origin,
 };
+use graphite_meter_testkit::read_head;
 use std::{assert_matches, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,14 +31,6 @@ async fn local() -> (TcpListener, Origin) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = Origin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     (listener, origin)
-}
-
-async fn read_head(stream: &mut TcpStream) -> Option<String> {
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        head.push(stream.read_u8().await.ok()?);
-    }
-    String::from_utf8(head).ok()
 }
 
 /// Answers downloads only once an upload arrived, and reads uploads until they end; says when each arrived.

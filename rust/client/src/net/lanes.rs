@@ -34,7 +34,7 @@ const SESSION_LANES: usize = 16;
 /// The block an upload repeats; an attempt that handed on more than one moved bytes.
 const BLOCK_BYTES: usize = 64 << 10;
 /// A WebTransport download stream's chunks taken under one lock of the connection, counted at once.
-const READ_BATCH: usize = 32;
+const CHUNKS_PER_READ: usize = 32;
 
 /// A server's throughput path as preparation chose it, its protocol resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub struct GroupPlan {
     pub lanes: Range<usize>,
 }
 
-/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport 16 each.
+/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport up to its lane cap each.
 pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<GroupPlan> {
     let mut plans = Vec::new();
     for &direction in stage.directions() {
@@ -179,7 +179,7 @@ impl Lanes {
             let fault = match ended {
                 Ok(Some(fault)) => fault,
                 Ok(None) => continue,
-                Err(error) => Fault::Lost(error.to_string()),
+                Err(_) => Fault::Lost,
             };
             self.failed.get_or_insert(fault);
         }
@@ -209,9 +209,7 @@ impl Lanes {
 
 /// A random block, so no hop compresses the upload; a host without randomness cannot measure and panics.
 fn block() -> Bytes {
-    let mut block = vec![0; BLOCK_BYTES];
-    getrandom::fill(&mut block).expect("the system provides randomness");
-    block.into()
+    Bytes::copy_from_slice(&graphite_meter_net::random::<BLOCK_BYTES>())
 }
 
 /// A group's shared connection or session, replaced one dial at a time once unusable.
@@ -371,7 +369,7 @@ impl Group {
 /// One server stream of the session, counted as it arrives; the lane opens at its first bytes.
 async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
     let mut stream = session.accept_uni().await?;
-    let (mut chunks, mut received) = ([const { Bytes::new() }; READ_BATCH], 0);
+    let (mut chunks, mut received) = ([const { Bytes::new() }; CHUNKS_PER_READ], 0);
     while let Some(count) = stream
         .read_chunks(&mut chunks)
         .await
@@ -391,7 +389,7 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
     }
     match received == STREAM_BYTES {
         true => Ok(()),
-        false => Err(Fault::Lost("WebTransport download ended before its byte count".into())),
+        false => Err(Fault::Lost),
     }
 }
 

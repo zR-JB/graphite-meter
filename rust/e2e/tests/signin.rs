@@ -15,6 +15,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc::UnboundedReceiver,
+    time::timeout,
 };
 use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 
@@ -56,19 +57,10 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
     panic!("no free port held: {failures:?}");
 }
 
-/// A check of a latency and download run at `address` over verified TLS.
+/// A check of a download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
-    e2e::config(&[
-        "-url",
-        &url,
-        "-stages",
-        "latency,download",
-        "-latency-duration",
-        "1s",
-        "-download-duration",
-        "1s",
-    ])
+    e2e::config(&["-url", &url, "-stages", "download", "-download-duration", "1s"])
 }
 
 /// The prompt an interactive check of `config` shows.
@@ -156,5 +148,7 @@ async fn a_sign_in_approved_over_http_lets_the_run_complete() {
         "{ran:#?}"
     );
     assert!(!ran.iter().any(|event| matches!(event, Event::SignIn(_))));
-    controller.settled().await;
+    timeout(LIMIT, controller.settled())
+        .await
+        .expect("the controller settles");
 }

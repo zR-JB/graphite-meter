@@ -1,7 +1,7 @@
 //! Transport-neutral measurement work: download payloads, the latency reflector, upload aggregates and feeds.
 
 pub mod download;
-pub mod uploads;
+mod uploads;
 
 pub use download::{Block, DownloadSource};
 pub use uploads::Uploads;
@@ -114,7 +114,6 @@ impl UploadSink {
         }
     }
 
-    /// The bytes this lane received.
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
@@ -142,9 +141,9 @@ impl Drop for UploadSink {
 }
 
 /// After the first accepted chunk a `progress` record follows this often.
-pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// A blank line follows this long after the feed's last line.
-pub const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
+const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
 
 /// One reader's lines (`api/upload.md#progress-records`), from `ready` to `complete` or an `error`, on any transport.
 pub struct ProgressFeed {

@@ -88,7 +88,7 @@ pub struct NewLogin {
 pub enum GrantRefusal {
     /// The login ended.
     NoLogin,
-    /// The login holds its eight grants and none may be replaced.
+    /// The login holds all its grants and none may be replaced.
     Full,
 }
 
@@ -96,7 +96,7 @@ pub enum GrantRefusal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MintRefusal {
     Ended,
-    /// The login holds its eight outstanding tickets.
+    /// The login holds all its outstanding tickets.
     Full,
 }
 
@@ -151,7 +151,7 @@ pub(super) struct State {
 pub struct Store(pub(super) Arc<Mutex<State>>);
 
 impl Store {
-    /// Signs `identity` in, ending its principal's oldest login at eight; `None` when the server holds 1024.
+    /// Signs `identity` in, ending its principal's oldest login at the cap; `None` when the server is full.
     pub fn sign_in(&self, identity: Identity<'_>) -> Option<NewLogin> {
         let (token, csrf, id) = (SessionToken(random::<32>()), CsrfToken(random::<32>()), random::<16>());
         let key = digest(token.as_str());
@@ -231,7 +231,7 @@ impl Store {
         lock(&self.0).grant(login, browser, credentials)
     }
 
-    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, for 30 s at most.
+    /// A one-use ticket presenting `lease` at `target` from the `origin` that minted it, briefly.
     pub(super) fn mint(
         &self,
         lease: &AuthLease,
@@ -284,7 +284,7 @@ impl Store {
 }
 
 impl State {
-    /// Issues `login` a grant with `credentials`; eight per login, then native replaces oldest native, else refused.
+    /// Issues `login` a grant with `credentials`; past the cap native replaces oldest native, else refused.
     pub(super) fn grant(
         &mut self,
         login: LoginKey,

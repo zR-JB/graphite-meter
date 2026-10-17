@@ -7,9 +7,9 @@ use std::{net::IpAddr, ops::RangeInclusive, time::Duration};
 /// Clients read at most this many bytes of a control response.
 pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 /// Each target list holds at most this many targets, counted as sent.
-pub const MAX_TARGETS: usize = 32;
+const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
-pub const MAX_METADATA_BYTES: usize = 256;
+const MAX_METADATA_BYTES: usize = 256;
 /// A server's stage limit unless its operator sets one.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
 /// The stage limits a server may advertise.

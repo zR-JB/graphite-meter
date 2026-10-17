@@ -3,8 +3,8 @@ use graphite_meter_proto::origin::Host;
 use std::{io, net::SocketAddr, pin::pin, time::Duration};
 use tokio::{net::TcpStream, time::Instant};
 
-/// A second under the client's 10 s control deadline, so a dial ends with its own error first.
-const TIMEOUT: Duration = Duration::from_secs(9);
+/// A whole TCP or QUIC dial, lookup included, under the client's control deadline so it ends with its own error first.
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(9);
 /// RFC 8305's recommended wait before the other address family joins.
 const FALLBACK_DELAY: Duration = Duration::from_millis(300);
 /// The least share of the remaining time for each address in a family, so one dead address leaves time for others.
@@ -15,7 +15,7 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
 
 /// The addresses `host` names, without a lookup for an IP address.
-pub async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
+pub(crate) async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     match host {
         Host::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),
         Host::Name(name) => Ok(tokio::net::lookup_host((name.as_str(), port)).await?.collect()),
@@ -86,15 +86,15 @@ async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpSt
 }
 
 /// An equal part of `left` for each of `addresses`, but at least `MIN_SHARE` while it lasts.
-fn share(left: Duration, addresses: usize) -> Duration {
+pub(crate) fn share(left: Duration, addresses: usize) -> Duration {
     let equal = left / u32::try_from(addresses).unwrap_or(u32::MAX);
     equal.max(MIN_SHARE.min(left))
 }
 
-/// Probes an idle peer after 30 s, then every 15 s, nine times; a socket refusing the options still connects.
+/// Probes an idle peer as the keep-alive constants say; a socket refusing the options still connects.
 fn keep_alive(stream: &TcpStream) {
     let probes = socket2::TcpKeepalive::new().with_time(KEEP_ALIVE_IDLE);
-    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    #[cfg(any(target_os = "linux", windows))]
     let probes = probes
         .with_interval(KEEP_ALIVE_INTERVAL)
         .with_retries(KEEP_ALIVE_PROBES);

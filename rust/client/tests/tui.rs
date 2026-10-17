@@ -227,11 +227,12 @@ fn the_chooser_keeps_up_to_four_servers_and_none_takes_the_default_ones() {
 #[test]
 fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
     let (mut app, now) = app();
+    assert!(!frame(&mut app, now)[0].ends_with("Failed"), "no server prepared yet is no failure");
     let failure = Failure::new(FailureReason::PreparationFailed, graphite_meter_client::net::UNREACHABLE);
     app.event(&Event::Checking(Kind::Check), now);
     app.event(&Event::CheckFailed(failure), now);
     assert!(frame(&mut app, now)[0].ends_with("● Failed"), "{:?}", frame(&mut app, now)[0]);
-    assert!(shows(&mut app, now, "Could not reach meter.example."));
+    assert!(shows(&mut app, now, "Could not reach meter.example") && !shows(&mut app, now, "meter.example."));
     assert!(shows(
         &mut app,
         now,

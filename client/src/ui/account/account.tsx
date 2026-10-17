@@ -3,6 +3,7 @@
 import "./account.css";
 import type { App } from "../../app/app";
 import { csrfHeaders, type Account } from "../../engine/net/page";
+import { AUTH_ROUTES } from "../../protocol/routes";
 import { Show } from "../../lib/dom";
 import { computed, onCleanup, signal } from "../../lib/signal";
 import { ConfirmDialog } from "../kit/dialog";
@@ -49,7 +50,7 @@ export function AccountControl(props: { app: App }): Node {
           <form
             class="account"
             method="post"
-            action="/auth/logout"
+            action={AUTH_ROUTES.logout}
             aria-label={() => `${label()}, ${provider()}`}
             // The page leaves once the run ended and its result's write landed, with the token as it is now: another
             // tab may have signed in again since this one read it. A submit drops its submitter, so the scope rides along.

@@ -1,5 +1,6 @@
 //! HTTP(S) origins, compared parsed, never as text: Rust prints IPv4-mapped IPv6 unlike a browser's `Origin`.
 
+use crate::text::decimal;
 use serde::{Serialize, Serializer};
 use std::{
     fmt,
@@ -7,7 +8,7 @@ use std::{
 };
 
 /// The longest origin text a contract accepts.
-pub const MAX_ORIGIN_BYTES: usize = 2048;
+const MAX_ORIGIN_BYTES: usize = 2048;
 
 table! {
     pub enum Scheme {
@@ -79,7 +80,7 @@ impl fmt::Display for OriginError {
 impl std::error::Error for OriginError {}
 
 impl Origin {
-    /// Parses an origin of at most 2048 bytes: an ASCII host, a nonzero port, no credentials, path, query or fragment.
+    /// Parses a bounded origin: an ASCII host, a nonzero port, no credentials, path, query or fragment.
     pub fn parse(text: &str) -> Result<Self, OriginError> {
         match Self::split(text)? {
             (origin, "") if text.len() <= MAX_ORIGIN_BYTES => Ok(origin),
@@ -87,7 +88,7 @@ impl Origin {
         }
     }
 
-    /// Splits a URL into origin and rest: at most 2048 bytes of printable ASCII without `#` or `\`.
+    /// Splits a URL into origin and rest: bounded printable ASCII without `#` or `\`.
     pub fn split(url: &str) -> Result<(Self, &str), OriginError> {
         let (scheme, rest) = url.split_once("://").ok_or(OriginError)?;
         let named = |known: &Scheme| known.name().eq_ignore_ascii_case(scheme);
@@ -105,7 +106,11 @@ impl Origin {
         };
         let port = match port {
             "" | ":" => scheme.default_port(),
-            _ => port.strip_prefix(':').and_then(decimal_port).ok_or(OriginError)?,
+            _ => port
+                .strip_prefix(':')
+                .and_then(|digits| decimal(digits, usize::MAX))
+                .filter(|&port: &u16| port != 0)
+                .ok_or(OriginError)?,
         };
         let refused = |byte: u8| byte <= b' ' || byte >= 0x7f || matches!(byte, b'#' | b'\\');
         if rest.len() > MAX_ORIGIN_BYTES || rest.bytes().any(refused) {
@@ -113,13 +118,6 @@ impl Origin {
         }
         Ok((Self { scheme, host, port }, rest))
     }
-}
-
-/// A nonzero port of decimal digits only.
-fn decimal_port(digits: &str) -> Option<u16> {
-    let decimal = digits.bytes().all(|byte| byte.is_ascii_digit());
-    let port: u16 = decimal.then(|| digits.parse().ok())??;
-    (port != 0).then_some(port)
 }
 
 impl fmt::Display for Origin {

@@ -6,7 +6,7 @@ use crate::{
 use std::{io, time::Duration};
 
 /// The background query: OSC 11, then DA1, which every terminal answers, in order.
-pub const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
+const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
 /// How long a terminal may take to answer the query.
 pub const ANSWER: Duration = Duration::from_secs(2);
 
@@ -154,7 +154,7 @@ pub fn mix(color: Color, under: Color, share: f64) -> Color {
 }
 
 /// `rgb` with the nearest of the 256 colors and `ansi` of the 16.
-pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
+fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
         rgb.iter()
@@ -325,11 +325,14 @@ fn rgb(color: &[u8]) -> Option<[u8; 3]> {
             let (form, components) = color.split_once(':').unwrap_or_default();
             let components: Vec<_> = components.split('/').collect();
             let channel = |part: &str| {
-                let value = if hex(part) { u32::from_str_radix(part, 16).unwrap_or(u32::MAX) } else { 0 };
-                (if value > 0xff { value >> 8 } else { value }) as u8
+                let value = u32::from_str_radix(part, 16)
+                    .ok()
+                    .filter(|_| hex(part) && part.len() <= 4)?;
+                u8::try_from(value * 255 / ((1 << (4 * part.len())) - 1)).ok()
             };
             matches!((form, components.len()), ("rgb", 3) | ("rgba", 4))
                 .then(|| components[..3].iter().map(|part| channel(part)).collect())
+                .flatten()
         }
     };
     channels.and_then(|rgb| rgb.try_into().ok())
@@ -379,6 +382,8 @@ mod tests {
             (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(Some([0; 3])), true)),
             (b"\x1b]11;#fdf6e3\x07\x1b[?6c", (Some(Some([0xfd, 0xf6, 0xe3])), true)),
             (b"\x1b]11;rgb:1010/1414/1818\x07\x1b[?6c", (Some(Some([0x10, 0x14, 0x18])), true)),
+            (b"\x1b]11;rgb:ffff/ffff/fffff\x07\x1b[?6c", (Some(None), true)),
+            (b"\x1b]11;rgba:f/fff/88/0\x07\x1b[?6c", (Some(Some([255, 255, 0x88])), true)),
             (b"\x1b]11;nonsense\x07\x1b[?6c", (Some(None), true)),
             (b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?6c", (None, true)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1bx\x1b[?6c", (None, true)),

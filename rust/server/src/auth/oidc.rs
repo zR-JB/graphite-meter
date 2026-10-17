@@ -17,7 +17,7 @@ use crate::{
     transport::body::Body,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use graphite_meter_proto::{approval, origin::Origin, text};
+use graphite_meter_proto::{approval, origin::Origin, route::AuthRoute, text};
 use http::{HeaderValue, Request, Response, header, request::Parts};
 use serde::Deserialize;
 use serde_json::Value;
@@ -75,7 +75,7 @@ impl Oidc {
     ) -> Result<Self, String> {
         Ok(Self {
             settings: settings.clone(),
-            redirect: format!("{public}/auth/oidc/callback"),
+            redirect: format!("{public}{}", AuthRoute::OidcCallback.path()),
             secret,
             client: Client::new(outbound)?,
             provider: OnceLock::new(),
@@ -327,14 +327,8 @@ pub(super) async fn callback(
     deadline: Instant,
     peer: &Peer,
 ) -> Response<Body> {
-    let mut answer = match sign_in(auth, oidc, &head, deadline, peer).await {
-        Ok(answer) => answer,
-        Err((reason, None)) => {
-            let challenge = query::get(head.uri.query(), "challenge").and_then(|text| Challenge::parse(&text));
-            refused(auth, reason, challenge.as_ref())
-        }
-        Err((reason, challenge)) => refused(auth, reason, challenge.as_ref()),
-    };
+    let answered = sign_in(auth, oidc, &head, deadline, peer).await;
+    let mut answer = answered.unwrap_or_else(|(reason, challenge)| refused(auth, reason, challenge.as_ref()));
     clear_cookie(&mut answer, Cookie::Transaction);
     answer
 }
@@ -364,8 +358,7 @@ async fn sign_in(
     }
     let identify = timeout_at(deadline - ANSWER_MARGIN, oidc.identify(&transaction, code, &auth.security));
     let (principal, name) = identify.await.unwrap_or(Err(Reason::TokenExchange)).map_err(fail)?;
-    let challenge = transaction.challenge.as_ref().map(Challenge::as_str);
-    let page = response::html(page::Continue { challenge, opening: false }.render());
+    let page = response::html(page::continuing(transaction.challenge.as_ref(), false));
     let identity = Identity { principal, name: &name, provider: &auth.provider };
     let answer = establish(auth, identity, transaction.prior, page).map_err(fail)?;
     auth.security.count(Counter::Oidc);

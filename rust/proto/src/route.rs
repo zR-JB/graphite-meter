@@ -1,4 +1,4 @@
-//! The fixed routes both binaries share (`api/routes.txt`).
+//! The fixed routes the server mounts and the clients request (`api/routes.txt`).
 
 table! {
     /// The transport that reaches a route.
@@ -39,5 +39,27 @@ table! {
         WtPing => ("wtPing", "/wt/ping", Kind::WebTransport, CONNECT),
         Servers => ("servers", "/servers", Kind::Http, GET),
         UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Kind::Http, POST),
+    }
+}
+
+table! {
+    /// A sign-in route, answered only at the public HTTPS origin: its key, exact path and the method it serves.
+    pub enum AuthRoute {
+        name.0: &'static str,
+        path.1: &'static str,
+        method.2: &'static str,
+    } {
+        Login => ("login", "/login", "GET"),
+        Password => ("password", "/auth/password", "POST"),
+        OidcStart => ("oidcStart", "/auth/oidc/start", "POST"),
+        OidcCallback => ("oidcCallback", "/auth/oidc/callback", "GET"),
+        Session => ("session", "/auth/session", "GET"),
+        Cli => ("cli", "/auth/cli", "GET"),
+        Browser => ("browser", "/auth/browser", "GET"),
+        CliApprove => ("cliApprove", "/auth/cli/approve", "POST"),
+        BrowserApprove => ("browserApprove", "/auth/browser/approve", "POST"),
+        CliToken => ("cliToken", "/auth/cli/token", "POST"),
+        BrowserToken => ("browserToken", "/auth/browser/token", "POST"),
+        Logout => ("logout", "/auth/logout", "POST"),
     }
 }

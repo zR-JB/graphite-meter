@@ -11,7 +11,6 @@ bytes.workspace = true
 crossterm.workspace = true
 form_urlencoded.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true
 graphite-meter-http3.workspace = true
 graphite-meter-legal.workspace = true
 graphite-meter-net.workspace = true

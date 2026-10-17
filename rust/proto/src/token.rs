@@ -3,9 +3,9 @@
 use serde::Serialize;
 
 /// A token or upload ID holds at most this many bytes.
-pub const MAX_TOKEN_BYTES: usize = 8192;
+const MAX_TOKEN_BYTES: usize = 8192;
 
-/// Whether `token` can be a token or upload ID: nonempty and at most 8192 bytes.
+/// Whether `token` can be a token or upload ID: nonempty and bounded.
 pub fn valid(token: &str) -> bool {
     !token.is_empty() && token.len() <= MAX_TOKEN_BYTES
 }

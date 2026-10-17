@@ -114,3 +114,24 @@ async fn a_reply_driven_prober_keeps_a_probe_in_flight_on_loopback() {
     let (busy, elapsed) = (rtts.iter().sum::<Duration>(), start.elapsed());
     assert!(busy * 2 > elapsed, "{} replies were in flight {busy:?} of {elapsed:?}", rtts.len());
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_first_dial_slower_than_a_redial_still_comes_up_while_the_run_waits() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = Origin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(ms(2500)).await;
+        drop(tokio_tungstenite::accept_async(tcp).await);
+    });
+    let path = LatencyPath { origin, transport: LatencyTransport::WebSocket };
+    let client = Client::new(false, Arc::new(Pool::inline()));
+    let mut prober = Prober::spawn(client, path, Stage::Latency, Cadence::ReplyDriven, CancellationToken::new());
+    let first = loop {
+        tokio::time::sleep(ms(100)).await;
+        if let Some(event) = prober.drain().next() {
+            break event;
+        }
+    };
+    assert!(matches!(first, ProberEvent::Up), "{first:?}");
+}
