@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from scripts.ci.workspace import Workspace
-from scripts.legal.check_rust_reviews import BUDGET, layout, over_budget, shipped, unreviewed, unreviewed_platforms
+from scripts.legal.check_rust_reviews import BUDGET, layout, over_budget, review_problems, shipped, unreviewed_platforms
 
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 
@@ -22,18 +22,23 @@ class ReviewTests(unittest.TestCase):
             ("graphite-meter-client", "x86_64-unknown-linux-musl"), ("graphite-meter-client", "x86_64-pc-windows-gnu"),
             ("graphite-meter-server", "x86_64-unknown-linux-musl")])
 
-    def test_registry_versions_share_coverage_but_unapproved_and_other_sources_do_not(self) -> None:
-        reviews = [review("ring", "0.17.14"), review("windows-sys", "0.61.1"),
-                   review("dlmalloc", "0.2.14", decision="pending")]
+    def test_each_review_names_exactly_one_compiled_crate(self) -> None:
         other = "registry+https://example.invalid/index"
-        used = {("ring", "0.17.14", REGISTRY), ("ring", "0.17.14", other),
-                ("windows-sys", "0.61.2", REGISTRY), ("dlmalloc", "0.2.14", REGISTRY)}
-        self.assertEqual(unreviewed(reviews, used), [("dlmalloc", "0.2.14", REGISTRY), ("ring", "0.17.14", other)])
-
-    def test_git_reviews_bind_the_exact_version_and_revision(self) -> None:
-        fork, other = (f"git+https://example.invalid/noq?rev={rev * 40}#{rev * 40}" for rev in "ab")
-        used = {("noq", "0.1.0", fork), ("noq", "0.2.0", fork), ("noq", "0.1.0", other)}
-        self.assertEqual(unreviewed([review("noq", "0.1.0", fork)], used), sorted(used - {("noq", "0.1.0", fork)}))
+        fork, refork = (f"git+https://example.invalid/noq?rev={rev * 40}#{rev * 40}" for rev in "ab")
+        reviews = [review("ring", "0.17.14"), review("noq", "0.1.0", fork)]
+        used = {("ring", "0.17.14", REGISTRY), ("noq", "0.1.0", fork)}
+        self.assertEqual(review_problems(reviews, used), [])
+        for extra, crates, problems in (
+                ([], {("ring", "0.17.14", other)}, [f"no approved review names ring 0.17.14 {other}"]),
+                ([], {("noq", "0.1.0", refork)}, [f"no approved review names noq 0.1.0 {refork}"]),
+                ([review("dlmalloc", "0.2.14", decision="pending")], {("dlmalloc", "0.2.14", REGISTRY)},
+                 [f"no approved review names dlmalloc 0.2.14 {REGISTRY}"]),
+                ([review("hmac", "0.13.0")], set(), [f"the review of hmac 0.13.0 {REGISTRY} names no compiled crate"]),
+                ([review("libc", "0.2.189")], {("libc", "0.2.190", REGISTRY)},
+                 [f"no approved review names libc 0.2.190 {REGISTRY}",
+                  f"the review of libc 0.2.189 {REGISTRY} names no compiled crate"])):
+            with self.subTest(extra=extra, crates=crates):
+                self.assertEqual(review_problems(reviews + extra, used | crates), problems)
 
     def test_the_static_linux_binaries_stay_within_their_crate_budgets(self) -> None:
         def crates(count: int) -> set[tuple[str, str]]:

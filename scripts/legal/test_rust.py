@@ -61,19 +61,19 @@ class InventoryTests(Scratch):
             with self.subTest(crates=crates), self.assertRaisesRegex(LegalError, "missing or ambiguous"):
                 selected(metadata, crates)
 
-    def test_registry_reviews_span_versions_git_reviews_bind_the_fork_and_workspace_crates_need_none(self) -> None:
+    def test_reviews_bind_the_exact_version_and_source_and_workspace_crates_need_none(self) -> None:
         packages = [self.package("ring", "0.17.15", REGISTRY), self.package("noq", "1.3.0", NOQ),
                     self.package("graphite-meter-net", "0.0.0", None)]
         metadata = {"packages": packages, "workspace_members": ["graphite-meter-net@0.0.0"]}
         builds: dict[str, Any] = {item["id"]: {} for item in packages}
-        found, inventory, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
+        found, inventory, failures = components(metadata, builds, [self.review("ring", "0.17.15"),
                                                                    self.review("noq", "1.3.0", NOQ, True)], [])
         self.assertEqual(failures, {})
         self.assertEqual([(item.name, item.modified) for item in found], [("noq", True), ("ring", False)])
         self.assertEqual(inventory[0]["upstreamRevision"], "2aba4e49f5c73f43ed23c40677ec96508842aa3c")
         _, _, failures = components(metadata, builds, [self.review("ring", "0.17.14"),
                                                        self.review("noq", "1.2.0", NOQ, True)], [])
-        self.assertEqual(list(failures), [("noq", "1.3.0", NOQ)])
+        self.assertEqual(sorted(failures), [("noq", "1.3.0", NOQ), ("ring", "0.17.15", REGISTRY)])
         other = NOQ.replace(NOQ[-40:], "0" * 40)
         with self.assertRaisesRegex(LegalError, "unreviewed Cargo git source"):
             components({"packages": [self.package("noq", "1.3.0", other)], "workspace_members": []},
@@ -83,7 +83,7 @@ class InventoryTests(Scratch):
         packages = [self.package("ring", "0.17.15", REGISTRY)]
         self.write("ring-0.17.15/LICENSE-MIT", "changed\n")
         _, _, failures = components({"packages": packages, "workspace_members": []}, {"ring@0.17.15": {}},
-                                    [self.review("ring", "0.17.14")], [])
+                                    [self.review("ring", "0.17.15")], [])
         self.assertIn("legal fingerprint changed", failures["ring", "0.17.15", REGISTRY])
 
     def messages(self) -> list[dict[str, Any]]:
@@ -208,8 +208,8 @@ class BuildVerifyTests(Scratch):
              "manifest_path": str(self.write("app/Cargo.toml", ""))},
             {"id": "dependency", "name": "dependency", "version": "1.0.0", "source": REGISTRY, "license": "MIT",
              "manifest_path": str(manifest)}], "workspace_members": ["app"], "target_directory": str(self.root)}
-        review = Review.parse({"ecosystem": "cargo", "name": "dependency", "upstream": REGISTRY,
-                               "declaredLicenseExpression": "MIT", "selectedLicenseExpression": "MIT",
+        review = Review.parse({"ecosystem": "cargo", "name": "dependency", "reviewedVersion": "1.0.0",
+                               "upstream": REGISTRY, "declaredLicenseExpression": "MIT", "selectedLicenseExpression": "MIT",
                                "legalFiles": [{"name": "LICENSE", "sha256": sha256(b"license\n"), "kind": "license"}],
                                "reviewDecision": "approved", "reviewNotes": "reviewed"})
         self.reviews = [review]

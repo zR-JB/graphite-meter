@@ -12,15 +12,14 @@ below.
 | Change                                 | Action                                                                       |
 | -------------------------------------- | ---------------------------------------------------------------------------- |
 | Application or documentation only      | None beyond the normal gate.                                                 |
-| Crate version, unchanged legal files   | None: a registry review covers its crate across versions.                    |
+| Crate version, unchanged legal files   | Move its review to the locked version, revision and archive SHA-256.         |
 | New component or changed legal facts   | Review it and add a record (below); `mise run rust-check` refuses it until then. |
 
 ## Review files
 
-- `rust-reviewed-components.json`: one approved review per line for each crate a shipped binary compiles. A registry
-  review covers its crate name and source across versions while the license expression, modification status and
-  legal-file fingerprints stay the same; a git review binds the exact version and fork revision. Unused approvals may
-  remain. `python3 -m scripts.legal.check_rust_reviews --format` rewrites the file in its layout.
+- `rust-reviewed-components.json`: one approved review per line for each crate a shipped binary compiles, bound to its
+  name, locked version and source; a review of any other crate fails the check.
+  `python3 -m scripts.legal.check_rust_reviews --format` rewrites the file in its layout.
 - `rust-provenance.json` and `manual/rust/`: legal texts, with their SHA-256 and review notes, for crates that do not
   package their own.
 - `reviewed-components.json` and `provenance.json`: npm packages the browser bundle includes (none today), the fonts
@@ -42,8 +41,8 @@ records of the crates that lack one.
 `mise run rust-check` runs `scripts.legal.check_rust_reviews`. The client ships on every TUI platform and the server
 on every server platform listed in `[workspace.metadata.graphite-meter]` of `rust/Cargo.toml`. For each build the
 check lists the compiled crates with `cargo tree` over normal and build edges and requires an approved review for
-each, and every shipped target needs an approved platform record. The static x86_64 Linux server and client compile
-at most 143 and 150 crates, a dependency policy rather than a license requirement.
+each and no other, and every shipped target needs an approved platform record. The static x86_64 Linux server and
+client compile at most 143 and 150 crates, a dependency policy rather than a license requirement.
 
 ## Updating pinned forks
 
@@ -65,7 +64,7 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
 1. **Prepare.** `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
    build scripts and procedural macros included. Each needs its approved review or manual provenance; the target
    needs its approved platform record, whose missing notice texts are fetched from `rust-notice-sources.json` into
-   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_RUST_LEGAL_DIR`:
+   `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_LEGAL_DIR`:
    `LEGAL.txt` (the `--legal` report) with its SHA-256 in `LEGAL.sha256`, `package.txt`, `target.txt`,
    `rustc-path.txt`, and `inputs.txt` with copies of those inputs under `inputs/`. For the server it also stages the
    browser build in `browser-assets/` with its `legal/` files (the license, the notices and `about.json`, whose

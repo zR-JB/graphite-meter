@@ -106,13 +106,9 @@ def components(metadata: Metadata, builds: dict[str, Units], reviews: list[Revie
 
 def review(component: Component, directory: Path, license_file: str | None, reviews: list[Review],
            provenance: list[Provenance]) -> None:
-    """Fill `component`'s legal files from `directory` or manual provenance and check them against its review.
-
-    A registry review covers its crate across versions, a git review only its exact version; an exact one wins."""
-    matching = [item for item in reviews if (item.ecosystem, item.name, item.upstream) == ("cargo", component.name,
-                                                                                           component.source)
-                and (component.source.startswith("registry+") or item.reviewedVersion == component.version)]
-    matching = [item for item in matching if item.reviewedVersion == component.version] or matching
+    """Fill `component`'s legal files from `directory` or manual provenance and check them against its review."""
+    matching = [item for item in reviews if (item.ecosystem, item.name, item.reviewedVersion, item.upstream)
+                == ("cargo", component.name, component.version, component.source)]
     if len(matching) > 1:
         raise LegalError("ambiguous review")
     manual = [entry for entry in provenance if (entry.ecosystem, entry.name, entry.version, entry.upstream)

@@ -1,12 +1,11 @@
 """Require an approved review for every crate a shipped Rust binary compiles.
 
 The client ships on every TUI platform and the server on every server platform of rust/Cargo.toml's
-workspace metadata; cargo tree over normal and build edges lists the crates each build compiles. A
-registry review covers its crate name and source across versions, a git review the exact version and
-revision; unused approved reviews may remain. Every shipped target also needs an approved platform
-record, and the static x86_64 Linux binaries stay within their crate budgets. The manual license texts of
-legal/rust-provenance.json keep their reviewed SHA-256, and the notice sources stay reviewed for the pinned
-Rust release.
+workspace metadata; cargo tree over normal and build edges lists the crates each build compiles. Each
+review names one compiled crate by name, locked version and source. Every shipped target also needs an
+approved platform record, and the static x86_64 Linux binaries stay within their crate budgets. The manual
+license texts of legal/rust-provenance.json keep their reviewed SHA-256, and the notice sources stay
+reviewed for the pinned Rust release.
 """
 from __future__ import annotations
 
@@ -64,13 +63,13 @@ def manual_problems(root: Path) -> list[str]:
     return []
 
 
-def unreviewed(reviews: list[dict], used: set[Crate]) -> list[Crate]:
-    """The compiled crates without an approved review of their registry family or exact git revision."""
-    return sorted(crate for crate in used if not any(
-        review.get("reviewDecision") == "approved"
-        and (review["name"], review["upstream"]) == (crate[0], crate[2])
-        and (crate[2].startswith("registry+") or review["reviewedVersion"] == crate[1])
-        for review in reviews))
+def review_problems(reviews: list[dict], used: set[Crate]) -> list[str]:
+    """Compiled crates without an approved review, and reviews of no compiled crate."""
+    named = {(review["name"], review["reviewedVersion"], review["upstream"]): review.get("reviewDecision")
+             for review in reviews}
+    approved = {crate for crate, decision in named.items() if decision == "approved"}
+    return ([f"no approved review names {' '.join(crate)}" for crate in sorted(used - approved)]
+            + [f"the review of {' '.join(crate)} names no compiled crate" for crate in sorted(named.keys() - used)])
 
 
 def unreviewed_platforms(records: list[dict], targets: set[str]) -> list[str]:
@@ -110,8 +109,7 @@ def main() -> None:
     # Workspace members have no lock source and need no review.
     used = {(name, version, source) for crates in trees.values() for name, version in crates
             for source in sources.get((name, version), ())}
-    problems += [f"no approved review names {name} {version} {source}"
-                 for name, version, source in unreviewed(reviews, used)] + over_budget(trees)
+    problems += review_problems(reviews, used) + over_budget(trees)
     if problems:
         sys.exit("The shipped Rust builds fail the review policy:\n" + "\n".join(f"  {item}" for item in problems))
     counts = ", ".join(f"{package} [{target}] {len(crates)}" for (package, target), crates in trees.items())
