@@ -411,7 +411,7 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
   none.start();
   await expect(none.result()).rejects.toMatchObject({
     reason: "preparation-failed",
-    message: expect.stringMatching(/^All selected servers failed/),
+    message: expect.stringMatching(/^All selected test servers failed/),
   });
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],

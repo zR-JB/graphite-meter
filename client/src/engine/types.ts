@@ -10,6 +10,7 @@ export type Direction = "down" | "up";
 export const ROLES = ["throughput", "latency"] as const;
 /** A test measures up to this many servers at once. */
 export const MAX_SELECTED = 4;
+export const SELECTION_REFUSED = `Select 1 to ${MAX_SELECTED} test servers`;
 export type Role = (typeof ROLES)[number];
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 

@@ -149,7 +149,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       pending()
         ? `Checking ${name()}…`
         : renew()
-          ? "Its sign-in ends before the planned test would."
+          ? "Its sign-in ends before the planned test would"
           : failed()
             ? (view()?.message ?? "Approval did not finish")
             : signIn()
@@ -248,7 +248,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
   };
 
   announceChanges(() => (servers.unresolved().length ? "The saved selection has changed." : ""));
-  announceChanges(() => (servers.catalog() || servers.loading() ? "" : "Could not load test servers."));
+  announceChanges(() => (servers.catalog() || servers.loading() ? "" : servers.loadError()));
   return (
     <>
       <Show when={() => entries().length > 1}>
@@ -299,7 +299,7 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       <Show when={() => !servers.catalog()}>
         {() => (
           <div class="selection-notice">
-            <p>{() => (servers.loading() ? "Loading test servers…" : "Could not load test servers.")}</p>
+            <p>{() => (servers.loading() ? "Loading test servers…" : servers.loadError())}</p>
             <button
               class="btn"
               type="button"

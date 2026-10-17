@@ -18,6 +18,7 @@ import type { DroppedServer } from "../run/run";
 import {
   MAX_SELECTED,
   ROLES,
+  SELECTION_REFUSED,
   type Discovery,
   type FailureReason,
   type OpenProbeChannel,
@@ -367,7 +368,7 @@ export function createServers(env: ServersEnv): Servers {
       new Set(ids).size !== ids.length ||
       ids.some((id) => !known.servers.some((entry) => entry.id === id))
     )
-      throw new Error(`Select 1 to ${MAX_SELECTED} test servers.`);
+      throw new Error(SELECTION_REFUSED);
     const next = inCatalogOrder(known, ids);
     const previous = selected.peek();
     batch(() => {

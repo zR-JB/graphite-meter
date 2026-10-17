@@ -251,7 +251,14 @@ export function unresolvedReason(
           : "This browser does not support WebTransport.",
       retry: "impossible",
     };
-  if (selection.kind === "auto") return { message: `No ${role} path this browser can use`, retry: "impossible" };
+  if (selection.kind === "auto")
+    return {
+      message:
+        role === "throughput"
+          ? "No offered throughput path works in this browser"
+          : `No ${page.secure ? "secure" : "clear"} WebSocket offered by this server`,
+      retry: "impossible",
+    };
   return { message: `${selectionName(selection)} not offered`, retry: "needs-user" };
 }
 

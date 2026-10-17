@@ -46,7 +46,7 @@ export const PHASE = {
   authenticating: "Checking sign-in",
   connecting: "Checking paths",
   blocked: "Test cannot start",
-  "start-failed": "Test could not start",
+  "start-failed": "Could not start the test",
   warmup: "Warmup",
   latency: STAGE.latency.label,
   download: STAGE.download.label,

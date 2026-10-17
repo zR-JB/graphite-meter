@@ -134,17 +134,11 @@ export class Receiver {
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
-        void this.#auth
-          .fetch(this.#feed, {
-            method: "DELETE",
-            cache: "no-store",
-            keepalive: true,
-            signal: AbortSignal.timeout(FINAL_GRACE_MS),
-          })
-          .then(
-            (response) => release(response),
-            () => {},
-          );
+        // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
+        void this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true }).then(
+          (response) => release(response),
+          () => {},
+        );
       else
         try {
           const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(FINAL_GRACE_MS)]);

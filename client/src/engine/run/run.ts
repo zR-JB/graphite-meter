@@ -20,6 +20,7 @@ import {
   CADENCE_MS,
   causes,
   MAX_SELECTED,
+  SELECTION_REFUSED,
   isNetworkFailure,
   ServerBusyError,
   SignInRequired,
@@ -294,7 +295,7 @@ export class Run {
       servers.length > MAX_SELECTED ||
       new Set(servers.map(({ server }) => server.id)).size < servers.length
     )
-      throw new Error(`Select 1 to ${MAX_SELECTED} different servers`);
+      throw new Error(SELECTION_REFUSED);
     this.#servers = servers.map((prepared) => {
       const id = prepared.server.id;
       return {
@@ -593,7 +594,7 @@ export class Run {
         this.#remove(
           servers[index]!,
           signIn ? "sign-in-required" : classify(result.reason, "preparation-failed"),
-          error instanceof Error ? error.message : "Measurement preparation failed",
+          error instanceof Error ? error.message : "Could not prepare the stage",
         );
       });
       if (!this.#current(stage) || stage.phase !== "preparing") return;
@@ -1021,7 +1022,7 @@ export class Run {
     const survivors = this.#participants();
     if (!survivors.length) {
       if (!this.#measured())
-        return this.#fail(reason, `All selected servers failed. ${server.prepared.server.name}: ${message}`);
+        return this.#fail(reason, `All selected test servers failed. ${server.prepared.server.name}: ${message}`);
       // A sole server skips to its next stage; several that all fail end the run as incomplete.
       return this.#servers.length === 1
         ? this.#skip(stage)

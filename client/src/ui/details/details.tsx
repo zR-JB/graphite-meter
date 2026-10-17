@@ -268,7 +268,7 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             </p>
           )}
         </For>
-        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server.") : "")}>
+        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server") : "")}>
           {(text) => (
             <p class="notice" data-tone="err">
               {text}
