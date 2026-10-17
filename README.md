@@ -7,13 +7,13 @@
 A self-hosted speed and latency test, in one container, for the browser and the terminal.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/zR-JB/graphite-meter/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver&label=release&logo=github)](https://github.com/zR-JB/graphite-meter/releases/latest)
+[![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?label=release&logo=github)](https://github.com/zR-JB/graphite-meter/releases/latest)
 [![Image](https://img.shields.io/badge/ghcr.io-zr--jb%2Fgraphite--meter-2496ED?logo=docker&logoColor=white)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter)
 [![License](https://img.shields.io/github/license/zR-JB/graphite-meter?label=license)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
-  <img src="docs/assets/hero-light.png" width="100%" alt="A completed test on a desktop, 9.40 Gbit/s down and 9.39 up with 0.4 ms idle latency and 1.3 ms added under load, and the same app on a phone at 1197 Mbit/s">
+  <img src="docs/assets/hero-light.png" width="100%" alt="The browser app on a desktop after a completed test, 9.40 Gbit/s down and 9.39 Gbit/s up with 0.4 ms idle latency and 1.3 ms added under load, and a phone in front of it showing another test at 1197 Mbit/s down, 864.0 Mbit/s up and 2.7 ms latency">
 </picture>
 
 </div>
@@ -58,11 +58,16 @@ The [measurement definitions](docs/MEASUREMENTS.md) define each result. The app 
 
 </div>
 
-```sh
-# The console, against a server on the LAN
-graphite-meter-client --url http://192.168.1.20:7246
+Run the terminal client against your server:
 
-# One test against two catalog servers, printed as a report; the exit status says how it ended
+```sh
+graphite-meter-client --url http://192.168.1.20:7246
+```
+
+For scripts, `--report` runs one test without the console, prints the result and exits with a status that says how the
+test ended. This one tests two catalog servers:
+
+```sh
 graphite-meter-client --url https://meter.example.net --server frankfurt --server amsterdam --report
 ```
 
