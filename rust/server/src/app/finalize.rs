@@ -77,7 +77,7 @@ pub fn close(headers: &mut HeaderMap, version: Version) {
 }
 
 impl App {
-    /// Applies a passed answer's headers: `access`, hardening once authenticated, and a bootstrap probe's HTTP/3 port.
+    /// Applies a passed answer's headers: `access`, hardening while authentication is on, a bootstrap probe's HTTP/3 port.
     pub(super) fn finalize(
         &self,
         response: &mut Response<Body>,

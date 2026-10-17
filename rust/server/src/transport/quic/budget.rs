@@ -161,7 +161,6 @@ impl QuicWindow {
         Self { app, quic, budget }
     }
 
-    /// Whether an upload of `keys` reads at the raised window, raising it for the first.
     pub(super) fn fund(&self, keys: &ClientKeys) -> bool {
         let reserved = self.budget.reserve(&self.app, keys);
         if reserved {
@@ -170,7 +169,6 @@ impl QuicWindow {
         reserved
     }
 
-    /// Whether the window was raised.
     pub(super) fn raised(&self) -> bool {
         self.budget.reserved()
     }

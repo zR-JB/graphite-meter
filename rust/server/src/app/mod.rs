@@ -61,9 +61,7 @@ pub struct App {
 #[derive(Debug, Clone)]
 pub struct Connection {
     pub endpoint: Endpoint,
-    /// The socket peer's address.
     pub peer: IpAddr,
-    /// The admitted work on the connection.
     pub work: Work,
 }
 
@@ -295,7 +293,7 @@ impl App {
         })
     }
 
-    /// `bytes=` payload bytes; HEAD and an empty download release their handler with the reply.
+    /// `bytes=` payload bytes; HEAD and an empty download drop their lane at once.
     fn download<B>(
         &self,
         request: &Request<B>,
@@ -460,7 +458,7 @@ impl Endpoint {
             Self::H1 if auth => "trusted proxy only; GET / redirects to HTTPS",
             Self::H1 | Self::H1Tls => ALL,
             Self::H2 => "probe, transfers, progress",
-            Self::H3Companion => "HTTP/3 bootstrap probe, upload, tickets",
+            Self::H3Companion => "HTTP/3 bootstrap probe, upload control, tickets",
             Self::Quic => "probe, transfers, progress, WebTransport",
         }
     }

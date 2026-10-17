@@ -11,10 +11,10 @@ mod rate;
 mod routes;
 mod store;
 
-pub use policy::{BrowserOrigin, Policy};
-pub use store::{
-    CsrfToken, GrantRefusal, GrantToken, Identity, LOGIN_LIFETIME, LoginKey, NewLogin, SessionToken, Store,
-};
+pub use policy::BrowserOrigin;
+use policy::Policy;
+pub use store::{Identity, NewLogin, Store};
+use store::{LOGIN_LIFETIME, LoginKey};
 
 use crate::{
     app::{Endpoint, Outcome, finalize::Access, response},
@@ -44,13 +44,13 @@ use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
 /// What the policy decided: serve it, as the lease's holder when signed in, or its own answer from the head.
-pub type Decision = Result<Option<AuthLease>, Response<Body>>;
+pub(crate) type Decision = Result<Option<AuthLease>, Response<Body>>;
 
 /// The configured authentication; without it every request is allowed, anonymously.
 pub struct Auth(Option<Box<Enabled>>);
 
 /// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
-pub struct Enabled {
+pub(crate) struct Enabled {
     policy: Policy,
     store: Store,
     sign_in: SignIn,
@@ -247,7 +247,6 @@ impl AuthLease {
         }
     }
 
-    /// The login it belongs to.
     pub fn login(&self) -> LoginKey {
         self.login
     }

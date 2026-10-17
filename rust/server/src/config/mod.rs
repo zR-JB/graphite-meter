@@ -71,7 +71,7 @@ pub struct Config {
     pub outbound: Outbound,
 }
 
-/// How OIDC requests leave: the proxies and roots the same environment as the settings names.
+/// How OIDC requests leave: the proxies and trust roots the settings' environment names.
 #[derive(Debug, Clone)]
 pub struct Outbound {
     pub proxy: Proxy,

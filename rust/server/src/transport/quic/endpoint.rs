@@ -133,8 +133,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         Ok(Some(Endpoints { listeners, http3, bytes }))
     }
 
-    /// An endpoint built on `runtime`, whose socket holds `bytes` of the budget until it and its senders drop; its
-    /// connections hold a share of `shard`'s count.
+    /// An endpoint on `runtime`, its socket holding `bytes` of the budget till dropped; `shard` counts its connections.
     fn endpoint(
         &self,
         endpoint: noq::EndpointConfig,

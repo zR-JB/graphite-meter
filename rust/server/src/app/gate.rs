@@ -80,11 +80,9 @@ fn host_refusal<B>(request: &Request<B>) -> Option<&'static str> {
     let mut hosts = request.headers().get_all(header::HOST).iter();
     let required = request.version() == Version::HTTP_11 && request.method() != Method::CONNECT;
     match (hosts.next(), hosts.next()) {
-        (Some(_), Some(_)) => Some("400 Bad Request"),
-        (None, _) if required => Some("400 Bad Request: missing required Host header"),
-        (Some(host), None) if !host.as_bytes().iter().all(|&byte| host_byte(byte)) => {
-            Some("400 Bad Request: malformed Host header")
-        }
+        (Some(_), Some(_)) => Some("more than one Host header"),
+        (None, _) if required => Some("missing Host header"),
+        (Some(host), None) if !host.as_bytes().iter().all(|&byte| host_byte(byte)) => Some("malformed Host header"),
         _ => None,
     }
 }

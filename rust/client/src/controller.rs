@@ -1,4 +1,4 @@
-//! One operation at a time, each awaiting the one it replaces; a stopped run gets 5 s; sign-in waits on the operator.
+//! One operation at a time, each awaiting the one it replaces for a bounded time; sign-in waits on the operator.
 use crate::{
     config::Config,
     events::{Event, Events, SignInEnd, SignInPrompt},

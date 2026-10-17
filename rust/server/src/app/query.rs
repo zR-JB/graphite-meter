@@ -3,8 +3,8 @@
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
 /// The transfer size when `bytes=` is missing or unreadable.
-pub const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
-pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
+const DEFAULT_TRANSFER_BYTES: u64 = 25 << 20;
+const MAX_TRANSFER_BYTES: u64 = 64 << 30;
 /// Streams a WebTransport lane carries: a download's `streams=` and the uploads read at once; more are stopped.
 pub const MAX_LANE_STREAMS: usize = 16;
 
@@ -67,7 +67,7 @@ fn decode(text: &str) -> Option<String> {
     })
 }
 
-/// `bytes=`: missing, non-numeric or negative reads as 25 MiB, and above 64 GiB as 64 GiB.
+/// `bytes=`: missing, non-numeric or negative reads as the default, and above the maximum as the maximum.
 pub fn transfer_bytes(query: Option<&str>) -> u64 {
     match get(query, "bytes").as_deref().and_then(integer) {
         Some(bytes) if bytes >= 0 => (bytes as u64).min(MAX_TRANSFER_BYTES),
@@ -75,7 +75,7 @@ pub fn transfer_bytes(query: Option<&str>) -> u64 {
     }
 }
 
-/// `streams=`: missing, non-numeric or below one reads as one, and above 16 as 16.
+/// `streams=`: missing, non-numeric or below one reads as one, and above the cap as the cap.
 pub fn streams(query: Option<&str>) -> usize {
     let streams = get(query, "streams").as_deref().and_then(integer);
     streams.map_or(1, |streams| streams.clamp(1, MAX_LANE_STREAMS as i64) as usize)

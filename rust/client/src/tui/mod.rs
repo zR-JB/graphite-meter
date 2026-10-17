@@ -394,7 +394,7 @@ impl App {
             .map(|(_, target)| *target)
     }
 
-    /// Whether the pointer rests on `target`.
+    /// What the pointer rests on.
     pub fn hovered(&self) -> Option<Target> {
         self.hover
     }

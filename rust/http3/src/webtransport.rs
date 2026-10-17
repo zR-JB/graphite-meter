@@ -98,7 +98,7 @@ pub struct SessionClose {
 pub struct Session {
     id: SessionId,
     shared: Arc<Shared>,
-    datagram_prefix: ([u8; 8], usize),
+    datagram_prefix: Vec<u8>,
     streams: Mutex<mpsc::Receiver<RecvStream>>,
     datagrams: Mutex<mpsc::Receiver<Bytes>>,
     phase: watch::Receiver<Phase>,
@@ -119,7 +119,7 @@ impl PreparedDatagram<'_> {
 }
 
 impl Session {
-    /// Server: accepts a CONNECT; no WebTransport and datagrams in 5 s gets 400, a second session H3_REQUEST_REJECTED.
+    /// Server: accepts a CONNECT; no WebTransport and datagrams in time gets 400, a second session H3_REQUEST_REJECTED.
     pub async fn accept(mut stream: RequestStream, headers: http::HeaderMap) -> Result<Self, Error> {
         let shared = stream.shared().clone();
         let mut response = http::Response::new(());
@@ -211,9 +211,7 @@ impl Session {
     pub async fn open_uni(&self) -> Result<SendStream, Error> {
         let mut phase = self.phase.clone();
         let opened = phase.wait_for(|phase| !matches!(phase, Phase::Opening)).await;
-        if opened.map_or(true, |phase| phase.is_ended()) {
-            return Err(Error::SessionEnded);
-        }
+        opened.map_err(|_| Error::SessionEnded)?;
         unless_ended(&self.phase, SendStream::open(&self.shared, self.id, self.phase.clone())).await?
     }
 
@@ -222,8 +220,7 @@ impl Session {
         if self.phase.borrow().is_ended() {
             return Err(Error::SessionEnded);
         }
-        let (prefix, length) = &self.datagram_prefix;
-        Ok([&prefix[..*length], payload].concat().into())
+        Ok([&self.datagram_prefix[..], payload].concat().into())
     }
 
     /// Sends a datagram, displacing the oldest unsent ones if the queue is full.
@@ -250,7 +247,7 @@ impl Session {
         }
     }
 
-    /// Ends the session with `code` and `reason`; returns after CLOSE, FIN, the peer's FIN within 1 s and STOP_SENDING.
+    /// Ends the session with `code` and `reason`; returns after CLOSE, FIN, the peer's FIN or its wait, and STOP_SENDING.
     pub async fn close(&self, code: u32, reason: &str) {
         self.request_close(code, reason);
         let mut phase = self.phase.clone();
@@ -295,7 +292,7 @@ async fn dialect(shared: &Shared, wait: Option<Duration>) -> Result<Option<Diale
 
 /// How long a closing session waits for the peer's FIN, and a sessions-only connection for the CLOSE.
 const CLOSE_WAIT: Duration = Duration::from_secs(1);
-/// Wire bytes a peer may send on its CONNECT stream after the head, where its CLOSE takes at most 1 KiB.
+/// Wire bytes a peer may send on its CONNECT stream after the head, far more than its CLOSE takes.
 const MAX_CONNECT_BYTES: u64 = 64 * 1024;
 const MAX_DEFERRED_RESETS: usize = 64;
 
@@ -395,7 +392,7 @@ impl Connect {
         }
     }
 
-    /// Ends the session: CLOSE unless peer-ended, FIN, the peer's FIN within 1 s, then STOP_SENDING; `true` once done.
+    /// Ends the session: CLOSE unless peer-ended, FIN, the peer's FIN or its wait, then STOP_SENDING; `true` once done.
     fn poll(&mut self, cx: &mut Context<'_>, now: Instant, shared: &Shared) -> bool {
         let failed = match self.poll_read(cx) {
             Ok(()) if self.deadline.is_none() => match self.stream.send.poll_ready(cx) {
@@ -529,8 +526,6 @@ struct Active {
     close: Option<SessionClose>,
 }
 
-pub(super) type Queues = (mpsc::Receiver<RecvStream>, mpsc::Receiver<Bytes>);
-
 impl Registry {
     pub(crate) fn stream(&mut self, session: SessionId, stream: Unrouted) {
         match &self.active {
@@ -601,7 +596,7 @@ impl Registry {
     }
 
     /// Makes `connect` the connection's session, which must be vacant, for the driver to run.
-    pub(super) fn register(&mut self, connect: Connect) -> Queues {
+    pub(super) fn register(&mut self, connect: Connect) -> (mpsc::Receiver<RecvStream>, mpsc::Receiver<Bytes>) {
         let (streams, stream_queue) = mpsc::channel(STREAM_QUEUE);
         let (datagrams, datagram_queue) = mpsc::channel(DATAGRAM_QUEUE);
         let (id, phase, close) = (connect.id, connect.phase.subscribe(), self.shutdown.clone());

@@ -91,7 +91,7 @@ fn share(left: Duration, addresses: usize) -> Duration {
     equal.max(MIN_SHARE.min(left))
 }
 
-/// Probes an idle peer after 30 s, then every 15 s, nine times; a socket refusing the options still connects.
+/// Probes an idle peer as the keep-alive constants say; a socket refusing the options still connects.
 fn keep_alive(stream: &TcpStream) {
     let probes = socket2::TcpKeepalive::new().with_time(KEEP_ALIVE_IDLE);
     #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]

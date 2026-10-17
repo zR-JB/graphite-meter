@@ -77,16 +77,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Transport(error) => error.source(),
-            Self::Reset(_)
-            | Self::Stopped(_)
-            | Self::Protocol(_)
-            | Self::Connection { .. }
-            | Self::TimedOut
-            | Self::NoWebTransport
-            | Self::GoingAway
-            | Self::Refused
-            | Self::SessionEnded
-            | Self::Closed => None,
+            _ => None,
         }
     }
 }

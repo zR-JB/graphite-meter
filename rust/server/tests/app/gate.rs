@@ -48,12 +48,12 @@ async fn an_http11_request_names_exactly_one_valid_host() {
     let app = app(&ALL_LISTENERS);
     let bare = |version| Request::builder().uri("/nope").version(version);
     for (builder, refusal) in [
-        (bare(Version::HTTP_11), "400 Bad Request: missing required Host header"),
+        (bare(Version::HTTP_11), "missing Host header"),
+        (bare(Version::HTTP_11).header("host", "speed example"), "malformed Host header"),
         (
-            bare(Version::HTTP_11).header("host", "speed example"),
-            "400 Bad Request: malformed Host header",
+            bare(Version::HTTP_11).header("host", "a").header("host", "a"),
+            "more than one Host header",
         ),
-        (bare(Version::HTTP_11).header("host", "a").header("host", "a"), "400 Bad Request"),
     ] {
         let response = send(&app, Endpoint::H1, empty(builder)).await;
         assert_eq!(

@@ -13,13 +13,16 @@ use http::{HeaderMap, StatusCode, header};
 use rustls::CertificateError;
 use std::{fmt, time::Duration};
 
+/// The most characters of a peer's or a library's text a fault shows.
+const DETAIL_CHARS: usize = 320;
+
 /// Why a request, a connection or a lane failed.
 #[derive(Debug)]
 pub enum Fault {
     /// No connection opened.
     Connect(ConnectError),
     /// An open connection or stream broke.
-    Lost(String),
+    Lost,
     /// What did not arrive in time.
     TimedOut(&'static str),
     /// The server answered `from` with another status than 200.
@@ -51,7 +54,7 @@ impl Fault {
     pub fn reason(&self) -> FailureReason {
         match self {
             Self::Connect(ConnectError::Proxy(_) | ConnectError::Tls(_)) => FailureReason::PreparationFailed,
-            Self::Connect(_) | Self::Lost(_) | Self::Ended(LaneEnding::Finished | LaneEnding::Shutdown) => {
+            Self::Connect(_) | Self::Lost | Self::Ended(LaneEnding::Finished | LaneEnding::Shutdown) => {
                 FailureReason::ConnectionLost
             }
             Self::SignIn(_) | Self::Ended(LaneEnding::Revoked) => FailureReason::SignInRequired,
@@ -73,7 +76,7 @@ impl Fault {
             | Self::SignIn(_)
             | Self::Ended(LaneEnding::Revoked)
             | Self::Malformed(_) => Class::Final,
-            Self::Connect(_) | Self::Lost(_) | Self::TimedOut(_) | Self::Ended(_) => Class::Redial,
+            Self::Connect(_) | Self::Lost | Self::TimedOut(_) | Self::Ended(_) => Class::Redial,
         }
     }
 
@@ -141,18 +144,20 @@ impl fmt::Display for Fault {
             ),
             Self::Connect(ConnectError::Unreachable(_)) => formatter.write_str(super::UNREACHABLE),
             Self::Connect(ConnectError::Proxy(unusable)) => {
-                formatter.write_str(&text::clean(&unusable.to_string(), 320))
+                formatter.write_str(&text::clean(&unusable.to_string(), DETAIL_CHARS))
             }
-            Self::Connect(other) => formatter.write_str(&text::clean(&format!("Could not connect: {other}"), 320)),
+            Self::Connect(other) => {
+                formatter.write_str(&text::clean(&format!("Could not connect: {other}"), DETAIL_CHARS))
+            }
             Self::Status { status, from, .. } => write!(formatter, "HTTP {} from {}", status.as_u16(), source(*from)),
             Self::Refused(refusal) => write!(formatter, "{} (HTTP {})", refusal.message(), refusal.status().as_u16()),
             Self::Ended(ending) => write!(formatter, "The server ended the stream: {}", ending.name()),
             Self::SignIn(_) => formatter.write_str(self.reason().label()),
             Self::Malformed(detail) => {
-                formatter.write_str(&text::clean(&format!("Unexpected server response: {detail}"), 320))
+                formatter.write_str(&text::clean(&format!("Unexpected server response: {detail}"), DETAIL_CHARS))
             }
             Self::TimedOut(what) => write!(formatter, "{} timed out", capitalized(what)),
-            Self::Lost(_) => formatter.write_str(self.reason().label()),
+            Self::Lost => formatter.write_str(self.reason().label()),
         }
     }
 }
@@ -259,7 +264,7 @@ mod tests {
                 "Could not connect: proxy said no",
             ),
             (Fault::Connect(ConnectError::Unreachable(unreachable)), super::super::UNREACHABLE),
-            (Fault::Lost("reset".into()), "Connection lost"),
+            (Fault::Lost, "Connection lost"),
         ] {
             assert_eq!(fault.to_string(), text, "{fault:?}");
         }

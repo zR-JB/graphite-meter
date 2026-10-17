@@ -107,7 +107,7 @@ pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthL
     }
 }
 
-/// The sign-in page; its form proves a fresh token the login cookie holds for ten minutes.
+/// The sign-in page; its form proves a fresh token the login cookie holds.
 fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     let read = |name| query::get(request.uri().query(), name).unwrap_or_default();
     let challenge = Challenge::parse(&read("challenge"));
@@ -291,7 +291,7 @@ pub(super) fn field<'a>(form: &'a [(String, String)], name: &str) -> &'a str {
     found.map_or("", |(_, value)| value.as_str())
 }
 
-/// The request's head, and its URL-encoded form body of at most 4 KiB with unique, well-formed fields.
+/// The request's head, and its bounded URL-encoded form body with unique, well-formed fields.
 pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Option<Form>) {
     let (head, body) = request.into_parts();
     if super::provider::media(&head.headers) != "application/x-www-form-urlencoded" {
@@ -302,7 +302,7 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
     (head, form)
 }
 
-/// A request body of at most 4 KiB, in one allocation zeroized when dropped.
+/// A bounded request body, in one allocation zeroized when dropped.
 pub(super) async fn body<B: http_body::Body>(body: B) -> Option<Zeroizing<Vec<u8>>> {
     let mut body = pin!(body);
     let mut bytes = Zeroizing::new(Vec::with_capacity(FORM_BYTES));

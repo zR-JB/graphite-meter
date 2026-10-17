@@ -232,7 +232,7 @@ fn a_server_that_cannot_be_reached_opens_its_address_and_enter_tries_again() {
     app.event(&Event::Checking(Kind::Check), now);
     app.event(&Event::CheckFailed(failure), now);
     assert!(frame(&mut app, now)[0].ends_with("● Failed"), "{:?}", frame(&mut app, now)[0]);
-    assert!(shows(&mut app, now, "Could not reach meter.example."));
+    assert!(shows(&mut app, now, "Could not reach meter.example") && !shows(&mut app, now, "meter.example."));
     assert!(shows(
         &mut app,
         now,

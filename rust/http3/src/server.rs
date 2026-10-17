@@ -1,4 +1,4 @@
-//! The server role: a connection yields requests, and each resolves its head within 10 s.
+//! The server role: a connection yields requests, and each resolves its head within a bound.
 use crate::{
     budget::{Budget, Charge},
     code::Code,
@@ -31,7 +31,7 @@ impl Connection {
         self.0.goaway();
     }
 
-    /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or in 5 s.
+    /// Also ends the session with `code` and `reason`, even later ones; the connection closes as others end or at the drain bound.
     pub fn shutdown(&mut self, code: u32, reason: &str) {
         self.0.shutdown(code, reason);
     }
@@ -46,7 +46,7 @@ impl Request {
         self.0.abort(Code::H3_REQUEST_REJECTED);
     }
 
-    /// Checks the head: over 4 KiB 431, non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
+    /// Checks the head: over the field limit 431, non-WebTransport CONNECT 400, both `Refused`; over budget H3_REQUEST_REJECTED.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
         let Ok(request) = tokio::time::timeout(HEADER_TIMEOUT, head(&mut stream)).await else {

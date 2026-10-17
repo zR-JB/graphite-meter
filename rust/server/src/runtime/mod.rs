@@ -90,11 +90,7 @@ impl Server {
         let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
         let endpoint = endpoint_bytes.clone();
-        // Only QUIC floors grow with the chain.
-        let fits = move |handshake| match terms.quic {
-            Some(_) => terms.check(handshake, endpoint.load(Ordering::Relaxed)),
-            None => Ok(()),
-        };
+        let fits = move |handshake| terms.check(handshake, endpoint.load(Ordering::Relaxed));
         let certificates = match tls {
             Some(files) => {
                 let load = move || Certificates::load(files, hosts, SystemTime::now(), fits);
@@ -471,16 +467,9 @@ fn binary(bytes: u128) -> String {
 #[cfg(test)]
 mod background_tests {
     use super::*;
-    use crate::{
-        config::{self, Loaded},
-        limits::Transport,
-    };
-    use std::{
-        ffi::OsString,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
+    use crate::config::{self, Loaded};
+    use std::ffi::OsString;
     use tokio::time::advance;
-    use tokio_util::sync::CancellationToken;
 
     fn app() -> App {
         let none = |_: &str| None::<OsString>;

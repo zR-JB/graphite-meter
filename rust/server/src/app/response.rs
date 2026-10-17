@@ -16,12 +16,9 @@ pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     response
 }
 
-/// `status` with its own text: `404 page not found`, else the reason phrase.
+/// `status` with its reason phrase.
 pub fn status(status: StatusCode) -> Response<Body> {
-    match status {
-        StatusCode::NOT_FOUND => text(status, "404 page not found"),
-        _ => text(status, status.canonical_reason().unwrap_or_default()),
-    }
+    text(status, status.canonical_reason().unwrap_or_default())
 }
 
 pub fn empty(status: StatusCode) -> Response<Body> {

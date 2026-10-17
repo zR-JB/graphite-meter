@@ -118,15 +118,14 @@ impl App {
         }
     }
 
-    /// Steps a path row to the next choice, or to the first when the chosen one is not offered: its label.
-    pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) -> String {
+    /// Steps a path row to the next choice, or to the first when the chosen one is not offered.
+    pub(super) fn cycle_path<T: Copy + PartialEq>(&mut self, kind: &Kind<T>, step: isize) {
         let choices = self.choices(kind);
         let chosen = (kind.chosen)(&self.config.paths);
         let at = choices.iter().position(|choice| choice.selects(chosen));
         let next = at.map_or(0, |at| (at as isize + step).rem_euclid(choices.len() as isize) as usize);
         let choice = &choices[next];
         (kind.choose)(&mut self.config.paths, choice.origin.clone(), choice.transport);
-        choice.label.clone()
     }
 
     /// The HTTP version of the chosen throughput path when it does not negotiate one.

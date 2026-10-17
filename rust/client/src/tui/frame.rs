@@ -252,7 +252,7 @@ impl App {
                 Overlay::SignIn(sign_in) if sign_in.opened => ("Checking sign-in", palette.muted),
                 Overlay::SignIn(_) => ("Sign in", palette.warn),
                 _ if self.view.check == Check::SignIn => ("Sign in", palette.warn),
-                _ if self.could_not_start() => ("Test could not start", palette.warn),
+                _ if self.could_not_start() => ("Could not start the test", palette.warn),
                 _ => ("Not started", palette.muted),
             },
         }
@@ -400,7 +400,7 @@ impl App {
             ],
             (None, Some(text)) => {
                 let said = match text == crate::net::UNREACHABLE {
-                    true => warn(format!("Could not reach {host}.")),
+                    true => warn(format!("Could not reach {host}")),
                     false => warn(format!("{host}: {text}")),
                 };
                 [

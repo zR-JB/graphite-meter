@@ -229,8 +229,7 @@ impl FirstFlights {
 pub(super) struct Inbox(mpsc::Receiver<Forwarded>);
 
 impl Router {
-    /// Queues for `shards` endpoints, forwarding datagrams up to the endpoints' payload limit, steering new
-    /// connections when the kernel routes by connection ID.
+    /// Queues for `shards` endpoints forwarding datagrams within their payload limit, steering if the kernel routes.
     pub(super) fn new(shards: usize, max_datagram: usize, steering: bool) -> (Self, Vec<Inbox>) {
         let (queues, inboxes): (Vec<_>, _) = (0..shards)
             .map(|_| {
@@ -246,8 +245,7 @@ impl Router {
         Shard { connections: self.connections.clone(), index }
     }
 
-    /// Where a new connection arriving at `shard` runs: the endpoint holding the fewest connections, `shard` among
-    /// equals.
+    /// Where a new connection at `shard` runs: the endpoint holding the fewest connections, `shard` among equals.
     fn steer(&self, shard: usize) -> usize {
         let held = |index: usize| self.connections[index].load(Ordering::Relaxed);
         (0..self.connections.len()).fold(shard, |least, index| if held(index) < held(least) { index } else { least })

@@ -19,7 +19,6 @@ pub(super) struct Login<'a> {
     pub challenge: Option<&'a str>,
     /// The `error` query: a `Reason::notice`, anything else unnamed.
     pub error: &'a str,
-    /// The `reason` query.
     pub reason: &'a str,
     pub password: bool,
     pub oidc: bool,

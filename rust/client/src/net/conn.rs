@@ -55,7 +55,7 @@ const EARLY_ANSWER: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadBuffer {
     Adaptive,
-    /// A fixed 256 KiB buffer, as download lanes read.
+    /// A fixed buffer, as download lanes read.
     Fixed,
 }
 
@@ -332,7 +332,7 @@ impl Incoming {
         read
     }
 
-    /// The body, at most 64 KiB of it, read by `decode`.
+    /// The bounded body, read by `decode`.
     pub async fn json<T>(mut self, decode: Decode<T>) -> Result<T, Fault> {
         let oversized = || Fault::Malformed(format!("control response exceeds {MAX_RESPONSE_BYTES} bytes"));
         if let Source::Hyper(body) = &self.source
@@ -355,7 +355,7 @@ fn hyper_fault(error: &hyper::Error) -> Fault {
     match () {
         _ if error.is_parse() => Fault::Malformed(error.to_string()),
         _ if error.is_timeout() => Fault::TimedOut("HTTP exchange"),
-        _ => Fault::Lost(error.to_string()),
+        _ => Fault::Lost,
     }
 }
 
@@ -370,7 +370,7 @@ pub(super) fn http3_fault(error: http3::Error) -> Fault {
     match error {
         http3::Error::Protocol(_) | http3::Error::Connection { local: true, .. } => Fault::Malformed(error.to_string()),
         http3::Error::TimedOut => Fault::TimedOut("HTTP/3 exchange"),
-        error => Fault::Lost(error.to_string()),
+        _ => Fault::Lost,
     }
 }
 
@@ -408,7 +408,7 @@ impl Drop for Quic {
 pub(super) async fn dial(origin: &Origin, verify: Verify, runtime: &Handle) -> Result<Dialed, Fault> {
     let origin = origin.clone();
     let mut dialing = Dialing(runtime.spawn(async move { connect(&origin, verify).await }));
-    (&mut dialing.0).await.map_err(|error| Fault::Lost(error.to_string()))?
+    (&mut dialing.0).await.map_err(|_| Fault::Lost)?
 }
 
 /// A connection and its request sender.
@@ -485,7 +485,7 @@ impl Session {
         Some(match self.session.closed().now_or_never()? {
             Ok(SessionClose { code, .. }) => match LaneEnding::find_by(LaneEnding::webtransport_code, code) {
                 Some(ending) => self.client.ending(&self.origin, ending),
-                None => Fault::Lost(format!("WebTransport session closed with code {code}")),
+                None => Fault::Lost,
             },
             Err(error) => http3_fault(error),
         })
@@ -497,8 +497,7 @@ impl Session {
     }
 
     fn gone(&self) -> Fault {
-        self.ended()
-            .unwrap_or_else(|| Fault::Lost("WebTransport session ended".into()))
+        self.ended().unwrap_or(Fault::Lost)
     }
 
     /// The next stream the server opened.

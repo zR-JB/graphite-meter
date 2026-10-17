@@ -1,7 +1,7 @@
 //! What the server's work may hold: the buffer budget and the quotas keyed by client.
 
-pub mod budget;
-pub mod quota;
+mod budget;
+mod quota;
 
 pub use budget::{Budget, Lease, Pressure, Usage};
 pub use quota::{Hold, Quota, QuotaUsage, Refusal};

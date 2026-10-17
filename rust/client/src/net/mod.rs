@@ -13,7 +13,7 @@ pub use lanes::{Carrier, GroupPlan, Lanes, ThroughputPath, Work, topology};
 pub use retry::{Attempt, REDIAL_WINDOW, Retry, retrying};
 
 /// What a check says of a server no connection reached.
-pub const UNREACHABLE: &str = "Server could not be reached";
+pub const UNREACHABLE: &str = "Could not reach this test server";
 
 use conn::{Answer, Failed};
 use graphite_meter_net::{Connector, Pool, Proxy, Verify, lock};

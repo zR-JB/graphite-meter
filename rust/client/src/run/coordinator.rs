@@ -299,8 +299,7 @@ impl Live<'_> {
         self.open &= !closed;
     }
 
-    /// Announces each server's probes sent within the window, as the engine counts them, and while the window is
-    /// open the boundary's live rates `now` into it.
+    /// Announces each server's probes sent within the window and, while it is open, the live rates `now` into it.
     fn announce(
         &self,
         tick: &Tick,
@@ -332,8 +331,8 @@ impl Live<'_> {
 }
 
 /// One server's share of a stage: its download lanes, upload session and prober; dropping it ends them.
-pub struct Participant {
-    pub server: ServerId,
+struct Participant {
+    server: ServerId,
     down: Option<Lanes>,
     up: Option<UploadSession>,
     prober: Option<Prober>,
@@ -344,7 +343,7 @@ pub struct Participant {
 
 impl Participant {
     /// Starts `server`'s work for `plan` under `token`; `replaced` is its upload replacement for the run.
-    pub async fn open(
+    async fn open(
         client: &Client,
         server: &ServerPath,
         plan: &StagePlan,
@@ -386,7 +385,7 @@ impl Participant {
     }
 
     /// Its local counters and lane health now; checkpoints come apart.
-    pub fn local(&mut self) -> Sample {
+    fn local(&mut self) -> Sample {
         let reading = Reading {
             server: self.server.clone(),
             down: self.down.as_ref().map(Lanes::bytes),
@@ -402,27 +401,27 @@ impl Participant {
     }
 
     /// A fresh receiver checkpoint within `budget`, when it uploads.
-    pub async fn checkpoint(&self, budget: Duration) -> Option<Result<Receiver, Failure>> {
+    async fn checkpoint(&self, budget: Duration) -> Option<Result<Receiver, Failure>> {
         let up = self.up.as_ref()?;
         Some(up.checkpoint(budget).await.map_err(|fault| fault.failure()))
     }
 
     /// Moves what its prober observed into `into`.
-    pub fn probes(&mut self, into: &mut Vec<(ServerId, ProberEvent)>) {
+    fn probes(&mut self, into: &mut Vec<(ServerId, ProberEvent)>) {
         if let Some(prober) = &mut self.prober {
             into.extend(prober.drain().map(|probe| (self.server.clone(), probe)));
         }
     }
 
     /// The measured window opened and ends at `end`.
-    pub fn opened(&self, end: Instant) {
+    fn opened(&self, end: Instant) {
         if let Some(prober) = &self.prober {
             prober.open(end);
         }
     }
 
     /// The window closed: downloads stop, the upload session finishes within `budget` and the prober drains.
-    pub fn close(&mut self, budget: Duration) {
+    fn close(&mut self, budget: Duration) {
         self.down = None;
         if let Some(prober) = &self.prober {
             prober.close();
@@ -433,19 +432,19 @@ impl Participant {
     }
 
     /// Its latency population failed: probing ends.
-    pub fn stop_probing(&mut self) {
+    fn stop_probing(&mut self) {
         self.prober = None;
     }
 
     /// Leaves the stage: its work ends and its upload receiver is asked to finalize.
-    pub fn depart(mut self) {
+    fn depart(mut self) {
         if let Some(up) = self.up.take() {
             up.depart();
         }
     }
 
     /// Closes it if the window did not, and waits up to `budget` for its upload session to finish.
-    pub async fn finish(mut self, budget: Duration) {
+    async fn finish(mut self, budget: Duration) {
         self.close(budget);
         if let Some(finishing) = self.finishing.take() {
             let _ = tokio::time::timeout(budget, finishing).await;

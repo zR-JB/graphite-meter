@@ -40,8 +40,7 @@ pub enum Event {
         at: Duration,
         rates: Dir<Option<f64>>,
     },
-    /// A server's probes resolved since the last tick that it sent within the window, in resolution order, and its
-    /// latency over the window so far.
+    /// A server's probes sent within the window and resolved since the last tick, in order, and its window latency.
     Probes {
         server: ServerId,
         probes: Box<[Probed]>,
@@ -335,8 +334,9 @@ impl Run {
                         self.throughput[direction].push(offset + *at, None);
                         continue;
                     };
-                    self.live[direction].observe(rate * ms / 1e3, ms);
-                    self.moved += rate * ms / 1e3;
+                    let bytes = rate * ms / 1e3;
+                    self.live[direction].observe(bytes, ms);
+                    self.moved += bytes;
                     if let Some(presented) = self.live[direction].presented() {
                         self.throughput[direction].push(offset + *at, Some(presented));
                     }

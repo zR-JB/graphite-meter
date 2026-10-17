@@ -124,8 +124,7 @@ pub async fn interactive(
 
 type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
-/// Draws a frame: the changed cells and chrome in one write, a synchronized update where the terminal holds one, the
-/// progress bar where it draws one. An unchanged frame writes nothing, so the terminal has nothing to repaint.
+/// Draws a frame's changed cells, chrome and progress bar in one synchronized write; an unchanged frame writes nothing.
 fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome)>, progress: bool) -> io::Result<()> {
     let mut frame = terminal.get_frame();
     let cells = frame.buffer_mut();
@@ -163,8 +162,7 @@ const ENTER: &[u8] = b"\x1b[22;0t\x1b[?1003h\x1b[?1006h";
 /// Undoes `ENTER`, putting back the pushed title.
 const LEAVE: &[u8] = b"\x1b[?1006l\x1b[?1003l\x1b[23;0t";
 
-/// The terminal raw on the alternate screen with mouse and pastes; dropping it restores it all, the progress bar
-/// cleared where the terminal draws one.
+/// The terminal raw on the alternate screen with mouse and pastes; dropping it restores it all and clears the progress.
 struct Session {
     hook: Arc<Hook>,
     progress: bool,

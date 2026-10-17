@@ -133,7 +133,7 @@ impl Shared {
                 peer.check(self.quic.max_datagram_size().is_some())?;
                 self.peer.send_replace(Some(peer));
             }
-            ControlEvent::Goaway(_) => self.going_away.store(true, Ordering::Relaxed),
+            ControlEvent::Goaway => self.going_away.store(true, Ordering::Relaxed),
         }
         Ok(())
     }
@@ -204,7 +204,7 @@ impl Driver {
         }
     }
 
-    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and 5 s bound the rest.
+    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and a drain bounds the rest.
     pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
         self.goaway();
         if self.drain.is_none() && !self.ended {
@@ -385,7 +385,7 @@ const TYPE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Streams covered by the connection floor, where peers open their critical ones.
 const FLOOR: u8 = 3;
 
-/// The peer's unidirectional streams: classified within 10 s, then read as control or QPACK, or handed to WebTransport.
+/// The peer's unidirectional streams: classified in time, then read as control or QPACK, or handed to WebTransport.
 struct Incoming {
     streams: Vec<PeerStream>,
     /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
@@ -539,8 +539,8 @@ fn classify(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControlEvent {
     Settings(Peer),
-    /// The server's GOAWAY: requests from this stream ID on go unprocessed.
-    Goaway(u64),
+    /// The server's GOAWAY: no new request.
+    Goaway,
 }
 
 #[derive(Default)]
@@ -582,8 +582,8 @@ impl ControlReader {
                             self.settings = None;
                             event(ControlEvent::Settings(peer))?;
                         }
-                    } else if let Some(goaway) = self.value(&mut payload, peer)? {
-                        event(ControlEvent::Goaway(goaway))?;
+                    } else if self.value(&mut payload, peer)?.is_some() {
+                        event(ControlEvent::Goaway)?;
                     }
                 }
             }
@@ -655,7 +655,7 @@ mod control_tests {
         let goaway = |id| frame(FrameType::GOAWAY, &[id]);
         assert_eq!(
             events(Role::Server, &[goaway(8), goaway(4)]),
-            Ok(vec![settings, ControlEvent::Goaway(8), ControlEvent::Goaway(4)])
+            Ok(vec![settings, ControlEvent::Goaway, ControlEvent::Goaway])
         );
         assert_eq!(events(Role::Server, &[goaway(4), goaway(8)]), Err(Code::H3_ID_ERROR));
         assert_eq!(events(Role::Server, &[goaway(2)]), Err(Code::H3_ID_ERROR));

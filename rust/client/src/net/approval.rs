@@ -1,4 +1,4 @@
-//! Native sign-in: a PKCE approval page, then its token exchange polled up to 120 s; the grant stays in memory.
+//! Native sign-in: a PKCE approval page, then its token exchange polled to a deadline; the grant stays in memory.
 use super::{
     CONTROL_TIMEOUT, Client,
     conn::{Conn, Payload, ReadBuffer},

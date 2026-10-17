@@ -223,13 +223,14 @@ impl Policy {
             return true;
         }
         let ours = origin == public;
-        match text(headers, &SEC_FETCH_SITE) {
+        let site = text(headers, &SEC_FETCH_SITE);
+        match site {
             Some("" | "same-origin" | "none") => {}
             Some("same-site") if ours => {}
             _ => return false,
         }
         let read = matches!(*request.method(), Method::GET | Method::HEAD);
-        let same_origin = text(headers, &SEC_FETCH_SITE) == Some("same-origin");
+        let same_origin = site == Some("same-origin");
         if route.is_some() && read && !ours && !same_origin || route == Some(Route::Ping) && !ours {
             return false;
         }
@@ -369,14 +370,12 @@ pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLea
 pub(super) fn cookie(headers: &HeaderMap, cookie: Cookie) -> Option<&str> {
     let name = cookie.name();
     let values = headers.get_all(header::COOKIE).iter();
-    let pairs: Vec<_> = values
-        .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))
-        .collect();
-    if pairs.len() > 3000 {
-        return None;
-    }
+    let pairs = values.flat_map(|value| value.as_bytes().split(|&byte| byte == b';'));
     let mut found = None;
-    for pair in pairs {
+    for (index, pair) in pairs.enumerate() {
+        if index == 3000 {
+            return None;
+        }
         let pair = pair.trim_ascii();
         let (key, value) = match pair.iter().position(|&byte| byte == b'=') {
             Some(at) => (pair[..at].trim_ascii(), &pair[at + 1..]),

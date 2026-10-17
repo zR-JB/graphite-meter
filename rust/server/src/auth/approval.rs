@@ -74,8 +74,7 @@ pub(super) struct Approval {
     pub deadline: Instant,
 }
 
-/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by that login, or the grant
-/// it issued.
+/// How far an approval is: unclaimed, claimed by the login that may approve it, approved by it, or its grant.
 #[derive(Clone)]
 enum Stage {
     Open,
@@ -122,7 +121,7 @@ impl Approval {
     }
 }
 
-/// Room for one more approval: within its login's eight, and within the server bounds and the client's share.
+/// Room for one more approval: within its login's grants, the server bounds and the client's share.
 struct Room {
     login: bool,
     shared: bool,
@@ -315,7 +314,7 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     answer
 }
 
-/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again for 30 s.
+/// Issues the grant an approved challenge of `verifier` holds for `origin`, the same one again briefly.
 fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Response<Body> {
     let (Some(challenge), credentials) = (Challenge::of(verifier), credentials()) else {
         return pending();
@@ -414,7 +413,7 @@ fn refused(refused: Refused) -> Response<Body> {
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 
-/// The page of a login holding its eight grants.
+/// The page of a login holding all its grants.
 fn capacity() -> Response<Body> {
     let page = page::Cli::Capacity { limit: MAX_LOGIN_GRANTS }.render();
     with_status(StatusCode::TOO_MANY_REQUESTS, response::html(page))

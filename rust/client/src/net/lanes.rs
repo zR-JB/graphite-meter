@@ -64,7 +64,7 @@ pub struct GroupPlan {
     pub lanes: Range<usize>,
 }
 
-/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport 16 each.
+/// Groups: HTTP/1.1 per lane, HTTP/2 per direction, HTTP/3 the path's but bidirectional uploads, WebTransport up to its lane cap each.
 pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<GroupPlan> {
     let mut plans = Vec::new();
     for &direction in stage.directions() {
@@ -179,7 +179,7 @@ impl Lanes {
             let fault = match ended {
                 Ok(Some(fault)) => fault,
                 Ok(None) => continue,
-                Err(error) => Fault::Lost(error.to_string()),
+                Err(_) => Fault::Lost,
             };
             self.failed.get_or_insert(fault);
         }
@@ -389,7 +389,7 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
     }
     match received == STREAM_BYTES {
         true => Ok(()),
-        false => Err(Fault::Lost("WebTransport download ended before its byte count".into())),
+        false => Err(Fault::Lost),
     }
 }
 

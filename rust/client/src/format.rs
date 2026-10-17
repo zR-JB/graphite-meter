@@ -287,7 +287,7 @@ pub fn server(name: &str, location: &str) -> String {
 pub fn authority(origin: &Origin) -> String {
     let text = origin.to_string();
     text.split_once("://")
-        .map_or_else(|| text.clone(), |(_, authority)| authority.to_owned())
+        .map_or_default(|(_, authority)| authority.to_owned())
 }
 
 /// A probe cadence by its preset's name, or its spacing.

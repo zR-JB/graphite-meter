@@ -105,7 +105,7 @@ impl App {
         let document = serde_json::to_vec(&catalog).expect("catalogs serialize");
         let refused = match catalog.validate() {
             Err(error) => Some(error.to_string()),
-            Ok(()) if document.len() > MAX_CATALOG_BYTES => Some("it exceeds 64 KiB".into()),
+            Ok(()) if document.len() > MAX_CATALOG_BYTES => Some(format!("it exceeds {MAX_CATALOG_BYTES} bytes")),
             Ok(()) => None,
         };
         match refused {

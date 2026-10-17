@@ -1,4 +1,4 @@
-//! When a multiplexed connection goes away and closes, per streams, admitted work and credit; HTTP/2 and QUIC.
+//! When a multiplexed connection goes away and closes, by its streams, admitted work and credit; HTTP/2 and QUIC.
 
 use super::accept::SHUTDOWN_GRACE;
 use crate::lane::Work;
@@ -54,7 +54,6 @@ pub struct Lifecycle {
 }
 
 impl Lifecycle {
-    /// The lifecycle of a connection whose admitted work is `work`.
     pub fn new(work: Work, grace: Grace) -> Self {
         Self {
             work,

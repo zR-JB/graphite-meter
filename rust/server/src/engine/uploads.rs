@@ -22,17 +22,17 @@ use std::{
 use tokio::{sync::Notify, time::Instant};
 
 /// Aggregates the server holds at once, finished ones until their retention ends.
-pub const MAX_LIVE: usize = 1000;
+const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
-pub const MAX_PER_CLIENT: usize = 32;
+const MAX_PER_CLIENT: usize = 32;
 /// An ID creates state for this long after it was minted.
-pub const ID_LIFETIME: Duration = Duration::from_mins(2);
-const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_secs() * 1_000_000_000;
+const ID_LIFETIME: Duration = Duration::from_mins(2);
+const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_nanos() as u64;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
-pub const RETENTION: Duration = ID_LIFETIME;
+const RETENTION: Duration = ID_LIFETIME;
 /// Retention is swept at most this often.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
-const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_secs() * 1_000_000_000;
+const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_nanos() as u64;
 
 const ID_PREFIX: &str = "gmu_";
 /// An ID signs its issue time and 16 random bytes.

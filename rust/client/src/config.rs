@@ -1,4 +1,4 @@
-//! The command line: the client's 22 flags, their validation and the `Config` they give.
+//! The command line: the client's flags, their validation and the `Config` they give.
 
 use crate::model::{Cadence, Dir, Direction, Stage};
 use graphite_meter_proto::{

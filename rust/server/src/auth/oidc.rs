@@ -327,14 +327,8 @@ pub(super) async fn callback(
     deadline: Instant,
     peer: &Peer,
 ) -> Response<Body> {
-    let mut answer = match sign_in(auth, oidc, &head, deadline, peer).await {
-        Ok(answer) => answer,
-        Err((reason, None)) => {
-            let challenge = query::get(head.uri.query(), "challenge").and_then(|text| Challenge::parse(&text));
-            refused(auth, reason, challenge.as_ref())
-        }
-        Err((reason, challenge)) => refused(auth, reason, challenge.as_ref()),
-    };
+    let answered = sign_in(auth, oidc, &head, deadline, peer).await;
+    let mut answer = answered.unwrap_or_else(|(reason, challenge)| refused(auth, reason, challenge.as_ref()));
     clear_cookie(&mut answer, Cookie::Transaction);
     answer
 }

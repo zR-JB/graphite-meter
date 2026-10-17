@@ -6,7 +6,7 @@ use crate::{
 use std::{io, time::Duration};
 
 /// The background query: OSC 11, then DA1, which every terminal answers, in order.
-pub const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
+const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
 /// How long a terminal may take to answer the query.
 pub const ANSWER: Duration = Duration::from_secs(2);
 
@@ -154,7 +154,7 @@ pub fn mix(color: Color, under: Color, share: f64) -> Color {
 }
 
 /// `rgb` with the nearest of the 256 colors and `ansi` of the 16.
-pub fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
+fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let distance = |to: [u8; 3]| {
         rgb.iter()

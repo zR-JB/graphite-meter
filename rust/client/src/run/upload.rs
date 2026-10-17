@@ -127,7 +127,7 @@ impl UploadSession {
         Some(Fed { id: self.upload.number, bytes: latest.bytes() })
     }
 
-    /// A fresh checkpoint within `budget`, a miss asked again every 100 ms unless its fault is final.
+    /// A fresh checkpoint within `budget`, a miss asked again after a pause unless its fault is final.
     pub async fn checkpoint(&self, budget: Duration) -> Result<Receiver, Fault> {
         let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
         loop {
@@ -151,7 +151,7 @@ impl UploadSession {
             match futures_util::FutureExt::now_or_never(replacing) {
                 Some(Ok(Some(Ok(upload)))) => self.upload = upload,
                 Some(Ok(Some(Err(fault)))) => return LaneHealth::Failed(fault.failure()),
-                _ => return LaneHealth::Failed(Fault::Lost("upload replacement ended".into()).failure()),
+                _ => return LaneHealth::Failed(Fault::Lost.failure()),
             }
         }
         if self.replacing.is_some() {
@@ -184,7 +184,7 @@ impl UploadSession {
         self.start.token.cancel();
     }
 
-    /// Ends the lanes and feed, and asks the receiver to finalize without waiting more than a second for it.
+    /// Ends the lanes and feed, and asks the receiver to finalize without waiting long for it.
     pub fn depart(self) {
         let (control, id) = (self.start.control.clone(), self.upload.id.clone());
         self.start.token.cancel();
@@ -245,7 +245,7 @@ async fn follow(
         let streamed = async {
             let opened = sessions.wait_for(Option::is_some).await.ok();
             let session = opened.and_then(|opened| opened.clone());
-            let session = session.ok_or_else(|| Fault::Lost("upload lanes ended".into()))?;
+            let session = session.ok_or(Fault::Lost)?;
             let stream = session.accept_uni().await?;
             read(&control, Source::Stream(stream, session), &progress, &mut false).await
         };
@@ -291,7 +291,7 @@ impl Source {
     }
 }
 
-/// Records from `source` into `progress` until `complete`, lines up to 64 KiB within the control timeout; `moved`.
+/// Records from `source` into `progress` until `complete`, bounded lines within the control timeout; `moved`.
 async fn read(
     control: &Control,
     mut source: Source,
@@ -302,12 +302,12 @@ async fn read(
     loop {
         let chunk = timeout(CONTROL_TIMEOUT, source.chunk()).await;
         let chunk = chunk.unwrap_or(Err(Fault::TimedOut("upload progress")))?;
-        let mut chunk = chunk.ok_or_else(|| Fault::Lost("upload progress ended without complete".into()))?;
+        let mut chunk = chunk.ok_or(Fault::Lost)?;
         while !chunk.is_empty() {
             let end = chunk.iter().position(|&byte| byte == b'\n');
             let taken = chunk.split_to(end.map_or(chunk.len(), |end| end + 1));
             if line.len() + taken.len() > MAX_RECORD_BYTES {
-                return Err(Fault::Malformed("upload progress record exceeds 64 KiB".into()));
+                return Err(Fault::Malformed(format!("upload progress record exceeds {MAX_RECORD_BYTES} bytes")));
             }
             line.extend_from_slice(&taken);
             if end.is_none() {
