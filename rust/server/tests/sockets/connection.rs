@@ -64,8 +64,12 @@ async fn an_unadmitted_reply_the_peer_does_not_read_is_cut_at_the_exchange_bound
     const REQUESTS: usize = 40_000;
     let server = start(&[]).await;
     let reply = server.get("/probe").await.body.len();
-    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    // A small window and segment size keep the server's send buffer, which grows by segments, far below the replies.
+    let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
     socket.set_recv_buffer_size(4096).unwrap();
+    socket.set_tcp_mss(536).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = tokio::net::TcpSocket::from_std_stream(socket.into());
     let (mut reader, mut writer) = socket.connect(server.address).await.unwrap().into_split();
     let requests = "GET /probe HTTP/1.1\r\nHost: test\r\n\r\n".repeat(REQUESTS);
     let sending = tokio::spawn(async move {
