@@ -1,8 +1,8 @@
 # Measurement definitions
 
 Graphite Meter measures an application path: client scheduling, server work, protocol queues and the network all
-contribute. Results do not isolate ICMP latency, directional IP loss or a physical link's capacity. Every rule holds
-in both clients unless [client differences](#client-differences) says otherwise.
+contribute. Results do not isolate ICMP latency, directional IP loss or a physical link's capacity. Every rule holds in both
+clients unless [client differences](#client-differences) says otherwise.
 
 ## Reading a result
 
@@ -20,11 +20,11 @@ in both clients unless [client differences](#client-differences) says otherwise.
 | Latency stability (browser) | `100 × (1 − jitter / max(median, 1 ms))`, floored at 0 %, on the stage's own population.                                                                                                                 | No jitter: absent.                                                           |
 | Wire rate (browser)         | The headline times a modelled overhead: HTTP/2, HTTP/3 or WebTransport framing, TLS 1.3 records, TCP (with timestamps) or UDP + QUIC headers, IPv4 or IPv6 and Ethernet framing, assuming a 1,500 B MTU. Several servers each count with their own protocol and IP family, weighted by their bytes. | Shown only from 0.5 % overhead.                                              |
 
-- **Percentiles** cover replies within the stage's measured window. P50 is the midpoint median; P95 and the
+- Percentiles cover replies within the stage's measured window. P50 is the midpoint median; P95 and the
   browser's P10–P90 span use nearest rank.
-- **Jitter** (RTT variation) takes successful replies in receive order within one continuous segment. Timeouts are
+- Jitter (RTT variation) takes successful replies in receive order within one continuous segment. Timeouts are
   skipped; a stage boundary or reconnect breaks adjacency. Identical replies give zero.
-- **Probe timeout**: the reply deadline expired; a late reply cannot erase it. Unfinished probes (no verdict) and
+- Probe timeout: the reply deadline expired; a late reply cannot erase it. Unfinished probes (no verdict) and
   local send failures are counted separately and left out of the ratio. Timeouts are application observations on
   WebSocket (reliable, so retransmission and head-of-line blocking delay replies) or WebTransport datagrams (which
   queues may delay or drop); neither is TCP/IP packet loss.
@@ -43,20 +43,20 @@ One schedule owns stages, readiness, warmup, boundaries, cancellation and member
 single server is the same run with one participant. Each server keeps its own resources and credentials. Their
 contributions share the client's connection and are not independent capacity tests.
 
-- **Intervals** have fixed membership. Downloads sum client-consumed byte deltas over one client monotonic window.
+- Intervals have fixed membership. Downloads sum client-consumed byte deltas over one client monotonic window.
   Uploads take each receiver's latest observation, divide its byte delta by its own elapsed time and add the rates;
   receiver durations are never added. The final boundary always requests fresh receiver checkpoints, and in the
   browser asks every download lane what it had counted by one cutoff, waiting up to 250 ms for the answers. Each
   lane answers from readings of its running total, taken at most once a millisecond and at every report, so however late its answer
   arrives it counts to the same moment as every other lane, and the boundary closes at that cutoff; a lane that
   answered counts nothing more.
-- **Headline and peak** come from the combined boundary samples, never from per-server windows; per-server
+- Headline and peak come from the combined boundary samples, never from per-server windows; per-server
   headlines do not add up to the all-servers value.
-- **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
+- Zero vs missing: advancing receiver time with unchanged bytes is measured zero. A missing, stale or
   zero-duration component skips that boundary; the next valid one spans the gap on each receiver's clock. A replaced
   or regressing receiver closes its interval, which no longer counts, and starts an `evidence-resumed` one. A final
   boundary where any server's direction moved no bytes is skipped, so the result ends at the last good one.
-- **Dropouts:** a server leaves the stage where its measured bytes stop growing for the silence limit while another
+- Dropouts: a server leaves the stage where its measured bytes stop growing for the silence limit while another
   server's still grow, a lane fails for good, or its grant is refused (which asks for sign-in). Silence that every
   server shares is the link's: nobody leaves for it, the run shows it as Recovering and the stage keeps its planned
   time. The browser times an upload receiver that still reports on that receiver's clock, and one that sends no record
@@ -72,14 +72,14 @@ contributions share the client's connection and are not independent capacity tes
   retries at the next stage; its own statuses show the stages it never began as not run. A latency-only failure keeps
   throughput, except in the latency stage: a server lost there (connection lost or timed out) leaves the run while
   another remains.
-- **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
+- Headline: the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes; time in it when no bytes moved lowers the mean. After a late
   dropout the interval before it can hold the headline and the stage is Partial. With no such interval the stage
   fails with a [reason](#failure-reasons) and the run is Incomplete. Earlier intervals and removed servers'
   measurements stay in the per-server results.
-- **Gaps:** a client timer read more than 1.5 s late starts an `evidence-resumed` interval, so no headline spans the
+- Gaps: a client timer read more than 1.5 s late starts an `evidence-resumed` interval, so no headline spans the
   pause; a slow checkpoint alone never does.
-- **Byte ledgers** count unique measured bytes once, independent of window selection.
+- Byte ledgers count unique measured bytes once, independent of window selection.
 
 ### Stage timing
 

@@ -55,7 +55,7 @@ Environment=GM_SERVER_NAME=graphite-meter
 # HTTPS on that hostname. Publish 7246 as 127.0.0.1:7246:7246 so only that
 # proxy can send forwarding headers, and trust only the address its
 # connections arrive from (127.0.0.1/32 with Network=host).
-# Setup and the podman secret commands: ./README.md#enable-authentication
+# Setup and the podman secret commands: ./README.md#the-published-image
 # Environment=GM_AUTH_MODE=password
 # Environment=GM_AUTH_PUBLIC_URL=https://meter.example.com
 # Environment=GM_ADVERTISED_NATIVE_ENDPOINTS=none

@@ -25,7 +25,7 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
    emits `complete` after active data lanes have drained, then closes.
 
 `POST /upload/checkpoint?id=...` returns a fresh `{ "bytes": N, "nanos": N }`
-snapshot of an **existing** receiver aggregate with `Cache-Control: no-store`.
+snapshot of an existing receiver aggregate with `Cache-Control: no-store`.
 It applies the same owner check as data and progress. It never allocates an
 aggregate, replaces a progress reader, finalizes the upload, or refreshes its
 activity/idle-retention lifetime. Missing/expired IDs and foreign owners use the

@@ -45,21 +45,21 @@ shipped build, and `checksums.txt`. A prerelease takes a `vX.Y.Z-{alpha,beta,rc}
 `X.Y.Z-rc.N`, which no alias follows. `mode=validate` stops before any write. Approve the `ghcr-release` deployment
 when the Release run asks.
 
-1. **Untrusted build.** `release-request.yml` is one `workflow_dispatch` job on main with `contents: read`, no secrets
+1. Untrusted build. `release-request.yml` is one `workflow_dispatch` job on main with `contents: read`, no secrets
    and no caches. Only `release.py prepare` sees the inputs, which GitHub also renders into the run title. The pinned
    builder builds the image from main or, for a PR, from the exact commit BuildKit fetches without a token; a stable
    build then exports the server's source offers and the client archives from the same fresh builder. Before its
    reviewed builds the builder trains a PGO profile per architecture on loopback transfers, amd64 natively and arm64
    under QEMU's user mode (`scripts/pgo.py`). `assets.py stage` copies the release files and merges every build's
    part of the source offer into one archive; the job runs the amd64 client and uploads one artifact.
-2. **Trusted verification.** `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never
+2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never
    executes the requested source. It binds `request.json` to the run title, the owner, the first attempt and the one
    bounded artifact its one job wrote. It verifies the image, the archives and the source offer as data, and requires
    every main CI job and CodeQL for a release of main or, for a PR prerelease, an open PR containing current main with
    identical `.github`, `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check. A stable tag that
    already has a published Release must carry exactly its assets. Publish mode also requires `ghcr-release` to have
    reviewers and main-only deployments.
-3. **Approved publication.** One `ghcr-release` job holds the only write credentials. It rechecks the handoff digests
+3. Approved publication. One `ghcr-release` job holds the only write credentials. It rechecks the handoff digests
    and all trust above and pushes the verified digest to its exact version tag. For a stable release it publishes the
    GitHub Release and points `X.Y` and `latest` at the highest published releases, which also repairs aliases a
    cancelled run left behind.
@@ -80,20 +80,20 @@ secrets because max provenance records them.
 
 ### Owner setup
 
-1. **Actions, General:** workflow permissions *Read repository contents and packages*; artifact retention at least
+1. Actions, General: workflow permissions *Read repository contents and packages*; artifact retention at least
    35 days; if actions are allow-listed, add `actions/create-github-app-token`.
-2. **Environment `ghcr-release`:** required reviewer = owner; deployment branches = selected branch `main` only, no
+2. Environment `ghcr-release`: required reviewer = owner; deployment branches = selected branch `main` only, no
    tags. Its secrets and variables are the only release credentials; define none at repository level.
-3. **`GHCR_TOKEN` (environment secret):** a classic personal access token of the owner with only `write:packages`
+3. `GHCR_TOKEN` (environment secret): a classic personal access token of the owner with only `write:packages`
    (clear the preselected `repo`), with an expiry and a rotation reminder. GHCR accepts no App or fine-grained token.
-4. **Release App:** a GitHub App owned by the owner, webhook off, repository permission *Contents: read and write*
+4. Release App: a GitHub App owned by the owner, webhook off, repository permission *Contents: read and write*
    only, installed on this repository only. Store its client ID as environment variable `RELEASE_APP_CLIENT_ID` and a
    private key as environment secret `RELEASE_APP_PRIVATE_KEY`.
-5. **GHCR package, Manage Actions access:** give this repository *Read*, not *Write* or *Admin*, so no workflow token
+5. GHCR package, Manage Actions access: give this repository *Read*, not *Write* or *Admin*, so no workflow token
    can push images.
-6. **Rulesets:** tags `refs/tags/v*` restrict creation, update and deletion with the Release App as the only bypass
+6. Rulesets: tags `refs/tags/v*` restrict creation, update and deletion with the Release App as the only bypass
    actor; `main` requires pull requests, the `Gate` and CodeQL checks and blocks force pushes and deletion.
-7. **Releases:** enable release immutability.
+7. Releases: enable release immutability.
 
 ## Workflow policy
 

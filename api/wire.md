@@ -1,7 +1,7 @@
 # Graphite Meter message-bus wire protocol
 
-This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the WebTransport
-datagram bus (`/wt/ping`), plus the **WebTransport session routes**, defined by their CONNECT URL (see [WebTransport
+This spec governs the message-based channels: the WebSocket latency bus (`/ws/ping`) and the WebTransport
+datagram bus (`/wt/ping`), plus the WebTransport session routes, defined by their CONNECT URL (see [WebTransport
 routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
 receiver-progress stream. The plain request/response HTTP endpoints (`/servers`, `/preflight`, `/probe`,
 `/download`, `/upload/session`, `/upload`, `/upload/progress`, `/upload/checkpoint`) are not covered here:
@@ -70,16 +70,16 @@ content it defines. Streams are raw bytes end to end.
 | -------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/wt/ping`     | `token=`                            | none                                                                                                                                                                                                                       | the message bus above, one frame per datagram                                                                                              |
 | `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check                     | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
-| `/wt/upload`   | `id=&datagrams=&token=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is refused, not served. The server opens **one** unidirectional stream on establishment carrying the progress feed      | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
+| `/wt/upload`   | `id=&datagrams=&token=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is refused, not served. The server opens one unidirectional stream on establishment carrying the progress feed      | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
 
-`streams=` and `bytes=` are **clamped, never rejected**: a missing, non-numeric, or sub-1 `streams`
+`streams=` and `bytes=` are clamped, never rejected: a missing, non-numeric, or sub-1 `streams`
 is read as 1 and one above 16 as 16; a missing, non-numeric or negative `bytes` is read as 25 MiB
 (26214400) and one above 64 GiB as 64 GiB, the same rule as `GET /download?bytes=`. `/wt/upload`
 enforces the stream ceiling from the receiving side: the server stops reading the 17th concurrent
 client stream with `STOP_SENDING` code 0, without an error frame, since a byte stream carries no
 channel to report one on.
 
-`datagrams=` is **presence-based**: the bare `datagrams=` spelled above is the request, and so is
+`datagrams=` is presence-based: the bare `datagrams=` spelled above is the request, and so is
 any value the server cannot read. A spelling of zero or false (`0`, `false`, `off`, `no`, matched
 case-insensitively with surrounding whitespace ignored) is a request for no datagrams and is
 served none, the same rule `bytes=0` follows.

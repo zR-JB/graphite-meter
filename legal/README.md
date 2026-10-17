@@ -62,7 +62,7 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
 
 `python3 -m scripts.legal.rust` collects a binary's notices around one real Cargo build of it, in three steps:
 
-1. **Prepare.** `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
+1. Prepare. `cargo tree` for the target and the host gives a conservative set of crates the build may compile,
    build scripts and procedural macros included. Each needs its approved review or manual provenance; the target
    needs its approved platform record, whose missing notice texts are fetched from `rust-notice-sources.json` into
    `legal/manual/` and checked by SHA-256. The step writes the directory the build reads as `GM_LEGAL_DIR`:
@@ -71,14 +71,14 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    browser build in `browser-assets/` with its `legal/` files (the license, the notices and `about.json`, whose
    components link their source, upstream and changes) and, for a reviewed build, writes the image's
    `IMAGE_NOTICES.txt`.
-2. **Build and verify.** One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
+2. Build and verify. One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
    another package, target or compiler, or whose input copies differ. The collector then requires that the build
    compiled only prepared crates with unchanged legal files, linked only the record's native inputs, imported only its
    system libraries, embedded exactly `LEGAL.txt` and, for a reviewed build, carries
    `graphite-meter reviewed notices sha256:` with its SHA-256 in plain text, which release verification compares with
    the notices shipped beside the executable. It then writes `inventory.json` of the compiled crates and the server's
    browser packages.
-3. **Source offer.** A reviewed build writes its part of the release's one source offer,
+3. Source offer. A reviewed build writes its part of the release's one source offer,
    `graphite-meter_VERSION_third-party-source.tar.gz`: the compiled crates' and browser packages' sources under
    `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/`, the fork records and the manual
    material. Release staging merges the parts of every shipped build into that one archive. The build also writes the
