@@ -1,6 +1,4 @@
-// Keeps one server's connection evidence between runs, its discovery and one check per path role, each a fact with
-// its own backoff, and derives the view Settings shows from those facts. One timer wakes whatever falls due next.
-// The shown latency server keeps an idle monitor.
+// One server's connection evidence between runs, each fact with its own backoff, and the Settings view of it.
 import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "../../lib/signal";
 import type { CatalogEntry } from "../../protocol/documents";
 import {

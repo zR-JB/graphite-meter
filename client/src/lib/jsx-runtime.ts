@@ -53,8 +53,8 @@ const PROPERTIES = new Set(["value", "checked"]);
 
 type Component<P> = (props: P) => Node;
 
-export function jsx(type: string | Component<any>, props: Record<string, unknown>): Node {
-  if (typeof type === "function") return untrack(() => type(props));
+export function jsx(type: string | Component<never>, props: Record<string, unknown>): Node {
+  if (typeof type === "function") return untrack(() => type(props as never));
   const element = SVG_TAGS.has(type) ? document.createElementNS(SVG_NS, type) : document.createElement(type);
   // Children first, so a select's value finds its option; the ref last, so it sees the finished element.
   insert(element, props.children as Child);
@@ -142,6 +142,6 @@ export namespace JSX {
     >;
   };
   export interface ElementChildrenAttribute {
-    children: {};
+    children: unknown;
   }
 }

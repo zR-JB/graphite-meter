@@ -1,6 +1,5 @@
-// One upload id's receiver (api/upload.md): its feed's observations, whether the receiver follows the HTTP progress
-// feed itself or a session relays them, pass one monotonic guard; checkpoints back them up on demand. Whoever carries
-// the feed finalizes the id once: the HTTP feed here, a session in its worker.
+// One upload id's receiver (api/upload.md): every feed observation, direct or relayed, passes one monotonic guard, and
+// whoever carries the feed finalizes the id once.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release } from "../../protocol/documents";
 import type { FeedRecord } from "../../protocol/messages";

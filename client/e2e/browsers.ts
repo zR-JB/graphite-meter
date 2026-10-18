@@ -1,5 +1,4 @@
-// The browsers the suite drives: Chrome for Testing through Bun's WebView (CDP), and Firefox through WebDriver
-// BiDi. GM_E2E_BROWSER picks one; a page sees only the Driver both share.
+// Chrome for Testing through Bun's WebView (CDP) or Firefox through WebDriver BiDi, by GM_E2E_BROWSER.
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -61,9 +60,7 @@ function removeProfiles() {
       if (dirname(dir) === tmpdir()) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
     } catch {}
 }
-// Chrome is shared across files in this process. File-scoped afterAll cleanup
-// can kill the next file's first view while it starts. Only shut down at exit;
-// the fleet wrapper also owns worker profiles through its temporary directory.
+// Chrome is shared across files, so an afterAll would kill the next file's first view; shut down only at exit.
 if (browser === "chrome") process.on("exit", removeProfiles);
 
 async function chromeDriver(events: DriverEvents): Promise<Driver> {
@@ -142,8 +139,7 @@ const KEYS: Record<string, string> = {
   End: "\uE010",
 };
 
-// Firefox logs a refused or failed request as an error; Chrome tells pages' console listeners nothing, and the app
-// handles both failures itself.
+// Firefox logs refused requests as errors and Chrome reports nothing; the app handles both failures itself.
 const NETWORK_REPORT =
   /^(Cross-Origin Request Blocked|Firefox can.t establish a connection|The connection to .* was interrupted)/;
 

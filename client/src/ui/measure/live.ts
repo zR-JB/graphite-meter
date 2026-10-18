@@ -142,10 +142,11 @@ function createLive(app: App) {
   effect(() => {
     series()?.version();
     untrack(() => {
-      bucketPending ??= nextFrame(() => {
-        bucketPending = null;
-        bucketFrame.set(bucketFrame.peek() + 1);
-      });
+      if (!bucketPending)
+        bucketPending = nextFrame(() => {
+          bucketPending = null;
+          bucketFrame.set(bucketFrame.peek() + 1);
+        });
     });
   });
   /** Gives the focus server's buckets, as of this frame. */

@@ -183,9 +183,8 @@ export class HistoryRepository {
     return written;
   }
 
-  /** The newest readable records, at most 2,000, each as `keep` makes it, so no whole record outlives its row; and
-      how many rows could not be read. Each row is its own task; an abort stops the walk at the next row without
-      aborting any write. */
+  /** The newest 2,000 readable records as `keep` trims them, and how many rows could not be read. An abort stops the
+      walk at the next row, never a write. */
   async list<T>(
     signal: AbortSignal,
     keep: (record: HistoryRecord) => T,

@@ -1,5 +1,4 @@
-// A finger drags a floating sheet out by its edge. Released, it carries the finger's speed into the spring, to rest
-// or out. A mouse never drags a sheet.
+// A finger drags a floating sheet by its edge and flings it with its speed; a mouse never drags a sheet.
 import { animate } from "../../lib/frame";
 import { reducedMotion, spring } from "../../lib/motion";
 
@@ -10,8 +9,7 @@ const SLOP_PX = 10;
 /** The finger's speed is read over its last moves. One held still this long before lifting has none. */
 const VELOCITY_WINDOW_MS = 100;
 const HELD_MS = 60;
-/** Released, the sheet leaves when its offset plus this long at the finger's speed passes a share of its size, so a
-    short quick flick and a slow long drag both send it away and a flick back keeps it. */
+/** A released sheet leaves when its offset, projected this far at the finger's speed, passes a share of its size. */
 const PROJECT_MS = 400;
 const LEAVE_SHARE = 0.4;
 const LEAVE_MAX_PX = 240;

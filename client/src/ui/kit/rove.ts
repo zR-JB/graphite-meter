@@ -1,5 +1,4 @@
-// Keyboard roving through a list of explained facts: the list is one tab stop, and arrows, Home and End move between
-// its facts.
+// Keyboard roving through a list of facts: one tab stop, arrows, Home and End.
 import { onCleanup } from "../../lib/signal";
 
 const ROVE: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };

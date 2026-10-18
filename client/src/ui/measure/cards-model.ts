@@ -85,9 +85,8 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
-/** Chooses what the cards read, the lens's server or every server together. Shown together, the latency card reads
-    the server latency is shown for, whole, once it has a result; every server is probed alike, so its headline and
-    its spread never come from two servers. */
+/** What the cards read: the lens's server, or all together, where latency reads only its shown server so headline and
+    spread never mix servers. */
 export function shownEvidence(view: {
   details: MultiServerResult | null;
   lens: string;

@@ -1,5 +1,4 @@
-// How the console lays out at this viewport: whether panels dock beside the stage (two, one) or fly over it, and the
-// dock widths. It stamps the mode on <html> for the stylesheet.
+// Whether panels dock beside the stage or fly over it at this viewport, stamped on <html> for the stylesheet.
 import { nextFrame } from "../../lib/frame";
 import { computed, effect, onCleanup, signal, type Read } from "../../lib/signal";
 
@@ -19,9 +18,8 @@ export interface DockWidths {
   max: number;
 }
 
-/** Each open side within 360 to 720 px, the stage keeping 800 px. Past the budget the excess comes out of each side in
-    proportion to how far it sits above the minimum, except that `priority` (the side resized last) keeps its own
-    width so a dragged edge follows the pointer. Preferences never change here. */
+/** Each open side within 360 to 720 px, the stage keeping 800 px; the excess comes out of each side in proportion,
+    except `priority`, the side being dragged. */
 export function resolveDocks(
   width: number,
   preferred: Record<Side, number>,

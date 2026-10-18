@@ -411,7 +411,7 @@ impl Engine {
                 }
             }
             ProberEvent::Drained if matches!(seat.probing, Probing::Waiting | Probing::Up) => {
-                seat.probing = Probing::Drained
+                seat.probing = Probing::Drained;
             }
             ProberEvent::Down { at, failure } => self.latency_failed(index, failure.clone(), *at, out),
             ProberEvent::Outcome { .. } | ProberEvent::Drained => {}

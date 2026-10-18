@@ -1,5 +1,4 @@
-//! Mirrors the live rate the browser presents (`client/src/engine/measure/live.ts`, `api/liverate.testvectors.json`), a
-//! growing average that restarts on a confirmed shift.
+//! Mirrors the browser's live rate (`client/src/engine/measure/live.ts`, `api/liverate.testvectors.json`).
 
 const MIN_WINDOW_MS: f64 = 800.0;
 const FIRST_MS: f64 = 500.0;

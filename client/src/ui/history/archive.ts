@@ -1,5 +1,4 @@
-// The saved results one visit to History lists, as small entries kept current by this tab's changes and read again
-// on another tab's; the open result alone is read whole.
+// The saved results one History visit lists, as small entries kept current across tabs.
 import { historyEntry, type HistoryRecord } from "../../app/history/records";
 import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";

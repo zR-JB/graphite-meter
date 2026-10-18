@@ -1,5 +1,4 @@
-//! Delayed links: an HTTP/3 upload beyond the floor window, a control reply beside downloads on a slow link, and the
-//! optimized-build gate that QUIC downloads outgrow a fixed 2.5 MiB window at 50 ms.
+//! Delayed links, and the optimized-build gate that QUIC downloads outgrow a fixed 2.5 MiB window at 50 ms.
 
 use super::{
     http3::{H3, read, transport},

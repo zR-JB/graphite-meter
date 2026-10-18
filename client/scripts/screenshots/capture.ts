@@ -1,7 +1,4 @@
-// Renders the README screenshots from the working tree into docs/assets. The browser app is bundled from its sources
-// with the network and the run's clock swapped for fixed scenarios (fakes.ts) and served in place of the server's own
-// bundle; the terminal client's console arrives as cells from its screenshot example. Both are composed in Chrome.
-// `mise run screenshots` runs it under scripts/e2e.ts, which starts the servers.
+// Renders the README screenshots into docs/assets in Chrome; `mise run screenshots` runs it.
 import type { BunPlugin } from "bun";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -331,7 +328,7 @@ async function paintTerminal({
   );
   const thickness = (weight: number) => (weight === 2 ? 5 : 2);
   const DOTS = [0, 1, 2, 4, 5, 6, 3, 7].map((cell) => [cell >> 2, cell & 3]);
-  rows.forEach((row, y) =>
+  for (const [y, row] of rows.entries())
     row.forEach(([symbol, fg, bg, bold], x) => {
       const [left, top] = [x * cw, y * ch];
       if (bg !== canvas) {
@@ -379,8 +376,7 @@ async function paintTerminal({
         g.font = `${bold ? 600 : 500} 30px "Plex Mono", "Plex Pi"`;
         g.fillText(symbol, left + (cw - g.measureText(symbol).width) / 2, top + 31);
       }
-    }),
-  );
+    });
 }
 
 /** Renders `html` at `width` px wide from its `size` in CSS px, and writes it as a 256-color PNG. */

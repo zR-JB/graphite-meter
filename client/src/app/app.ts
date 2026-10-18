@@ -1,5 +1,4 @@
-// The application, wired once at boot: preferences, the servers and their checks, the run, History saving, and the
-// idle latency the console shows between runs. Views read its signals and call its methods.
+// The application, wired once at boot; views read its signals and call its methods.
 import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
 import { createServers, stageLimit } from "../engine/net/servers";

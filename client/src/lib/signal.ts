@@ -1,7 +1,4 @@
-// Implements glitch-free push-pull signals. A write marks readers stale, a read recomputes lazily, and effects flush
-// once per batch, owners before the effects they own. Effects own what they create while running (effects, cleanups)
-// and dispose it before each rerun. An exception in one effect is reported and never stops the others. A computed
-// keeps the one it threw and throws it to every reader until a source changes.
+// Glitch-free push-pull signals; a throwing effect never stops others, a computed rethrows until a source changes.
 
 const CLEAN = 0;
 const CHECK = 1;

@@ -1,9 +1,7 @@
-// Payload in a lane or session worker: a download's bytes are counted, never touched, and reported in batches; an
-// upload sends one incompressible block over and over.
+// Lane payloads: downloads are counted, never touched; uploads send one incompressible block over and over.
 
 const READ_BYTES = 1024 * 1024;
-/** A server's download reports, all its lanes together, come about this often: a boundary then misses at most this
-    much of one reporter's bytes, whatever the lane count, and the page handles about 100 reports a second. */
+/** A server's lanes report together about this often: the page handles 100 a second, a boundary misses 10 ms. */
 const REPORT_MS = 10;
 const MIB = 1024 * 1024;
 const BLOCK_BYTES = 4 * MIB;
@@ -129,9 +127,8 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
 /** Bodies repeat one random block, so memory stays at the block whatever their size. */
 export const MAX_POST_BYTES = 256 * MIB;
 
-/** A lane's share of what a server's `streams` lanes post at once, by device memory. Where the browser does not say
-    (Firefox), the pool spans all `sharing` lanes of the run: Firefox stalls a body without an error when its POSTs
-    together grow larger. */
+/** A lane's share of a server's posting budget, by device memory; Firefox reports none and silently stalls larger
+    POSTs, so there the pool spans all `sharing` lanes of the run. */
 export function largestPost(streams: number, sharing: number, deviceMemory: number | undefined): number {
   const [pool, lanes] =
     deviceMemory === undefined

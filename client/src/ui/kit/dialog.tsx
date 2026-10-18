@@ -1,5 +1,4 @@
-// Wraps native modal dialogs. They trap focus and carry their own live region. The owner keeps the open state and
-// hears every close request once. Focus returns to the opener unless the user already moved it.
+// Native modal dialogs; the owner keeps the open state, and focus returns to the opener unless moved.
 import type { Child } from "../../lib/jsx-runtime";
 import { effect, onCleanup, untrack, type Read } from "../../lib/signal";
 import { Announcements } from "./announce";

@@ -1,5 +1,4 @@
-// Runs the one frame clock. Everything that moves per frame paints from a single requestAnimationFrame loop, which
-// runs only while something moves and the page is visible.
+// The one frame clock: a requestAnimationFrame loop that runs only while something moves on a visible page.
 
 /** Monotonic page milliseconds, the timeline that frame timestamps share. */
 export const pageMs = (): number => performance.now();

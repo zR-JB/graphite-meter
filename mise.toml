@@ -103,10 +103,10 @@ run = [
 ]
 
 [tasks.client-ci]
-description = "Check client formatting, types, dependencies, and tests"
+description = "Check client formatting, lints, types, dependencies, and tests"
 run = [
   { task = "doctor" },
-  "cd client && bun run format:check",
+  "cd client && bun run lint",
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
   "cd client && bun dedupe --dry-run",
