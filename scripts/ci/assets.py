@@ -22,6 +22,7 @@ import sys
 import tarfile
 import zipfile
 from contextlib import ExitStack
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import verify_oci
@@ -213,7 +214,7 @@ def join(parts: list[Path], out: Path) -> None:
         digest = hashlib.sha256(index).hexdigest()
         layout = json.dumps({"schemaVersion": 2, "mediaType": verify_oci.INDEX_TYPE, "manifests": [
             {"mediaType": verify_oci.INDEX_TYPE, "digest": f"sha256:{digest}", "size": len(index),
-             "annotations": {CREATED: max(created)}}]}, separators=(",", ":")).encode()
+             "annotations": {CREATED: max(created, key=datetime.fromisoformat)}}]}, separators=(",", ":")).encode()
         for template, name, data in ((templates[0], f"blobs/sha256/{digest}", index),
                                      (templates[1], "index.json", layout)):
             info = template.replace(name=name)
