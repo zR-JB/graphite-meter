@@ -220,9 +220,9 @@ def remap_flags() -> list[str]:
     return [f"--remap-path-prefix={path}={name}" for path, name in ((ROOT, "/src"), (cargo_home, "/cargo"))]
 
 
-def pgo_profile(target: str) -> Path:
-    """The trained profile of `target`'s architecture, which a build of any of its targets may use."""
-    return PGO / f"{target.split('-')[0]}.profdata"
+def pgo_profile(target: str) -> Path | None:
+    """The trained profile of `target`'s architecture, which a build of any of its targets but Windows arm64 may use."""
+    return None if target.endswith("-gnullvm") else PGO / f"{target.split('-')[0]}.profdata"
 
 
 def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
@@ -238,11 +238,14 @@ def build_verify(build: Build, state: Prepared) -> tuple[Path, list[Component]]:
     link_map = None
     if build.target is not None:
         flags = remap_flags()
-        if (profile := pgo_profile(build.target)).is_file():
+        if (profile := pgo_profile(build.target)) and profile.is_file():
             flags.append(f"-Cprofile-use={profile}")
         environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
         link_map = platform.link_map(build.out, build.target, build.profile)
         command += ["--target", build.target, "--", f"-Clink-arg=-Wl,-Map={link_map}"]
+        # llvm-mingw's libunwind is a DLL Windows lacks unless the runtime links statically.
+        if build.target.endswith("-gnullvm"):
+            command.append("-Ctarget-feature=+crt-static")
     output = subprocess.run(command, cwd=rust, env=environment, stdout=subprocess.PIPE, check=True, text=True).stdout
     messages = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     root = next(item["id"] for item in state.metadata["packages"]
@@ -396,7 +399,8 @@ def main() -> None:
         return
     executable = collect(build)
     kind = "development" if build.development else "reviewed"
-    pgo = ", PGO" if build.target is not None and pgo_profile(build.target).is_file() else ""
+    profile = pgo_profile(build.target) if build.target is not None else None
+    pgo = ", PGO" if profile and profile.is_file() else ""
     print(f"Rust {build.package} [{build.profile} profile{pgo}, {kind} notices]: {executable}")
 
 

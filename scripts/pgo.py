@@ -72,6 +72,8 @@ def transfer(client: Path, server: Server, listener: str, direction: str, *extra
 
 
 def train(target: str, profile: str, runner: list[str]) -> Path:
+    if (merged := pgo_profile(target)) is None:
+        sys.exit(f"{target} trains no profile")
     raw = PGO / "raw"
     shutil.rmtree(raw, ignore_errors=True)
     raw.mkdir(parents=True)
@@ -87,7 +89,6 @@ def train(target: str, profile: str, runner: list[str]) -> Path:
     recorded = sorted(raw.glob("*.profraw"))
     if not recorded:
         sys.exit("training recorded no profile")
-    merged = pgo_profile(target)
     subprocess.run([str(llvm_profdata()), "merge", "--output", str(merged), *map(str, recorded)], check=True)
     shutil.rmtree(raw)
     return merged

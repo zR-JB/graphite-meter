@@ -19,7 +19,8 @@ from .model import Json, LegalError, array, obj, read_json, sha256, string, stri
 SYSROOT = "$RUST_SYSROOT/"
 IMPORTS = {
     "elf": (["readelf", "--dynamic"], r"\(NEEDED\).*\[([^]]+)\]"),
-    "pe": (["objdump", "-p"], r"DLL Name: (\S+)"),
+    # The target's MinGW objdump, since Debian's own reads no arm64 PE.
+    "pe": (["{arch}-w64-mingw32-objdump", "-p"], r"DLL Name: (\S+)"),
 }
 MAX_NOTICE_BYTES = 1_000_000
 
@@ -41,8 +42,9 @@ def linked(link_map: Path, sysroot: Path, cargo: set[Path]) -> set[str]:
 def imports(executable: Path, target: str) -> set[str]:
     """The shared libraries `executable` names, lowercased for Windows DLLs."""
     kind = "pe" if "-windows-" in target else "elf"
-    command, pattern = IMPORTS[kind]
-    names = re.findall(pattern, subprocess.check_output([*command, str(executable)], text=True))
+    (tool, *flags), pattern = IMPORTS[kind]
+    command = [tool.format(arch=target.split("-")[0]), *flags, str(executable)]
+    names = re.findall(pattern, subprocess.check_output(command, text=True))
     return {name.lower() for name in names} if kind == "pe" else set(names)
 
 
