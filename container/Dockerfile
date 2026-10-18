@@ -7,6 +7,8 @@
 ARG VERSION=0.0.0-dev
 ARG TARGETARCH
 ARG PROFILE=release
+# Empty builds every TUI platform; CI and release requests build one per runner.
+ARG TUI_PLATFORM
 
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.15.0-slim-trixie@sha256:d802f03223b9e00604cd54574bcac1a4638914c43683d3f0afd6ebee35f25313 AS python
 
@@ -75,19 +77,22 @@ FROM pgo-amd64-${PROFILE} AS pgo-amd64
 FROM pgo-arm64-${PROFILE} AS pgo-arm64
 FROM pgo-${TARGETARCH} AS pgo
 
-# The TUI archives for every TUI platform of the workspace metadata, each with its source offer; the Windows TUI uses
-# amd64's profile.
+# The profiles of the TUI_PLATFORM's architecture, the Windows TUI's being amd64's; empty selects pgo-, every one.
+FROM scratch AS pgo-
+COPY --from=pgo-amd64 /pgo/ /pgo/
+COPY --from=pgo-arm64 /pgo/ /pgo/
+FROM pgo-${TUI_PLATFORM##*/} AS pgo-tui
+
+# The TUI archives for every TUI platform of the workspace metadata, or the TUI_PLATFORM's, each with its source offer.
 FROM rust-arm64 AS tui-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=14.2.0-19+27+b1 mingw-w64-x86-64-dev=12.0.0-5 \
     && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 COPY --from=source / /src/
-COPY --from=pgo-amd64 /pgo/ /src/rust/target/pgo/
-COPY --from=pgo-arm64 /pgo/ /src/rust/target/pgo/
+COPY --from=pgo-tui /pgo/ /src/rust/target/pgo/
 ARG VERSION
 ARG PROFILE
-# Empty builds every TUI platform; CI builds one per runner.
 ARG TUI_PLATFORM
 RUN python3 -m scripts.package "$VERSION" --profile "$PROFILE" --output dist ${TUI_PLATFORM:+--platform "$TUI_PLATFORM"}
 

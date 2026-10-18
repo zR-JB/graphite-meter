@@ -25,7 +25,7 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
-| Build server image | `build-image.sh`, as a release request runs it, with the ci profile (no LTO or PGO); both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
+| Build server image | `build-image.sh` with the ci profile (no LTO or PGO), one architecture after the other; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Release staging | `assets.py stage` and `assets.py check` on the image and the client archives, as a release does |
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
@@ -58,8 +58,9 @@ when the Release run asks.
    requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, *Build server
    image* runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches without a token, and one
    *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a prerelease's client jobs skip
-   their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile per
-   architecture on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`). *Assemble
+   their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile for each
+   architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`); the
+   image builds both architectures at once, a client only its own, the Windows one amd64's. *Assemble
    request* runs `assets.py stage`, which copies the release files and merges every build's part of the source offer
    into one archive. Only a stable release, built from main, exports file trees; every job uploads only the regular
    files `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs
