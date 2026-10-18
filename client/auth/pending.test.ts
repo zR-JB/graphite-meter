@@ -124,7 +124,6 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     createElement: (tag: string) => h(tag),
   };
   let answer: Reply | undefined;
-  // The test moves this clock by hand.
   let now = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
   let ids = 0;

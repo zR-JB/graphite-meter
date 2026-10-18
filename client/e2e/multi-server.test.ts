@@ -52,8 +52,7 @@ async function shareOneRun(page: Page, four: Server[]) {
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
-      // Eight transfers start at once, and a receiver's window opens only once every server has reported: in a
-      // 1 s stage the slowest left under the 800 ms evidence floor on a loaded runner.
+      // Eight transfers start at once and a receiver's window opens once every server reported; 1 s left the slowest under 800 ms.
       duration: { ...combined.duration, bidirectionalMs: 2000 },
     },
   });

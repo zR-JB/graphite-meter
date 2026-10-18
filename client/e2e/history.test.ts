@@ -189,8 +189,7 @@ test("closing History stops an unfinished archive scan and preserves its records
         this.source.objectStore.transaction.mode === "readonly"
       ) {
         stats.deliveries++;
-        // Interrupt the actual scan, without slowing cursor deliveries or
-        // relying on the test driver to catch a brief intermediate state.
+        // Interrupt the actual scan, without slowing cursor deliveries or relying on the driver to catch a brief state.
         if (stats.deliveries === 20) {
           const close = document.querySelector<HTMLButtonElement>(
             'button[aria-label="Close History"]',
@@ -307,8 +306,7 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   const only = (at: number, state: string) =>
     Array.from({ length: count }, (_, index) => (index === at ? state : "000"));
   expect(await orders()).toEqual(only(0, "110"));
-  // The popover gives focus to its first column; Tab passes the columns and the heading's term to the chosen order
-  // alone, and leaves the group again.
+  // The popover focuses its first column; Tab passes the columns and the heading's term to the chosen order alone, then leaves.
   const role = () => page.evaluate(() => document.activeElement?.getAttribute("role"));
   await expect.poll(role).toBe("checkbox");
   for (let stop = 0; stop < 10 && (await role()) !== "radio"; stop++) await page.press("Tab");
@@ -824,7 +822,6 @@ test("Up and Down open the results beside the open one on its history entry, pas
 test("closing a linked result far down the list returns to its row", async (page) => {
   await fixturePage(page);
   await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });
-  // Beside the list, and over it.
   for (const [width, close] of [
     [1280, "Close result"],
     [700, "Results"],

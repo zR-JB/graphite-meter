@@ -12,8 +12,7 @@ import {
 import type { Subprocess } from "bun";
 import { expect, test, type Page } from "./webview";
 
-// The dial shows a rate after half a second of evidence, so a peer killed then still leaves the survivors the
-// 800 ms a result needs after it.
+// The dial shows a rate after half a second of evidence, so a peer killed then leaves survivors the 800 ms a result needs.
 const long = {
   ...baseConfig,
   duration: { ...baseConfig.duration, downloadMs: 4000, uploadMs: 1000 },

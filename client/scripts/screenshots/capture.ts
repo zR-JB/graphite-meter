@@ -387,8 +387,7 @@ function terminalHtml(theme: Theme, canvas: string) {
 }
 
 type Cell = [string, string, string, boolean];
-/** Draws the console's cells as a terminal at 2x would: 18x40 px cells, IBM Plex Mono, and the line, block and
-    braille glyphs drawn rather than taken from a font, as terminals do. */
+/** Draws the console's cells as a 2x terminal would: 18x40 px cells, IBM Plex Mono, line, block and braille glyphs drawn, not from a font. */
 async function paintTerminal({
   rows,
   canvas,

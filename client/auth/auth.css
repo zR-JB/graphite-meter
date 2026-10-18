@@ -229,7 +229,6 @@ form {
   display: grid;
   gap: var(--space-3);
 }
-/* The label over its entry, on the sheet's own ground. */
 .field {
   display: grid;
   gap: 6px;

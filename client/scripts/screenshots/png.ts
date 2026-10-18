@@ -4,7 +4,6 @@ import { deflateSync, inflateSync } from "node:zlib";
 export interface Image {
   width: number;
   height: number;
-  /** RGBA, row by row. */
   data: Uint8Array;
 }
 

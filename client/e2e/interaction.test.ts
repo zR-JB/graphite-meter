@@ -48,8 +48,7 @@ test("a pause on a control opens its tip while the hand drifts, and leaving clos
   await open(page, home.http);
   const settings = page.getByRole("button", { name: "Settings", exact: true });
   const { x, y } = await center(settings);
-  // A reading hand never holds still: the tip must open while it drifts a few pixels every step. A busy runner's
-  // timers fire late, so the hand drifts for a while rather than a number of steps.
+  // A reading hand never holds still: the tip must open while it drifts every step, for a while, as a busy runner's timers fire late.
   let opened = false;
   const until = performance.now() + 5_000;
   for (let step = 0; performance.now() < until && !opened; step++) {

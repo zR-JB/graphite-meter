@@ -12,8 +12,7 @@ import {
 } from "./fleet";
 import { expect, settled, test } from "./webview";
 
-// Flush native dialog/popover events without waiting for CSS transitions: each
-// reversal should interrupt the preceding animation, just like rapid input.
+// Flush native dialog and popover events without waiting for transitions: each reversal interrupts the last, like rapid input.
 async function churnSurfaces(cycles: number) {
   const frames = async () => {
     for (let i = 0; i < 2; i++)
@@ -188,8 +187,7 @@ for (const width of [1000, 390]) {
       return { x, y, receivesInput: !!hit && node.contains(hit) };
     });
     expect(target.receivesInput).toBe(true);
-    // Bypass the locator's actionability retry: the first click must land while
-    // the closed sheet and scrim are still fading.
+    // Bypass the locator's actionability retry: the first click must land while the closed sheet and scrim still fade.
     await page.click(target.x, target.y);
     // A stop before the run is under way cancels the start; one after it aborts the run.
     await expect(
@@ -208,8 +206,7 @@ test("the measurement workspace's painters rest while History covers it mid-run 
     },
   });
   await ready(page);
-  // What the workspace's painters write over 30 frames: inline styles (the needle, the chips' bars) and the dial's,
-  // the chips' and the running card's figures; a card's facts, and the widths their figures grow to, follow samples.
+  // What the painters write over 30 frames: inline styles and figures; a card's facts and their figures' widths follow samples.
   const painted = () =>
     page.evaluate(async () => {
       let writes = 0;

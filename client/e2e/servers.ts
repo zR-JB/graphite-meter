@@ -116,8 +116,7 @@ export async function launch(
   }
 }
 
-/** A TCP proxy from `listen` to `target` that holds each direction, all its connections together, to `bytesPerSec`:
-    a link, not loopback, so no browser's network thread saturates. Resolves with its close. */
+/** A TCP proxy from `listen` to `target` holding each direction to `bytesPerSec`, a link so no browser's network thread saturates; resolves with its close. */
 export async function pace(
   listen: number,
   target: number,

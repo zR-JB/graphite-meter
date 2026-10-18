@@ -20,7 +20,6 @@ export const HISTORY_DB = {
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
-// The runner always launches these five.
 export const [home, frankfurt, amsterdam, helsinki, locked] = fleet as [
   Server,
   Server,
@@ -37,8 +36,7 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-/** A server of its own; `env` may depend on it, such as a public URL for sign-in. A `paced` one serves its HTTPS
-    origin through a link of that many bytes per second each way. */
+/** A server of its own, `env` possibly depending on it; a `paced` one serves its HTTPS origin through a link of that many bytes per second. */
 export async function spawnPeer(
   name: string,
   env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
@@ -158,7 +156,6 @@ export async function ready(page: Page) {
   await closeSettings(page);
 }
 
-/** Counts History saves announced to other tabs from now on. */
 export async function countSaves(page: Page) {
   await page.evaluate(() => {
     Object.assign(window, { saves: 0 });

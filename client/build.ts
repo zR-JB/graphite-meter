@@ -1,5 +1,4 @@
-// Builds the browser app into dist/ for the server to embed: content-hashed bundles under assets/, the shell, the
-// shared public files, version.json and precompressed copies.
+// Builds the browser app into dist/ for the server to embed: hashed bundles, the shell, public files, version.json and compressed copies.
 import { cp, readdir, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
@@ -43,9 +42,7 @@ const styles = app.outputs.filter((output) => output.path.endsWith(".css"));
 for (const output of styles)
   await Bun.write(output.path, withoutPrefixedIs(await Bun.file(output.path).text()));
 
-// The server hashes the shell's one inline script and style into its content security policy and inserts its meta
-// tags before its one </head>.
-// <!-- theme --> takes the pre-paint theme script the sign-in pages run too.
+// The server hashes the shell's inline script and style into its CSP and adds meta tags before </head>; <!-- theme --> takes the pre-paint script.
 const theme = await themeScript();
 let shell = (await Bun.file(join(root, "index.html")).text()).replace(
   "<!-- theme -->",

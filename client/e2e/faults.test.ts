@@ -33,8 +33,7 @@ interface Fault {
 const faults: Fault[] = [
   {
     name: "a stopped peer leaves the download it stalled",
-    // The fault lands once the page shows the stage, which a busy browser can show late; a stall must still end the
-    // window well before it closes to fail the stage rather than the next one.
+    // The fault lands once the page shows the stage, maybe late; a stall must still end the window well before it closes.
     downloadMs: 5_000,
     during: "download",
     act: async (_page, victim) => void victim.kill("SIGSTOP"),

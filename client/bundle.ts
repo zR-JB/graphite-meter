@@ -1,5 +1,4 @@
-// The app's bundles, shared by the build and the screenshot pipeline: the workers first so the app can name them, then
-// the app with the build's facts defined.
+// The app's bundles, shared by the build and the screenshot pipeline: the workers first, so the app can name them.
 import type { BunPlugin } from "bun";
 import { readdir } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";

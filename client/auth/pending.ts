@@ -126,8 +126,7 @@ export function install({
         const page = new DOMParser().parseFromString(await response.text(), "text/html");
         const card = page.querySelector("main.card");
         if (!card) {
-          // A refusal without a card, such as an approval that ended, shows its page's state on a reload; a failing
-          // hop's answer is not this server's.
+          // A refusal without a card shows its page's state on a reload; a failing hop's answer is not this server's.
           if (response.ok) location.assign(response.url);
           else if (response.status < 500) location.reload();
           else unreachable(form);

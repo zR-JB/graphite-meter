@@ -1,5 +1,4 @@
-// The brand mark, "lattice needle": the hexagon is graphite's carbon lattice and a pencil's cross-section, drawn in the
-// latency hue; the needle makes it a meter. One drawing for the favicon and the mark beside the name.
+// The brand mark, "lattice needle": graphite's carbon hexagon in the latency hue with a meter's needle; one drawing for favicon and mark.
 
 const glyph = (hexagon: number, needle: number, hub: number) =>
   `<path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="${hexagon}" ` +
@@ -9,8 +8,7 @@ const glyph = (hexagon: number, needle: number, hub: number) =>
 /** The auth pages' brand line; their stylesheet strokes the hexagon, and the needle takes the text color. */
 export const BRAND_LINE = `<p class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true">${glyph(2, 2.2, 2.1)}</svg>Graphite Meter</p>`;
 
-/** The favicon from the `--phase-latency` and `--text` tokens' `light-dark()` pairs. The browser draws it apart from
-    any page, so each scheme's colors are baked in as sRGB, and its strokes are heavier to hold up at 16 px. */
+/** The favicon from the latency and text tokens; drawn apart from any page, so each scheme's colors are baked in as sRGB, stroked heavier for 16 px. */
 export function favicon(latency: string, text: string): string {
   const [hexagon, ink] = [schemes(latency), schemes(text)];
   const paint = (scheme: 0 | 1) => `svg{color:${ink[scheme]}}.hex{stroke:${hexagon[scheme]}}`;

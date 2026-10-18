@@ -272,8 +272,7 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
   expect(new Set(legal.components.map((c) => c.ecosystem)).has("cargo")).toBe(true);
   expect(identity.engineVersion).toBe(legal.sourceVersion);
   await expect(dialog).toContainText("Rust crates");
-  // Every component reads one way: where it comes from (a fork's upstream), then a modified one's shipped copy and
-  // changes.
+  // Every component reads one way: where it comes from, then a modified one's shipped copy and changes.
   const links = legal.components.flatMap((component) => {
     expect(component.links.length).toBeGreaterThan(0);
     for (const link of component.links) expect(new URL(link.url).protocol).toMatch(/^https?:$/);

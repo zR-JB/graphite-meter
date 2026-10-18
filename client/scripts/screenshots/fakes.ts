@@ -20,7 +20,6 @@ export interface Spread {
 
 /** One run as the fakes report it; capture.ts sets it on the page before each run. */
 export interface Scenario {
-  /** Epoch ms the run starts at. */
   epoch: number;
   /** Each server's payload rates, in bytes per second, and how far they wander from them. */
   down: number;
@@ -118,8 +117,7 @@ const PROBE_MS = 10;
 
 export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
   const plan = scenario();
-  // The rate holds each level for a while, as a link's does, so peaks and stability read like a real run's; each
-  // level's mirror follows it, so the mean stays the scenario's rate.
+  // The rate holds each level a while, as a link's does, and each level's mirror follows it, so the mean stays the scenario's.
   const rate = (dir: "down" | "up", ms: number) => {
     const level = Math.floor(ms / 1000);
     const offset = random(activity.stage.length * 7919 + (level >> 1))() - 0.5;

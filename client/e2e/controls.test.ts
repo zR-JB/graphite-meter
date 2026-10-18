@@ -414,8 +414,7 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in; the address is pressed once it rests. Scroll-driven
-  // animations never finish, so only timed ones are waited for.
+  // A busy runner can still be sliding the sheet in, so wait for timed animations; scroll-driven ones never finish.
   await page.evaluate(() =>
     Promise.all(
       document

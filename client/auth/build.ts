@@ -77,8 +77,7 @@ function parse(css: string): Item[] {
   return items();
 }
 
-/** The faces the pages may load, the `:root` tokens their rules use, transitively, with each override's media, the
-    SHARED rules and then auth.css's own. */
+/** The faces the pages may load and the `:root` tokens their rules use, transitively, then the SHARED rules and auth.css's own. */
 async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> }> {
   const own = (await Bun.file(join(here, "auth.css")).text()).replace(/\/\*[\s\S]*?\*\//g, "");
   const faces: string[][] = [];
@@ -167,7 +166,6 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
   return { css: withoutPrefixedIs(minifiedCss), tokens };
 }
 
-/** Every generated file by path. */
 async function generated(): Promise<Map<string, string>> {
   const { css, tokens } = await stylesheet();
   const svg = favicon(tokens.get("--phase-latency")!, tokens.get("--text")!);

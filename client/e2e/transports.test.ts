@@ -18,8 +18,7 @@ const paths = [
   ],
 ] as const;
 
-// Only Chrome takes the run's certificate for QUIC (--origin-to-force-quic-on), and Firefox 157 can wedge a worker's
-// abandoned HTTP/2 download on a slow runner (a Firefox networking bug).
+// Only Chrome takes the run's certificate for QUIC, and Firefox 157 can wedge a worker's abandoned HTTP/2 download (a Firefox bug).
 for (const [name, at, throughputTarget, origin, transport, protocol] of paths)
   (protocol === "http/1.1" ? test : test.chrome)(
     `${name} carries both directions over ${protocol}`,

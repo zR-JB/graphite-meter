@@ -30,8 +30,7 @@ for (const count of counts)
           deviceScaleFactor: Number(process.env.GM_PERF_DPR ?? 1),
           mobile: viewport[0] <= 600,
         });
-      // Phases are timed as they change, not read when an observer reports, so a task or a frame lands in the
-      // phase it ran in.
+      // Phases are timed as they change, not when an observer reports, so a task or frame lands in the phase it ran in.
       await page.addInitScript(() => {
         const recording: Recording = ((window as any).recording = {
           timeline: [],

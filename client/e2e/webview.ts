@@ -115,8 +115,7 @@ function reportPolicyViolations() {
   );
 }
 
-/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed, and where
- *  the pointer last moved, so a hover that opened nothing shows what it was over. */
+/** Every page: the last clicks and their targets, and where the pointer last moved, so a dead click or hover shows where it was. */
 function recordClicks() {
   const clicks: string[] = [];
   const pointer = { x: -1, y: -1, over: "" };
@@ -608,7 +607,6 @@ export const expect: any = Object.assign(
 type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
-  /** Needs the DevTools Protocol; other browsers skip it. */
   chrome?: boolean;
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
