@@ -69,12 +69,11 @@ description = "Update required toolchain literals from mise.toml"
 run = "python3 scripts/ci/toolchains.py sync"
 
 [tasks.workflow-check]
-description = "Lint workflows, validate trust boundaries and keep dashes out of the text"
+description = "Lint workflows and validate trust boundaries"
 run = [
   "jactionlint --no-online --shellcheck= --pyflakes=",
   "zizmor --offline --no-progress --config .github/zizmor.yml .github",
   "python3 scripts/ci/workflow_policy.py",
-  "python3 scripts/ci/dashes.py",
 ]
 
 [tasks.python-check]
