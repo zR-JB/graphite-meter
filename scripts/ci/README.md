@@ -27,7 +27,7 @@ checks job alone; every other change, every push to main and the daily run on ma
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
 | Build server image | `build-image.sh` with the ci profile (no LTO or PGO), one architecture after the other; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
-| Release staging | `assets.py stage` and `assets.py check` on the image and the client archives, as a release does |
+| Release staging | `assets.py stage` and `assets.py check` on the image, the server archives and the client archives, as a release does |
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
@@ -45,12 +45,13 @@ databases daily, so a new advisory never fails an unrelated pull request. Pull r
 gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
 ```
 
-A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with five
-assets: the client archives for Linux amd64, Linux arm64 and Windows amd64, one third-party source archive for every
-shipped build, and `checksums.txt`. A prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or
-`-f pr=N -f sha=<PR head>` to build an open same-repository PR; it publishes only the image of that version, such as
-`X.Y.Z-rc.N`, which no alias follows. `mode=validate` stops before any write. Approve the `ghcr-release` deployment
-when the Release run asks.
+A stable release publishes the image as `X.Y.Z`, moves `X.Y` and `latest`, and creates a GitHub Release with seven
+assets: the server archives for Linux amd64 and arm64, the client archives for Linux amd64, Linux arm64 and Windows
+amd64, one third-party source archive for every shipped build, and `checksums.txt`. Each archive holds the executable,
+`LICENSE`, `COPYRIGHT`, its build's `THIRD_PARTY_NOTICES.txt` and the `SOURCE.txt` that names the source archive. A
+prerelease takes a `vX.Y.Z-{alpha,beta,rc}.N` tag and `-f sha=<main head>`, or `-f pr=N -f sha=<PR head>` to build an
+open same-repository PR; it publishes only the image of that version, such as `X.Y.Z-rc.N`, which no alias follows.
+`mode=validate` stops before any write. Approve the `ghcr-release` deployment when the Release run asks.
 
 1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
    from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
@@ -61,10 +62,11 @@ when the Release run asks.
    their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile for each
    architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`); the
    image builds both architectures at once, a client only its own, the Windows one amd64's. *Assemble
-   request* runs `assets.py stage`, which copies the release files and merges every build's part of the source offer
-   into one archive. Only a stable release, built from main, exports file trees; every job uploads only the regular
-   files `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs
-   past a failure.
+   request* runs `assets.py stage`, which packages each architecture's server out of the image archive, so no second
+   build makes it, copies the client archives and merges every build's part of the source offer into one archive.
+   Only a stable release, built from main, exports file trees; every job uploads only the regular files
+   `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs past
+   a failure.
 2. Trusted verification. `release.yml` runs main's tooling on `workflow_run` for main dispatches only and never executes
    the requested source; its run is named after the request's run number. It binds `request.json` to the run title, the
    owner, the first attempt, exactly the jobs `release.py` names, each once and successful, and the one bounded artifact
@@ -87,9 +89,10 @@ Dockerfile may not select a custom frontend, pins its base images by digest and 
 from one snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification
 requires one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose
 source is the release commit and whose Dockerfile and target are `container/Dockerfile` and `server`; each image's
-server and notices must be the reviewed build its source offer names, and nothing may carry `UNREVIEWED DEVELOPMENT
-BUILD`. Verification reads the archive as data and checks every blob the index reaches against its descriptor's size and
-digest; Skopeo runs only to publish. The untrusted build writes the provenance, so it shows which source was built but
+server and notices must be the reviewed build its source offer names, its server must have the SHA-256 of the
+executable in that architecture's server archive, and nothing may carry `UNREVIEWED DEVELOPMENT BUILD`. Verification
+reads the archive as data and checks every blob the index reaches against its descriptor's size and digest; Skopeo
+runs only to publish. The untrusted build writes the provenance, so it shows which source was built but
 does not authenticate it. Build arguments carry no secrets because max provenance records them.
 
 ### Owner setup

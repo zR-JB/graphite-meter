@@ -10,8 +10,6 @@ of its archive in DIR; scripts/ci/assets.py verifies every archive and the sourc
 """
 
 import argparse
-import gzip
-import io
 import os
 import platform
 import re
@@ -25,7 +23,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.workspace import ROOT, VERSION, build_offer, load, tui_archive
+from .ci.workspace import ROOT, VERSION, build_offer, load, release_archive
+from .legal.artifacts import write_archive
 from .legal.model import LegalError
 from .legal.rust import PROFILES, Build, collect
 
@@ -55,7 +54,7 @@ def probe(executable: Path, version: str, platform_name: str) -> None:
 def package(version: str, profile: str, platform_name: str, target: str, output: Path) -> None:
     """Build and write the archive and source offer part of one platform, replacing neither until both are
     complete."""
-    archive, base, binary = tui_archive(version, platform_name)
+    archive, base, binary = release_archive("graphite-meter-client", version, platform_name)
     offer = build_offer("graphite-meter-client", platform_name)
     cargo = ROOT / "rust/target"
     cargo.mkdir(parents=True, exist_ok=True)
@@ -67,38 +66,12 @@ def package(version: str, profile: str, platform_name: str, target: str, output:
                                    target_dir=cargo / "package" / target))
         if platform_name == host_platform():
             probe(executable, version, platform_name)
-        texts = {"LICENSE": ROOT / "LICENSE", "COPYRIGHT": ROOT / "COPYRIGHT",
-                 "THIRD_PARTY_NOTICES.txt": legal / "LEGAL.txt", "SOURCE.txt": legal / "SOURCE.txt"}
-        files = {binary: (executable.read_bytes(), 0o755)} | {name: (path.read_bytes(), 0o644)
-                                                              for name, path in texts.items()}
-        write_archive(confined_path(stage / archive, stage), base, files)
+        write_archive(confined_path(stage / archive, stage), base, binary, executable.read_bytes(),
+                      (legal / "LEGAL.txt").read_bytes(), (legal / "SOURCE.txt").read_bytes(), ROOT)
         shutil.copyfile(confined_path(legal / offer, legal), confined_path(stage / offer, stage))
         for name in (archive, offer):
             os.replace(confined_path(stage / name, stage), confined_path(output / name, output))
     print(f"Rust TUI {platform_name}: {archive} and {offer}", flush=True)
-
-
-def write_archive(path: Path, base: str, files: dict[str, tuple[bytes, int]]) -> None:
-    """`base/` holding `files` with their modes, at fixed times and owners."""
-    if path.suffix == ".zip":
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-            directory = zipfile.ZipInfo(f"{base}/", (1980, 1, 1, 0, 0, 0))
-            directory.create_system, directory.external_attr = 3, (0o40755 << 16) | 0x10
-            archive.writestr(directory, b"")
-            for name, (data, mode) in sorted(files.items()):
-                entry = zipfile.ZipInfo(f"{base}/{name}", (1980, 1, 1, 0, 0, 0))
-                entry.create_system, entry.external_attr = 3, (0o100000 | mode) << 16
-                archive.writestr(entry, data, zipfile.ZIP_DEFLATED)
-        return
-    with path.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
-            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
-        directory = tarfile.TarInfo(base)
-        directory.type, directory.mode = tarfile.DIRTYPE, 0o755
-        archive.addfile(directory)
-        for name, (data, mode) in sorted(files.items()):
-            entry = tarfile.TarInfo(f"{base}/{name}")
-            entry.size, entry.mode = len(data), mode
-            archive.addfile(entry, io.BytesIO(data))
 
 
 def check(version: str, output: Path) -> None:
@@ -106,7 +79,7 @@ def check(version: str, output: Path) -> None:
     platform_name = host_platform()
     if platform_name not in load().tui:
         raise LegalError(f"no Rust TUI is built for {platform_name}")
-    archive, base, binary = tui_archive(version, platform_name)
+    archive, base, binary = release_archive("graphite-meter-client", version, platform_name)
     path = confined_path(output / archive, output)
     if path.suffix == ".zip":
         with zipfile.ZipFile(path) as files:
