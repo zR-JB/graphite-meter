@@ -51,8 +51,7 @@ export function AccountControl(props: { app: App }): Node {
             method="post"
             action={AUTH_ROUTES.logout}
             aria-label={() => `${label()}, ${provider()}`}
-            // The page leaves once the run ended and its result's write landed, with the token as it is now: another
-            // tab may have signed in again since this one read it. A submit drops its submitter, so the scope rides along.
+            // The page leaves once the run's result is saved, with the token as it is now; a submit drops its submitter, so the scope rides along.
             onsubmit={(event) => {
               event.preventDefault();
               if (leaving) return;

@@ -170,7 +170,6 @@ test("without randomUUID, on plain-HTTP LAN pages, ids are still v4 UUIDs", () =
   random.mockRestore();
 });
 
-/** `record` with the value at a dotted path replaced; nothing in the copy is shared. */
 function altered(record: unknown, path: string, value: unknown): unknown {
   const copy = JSON.parse(JSON.stringify(record));
   const keys = path.split(".");

@@ -206,8 +206,7 @@ export function HistoryWorkspace(props: {
 
   // The result last focused, so a pane built again for it never takes focus twice.
   let focused: string | null = null;
-  // Where focus was as a result was chosen: its pane, built once the result is read, takes focus only while focus
-  // is still there and nothing outside History was used since.
+  // Where focus was as a result was chosen: its pane takes focus only while focus is still there and nothing else was used.
   let intent: { id: string; from: Element | null } | null = null;
   effect(() => {
     const id = props.selectedId();
@@ -222,8 +221,7 @@ export function HistoryWorkspace(props: {
     document.removeEventListener("pointerdown", elsewhere, true);
     document.removeEventListener("focusin", elsewhere);
   });
-  // With a result open, Up and Down open the one above or below it in the list from anywhere in History that leaves
-  // arrows alone, except from within the result's body, which they scroll; past either end they do nothing.
+  // With a result open, Up and Down open the neighbor from anywhere in History that leaves arrows alone, except the result's body.
   const step = (event: KeyboardEvent) => {
     const by = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
     const id = props.selectedId.peek();
@@ -295,8 +293,7 @@ export function HistoryWorkspace(props: {
       </div>
     );
   }
-  // Built again only when another result, or another state of the link, shows; a result still being read keeps what
-  // shows, so moving between results never blanks the pane.
+  // Built again only when another result or link state shows, so moving between results never blanks the pane.
   let shownBefore = "none";
   const shownKey = computed(() => {
     const selected = archive.selected();

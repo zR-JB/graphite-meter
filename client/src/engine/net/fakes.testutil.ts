@@ -11,7 +11,6 @@ import type {
 import { initialAuth } from "./auth";
 import type { PageConfig, PageSession } from "./page";
 
-/** The app's default test settings, as a server set sees them. */
 export const CONFIG: TestConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
@@ -39,7 +38,6 @@ export const page: PageConfig = {
   webTransport: "available",
 };
 
-/** Credentials for a server that needs none. */
 export const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, {} as PageSession);
 
 export const MARKER = { "Graphite-Meter-Auth": "required" };
@@ -68,8 +66,7 @@ export const preflight = (throughput: object[], latency: object[] = []) => ({
   capabilities: { throughput, latency, uploadCheckpoint: true, maxStageMs: 300_000 },
 });
 
-/** One answer: a JSON body after `afterMs` with the next hop the browser reports (h2 unless named; null when it names
-    none), a request that never answers, or one that cannot reach the server. */
+/** One answer: a JSON body after `afterMs` with the hop the browser reports (h2 unless named, null for none), a hang, or unreachable. */
 export type Answer =
   | {
       status?: number;
@@ -116,7 +113,6 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
   });
   return {
     requests,
-    /** When each request to `pathname` was sent, in page ms. */
     sent: (pathname: string) =>
       requests.filter(({ url }) => url.pathname === pathname).map(({ at }) => at),
     now: () => performance.now(),
@@ -144,8 +140,7 @@ interface Bus {
   disposed: boolean;
 }
 
-/** Latency buses that answer `rttMs` after measuring starts and once per interval after the next reply, or never
-    while `rttMs` is null; every bus opened stays listed. */
+/** Latency buses answering `rttMs` after measuring starts and once per interval after each reply, or never while it is null. */
 export class FakeBuses {
   rttMs: number | null = 10;
   readonly opened: Bus[] = [];

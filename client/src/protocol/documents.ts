@@ -14,15 +14,13 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TARGETS = 32;
 export const MAX_STAGE_LIMIT_MS = 86_400_000;
 
-/** Lets go of a body nobody reads. */
 export const release = (response: Response) => response.body?.cancel().catch(() => {});
 
 /** Only HTTP 403 with this marker means a sign-in or grant has ended. Other refusals and failures are not evidence. */
 export const signInMarker = (response: Response) =>
   response.status === 403 && response.headers.get("Graphite-Meter-Auth") === "required";
 
-/** One JSON document of at most `maxBytes` (64 KiB unless named) of strict UTF-8, decoded bytes counted as they
-    stream. The body is always released. */
+/** One JSON document of at most `maxBytes` (64 KiB by default) of strict UTF-8, counted as it streams; the body is always released. */
 export async function readJSON(response: Response, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
   if (!response.body) throw new DecodeError("the response has no body");
   const reader = response.body.getReader();
@@ -200,8 +198,7 @@ export interface Catalog {
   defaultSelection: string[];
 }
 
-/** The originating server's catalog holds `self` first, unique IDs and origins, and 1 to 4 default IDs. Any violation
-    refuses the whole document. */
+/** The originating server's catalog: `self` first, unique IDs and origins, 1 to 4 defaults; any violation refuses it whole. */
 export function catalog(value: unknown, pageOrigin: string): Catalog {
   const document = object({
     servers: array(

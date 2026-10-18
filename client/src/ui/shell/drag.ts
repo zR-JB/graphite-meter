@@ -24,7 +24,6 @@ const rubber = (offset: number) =>
 interface Gesture {
   id: number;
   edge: Edge;
-  /** The sheet goes this far out to be hidden. */
   size: number;
   startX: number;
   startY: number;
@@ -36,12 +35,10 @@ interface Gesture {
   content: Element | null;
 }
 
-/** Attaches the drag to `sheet` until the returned detach runs. `--sheet-drag` on its parent, 0 to 1, fades the
-    scrim with it. */
+/** Attaches the drag to `sheet` until detached; `--sheet-drag` on its parent, 0 to 1, fades the scrim with it. */
 export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () => void): () => void {
   const host = sheet.parentElement ?? sheet;
-  // Checks every box from the finger up to the sheet for a scroll from its top, since what scrolls depends on the
-  // layout, the content's body or the sheet itself on a short screen.
+  // Checks every box from the finger up to the sheet for a scroll from its top, since what scrolls depends on the layout.
   const scrolledAbove = (from: Element) => {
     for (let node: Element | null = from; node; node = node === sheet ? null : node.parentElement)
       if (node.scrollTop > 0) return true;

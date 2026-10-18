@@ -35,12 +35,10 @@ interface ReportSources {
   servers: readonly { id: string; url: string; name: string; location?: string }[];
   /** Holds the addresses servers saw for this browser, which are scrubbed from free text too. */
   clientIps: readonly string[];
-  /** Holds plain state, from the build, environment and settings to the servers' views and the run. */
   state: Record<string, unknown>;
 }
 
-/** Renders pretty JSON in which servers read "server-N", their names "Server N" and this browser's address
-    "client-address", with secrets gone. */
+/** Pretty JSON where servers read "server-N", their names "Server N" and this browser's address "client-address", secrets gone. */
 export function diagnosticReport({ page, servers, clientIps, state }: ReportSources): string {
   const hosts = new Map<string, string>();
   const words = new Map<string, string>();

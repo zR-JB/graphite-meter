@@ -3,8 +3,7 @@ import type { ProbeReport } from "../../protocol/messages";
 import type { ProbeOutcome } from "../types";
 import { Prober } from "./prober";
 
-/** A probe meets one of these fates. It gets a reply after so many ms, gets none, throws on send, never confirms its
-    write, or confirms it and is answered after so many ms. */
+/** A probe's fate: a reply after so many ms, none, a throw on send, an unconfirmed write, or a confirmed one answered later. */
 type Fate = number | "lost" | "unsent" | "unconfirmed" | { confirmed: number; reply: number };
 
 /** Builds a bus on a fake clock. At one instant replies run before the timer. */
@@ -307,7 +306,6 @@ test("a write confirmed late still counts its reply when that comes before the d
 });
 
 test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wakes only to probe and report", () => {
-  /** Measures how long after its observation each outcome crossed. */
   const lags = ({ reports, stamps }: ReturnType<typeof bus>) =>
     reports.flatMap((report, i) =>
       report.type === "outcomes"

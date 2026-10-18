@@ -1,5 +1,4 @@
-// Carries one stage direction over fetch lanes, a worker each, or one WebTransport session worker. A worker lives as
-// long as its carrier, so a lane that ends reopens on it and a session's unspent ticket survives its redials.
+// One stage direction over fetch lanes, a worker each, or one WebTransport session worker that outlives its redials.
 import type {
   FeedRecord,
   Flushed,
@@ -22,7 +21,6 @@ const STAGGER_MS = 75;
 const SPREAD_MS = 1_000;
 
 export interface CarrierHost {
-  /** Counts download bytes of the current measurement epoch. */
   bytes(bytes: number): void;
   posted(lane: number, bytes: number, elapsedMs: number): void;
   record(record: FeedRecord): void;
@@ -40,7 +38,6 @@ export interface CarrierHost {
 
 export interface CarrierPlan {
   worker: string;
-  /** Fetch lanes, or one session. */
   lanes: number;
   /** Lanes that must deliver before the carrier is ready. */
   gating: number;
@@ -58,7 +55,6 @@ interface Lane {
   counted: number;
   /** Bytes reported while a flush awaits this lane's answer, which counts them itself. Null when none awaits. */
   held: number | null;
-  /** Resolves the flush awaiting this lane's answer. */
   flushed: ((answer: Flushed) => void) | null;
   /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
@@ -124,8 +120,7 @@ export class Carrier {
     }
   }
 
-  /** Collects every lane's download count at `cutoff` (page time, 250 ms at most) and resolves with the latest time
-      those counts stand at, so a rate read there never overstates; null without lanes. */
+  /** Collects every lane's download count at `cutoff` and resolves with the latest time they stand at, so a rate never overstates. */
   async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;

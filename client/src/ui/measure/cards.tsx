@@ -39,7 +39,6 @@ import type { Live } from "./live";
 import { Figure, painter, setText } from "./paint";
 import { StageGraph, type Head } from "./strip";
 
-/** The figures a card's painter writes while its stage runs. */
 interface Figures {
   num: Figure;
   down: Figure;
@@ -309,8 +308,7 @@ export function ResultSummary(props: {
 
 const RUNNING_STATES = new Set<StageState>(["warmup", "running", "recovering"]);
 
-/** The live console's cards: settled stages from the run's results, the running one following the frame clock with its
-    strip's leading edge, the rest waiting; a completed run is announced once. */
+/** The live console's cards: settled stages from the results, the running one on the frame clock, the rest waiting. */
 export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;

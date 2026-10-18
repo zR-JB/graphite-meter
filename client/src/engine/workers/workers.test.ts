@@ -48,7 +48,6 @@ const task = () =>
     port2.postMessage(null);
   });
 
-/** Builds a controllable stream of byte chunks or NDJSON lines. */
 function source() {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
@@ -97,17 +96,14 @@ class FakeWebTransport {
     FakeWebTransport.dialed.push(this);
   }
 
-  /** The server opens a stream. */
   open(stream: ReadableStream<Uint8Array>): void {
     this.#streams.enqueue(stream);
   }
 
-  /** The server sends a datagram. */
   datagram(bytes: number): void {
     this.#datagrams.enqueue(new Uint8Array(bytes));
   }
 
-  /** The server resets the session's streams and datagrams. */
   reset(): void {
     this.#streams.error(new Error("stream reset"));
     this.#datagrams.error(new Error("datagrams reset"));
@@ -468,7 +464,6 @@ class FakeWebSocket {
     FakeWebSocket.opened.push(this);
   }
 
-  /** The server answers the probe it was sent. */
   send(text: string): void {
     queueMicrotask(() => this.onmessage?.({ data: `PONG,${text.slice("PING,".length)},0` }));
   }

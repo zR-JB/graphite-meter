@@ -55,8 +55,7 @@ test("servers present independently, and only an irregular receiver is bridged b
 });
 
 test("a slow receiver counting 64 KiB reads never opens with a peak", () => {
-  // 9.3 Mbit/s flows into a server that counts whole reads, with a record every 100 ms and the boundary's checkpoint
-  // 2 ms after the first record. A read completes between them, and that pair alone once showed 28 times the rate.
+  // 9.3 Mbit/s into a server counting whole reads, records every 100 ms and a checkpoint 2 ms after one; that pair once showed 28 times the rate.
   const rate = 1_162_500;
   const counted = (ms: number) => Math.floor((rate * (ms + 55)) / 1000 / 65_536) * 65_536;
   const live = new LiveRates();

@@ -84,8 +84,7 @@ export function Dial(props: {
       (phase() === "complete" && !arcs().length && !run.result()?.latency)
     );
   });
-  // A stage's warmup already reads its stage, muted: the checked round trip, or the rate the lanes are moving, which
-  // nothing counts yet.
+  // A stage's warmup already reads its stage, muted: the checked round trip, or the rate nothing counts yet.
   const warming = computed(() => phase() === "warmup" && run.running());
   const reads = computed<string>(() => (warming() ? (run.stage() ?? phase()) : phase()));
   // What the needle points at: the round trip on the millisecond scale, the stage's own rate, or nothing.
@@ -133,8 +132,7 @@ export function Dial(props: {
     (view) => view.key,
     (leaving) => (leaving.arcs.length ? RESULT_DRAIN_MS : HANDOFF_OUT_MS),
   );
-  // The running stage's name and its figure hand off apart: the name once per stage, the figure on its first value,
-  // so a dash that stays never blinks. A finished run that reads its latency names it.
+  // The stage's name and figure hand off apart: the name once per stage, the figure on its first value, so a lasting dash never blinks.
   const stageName = handoff<Stage | null>(
     () => (run.running() ? run.stage() : live.completedRtt() !== null ? "latency" : null),
     (stage) => stage,
@@ -172,8 +170,7 @@ export function Dial(props: {
     return MISSING;
   });
 
-  // The note under the ring: a check under way, a refused start, how the run ended (and, short of complete, which
-  // stages it lacks), a stall, or what comes next. A counting note updates in place; only a new kind hands off.
+  // The note under the ring: a check, a refused start, how the run ended, a stall or what comes next; only a new kind hands off.
   const unanswered = computed(() => {
     if (phase() !== "latency" || !live.replies().lost) return null;
     const buckets = live.buckets();
@@ -183,8 +180,7 @@ export function Dial(props: {
         ?.endT ?? run.shownAt();
     return newest - answered >= 1_000 ? newest - answered : null;
   });
-  // A failed check names the path that failed, as the first selected server's check found it; anything else says
-  // why the start was refused.
+  // A failed check names the path the first selected server's check failed on; else why the start was refused.
   const refusal = computed(() => {
     const preparation = live.preparation();
     const detail = run.startError() || app.blocker();
@@ -367,8 +363,7 @@ export function Dial(props: {
       rotors[0]!.style.transform = `rotate(${Math.min(180, degrees)}deg)`;
       rotors[1]!.style.transform = `rotate(${Math.max(0, degrees - 180)}deg)`;
       head.style.transform = `rotate(${degrees + 135}deg)`;
-      // At rest against its clip edge a half would bleed a hairline at the seam; the head covers the first degree,
-      // and the start cap while the arc is shorter than the head.
+      // At rest a half would bleed a hairline at its clip seam; the head covers the first degree, and the start cap while shorter.
       const { radius, arcWidth, headRadius } = layout.peek();
       const capped = (degrees * Math.PI * radius) / 180 < headRadius + arcWidth / 2;
       if (degrees <= 1 !== firstHidden) firstClip!.hidden = firstHidden = degrees <= 1;
@@ -698,8 +693,7 @@ function ResultLayer(props: {
               path.style.setProperty("--arc", `${layout().radius * ARC_SWEEP}px`);
               path.style.setProperty("--fraction", String(fractionOf(arc())));
             });
-            // A one-direction arc shows through a still mask of dashes: nothing that moves lies in a mask, whose paint
-            // may lag its style. Round caps add an arc width to every dash, so its gaps stay open.
+            // A one-direction arc shows through a still dash mask, as a mask's paint may lag its style; round caps widen each dash.
             return [
               <Show when={() => arc().dashed}>
                 {() => (

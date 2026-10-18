@@ -2,14 +2,12 @@
 import type { Stage } from "../run/schedule";
 import { midpointMedian, nearestRank } from "./latency";
 
-/** A presented series keeps this many points. */
 export const SERIES_LIMIT = 1_200;
 const MIN_WIDTH_MS = 200;
 /** A late outcome may still revise a closed bucket this far back. */
 export const REVISION_MS = 10_000;
 
 export interface LatencyBucket {
-  /** Names the stage the probes belong to, or "idle" between runs. */
   phase: Stage | "idle";
   /** Buckets with different ids belong to separate lines. */
   continuityId: number;
@@ -25,8 +23,7 @@ export interface LatencyBucket {
   timeoutCount: number;
 }
 
-/** Returns a width at which a stage of `spanMs` fits the series. With a fixed probe spacing it holds a whole number
-    of probes, so no bucket is empty by construction. */
+/** A width at which a stage of `spanMs` fits the series; with a fixed probe spacing no bucket is empty by construction. */
 export function bucketWidth(spanMs: number, intervalMs: number | null): number {
   const base = Math.max(
     MIN_WIDTH_MS,
@@ -49,13 +46,11 @@ export class LatencyBuckets {
   #width = MIN_WIDTH_MS;
   #intervalMs: number | null = null;
   #pending: Open | null = null;
-  /** A late outcome may still revise these closed buckets. */
   #closed: Open[] = [];
   /** Holds closed buckets revised since the last report. They go out once per tick, not once per outcome. */
   #revised = new Set<Open>();
 
-  /** `emit` receives every bucket that closes with probes in it, and every revision of one at the next
-      `closeThrough` or `flush`. */
+  /** `emit` receives each bucket that closes with probes, and each revision at the next `closeThrough` or `flush`. */
   constructor(readonly emit: (bucket: LatencyBucket) => void) {}
 
   reset(
@@ -71,7 +66,6 @@ export class LatencyBuckets {
     this.restart(t, continuity);
   }
 
-  /** Starts a new line from `t` with the same stage and width. */
   restart(t: number, continuity: number): void {
     this.#continuity = continuity;
     this.#pending = this.#open(t);
@@ -136,7 +130,6 @@ export class LatencyBuckets {
     return this.#pending?.endT ?? null;
   }
 
-  /** Emits the open bucket cut at `atT` and forgets everything. */
   flush(atT: number): void {
     this.#report();
     const pending = this.#pending;

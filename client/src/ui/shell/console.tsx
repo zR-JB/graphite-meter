@@ -29,7 +29,6 @@ export interface Views {
   /** The status strip's facts, before the keyboard hints. */
   status(shell: Shell): Node;
   toast(shell: Shell): Node;
-  /** The connection indicator in the top bar. */
   connectivity(shell: Shell): Node;
 }
 
@@ -181,8 +180,7 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
   );
 }
 
-/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell holds every run word,
-    so a change never moves the strip. */
+/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell fits every run word. */
 function ShortcutHints(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const current = props.shell.runWord;

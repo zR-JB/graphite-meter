@@ -4,7 +4,6 @@ import { REVISION_MS, SERIES_LIMIT, type LatencyBucket } from "../engine/measure
 import type { TransferStage } from "../engine/run/schedule";
 
 export interface ThroughputSample {
-  /** Timeline ms. */
   t: number;
   bytesPerSec: number;
   /** Unique measured bytes of the run so far. */
@@ -23,7 +22,6 @@ const sampleLine = (sample: ThroughputSample) =>
   `${sample.stage}:${sample.dir}:${sample.continuityId}`;
 const sampleTime = (sample: ThroughputSample) => sample.t;
 
-/** One probe of the idle monitor as a bucket of its own. */
 export function idleBucket(t: number, rttMs: number, timedOut: boolean): LatencyBucket {
   const rtt = timedOut ? null : Math.max(0, rttMs);
   return {
@@ -59,8 +57,7 @@ export function upsertLatency(
   if (same >= 0 && history[same]!.startT === bucket.startT) history[same] = bucket;
   else history.splice(at, 0, bucket);
   if (history.length <= limit) return;
-  // Buckets a late outcome may still revise stay whole, so a revision replaces its bucket instead of adding to a
-  // merge, unless they alone fill the series.
+  // Buckets a late outcome may still revise stay whole, so a revision replaces its bucket instead of merging.
   const horizon = Math.max(...history.map((each) => each.endT)) - REVISION_MS;
   const open = history.filter((each) => each.endT >= horizon);
   const whole = open.length < limit ? open : [];

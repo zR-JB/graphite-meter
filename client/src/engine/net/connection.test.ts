@@ -17,8 +17,7 @@ afterEach(() => {
   net.restore();
 });
 
-/** A selected server's connection on the fake network, and every readiness its view painted: what it shows once the
-    task that changed it is done. */
+/** A selected server's connection on the fake network, and every readiness its view painted. */
 function connect(
   entry: CatalogEntry,
   { auth = publicAuth(entry) as ServerAuth, latency = false, shown = true, now = net.now } = {},

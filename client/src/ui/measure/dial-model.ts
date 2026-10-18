@@ -7,7 +7,6 @@ export const SWEEP_DEG = 270;
 export const ARC_START = 0.75 * Math.PI;
 export const ARC_SWEEP = (SWEEP_DEG * Math.PI) / 180;
 const TICKS = 8;
-/** The label fractions of the ring, in label order. */
 export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
 const LABEL_CLEARANCE = 8;
 const NOTE_GAP = 8;
@@ -32,7 +31,6 @@ export interface DialLayout {
   headRadius: number;
   /** The whole ring, which the track and every result arc stroke. */
   track: string;
-  /** The tick marks as one path. */
   ticks: string;
   labels: (Point & { anchorX: Anchor; anchorY: Anchor })[];
   /** Where a note hung under the ring starts: just under the tick ends. */
@@ -122,7 +120,6 @@ export function gaugeFraction(bytesPerSec: number, scale: number): number {
   return (i - 1 + (value - low) / (KNOTS[i]! - low)) / SPANS;
 }
 
-/** The rate at a fraction of the ring: the inverse of `gaugeFraction`. */
 export function gaugeValue(fraction: number, scale: number): number {
   const f = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
   if (f >= 1) return scaleOf(scale);
@@ -131,8 +128,7 @@ export function gaugeValue(fraction: number, scale: number): number {
   return scaleOf(scale) * (low + (f * SPANS - i) * (KNOTS[i + 1]! - low));
 }
 
-/** A finished transfer stage's result on the ring. A one-sided bidirectional result is dashed and named by the
-    direction that survived; its rate is that direction's alone. */
+/** A finished transfer stage's result on the ring; a one-sided bidirectional result is dashed and named by its surviving direction. */
 export interface ResultArc {
   stage: TransferStage;
   direction: TransferStage;
@@ -142,8 +138,7 @@ export interface ResultArc {
 
 type Rated = { reportedBytesPerSec: number } | null | undefined;
 
-/** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
-    both lanes, and a zero lane is evidence. */
+/** Every transfer result, longest first so shorter ones lie over it; a combined bidirectional value needs both lanes. */
 export function resultArcs(
   results: {
     download: Rated;
@@ -190,7 +185,6 @@ export const headlineArc = (arcs: readonly ResultArc[]): ResultArc | null =>
     .map((stage) => arcs.find((arc) => arc.stage === stage))
     .find(Boolean) ?? null;
 
-/** An arc's name, as its bead's tip gives it. */
 export const arcLabel = (arc: ResultArc) =>
   arc.dashed
     ? `${STAGE.bidirectional.label}, ${STAGE[arc.direction].label.toLowerCase()} only`
@@ -233,7 +227,6 @@ const FRAME_GAP_MS = 50;
 
 /** What the needle is told when what the dial shows changes, not every frame. */
 interface NeedleInput {
-  /** The dial shows a value the needle can point at. */
   visible: boolean;
   /** A run ending in a speed result: the needle waits where it stands for the result to take over. */
   hold: boolean;
@@ -243,8 +236,7 @@ interface NeedleInput {
   course: string;
 }
 
-/** The needle's course in degrees: it follows the live value and drains to zero between stages, so each hands the ring
-    to the next through zero. */
+/** The needle's course in degrees: it follows the live value and drains to zero between stages. */
 export class Needle {
   #from = 0;
   #at = 0;

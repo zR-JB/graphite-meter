@@ -8,11 +8,9 @@ export const epochMs = (): number => Date.now();
 /** The page time of an epoch time; worker clocks cross realms only as epoch values. */
 export const fromEpoch = (epoch: number): number => epoch - performance.timeOrigin;
 
-/** The time a run reads; tests pass a fake. */
 export interface Clock {
   now(): number;
   epoch(): number;
-  /** Runs `fn` once after `ms`; the returned function cancels it. */
   after(ms: number, fn: () => void): () => void;
 }
 
@@ -20,8 +18,7 @@ let worker: Worker | null | undefined;
 let nextId = 0;
 const due = new Map<number, () => void>();
 
-// A tab hidden for a few minutes wakes its own timers about once a minute, which would split a long run's evidence
-// at every wake; a worker's timers keep their pace.
+// A tab hidden for minutes wakes its timers about once a minute, splitting a run's evidence; a worker's timers keep pace.
 function timerWorker(): Worker | null {
   if (worker !== undefined) return worker;
   worker = null;
@@ -118,7 +115,6 @@ export class RunClock {
     return this.read() - this.start - this.#paused;
   }
 
-  /** Whether a gap happened since the last call. */
   takeGap(): boolean {
     const gap = this.#gap;
     this.#gap = false;
@@ -133,7 +129,6 @@ export class RunClock {
     this.#held = true;
   }
 
-  /** Page ms now. */
   resume(): number {
     this.#held = false;
     return (this.#read = this.#clock.now());

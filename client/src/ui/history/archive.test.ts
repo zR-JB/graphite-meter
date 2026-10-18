@@ -78,7 +78,6 @@ test("a failed quiet reload or lookup keeps the list on screen and says why", as
   await settle();
   expect(archive.state()).toBe("ready");
 
-  // Another tab's change.
   change({ type: "elsewhere" });
   reads[1]!.reject(new Error("closed"));
   await settle();

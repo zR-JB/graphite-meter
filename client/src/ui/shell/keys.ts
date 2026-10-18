@@ -10,15 +10,11 @@ export interface KeyFacts {
   shortcuts: boolean;
   saving: boolean;
   workspace: "measurement" | "history" | "not-found";
-  /** A History result is open. */
   detail: boolean;
   /** Lists the visible panels, the last opened last. */
   panels: readonly Panel[];
-  /** The panel holding focus. */
   focused: Panel | null;
-  /** The visible panel flies over the stage. */
   flyout: boolean;
-  /** A start is being prepared. */
   pending: boolean;
 }
 
@@ -40,7 +36,6 @@ export interface Binding {
   /** Tells whether the key acts at all. The History key acts only while results are saved. */
   when(facts: Pick<KeyFacts, "saving">): boolean;
   command: Command;
-  /** The status strip names it. */
   hint: boolean;
 }
 

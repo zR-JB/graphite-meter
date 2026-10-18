@@ -1,5 +1,4 @@
-// Provides fakes for driving a real run, page time that moves only when a test says so and servers whose lanes report
-// at a fixed rate. Tests of the run and of the views' model share them.
+// Fakes for driving a real run: page time that moves only when a test says so, and servers reporting at a fixed rate.
 import type {
   Checkpoint,
   Discovery,
@@ -19,7 +18,6 @@ interface Timer {
   fn: () => void;
 }
 
-/** Page time moves only when a test says so. Promise continuations settle before each timer. */
 export class FakeClock implements Clock {
   t = 0;
   #timers: Timer[] = [];

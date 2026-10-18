@@ -46,8 +46,7 @@ export function httpPaths(discovery: Discovery | null): string[] | null {
   ];
 }
 
-/** Lists the mechanisms the server advertises for `role`, noting origins this page cannot reach, or null before
-    discovery. */
+/** Lists the mechanisms the server advertises for `role`, noting origins this page cannot reach; null before discovery. */
 export function capabilities(discovery: Discovery | null, role: Role): string[] | null {
   if (!discovery) return null;
   const entries = origins(discovery, role);

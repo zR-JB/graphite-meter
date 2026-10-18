@@ -44,8 +44,7 @@ import { isLoopback, selectionText, stillValid, type Selection } from "./paths";
 export const FRESH_MS = 120_000;
 /** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays ready. */
 const LIVENESS_MS = 5_000;
-/** A monitored one re-reads it this often, since its bus proves liveness, not an unchanged generation, stage limit
-    or targets behind a proxy that holds the bus open. */
+/** A monitored one re-reads it this often: its bus proves liveness, not an unchanged discovery behind a proxy. */
 const MONITORED_MS = 60_000;
 const DISCOVERY_BUDGET_MS = 5_000;
 const ROLE_BUDGET_MS = 12_000;
@@ -64,7 +63,6 @@ interface RoleView<P> {
 }
 
 export interface ServerView {
-  /** The catalog entry, named as its discovery names it. */
   server: ServerIdentity;
   discovery: Discovery | null;
   readiness: Readiness;
@@ -97,7 +95,6 @@ export interface ConnectionEnv {
   session: PageSession;
   limiter: Limiter;
   openProbeChannel: OpenProbeChannel;
-  /** Checks and their timers may run. */
   active: Read<boolean>;
   online: Read<boolean>;
   /** Settings is open, so unselected servers are discovered for their names and limits. */
@@ -178,8 +175,7 @@ function connect(
   /** The bus the latest latency check proved, for the idle monitor to take over. */
   let handed: CheckedBus | null = null;
 
-  // The browser's word is advisory, since a link without a gateway reads offline and still reaches its server. It
-  // names a failure, and stops nothing.
+  // The browser's offline word is advisory: a link without a gateway reads offline yet reaches its server.
   const loopback = isLoopback(new URL(entry.url).hostname);
   const offline = computed(() => !loopback && !env.online());
   const required = (role: Role) => selected() && (role === "throughput" || env.latencyNeeded());
@@ -279,8 +275,7 @@ function connect(
     return { failure, attempts, due: now() + backoffMs(attempts) };
   }
 
-  /** Runs one check owning `slot`. It waits for a limiter slot, then runs within its budget. An outcome lands only
-      while the check is still current. */
+  /** Runs one check owning `slot` after a limiter slot, within its budget; an outcome lands only while it is current. */
   function job<T>(
     slot: Signal<Task | null>,
     quiet: boolean,

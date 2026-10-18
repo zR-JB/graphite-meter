@@ -36,8 +36,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
   const short = media("(max-height: 520px) and (orientation: landscape)");
   const portrait = media("(orientation: portrait)");
   const wide = computed(() => width() >= 760 || (short() && width() >= 560));
-  // Beside the lanes the ring centers on their axis and its note hangs just under it; short, the note keeps to the
-  // column under the ring.
+  // Beside the lanes the ring centers on their axis with its note just under it; short, the note keeps under the ring.
   const hung = computed(() => wide() && !portrait() && !short());
   effect(() => {
     const list = section.classList;

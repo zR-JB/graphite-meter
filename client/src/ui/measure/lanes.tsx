@@ -34,7 +34,6 @@ import {
 import type { Live } from "./live";
 import { inView, measure, painter, scrub } from "./paint";
 
-/** One population's row. */
 export interface LaneInput {
   stage: Stage;
   summary: LatencySummary | null;
@@ -42,7 +41,6 @@ export interface LaneInput {
   current?: number | null;
   /** The stage runs now, its warmup included: the row washes in. */
   active?: boolean;
-  /** Why this population's probes stopped. */
   failure?: string;
 }
 
@@ -63,8 +61,7 @@ interface Row {
   values: Values;
 }
 
-/** The lanes for a live run ("bare": marks glide, the latest reply is marked) or a saved result ("compact"), rows in
-    stage order. A row kept as the same object draws nothing again; until the run has `added`, the medians give it. */
+/** The lanes of a live run ("bare": marks glide, the latest reply is marked) or a saved result ("compact"), in stage order. */
 export function LatencyProfileView(props: {
   lanes: () => readonly LaneInput[];
   variant?: "bare" | "compact";
@@ -315,8 +312,7 @@ function Lane(props: {
     reach.dataset.max = `${fmtMs(shown().max)} ms`;
   });
 
-  // Marks glide to each summary on the frame clock while the lanes are seen; a saved or unseen row snaps. A glide is
-  // made on a metric's first value and let go when the value goes.
+  // Marks glide to each summary on the frame clock while seen; a saved or unseen row snaps.
   const glides = new Map<(typeof GLIDED)[number], Glide>();
   const wake = painter((now) => draw(now), props.away);
   effect(() => {
@@ -464,8 +460,7 @@ function Lane(props: {
   );
 }
 
-/** The plate reading the mark nearest the pointer, as far along its own width as the mark lies along the plot, so it
-    stays inside unmeasured. */
+/** The plate reading the mark nearest the pointer, as far along its width as the mark lies along the plot. */
 function Reading(props: {
   metric: Read<Metric>;
   values: Read<Values>;
@@ -495,8 +490,7 @@ function Reading(props: {
   );
 }
 
-/** The live console's lanes: the run's rows, whose latency to show when several servers run, and the idle stage's
-    failure, heard once when it fails. A row stays the same object while its values do, so it draws nothing again. */
+/** The live console's lanes, whose server to show when several run, and the idle stage's failure, heard once. */
 export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;

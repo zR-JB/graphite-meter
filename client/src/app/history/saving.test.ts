@@ -6,7 +6,6 @@ import { createHistorySaving } from "./saving";
 
 const RETRYING = "Could not save this result locally. Future writes will be retried.";
 const record = (id: string) => ({ id }) as HistoryRecord;
-/** Lets every promise already settled run on. */
 const turns = async () => {
   for (let i = 0; i < 20; i++) await null;
 };
@@ -60,7 +59,6 @@ function memoryHistory() {
       rows.delete(id);
       notify({ type: "deleted", ids: [id] });
     },
-    /** Another tab changes History. */
     elsewhere(change: () => void) {
       change();
       notify({ type: "elsewhere" });

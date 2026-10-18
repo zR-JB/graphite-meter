@@ -78,8 +78,7 @@ export function Fragment(props: { children?: Child }): Node {
   return fragment;
 }
 
-// A rerun that yields the attribute it wrote last leaves the element alone, as every write restyles it. Live state
-// (a field's value, a box's checked) is written each time, so a rerun can take back what the user changed.
+// A rerun yielding the last written attribute leaves the element alone, as each write restyles; live state is written every time.
 function bind(element: Element, name: string, read: () => Primitive): void {
   if (PROPERTIES.has(name)) return void effect(() => assign(element, name, read()));
   let written: { value: Primitive } | null = null;
@@ -109,8 +108,7 @@ export function insert(parent: Node, child: Child): void {
   else parent.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
 }
 
-// The region's effect owns what it builds, so a rerun disposes the previous content's bindings. Its content is
-// everything between its two markers, including what nested regions add later.
+// The region's effect owns what it builds, so a rerun disposes the previous content; it spans everything between its markers.
 function region(parent: Node, fn: () => Child): void {
   const start = parent.appendChild(document.createComment(""));
   const end = parent.appendChild(document.createComment(""));
@@ -132,7 +130,6 @@ function region(parent: Node, fn: () => Child): void {
   });
 }
 
-/** Removes the nodes between two markers. */
 export function clear(start: Node, end: Node): void {
   while (start.nextSibling && start.nextSibling !== end) start.nextSibling.remove();
 }

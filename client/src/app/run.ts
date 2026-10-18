@@ -37,8 +37,7 @@ interface RunEnvironment {
   refusal: Read<string>;
   /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again; throws the words to show when one refuses `config`, an AbortError when newer
-      intent superseded the start. */
+  /** Checks the selected servers again; throws the words to show when one refuses `config`, or an AbortError when superseded. */
   prepare(
     signal: AbortSignal,
     config: TestConfig,
@@ -67,12 +66,10 @@ type Step = "preparing" | "running" | "finalizing";
 
 interface ServerSeries {
   buckets: LatencyBucket[];
-  /** Bumped whenever `buckets` changes in place. */
   version: Signal<number>;
   summaries: Signal<Partial<Record<Stage, LatencySummary | null>>>;
 }
 
-/** One server's latency series as views read it. */
 interface LatencySeries {
   readonly buckets: readonly LatencyBucket[];
   readonly version: Read<number>;
@@ -91,7 +88,6 @@ export function createRun(env: RunEnvironment) {
   const phase = signal<ShownPhase>("idle");
   const stage = signal<Stage | null>(null);
   const step = signal<Step | null>(null);
-  /** Timeline ms where the shown segment starts. */
   const shownAt = signal(0);
   const progress = signal({ elapsedMs: 0, budgetMs: 0 });
   const stall = signal<Stall | null>(null);
@@ -116,7 +112,6 @@ export function createRun(env: RunEnvironment) {
   const prepared = signal<readonly PreparedServer[]>([]);
 
   let run: Run | null = null;
-  /** The RTT the current run's warmup adapts to. */
   let rttMs = 0;
   let release = () => {};
   let pending: AbortController | null = null;
@@ -329,7 +324,6 @@ export function createRun(env: RunEnvironment) {
     next.start();
   }
 
-  /** Start, Stop or Cancel: what the run key does now. */
   function toggle(): void {
     if (running.peek()) {
       cancel();
@@ -383,8 +377,7 @@ export function createRun(env: RunEnvironment) {
     untrack(cancel);
   });
 
-  /** May this stage be turned on or off now? While a test runs, the run's own rule decides, read again as its stage
-      moves on. */
+  /** Whether a stage may be turned on or off now; while a test runs, the run's own rule decides. */
   const canToggle = (name: Stage) => {
     if (preparing()) return false;
     if (!running()) return true;
@@ -392,8 +385,7 @@ export function createRun(env: RunEnvironment) {
     return run?.canChange(name) ?? false;
   };
 
-  /** The one writer of test settings: refused while a start prepares; while a run is live only stages, durations,
-      early finish and the gauge maximum may change, a stage only until it begins. Returns whether it applied. */
+  /** The one writer of test settings; while a run is live only stages, durations, early finish and the gauge may change. */
   function configure(patch: Partial<TestConfig>): boolean {
     const keys = Object.keys(patch);
     // A refusal speaks for the change that caused it, never for a later one.
@@ -453,7 +445,6 @@ export function createRun(env: RunEnvironment) {
     return configure({ stages });
   }
 
-  /** Start over: the shown run and its result go. */
   function returnToStart(): void {
     cancel();
     releaseRun();
@@ -461,7 +452,6 @@ export function createRun(env: RunEnvironment) {
     reset();
   }
 
-  /** Ends a live run for the reason given, keeping what it measured. */
   function end(reason: FailureReason, message: string): void {
     if (running.peek()) run?.end(reason, message);
   }

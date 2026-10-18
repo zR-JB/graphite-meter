@@ -20,8 +20,7 @@ const entry: CatalogEntry = { id: "self", url: page.origin, name: "Meter", addit
 let net: ReturnType<typeof fakeNet> | undefined;
 afterEach(() => net?.restore());
 
-/** Discovers a server offering `throughput` and `latency`, whose probes answer as `probe` says, then `run`s its check
-    of `choice`. It yields what the check returned or the words its row shows, and when it settled. */
+/** Discovers a server offering `throughput` and `latency`, then `run`s its check of `choice`; yields the result or row words and when it settled. */
 async function check<P>(
   run: (
     context: CheckContext,

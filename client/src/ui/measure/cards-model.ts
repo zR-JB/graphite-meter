@@ -32,7 +32,6 @@ import {
 } from "../../view/words";
 import { CARDS, FACT, type FactKey } from "./copy";
 
-/** Sets the card's look, its edge, glow and quiet dash. */
 type CardStatus =
   | "pending"
   | "not-run"
@@ -77,7 +76,6 @@ type Transfer = ThroughputResult & { wire?: WireModel | null };
 
 /** The evidence a card shows, the run's or one server's share of it. */
 export interface Evidence {
-  /** Settled stages only. */
   status: Partial<Record<Stage, StageStatus>>;
   download: Transfer | null;
   upload: Transfer | null;
@@ -113,8 +111,7 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
-/** What the cards read: the lens's server, or all together, where latency reads only its shown server so headline and
-    spread never mix servers. */
+/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix servers. */
 export function shownEvidence(view: {
   details: MultiServerResult | null;
   lens: string;
@@ -173,7 +170,6 @@ const FACTS: Record<Stage, readonly FactKey[]> = {
 };
 type Known = Partial<Record<FactKey, string>>;
 
-/** Fills the stage's fixed facts from `known`. */
 function facts(stage: Stage, known: Known): Fact[] {
   return FACTS[stage].map((key) => ({
     key,
@@ -185,7 +181,6 @@ function facts(stage: Stage, known: Known): Fact[] {
 
 const percent = (pct: number | null | undefined) => (pct == null ? undefined : fmtPercent(pct));
 
-/** Reads the idle replies' spread, count and unanswered share. */
 const idleFacts = (idle: LatencySummary | null): Known => ({
   range: idle ? fmtLatencyRange(idle.minMs, idle.maxMs) : undefined,
   replies: idle ? String(idle.probeCount - idle.timeoutCount) : undefined,
@@ -254,7 +249,6 @@ const blank = (stage: Stage, state: StageState): CardModel => {
   };
 };
 
-/** Builds a settled stage's card, live or saved. */
 export function settledCard(
   stage: Stage,
   status: "complete" | "partial" | "failed",
@@ -330,13 +324,11 @@ export interface LiveEvidence {
   /** A stopped stage keeps the last value its series measured. */
   held: number | null;
   idle: LatencySummary | null;
-  /** This stage's measured bytes so far. */
   bytes: number;
   /** Peak and Stability so far come from the stage's series by the second. */
   shape: { peak: number; stability: number | null } | null;
 }
 
-/** Builds the card of a stage still to come, running, stopped, or one the run will never settle. */
 export function liveCard(
   stage: Stage,
   state: StageState,
@@ -424,8 +416,7 @@ export interface Issue {
   throughput: Stage[];
 }
 
-/** Lists failed server stages, one line per server and reason saying who, which stages and why. A transfer's lost
-    probes are named as the lanes name them; only throughput failures mark a card. `scope` narrows to one server. */
+/** Lists failed server stages, one line per server and reason; only throughput failures mark a card, and `scope` narrows to one server. */
 export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
   const lines = new Map<
     string,

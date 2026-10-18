@@ -20,7 +20,6 @@ export type Outcome = "complete" | "partial" | "incomplete";
 export interface ServerFailure {
   serverId: string;
   stage: Stage;
-  /** Run ms. */
   atMs: number;
   scope: Role;
   reason: FailureReason;
@@ -28,7 +27,6 @@ export interface ServerFailure {
   message: string;
 }
 
-/** A run-level transfer headline with its wire estimate. */
 type StageThroughput = ThroughputResult & { wire: WireModel | null };
 
 export interface StageResults {
@@ -73,7 +71,6 @@ export interface ServerMeasurementSummary {
 export interface MultiServerResult {
   /** The run's servers in catalog order, then those that failed their start check. */
   selection: ServerIdentity[];
-  /** Servers still in the run. */
   participants: string[];
   latencyFocus: string;
   servers: ServerMeasurementSummary[];
@@ -89,7 +86,6 @@ export interface RunResult extends StageResults {
   /** The latency focus server's populations. */
   latencyByStage: Record<Stage, LatencySummary | null>;
   addedLatency: AddedLatency | null;
-  /** Epoch ms. */
   startedAt: number;
   /** Run ms, preparation, finalization and page gaps included. */
   durationMs: number;
@@ -118,7 +114,6 @@ export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
 export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
   statuses.includes("failed") ? "incomplete" : failures ? "partial" : "complete";
 
-/** The bytes every server moved, both directions. */
 export const movedBytes = (result: MultiServerResult) =>
   result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
 

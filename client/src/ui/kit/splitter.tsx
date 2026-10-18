@@ -29,7 +29,6 @@ export function Splitter(props: {
   /** Which edge of the panel the splitter sits on: the panel grows toward it. */
   edge: "left" | "right";
   label: string;
-  /** The panel's width in px, and its limits. */
   value: Read<number>;
   min: Read<number>;
   max: Read<number>;

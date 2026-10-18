@@ -1,5 +1,4 @@
-// Connection checks for one server: discovery and proof that a chosen path carries data from this page. A failure
-// carries its row's words and whether time alone can clear it.
+// Connection checks for one server: discovery and proof that a chosen path carries data from this page.
 import {
   preflight,
   probe as probeDocument,
@@ -59,14 +58,12 @@ export class CheckError extends Error {
   }
 }
 
-/** A failed check as its server's row shows it. */
 export interface Failure {
   message: string;
   retry: Retry;
   signIn: boolean;
 }
 
-/** What a check needs of its server and this page. */
 export interface CheckContext {
   entry: CatalogEntry;
   auth: ServerAuth;
@@ -105,8 +102,7 @@ export function failureOf(error: unknown, name: string): Failure {
   };
 }
 
-/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal; its own deadline reads "Connection
-    check timed out". */
+/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal. */
 export async function withinBudget<T>(
   owner: AbortSignal,
   ms: number,
@@ -126,8 +122,7 @@ export async function withinBudget<T>(
 
 let requests = 0;
 
-/** The browser's next-hop protocol for one unique URL, watched from before the request so that neither a full
-    Resource Timing buffer nor an older request's late entry can hide or replace it. */
+/** The browser's next-hop protocol for one unique URL, watched before the request so no buffered or late entry hides it. */
 function watchProtocol(url: string) {
   let protocol: string | null | undefined;
   let delivered: (() => void) | null = null;
@@ -222,8 +217,7 @@ async function settled(
   });
 }
 
-/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no probe, socket
-    or other side effect. A browser policy refuses it before any request. */
+/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no other side effect. */
 export async function discover(context: CheckContext, signal: AbortSignal): Promise<Discovery> {
   const { entry, auth, page, now } = context;
   signal.throwIfAborted();
@@ -292,8 +286,7 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
   }
 }
 
-/** The targets a check tries: Automatic's candidates in rank order, or only what an explicit choice resolves to.
-    Nothing to try fails before any request. */
+/** The targets a check tries: Automatic's candidates in rank order, or what an explicit choice resolves to. */
 function targetsFor<R extends Role>(
   context: CheckContext,
   discovery: Discovery,
@@ -308,8 +301,7 @@ function targetsFor<R extends Role>(
   return selection.kind === "auto" ? candidates(discovery, role, context.page) : [requested];
 }
 
-/** The first target that verifies, each within its own budget. Automatic stops at a sign-in refusal rather than
-    probing another endpoint; when all fail, the preferred target's failure says the most. */
+/** The first target that verifies; Automatic stops at a sign-in refusal, and the preferred target's failure says the most. */
 async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   targets: readonly T[],
   signal: AbortSignal,
@@ -336,8 +328,7 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   throw failure;
 }
 
-/** Proves the throughput path `selection` names: the HTTP view of its origin answers a probe over the protocol it
-    claims, and a WebTransport session delivers bytes. */
+/** Proves the throughput path `selection` names: its origin answers a probe over the claimed protocol, and a session delivers bytes. */
 export async function checkThroughput(
   context: CheckContext,
   discovery: Discovery,
@@ -454,8 +445,7 @@ async function verifySession(
   }
 }
 
-/** The bus a latency check proved, still open at the preparation cadence so the idle monitor can take it over; until
-    then it closes with its check, at the latest when the check's budget ends. */
+/** The bus a latency check proved, kept open for the idle monitor to adopt; until then it closes with its check. */
 export interface CheckedBus {
   /** Its events go to `events` from now on, and the channel to its adopter. */
   adopt(events: ProbeChannelEvents): ProbeChannel;
@@ -519,8 +509,7 @@ export async function checkLatency(
 
 type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
 
-/** Opens the bus at the preparation cadence: once it answers, replies are collected for a moment; their median, or
-    null without one, and the bus, still open, with the events it reports to. */
+/** Opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the still-open bus. */
 function collectRtt(
   context: CheckContext,
   target: LatencyTarget,

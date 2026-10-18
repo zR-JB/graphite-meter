@@ -48,8 +48,7 @@ export interface Sort {
 const HOUR_MS = 3_600_000;
 /** From this list width the bars show (`data-bars`), and the content needs a different width. */
 const BARS_PX = 901;
-/** One side of BARS_PX: the narrowest list the unfolded content was seen to fit, and the width it was measured to
-    need, exact until rows are added. */
+/** One side of BARS_PX: the narrowest width the unfolded content fit, and the width it needs, exact until rows are added. */
 const unknown = () => ({ fits: Infinity, needs: 0, exact: false });
 
 /** Rows built in one frame: more than a tall screen shows. */
@@ -62,7 +61,6 @@ export function ResultsList(props: {
   setSort(by: HistorySort, descending: boolean): void;
   pages: Signal<number>;
   selectedId: Read<string | null>;
-  /** Epoch ms, a minute apart. */
   now: Read<number>;
 }): {
   element: HTMLElement;
@@ -104,8 +102,7 @@ export function ResultsList(props: {
   );
   // Only the pages asked for: a link to a result far down opens it without building every row above it.
   const shown = computed(() => Math.min(ordered().length, props.pages() * PAGE_ROWS));
-  // A screenful first, or every row down to the open result's when it lies further; the rest of the pages a screenful
-  // a frame after, below the fold.
+  // A screenful first, or down to the open result's row; the rest a screenful a frame, below the fold.
   const built = signal(BUILD_ROWS);
   const selectedAt = computed(() => {
     const id = props.selectedId();
@@ -360,8 +357,7 @@ export function ResultsList(props: {
     </div>
   ) as HTMLElement;
   effect(() => table.style.setProperty("--metric-columns", String(columns().length)));
-  // Each column's bars fill against its peak, so a new fastest result redraws them without rebuilding a row; a peak
-  // that stays is not written again, which would restyle every row.
+  // Each column's bars fill against its peak, so a new fastest result redraws them without rebuilding rows; unchanged peaks are not rewritten.
   const peaks = new Map<string, string>();
   effect(() => {
     for (const column of columns()) {
@@ -400,8 +396,7 @@ export function ResultsList(props: {
     </Show>,
   ]);
 
-  // Rows fold once the table's columns no longer fit their content, judged on width alone. The content's own width
-  // differs on either side of BARS_PX, so each side keeps what it learned until the rows change.
+  // Rows fold once the columns no longer fit their content, judged on width alone; each side of BARS_PX keeps what it learned.
   let folded = false;
   let sides = [unknown(), unknown()];
   /** The list's scrollbar gutter, which its expected width includes. */
@@ -471,8 +466,7 @@ export function ResultsList(props: {
 
   return {
     element: list,
-    /** The list is about to be `width` px wide (a result opening or closing): a fold decided now lands in the layout
-        that width takes rather than one more. */
+    /** The list is about to be `width` px wide, so a fold decided now lands in that layout rather than one more. */
     fitTo(width) {
       bars(width - gutter);
       const fits = judge(width - gutter);

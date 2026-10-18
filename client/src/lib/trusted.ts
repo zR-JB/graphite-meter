@@ -9,8 +9,7 @@ const { trustedTypes } = globalThis as {
 };
 let policy: ScriptURLPolicy | undefined;
 
-/** `url` as the Worker constructor takes it, a trusted script URL where the browser has Trusted Types. The policy is
-    made with the first worker, so a module that only imports this creates none. */
+/** `url` as the Worker constructor takes it, a trusted script URL under Trusted Types; the policy is made with the first worker. */
 export function workerScript(url: string): string {
   policy ??= trustedTypes?.createPolicy(TRUSTED_TYPES_POLICY, {
     createScriptURL(url) {

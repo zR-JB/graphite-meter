@@ -11,7 +11,6 @@ const fail = (path: string, expected: string): never => {
 
 const encoder = new TextEncoder();
 
-/** A string of `min` to `max` UTF-8 bytes. */
 export const string =
   (min = 0, max = Infinity): Decoder<string> =>
   (value, path = "") => {
@@ -73,7 +72,6 @@ export const object =
     return out as Fields<R, O>;
   };
 
-/** Objects told apart by their `type` member. */
 export const variant =
   <V extends Record<string, Decoder<object>>>(
     variants: V,

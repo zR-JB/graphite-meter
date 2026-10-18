@@ -194,8 +194,7 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
       .filter(Boolean)
       .join(" ");
   });
-  // The bar: its stage's progress while it runs, the fraction a stopped stage reached, full once it settled. Only a
-  // chip whose bar follows the clock draws every frame; the rest draw once per change.
+  // The bar: progress while its stage runs, the share a stopped one reached, full once settled; only a clocked bar draws every frame.
   const clocked = computed(() => {
     const now = look();
     return (

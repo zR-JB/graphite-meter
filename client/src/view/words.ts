@@ -87,8 +87,7 @@ export function runAction(preparing: boolean, running: boolean, phase: ShownPhas
     : RUN_ACTION.start;
 }
 
-/** The run in one word, as the status strip says it: a refused start, a check under way, else the phase or the
-    finished run's outcome. */
+/** The run in one word, as the status strip says it: a refused start, a check, else the phase or the finished outcome. */
 export function statusLabel(
   preparation: Preparation,
   phase: ShownPhase,
@@ -103,8 +102,7 @@ export function statusLabel(
   return PHASE[phase];
 }
 
-/** A stage in the shown run. `skipped`: the run left it out; `unreached`: the run ended without reaching or settling
-    it. */
+/** A stage in the shown run; `skipped` the run left out, `unreached` it ended without reaching or settling. */
 export type StageState =
   | "skipped"
   | "upcoming"
@@ -136,14 +134,11 @@ export const NEXT_RUN = { label: "Next test", tone: null } as const satisfies Wo
 
 /** What the runner has said about one stage of the shown run. */
 export interface StageFacts {
-  /** The run includes the stage. */
   planned: boolean;
-  /** Its status once it ended. */
   settled: StageStatus | null;
   /** The run's phase while this is its stage, kept once the run ends; null until the run moves to it. */
   phase: Phase | null;
   stalled: boolean;
-  /** How the run ended; null while it runs. */
   ended: "complete" | "stopped" | "error" | null;
 }
 
@@ -218,16 +213,14 @@ export const TRANSPORT: Record<Transport, string> = {
   "webtransport-datagram": "WebTransport datagrams",
 };
 
-/** A transport in its role, or null for one this build does not know. Bare WebTransport names the session, whose
-    streams carry throughput and whose datagrams carry latency. */
+/** A transport in its role, or null for one this build does not know; bare WebTransport names the session. */
 export function transportLabel(transport: string, role: Role): string | null {
   const kind =
     transport === "webtransport" && role === "latency" ? "webtransport-datagram" : transport;
   return Object.hasOwn(TRANSPORT, kind) ? TRANSPORT[kind as Transport] : null;
 }
 
-/** An HTTP version as recorded or as a browser's next hop names it ("h2"); one this build does not know reads as
-    given. */
+/** An HTTP version as recorded or as a browser's next hop names it ("h2"); an unknown one reads as given. */
 export function httpVersionLabel(name: string): string {
   const known = protocolFromNextHop(name) ?? name;
   return Object.hasOwn(PROTOCOL_LABEL, known) ? PROTOCOL_LABEL[known as HttpProtocol] : name;
@@ -285,8 +278,7 @@ export function allServersLabel(total: number, stayed: number, measured: number)
 export const listed = (words: readonly string[]) =>
   words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 
-/** Why Start is refused when planned stages outlast the shortest stage limit of the selected servers; "" when none
-    does. */
+/** Why Start is refused when planned stages outlast the selected servers' shortest stage limit; "" when none does. */
 export function stageLimitError(
   config: TestConfig,
   limit: { ms: number; server: string | null },

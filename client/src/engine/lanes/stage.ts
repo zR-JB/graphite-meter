@@ -51,7 +51,6 @@ class Stage implements StageResources {
   #probes: ProbeChannel | null = null;
   #probesReady = false;
   readonly #stalls: Record<Direction, boolean> = { down: false, up: false };
-  /** Rejects the prepare() in progress. */
   #unprepared: ((error: Error) => void) | null = null;
   #changed = Promise.withResolvers<void>();
   #signInCheck: { at: number; ended: Promise<boolean> } | null = null;
@@ -149,8 +148,7 @@ class Stage implements StageResources {
     this.#releaseThroughput();
   }
 
-  /** Explains why the stage is not ready. The caller's abort passes as such, a failure as reported, and a lapsed
-      budget as busy when a lane or the feed is still refused as busy. */
+  /** Why the stage is not ready: an abort as such, a failure as reported, a lapsed budget as busy while refused as busy. */
   #unready(error: unknown, signal: AbortSignal): unknown {
     if (signal.aborted) return signal.reason;
     if (!(error instanceof DOMException && error.name === "TimeoutError")) return error;
@@ -203,8 +201,7 @@ class Stage implements StageResources {
     this.#probes = bus.current;
   }
 
-  /** Mints an upload id and opens its receiver. A session carries its own feed; HTTP lanes write only once the feed
-      is open, so the server reports from the first byte. */
+  /** Mints an upload id and opens its receiver; HTTP lanes write only once the feed is open, so it reports from the first byte. */
   async #prepareUpload(signal: AbortSignal): Promise<Receiver> {
     const { auth, throughput } = this.#setup.server;
     const id = await this.#mintUpload(signal);
@@ -306,8 +303,7 @@ class Stage implements StageResources {
     return new Carrier(plan, this.#carrierHost(direction));
   }
 
-  /** Reads a request's credentials afresh at every opening, which runs from timers too. A grant that ended asks for
-      sign-in, and any other refusal fails the stage. */
+  /** Reads a request's credentials afresh at every opening; an ended grant asks for sign-in, any other refusal fails the stage. */
   #signedIn<T>(build: () => T): T | null {
     try {
       return build();
@@ -330,8 +326,7 @@ class Stage implements StageResources {
         if (!this.#throughputEnded) events.uploadHint(lane, bytes, elapsedMs);
       },
       record: (record) => this.#receiver?.record(record),
-      // Only a lane that reopened proves a download moves again, since bytes a lane read before its own break arrive
-      // after another lane's.
+      // Only a lane that reopened proves a download moves again: bytes read before its own break arrive after others'.
       delivered: () => {
         this.#notify();
         if (direction === "down") this.#progress("down");

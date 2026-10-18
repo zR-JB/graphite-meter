@@ -88,8 +88,7 @@ export interface Scale {
   unit: string;
 }
 
-/** Each column's unit from every loaded record, not only the rows shown: latency in ms, a rate in the tier of its
-    upper median, so one fast outlier never sets it. */
+/** Each column's unit from every loaded record: latency in ms, a rate in its upper median's tier, so one outlier never sets it. */
 export function columnScales(
   records: readonly HistoryEntry[],
   units: Units,
@@ -179,7 +178,6 @@ export interface Cell {
 interface RowBase {
   id: string;
   completedAt: number;
-  /** For the `datetime` attribute. */
   iso: string;
   heading: string;
 }
@@ -189,7 +187,6 @@ export type Row =
       /** The exact time, for the title and the accessible name. */
       exact: string;
       primary: string;
-      /** The server, or how many ran. */
       where: string;
       outcome: Outcome;
       cells: Cell[];
@@ -203,7 +200,6 @@ export interface RowContext {
   columns: readonly HistoryColumn[];
   scales: Record<HistoryColumn, Pick<Scale, "tier" | "unit">>;
   units: Units;
-  /** The list is in date order, under day headings. */
   byDay: boolean;
 }
 
@@ -304,8 +300,7 @@ function presentRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   }
 }
 
-/** Rows worded under one context, kept by id. A row stays the same object until what it shows changes, so its DOM is
-    built again only then: across midnight, only the rows whose day words change. */
+/** Rows worded under one context, kept by id; a row stays the same object until what it shows changes. */
 export function rowPresenter(context: RowContext): (entry: HistoryEntry, days: Days) => Row {
   const kept = new Map<string, { row: Row; days: Days }>();
   return (listed, days) => {
@@ -348,8 +343,7 @@ export function groupRows(rows: readonly Row[]): Group[] {
   return groups;
 }
 
-/** `added` in the list, replacing the same id; at the limit the oldest other record gives way, so a result opened
-    past the newest 2,000 shows and the count stays 2,000. */
+/** `added` in the list, replacing the same id; at the limit the oldest other gives way, so the count stays 2,000. */
 export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry): HistoryEntry[] {
   const rest = records.filter(({ id }) => id !== added.id);
   if (rest.length >= HISTORY_LIMIT) {
@@ -364,12 +358,10 @@ export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry)
 
 export interface Listed {
   records: readonly HistoryEntry[];
-  /** Rows that could not be read. */
   malformed: number;
 }
 
-/** This tab's change applied to a list. Each sets rows by id, so replaying one the list already holds changes
-    nothing: a list read while changes landed takes them all again. */
+/** This tab's change applied to a list, by id, so replaying one the list already holds changes nothing. */
 export function applyChange(
   listed: Listed,
   change: Exclude<HistoryChange, { type: "elsewhere" }>,

@@ -29,7 +29,6 @@ export type Group = "connection" | "duration" | "display" | "probes" | "transfer
 export interface Edits {
   /** Runs a test-setting change; a refusal shows under `group` and is announced, until a change applies. */
   edit(group: Group, change: () => boolean): boolean;
-  /** The refusal notice under `group`. */
   notice(group: Group): Node;
 }
 

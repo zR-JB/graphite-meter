@@ -108,7 +108,6 @@ interface Marker {
 }
 
 interface Navigator {
-  /** Opens `next` on a new history entry. */
   push(next: Route): void;
   /** Rewrites the current entry, keeping where it was pushed from. */
   replace(next: Route): void;
@@ -120,8 +119,7 @@ interface Navigator {
   dispose(): void;
 }
 
-/** Owns the URL. `commit` renders a route in the frame of the input that asked for it; `fromHistory` marks the
-    browser's own navigations (Back, Forward, links, the first load). */
+/** Owns the URL: `commit` renders a route for the input that asked; `fromHistory` marks the browser's own navigations. */
 export function createNavigator(env: {
   location: Pick<Location, "hash">;
   history: Pick<History, "state" | "pushState" | "replaceState" | "back">;

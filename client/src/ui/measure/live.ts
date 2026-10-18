@@ -32,7 +32,6 @@ export type Live = ReturnType<typeof createLive>;
 
 const lives = new WeakMap<App, Live>();
 
-/** Gives the app's live values, made once and kept as long as the app. */
 export function liveOf(app: App): Live {
   let live = lives.get(app);
   if (!live) {
@@ -55,8 +54,7 @@ function createLive(app: App) {
     moved.set(moved.peek() + 1);
   };
 
-  // The peaks are running maxima of what the live ticks drew, a warmup's included, so the axes never step back and
-  // the scale is sized before the window opens; a new run starts them over.
+  // The peaks are running maxima of what live ticks drew, warmups included, so axes never step back; a new run starts them over.
   const peaks = signal({ lane: 0, combined: 0 });
   effect(() => {
     run.throughputVersion();
@@ -113,8 +111,7 @@ function createLive(app: App) {
     });
   });
 
-  // The result lens and the latency focus live here. Showing every server follows the run's focus, which moves to a
-  // survivor when its server leaves; a server shown alone takes the focus when it measured latency.
+  // The result lens and the latency focus; all servers follow the run's focus, and a server shown alone takes it when it measured latency.
   const lens = signal("");
   const chosen = signal<string | null>(null);
   const measuredLatency = (id: string | null) =>
@@ -159,8 +156,7 @@ function createLive(app: App) {
     const id = focus();
     return id ? run.latency(id) : null;
   });
-  // A late reply revises a closed bucket, so the series changes hundreds of times a second while replies are fast;
-  // views follow it at most once a frame.
+  // A late reply revises a closed bucket hundreds of times a second, so views follow the series at most once a frame.
   const bucketFrame = signal(0);
   let bucketPending: (() => void) | null = null;
   effect(() => {
@@ -173,7 +169,6 @@ function createLive(app: App) {
         });
     });
   });
-  /** Gives the focus server's buckets, as of this frame. */
   const buckets = (): readonly LatencyBucket[] => {
     bucketFrame();
     return series()?.buckets ?? [];
@@ -218,8 +213,7 @@ function createLive(app: App) {
     });
   });
 
-  /** Counts each transfer stage's samples in the series, with the first and the last time, as a key that changes only
-      when that stage's samples do, so a strip whose stage is not running never redraws for another's. */
+  /** Each transfer stage's sample count and first and last time, as a key that changes only with that stage's samples. */
   const stageSamples = computed(() => {
     run.throughputVersion();
     const seen: Partial<Record<TransferStage, { count: number; first: number; last: number }>> = {};
@@ -298,8 +292,7 @@ function createLive(app: App) {
     });
   });
 
-  // One projection of the run's facts gives each stage's state in the shown run; a run that ended keeps the phase it
-  // ended in for its stage.
+  // Each stage's state in the shown run, from one projection of its facts; an ended run keeps its last phase for its stage.
   const lastPhase = signal<Phase | null>(null);
   effect(() => {
     const phase = run.phase();
@@ -359,8 +352,7 @@ function createLive(app: App) {
       ? "blocked"
       : own;
   });
-  /** Lists the servers the run indicates, its own selection, else the selected ones in catalog order, as discovery
-      names them. */
+  /** The servers the run indicates: its own selection, else the selected ones in catalog order, as discovery names them. */
   const indicated = computed<readonly ServerIdentity[]>(() => {
     const details = run.details();
     if (details) return details.selection;
@@ -391,7 +383,6 @@ function createLive(app: App) {
     /** Holds the shown segment's length once its progress arrives; 0 before. */
     budget: budget as Read<number>,
     runClock,
-    /** Bumped whenever a live value is set. */
     moved: moved as Read<number>,
     /** Painting may stop once no run is live and the last change has landed. */
     active: (now: number) => run.running.peek() || now - movedAt < SETTLE_MS,

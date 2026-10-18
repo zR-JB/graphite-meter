@@ -11,7 +11,6 @@ export function canFocus(target: Element | null | undefined): target is HTMLElem
   );
 }
 
-/** Tells whether something other than the page itself holds focus. */
 export function hasFocus(): boolean {
   const active = document.activeElement;
   return active !== document.body && active !== document.documentElement && canFocus(active);

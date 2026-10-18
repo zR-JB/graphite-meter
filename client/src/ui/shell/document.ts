@@ -3,8 +3,7 @@ import type { PreferenceSignals } from "../../app/preferences";
 import { computed, effect, type Read } from "../../lib/signal";
 import { media } from "./layout";
 
-/** Keeps `<html data-theme>`, the theme-color metas and `data-explanations` in step with the preferences; `auto`
-    follows the system live. Returns the resolved theme. */
+/** Keeps `<html data-theme>`, the theme-color metas and `data-explanations` in step with the preferences; returns the resolved theme. */
 export function markDocument(
   preferences: Pick<PreferenceSignals, "theme" | "explanations">,
 ): Read<"light" | "dark"> {

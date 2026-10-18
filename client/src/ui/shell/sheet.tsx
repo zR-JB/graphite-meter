@@ -74,8 +74,7 @@ export function Sheet(props: {
     </dialog>
   ) as HTMLDialogElement;
 
-  // Its own width only, a property its content does not inherit: a resize restyles this one element. A closing
-  // docked sheet keeps the width its column gave it, so it leaves as it stood.
+  // Its own width only, which its content does not inherit, so a resize restyles one element; a closing docked sheet keeps its width.
   let column = 0;
   effect(() => {
     const flying = clampDock(props.preferred());

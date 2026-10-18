@@ -68,13 +68,11 @@ export interface ThroughputResult {
   /** The fastest disjoint window of at least 500 ms on every clock, never below the headline. */
   peakBytesPerSec: number;
   stabilityPct: number;
-  /** Time in the headline window when no server moved this direction. */
   quietMs?: number;
   totalBytes: number;
   reportedBytesPerSec: number;
 }
 
-/** A stage direction's settled headline and the window it describes. */
 interface Headline {
   result: ThroughputResult;
   window: AggregateWindow;
@@ -109,7 +107,6 @@ interface Open {
   stable: Boundary | null;
   wasStable: boolean;
   quiet: Totals;
-  /** Quiet time up to `stable`. */
   stableQuiet: Totals;
   /** All directions together, for the early-finish score. */
   combined: RateSeries;
@@ -146,7 +143,6 @@ export class Aggregate {
     return this.#open?.record ?? null;
   }
 
-  /** Whether the open interval already holds a reportable window. */
   get sufficient(): boolean {
     return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
@@ -199,8 +195,7 @@ export class Aggregate {
     };
   }
 
-  /** Ends the interval where a departed server last moved, so its silence never counts; survivors go on from
-      there in a `dropout` interval. */
+  /** Ends the interval where a departed server last moved, so its silence never counts; survivors go on in a `dropout` interval. */
   dropout(survivors: string[], atMs: number): void {
     const open = this.#open;
     if (!open || survivors.length === open.record.participants.length) return;
@@ -242,13 +237,11 @@ export class Aggregate {
     return sum;
   }
 
-  /** Download bytes count as the client consumes them. */
   addDownload(stage: TransferStage, id: string, bytes: number): void {
     this.#credit(stage, id, "down", bytes);
   }
 
-  /** Upload bytes count from each receiver's highest count, whether or not it reached a boundary. A receiver first
-      seen during a stage starts at its current count; a replacement starts at zero. */
+  /** Upload bytes count from each receiver's highest count; one first seen mid-stage starts at its count, a replacement at zero. */
   credit(id: string, receiver: { id: string; bytes: number }): void {
     const stage = this.#open?.record.stage;
     if (!stage || !Number.isSafeInteger(receiver.bytes) || receiver.bytes < 0) return;
@@ -259,8 +252,7 @@ export class Aggregate {
     ledger.set(receiver.id, Math.max(maximum, receiver.bytes));
   }
 
-  /** Adds a boundary; one missing any component is skipped, and the next valid one spans the gap. Returns the
-      window since the previous boundary. */
+  /** Adds a boundary and returns the window since the previous one; one missing a component is skipped and the next spans the gap. */
   observe(boundary: Boundary, final = false): AggregateWindow | null {
     const open = this.#open;
     if (!open) return null;
@@ -378,8 +370,7 @@ export class Aggregate {
     return stable;
   }
 
-  /** Each direction's headline from the latest complete interval with enough evidence; `stable` prefers the early
-      finish's steady window when it suffices for both, so a stage's figures describe one window. */
+  /** Each direction's headline from the latest complete interval with enough evidence; `stable` prefers the steady window for both. */
   settle(stage: TransferStage, stable: boolean): Record<Direction, Headline | null> {
     const intervals = this.intervals.filter((interval) => interval.stage === stage);
     const dirs = directions(stage);
@@ -452,8 +443,7 @@ export class Aggregate {
       : null;
   }
 
-  /** Keeps what an interval the limit lets go measured, where nothing later measured it: the stage's full window and
-      each server's share. Totals are read from the ledgers, which go on counting. */
+  /** Keeps what an evicted interval measured where nothing later did; totals come from the ledgers, which go on counting. */
   #keep(record: Interval): void {
     const open = this.#interval(record);
     if (!open || !record.complete || !record.full) return;

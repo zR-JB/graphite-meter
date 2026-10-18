@@ -44,8 +44,7 @@ const legalOf = (route: Route) => route.kind === "app" && route.legal;
 const resultOf = (route: Route) =>
   route.kind === "app" && route.workspace.kind === "history" ? (route.workspace.id ?? "") : null;
 
-/** What a route change moves on the spring: the stage and the sheets as one surface when the docked panels change,
-    the History panes when a result opens, closes or changes; null when it applies in place. */
+/** What a route change moves on the spring: the stage and sheets as one surface, or the History panes; null when it applies in place. */
 export function moves(
   current: Route,
   next: Route,
@@ -121,8 +120,7 @@ export function createShell(app: App, layout: Layout) {
   const historyOpen = computed(() => workspace() === "history");
   const selectedId = computed(() => resultOf(route()) || null);
 
-  // The side resized last keeps its width when both must shrink, so a dragged edge follows the pointer and the
-  // other side's preference is never rewritten.
+  // The side resized last keeps its width when both must shrink, so a dragged edge follows the pointer.
   const resized = signal<Side | null>(null);
   const docks = computed(() =>
     resolveDocks(
@@ -281,8 +279,7 @@ export function createShell(app: App, layout: Layout) {
     else showHistory(null, null, where);
   }
 
-  // Starting over asks first while a run is live or its unsaved result shows, and a new run first while the result
-  // it replaces could not be saved; the panels stay as they are.
+  // Starting over asks first while a run is live or its result unsaved, and a new run first when the result it replaces failed to save.
   const reset = { open: signal(false), reason: signal<"running" | "unsaved" | "rerun">("running") };
   const unsavable = () => !!app.run.result.peek() && app.saver.failed.peek();
   function startOver(): void {
@@ -310,8 +307,7 @@ export function createShell(app: App, layout: Layout) {
     });
   }
 
-  /** Light, dark, auto: each press steps from the theme applied when its change runs, so presses during a fade each
-      count. The new theme fades in over the old on the compositor; a fade a newer press skips is no error. */
+  /** Light, dark, auto: each press steps from the theme applied when it runs, fading in on the compositor; a skipped fade is no error. */
   function toggleTheme(): void {
     const update = () => app.preferences.set({ theme: NEXT_THEME[app.preferences.theme.peek()] });
     if (reducedMotion.peek() || !document.startViewTransition) return update();
@@ -384,16 +380,14 @@ export function createShell(app: App, layout: Layout) {
     // Every shortcut toggles or acts once: a held key acts on its press, and its repeats do nothing.
     if (!event.repeat) run(order);
   }
-  // Leaving mid-run, before a result's write lands, or while a result that could not be saved shows, asks first; a
-  // sign-out asked already.
+  // Leaving mid-run, before a result's write lands, or with an unsaved result asks first; a sign-out asked already.
   const beforeunload = (event: BeforeUnloadEvent) => {
     if (app.signingOut.peek()) return;
     if (!app.run.running.peek() && !app.saver.pending.peek() && !unsavable()) return;
     event.preventDefault();
     event.returnValue = "";
   };
-  // Chromium lights a clicked control's ring on any later key, even Shift or a screenshot chord; here only a key that
-  // moves focus does.
+  // Chromium lights a clicked control's ring on any later key; here only a key that moves focus does.
   const root = document.documentElement;
   const pointer = () => {
     root.dataset.pointer = "";
@@ -460,8 +454,7 @@ export function createShell(app: App, layout: Layout) {
     confirmStartOver,
     closeLegal,
     legalInvoker: () => legalInvoker,
-    /** Renders the location the page loaded with, a panel it names taking focus; call once the console is in the
-        page. */
+    /** Renders the location the page loaded with, a named panel taking focus; call once the console is in the page. */
     start: () =>
       untrack(() => {
         navigator.start();

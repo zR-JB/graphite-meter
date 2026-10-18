@@ -18,7 +18,6 @@ class Node<T = unknown> implements Owner {
   observers: Node[] = [];
   owned: (() => void)[] | null = null;
   disposed = false;
-  /** What the last run of a computed threw. */
   failure: { error: unknown } | null = null;
   state: State;
   constructor(

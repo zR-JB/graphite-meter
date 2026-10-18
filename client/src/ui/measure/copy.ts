@@ -44,7 +44,6 @@ export const LANES = {
   picker: "Show latency to",
 } as const;
 
-/** A card's facts, each with its explainer. */
 export const FACT = {
   peak: { label: "Peak", tip: TIP.peak },
   stability: { label: "Stability", tip: TIP.rateStability },

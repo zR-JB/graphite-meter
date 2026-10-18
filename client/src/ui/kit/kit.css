@@ -1,4 +1,3 @@
-/* The kit's own blocks. */
 @layer components {
   /* The width owns the gutter; the UA's own max-width would leave 19 px. */
   dialog.float {
@@ -55,8 +54,7 @@
     }
   }
 
-  /* A plate row with the link row's wash and ring; it contains the hidden checkbox so focusing it cannot scroll the
-     panel. On fills the track with ink, like a checked box; off is an empty track with the box's edge. */
+  /* A plate row with the link row's wash and ring, holding the hidden checkbox so focus cannot scroll the panel; on fills the track with ink. */
   .switch {
     position: relative;
     display: flex;

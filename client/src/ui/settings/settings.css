@@ -22,7 +22,6 @@
     & .kv > .presets + .strip-row {
       border-top: 0;
     }
-    /* The strip keeps its own spacing. */
     & .strip-row {
       display: block;
       padding-block: 0;
@@ -88,7 +87,6 @@
       justify-self: start;
     }
 
-    /* Test servers */
     & .servers {
       display: grid;
       gap: 6px;
@@ -180,7 +178,6 @@
       letter-spacing: var(--track-wide);
     }
 
-    /* Path pickers */
     & .picker {
       display: grid;
       gap: 6px;

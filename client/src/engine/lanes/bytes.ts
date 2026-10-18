@@ -10,8 +10,7 @@ const RANDOM_QUOTA = 65_536;
 /** Readings of a download's running total a flush can look back over: well past the 250 ms a flush waits. */
 const TOTALS = 512;
 
-/** Counts `body` through one reused 1 MiB buffer: a default reader allocates per chunk, which halves what a worker
-    reads at multi-Gbit/s. A stream without byte support is read chunk by chunk. */
+/** Counts `body` through one reused 1 MiB buffer: a default reader allocates per chunk, halving a worker's multi-Gbit/s reads. */
 export async function countBytes(
   body: ReadableStream<Uint8Array>,
   count: (bytes: number) => void,
@@ -43,8 +42,7 @@ export async function countBytes(
   }
 }
 
-/** A download's counted bytes, reported in batches with the measurement epoch they belong to. Recent readings of the
-    epoch's running total let a flush answer what was counted by a moment shortly back. */
+/** A download's counted bytes, reported in batches by epoch; recent running totals let a flush look a moment back. */
 export class ByteReports {
   #bytes = 0;
   #since = performance.now();
@@ -55,7 +53,6 @@ export class ByteReports {
   readonly #totals = new Float64Array(TOTALS);
   /** Readings taken this epoch; the latest is at `(#taken - 1) % TOTALS`. */
   #taken = 0;
-  /** The latest count's time. */
   #last = Number.NEGATIVE_INFINITY;
 
   constructor(readonly report: (bytes: number, epoch: number) => void) {}
@@ -91,8 +88,7 @@ export class ByteReports {
     this.#last = Number.NEGATIVE_INFINITY;
   }
 
-  /** The epoch's total as counted by `at`: every count by then, each at its own clock reading; before the latest
-      count, the latest reading at or before `at`; past what is kept, the earliest reading kept and its time. */
+  /** The epoch's total as counted by `at`; past what is kept, the earliest reading kept and its time. */
   totalAt(at: number): { total: number; at: number } {
     if (at >= this.#last) return { total: this.#total, at };
     const kept = Math.min(this.#taken, TOTALS);
@@ -105,7 +101,6 @@ export class ByteReports {
     return { total: this.#totals[oldest]!, at: this.#times[oldest]! };
   }
 
-  /** The answer to an owner's flush asked at page time `at`. */
   flushed(at: number) {
     this.flush();
     const counted = this.totalAt(at - performance.timeOrigin);
@@ -136,8 +131,7 @@ export function randomBlock(): Uint8Array<ArrayBuffer> {
 /** Bodies repeat one random block, so memory stays at the block whatever their size. */
 export const MAX_POST_BYTES = 256 * MIB;
 
-/** A lane's share of a server's posting budget, by device memory; Firefox reports none and silently stalls larger
-    POSTs, so there the pool spans all `sharing` lanes of the run. */
+/** A lane's share of a server's posting budget by device memory; Firefox reports none and stalls larger POSTs, so it pools all lanes. */
 export function largestPost(
   streams: number,
   sharing: number,

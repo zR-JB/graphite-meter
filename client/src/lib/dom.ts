@@ -31,7 +31,6 @@ export function Show<T>(props: {
 interface Row<T> {
   item: Signal<T>;
   index: Signal<number>;
-  /** The row's content lies between these markers. */
   start: Comment;
   end: Comment;
   dispose: () => void;
@@ -94,7 +93,6 @@ export function For<T>(props: {
   return fragment;
 }
 
-/** Moves a row's markers and everything between them after `previous`. */
 function move<T>(row: Row<T>, previous: Node): void {
   const range = document.createDocumentFragment();
   for (let node: Node | null = row.start; node; ) {

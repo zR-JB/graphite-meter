@@ -31,8 +31,7 @@ const SESSION: SessionTarget = {
 };
 const DOWNLOAD: Activity = { stage: "download", transfer: ["down"], loadedLatency: false };
 
-/** Opens one server's stage over `target`, whose credentials answer with `auth` and whose events are kept in order.
-    Its latency bus is `bus`. */
+/** One server's stage over `target`, with `auth` answering its credentials and `bus` as its latency bus. */
 function stage(
   activity: Activity,
   auth: Partial<ServerAuth> = {},
@@ -281,8 +280,7 @@ test("lanes answering a flush at different times each count what they had by the
   const cutoff = performance.now();
   const answer = outcome(flushing.resources.flush(cutoff));
   const at = performance.timeOrigin + cutoff;
-  // The first answers at once. The second's report sent before the cutoff arrives after it, and its answer 200 ms
-  // later. The third had counted 400 more bytes by the cutoff, and had counted more by the time it answered.
+  // The first answers at once, the second's pre-cutoff report arrives late, and the third counted 400 more by the cutoff.
   lanes[0]!.report({ type: "flushed", total: 1_000, at });
   bytes(lanes[1]!, 1);
   await elapse(200);

@@ -6,8 +6,7 @@ import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
-/** A view's painter: `wake()` draws next frame and on while `draw` returns true, at most every LIVE_FRAME_MS;
-    `wake(true)` draws before the next layout so a resized view keeps step with its box. Nothing draws while `away`. */
+/** A view's painter: `wake()` draws next frame and on while `draw` returns true; `wake(true)` draws before the next layout. */
 export function painter(
   draw: (now: number) => boolean,
   away?: Read<boolean>,
@@ -92,12 +91,10 @@ export function inView(element: Element, initial: boolean): Read<boolean> {
 
 type Size = { width: number; height: number };
 
-/** Every measured element, its last size and the views that follow it. */
 const measured = new Map<Element, { size: Size; follow: Set<(size: Size) => void> }>();
 let sizer: ResizeObserver | null = null;
 
-/** Each element's size in whole CSS px, so sub-pixel slide steps draw nothing; one shared observer batches a frame's
-    resizes without forcing layout. */
+/** Each element's size in whole CSS px, so sub-pixel steps draw nothing; one shared observer batches a frame's resizes. */
 export function measure<K extends string>(elements: Record<K, Element>): Record<K, Read<Size>> {
   sizer ??= new ResizeObserver((records) =>
     batch(() => {
@@ -137,8 +134,7 @@ export function measure<K extends string>(elements: Record<K, Element>): Record<
   return sizes;
 }
 
-/** A plot answers a mouse at once; a finger reads it on a tap or a sideways drag, and a vertical swipe scrolls past.
-    The plot sets `touch-action: pan-y pinch-zoom`. */
+/** A plot answers a mouse at once; a finger reads on a tap or sideways drag, and a vertical swipe scrolls past. */
 export function scrub(read: (event: PointerEvent) => void, clear: (event: PointerEvent) => void) {
   const DRAG_PX = 8;
   let touch: { id: number; x: number; y: number; dragging: boolean } | null = null;
@@ -170,8 +166,7 @@ export function scrub(read: (event: PointerEvent) => void, clear: (event: Pointe
   };
 }
 
-/** A mono figure that changes every frame, in a contained box as wide as its longest text, so a write lays out
-    nothing around it. */
+/** A mono figure that changes every frame, in a contained box as wide as its longest text, so a write lays out nothing. */
 export class Figure {
   readonly box: HTMLElement;
   readonly #text: Text;

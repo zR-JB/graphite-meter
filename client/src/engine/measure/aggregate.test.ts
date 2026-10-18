@@ -99,8 +99,7 @@ test("a stage's coverage counts from its first interval after the interval limit
 });
 
 test("a stage's stability is of its 250 ms rates however long it runs", () => {
-  // A link alternates between nothing and twice its mean every 250 ms and shows no stability, both before and after
-  // the rates kept for drawing merge at 4,096 buckets.
+  // A link alternating between nothing and twice its mean every 250 ms shows no stability, before and after buckets merge.
   for (const buckets of [4_094, 4_096, 8_192]) {
     const aggregate = new Aggregate();
     aggregate.begin("download", ["a"], 0);

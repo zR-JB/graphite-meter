@@ -66,8 +66,7 @@ async function download({
   }
 }
 
-/** Reads an answer to its end without keeping it; false, and the rest canceled, once it passes MAX_ANSWER_BYTES. A
-    failed read is the next request's to find. */
+/** Reads an answer to its end without keeping it; false, the rest canceled, once past MAX_ANSWER_BYTES. */
 async function drained(response: Response): Promise<boolean> {
   const reader = response.body?.getReader();
   if (!reader) return true;
@@ -119,8 +118,7 @@ async function upload({
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
       turnaround = Math.min(turnaround, elapsedMs);
-      // The rate counts each POST's turnaround as time, so a POST sized to span its send time and one turnaround
-      // sends for the send time.
+      // The rate counts each POST's turnaround as time, so a POST sized to its send time plus one turnaround sends for the send time.
       rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
       const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
       const want = (rate * (sendMs + turnaround)) / 1000;

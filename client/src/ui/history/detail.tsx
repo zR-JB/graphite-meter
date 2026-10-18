@@ -47,8 +47,7 @@ const PROBES_TIP =
 const PARTIAL_TIP = "\nPartial: Some probe outcomes are unknown. Counts cover known outcomes only.";
 const CLOSE_TIP = "Close result (Esc)\n↑ ↓ open the result above or below";
 
-/** How a role was carried: its mechanism, and the HTTP version each side saw when they differ. A version left to
-    negotiation that the browser did not report is not named. */
+/** How a role was carried: its mechanism, and each side's HTTP version when they differ; an unreported negotiated one is not named. */
 function path(role: Role, transport: string, protocol?: string, browserProtocol?: string) {
   const observed = browserProtocol && httpVersionLabel(browserProtocol);
   const server = protocol && protocol !== "negotiated" && httpVersionLabel(protocol);

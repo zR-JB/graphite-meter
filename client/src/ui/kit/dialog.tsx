@@ -7,7 +7,6 @@ import { canFocus, hasFocus } from "./focus";
 export function Dialog(props: {
   open: Read<boolean>;
   onCancel: () => void;
-  /** A click on the backdrop closes it. */
   lightDismiss?: boolean;
   /** Focus returns here if the opener is gone. The opener is the focused element when the dialog opens. */
   invoker?: () => HTMLElement | null;

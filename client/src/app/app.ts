@@ -198,9 +198,7 @@ export function createApp() {
     history,
     saver,
     saving,
-    /** Why Start cannot run now, or "". */
     blocker,
-    /** Why a planned stage outlasts a selected server's limit, or "". */
     limitError,
     /** The running test's length, else the next one's, its warmup adapted to the latency server's round trip. */
     plannedMs,
@@ -215,8 +213,7 @@ export function createApp() {
       booted.set(true);
       void servers.load();
     },
-    /** Before the sign-out form leaves: a running test ends as a lapsed sign-in ends it, the result's write gets its
-        few seconds, and the sign-in the form ends is no reason to leave for sign-in. */
+    /** Before the sign-out form leaves: a running test ends, the result's write gets a few seconds, and nothing leaves for sign-in. */
     async signOut(): Promise<void> {
       leave();
       await settled();

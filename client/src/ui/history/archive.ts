@@ -101,8 +101,7 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
       },
     );
   }
-  // The open result is read once the list is, and again as it leaves the list, so one deleted elsewhere reads as
-  // missing; closing it lets go of it.
+  // The open result is read once the list is, and again as it leaves the list, so one deleted elsewhere reads as missing.
   effect(() => {
     const id = selectedId();
     const listedNow = listedOpen();
@@ -134,7 +133,6 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
     }),
     /** Reads the archive again; `quiet` keeps the list on screen meanwhile. */
     load,
-    /** Reads the open result again after it could not be read. */
     reread(): void {
       const id = selectedId.peek();
       if (id === null) return;

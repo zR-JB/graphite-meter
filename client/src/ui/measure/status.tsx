@@ -115,11 +115,9 @@ export function StatusBar(props: { app: App; shell: Shell }): Node {
 
 /** A toast lingers for its reading time, then goes; not motion. */
 const LINGER_MS = 3_200;
-/** Its fade as it goes, while it stays laid out. */
 const LEAVE_MS = 150;
 
-/** Only failures, issues, stalls and a result History could not save: the status strip already names every phase.
-    A stall shows while it lasts, and an unsaved result's warning after any toast, for as long as it is unsaved. */
+/** Only failures, issues, stalls and a result History could not save; a stall shows while it lasts, an unsaved warning while unsaved. */
 export function PhaseToast(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;

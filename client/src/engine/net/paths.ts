@@ -17,8 +17,7 @@ type TargetOf<R extends Role> = R extends "throughput" ? ThroughputTarget : Late
 type Transport = Target["transport"];
 type Browser = Pick<PageConfig, "origin" | "secure" | "webTransport">;
 
-/** A saved path choice, parsed once: Automatic, an HTTP version, a mechanism, or one origin's target. Anything else
-    stays an origin that names nothing, so it round-trips and resolves to "not offered". */
+/** A saved path choice: Automatic, an HTTP version, a mechanism, or one origin's target; anything else names nothing but round-trips. */
 export type Selection =
   | { kind: "auto" }
   | { kind: "protocol"; protocol: HttpProtocol }
@@ -31,7 +30,6 @@ export const PROTOCOL_LABEL: Record<HttpProtocol, string> = {
   http3: "HTTP/3",
   negotiated: "Negotiated HTTP",
 };
-/** In the order pickers list them. */
 const TRANSPORT_LABEL: Record<Transport, string> = {
   "fetch-stream": "HTTP",
   websocket: "WebSocket",
@@ -79,8 +77,7 @@ export function protocolFromNextHop(
         : null;
 }
 
-/** Whether `url` lies where `entry` may be reached: its own hostname on any scheme and port, or an exact additional
-    origin. Discovery can never widen this, and it grants no credential on its own. */
+/** Whether `url` lies where `entry` may be reached: its own hostname, or an exact additional origin; this grants no credential. */
 export function allowsOrigin(
   entry: Pick<CatalogEntry, "url" | "additionalOrigins">,
   url: string,
@@ -109,8 +106,7 @@ export function isLoopback(hostname: string): boolean {
   );
 }
 
-/** Why this page cannot reach `origin` at all, or null. Literal IPv6 hosts cannot be named in the page's connection
-    policy (its own origin is covered by 'self'); an HTTPS page reaches clear HTTP only on loopback. */
+/** Why this page cannot reach `origin`: CSP cannot name literal IPv6 hosts, and an HTTPS page reaches clear HTTP only on loopback. */
 export function originPolicy(
   origin: string,
   page: Pick<PageConfig, "origin" | "secure">,
@@ -150,8 +146,7 @@ function byOrigin<T extends Target>(
   return origins;
 }
 
-/** The advertised targets grouped by origin, each origin judged once against this page. WebTransport dials only
-    https: URLs, so a session target on a clear origin is not offered. */
+/** The advertised targets by origin, each judged once against this page; WebTransport dials only https: URLs. */
 export function classify(
   capabilities: Preflight["capabilities"],
   discoveryOrigin: string,
@@ -215,8 +210,7 @@ const pointsAt = (selection: Selection, target: Target) =>
 
 const RANK: Record<HttpProtocol, number> = { http1: 0, http2: 1, http3: 2, negotiated: 3 };
 
-/** Automatic's candidates, best first; ties go to the discovery origin, then TLS, then the id, so the order never
-    depends on how the server listed them. */
+/** Automatic's candidates, best first; ties go to the discovery origin, then TLS, then the id. */
 export function candidates<R extends Role>(
   discovery: Discovery,
   role: R,
@@ -246,8 +240,7 @@ function locate<R extends Role>(discovery: Discovery, role: R, id: string) {
   return null;
 }
 
-/** The target a run would use for `selection`, or null when nothing usable matches. An explicit choice never falls
-    back to another mechanism. */
+/** The target a run would use for `selection`, or null; an explicit choice never falls back to another mechanism. */
 export function resolve<R extends Role>(
   discovery: Discovery,
   role: R,
@@ -318,8 +311,7 @@ export function unresolvedReason(
   return { message: `${selectionName(selection)} not offered`, retry: "needs-user" };
 }
 
-/** Probe evidence and the upload id are HTTP whichever mechanism moves the bytes: the origin's advertised fetch
-    target, else a negotiated view of it. */
+/** Probe evidence and the upload id are HTTP whatever moves the bytes: the origin's fetch target, else its negotiated view. */
 export function fetchView(discovery: Discovery, target: ThroughputTarget): FetchTarget {
   const view = discovery.throughput
     .get(target.origin)
@@ -335,8 +327,7 @@ export function fetchView(discovery: Discovery, target: ThroughputTarget): Fetch
   };
 }
 
-/** Whether a path verified for `verifiedFor` still answers `selection`: Automatic while its first candidate is
-    unchanged (a verified fallback stays good), an explicit choice while it resolves to the verified target. */
+/** Whether a verified path still answers `selection`: Automatic while its first candidate holds, an explicit choice while it resolves there. */
 export function stillValid(
   path: { generation: string; verifiedFor: VerifiedFor },
   discovery: Discovery,
@@ -351,8 +342,7 @@ export function stillValid(
   );
 }
 
-/** A choice that applies to every server: carries a transport preference between servers without carrying another
-    server's origin. It resolves as if WebTransport existed, as it converts a preference, not this browser. */
+/** A choice for every server: a transport preference without another server's origin, resolved as if WebTransport existed. */
 export function portable(
   role: Role,
   selection: Selection,

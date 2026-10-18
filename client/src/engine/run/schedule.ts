@@ -21,7 +21,6 @@ export interface Activity {
 
 export interface Segment {
   phase: "warmup" | Stage;
-  /** Run-clock milliseconds. */
   start: number;
   end: number;
   activity: Activity;
@@ -38,7 +37,6 @@ const TRANSFER: Record<Stage, Activity["transfer"]> = {
   bidirectional: ["down", "up"],
 };
 
-/** Each planned stage's activity, in stage order. */
 export const activities = (plan: Plan): Activity[] =>
   STAGES.filter((stage) => planned(plan, stage)).map((stage) => ({
     stage,
@@ -77,15 +75,12 @@ export function timeline(plan: Plan): Segment[] {
   return segments;
 }
 
-/** The whole timeline's length. */
 export const totalMs = (plan: Plan) => timeline(plan).at(-1)?.end ?? 0;
 
-/** The segment covering `elapsed`, or undefined past the end. */
 export const segmentAt = (segments: readonly Segment[], elapsed: number) =>
   segments.find((segment) => elapsed >= segment.start && elapsed < segment.end);
 
-/** The unfinished timeline under a changed plan. What ran stays; the running segment takes its new length (never
-    ending before now); stages not started yet follow. `between` means no segment is active. */
+/** The unfinished timeline under a changed plan: what ran stays, the running segment takes its new length, later stages follow. */
 export function replan(
   segments: readonly Segment[],
   elapsed: number,

@@ -15,22 +15,18 @@ import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedul
 import type { HttpProtocol } from "../../engine/types";
 import { isRecord } from "../../lib/decode";
 
-/** Readable records kept and listed: the newest by completion. */
 export const HISTORY_LIMIT = 2_000;
 
 export interface HistoryRecord {
   schemaVersion: 6;
   /** A v4 UUID when this client saved it; older rows may carry any text. */
   id: string;
-  /** Epoch ms of the run's completion. */
   completedAt: number;
-  /** The client version that saved it. */
   build: string;
   result: RunResult;
 }
 
-/** A finished run as History keeps it, apart from the result on screen: one its own evidence contradicts is saved
-    as incomplete, while the view keeps the outcome the run reported. */
+/** A finished run as History keeps it: one its own evidence contradicts is saved as incomplete. */
 export function historyRecord(run: { result: RunResult; plans: StagePlans }): HistoryRecord {
   const record: HistoryRecord = {
     schemaVersion: 6,
@@ -57,8 +53,7 @@ function createUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** Stored leaves are finite numbers, text of at most 2,048 characters, booleans, null or absent; objects and lists
-    hold at most 512 entries and nest at most 8 deep. */
+/** Stored leaves are finite numbers, text up to 2,048 characters, booleans or null; at most 512 entries, 8 deep. */
 function plain(value: unknown, depth = 0): boolean {
   if (value == null || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
@@ -68,8 +63,7 @@ function plain(value: unknown, depth = 0): boolean {
   return entries.length <= 512 && entries.every((entry) => plain(entry, depth + 1));
 }
 
-// Checked in place rather than decoded: a record keeps every field, and only those History's views dereference
-// are checked.
+// Checked in place rather than decoded, and only the fields History's views dereference.
 type Check = (value: unknown) => boolean;
 const finite: Check = (value) => Number.isFinite(value);
 const text: Check = (value) => typeof value === "string";
@@ -134,7 +128,6 @@ function recordShape(upgraded: boolean): Check {
   return shape({
     schemaVersion: (value) => value === (upgraded ? 6 : 5),
     id: text,
-    // Any time a Date holds.
     completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
     build: text,
     ...(upgraded ? {} : { engine: text }),
@@ -174,15 +167,13 @@ function recordShape(upgraded: boolean): Check {
 const readable = recordShape(true);
 const stored = recordShape(false);
 
-/** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
   return isRecord(value) && plain(value) && readable(value)
     ? (value as unknown as HistoryRecord)
     : null;
 }
 
-/** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
-    either, and it is then left as stored. */
+/** A schema 4 or 5 row in this build's form; null when its own release could not read it either. */
 export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isRecord(value) || !plain(value)) return null;
   try {
@@ -213,7 +204,6 @@ const lane = <T extends Omit<ThroughputResult, "quietMs"> | null>(saved: T): T =
   };
 const latency = (saved: LatencyResult | null): LatencyResult | null =>
   saved && { ...saved, stabilityPct: saved.stabilityPct ?? null };
-// A status this build does not know reads as not run.
 const stageStatuses = (saved: Record<Stage, StageStatus>) =>
   Object.fromEntries(
     STAGES.map((stage) => [stage, STATUSES.includes(saved[stage]) ? saved[stage] : "not-run"]),
@@ -457,13 +447,11 @@ export type HistorySort = "date" | "download" | "upload" | "bidirectional" | "id
 /** Latency reads best lowest first; dates and rates highest first. */
 export const naturalDescending = (sort: HistorySort) => sort !== "idle" && sort !== "loaded";
 
-/** What History's list shows of a record and orders it by: a few hundred bytes of a record's kilobytes, so the list
-    stays small while History is open. A record is read whole only as it opens. */
+/** What History's list keeps of a record: a few hundred bytes of its kilobytes; a record is read whole only as it opens. */
 export interface HistoryEntry {
   id: string;
   completedAt: number;
   outcome: Outcome;
-  /** How many servers ran, and the first one's name. */
   servers: number;
   server: string;
   stages: Record<Stage, StageStatus>;
@@ -473,7 +461,6 @@ export interface HistoryEntry {
   loadedStage: TransferStage | null;
   /** The one direction a bidirectional stage kept, when it kept only one. */
   lone: "down" | "up" | null;
-  /** The value each sort orders it by. */
   keys: Record<HistorySort, number | null>;
 }
 

@@ -16,7 +16,6 @@ export const ROUTES = {
   wtPing: "/wt/ping",
 } as const;
 
-/** The sign-in routes the browser reaches, as api/routes.txt pins them. */
 export const AUTH_ROUTES = {
   login: "/login",
   password: "/auth/password",

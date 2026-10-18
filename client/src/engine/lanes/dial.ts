@@ -1,5 +1,4 @@
-// A worker's socket dial and its single-use ticket (api/wire.md#socket-credentials). A ticket whose dial lapsed
-// unanswered may be unspent, so close dials share it and retries stay inside the server's ticket limit.
+// A worker's socket dial and its single-use ticket; a lapsed dial's ticket may be unspent, so close dials share it.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";

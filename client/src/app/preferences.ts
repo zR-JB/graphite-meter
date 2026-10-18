@@ -62,7 +62,6 @@ function clampDuration(key: DurationKey, value: unknown): number {
     : DEFAULT_CONFIG.duration[key];
 }
 
-/** The History list's share of its body width until the user moves it. */
 export const HISTORY_SPLIT = 0.42;
 
 export const HISTORY_COLUMNS = ["download", "upload", "bidirectional", "idle", "loaded"] as const;
@@ -70,7 +69,6 @@ export type HistoryColumn = (typeof HISTORY_COLUMNS)[number];
 export type Theme = "dark" | "light" | "auto";
 type HistoryPreference = "default" | "enabled" | "disabled";
 
-/** In the order they are stored. */
 export interface Preferences {
   config: TestConfig;
   unitBase: "base10" | "base2";
@@ -84,7 +82,6 @@ export interface Preferences {
   historyColumns: HistoryColumn[];
   /** Docked sheet widths in px, clamped where they are used. */
   dockWidth: { left: number; right: number };
-  /** The History list's share of its body width. */
   historySplit: number;
 }
 
@@ -183,7 +180,6 @@ export function readPreferences(stored: unknown): Preferences {
 export type PreferenceSignals = { readonly [K in keyof Preferences]: Read<Preferences[K]> };
 
 export interface PreferenceStore extends PreferenceSignals {
-  /** The one writer. */
   set(patch: Partial<Preferences>): void;
   dispose(): void;
 }
@@ -198,8 +194,7 @@ function read(storage: Storage | null): unknown {
   }
 }
 
-/** Loads, saves and follows other tabs' History choices; a save rewrites only this tab's changed fields over a fresh
-    read, so tabs keep each other's changes. */
+/** Loads, saves and follows other tabs' History choices; a save rewrites only this tab's changed fields over a fresh read. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,

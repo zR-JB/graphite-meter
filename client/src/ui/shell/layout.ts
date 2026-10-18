@@ -18,8 +18,7 @@ export interface DockWidths {
   max: number;
 }
 
-/** Each open side within 360 to 720 px, the stage keeping 800 px; the excess comes out of each side in proportion,
-    except `priority`, the side being dragged. */
+/** Each open side within 360 to 720 px, the stage keeping 800 px; the excess comes out in proportion, except from `priority`. */
 export function resolveDocks(
   width: number,
   preferred: Record<Side, number>,
@@ -56,7 +55,6 @@ export interface Layout {
   mode: Read<Mode>;
   /** Flyouts rise from the bottom: a phone held upright. */
   bottomSheet: Read<boolean>;
-  /** The console's width in px. */
   width: Read<number>;
 }
 
@@ -69,8 +67,7 @@ export function media(query: string): Read<boolean> {
   return matches;
 }
 
-/** Follows the viewport and the console's own width (read once per frame at most, never inside observer delivery).
-    Its listeners and observer live as long as the owner that creates it. */
+/** Follows the viewport and the console's width, read at most once a frame; its listeners live as long as its owner. */
 export function createLayout(console: HTMLElement, root = document.documentElement): Layout {
   const two = media(`(min-width: ${TWO_DOCKS}px)`);
   const one = media(`(min-width: ${ONE_DOCK}px)`);

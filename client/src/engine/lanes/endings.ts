@@ -85,8 +85,7 @@ export const sessionClosed = (code: number | undefined): Ending | null =>
       ? { reason: "timeout", retry: true, detail: "webtransport session reached its bound" }
       : null;
 
-/** One lane's or feed's restart pause: 300 ms, doubled by consecutive busy refusals and raised by a Retry-After,
-    within 1.2 s. */
+/** One lane's or feed's restart pause: 300 ms, doubled by busy refusals and raised by Retry-After, within 1.2 s. */
 export class Backoff {
   #busy = 0;
 
@@ -104,7 +103,6 @@ export class Backoff {
     this.#busy = 0;
   }
 
-  /** Refused as busy since it last delivered. */
   get busy(): boolean {
     return this.#busy > 0;
   }

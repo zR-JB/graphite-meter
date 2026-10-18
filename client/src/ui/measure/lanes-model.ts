@@ -52,8 +52,7 @@ export function nearestMetric(row: Values, ms: number): Metric | null {
   return best;
 }
 
-/** Steps a slider key through the present metrics, null for any other key; from no reading, a step down takes the
-    last. */
+/** Steps a slider key through the present metrics, null for other keys; from no reading, a step down takes the last. */
 export function stepMetric(row: Values, from: Metric | null, key: string): Metric | null {
   const metrics = present(row);
   const index = from === null ? -1 : metrics.indexOf(from);
@@ -78,7 +77,6 @@ export function stepMetric(row: Values, from: Metric | null, key: string): Metri
 /** A twentieth of the probes timing out is worth a look. */
 export const TIMEOUTS_WARN = 0.05;
 
-/** Gives the share of resolved probes that timed out; null before any resolved. */
 export const timeoutShare = (summary: LatencySummary | null) =>
   summary?.probeCount ? summary.timeoutCount / summary.probeCount : null;
 

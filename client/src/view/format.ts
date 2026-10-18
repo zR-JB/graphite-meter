@@ -28,8 +28,7 @@ const guarded =
   (value: Value): string =>
     known(value) ? format(value) : MISSING;
 
-/** Every figure rounds here, as `toFixed` does, but never reads as a negative zero or in exponent form: -0.001 reads
-    0.00 and 1e21 in full. */
+/** Rounds as `toFixed` does, but never to a negative zero or exponent form: -0.001 reads 0.00 and 1e21 in full. */
 function fixed(value: number, digits: number): string {
   const text =
     Math.abs(value) < 1e21
@@ -56,8 +55,7 @@ export const fmtSpeed = guarded((value) =>
 
 const fixedMs = (ms: number) => fixed(ms, Math.abs(Math.round(ms * 10) / 10) < 100 ? 1 : 0);
 
-/** A latency figure has one decimal below 100 ms, decided after rounding. Browser timers resolve 0.1 ms, so a smaller
-    measured value reads as below it. */
+/** One decimal below 100 ms, decided after rounding; browser timers resolve 0.1 ms, so smaller values read as below it. */
 export const fmtMs = guarded((ms) => (ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms)));
 
 export const fmtLatency = (ms: Value) => withUnit(fmtMs(ms), "ms");
@@ -114,7 +112,6 @@ export function rateTier(bytesPerSec: number, units: Units): number {
 export const toRateUnit = (bytesPerSec: number, units: Units, tier: number) =>
   inKind(bytesPerSec, units.kind) / STEP[units.base] ** tierOf(tier);
 
-/** Bytes per second of a value read in the unit of `tier`. */
 export const fromRateUnit = (value: number, units: Units, tier: number) =>
   (value * STEP[units.base] ** tierOf(tier)) / (units.kind === "bits" ? 8 : 1);
 
@@ -156,8 +153,7 @@ export const fmtStageTime = guarded((ms) => {
 const UNIT_MS = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
 const UNIT = /^(ms|s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/;
 
-/** A typed time in ms, or null. Seconds apply unless a unit is named ("90", "2.5", "2h", "1 h 30 min", "500ms"), or a
-    clock ("1:30", "1:30:00") is typed. A shown stage time reads back as itself. */
+/** A typed time in ms, or null: seconds unless a unit ("2h", "500ms") or a clock ("1:30") is typed; a shown time reads back as itself. */
 export function parseDuration(text: string): number | null {
   const input = text.trim().toLowerCase();
   let total = 0;
@@ -179,8 +175,7 @@ export function parseDuration(text: string): number | null {
   return Number.isFinite(total) ? Math.round(total) : null;
 }
 
-/** Seconds into a stage over its length as the stepper shows it: "1.9 / 2.5 s", "65.3 / 5 min". The seconds keep
-    counting past a minute, so the text never jumps at one. */
+/** Seconds into a stage over its length, "1.9 / 2.5 s"; the seconds keep counting past a minute, so the text never jumps. */
 export function fmtProgress(elapsedMs: Value, totalMs: Value): string {
   if (!known(elapsedMs) || !known(totalMs)) return MISSING;
   return `${fixed(Math.max(0, elapsedMs) / 1000, 1)} / ${fmtStageTime(totalMs)}`;
@@ -197,8 +192,7 @@ export function fmtCounted(count: Value, one: string, other = `${one}s`): string
   return shown === MISSING ? MISSING : `${shown} ${shown === "1" ? one : other}`;
 }
 
-/** A share in percent as the terminal clients show it. Two decimals below 1% keep a rare timeout legible, one from
-    there: 0.25%, 12.5%, 100.0%. */
+/** A share in percent as the terminal clients show it: two decimals below 1%, one from there. */
 export const fmtPercent = guarded((pct) => `${fixed(pct, pct > 0 && pct < 1 ? 2 : 1)}%`);
 
 /** A dial label is ungrouped, decimals down to the third significant figure, no trailing zeros: 0.25, 2.5, 1000. */

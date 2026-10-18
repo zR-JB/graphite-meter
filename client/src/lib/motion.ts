@@ -24,8 +24,7 @@ interface Sample {
   now?: number;
 }
 
-/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples: samples
-    correct the value, never step it. The offset from the sample fades linearly, so a clock keeps its own pace. */
+/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples; corrections never step it. */
 export class Glide {
   #from: number;
   #to: number;
@@ -39,7 +38,6 @@ export class Glide {
     this.#from = this.#to = value;
   }
 
-  /** The last sample. */
   get target(): number {
     return this.#to;
   }
@@ -78,7 +76,6 @@ export class Glide {
     this.#fixed = fixed;
   }
 
-  /** Stops where it is now. */
   hold(now = pageMs()): void {
     this.set(this.at(now), { snap: true, now });
   }
@@ -131,7 +128,6 @@ class Handoff<T> {
     });
   }
 
-  /** How long the shown view fades out. */
   #fadeMs(): number {
     return typeof this.outMs === "function" ? this.outMs(this.#shown.peek()) : this.outMs;
   }

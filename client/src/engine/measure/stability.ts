@@ -9,7 +9,6 @@ export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 interface Moments {
   count: number;
   mean: number;
-  /** Sums the squared deviations from the mean. */
   squares: number;
 }
 
@@ -21,10 +20,8 @@ export interface Mark {
 
 const fresh = (): Moments => ({ count: 0, mean: 0, squares: 0 });
 
-/** Cuts byte and time evidence into fixed 250 ms rates. It keeps their spread as running moments over every rate and
-    over a window opened at a point (a steady stretch), and the latest `keep` rates themselves. */
+/** Fixed 250 ms rates from byte and time evidence, with running moments over all and over an open window, and the latest `keep`. */
 export class RateSeries {
-  /** Holds the latest rates, at most `keep`. */
   readonly recent: number[] = [];
   #bytes = 0;
   #ms = 0;
@@ -36,7 +33,6 @@ export class RateSeries {
     return { all: { ...this.#all }, window: this.#window && { ...this.#window } };
   }
 
-  /** Takes the moments back to an earlier mark. */
   restore(mark: Mark): void {
     this.#all = { ...mark.all };
     this.#window = mark.window && { ...mark.window };
@@ -136,8 +132,7 @@ export const minCoverage = (early: boolean) => (early ? EARLY_FINISH.minCoverage
 export const stillStable = (wasStable: boolean, score: number) =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
-/** Returns the evidence a stage can reach within its time, never below the statistical minimum. `intervalMs` is
-    the fixed probe spacing of a latency stage, or null when reply-driven. */
+/** The evidence a stage can reach within its time, never below the statistical minimum; `intervalMs` null is reply-driven. */
 function sampleFloor(
   kind: "latency" | "transfer",
   durationMs: number,

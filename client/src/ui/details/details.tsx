@@ -150,7 +150,6 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const supports = (items: string[] | null) =>
     items === null ? ["Checking server"] : items.length ? items : ["None advertised"];
 
-  /** How the last copy went, for a moment. */
   const copied = signal<"" | "copied" | "failed">("");
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(copiedTimer));

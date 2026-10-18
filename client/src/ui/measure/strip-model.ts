@@ -11,8 +11,7 @@ const REPLY_PX = 4;
 
 export const columnsFor = (width: number) => Math.max(8, Math.floor(width / BIN_PX));
 
-/** One lane's non-empty bins: center time (timeline ms) and mean rate (bytes/s), in time order. Buffers are kept and
-    grown, so rebinning a live series allocates nothing once the width settles. */
+/** One lane's non-empty bins: center time and mean rate in time order; buffers are kept so rebinning allocates nothing. */
 export class Lane {
   t = new Float64Array(0);
   v = new Float64Array(0);
@@ -22,8 +21,7 @@ export class Lane {
   #counts = new Uint32Array(0);
   #lines = new Float64Array(0);
 
-  /** Rebins one stage's samples of one direction; samples before `start` stay out and those past the span pile into
-      the last column. */
+  /** Rebins one stage's samples of one direction; samples before `start` stay out, those past the span pile into the last column. */
   fill(
     samples: readonly ThroughputSample[],
     stage: TransferStage,
@@ -65,8 +63,7 @@ export class Lane {
   }
 }
 
-/** Tangents of the monotone cubic (Fritsch-Carlson, weighted harmonic mean) through `n` points, written to `out`:
-    the curve passes every point and never overshoots between two of them. */
+/** Monotone cubic tangents (Fritsch-Carlson) through `n` points into `out`: the curve passes every point and never overshoots. */
 export function monotoneTangents(
   x: ArrayLike<number>,
   y: ArrayLike<number>,
@@ -114,8 +111,7 @@ export interface ReplyBar {
   hi: number;
 }
 
-/** A stage's reply buckets as bars. Buckets narrower than a bar's pitch join whole, on the grid of the series' first
-    bucket, so no bucket is drawn twice and a live bar only grows as its buckets close; a bucket of timeouts has none. */
+/** A stage's reply buckets as bars, narrower ones joined whole on the first bucket's grid, so a live bar only grows; timeouts have none. */
 export function replyBars(
   buckets: readonly LatencyBucket[],
   phase: LatencyBucket["phase"],

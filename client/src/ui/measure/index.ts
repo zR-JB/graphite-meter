@@ -1,4 +1,3 @@
-// The instrument's exports for the shell and for History's saved results.
 import "./measure.css";
 
 export { ResultSummary } from "./cards";

@@ -50,7 +50,6 @@ export interface PageSession {
   /** Set once when the page's sign-in ends. The app then saves what it can and navigates to sign-in. */
   readonly ended: Read<SessionEnd | null>;
   end(reason: SessionEnd): void;
-  /** Adds the sign-in's CSRF token, which its readable cookie mirrors, to requests that change state. */
   headers(method: string): Record<string, string>;
   /** Asks the page's own server, with its cookies, CSRF on unsafe methods, and no redirect with credentials. */
   fetch(input: string, init?: RequestInit): Promise<Response>;
@@ -62,12 +61,10 @@ export interface PageSession {
   account(signal: AbortSignal): Promise<Account | null>;
 }
 
-/** One check whether a sign-in or grant ended gets this long. */
 export const ENDED_CHECK_MS = 3_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Asks whether a sign-in or grant ended, from one `check` in flight for everyone who asks, so an expiry never fans
-    out into a burst from parallel lanes. An asker that gave up hears no. A failed check is no evidence. */
+/** Asks whether a sign-in or grant ended through one shared check in flight, so an expiry never fans out; a failure is no evidence. */
 export function endedCheck(
   check: () => Promise<Response>,
 ): (signal?: AbortSignal) => Promise<boolean> {

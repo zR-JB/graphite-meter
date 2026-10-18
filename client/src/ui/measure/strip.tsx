@@ -19,7 +19,6 @@ import {
 } from "./strip-model";
 
 const TOP_PAD = 3;
-/** A readout keeps this gap from the cursor beside it. */
 const GAP = 10;
 
 /** The running stage's leading edge at a frame holds now on the timeline and each lane's glided rate (bytes/s). */
@@ -158,7 +157,6 @@ export function StageGraph(props: StripProps): HTMLElement {
   let keyboard = false;
   const x = (t: number) =>
     Math.min(width(), Math.max(0, ((t - props.start()) / (props.span() || 1)) * width()));
-  /** Gives a reply's height on a track `h` px tall, inside a 1.5 px margin. */
   const trackY = (ms: number, h: number) =>
     h - 1.5 - Math.min(1, Math.max(0, ms / (props.latencyTop() || 1))) * (h - 3);
   const time = (when: number) => fmtDuration(Math.max(0, when - props.start()), 1);
@@ -289,8 +287,7 @@ export function StageGraph(props: StripProps): HTMLElement {
     clear();
   });
 
-  // Each reply bar spans a bucket group's fastest to slowest reply, at least a dot's length, on a whole pixel; one
-  // over the track's top is clamped there and capped by an arrowhead. Only bars that changed are written.
+  // Each reply bar spans its group's fastest to slowest reply on a whole pixel, clamped under an arrowhead past the top; only changes are written.
   const marks: { line: SVGLineElement; over: SVGPathElement | null; key: string }[] = [];
   let medianAt = "";
   effect(() => {

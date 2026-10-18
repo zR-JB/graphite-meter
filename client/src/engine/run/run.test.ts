@@ -73,7 +73,6 @@ function harness(
       run.start();
     },
     elapse: (ms: number) => clock.advance(ms),
-    /** The shown phases, each once per stretch. */
     phases: () =>
       events.flatMap((event, index) =>
         event.type === "phase" &&
@@ -143,8 +142,7 @@ test("warmup probes never enter a measured population", async () => {
 });
 
 test("loaded latency ends with the stage's window, however late its final checkpoint answers", async () => {
-  // A probe every 80 ms: 10 ms replies through the 1 s upload window, 200 ms ones after it, while the final checkpoint
-  // takes 600 ms to answer.
+  // A probe every 80 ms: 10 ms replies through the 1 s upload window, 200 ms after it, and a final checkpoint taking 600 ms.
   const measure = (events: StageEvents) => {
     const start = clock.t;
     clock.every(80, () => {
@@ -196,8 +194,7 @@ test("an aborted latency stage keeps its summary after the run releases its repl
 });
 
 test("a warmup moves the live rate, which no result counts, and the window opens on that rate", async () => {
-  // 3 bytes per ms through the default 800 ms warmup, then the fixture's 1 byte per ms through the window. The live
-  // rate shows 500 ms after its first delivery, within the warmup.
+  // 3 bytes per ms through the 800 ms warmup, then 1 per ms; the live rate shows 500 ms after its first delivery, within the warmup.
   let warming = () => {};
   const h = setup(
     [
@@ -733,8 +730,7 @@ test("a lane that fails while a measured stage shuts down never fails the stage,
 });
 
 test("a final checkpoint answered late over a full uplink keeps a server that was moving", async () => {
-  // The feed's last record comes at 900 ms; the checkpoint asked as the window closed answers 1.2 s later with that
-  // count on the receiver's later clock, so the server seems to have stood still for two seconds it was not measured.
+  // The feed's last record comes at 900 ms and the closing checkpoint 1.2 s later, as if the server stood still two unmeasured seconds.
   const late: Partial<Peer> = {
     silent: (_activity, ms) => ms > 900,
     checkpoint: () =>

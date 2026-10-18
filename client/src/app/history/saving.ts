@@ -10,8 +10,7 @@ const RETRYING = "Could not save this result locally. Future writes will be retr
 const UNORDERED = "Could not save this result: History did not answer when it finished.";
 
 interface HistorySaving {
-  /** The latest finished result: saved now while saving is on, else the moment it turns on in any tab, until
-      withdrawn. */
+  /** The latest finished result: saved while saving is on, or once it turns on in any tab, until withdrawn. */
   offer(record: HistoryRecord): void;
   /** A new Start or Start over: the result shown before can no longer be saved, though queued writes go on. */
   withdraw(): void;
@@ -21,7 +20,6 @@ interface HistorySaving {
   readonly unsaved: Read<boolean>;
   /** The offered result's write was refused or given up: not saved, though saving is on and nothing removed it. */
   readonly failed: Read<boolean>;
-  /** Why the last write failed, until one succeeds. */
   readonly warning: Read<string>;
   dispose(): void;
 }
@@ -29,7 +27,6 @@ interface HistorySaving {
 interface Entry {
   record: HistoryRecord;
   clears: Promise<number | null | HistoryRefusal>;
-  /** `changes` when it was queued. */
   queuedAt: number;
 }
 
@@ -51,10 +48,8 @@ export function createHistorySaving(
   let draining = false;
   let disposed = false;
   let stopRetries: (() => void) | null = null;
-  // The clear count as last read for a write, while nothing in another tab may have changed it since. Never read
-  // for its own sake, so History opens its database only to save.
+  // The clear count last read for a write, while no other tab may have changed it; read only to save.
   let known: number | null = null;
-  /** Clears and other tabs' changes heard so far. */
   let changes = 0;
   const read = () =>
     repository.clears().then((clears) => {

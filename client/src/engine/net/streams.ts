@@ -22,7 +22,6 @@ const MULTIPLEXED: Partial<Record<HttpProtocol, Record<Direction, number>>> = {
 
 type StreamPolicy = TestConfig["transferStreams"];
 
-/** What planning reads of a server's verified paths. */
 export interface PlanServer {
   server: { id: string; name: string };
   throughput: {
@@ -68,8 +67,7 @@ function deal(available: number, ceilings: readonly number[]): number[] {
   return dealt;
 }
 
-/** Deals each HTTP/1.1 origin's pool (unproven HTTP counts) among its lanes, refusing a stage that leaves a lane none;
-    only lanes the pool can run gate readiness. */
+/** Deals each HTTP/1.1 origin's pool among its lanes, refusing a stage that leaves one none; only lanes the pool runs gate readiness. */
 export function planStreams(
   servers: readonly PlanServer[],
   activity: Activity,
@@ -129,7 +127,6 @@ export function planStreams(
   return plan;
 }
 
-/** Why `config`'s stages cannot run on `servers`, or "" when they can. */
 export function planError(config: TestConfig, servers: readonly PlanServer[]): string {
   const planned = activities(config);
   if (!planned.length) return "Give at least one stage a duration";
@@ -152,8 +149,7 @@ const ASSUMED: PlanServer = {
   latency: { target: { transport: "websocket", origin: "" } },
 };
 
-/** The lane policy in words for Settings, a value and its qualifier, read from the plan the run would make for
-    `server` on its own over `activities`. */
+/** The lane policy in words for Settings, from the plan the run would make for `server` alone. */
 export function describeStreams(
   policy: StreamPolicy,
   activities: readonly Activity[],

@@ -1,5 +1,4 @@
-// Opens a latency bus to one server; its probe worker paces probes and reconnects, this side translates their times
-// and hands the bus between owners.
+// A latency bus to one server; its worker paces probes and reconnects, and this side hands the bus between owners.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { workerScript } from "../../lib/trusted";
 import { ROUTES } from "../../protocol/routes";

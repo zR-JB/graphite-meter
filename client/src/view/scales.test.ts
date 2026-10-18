@@ -57,8 +57,7 @@ test("each throughput axis holds what it draws, with headroom and no decade jump
 });
 
 test("the dial's ceiling is round in the unit the page reads, in each of the four units", () => {
-  // The dial reads idle, a tick at 1.1× the giga or gibi prefix (which still reads a prefix below) and a 2 Gbit/s tick
-  // as 1, 2 and 5 Gbit/s; 200 MB/s, 2000 MB/s, 500 MB/s; 1000 Mibit/s, 2000 Mibit/s, 2 Gibit/s; 200, 2000, 500 MiB/s.
+  // The dial reads idle, 1.1× the giga or gibi prefix and 2 Gbit/s as three round steps in each unit.
   const all: [Units, number, number, number][] = [
     [{ base: "base10", kind: "bits" }, 125e6, 250e6, 625e6],
     [{ base: "base10", kind: "bytes" }, 200e6, 2e9, 500e6],
@@ -75,8 +74,7 @@ test("the dial's ceiling is round in the unit the page reads, in each of the fou
 });
 
 test("a stage settling never rescales the page; a finished run reads in the tier History gives it", () => {
-  // Each case gives a live peak and the result it settled at, in bytes/s, the tier and dial through the run, and the
-  // run's tier once it ends, History's when a result settled, else the one its live figures were drawn in.
+  // Each case: a live peak and its settled result in bytes/s, the tier and dial through the run, and the run's tier once it ends.
   const cases = [
     // 1.3 Mbit/s live, 1.1 settled.
     [162_500, 137_500, 2, 125e6, 1],

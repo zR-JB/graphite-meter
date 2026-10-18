@@ -4,8 +4,7 @@ export const ping = (id: number): string => `PING,${id}`;
 
 const PONG = /^PONG,(\d{1,10}),(\d{1,20})$/;
 
-/** A reply, or null when malformed. A valid handling time past what a double holds exactly is null. The reply still
-    counts, and only its paired server-timing diagnostic is dropped. */
+/** A reply, or null when malformed; a handling time past a double's exact range drops only the server-timing diagnostic. */
 export function pong(message: string): { id: number; handlingNs: number | null } | null {
   const match = PONG.exec(message);
   if (!match) return null;

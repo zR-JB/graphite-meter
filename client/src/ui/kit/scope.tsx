@@ -19,7 +19,6 @@ export function ServerScope(props: {
   /** Names the choice of every server at once, which `value` reads as "". */
   aggregate?: () => string;
   disabled?: () => boolean;
-  /** These servers are listed but not choosable. */
   unavailable?: () => readonly string[];
   /** Draws a lens over results, with a server mark and a borderless field. */
   quiet?: boolean;

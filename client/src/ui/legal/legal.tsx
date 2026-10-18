@@ -12,8 +12,7 @@ const ECOSYSTEM: Record<string, string> = {
   font: "Fonts",
 };
 
-/** Names a location as people know it, a repository or crate by its first two path parts and any other page by its
-    host and path. Revisions, compare ranges and versions stay in the link. */
+/** Names a location as people know it: a repository or crate by its first two path parts, any other page by host and path. */
 function place(url: string): string {
   const { host, pathname } = new URL(url, document.baseURI);
   const parts = pathname.split("/").filter(Boolean);
@@ -31,8 +30,7 @@ const Out = (props: { href: string; text: string; name: string }) => (
   </a>
 );
 
-// Every component reads one way. It shows where it comes from (a fork's upstream), then, when modified, the shipped
-// copy and what changed.
+// Every component reads one way: where it comes from, then, when modified, the shipped copy and what changed.
 function Component({ component }: { component: LegalComponent }): Node {
   const url = (label: string) => component.links.find((link) => link.label === label)?.url;
   const [source, upstream, changes] = [url("Source"), url("Upstream"), url("Changes")];

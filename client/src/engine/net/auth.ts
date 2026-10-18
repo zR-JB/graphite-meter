@@ -16,7 +16,6 @@ import { allowsOrigin } from "./paths";
 /** A measurement grant is held in memory only, as its bearer token and when its parent login ends. */
 export interface Grant {
   token: string;
-  /** Monotonic page ms. */
   deadline: number;
   /** Epoch ms by this page's clock, which runs on through a suspend that can pause the monotonic one. */
   expires: number;
@@ -151,8 +150,7 @@ const base64url = (bytes: Uint8Array) =>
   bytes.toBase64({ alphabet: "base64url", omitPadding: true });
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-/** Derives the approval's public challenge and the comparison code both pages show, which is RFC 4648 base32 of the
-    first five bytes of the verifier's SHA-256, eight characters. */
+/** The approval's public challenge and its comparison code: RFC 4648 base32 of the first five bytes of the verifier's SHA-256. */
 export async function approvalChallenge(
   verifier: string,
 ): Promise<{ challenge: string; code: string }> {
@@ -170,8 +168,7 @@ export async function approvalChallenge(
   return { challenge: base64url(hash), code };
 }
 
-/** Begins a fresh approval for `entry`, with the page to open, the code to compare, and the verifier, which never
-    leaves this page except in the exchange's body. */
+/** Begins a fresh approval for `entry`; the verifier never leaves this page except in the exchange's body. */
 export async function beginApproval(
   entry: CatalogEntry,
   page: PageConfig,
@@ -196,8 +193,7 @@ const MAX_GRANT_MS = 8 * 3_600_000;
 const POLL_MS = 1_000;
 const EXCHANGE_TIMEOUT_MS = 5_000;
 
-/** Polls the verifier-bound exchange until the user approves; failures retry next round, which answers the grant
-    already issued, and a refusal is final. */
+/** Polls the verifier-bound exchange until approved; failures retry next round and a refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,

@@ -31,8 +31,7 @@ function ceilStep(value: number, steps: readonly number[]): number {
   return (steps.find((step) => step * decade >= value) ?? 10) * decade;
 }
 
-/** The ladder step at or above `bytesPerSec` counted in the page's unit, so the dial's labels are round in the unit
-    they read: bits or bytes, decimal or binary, 2000 Mibit/s rather than 2 Gibit/s read as 2048. */
+/** The ladder step at or above `bytesPerSec` in the page's unit, so dial labels are round in it: 2000 Mibit/s, not 2048. */
 function rateStep(
   bytesPerSec: number,
   units: Units,
@@ -49,7 +48,6 @@ interface LivePeaks {
   lane: number;
   /** One tick's lanes together, as the dial shows them. */
   combined: number;
-  /** The run has not ended. */
   running: boolean;
 }
 
@@ -104,8 +102,7 @@ export function latencyCeilingMs(values: readonly (number | null)[]): number {
   return Math.max(1, ceilStep(rank(sorted, 0.95) * LATENCY_HEADROOM, LATENCY_STEPS));
 }
 
-/** A reply track's top: the ladder step over 2.5× the p75, so the body of the replies keeps its shape and an outlier
-    is clamped with an arrow instead of flattening the rest. */
+/** A reply track's top: the ladder step over 2.5× the p75, so the body keeps its shape and an outlier is clamped with an arrow. */
 export function replyTrackMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
   if (!sorted.length) return EMPTY_LATENCY_MS;

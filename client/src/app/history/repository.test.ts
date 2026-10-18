@@ -58,7 +58,6 @@ async function storage(version?: number, rows: unknown[] = []) {
       };
       opening.onerror = () => reject(opening.error);
     });
-  /** The database's version and its rows as stored, by id. */
   return () =>
     new Promise<{ version: number; rows: unknown[] }>((resolve, reject) => {
       const opening = factory.open("graphite-meter");

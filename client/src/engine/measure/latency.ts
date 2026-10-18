@@ -26,7 +26,6 @@ export interface LatencySummary {
 
 type Outcome = Pick<ProbeOutcome, "rttMs" | "timedOut" | "handlingMs" | "inWindow">;
 
-/** The 0-based nearest rank of percentile `p` among `n` sorted values. */
 export const nearestRank = (p: number, n: number) =>
   Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
 
@@ -42,8 +41,7 @@ const significant = (ns: number) => {
   return Math.round(ns / step) * step;
 };
 
-/** One stage's outcomes. RTTs are kept once per distinct nanosecond value with a count, so a dense loopback run
-    holds its few thousand distinct values rather than millions of samples. */
+/** One stage's outcomes, each distinct nanosecond RTT kept once with a count, so dense runs stay small. */
 export class Population {
   #counts = new Map<number, number>();
   #sorted = new Float64Array(0);
@@ -63,7 +61,6 @@ export class Population {
   #cached: LatencySummary | null | undefined;
   #final: LatencySummary | null | undefined;
 
-  /** Resolved probes: replies and timeouts. */
   get count(): number {
     return this.#replies + this.#timeouts;
   }
@@ -190,7 +187,6 @@ export class Population {
 /** The idle stage's last four seconds of outcomes, which early finish scores. */
 class IdleWindow {
   #times: number[] = [];
-  /** RTTs, NaN for a timeout. */
   #rtts: number[] = [];
   #head = 0;
   #scratch = new Float64Array(1024);
@@ -315,7 +311,6 @@ export class ServerLatency {
     bidirectional: new Population(),
   };
   readonly failed = new Set<Stage>();
-  /** The idle stage's recent outcomes, for early finish. */
   readonly idle = new IdleWindow();
 
   observe(stage: Stage, outcome: Outcome, t: number, continuity: number): void {

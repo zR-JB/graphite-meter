@@ -98,8 +98,7 @@
   inherits: false;
   initial-value: 0%;
 }
-/* A parent hands these values to the one child that reads them (`inherit` there). They are not inherited further, so
-   a resize or a sheet drag restyles that child rather than everything inside it. */
+/* A parent hands these to the one child that reads them (`inherit` there), so a resize restyles that child alone. */
 @property --sheet-w {
   syntax: "<length>";
   inherits: false;
@@ -130,8 +129,7 @@
     --statusbar-h: 28px;
 
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-    /* The same curve cut where 98 % of its change is done, 54 % of the way. A slow fade in a tint or a hairline
-       keeps its look in 0.54 of its time, without the frames that change nothing. */
+    /* The same curve cut where 98 % of its change is done, at 54 % of its time, without frames that change nothing. */
     --ease-out-head: cubic-bezier(0.215, 0.743, 0.41, 0.945);
     /* What arrives overshoots its place a little and settles. The instrument's readings never overshoot. */
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -166,7 +164,6 @@
     --r-full: 999px;
     /* A row's wash sits 2 px inside its plate, concentric with it. */
     --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
-    /* One device pixel. */
     --hairline: 1px;
 
     /* 10 px is the floor for any text. Only headings scale with the viewport. */
@@ -254,11 +251,9 @@
 
     /* Only what floats casts a shadow. Panels and keys are flat fills with a hairline. */
     --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
-    /* The color of every shadow. */
     --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
     --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
     --elev-recess: inset 0 1px 2px color-mix(in oklab, var(--shade) 6%, transparent);
-    /* A thumb or knob raised a step off its track. */
     --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35));
     --elev-tooltip:
       var(--elev-thumb),
@@ -306,8 +301,7 @@
   }
 }
 
-/* This stays unlayered, so the tone an element names beats every recipe's default. A tone's one hue yields its
-   variants, the line, a wash, an edge and ink for small text on the wash. */
+/* Unlayered, so the tone an element names beats every recipe's default; one hue yields its line, wash, edge and ink. */
 [data-tone] {
   --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
   --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);

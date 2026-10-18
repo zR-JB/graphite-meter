@@ -31,8 +31,7 @@ interface PathTarget {
   protocol?: HttpProtocol;
 }
 
-/** The mechanism, its carrier, and both together: "Fetch streams over HTTP/1.1 (TLS)". A WebSocket names HTTP/1.1
-    only when its origin's fetch target does. */
+/** The mechanism and its carrier together: "Fetch streams over HTTP/1.1 (TLS)"; a WebSocket names HTTP/1.1 only when its origin's fetch target does. */
 export function describePath(
   discovery: Discovery | null,
   role: Role,
@@ -77,7 +76,6 @@ export const pathSummary = (discovery: Discovery | null, role: Role, target: Pat
 const origins = (discovery: Discovery, role: Role) =>
   discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
 
-/** Why one server cannot run `value` for `role`; null when it can. */
 function unavailable(
   discovery: Discovery | null,
   role: Role,
@@ -92,12 +90,10 @@ function unavailable(
 }
 
 export interface Choice {
-  /** The saved selection the choice writes. */
   value: string;
   label: string;
   /** The choice group whose note the row shows. */
   group: string;
-  /** Why it cannot be chosen; null when it can. */
   unavailable: string | null;
 }
 
@@ -122,8 +118,7 @@ const groupOf = (target: Target) =>
     ? `protocol:${target.protocol}`
     : `transport:${target.transport}`;
 
-/** Every choice a picker offers: one server's advertised mechanisms, or for several the groups every answering server
-    can run. */
+/** Every choice a picker offers: one server's advertised mechanisms, or for several the groups every answering server can run. */
 export function choices(
   role: Role,
   servers: readonly ServerIdentity[],
@@ -192,8 +187,7 @@ export function choices(
 
 type RoleState = ServerView["throughput"]["state"];
 
-/** The check line under a picker: one server's own state and words, or the worst of several and how many are
-    ready; a failure's message stands in for its status word. Null when no server is left to state. */
+/** The check line under a picker: one server's state, or the worst of several and how many are ready; null with no server left. */
 export function roleLine(
   role: Role,
   considered: readonly ServerView[],

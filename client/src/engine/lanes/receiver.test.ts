@@ -5,7 +5,6 @@ import { Receiver } from "./receiver";
 
 const encoder = new TextEncoder();
 
-/** Builds an NDJSON body that arrives in these chunks. */
 const ndjson = (...chunks: string[]) =>
   new Response(
     new ReadableStream({
@@ -16,8 +15,7 @@ const ndjson = (...chunks: string[]) =>
     }),
   );
 
-/** Builds a receiver that follows an HTTP feed. The feed answers from `script`, one per request, and its checkpoints
-    answer `counters` in turn. `carried` leaves the feed to a session. */
+/** A receiver following an HTTP feed that answers from `script` and checkpoints from `counters`; `carried` leaves it to a session. */
 function follow(
   script: ((init: RequestInit) => Response)[],
   counters: { bytes: number; nanos: number }[] = [],

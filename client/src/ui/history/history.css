@@ -1,5 +1,4 @@
-/* History: the workspace over the console, its list of rows on one grid with heads that stick and rows that fold,
-   the split beside an open result, the view popover, and the result's own head and facts. */
+/* History: the workspace over the console, its row grid with sticky heads and folding rows, the split, and the open result. */
 @layer components {
   .history-workspace {
     display: flex;
@@ -117,8 +116,7 @@
     }
   }
 
-  /* The time takes the slack first and the value columns the rest, so the table fills the list at any width. Value
-     columns never shrink below their content: the rows fold first. */
+  /* The time takes the slack first and the value columns the rest; value columns never shrink below their content, the rows fold first. */
   .history-table {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto repeat(
@@ -256,8 +254,7 @@
     & > * {
       padding: 7px var(--space-3);
     }
-    /* The time over its server, on the lines of the values and their notes; a long name is cut, never wrapped. The
-       time is the row's name, weighted like its values. */
+    /* The time over its server, on the values' lines; a long name is cut, never wrapped, and the time is weighted like its values. */
     & > time {
       display: grid;
       font-weight: 500;
@@ -278,8 +275,7 @@
       color: var(--text-muted);
     }
   }
-  /* A value, then what it cost or how it varied, in the column's own ink. The bar takes the column's slack up to a
-     reading length, so a wide list draws longer bars, not wider gaps. */
+  /* A value, then its cost or variation, in the column's ink; the bar takes the slack up to a reading length. */
   .metric {
     display: grid;
     grid-template: "bar value" auto ". note" auto / minmax(0, 12rem) auto;
@@ -315,8 +311,7 @@
     &[data-tone="loaded"] {
       --peak: var(--peak-loaded);
     }
-    /* A magnitude, never a verdict: the column's largest value fills the bar from the zero end beside the value,
-       and the track behind it shows the scale it fills. */
+    /* A magnitude, never a verdict: the column's largest value fills the bar from the value's side, over a track showing the scale. */
     & .bar {
       display: none;
       grid-area: bar;
