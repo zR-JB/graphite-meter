@@ -209,6 +209,34 @@ def provenance_sources(archive: tarfile.TarFile, attestation: JsonObject, image:
     return sources
 
 
+def image_index(tar: tarfile.TarFile) -> JsonObject:
+    """The descriptor of the one image index that index.json lists, in an archive of canonical, unique names."""
+    names = tar.getnames()
+    if len(set(names)) != len(names) or not all(map(canonical, names)):
+        fail("OCI archive member names must be canonical and unique")
+    entry = tar.getmember("index.json")
+    layout = tar.extractfile(entry) if entry.isfile() and entry.size <= BLOB_LIMIT else None
+    if layout is None:
+        fail("OCI index.json is not a bounded regular file")
+    top = document(expect_object(decode_json(layout.read().decode(errors="replace"), "index.json"), "index.json"),
+                   INDEX_TYPE, "index.json")
+    listed = expect_array(top.get("manifests"), "index.json manifests")
+    if len(listed) != 1:
+        fail("OCI index.json must list exactly one image index")
+    return expect_object(listed[0], "index.json")
+
+
+def servers(archive: Path) -> dict[str, tuple[str, bytes]]:
+    """Each architecture's SOURCE.txt and server, read as `verify` reads them."""
+    try:
+        with tarfile.open(archive, mode="r:") as tar:
+            _, images = validate_index_descriptors(blob(tar, image_index(tar), INDEX_TYPE))
+            return {arch: check_image_files(tar, blob(tar, image, MANIFEST_TYPE), str(image["digest"]))
+                    for arch, image in images.items()}
+    except (KeyError, tarfile.TarError) as exc:
+        raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
+
+
 def verify(version: str, revision: str, archive: Path,
            check_files: Callable[[str, str, bytes], None] | None = None) -> str:
     """Verify the archive, passing each architecture's SOURCE.txt and server to `check_files`, and return the digest
@@ -225,19 +253,7 @@ def verify(version: str, revision: str, archive: Path,
     # Every blob the index reaches is read once and checked against its descriptor, so the archive is complete.
     try:
         with tarfile.open(archive, mode="r:") as tar:
-            names = tar.getnames()
-            if len(set(names)) != len(names) or not all(map(canonical, names)):
-                fail("OCI archive member names must be canonical and unique")
-            entry = tar.getmember("index.json")
-            layout = tar.extractfile(entry) if entry.isfile() and entry.size <= BLOB_LIMIT else None
-            if layout is None:
-                fail("OCI index.json is not a bounded regular file")
-            top = document(expect_object(decode_json(layout.read().decode(errors="replace"), "index.json"),
-                                         "index.json"), INDEX_TYPE, "index.json")
-            listed = expect_array(top.get("manifests"), "index.json manifests")
-            if len(listed) != 1:
-                fail("OCI index.json must list exactly one image index")
-            index = expect_object(listed[0], "index.json")
+            index = image_index(tar)
             attestations, images = validate_index_descriptors(blob(tar, index, INDEX_TYPE))
             for arch, image in images.items():
                 manifest = blob(tar, image, MANIFEST_TYPE)

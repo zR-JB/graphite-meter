@@ -264,7 +264,7 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertTrue(release["body"].startswith(
             f"## Source\n\nThe source for this release is the repository at tag **{TAG}** (commit **{SHA}**), "
             "attached by GitHub as Source code (zip/tar.gz). The source of the third-party components in the image "
-            f"and the client archives is attached as **{SOURCE}**."))
+            f"and the server and client archives is attached as **{SOURCE}**."))
 
         def edit(**change: object) -> Callable[[State], State]:
             return lambda state: state | {"releases": [state["releases"][0] | change]}

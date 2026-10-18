@@ -1,7 +1,9 @@
 """Notices, the browser's legal index and deterministic archive members."""
 
+import gzip
 import io
 import tarfile
+import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
@@ -92,3 +94,31 @@ def add_tree(archive: tarfile.TarFile, root: Path, destination: str, boundary: P
         return
     for path in sorted(root.iterdir()):
         add_tree(archive, path, destination + "/" + path.name, boundary)
+
+
+def write_archive(path: Path, base: str, binary: str, executable: bytes, notices: bytes, source: bytes,
+                  root: Path) -> None:
+    """A release archive: `base/` holding the executable, `root`'s license files, the build's notices and its
+    SOURCE.txt, at fixed times, owners and modes."""
+    files = {binary: (executable, 0o755)} | {name: (data, 0o644) for name, data in (
+        ("LICENSE", (root / "LICENSE").read_bytes()), ("COPYRIGHT", (root / "COPYRIGHT").read_bytes()),
+        ("THIRD_PARTY_NOTICES.txt", notices), ("SOURCE.txt", source))}
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            directory = zipfile.ZipInfo(f"{base}/", (1980, 1, 1, 0, 0, 0))
+            directory.create_system, directory.external_attr = 3, (0o40755 << 16) | 0x10
+            archive.writestr(directory, b"")
+            for name, (data, mode) in sorted(files.items()):
+                entry = zipfile.ZipInfo(f"{base}/{name}", (1980, 1, 1, 0, 0, 0))
+                entry.create_system, entry.external_attr = 3, (0o100000 | mode) << 16
+                archive.writestr(entry, data, zipfile.ZIP_DEFLATED)
+        return
+    with path.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        directory = tarfile.TarInfo(base)
+        directory.type, directory.mode = tarfile.DIRTYPE, 0o755
+        archive.addfile(directory)
+        for name, (data, mode) in sorted(files.items()):
+            entry = tarfile.TarInfo(f"{base}/{name}")
+            entry.size, entry.mode = len(data), mode
+            archive.addfile(entry, io.BytesIO(data))

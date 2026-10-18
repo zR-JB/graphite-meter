@@ -84,8 +84,8 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    `graphite-meter_VERSION_third-party-source.tar.gz`: the compiled crates' and browser packages' sources under
    `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/`, the fork records and the manual
    material. Release staging merges the parts of every shipped build into that one archive. The build also writes the
-   `SOURCE.txt` its client archive or image ships, which names the release source, the source offer and the build. A
-   prerelease publishes no tag or source offer, so its `SOURCE.txt` names the repository.
+   `SOURCE.txt` that its release archive and the server's image ship; it names the release source, the source offer
+   and the build. A prerelease publishes no tag or source offer, so its `SOURCE.txt` names the repository.
 
 `--development` notices, which local builds (`scripts.build`, through `mise run dev`, `tui`, `server-build`,
 `tui-build` and `e2e-server`) embed, need the dependency reviews but no platform record, so any host builds them. Their

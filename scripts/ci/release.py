@@ -339,7 +339,7 @@ def source_notice(release: Release) -> str:
     return (
         f"## Source\n\nThe source for this release is the repository at tag **{release.tag}** (commit "
         f"**{release.sha}**), attached by GitHub as Source code (zip/tar.gz). The source of the third-party "
-        "components in the image and the client archives is attached as "
+        "components in the image and the server and client archives is attached as "
         f"**{offer_name(release.version)}**."
     )
 
