@@ -75,12 +75,11 @@ branch and tag and checks ancestry, the change-set digest and scope, and the com
    `IMAGE_NOTICES.txt`.
 2. Build and verify. One `cargo rustc` build embeds the notices; the build script refuses a directory prepared for
    another package, target or compiler, or whose input copies differ. The collector then requires that the build
-   compiled only prepared crates with unchanged legal files, linked only the record's native inputs (LLD's COFF map
-   for Windows arm64 names no archive, so there only objects), imported only its system libraries, embedded exactly
-   `LEGAL.txt` and, for a reviewed build, carries
-   `graphite-meter reviewed notices sha256:` with its SHA-256 in plain text, which release verification compares with
-   the notices shipped beside the executable. It then writes `inventory.json` of the compiled crates and the server's
-   browser packages.
+   compiled only prepared crates with unchanged legal files, linked only the record's native inputs (on Windows
+   arm64 only its objects, because LLD's map names no archives there), imported only its system libraries, embedded
+   exactly `LEGAL.txt` and, for a reviewed build, carries `graphite-meter reviewed notices sha256:` with its SHA-256
+   in plain text, which release verification compares with the notices shipped beside the executable. It then writes
+   `inventory.json` of the compiled crates and the server's browser packages.
 3. Source offer. A reviewed build writes its part of the release's one source offer,
    `graphite-meter_VERSION_third-party-source.tar.gz`: the compiled crates' and browser packages' sources under
    `third_party/`, its inventory and report under `builds/<package>_<os>_<arch>/`, the fork records and the manual

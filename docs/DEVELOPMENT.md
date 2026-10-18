@@ -36,6 +36,9 @@ mise run tui-build      # rust/target/release/graphite-meter-client
 | Browser unit    | `mise run client-ci`  | Types, format, measurement math, codecs, state.              |
 | Real-server E2E | `mise run e2e`        | Chrome or Firefox against a local fleet of real servers.     |
 
+`mise run ci` also needs a browser and the cross compilers the target checks build with: mingw-w64, llvm-mingw,
+musl-tools and an aarch64 GNU compiler.
+
 `dev`, `tui` and `e2e-server` use the `ci` profile, which has no LTO and 16 codegen units. The build tasks use the
 release profile, which has fat LTO and one codegen unit. Local builds embed development notices, so their executables
 say `UNREVIEWED DEVELOPMENT BUILD` and are not distributable. Untagged builds identify as `GM_CLIENT_REVISION`, which
@@ -132,12 +135,13 @@ grows. The budget bounds buffers, not resident memory. Two seconds after the las
 returns its threads' free pages.
 
 The following choices were measured, and this list keeps them because they are easy to undo by accident. Release
-builds use fat LTO and one codegen unit. Image and client builds use a PGO profile per architecture trained on
-loopback transfers (`scripts/pgo.py`), which costs 10 to 17 % less CPU per byte on HTTP/3 on amd64. Static musl
-builds link mimalloc with transparent huge pages off, since musl's allocator ran HTTP/2 downloads at a sixth of the
-rate. QUIC receive windows autotune from 768 KiB to 48 MiB per connection. Admitted HTTP/2 uploads get a 24 MiB
-window, which reached 903 Mbit/s against 640 at 16 MiB on a 200 ms, 1 Gbit/s path. Upload control rides the
-throughput check's connection, since a fresh one started bidirectional uploads two round trips late.
+builds use fat LTO and one codegen unit. Image and client builds, except the Windows arm64 client, use a PGO profile
+per architecture trained on loopback transfers (`scripts/pgo.py`), which costs 10 to 17 % less CPU per byte on
+HTTP/3 on amd64; Linux cannot train a Windows arm64 profile. Static musl builds link mimalloc with transparent huge
+pages off, since musl's allocator ran HTTP/2 downloads at a sixth of the rate. QUIC receive windows autotune from
+768 KiB to 48 MiB per connection. Admitted HTTP/2 uploads get a 24 MiB window, which reached 903 Mbit/s against 640
+at 16 MiB on a 200 ms, 1 Gbit/s path. Upload control rides the throughput check's connection, since a fresh one
+started bidirectional uploads two round trips late.
 
 ### Browser client
 
@@ -169,11 +173,12 @@ covers pure logic and the engine against fake clocks.
 
 ## Containers and releases
 
-`mise run container-build` and `mise run container-smoke` build and verify the image on an amd64 host. The image is a
-staged build ending in `scratch`, and it holds the server binary, CA roots and license material.
-`mise run tui-package VERSION` builds the client archives in the same pinned builder. Releases stamp one version across
-every artifact, bind publication to the authorized commit and verify every file before publishing ([CI and
-release](../scripts/ci/README.md)). Never create or move release tags in ordinary work.
+`mise run container-build` and `mise run container-smoke` build and verify the image on an amd64 host. The image is
+a staged build ending in `scratch`, and it holds the server binary, CA roots and license material.
+`mise run tui-package VERSION` builds the client archives in the same pinned builder. A release packages each server
+archive from the image, so both hold the same executable. Releases stamp one version across every artifact, bind
+publication to the authorized commit and verify every file before publishing
+([CI and release](../scripts/ci/README.md)). Never create or move release tags in ordinary work.
 
 Before each release, `mise run screenshots vX.Y.Z` renders the README images in `docs/assets` from the working tree,
 and the result merges like any change. The browser app runs on the E2E fleet with fakes for the network and the run's
@@ -193,6 +198,7 @@ any pull request whose UI sources changed since the images were rendered, withou
 | Rust                             | `rust/rust-toolchain.toml`, `vars.rust_manifest_sha256` | rustup, the image builder                 |
 | mise bootstrap, Buildx           | `vars.mise_version`, `vars.buildx_version`              | The SHA-pinned CI actions                 |
 | Chrome for Testing, Firefox      | `vars.browser_*`                                        | CI install and identity check             |
+| llvm-mingw                       | `vars.llvm_mingw`, `vars.llvm_mingw_sha256`             | The Windows arm64 client build            |
 | CodeQL bundle                    | `vars.codeql`                                           | `mise run codeql`                         |
 | Container images                 | `vars.image_*`                                          | Image build, verification and publication |
 | Rust dependencies                | `rust/Cargo.toml`, `rust/Cargo.lock`                    | Cargo, `cargo deny`                       |

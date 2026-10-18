@@ -75,11 +75,17 @@ Verify with `systemctl --user status certbot-bootstrap certbot-renew graphite-me
 
 `certbot-bootstrap` uses a stable `--cert-name` with `--keep-until-expiring`, so restarting it reuses the lineage.
 `certbot-renew` runs `certbot renew` at start and every 12 hours and updates the `live/` symlinks atomically. The
-server reloads the PEM pair itself, so there is no deploy hook. `renew --dry-run` against the staging environment
-tests renewal without spending rate limits. `graphite-meter.env` advertises only the TLS listeners, so 7246/tcp can
-stay closed, and with `Network=host` there is no `PublishPort=`. To change the hostname, stop all three units, update
-the env file, and either keep the old certificate lineage or delete it with `certbot delete --cert-name OLD_NAME`. Never edit
-`letsencrypt/renewal`, `live` or `archive` by hand.
+server reloads the certificate and key itself, so there is no deploy hook. To test renewal against Let's Encrypt's
+staging environment without using up rate limits, run:
+
+```sh
+podman exec graphite-meter-certbot-renew certbot renew --dry-run --dns-cloudflare-credentials /run/secrets/cloudflare.ini
+```
+
+`graphite-meter.env` advertises only the TLS listeners, so 7246/tcp can stay closed, and with `Network=host` there is
+no `PublishPort=`. To change the hostname, stop all three units, update the env file, and either keep the old
+certificate lineage or delete it with `certbot delete --cert-name OLD_NAME`. Never edit `letsencrypt/renewal`, `live`
+or `archive` by hand.
 
 ## Tailscale sidecar
 
