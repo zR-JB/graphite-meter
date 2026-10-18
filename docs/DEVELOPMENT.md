@@ -181,7 +181,7 @@ clock (`client/scripts/screenshots`), and the terminal client draws a simulated 
 (`rust/client/examples/screenshot.rs`), so the same code in the same browser gives the same pixels.
 `docs/assets/screenshots.json` records the version and a hash of the sources that draw them, and a stable release
 request refuses screenshots of another version or of changed sources
-(`python3 scripts/ci/screenshots.py check vX.Y.Z`).
+(`python3 scripts/ci/screenshots.py check vX.Y.Z`). The README captions name that version, so update them with it.
 
 ## Toolchain pins
 

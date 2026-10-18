@@ -10,10 +10,10 @@ rule holds in both clients unless [client differences](#client-differences) says
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Download / upload           | The payload bytes per second over the headline interval, shown in the rate unit you chose.                                                                                                               | There is no rate when no interval was long enough.                                                   |
 | Peak                        | The highest mean over the headline window and over consecutive ≥ 500 ms windows of its interval, on every clock.                                                                                         | There is no peak when there is no headline.                                                          |
-| Latency                     | The median (P50) RTT of in-window replies, per server and stage. P95 is secondary.                                                                                                                       | It shows "–" when there is no reply, or when a failed stage has fewer than three replies and timeouts. |
+| Latency                     | The median (P50) RTT of in-window replies, per server and stage. P95 is secondary.                                                                                                                       | It is missing when there is no reply, or when a failed stage has fewer than three replies and timeouts. |
 | Added latency               | The loaded median − idle median, per loaded stage and server, in ms. Negative values are kept.                                                                                                            | There is no value when either median is missing.                                                     |
-| Jitter                      | The mean absolute change between consecutive replies, in ms.                                                                                                                                             | It shows "–" when fewer than two replies are comparable.                                             |
-| Timeouts                    | The ratio `timeouts / (replies + timeouts)`, as a percentage.                                                                                                                                            | It shows "–", not zero, when no probe was resolved.                                                  |
+| Jitter                      | The mean absolute change between consecutive replies, in ms.                                                                                                                                             | It is missing when fewer than two replies are comparable.                                             |
+| Timeouts                    | The ratio `timeouts / (replies + timeouts)`, as a percentage.                                                                                                                                            | It is missing, not zero, when no probe was resolved.                                                  |
 | Paired server timing        | The mean raw RTT and server handling over the same valid pairs.                                                                                                                                          | It is absent when there is no valid pair.                                                            |
 | Rate stability (browser)    | The score is `100 × (1 − CV)` over every 250 ms rate bucket in the headline window, holes included, and it is floored at 0 %.                                                                            | It is 0 % when there are fewer than two buckets.                                                     |
 | No data (browser)           | The time in the headline window when no server moved that direction. It is client time for download and the shortest receiver clock for upload, and it counts in the mean.                               | It is shown from 0.5 s, and older saved results have none.                                           |
@@ -21,7 +21,7 @@ rule holds in both clients unless [client differences](#client-differences) says
 | Wire rate (browser)         | The headline times a modeled overhead. The model adds HTTP/2, HTTP/3 or WebTransport framing, TLS 1.3 records, TCP (with timestamps) or UDP + QUIC headers, IPv4 or IPv6 and Ethernet framing, and assumes a 1,500 B MTU. Several servers each count with their own protocol and IP family, weighted by their bytes. | It is shown only from 0.5 % overhead.                                                                |
 
 - Percentiles cover replies within the stage's measured window. P50 is the midpoint median; P95 and the
-  browser's P10–P90 span use nearest rank.
+  browser's P10 to P90 span use nearest rank.
 - Jitter (RTT variation) takes successful replies in receive order within one continuous segment. Timeouts are
   skipped, and a stage boundary or reconnect breaks adjacency. Identical replies give zero.
 - A probe times out when its reply deadline expires, and a late reply cannot erase the timeout. Unfinished probes
@@ -29,7 +29,7 @@ rule holds in both clients unless [client differences](#client-differences) says
   application observations, not TCP/IP packet loss. WebSocket is reliable, so retransmission and head-of-line
   blocking delay replies. On WebTransport, queues may delay or drop datagrams.
 
-Results are plain values, and nothing is graded.
+Results are plain values, and nothing is graded. Both clients show a missing value as a dash, never as zero.
 
 ## Throughput
 
@@ -88,7 +88,7 @@ Stages last from 1 s up to the smallest stage limit among the selected servers. 
 that reports no limit fails its check. A quiet link never ends a stage. A stage runs its planned time unless an early
 finish, a live change or a failure no server survives ends it sooner. The browser never finishes a stage early once a
 server moved no bytes in a direction for 500 ms, the run stalled, a server left or evidence resumed. Warmup runs
-before every stage, including latency. It lasts the configured 0–4 s, stretched to ten idle RTTs but at most 4 s.
+before every stage, including latency. It lasts the configured 0 to 4 s, stretched to ten idle RTTs but at most 4 s.
 Stage readiness is bounded per client. Hidden browser pages keep measuring. Workers time bytes and probes, the
 browser's run clock ticks from a worker so a page hidden for hours keeps its pace, and the schedule never skips past
 the current segment.
@@ -104,7 +104,7 @@ after three replies and timeouts.
 | Cadence          | The idle default is reply-driven and the loaded default is Medium. Fast 80 ms, Medium 250 ms and Slow 600 ms are start-to-start. |
 | Reply-driven     | The latest probe's reply sends the next at once, a late one never; a backup timer covers a missing reply.        |
 | In-flight window | 16 probes idle at a fixed cadence, 4 reply-driven and 2 under load. A full window skips the send, never a timeout. |
-| Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms–10 s; 250 ms before the first reply. |
+| Deadline         | Fixed at send: `SRTT + 4 × max(RTTVAR, 1 ms)` (RFC 6298), clamped to 250 ms to 10 s; 250 ms before the first reply. |
 | Stage end        | Sending stops; in-window probes drain to their deadlines, at most 10 s.                                          |
 | Interruptions    | Disconnects and freezes over 1.5 s leave pending probes unfinished; send failures are separate; no timeouts.     |
 
@@ -145,13 +145,13 @@ can exceed it. Raw RTT stays primary for latency, jitter, deadlines and added la
 | Exact stream count        | Up to 128 per direction, 16 per WebTransport session; over HTTP/1.1 only what the origin's six connections can run gates readiness; within the server's per-client measurement limit                       | At most 14 per direction                                                                                                                                      |
 | Automatic streams         | HTTP/1.1 up to the HTTP/1.1 stream limit (default 4) per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1                                          | `--auto-streams`, default 6                                                                                                                                   |
 | Path freshness            | A verified path older than 2 min is checked again before a run                                                                                                                                               | Preparation is reused for 30 s                                                                                                                                |
-| Latency recovery          | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down                                                           | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down                                      |
+| Latency recovery          | The ping channel reconnects with 100 ms to 2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down                                                           | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down                                      |
 | Warmup RTT                | The latency focus server's path-check RTT                                                                                                                                                                    | The highest RTT among active servers, updated to latency-stage medians                                                                                        |
 | Live rates                | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate; 500 ms without bytes anywhere fades the sum to zero; a stage's warmup shows its ramp, muted and never counted, and runs on into the window | All-servers boundary rate, eased in the TUI                                                                                                                   |
 | Latency cadence           | Reply-driven, Fast, Medium or Slow                                                                                                                                                                           | Also a custom spacing from 80 ms to 15 s                                                                                                                      |
-| Reply-driven backup timer | RTT-based, 8 ms–1 s                                                                                                                                                                                          | The probe deadline                                                                                                                                            |
+| Reply-driven backup timer | RTT-based, 8 ms to 1 s                                                                                                                                                                                          | The probe deadline                                                                                                                                            |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter                                                                                                                                                              | Counts in RTT and jitter if before its deadline                                                                                                               |
-| Browser only              | P10–P90 span, stability, wire-rate estimate, saved history                                                                                                                                                   |                                                                                                                                                               |
+| Browser only              | P10 to P90 span, stability, wire-rate estimate, saved history                                                                                                                                                   |                                                                                                                                                               |
 
 ## Run outcomes
 
