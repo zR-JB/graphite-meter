@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from screenshots import RECORD, stale, stamp
+from screenshots import RECORD, drifted, stale, stamp
 
 
 class ScreenshotRecordTests(unittest.TestCase):
@@ -27,8 +27,10 @@ class ScreenshotRecordTests(unittest.TestCase):
             readme.write_text("<sub>Terminal client 1.2.2 at 120 by 40 cells.</sub>\n")
             self.assertEqual(stale("v1.2.3", root), "README captions name 1.2.2: run mise run screenshots v1.2.3")
             stamp("v1.2.3", root)
+            self.assertIsNone(drifted(root), "pull requests are not warned while the sources still draw the images")
             view.write_text("export const title = 'Graphite';\n")
             self.assertIsNotNone(stale("v1.2.3", root), "a changed source")
+            self.assertRegex(drifted(root) or "", r"^::warning title=Screenshots are out of date::")
             stamp("v1.2.3", root)
             (root / "client/src/new.ts").write_text("export {};\n")
             self.assertIsNotNone(stale("v1.2.3", root), "a new source not yet committed")
