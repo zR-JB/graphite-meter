@@ -224,14 +224,16 @@ def check_workflows(root: Path) -> None:
                 and "if: steps.verify.outputs.publish == 'true'" not in step):
             fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text()
-    # release.py binds the request's artifact to its jobs by these names, each once.
-    platforms = re.search(r"(?m)^        platform: \[(.*)\]$", request)
-    named = sorted(name.replace("${{ matrix.platform }}", platform.strip())
-                   for name in re.findall(r"(?m)^    name: (.*)$", request)
-                   for platform in (platforms.group(1).split(",") if platforms and "matrix" in name else [""]))
-    if named != sorted(request_jobs()):
-        fail(f"release-request.yml must run the jobs {sorted(request_jobs())} once each, as release.py expects")
     jobs = [job for job in JOB.split(request.split("\njobs:\n", 1)[1]) if job.strip()]
+    # release.py binds the request's artifact to its jobs by these names, each once.
+    named: list[str] = []
+    for job in jobs:
+        platforms = re.search(r"(?m)^        platform: \[(.*)\]$", job)
+        named += [name.replace("${{ matrix.platform }}", platform.strip())
+                  for name in re.findall(r"(?m)^    name: (.*)$", job)
+                  for platform in (platforms.group(1).split(",") if platforms and "matrix" in name else [""])]
+    if sorted(named) != sorted(request_jobs()):
+        fail(f"release-request.yml must run the jobs {sorted(request_jobs())} once each, as release.py expects")
     first = jobs[0].split(":", 1)[0]
     for job in jobs:
         needs = re.search(r"(?m)^    needs: \[?([^]\n]*)\]?$", job)
@@ -278,7 +280,7 @@ def check_workflows(root: Path) -> None:
 
 
 def check_image_script(text: str) -> None:
-    """The image archive alone records max provenance; no build imports a cache, substitutes a stage or gets a
+    """Image archives alone record max provenance; no build imports a cache, substitutes a stage or gets a
     secret, an entitlement or other attestations."""
     for needle in (*FORBIDDEN["workflows/release-request.yml"], "--secret", "--allow", "--attest"):
         if needle in text:

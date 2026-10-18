@@ -116,13 +116,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # One runner per server platform, so each trains only its own PGO profile; Assemble request joins the images.
   image:
-    name: Build server image
+    name: Build server image (${{ matrix.platform }})
     needs: request
     runs-on: ubuntu-26.04
     timeout-minutes: 90
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
     env:
       VERSION: ${{ needs.request.outputs.version }}
+      SERVER_PLATFORMS: ${{ matrix.platform }}
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,7 +142,7 @@ jobs:
               cache: 'false'
           - name: Set up Buildx
             uses: ./.github/actions/setup-buildx
-      - name: Build image and source offers
+      - name: Build image and source offer
         env:
           CONTEXT: ${{ needs.request.outputs.context }}
           PROFILE: release
@@ -148,15 +153,15 @@ jobs:
           REVISION: ${{ needs.request.outputs.sha }}
           OUT_DIR: ${{ runner.temp }}/image
         run: scripts/ci/build-image.sh
-      - name: Check image and source offers
+      - name: Check image and source offer
         env:
           SOURCE: ${{ runner.temp }}/image
           OUT_DIR: ${{ runner.temp }}/upload
         run: python3 scripts/ci/assets.py upload image
-      - name: Upload image and source offers
+      - name: Upload image and source offer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: image
+          name: image-${{ strategy.job-index }}
           path: ${{ runner.temp }}/upload/
           if-no-files-found: error
           retention-days: 1
@@ -240,10 +245,11 @@ jobs:
             with:
               name: request
               path: ${{ runner.temp }}/staged
-          - name: Download image and source offers
+          - name: Download images and source offers
             uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
             with:
-              name: image
+              pattern: image-*
+              merge-multiple: true
               path: ${{ runner.temp }}/image
           - name: Download client archives and source offers
             if: env.STABLE == 'true'
@@ -255,7 +261,6 @@ jobs:
       - name: Stage release files
         env:
           VERSION: ${{ needs.request.outputs.version }}
-          OCI_ARCHIVE: ${{ runner.temp }}/image/graphite-meter.oci.tar
           SERVER_EXPORT: ${{ runner.temp }}/image
           TUI_EXPORT: ${{ runner.temp }}/client
           OUT_DIR: ${{ runner.temp }}/staged

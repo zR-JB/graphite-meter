@@ -25,10 +25,10 @@ checks job alone; every other change, every push to main and the daily run on ma
 | Rust target checks | `check_git_sources --verify`, `rust-check-targets` |
 | Rust checks on Windows | the client, net and legal crates' tests |
 | E2E server | the image's amd64 server alone, so the browser tests need not wait for both images |
-| Build server image | `build-image.sh` with the ci profile (no LTO or PGO), one architecture after the other; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
+| Build server image | `build-image.sh` with the ci profile (no LTO or PGO), one architecture after the other, each its own OCI archive; both images verified with `scripts/verify-container.sh`, the arm64 one under QEMU |
 | Build client | one runner per TUI platform builds its archive in the pinned builder with the ci profile, as a release request does; the amd64 client runs out of its archive |
 | Run client on Windows arm64 | the Windows arm64 client out of its archive, on GitHub's arm64 Windows runner |
-| Release staging | `assets.py stage` and `assets.py check` on the image, the server archives and the client archives, as a release does |
+| Release staging | `assets.py stage`, which joins the two OCI archives into the image, and `assets.py check` on the image, the server archives and the client archives, as a release does |
 | Browser E2E | Chrome in four shards and Firefox in three against the E2E server; Chromium's HTTP/3 and WebTransport check (`rust/interop/browser.py`) |
 
 `mise run ci` runs the same gates locally, and the policy fails if one has no CI job. Cargo caches are keyed by job,
@@ -57,14 +57,15 @@ open same-repository PR; it publishes only the image of that version, such as `X
 1. Untrusted build. `release-request.yml` runs from main with `contents: read`, no secrets and no caches; dispatched
    from another ref, its first step fails and nothing builds. Only `release.py prepare` in *Validate request* sees the
    inputs, which GitHub also renders into the run title (`v1.2.3 · publish · main`), and the token, with which it
-   requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, *Build server
-   image* runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit fetches without a token, and one
-   *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a prerelease's client jobs skip
-   their builds. Each job's builder starts empty. Before its reviewed builds a builder trains a PGO profile for each
-   architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's user mode (`scripts/pgo.py`); the
-   image builds both architectures at once, a client only its own, Windows amd64 amd64's and Windows arm64 none.
-   *Assemble request* runs `assets.py stage`, which packages each architecture's server out of the image archive, so no
-   second build makes it, copies the client archives and merges every build's part of the source offer into one archive.
+   requires a PR prerelease's commit to be the head of an open PR of this repository. Then, in parallel, one *Build
+   server image* job per server platform runs `build-image.sh` from main or, for a PR, from the exact commit BuildKit
+   fetches without a token, and one *Build client* job per TUI platform runs `tui-package` and, on amd64, the client; a
+   prerelease's client jobs skip their builds. Each job's builder starts empty. Before its reviewed builds a builder
+   trains a PGO profile for the architecture it builds on loopback transfers, amd64 natively and arm64 under QEMU's
+   user mode (`scripts/pgo.py`); Windows amd64 uses amd64's and Windows arm64 none. *Assemble request* runs
+   `assets.py stage`, which joins the two images' OCI archives into the one archive a multi-platform build exports,
+   packages each architecture's server out of it, so no second build makes it, copies the client archives and merges
+   every build's part of the source offer into one archive.
    Only a stable release, built from main, exports file trees; every job uploads only the regular files
    `assets.py upload` named and moved into one directory, so no link a build wrote reaches an upload. No job runs past
    a failure.
@@ -85,7 +86,7 @@ The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are reta
 window; the recheck fails closed. A prerelease image names the repository in `SOURCE.txt` and the built commit in its
 `revision` label; that commit's lockfiles pin the third-party source it was built from.
 
-The image archive requests `--provenance mode=max`; builds keep BuildKit's insecure entitlements disabled. The
+Each image archive requests `--provenance mode=max`; builds keep BuildKit's insecure entitlements disabled. The
 Dockerfile may not select a custom frontend, pins its base images by digest and installs exact apt package versions only
 from one snapshot.debian.org timestamp; `toolchain-sync` keeps its image literals equal to `mise.toml`'s. Verification
 requires one runnable `linux/amd64` and `linux/arm64` manifest, each with one linked SLSA provenance statement whose

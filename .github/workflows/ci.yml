@@ -243,6 +243,7 @@ jobs:
           PROFILE: ci
           GM_CLIENT_VALIDATE: '0'
           SOURCE_OFFERS: 'true'
+          SERVER_PLATFORMS: linux/amd64 linux/arm64
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}
           OUT_DIR: ${{ runner.temp }}/image
@@ -362,8 +363,7 @@ jobs:
           path: ${{ runner.temp }}/tui
       - name: Stage exactly the release files out of the exports
         env:
-          OCI_ARCHIVE: ${{ runner.temp }}/image/graphite-meter.oci.tar
-          SERVER_EXPORT: ${{ runner.temp }}/image/server-export
+          SERVER_EXPORT: ${{ runner.temp }}/image
           TUI_EXPORT: ${{ runner.temp }}/tui
           OUT_DIR: ${{ runner.temp }}/staged
         run: python3 scripts/ci/assets.py stage
