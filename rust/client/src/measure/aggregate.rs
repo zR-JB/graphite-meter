@@ -12,7 +12,6 @@ use std::{
 const MIN_EVIDENCE: Duration = Duration::from_millis(800);
 /// A peak window spans at least this much on every clock.
 const MIN_PEAK: Duration = Duration::from_millis(500);
-/// A stage keeps its latest this many intervals.
 const MAX_INTERVALS: usize = 128;
 
 /// Holds one upload receiver's counters. A replacement receiver has a higher `id`.
@@ -29,36 +28,33 @@ pub struct Fed {
     pub bytes: u64,
 }
 
-/// Holds one server's counters at a boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
     pub server: ServerId,
-    /// The client consumed this many payload bytes.
     pub down: Option<u64>,
     /// The receiver reported these counters at a fresh checkpoint.
     pub up: Option<Receiver>,
     pub fed: Option<Fed>,
 }
 
-/// Holds every server's counters at one instant of the client's clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Boundary {
     pub at: Instant,
     /// The sampler ran late, so evidence resumes here.
     pub stalled: bool,
-    /// The stage ends at this boundary.
     pub last: bool,
     pub readings: Vec<Reading>,
 }
 
 impl Boundary {
     fn reading(&self, server: &ServerId) -> Option<&Reading> {
-        self.readings.iter().find(|reading| reading.server == *server)
+        self.readings
+            .iter()
+            .find(|reading| reading.server == *server)
     }
 }
 
 graphite_meter_proto::table! {
-    /// Says why an interval began.
     pub enum Reason {
         name.0: &'static str,
     } {
@@ -76,7 +72,6 @@ pub struct Component {
     pub rate: f64,
 }
 
-/// Holds the combined rates between two boundaries, in bytes per second.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Window {
     pub start: Instant,
@@ -90,10 +85,16 @@ impl Window {
         self.components.down.iter().chain(&self.components.up)
     }
 
-    /// Returns the shortest span the window covers on any clock.
     pub fn shortest(&self) -> Duration {
-        let receivers = self.components.up.iter().map(|component| component.duration);
-        receivers.fold(self.end.saturating_duration_since(self.start), Duration::min)
+        let receivers = self
+            .components
+            .up
+            .iter()
+            .map(|component| component.duration);
+        receivers.fold(
+            self.end.saturating_duration_since(self.start),
+            Duration::min,
+        )
     }
 }
 
@@ -113,14 +114,14 @@ pub struct Interval {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Peaks {
     combined: Dir<f64>,
-    /// Lists one peak per participant, in the interval's order.
     servers: Vec<Dir<f64>>,
 }
 
 impl Peaks {
     fn record(&mut self, window: &Window) {
         for direction in Direction::BOTH {
-            let (components, combined) = (&window.components[direction], &mut self.combined[direction]);
+            let (components, combined) =
+                (&window.components[direction], &mut self.combined[direction]);
             *combined = window.rates[direction].map_or(*combined, |rate| combined.max(rate));
             let len = self.servers.len().max(components.len());
             self.servers.resize(len, Dir::default());
@@ -131,7 +132,6 @@ impl Peaks {
     }
 }
 
-/// A headline carries the mean and peak in bytes per second.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rate {
     pub mean: f64,
@@ -149,11 +149,14 @@ struct Mark {
 impl Mark {
     fn of(boundary: &Boundary, interval: &Interval) -> Arc<Self> {
         let (window, peaks) = (interval.window.clone(), interval.peaks.clone());
-        Arc::new(Self { boundary: boundary.clone(), window, peaks })
+        Arc::new(Self {
+            boundary: boundary.clone(),
+            window,
+            peaks,
+        })
     }
 }
 
-/// Holds the current interval's evidence once its first boundary is in.
 #[derive(Debug)]
 struct Open {
     first: Boundary,
@@ -168,18 +171,14 @@ struct Open {
 struct Ledger {
     server: ServerId,
     down: Option<u64>,
-    /// The current receiver's highest count.
     up: Option<Fed>,
     bytes: Dir<u64>,
 }
 
-/// Keeps one stage's accounting.
 #[derive(Debug)]
 pub struct Aggregate {
     stage: Stage,
-    /// The latest interval comes last.
     intervals: VecDeque<Interval>,
-    /// Counts every interval begun, the dropped ones too.
     begun: usize,
     ledgers: Vec<Ledger>,
     open: Option<Open>,
@@ -222,11 +221,21 @@ impl Aggregate {
             return self.resume(boundary);
         }
         let interval = self.intervals.back()?;
-        let (down, up) = (self.stage.moves(Direction::Down), self.stage.moves(Direction::Up));
+        let (down, up) = (
+            self.stage.moves(Direction::Down),
+            self.stage.moves(Direction::Up),
+        );
         let complete = |reading: Option<&Reading>| {
-            reading.is_some_and(|reading| (!down || reading.down.is_some()) && (!up || reading.up.is_some()))
+            reading.is_some_and(|reading| {
+                (!down || reading.down.is_some()) && (!up || reading.up.is_some())
+            })
         };
-        if interval.participants.is_empty() || !interval.participants.iter().all(|id| complete(boundary.reading(id))) {
+        if interval.participants.is_empty()
+            || !interval
+                .participants
+                .iter()
+                .all(|id| complete(boundary.reading(id)))
+        {
             return None;
         }
         let Some(open) = &self.open else {
@@ -235,7 +244,9 @@ impl Aggregate {
         };
         let sample = match self.window(&open.last, &boundary) {
             Err(Gap::Broken) => return self.resume(boundary),
-            Ok(sample) if !boundary.last || sample.all().all(|component| component.bytes > 0) => sample,
+            Ok(sample) if !boundary.last || sample.all().all(|component| component.bytes > 0) => {
+                sample
+            }
             _ => return None,
         };
         let Ok(full) = self.window(&open.first, &boundary) else {
@@ -265,14 +276,18 @@ impl Aggregate {
 
     /// Ends the interval at the earliest last move of a departed server; the survivors' dropout interval starts there.
     pub fn dropout(&mut self, survivors: &[ServerId], at: Instant) {
-        let Some(interval) = self.intervals.back() else { return };
+        let Some(interval) = self.intervals.back() else {
+            return;
+        };
         if survivors.len() == interval.participants.len() {
             return;
         }
         let moved = self.open.as_ref().map_or(&[][..], |open| &open.moved);
         let paired = interval.participants.iter().zip(moved);
         let departed = paired.filter(|(id, _)| !survivors.contains(id));
-        let marks = departed.flat_map(|(_, moved)| [&moved.down, &moved.up]).flatten();
+        let marks = departed
+            .flat_map(|(_, moved)| [&moved.down, &moved.up])
+            .flatten();
         let Some(end) = marks.min_by_key(|mark| mark.boundary.at).cloned() else {
             if !survivors.is_empty() {
                 self.restart(Reason::Dropout, survivors.to_vec(), at);
@@ -301,7 +316,10 @@ impl Aggregate {
             let span = interval.end.saturating_duration_since(interval.start);
             let enough = span >= MIN_EVIDENCE && evidence(&window.components[direction]);
             let mean = window.rates[direction].filter(|_| enough)?;
-            Some(Rate { mean, peak: interval.peaks.combined[direction].max(mean) })
+            Some(Rate {
+                mean,
+                peak: interval.peaks.combined[direction].max(mean),
+            })
         })
     }
 
@@ -309,13 +327,18 @@ impl Aggregate {
     pub fn server(&self, server: &ServerId, direction: Direction) -> Option<Rate> {
         self.counted().find_map(|(interval, window)| {
             let index = interval.participants.iter().position(|id| id == server)?;
-            let (component, peaks) = (window.components[direction].get(index)?, interval.peaks.servers.get(index));
+            let (component, peaks) = (
+                window.components[direction].get(index)?,
+                interval.peaks.servers.get(index),
+            );
             let (mean, peak) = (component.rate, peaks.map_or(0.0, |peaks| peaks[direction]));
-            evidence(std::slice::from_ref(component)).then_some(Rate { mean, peak: peak.max(mean) })
+            evidence(std::slice::from_ref(component)).then_some(Rate {
+                mean,
+                peak: peak.max(mean),
+            })
         })
     }
 
-    /// Returns `server`'s unique measured bytes in `direction`.
     pub fn bytes(&self, server: &ServerId, direction: Direction) -> u64 {
         let ledger = self.ledgers.iter().find(|ledger| ledger.server == *server);
         ledger.map_or(0, |ledger| ledger.bytes[direction])
@@ -326,19 +349,21 @@ impl Aggregate {
         bytes.fold(0, u64::saturating_add)
     }
 
-    /// Returns the kept intervals, the latest last.
     pub fn intervals(&self) -> impl Iterator<Item = &Interval> {
         self.intervals.iter()
     }
 
-    /// Counts how many intervals began, the dropped ones too.
     pub fn begun(&self) -> usize {
         self.begun
     }
 
     /// Yields the complete intervals that have a window, the latest first.
     fn counted(&self) -> impl Iterator<Item = (&Interval, &Window)> {
-        let complete = self.intervals.iter().rev().filter(|interval| interval.complete);
+        let complete = self
+            .intervals
+            .iter()
+            .rev()
+            .filter(|interval| interval.complete);
         complete.filter_map(|interval| Some((interval, interval.window.as_ref()?)))
     }
 
@@ -362,7 +387,9 @@ impl Aggregate {
     }
 
     fn start(&mut self, boundary: Boundary) {
-        let Some(interval) = self.intervals.back_mut() else { return };
+        let Some(interval) = self.intervals.back_mut() else {
+            return;
+        };
         (interval.start, interval.end) = (boundary.at, boundary.at);
         let mark = Mark::of(&boundary, interval);
         let moved = Dir::from_fn(|direction| self.stage.moves(direction).then(|| mark.clone()));
@@ -389,13 +416,20 @@ impl Aggregate {
         if elapsed.is_zero() {
             return Err(Gap::Stale);
         }
-        let participants = self.intervals.back().map_or(&[][..], |interval| &interval.participants);
+        let participants = self
+            .intervals
+            .back()
+            .map_or(&[][..], |interval| &interval.participants);
         let (mut components, mut stale) = (Dir::<Vec<Component>>::default(), false);
         for id in participants {
             let (start, end) = first.reading(id).zip(last.reading(id)).ok_or(Gap::Broken)?;
             let component = |bytes: u64, duration: Duration| {
                 let rate = bytes as f64 / duration.as_secs_f64();
-                Component { bytes, duration, rate }
+                Component {
+                    bytes,
+                    duration,
+                    rate,
+                }
             };
             if self.stage.moves(Direction::Down) {
                 let (start, end) = start.down.zip(end.down).ok_or(Gap::Broken)?;
@@ -410,30 +444,51 @@ impl Aggregate {
                 let (start, end) = (start.counters, end.counters);
                 let (bytes, nanos) = (end.bytes() - start.bytes(), end.nanos() - start.nanos());
                 stale |= nanos == 0;
-                components.up.push(component(bytes, Duration::from_nanos(nanos)));
+                components
+                    .up
+                    .push(component(bytes, Duration::from_nanos(nanos)));
             }
         }
         if stale {
             return Err(Gap::Stale);
         }
         let total = |components: &Vec<Component>| {
-            (!components.is_empty()).then(|| components.iter().map(|component| component.rate).sum())
+            (!components.is_empty())
+                .then(|| components.iter().map(|component| component.rate).sum())
         };
-        let rates = Dir { down: total(&components.down), up: total(&components.up) };
-        Ok(Window { start: first.at, end: last.at, components, rates })
+        let rates = Dir {
+            down: total(&components.down),
+            up: total(&components.up),
+        };
+        Ok(Window {
+            start: first.at,
+            end: last.at,
+            components,
+            rates,
+        })
     }
 
     fn credit(&mut self, boundary: &Boundary) {
         for reading in &boundary.readings {
-            let Some(ledger) = self.ledgers.iter_mut().find(|ledger| ledger.server == reading.server) else {
+            let Some(ledger) = self
+                .ledgers
+                .iter_mut()
+                .find(|ledger| ledger.server == reading.server)
+            else {
                 continue;
             };
             if let Some(count) = reading.down {
                 let high = ledger.down.get_or_insert(count);
-                ledger.bytes.down = ledger.bytes.down.saturating_add(count.saturating_sub(*high));
+                ledger.bytes.down = ledger
+                    .bytes
+                    .down
+                    .saturating_add(count.saturating_sub(*high));
                 *high = (*high).max(count);
             }
-            let checkpoint = reading.up.map(|up| Fed { id: up.id, bytes: up.counters.bytes() });
+            let checkpoint = reading.up.map(|up| Fed {
+                id: up.id,
+                bytes: up.counters.bytes(),
+            });
             for fed in reading.fed.into_iter().chain(checkpoint) {
                 ledger.credit(fed);
             }
@@ -446,7 +501,11 @@ impl Ledger {
     fn credit(&mut self, next: Fed) {
         let added = match self.up {
             None => 0,
-            Some(current) if next.id < current.id || next.id == current.id && next.bytes <= current.bytes => return,
+            Some(current)
+                if next.id < current.id || next.id == current.id && next.bytes <= current.bytes =>
+            {
+                return;
+            }
             Some(current) if next.id == current.id => next.bytes - current.bytes,
             Some(_) => next.bytes,
         };
@@ -458,7 +517,9 @@ impl Ledger {
 /// Every component spans enough time and some moved bytes.
 fn evidence(components: &[Component]) -> bool {
     !components.is_empty()
-        && components.iter().all(|component| component.duration >= MIN_EVIDENCE)
+        && components
+            .iter()
+            .all(|component| component.duration >= MIN_EVIDENCE)
         && components.iter().any(|component| component.bytes > 0)
 }
 
@@ -484,11 +545,22 @@ mod tests {
             let reading = Reading {
                 server: id("a"),
                 down: None,
-                up: Some(Receiver { id: up_id, counters: Counters::new(bytes, nanos) }),
-                fed: Some(Fed { id: fed_id, bytes: fed }),
+                up: Some(Receiver {
+                    id: up_id,
+                    counters: Counters::new(bytes, nanos),
+                }),
+                fed: Some(Fed {
+                    id: fed_id,
+                    bytes: fed,
+                }),
             };
             let at = base + Duration::from_millis(250 * tick);
-            aggregate.observe(Boundary { at, stalled: false, last: false, readings: vec![reading] });
+            aggregate.observe(Boundary {
+                at,
+                stalled: false,
+                last: false,
+                readings: vec![reading],
+            });
         }
         assert_eq!(aggregate.total(Direction::Up), 500 + 200 + 200 + 200);
     }

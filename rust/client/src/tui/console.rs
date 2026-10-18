@@ -1,4 +1,3 @@
-//! The console, the one screen before, during and after a run.
 use super::{
     App, Target, chart,
     dial::{self, Arc, Dial},
@@ -23,23 +22,22 @@ const WIDE: (u16, u16) = (110, 32);
 /// The browser's chart steps (`client/src/view/scales.ts`) and its latency ladder.
 const CHART_STEPS: [f64; 10] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
 pub(super) const LADDER: [f64; 3] = [1.0, 2.0, 4.0];
-/// The run key's and the chips' widest.
 const CONTROLS: u16 = 64;
 /// The browser's dial transfer curve (`client/src/ui/measure/dial-model.ts`): equal sweeps for each knot.
 const KNOTS: [f64; 9] = [0.0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
 
-/// Where `value` sits on a dial reaching `scale`, from 0 to 1.
 pub fn gauge_fraction(value: f64, scale: f64) -> f64 {
     let v = (value / scale).clamp(0.0, 1.0);
     if v.is_nan() {
         return 0.0;
     }
     let spans = (KNOTS.len() - 1) as f64;
-    let i = (1..KNOTS.len()).find(|&i| v <= KNOTS[i]).unwrap_or(KNOTS.len() - 1);
+    let i = (1..KNOTS.len())
+        .find(|&i| v <= KNOTS[i])
+        .unwrap_or(KNOTS.len() - 1);
     (i as f64 - 1.0 + (v - KNOTS[i - 1]) / (KNOTS[i] - KNOTS[i - 1])) / spans
 }
 
-/// The value at `fraction` of a dial reaching `scale`.
 pub fn gauge_value(fraction: f64, scale: f64) -> f64 {
     let at = fraction.clamp(0.0, 1.0) * (KNOTS.len() - 1) as f64;
     let i = (at as usize).min(KNOTS.len() - 2);
@@ -70,11 +68,9 @@ pub fn icon(stage: Stage) -> &'static str {
 
 /// The browser's reference rate before any, 100 Mbit/s in bytes per second.
 const REFERENCE_RATE: f64 = 12.5e6;
-/// A scale's headroom over the rate it shows.
 const HEADROOM: f64 = 1.03;
 
-/// The browser's dial scale for a combined rate in bytes per second: its 1-2-5 step above it with headroom, and from
-/// a megabit up never under 1 Gbit/s, where most connections fit.
+/// The browser's dial scale: the 1-2-5 step above the rate with headroom, from a megabit up never under 1 Gbit/s.
 pub fn gauge_ceiling(bytes_per_sec: f64) -> f64 {
     let bits = bytes_per_sec * 8.0 * HEADROOM;
     let top = ceil_step(bits, &[1.0, 2.0, 5.0]);
@@ -93,10 +89,12 @@ impl Unit {
     pub fn of(peak: f64) -> Self {
         let peak = if peak > 0.0 { peak } else { REFERENCE_RATE };
         let (shown, name) = format::tier(peak * 8.0, 1.2);
-        Self { divisor: peak * 8.0 / shown, name }
+        Self {
+            divisor: peak * 8.0 / shown,
+            name,
+        }
     }
 
-    /// `bytes_per_sec` as a figure in this unit.
     pub fn figure(self, bytes_per_sec: f64) -> String {
         format::speed(bytes_per_sec * 8.0 / self.divisor)
     }
@@ -124,19 +122,44 @@ impl App {
         let lanes = self.lanes();
         if area.width >= WIDE.0 && area.height >= WIDE.1 {
             let top = (area.height * 11 / 20).clamp(18, 24);
-            let dial = Rect::new(area.x + 1, area.y + 1, (area.width * 3 / 10).clamp(46, 66), top);
+            let dial = Rect::new(
+                area.x + 1,
+                area.y + 1,
+                (area.width * 3 / 10).clamp(46, 66),
+                top,
+            );
             dial::draw(canvas, dial, &self.palette, &self.dial(), &self.ring);
-            let side = Rect::new(dial.right() + 3, dial.y, area.right().saturating_sub(dial.right() + 5), top);
+            let side = Rect::new(
+                dial.right() + 3,
+                dial.y,
+                area.right().saturating_sub(dial.right() + 5),
+                top,
+            );
             let mut controls = side;
             if !lanes.is_empty() {
                 let pitch = if top >= 22 { 2 } else { 1 };
                 let height = 4 + pitch * lanes.len() as u16;
-                self.lanes_area(canvas, Rect::new(side.x, side.y, side.width, height), &lanes, pitch);
-                controls = Rect::new(side.x, side.y + height + 1, side.width, side.height.saturating_sub(height + 1));
+                self.lanes_area(
+                    canvas,
+                    Rect::new(side.x, side.y, side.width, height),
+                    &lanes,
+                    pitch,
+                );
+                controls = Rect::new(
+                    side.x,
+                    side.y + height + 1,
+                    side.width,
+                    side.height.saturating_sub(height + 1),
+                );
             }
             let y = controls.y + controls.height.saturating_sub(6) / 2;
             self.controls(canvas, Rect::new(controls.x, y, controls.width, 6));
-            let cards = Rect::new(area.x + 1, dial.bottom() + 1, area.width - 2, area.bottom() - dial.bottom() - 1);
+            let cards = Rect::new(
+                area.x + 1,
+                dial.bottom() + 1,
+                area.width - 2,
+                area.bottom() - dial.bottom() - 1,
+            );
             self.cards(canvas, cards);
             return;
         }
@@ -145,21 +168,35 @@ impl App {
         dial::readout(canvas, readout, &self.palette, &self.dial());
         let width = area.width.saturating_sub(4).min(CONTROLS);
         let gap = area.height.saturating_sub(14).min(1);
-        let controls = Rect::new(area.x + (area.width - width) / 2, readout.bottom() + gap, width, 6);
+        let controls = Rect::new(
+            area.x + (area.width - width) / 2,
+            readout.bottom() + gap,
+            width,
+            6,
+        );
         self.controls(canvas, controls);
         let rest = area.bottom().saturating_sub(controls.bottom() + 1);
         let lanes_height = 4 + lanes.len() as u16;
         let lanes_room = !lanes.is_empty() && rest > 8 + lanes_height;
-        let cards_height = if lanes_room { rest - lanes_height - 1 } else { rest };
-        let cards = Rect::new(area.x + 1, controls.bottom() + 1, area.width - 2, cards_height);
+        let cards_height = if lanes_room {
+            rest - lanes_height - 1
+        } else {
+            rest
+        };
+        let cards = Rect::new(
+            area.x + 1,
+            controls.bottom() + 1,
+            area.width - 2,
+            cards_height,
+        );
         self.cards(canvas, cards);
         if lanes_room {
-            let lanes_area = Rect::new(area.x + 1, cards.bottom() + 1, area.width - 2, lanes_height);
+            let lanes_area =
+                Rect::new(area.x + 1, cards.bottom() + 1, area.width - 2, lanes_height);
             self.lanes_area(canvas, lanes_area, &lanes, 1);
         }
     }
 
-    /// The run key over the stage chips, as wide as each other.
     fn controls(&self, canvas: &mut Canvas, area: Rect) {
         let width = area.width.min(CONTROLS);
         let x = area.x + (area.width - width) / 2;
@@ -173,25 +210,54 @@ impl App {
         let hovered = self.hover == Some(Target::Key);
         let (label, note, cap, plate, faint) = match self.blocked() {
             _ if self.running() => {
-                let plate = if hovered { palette.selected } else { palette.raised };
-                let faint = Style { bg: Some(plate), ..palette.muted };
+                let plate = if hovered {
+                    palette.selected
+                } else {
+                    palette.raised
+                };
+                let faint = Style {
+                    bg: Some(plate),
+                    ..palette.muted
+                };
                 (
                     "■  Stop test".to_owned(),
                     String::new(),
                     "esc",
-                    Style { bg: Some(plate), ..palette.value },
+                    Style {
+                        bg: Some(plate),
+                        ..palette.value
+                    },
                     faint,
                 )
             }
-            Some(reason) => ("Start test".into(), reason, "", palette.plate_off, palette.plate_off),
+            Some(reason) => (
+                "Start test".into(),
+                reason,
+                "",
+                palette.plate_off,
+                palette.plate_off,
+            ),
             None => {
-                let label = if self.view.run.is_some() { "Run again" } else { "Start test" };
+                let label = if self.view.run.is_some() {
+                    "Run again"
+                } else {
+                    "Start test"
+                };
                 let mut plate = palette.plate;
                 if hovered {
                     plate.bg = plate.bg.map(|ink| mix(palette.canvas(), ink, 0.12));
                 }
-                let faint = Style { bg: plate.bg, ..palette.plate_note };
-                (label.into(), format!("~{}", self.plan_time()), "enter", plate.bold(), faint)
+                let faint = Style {
+                    bg: plate.bg,
+                    ..palette.plate_note
+                };
+                (
+                    label.into(),
+                    format!("~{}", self.plan_time()),
+                    "enter",
+                    plate.bold(),
+                    faint,
+                )
             }
         };
         canvas.plate(area, plate);
@@ -199,12 +265,16 @@ impl App {
         let text = Line::styled(label, plate).and(gap, plate).and(note, faint);
         canvas.center(area.x, area.y + 1, area.width, &text);
         if !cap.is_empty() && area.width >= 30 {
-            canvas.right(area.x, area.y + 1, area.width - 2, &Line::styled(cap, faint));
+            canvas.right(
+                area.x,
+                area.y + 1,
+                area.width - 2,
+                &Line::styled(cap, faint),
+            );
         }
         canvas.hit(area, Target::Key);
     }
 
-    /// Why the key cannot start a test now, if it cannot.
     pub(super) fn blocked(&self) -> Option<String> {
         match () {
             _ if self.running() => None,
@@ -225,7 +295,11 @@ impl App {
         for (index, &stage) in stages.iter().enumerate() {
             let x = area.x + index as u16 * (width + 1);
             let last = index as u16 + 1 == count;
-            self.chip(canvas, Rect::new(x, area.y, if last { area.right() - x } else { width }, 2), stage);
+            self.chip(
+                canvas,
+                Rect::new(x, area.y, if last { area.right() - x } else { width }, 2),
+                stage,
+            );
         }
     }
 
@@ -234,7 +308,9 @@ impl App {
         let planned = self.plan();
         let stages = Stage::ALL.iter().copied();
         let shown = |stage: &Stage| {
-            *stage != Stage::Bidirectional || self.stage_on(*stage) || planned.iter().any(|(own, _)| own == stage)
+            *stage != Stage::Bidirectional
+                || self.stage_on(*stage)
+                || planned.iter().any(|(own, _)| own == stage)
         };
         stages.filter(shown).collect()
     }
@@ -243,7 +319,11 @@ impl App {
         let palette = &self.palette;
         let on = self.stage_on(stage);
         // Between runs a chip that is off says so, whatever the last run did.
-        let state = if on || self.running() { self.stage_state(stage) } else { State::Pending };
+        let state = if on || self.running() {
+            self.stage_state(stage)
+        } else {
+            State::Pending
+        };
         let planned = match self.running() {
             true => self
                 .plan()
@@ -263,9 +343,10 @@ impl App {
         let hue = palette.trace(stage);
         let track = mix(palette.border.fg.unwrap_or(hue), tile, 0.75);
         let (share, bar) = match state {
-            State::Measuring => {
-                (self.elapsed().as_secs_f64() / planned.map_or(1.0, |planned| planned.as_secs_f64()), hue)
-            }
+            State::Measuring => (
+                self.elapsed().as_secs_f64() / planned.map_or(1.0, |planned| planned.as_secs_f64()),
+                hue,
+            ),
             State::Ended(StageStatus::Complete | StageStatus::Partial) => (1.0, hue),
             State::Ended(StageStatus::Failed) => (1.0, palette.err.fg.unwrap_or(hue)),
             State::Ended(StageStatus::Stopped) => (self.reached(stage), hue),
@@ -276,8 +357,12 @@ impl App {
         let mut rule = Line::default();
         for cell in 0..inner {
             match () {
-                _ if state == State::Warmup && self.sweeping(cell, inner) => rule.push('━', Style::fg(hue)),
-                _ if state == State::Ended(StageStatus::Partial) && cell % 3 == 2 => rule.push(' ', Style::default()),
+                _ if state == State::Warmup && self.sweeping(cell, inner) => {
+                    rule.push('━', Style::fg(hue));
+                }
+                _ if state == State::Ended(StageStatus::Partial) && cell % 3 == 2 => {
+                    rule.push(' ', Style::default());
+                }
                 _ if 2 * cell + 2 <= halves => rule.push('━', Style::fg(bar)),
                 _ if 2 * cell + 1 == halves => rule.push('╸', Style::fg(bar)),
                 _ => rule.push('━', Style::fg(track)),
@@ -285,10 +370,18 @@ impl App {
         }
         canvas.line(area.x + 1, area.y, inner, &rule);
         let (text, style) = self.chip_status(stage, state, planned, inner);
-        let mark = Line::styled(icon(stage), if on { palette.stage(stage) } else { palette.muted });
-        let name = mark
-            .and(" ", Style::default())
-            .and(format::label(stage), if on { palette.text } else { palette.muted });
+        let mark = Line::styled(
+            icon(stage),
+            if on {
+                palette.stage(stage)
+            } else {
+                palette.muted
+            },
+        );
+        let name = mark.and(" ", Style::default()).and(
+            format::label(stage),
+            if on { palette.text } else { palette.muted },
+        );
         let room = inner.saturating_sub(text::width(&text) as u16 + 1);
         canvas.line(area.x + 1, area.y + 1, room, &name.fit(usize::from(room)));
         canvas.right(area.x + 1, area.y + 1, inner, &Line::styled(text, style));
@@ -298,22 +391,35 @@ impl App {
     }
 
     /// The chip's end: the planned time, the time into it, a check, or its state.
-    fn chip_status(&self, stage: Stage, state: State, planned: Option<Duration>, width: u16) -> (String, Style) {
+    fn chip_status(
+        &self,
+        stage: Stage,
+        state: State,
+        planned: Option<Duration>,
+        width: u16,
+    ) -> (String, Style) {
         let palette = &self.palette;
         match state {
             State::Measuring => {
                 let elapsed = self.elapsed();
                 let long = planned.map(|planned| format::progress(elapsed, planned));
-                let fits =
-                    |long: &String| text::width(long) + text::width(format::label(stage)) + 5 <= usize::from(width);
-                (long.filter(fits).unwrap_or(format::duration(elapsed)), palette.text)
+                let fits = |long: &String| {
+                    text::width(long) + text::width(format::label(stage)) + 5 <= usize::from(width)
+                };
+                (
+                    long.filter(fits).unwrap_or(format::duration(elapsed)),
+                    palette.text,
+                )
             }
             State::Warmup => ("Warmup".into(), palette.muted),
             State::Ended(status) => {
                 let (text, style) = self.ended(status);
                 (text.into(), style)
             }
-            State::Pending => (planned.map_or("Skipped".into(), format::stage_time), palette.muted),
+            State::Pending => (
+                planned.map_or("Skipped".into(), format::stage_time),
+                palette.muted,
+            ),
         }
     }
 
@@ -331,12 +437,24 @@ impl App {
         const FIGURE: u16 = 10;
         let palette = &self.palette;
         let hue = palette.stage(Stage::Latency);
-        canvas.line(area.x, area.y, area.width, &Line::styled("━".repeat(usize::from(area.width)), hue));
+        canvas.line(
+            area.x,
+            area.y,
+            area.width,
+            &Line::styled("━".repeat(usize::from(area.width)), hue),
+        );
         let head = Line::styled(icon(Stage::Latency), hue).and(" Latency", palette.heading);
         canvas.line(area.x, area.y + 1, area.width, &head);
-        if self.view.run.as_ref().is_some_and(|run| run.at.is_some()) && self.participants().len() > 1 {
+        if self.view.run.as_ref().is_some_and(|run| run.at.is_some())
+            && self.participants().len() > 1
+        {
             let to = format!("to {}  l switches", self.name(self.latency_server()));
-            canvas.right(area.x, area.y + 1, area.width, &Line::styled(to, palette.muted));
+            canvas.right(
+                area.x,
+                area.y + 1,
+                area.width,
+                &Line::styled(to, palette.muted),
+            );
         }
         let jitter = area.width >= LABEL + 4 * FIGURE + 34;
         let plot_x = area.x + LABEL + if jitter { 3 } else { 2 } * FIGURE + 3;
@@ -352,10 +470,18 @@ impl App {
                 &Line::styled(head, palette.muted),
             );
         }
-        canvas.right(area.x, area.y + 2, area.width, &Line::styled("Added", palette.muted));
+        canvas.right(
+            area.x,
+            area.y + 2,
+            area.width,
+            &Line::styled("Added", palette.muted),
+        );
         let scale = lane_scale(lanes);
-        let at =
-            |ms: f64| plot_x + ((ms / scale).clamp(0.0, 1.0) * f64::from(plot_width.saturating_sub(1))).round() as u16;
+        let at = |ms: f64| {
+            plot_x
+                + ((ms / scale).clamp(0.0, 1.0) * f64::from(plot_width.saturating_sub(1))).round()
+                    as u16
+        };
         let ms = |duration: Duration| duration.as_secs_f64() * 1e3;
         let idle = lanes
             .iter()
@@ -375,33 +501,47 @@ impl App {
                 .and(" ", Style::default())
                 .and(format::compact_population(lane.stage), palette.text);
             canvas.line(area.x, y, LABEL, &name);
-            let summary = lane.summary.filter(|summary| summary.replies + summary.timeouts > 0);
+            let summary = lane
+                .summary
+                .filter(|summary| summary.replies + summary.timeouts > 0);
             let missing = || Line::styled(MISSING, palette.muted);
-            let mut cells = vec![
-                summary
-                    .and_then(|s| s.p50)
-                    .map_or_else(missing, |m| Line::styled(round_trip(m), palette.value)),
-            ];
+            let median = summary.and_then(|summary| summary.p50);
+            let mut cells = vec![median.map_or_else(missing, |median| {
+                Line::styled(round_trip(median), palette.value)
+            })];
             if jitter {
-                let value = summary.and_then(|s| s.jitter);
-                cells.push(value.map_or_else(missing, |jitter| Line::styled(round_trip(jitter), palette.text)));
+                let value = summary.and_then(|summary| summary.jitter);
+                cells.push(value.map_or_else(missing, |jitter| {
+                    Line::styled(round_trip(jitter), palette.text)
+                }));
             }
-            cells.push(summary.and_then(|s| s.timeout_ratio()).map_or_else(missing, |ratio| {
-                Line::styled(format::percent(ratio), if ratio >= 0.05 { palette.warn } else { palette.text })
+            let timeouts = summary.and_then(|summary| summary.timeout_ratio());
+            cells.push(timeouts.map_or_else(missing, |ratio| {
+                let tone = if ratio >= 0.05 {
+                    palette.warn
+                } else {
+                    palette.text
+                };
+                Line::styled(format::percent(ratio), tone)
             }));
             for (column, cell) in cells.iter().enumerate() {
                 canvas.right(area.x + LABEL + column as u16 * FIGURE, y, FIGURE, cell);
             }
-            let added = match (lane.stage, summary.and_then(|s| s.p50), idle) {
+            let added = match (lane.stage, median, idle) {
                 (Stage::Latency, ..) => Line::default(),
-                (stage, Some(median), Some(idle)) => {
-                    Line::styled(format!("{} ms", format::added(ms(median) - ms(idle))), palette.stage(stage))
-                }
+                (stage, Some(median), Some(idle)) => Line::styled(
+                    format!("{} ms", format::added(ms(median) - ms(idle))),
+                    palette.stage(stage),
+                ),
                 _ => missing(),
             };
             canvas.right(area.x, y, area.width, &added);
-            let (Some(summary), true) = (summary, plot_width >= 12) else { continue };
-            let Some(spread) = summary.spread else { continue };
+            let (Some(summary), true) = (summary, plot_width >= 12) else {
+                continue;
+            };
+            let Some(spread) = summary.spread else {
+                continue;
+            };
             let trace = palette.trace(lane.stage);
             let whisker = Style::fg(mix(trace, ground, 0.7));
             if let (Some(idle), true) = (idle, lane.stage != Stage::Latency) {
@@ -409,12 +549,22 @@ impl App {
                 canvas.line(at(ms(idle)), y, 1, &Line::styled("┊", line));
             }
             let (from, to) = (at(ms(spread.min)), at(ms(spread.max).min(scale)));
-            canvas.line(from, y, to - from + 1, &Line::styled("─".repeat(usize::from(to - from) + 1), whisker));
+            canvas.line(
+                from,
+                y,
+                to - from + 1,
+                &Line::styled("─".repeat(usize::from(to - from) + 1), whisker),
+            );
             canvas.line(from, y, 1, &Line::styled("╶", whisker));
             if ms(spread.max) > scale {
                 let end = plot_x + plot_width - 1;
                 canvas.line(end, y, 1, &Line::styled("▸", Style::fg(trace)));
-                canvas.line(end + 2, y, 6, &Line::styled(format::ms(ms(spread.max)), palette.muted));
+                canvas.line(
+                    end + 2,
+                    y,
+                    6,
+                    &Line::styled(format::ms(ms(spread.max)), palette.muted),
+                );
             } else {
                 canvas.line(to, y, 1, &Line::styled("╴", whisker));
             }
@@ -424,26 +574,44 @@ impl App {
             match canvas.profile() >= Profile::Ansi256 {
                 true => canvas.fill(Rect::new(box_from, y, span, 1), boxed),
                 false => {
-                    _ = canvas.line(box_from, y, span, &Line::styled("━".repeat(usize::from(span)), Style::fg(trace)));
+                    _ = canvas.line(
+                        box_from,
+                        y,
+                        span,
+                        &Line::styled("━".repeat(usize::from(span)), Style::fg(trace)),
+                    );
                 }
             }
             if let Some(median) = summary.p50 {
                 let x = at(ms(median));
                 let tick = if (box_from..=box_to).contains(&x) {
-                    Style { bg: Some(boxed), ..palette.value }
+                    Style {
+                        bg: Some(boxed),
+                        ..palette.value
+                    }
                 } else {
                     palette.value
                 };
                 canvas.line(x, y, 1, &Line::styled("┃", tick));
             }
             if let (Some(latest), true, 2) = (lane.latest, lane.live, pitch) {
-                canvas.line(at(ms(latest)), y + 1, 1, &Line::styled("▴", Style::fg(trace)));
+                canvas.line(
+                    at(ms(latest)),
+                    y + 1,
+                    1,
+                    &Line::styled("▴", Style::fg(trace)),
+                );
             }
         }
         if plot_width >= 12 {
             let axis = area.y + 3 + lanes.len() as u16 * pitch;
             canvas.line(plot_x, axis, 1, &Line::styled("0", palette.muted));
-            canvas.center(plot_x, axis, plot_width, &Line::styled(format::tick(scale / 2.0), palette.muted));
+            canvas.center(
+                plot_x,
+                axis,
+                plot_width,
+                &Line::styled(format::tick(scale / 2.0), palette.muted),
+            );
             let end = Line::styled(format!("{} ms", format::tick(scale)), palette.muted);
             canvas.right(plot_x, axis, plot_width + 3, &end);
         }
@@ -470,7 +638,11 @@ impl App {
             let card = Rect::new(
                 x,
                 area.y + row * (height + 1),
-                if column + 1 == per { area.right() - x } else { width },
+                if column + 1 == per {
+                    area.right() - x
+                } else {
+                    width
+                },
                 height,
             );
             self.card(canvas, card, stage, duration, scales);
@@ -482,7 +654,11 @@ impl App {
         let run = self.view.run.as_ref();
         let peak = run.map_or(0.0, |run| run.peak);
         let rate = ceil_step(peak.max(1.0) * 8.0 * HEADROOM, &CHART_STEPS) / 8.0;
-        let series = run.and_then(|run| run.rtt.iter().find(|(id, _)| Some(id) == self.latency_server()));
+        let series = run.and_then(|run| {
+            run.rtt
+                .iter()
+                .find(|(id, _)| Some(id) == self.latency_server())
+        });
         let plan = self.plan();
         let top = |idle: bool| {
             let windows = plan
@@ -502,11 +678,22 @@ impl App {
             let p75 = highs.get(highs.len() * 3 / 4).copied().unwrap_or(0.0);
             ceil_step((p75 * 2.5).max(1.0), &LADDER)
         };
-        Scales { rate, idle: top(true), loaded: top(false) }
+        Scales {
+            rate,
+            idle: top(true),
+            loaded: top(false),
+        }
     }
 
     /// One stage's card, laid out alike before, during and after a run, so nothing moves between Start and the result.
-    fn card(&self, canvas: &mut Canvas, area: Rect, stage: Stage, duration: Duration, scales: Scales) {
+    fn card(
+        &self,
+        canvas: &mut Canvas,
+        area: Rect,
+        stage: Stage,
+        duration: Duration,
+        scales: Scales,
+    ) {
         let palette = &self.palette;
         let state = self.stage_state(stage);
         let tile = palette.surface;
@@ -519,7 +706,12 @@ impl App {
         canvas.fill(Rect::new(area.x, area.y, area.width, 1), head);
         let inner = area.width.saturating_sub(2);
         let mark = Line::styled(icon(stage), palette.stage(stage)).and(" ", Style::default());
-        canvas.line(area.x + 1, area.y, inner, &mark.and(format::label(stage), palette.heading));
+        canvas.line(
+            area.x + 1,
+            area.y,
+            inner,
+            &mark.and(format::label(stage), palette.heading),
+        );
         let (status, style) = self.card_status(stage, state);
         canvas.right(area.x + 1, area.y, inner, &Line::styled(status, style));
         let run = self.view.run.as_ref();
@@ -537,7 +729,10 @@ impl App {
         let mut facts = self.facts(stage, result, unit);
         facts.truncate(usize::from(area.bottom().saturating_sub(y + roomy)));
         let first = area.bottom().saturating_sub(facts.len() as u16 + roomy);
-        let (top, bottom) = (y + roomy, first.saturating_sub(u16::from(!facts.is_empty())));
+        let (top, bottom) = (
+            y + roomy,
+            first.saturating_sub(u16::from(!facts.is_empty())),
+        );
         if bottom >= top + 2 {
             let field = Rect::new(area.x + 1, top, inner, bottom - top);
             canvas.fill(field, palette.wash(stage, 0.05, tile));
@@ -545,10 +740,19 @@ impl App {
         }
         for (index, (label, value)) in facts.into_iter().enumerate() {
             let y = first + index as u16;
-            let style = if value == MISSING { palette.muted } else { palette.text };
+            let style = if value == MISSING {
+                palette.muted
+            } else {
+                palette.text
+            };
             let value = Line::styled(value, style);
             let room = inner.saturating_sub(value.width() as u16 + 1);
-            canvas.line(area.x + 1, y, room, &Line::styled(label, palette.muted).fit(usize::from(room)));
+            canvas.line(
+                area.x + 1,
+                y,
+                room,
+                &Line::styled(label, palette.muted).fit(usize::from(room)),
+            );
             canvas.right(area.x + 1, y, inner, &value);
         }
     }
@@ -577,7 +781,13 @@ impl App {
         match status {
             StageStatus::Complete => ("✓", palette.ok),
             StageStatus::Partial => (label, palette.warn),
-            StageStatus::Failed => (label, Style { bold: false, ..palette.err }),
+            StageStatus::Failed => (
+                label,
+                Style {
+                    bold: false,
+                    ..palette.err
+                },
+            ),
             StageStatus::Stopped => (label, palette.muted),
         }
     }
@@ -588,19 +798,25 @@ impl App {
         let run = self.view.run.as_ref();
         let result = run.and_then(|run| run.results.iter().rfind(|result| result.stage == stage));
         let missing = Line::styled(MISSING, palette.muted);
-        let figure =
-            |value: String, unit: &str| Line::styled(value, palette.value).and(format!(" {unit}"), palette.muted);
+        let figure = |value: String, unit: &str| {
+            Line::styled(value, palette.value).and(format!(" {unit}"), palette.muted)
+        };
         let mut quiet = Line::default();
         let value = if stage.directions().is_empty() {
             let summary = self.population(stage);
             if let Some(jitter) = summary.and_then(|s| s.jitter) {
-                quiet = Line::styled("Jitter ", palette.muted).and(round_trip(jitter), palette.text);
+                quiet =
+                    Line::styled("Jitter ", palette.muted).and(round_trip(jitter), palette.text);
             }
             let median = summary.and_then(|summary| summary.p50);
             let shown = median.or_else(|| self.latest().filter(|_| state == State::Measuring));
-            shown.map_or(missing, |rtt| figure(format::latency(rtt.as_secs_f64() * 1e3), "ms"))
+            shown.map_or(missing, |rtt| {
+                figure(format::latency(rtt.as_secs_f64() * 1e3), "ms")
+            })
         } else {
-            let rate = |direction| match result.and_then(|result: &StageResult| result.throughput[direction]?.rate) {
+            let rate = |direction| match result
+                .and_then(|result: &StageResult| result.throughput[direction]?.rate)
+            {
                 Some(rate) => Some(rate.mean),
                 None if state == State::Measuring => {
                     let shown = self.live.shown[direction];
@@ -610,16 +826,21 @@ impl App {
             };
             let hue = palette.stage(stage);
             match stage.directions() {
-                [direction] => rate(*direction).map_or(missing, |rate| figure(unit.figure(rate), unit.name)),
+                [direction] => {
+                    rate(*direction).map_or(missing, |rate| figure(unit.figure(rate), unit.name))
+                }
                 [down, up] => match (rate(*down), rate(*up)) {
                     (None, None) => missing,
                     (down, up) => {
                         let side = |arrow: &str, rate: Option<f64>| {
-                            let shown =
-                                rate.map_or(missing.clone(), |rate| Line::styled(unit.figure(rate), palette.value));
+                            let shown = rate.map_or(missing.clone(), |rate| {
+                                Line::styled(unit.figure(rate), palette.value)
+                            });
                             Line::styled(arrow, hue).with(shown)
                         };
-                        let pair = side("↓ ", down).and("   ", Style::default()).with(side("↑ ", up));
+                        let pair = side("↓ ", down)
+                            .and("   ", Style::default())
+                            .with(side("↑ ", up));
                         pair.and(format!(" {}", unit.name), palette.muted)
                     }
                 },
@@ -628,7 +849,9 @@ impl App {
         };
         if let Some(result) = result.filter(|_| state == State::Ended(StageStatus::Complete)) {
             let mean = result.throughput.mean();
-            if let Some(wire) = wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005) {
+            if let Some(wire) =
+                wire::wire_rate(result, &self.view.servers).filter(|wire| *wire >= mean * 1.005)
+            {
                 quiet = Line::styled("Wire ", palette.muted)
                     .and(format!("{} {}", unit.figure(wire), unit.name), palette.text);
                 let overhead = format!("  +{:.1}%", (wire / mean - 1.0) * 100.0);
@@ -642,9 +865,8 @@ impl App {
                 let (fallback, style) = self.ended(status);
                 Line::styled(self.failure(stage).unwrap_or(fallback), style)
             }
-            State::Warmup => {
-                Line::styled(self.spinner(), palette.accent).and(" Warming up, not counted", palette.muted)
-            }
+            State::Warmup => Line::styled(self.spinner(), palette.accent)
+                .and(" Warming up, not counted", palette.muted),
             _ => quiet,
         };
         [value, quiet]
@@ -654,7 +876,9 @@ impl App {
     fn failure(&self, stage: Stage) -> Option<&'static str> {
         let run = self.view.run.as_ref()?;
         let result = run.results.iter().rfind(|result| result.stage == stage)?;
-        let counted = |failure: &&ServerFailure| failure.failure.reason != FailureReason::InsufficientEvidence;
+        let counted = |failure: &&ServerFailure| {
+            failure.failure.reason != FailureReason::InsufficientEvidence
+        };
         let mut failures = result.failures.iter().filter(counted);
         let own = failures
             .clone()
@@ -662,22 +886,35 @@ impl App {
         Some(own.or_else(|| failures.next())?.failure.reason.label())
     }
 
-    /// The card's facts as label and value, missing until known.
-    fn facts(&self, stage: Stage, result: Option<&StageResult>, unit: Unit) -> Vec<(&'static str, String)> {
+    fn facts(
+        &self,
+        stage: Stage,
+        result: Option<&StageResult>,
+        unit: Unit,
+    ) -> Vec<(&'static str, String)> {
         let missing = || MISSING.to_owned();
         if stage.directions().is_empty() {
             let summary = self.population(stage);
             let range = summary
                 .and_then(|summary| summary.spread)
-                .map_or_else(missing, |spread| format::latency_range(spread.min, spread.max));
-            let p95 = summary.and_then(|summary| summary.p95).map_or_else(missing, round_trip);
+                .map_or_else(missing, |spread| {
+                    format::latency_range(spread.min, spread.max)
+                });
+            let p95 = summary
+                .and_then(|summary| summary.p95)
+                .map_or_else(missing, round_trip);
             let replies = summary
-                .filter(|s| s.replies > 0)
-                .map_or_else(missing, |s| format::count(s.replies));
+                .filter(|summary| summary.replies > 0)
+                .map_or_else(missing, |summary| format::count(summary.replies));
             let timeouts = summary
-                .and_then(|s| s.timeout_ratio())
+                .and_then(|summary| summary.timeout_ratio())
                 .map_or_else(missing, format::percent);
-            return vec![("Range", range), ("P95", p95), ("Replies", replies), ("Timeouts", timeouts)];
+            return vec![
+                ("Range", range),
+                ("P95", p95),
+                ("Replies", replies),
+                ("Timeouts", timeouts),
+            ];
         }
         let measured = result.filter(|result| !result.measured.is_zero());
         let bytes = |direction| {
@@ -690,18 +927,39 @@ impl App {
                 let rate = measured
                     .and_then(|result| result.throughput[*direction]?.rate)
                     .filter(|rate| rate.peak > 0.0);
-                let peak = rate.map_or_else(missing, |rate| format!("{} {}", unit.figure(rate.peak), unit.name));
-                vec![("Peak", peak), ("Transferred", bytes(*direction)), ("Duration", duration)]
+                let peak = rate.map_or_else(missing, |rate| {
+                    format!("{} {}", unit.figure(rate.peak), unit.name)
+                });
+                vec![
+                    ("Peak", peak),
+                    ("Transferred", bytes(*direction)),
+                    ("Duration", duration),
+                ]
             }
-            [down, up] => vec![("↓ Transferred", bytes(*down)), ("↑ Transferred", bytes(*up)), ("Duration", duration)],
+            [down, up] => vec![
+                ("↓ Transferred", bytes(*down)),
+                ("↑ Transferred", bytes(*up)),
+                ("Duration", duration),
+            ],
             _ => Vec::new(),
         }
     }
 
     /// The stage's traces on its field: a transfer's rate line over its loaded replies, or the idle replies alone.
-    fn traces(&self, canvas: &mut Canvas, field: Rect, stage: Stage, duration: Duration, scales: Scales) {
-        let Some(run) = self.view.run.as_ref() else { return };
-        let Some(window) = self.window(run, stage) else { return };
+    fn traces(
+        &self,
+        canvas: &mut Canvas,
+        field: Rect,
+        stage: Stage,
+        duration: Duration,
+        scales: Scales,
+    ) {
+        let Some(run) = self.view.run.as_ref() else {
+            return;
+        };
+        let Some(window) = self.window(run, stage) else {
+            return;
+        };
         let span = (window.0, window.0 + duration.as_secs_f64());
         let palette = &self.palette;
         let hue = palette.trace(stage);
@@ -712,22 +970,47 @@ impl App {
             .map(|(_, series)| series);
         if stage.directions().is_empty() {
             if let Some(series) = rtt {
-                chart::bars(canvas, field, between(series, span), (scales.idle, span), hue);
+                chart::bars(
+                    canvas,
+                    field,
+                    between(series, span),
+                    (scales.idle, span),
+                    hue,
+                );
             }
             return;
         }
         let loaded = self.config.loaded_latency && rtt.is_some() && field.height >= 5;
-        let rates = Rect::new(field.x, field.y, field.width, field.height - if loaded { 2 } else { 0 });
+        let rates = Rect::new(
+            field.x,
+            field.y,
+            field.width,
+            field.height - if loaded { 2 } else { 0 },
+        );
         let live = self.stage_state(stage) == State::Measuring;
         let tip = palette.text.fg.unwrap_or(hue);
         for (index, &direction) in stage.directions().iter().enumerate() {
-            let head = (window.0 + self.elapsed().as_secs_f64(), self.live.shown[direction].value(self.now));
+            let head = (
+                window.0 + self.elapsed().as_secs_f64(),
+                self.live.shown[direction].value(self.now),
+            );
             let head = Some(head).filter(|&(_, value)| live && value > 0.0);
-            let color = if index == 0 { hue } else { mix(hue, palette.surface, 0.55) };
+            let color = if index == 0 {
+                hue
+            } else {
+                mix(hue, palette.surface, 0.55)
+            };
             let points = between(&run.throughput[direction], span);
             // The area fills under the first direction only, so a second line stays readable over it.
             let field = (index == 0).then(|| palette.wash(stage, 0.05, palette.surface));
-            chart::line(canvas, rates, points, head, (scales.rate, span), (color, tip, field));
+            chart::line(
+                canvas,
+                rates,
+                points,
+                head,
+                (scales.rate, span),
+                (color, tip, field),
+            );
         }
         if let (true, Some(series)) = (loaded, rtt) {
             let track = Rect::new(field.x, field.bottom() - 2, field.width, 2);
@@ -748,12 +1031,18 @@ impl App {
         let peak = run.map_or(0.0, |run| run.peak);
         let unit = Unit::of(peak);
         let gauge = gauge_ceiling(if peak > 0.0 { peak } else { REFERENCE_RATE });
-        let rate_ticks: [String; 5] =
-            std::array::from_fn(|i| format::tick(gauge_value(i as f64 / 4.0, gauge) * 8.0 / unit.divisor));
+        let rate_ticks: [String; 5] = std::array::from_fn(|i| {
+            format::tick(gauge_value(i as f64 / 4.0, gauge) * 8.0 / unit.divisor)
+        });
         let ms_scale = self.live.rtt_scale.max(1.0);
-        let ms_ticks: [String; 5] = std::array::from_fn(|i| format::tick(i as f64 / 4.0 * ms_scale));
-        let label =
-            |stage: Stage| Line::styled(format!("{} {}", icon(stage), format::label(stage)), palette.stage(stage));
+        let ms_ticks: [String; 5] =
+            std::array::from_fn(|i| format::tick(i as f64 / 4.0 * ms_scale));
+        let label = |stage: Stage| {
+            Line::styled(
+                format!("{} {}", icon(stage), format::label(stage)),
+                palette.stage(stage),
+            )
+        };
         let border = palette.border.fg.unwrap_or(palette.canvas());
         let muted = |text: &str| Line::styled(text, palette.muted);
         let at_rest = |ticks: [String; 5], note: Line| Dial {
@@ -778,7 +1067,11 @@ impl App {
             };
             let stage = running.plan().stage;
             let track = palette.wash(stage, 0.22, border);
-            let ticks = if stage == Stage::Latency { ms_ticks } else { rate_ticks };
+            let ticks = if stage == Stage::Latency {
+                ms_ticks
+            } else {
+                rate_ticks
+            };
             let needle = |to| {
                 vec![Arc {
                     to: self.live.needle(to, self.now),
@@ -787,7 +1080,12 @@ impl App {
             };
             if let Running::Warmup(_) = running {
                 let warming = at_rest(ticks, muted("Warming up, not counted"));
-                return Dial { track, label: label(stage), arcs: needle(0.0), ..warming };
+                return Dial {
+                    track,
+                    label: label(stage),
+                    arcs: needle(0.0),
+                    ..warming
+                };
             }
             if stage == Stage::Latency {
                 let latest = self.latest();
@@ -796,7 +1094,9 @@ impl App {
                     track,
                     ticks,
                     label: label(stage),
-                    value: latest.map_or(MISSING.into(), |rtt| format::latency(rtt.as_secs_f64() * 1e3)),
+                    value: latest.map_or(MISSING.into(), |rtt| {
+                        format::latency(rtt.as_secs_f64() * 1e3)
+                    }),
                     unit: "ms".into(),
                     note: self.timeout_streak(),
                 };
@@ -811,7 +1111,11 @@ impl App {
                 track,
                 ticks,
                 label: label(stage),
-                value: if value > 0.0 { unit.figure(value) } else { MISSING.into() },
+                value: if value > 0.0 {
+                    unit.figure(value)
+                } else {
+                    MISSING.into()
+                },
                 unit: unit.name.into(),
                 note: Line::default(),
             };
@@ -827,10 +1131,12 @@ impl App {
             (!stage.directions().is_empty() && mean > 0.0).then_some((stage, mean))
         });
         if let Some((stage, mean)) = results.next() {
-            let arcs = std::iter::once((stage, mean)).chain(results).map(|(stage, mean)| Arc {
-                to: self.live.swept(gauge_fraction(mean, gauge), self.now),
-                color: palette.trace(stage),
-            });
+            let arcs = std::iter::once((stage, mean))
+                .chain(results)
+                .map(|(stage, mean)| Arc {
+                    to: self.live.swept(gauge_fraction(mean, gauge), self.now),
+                    color: palette.trace(stage),
+                });
             return Dial {
                 arcs: arcs.collect(),
                 track: border,
@@ -841,7 +1147,10 @@ impl App {
                 note: self.outcome_note(),
             };
         }
-        match self.population(Stage::Latency).and_then(|summary| summary.p50) {
+        match self
+            .population(Stage::Latency)
+            .and_then(|summary| summary.p50)
+        {
             Some(median) => Dial {
                 arcs: vec![Arc {
                     to: median.as_secs_f64() * 1e3 / ms_scale,
@@ -858,15 +1167,19 @@ impl App {
         }
     }
 
-    /// Under a finished run's dial: why it stopped or failed, if it did.
     fn outcome_note(&self) -> Line {
         let palette = &self.palette;
         let run = self.view.run.as_ref();
         match run.and_then(|run| run.outcome) {
-            Some(Outcome::Stopped) => Line::styled(format::outcome_label(Outcome::Stopped), palette.muted),
+            Some(Outcome::Stopped) => {
+                Line::styled(format::outcome_label(Outcome::Stopped), palette.muted)
+            }
             Some(Outcome::Failed) => {
                 let error = run.and_then(|run| run.error.as_ref());
-                Line::styled(error.map_or("Nothing was measured", |error| error.text.as_str()), palette.warn)
+                Line::styled(
+                    error.map_or("Nothing was measured", |error| error.text.as_str()),
+                    palette.warn,
+                )
             }
             _ => Line::default(),
         }
@@ -908,8 +1221,11 @@ fn lane_scale(lanes: &[Lane]) -> f64 {
     ceil_step((top * 1.25).max(1.0), &LADDER)
 }
 
-/// The series' points over `window` seconds.
 fn between(series: &Series, (t0, t1): (f64, f64)) -> &[Point] {
-    let at = |t: f64| series.points.partition_point(|point| point.at.as_secs_f64() < t);
+    let at = |t: f64| {
+        series
+            .points
+            .partition_point(|point| point.at.as_secs_f64() < t)
+    };
     &series.points[at(t0)..at(t1 + 1e-9)]
 }

@@ -3,7 +3,6 @@
 use crate::reason::FailureReason;
 use http::{HeaderName, StatusCode};
 
-/// Names an upload refusal.
 pub const UPLOAD_REFUSAL_HEADER: HeaderName = HeaderName::from_static("x-graphite-upload-refusal");
 /// Marks, with `required`, a refusal that a sign-in would lift.
 pub const SIGN_IN_HEADER: HeaderName = HeaderName::from_static("graphite-meter-auth");

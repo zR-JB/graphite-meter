@@ -21,7 +21,12 @@ const IPV6 = "Use a DNS hostname for browser connections to this IPv6 server.";
 function offer(
   throughput: object[],
   latency: object[] = [],
-  { origin = page.origin, protocol = null as string | null, generation = "g1", browser = page } = {},
+  {
+    origin = page.origin,
+    protocol = null as string | null,
+    generation = "g1",
+    browser = page,
+  } = {},
 ): Discovery {
   const capabilities = { throughput, latency } as Preflight["capabilities"];
   return {
@@ -53,12 +58,17 @@ test("this page's policy refuses origins it cannot reach, before any request", a
     const browser = { origin: pageOrigin, secure: pageOrigin.startsWith("https:") };
     expect(originPolicy(origin, browser), `${origin} from ${pageOrigin}`).toBe(reason);
   }
-  const mixed = offer([h("http://peer.example:7246", "http1"), h("http://localhost:7246", "http1")]);
+  const mixed = offer([
+    h("http://peer.example:7246", "http1"),
+    h("http://localhost:7246", "http1"),
+  ]);
   expect([...mixed.throughput].map(([origin, { blocked }]) => [origin, blocked])).toEqual([
     ["http://peer.example:7246", MIXED],
     ["http://localhost:7246", null],
   ]);
-  expect(unresolvedReason(mixed, "throughput", parseSelection("http://peer.example:7246"), page)).toEqual({
+  expect(
+    unresolvedReason(mixed, "throughput", parseSelection("http://peer.example:7246"), page),
+  ).toEqual({
     message: MIXED,
     retry: "impossible",
   });
@@ -69,7 +79,13 @@ test("this page's policy refuses origins it cannot reach, before any request", a
       ["https://[2001:db8::1]:7247", IPV6],
     ] as const) {
       const entry = { id: "peer", url, name: "Peer", additionalOrigins: [] };
-      const context = { entry, auth: publicAuth(entry), page, openProbeChannel: new FakeBuses().open, now: net.now };
+      const context = {
+        entry,
+        auth: publicAuth(entry),
+        page,
+        openProbeChannel: new FakeBuses().open,
+        now: net.now,
+      };
       await expect(discover(context, new AbortController().signal)).rejects.toMatchObject({
         message,
         retry: "impossible",
@@ -83,10 +99,17 @@ test("this page's policy refuses origins it cannot reach, before any request", a
 
 test("WebTransport needs an https origin and a page that has the API", () => {
   const advertised = offer(
-    [h("https://meter.example", "http1"), wt("https://meter.example:7249"), wt("http://meter.example:7246")],
+    [
+      h("https://meter.example", "http1"),
+      wt("https://meter.example:7249"),
+      wt("http://meter.example:7246"),
+    ],
     [ws("https://meter.example"), wt("https://meter.example:7249")],
   );
-  expect([...advertised.throughput.keys()]).toEqual(["https://meter.example", "https://meter.example:7249"]);
+  expect([...advertised.throughput.keys()]).toEqual([
+    "https://meter.example",
+    "https://meter.example:7249",
+  ]);
   const choice = parseSelection("transport:webtransport");
   for (const [webTransport, message] of [
     ["insecure-page", "WebTransport needs a secure page; open this interface over HTTPS."],
@@ -94,8 +117,13 @@ test("WebTransport needs an https origin and a page that has the API", () => {
   ] as const) {
     const browser = { ...page, webTransport };
     expect(resolve(advertised, "throughput", choice, browser)).toBeNull();
-    expect(unresolvedReason(advertised, "throughput", choice, browser)).toEqual({ message, retry: "impossible" });
-    expect(candidates(advertised, "latency", browser).map(({ id }) => id)).toEqual(["https://meter.example"]);
+    expect(unresolvedReason(advertised, "throughput", choice, browser)).toEqual({
+      message,
+      retry: "impossible",
+    });
+    expect(candidates(advertised, "latency", browser).map(({ id }) => id)).toEqual([
+      "https://meter.example",
+    ]);
   }
 });
 
@@ -128,8 +156,12 @@ test("Automatic ranks by mechanism, then origin, never by the order of advertise
     [null, "https://proxy.example:8443"],
   ] as const)
     expect(
-      resolve(offer(proxy, [], { origin: "https://proxy.example", protocol }), "throughput", { kind: "auto" }, page)
-        ?.id,
+      resolve(
+        offer(proxy, [], { origin: "https://proxy.example", protocol }),
+        "throughput",
+        { kind: "auto" },
+        page,
+      )?.id,
     ).toBe(first);
   // A target naming its protocol replaces a negotiated one of the same origin, in either order.
   for (const order of [
@@ -151,7 +183,11 @@ test("Automatic ranks by mechanism, then origin, never by the order of advertise
 
 test("an explicit choice resolves to its own mechanism or to nothing", () => {
   const advertised = offer(
-    [h("https://meter.example", "http1"), h("https://meter.example:8443", "http2"), wt("https://meter.example:8443")],
+    [
+      h("https://meter.example", "http1"),
+      h("https://meter.example:8443", "http2"),
+      wt("https://meter.example:8443"),
+    ],
     [ws("https://meter.example"), wt("https://meter.example"), wt("https://wt.example")],
   );
   const noApi = { ...page, webTransport: "no-api" } as const;
@@ -167,7 +203,10 @@ test("an explicit choice resolves to its own mechanism or to nothing", () => {
     ["throughput", "protocol:http3", null],
     ["throughput", "https://other.example", null],
   ] as const)
-    expect(resolve(advertised, role, parseSelection(choice), browser)?.id ?? null, `${role} ${choice}`).toBe(id);
+    expect(
+      resolve(advertised, role, parseSelection(choice), browser)?.id ?? null,
+      `${role} ${choice}`,
+    ).toBe(id);
   for (const [choice, message] of [
     ["protocol:http3", "HTTP/3 not offered"],
     ["transport:webtransport-datagram", "WebTransport datagrams not offered"],
@@ -180,19 +219,41 @@ test("an explicit choice resolves to its own mechanism or to nothing", () => {
 });
 
 test("a verified path stays valid while its choice resolves as when it was verified", () => {
-  const before = offer([h("https://meter.example", "http1"), h("https://meter.example:8443", "http2")]);
+  const before = offer([
+    h("https://meter.example", "http1"),
+    h("https://meter.example:8443", "http2"),
+  ]);
   // Automatic verified its fallback while the HTTP/1.1 head failed.
-  const fallback = { generation: "g1", verifiedFor: { selection: "auto", head: "https://meter.example" } };
+  const fallback = {
+    generation: "g1",
+    verifiedFor: { selection: "auto", head: "https://meter.example" },
+  };
   const auto = parseSelection("auto");
   expect(stillValid(fallback, before, "throughput", auto, page)).toBe(true);
-  expect(stillValid(fallback, offer([h("https://meter.example:8443", "http2")]), "throughput", auto, page)).toBe(false);
-  expect(stillValid(fallback, { ...before, generation: "g2" }, "throughput", auto, page)).toBe(false);
-  expect(stillValid(fallback, before, "throughput", parseSelection("protocol:http1"), page)).toBe(false);
+  expect(
+    stillValid(
+      fallback,
+      offer([h("https://meter.example:8443", "http2")]),
+      "throughput",
+      auto,
+      page,
+    ),
+  ).toBe(false);
+  expect(stillValid(fallback, { ...before, generation: "g2" }, "throughput", auto, page)).toBe(
+    false,
+  );
+  expect(stillValid(fallback, before, "throughput", parseSelection("protocol:http1"), page)).toBe(
+    false,
+  );
 });
 
 test("a portable choice keeps the mechanism and drops the origin", () => {
   const advertised = offer(
-    [h(".", "negotiated"), h("https://meter.example:8443", "http2"), wt("https://meter.example:8443")],
+    [
+      h(".", "negotiated"),
+      h("https://meter.example:8443", "http2"),
+      wt("https://meter.example:8443"),
+    ],
     [ws("https://meter.example")],
   );
   for (const [role, choice, travels, discovery = advertised] of [
@@ -207,7 +268,10 @@ test("a portable choice keeps the mechanism and drops the origin", () => {
     ["latency", "https://meter.example", "transport:websocket"],
     ["throughput", "https://meter.example:8443", "auto", null],
   ] as const)
-    expect(selectionText(portable(role, parseSelection(choice), discovery, page)), `${role} ${choice}`).toBe(travels);
+    expect(
+      selectionText(portable(role, parseSelection(choice), discovery, page)),
+      `${role} ${choice}`,
+    ).toBe(travels);
   for (const text of [
     "auto",
     "protocol:http1",

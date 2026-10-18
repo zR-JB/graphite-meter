@@ -25,12 +25,10 @@ use tokio::{sync::Notify, time::Instant};
 const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
 const MAX_PER_CLIENT: usize = 32;
-/// An ID creates state for this long after it was minted.
 const ID_LIFETIME: Duration = Duration::from_mins(2);
 const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_nanos() as u64;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
 const RETENTION: Duration = ID_LIFETIME;
-/// Retention is swept at most this often.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_nanos() as u64;
 
@@ -39,7 +37,6 @@ const ID_PREFIX: &str = "gmu_";
 const SIGNED_BYTES: usize = 24;
 const ID_BYTES: usize = SIGNED_BYTES + 32;
 
-/// The upload store; clones share it.
 #[derive(Clone)]
 pub struct Uploads(Arc<Store>);
 
@@ -68,7 +65,8 @@ impl UploadId {
         let encoded = text.strip_prefix(ID_PREFIX)?;
         let mut raw = [0; ID_BYTES];
         let exact = encoded.len() == (ID_BYTES * 4).div_ceil(3);
-        (exact && URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES)).then_some(Self(raw))
+        (exact && URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES))
+            .then_some(Self(raw))
     }
 }
 
@@ -83,7 +81,6 @@ struct Entry {
     _capacity: Hold,
 }
 
-/// The store's monotonic clock in nanoseconds.
 #[derive(Clone, Copy)]
 struct Clock(Instant);
 
@@ -98,7 +95,6 @@ pub(super) struct Aggregate {
     owner: ClientKey,
     clock: Clock,
     bytes: AtomicU64,
-    /// The clock at the first accepted chunk.
     first: OnceLock<u64>,
     life: Mutex<Life>,
     /// Woken when a lane leaves, the upload finishes or expires, or a reader replaces another.
@@ -109,7 +105,6 @@ pub(super) struct Life {
     pub(super) lanes: usize,
     touched: Instant,
     pub(super) phase: Phase,
-    /// The number of the reader whose feed is current.
     pub(super) reader: u64,
 }
 
@@ -140,7 +135,6 @@ impl Aggregate {
         Counters::new(bytes, nanos)
     }
 
-    /// Finalized or expired: no lane joins any more.
     pub(super) fn ended(&self) -> bool {
         self.life().phase != Phase::Open
     }
@@ -194,8 +188,9 @@ impl Entries {
             .iter()
             .filter_map(|(id, entry)| {
                 let life = entry.aggregate.life();
-                let empty =
-                    life.lanes == 0 && life.phase == Phase::Open && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
+                let empty = life.lanes == 0
+                    && life.phase == Phase::Open
+                    && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
                 empty.then_some((life.touched, id))
             })
             .min_by_key(|(touched, _)| *touched)
@@ -209,7 +204,6 @@ impl Entries {
     }
 }
 
-/// How a request reaches an aggregate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reach {
     /// A data lane, which may create the aggregate.
@@ -230,7 +224,10 @@ impl Uploads {
             clock: Clock(now),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
             next_sweep: AtomicU64::new(SWEEP_NANOS),
-            entries: Mutex::new(Entries { live: HashMap::new(), tombstones: HashMap::new() }),
+            entries: Mutex::new(Entries {
+                live: HashMap::new(),
+                tombstones: HashMap::new(),
+            }),
         }))
     }
 
@@ -260,8 +257,11 @@ impl Uploads {
         &self.0.meter
     }
 
-    /// Attaches the progress feed, replacing the previous reader's.
-    pub fn subscribe(&self, id: &str, owner: Option<&ClientKeys>) -> Result<ProgressFeed, UploadRefusal> {
+    pub fn subscribe(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+    ) -> Result<ProgressFeed, UploadRefusal> {
         let aggregate = self.reach(id, owner, Reach::Watch)?;
         let reader = {
             let mut life = aggregate.life();
@@ -282,13 +282,19 @@ impl Uploads {
         match entries.live.get(&id) {
             Some(entry) if entry.aggregate.owner != narrowest => Err(UploadRefusal::OwnerMismatch),
             Some(_) => Ok(()),
-            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => Err(UploadRefusal::Invalid),
+            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => {
+                Err(UploadRefusal::Invalid)
+            }
             None => Ok(()),
         }
     }
 
     /// An existing aggregate's counters, without refreshing its retention.
-    pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, UploadRefusal> {
+    pub fn checkpoint(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+    ) -> Result<Counters, UploadRefusal> {
         Ok(self.reach(id, owner, Reach::Read)?.counters())
     }
 
@@ -311,7 +317,12 @@ impl Uploads {
         }
     }
 
-    fn reach(&self, id: &str, owner: Option<&ClientKeys>, reach: Reach) -> Result<Arc<Aggregate>, UploadRefusal> {
+    fn reach(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+        reach: Reach,
+    ) -> Result<Arc<Aggregate>, UploadRefusal> {
         let narrowest = owner.and_then(ClientKeys::narrowest);
         if reach != Reach::Read && narrowest.is_none() {
             return Err(UploadRefusal::OwnerMismatch);
@@ -347,7 +358,10 @@ impl Uploads {
             }),
             changed: Notify::new(),
         });
-        let entry = Entry { aggregate: aggregate.clone(), _capacity: capacity };
+        let entry = Entry {
+            aggregate: aggregate.clone(),
+            _capacity: capacity,
+        };
         entries.live.insert(id, entry);
         Ok(aggregate)
     }
@@ -371,12 +385,13 @@ impl Uploads {
         let now = self.0.clock.now();
         if now >= self.0.next_sweep.load(Ordering::Relaxed) {
             entries.sweep(Instant::now());
-            self.0.next_sweep.store(now + SWEEP_NANOS, Ordering::Relaxed);
+            self.0
+                .next_sweep
+                .store(now + SWEEP_NANOS, Ordering::Relaxed);
         }
         entries
     }
 
-    /// Whether this store minted `id` within its lifetime.
     fn valid(&self, UploadId(raw): &UploadId) -> bool {
         let (signed, tag) = raw.split_at(SIGNED_BYTES);
         if hmac::verify(&self.0.key, signed, tag).is_err() {

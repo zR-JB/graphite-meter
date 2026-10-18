@@ -14,14 +14,11 @@ use std::{ffi::OsString, fmt, num::NonZero, path::PathBuf, time::Duration};
 
 /// Why settings without a server address cannot run; nothing has a sensible default one.
 pub const NO_SERVER: &str = "enter the server's address";
-/// Exact and automatic streams per server and direction stay within this many.
 pub const MAX_STREAMS: usize = 14;
-/// The longest warmup a setting or a server's round trip asks for.
 pub const MAX_WARMUP: Duration = Duration::from_secs(4);
 const FASTEST_CADENCE: Duration = Duration::from_millis(80);
 /// Half the server's idle bound, so a quiet probe channel is never closed.
 const SLOWEST_CADENCE: Duration = Duration::from_secs(IDLE_BOUND.as_secs() / 2);
-/// The probe cadence presets by name.
 pub const CADENCES: [(&str, Cadence); 4] = [
     ("reply-driven", Cadence::ReplyDriven),
     ("fast", Cadence::Every(FASTEST_CADENCE)),
@@ -29,7 +26,6 @@ pub const CADENCES: [(&str, Cadence); 4] = [
     ("slow", Cadence::Every(Duration::from_millis(600))),
 ];
 
-/// One run's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// The server whose server catalog lists the test servers; none until one is given.
@@ -103,7 +99,10 @@ impl Default for Config {
             stages: vec![Stage::Latency, Stage::Download, Stage::Upload],
             warmup: Duration::from_millis(800),
             durations: [4, 10, 10, 10].map(Duration::from_secs),
-            streams: Streams { auto: 6, forced: None },
+            streams: Streams {
+                auto: 6,
+                forced: None,
+            },
             ping: CADENCES[0].1,
             loaded_ping: CADENCES[2].1,
             loaded_latency: true,
@@ -118,9 +117,11 @@ impl Config {
         self.durations[stage.index()]
     }
 
-    /// The stages to run with their windows.
     pub fn plan(&self) -> Vec<(Stage, Duration)> {
-        self.stages.iter().map(|&stage| (stage, self.duration(stage))).collect()
+        self.stages
+            .iter()
+            .map(|&stage| (stage, self.duration(stage)))
+            .collect()
     }
 
     pub fn key(&self) -> PrepKey {
@@ -140,7 +141,10 @@ impl Config {
 
     /// Whether a stage probes latency: the latency stage, or loaded latency during transfers.
     pub fn probes(&self) -> bool {
-        let transfers = self.stages.iter().any(|stage| !stage.directions().is_empty());
+        let transfers = self
+            .stages
+            .iter()
+            .any(|stage| !stage.directions().is_empty());
         self.stages.contains(&Stage::Latency) || self.loaded_latency && transfers
     }
 
@@ -161,7 +165,6 @@ impl Config {
         Dir { down, up }
     }
 
-    /// Why the settings cannot run, if they cannot.
     pub fn validate(&self) -> Result<(), Invalid> {
         let outside = |stage: &&Stage| !STAGE_LIMITS.contains(&self.duration(**stage));
         let spaced = |cadence| matches!(cadence, Cadence::Every(spacing) if !(FASTEST_CADENCE..=SLOWEST_CADENCE).contains(&spacing));
@@ -169,16 +172,23 @@ impl Config {
             _ if self.url.is_none() => Err(Invalid::NoServer),
             _ if self.stages.is_empty() => Err(Invalid::NoStages),
             _ if self.warmup > MAX_WARMUP => Err(Invalid::Warmup),
-            _ if let Some(stage) = Stage::ALL.iter().find(outside) => Err(Invalid::StageDuration(*stage)),
+            _ if let Some(stage) = Stage::ALL.iter().find(outside) => {
+                Err(Invalid::StageDuration(*stage))
+            }
             _ if spaced(self.ping) || spaced(self.loaded_ping) => Err(Invalid::Cadence),
-            _ if self.streams.forced.is_some_and(|forced| forced.get() > MAX_STREAMS) => Err(Invalid::ForcedStreams),
+            _ if self
+                .streams
+                .forced
+                .is_some_and(|forced| forced.get() > MAX_STREAMS) =>
+            {
+                Err(Invalid::ForcedStreams)
+            }
             _ if !(1..=MAX_STREAMS).contains(&self.streams.auto) => Err(Invalid::AutoStreams),
             _ => Ok(()),
         }
     }
 }
 
-/// Why settings cannot run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Invalid {
     NoServer,
@@ -194,14 +204,25 @@ impl fmt::Display for Invalid {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoServer => formatter.write_str(NO_SERVER),
-            Self::NoStages => {
-                formatter.write_str("select at least one stage: latency, download, upload or bidirectional")
-            }
-            Self::Warmup => write!(formatter, "warmup must be from 0s to {}", duration::format(MAX_WARMUP)),
+            Self::NoStages => formatter
+                .write_str("select at least one stage: latency, download, upload or bidirectional"),
+            Self::Warmup => write!(
+                formatter,
+                "warmup must be from 0s to {}",
+                duration::format(MAX_WARMUP)
+            ),
             Self::StageDuration(stage) => {
                 let (shortest, longest) = (STAGE_LIMITS.start(), STAGE_LIMITS.end());
-                let range = format!("{} to {}", duration::format(*shortest), duration::format(*longest));
-                write!(formatter, "the {} stage must take from {range}", stage.name())
+                let range = format!(
+                    "{} to {}",
+                    duration::format(*shortest),
+                    duration::format(*longest)
+                );
+                write!(
+                    formatter,
+                    "the {} stage must take from {range}",
+                    stage.name()
+                )
             }
             Self::Cadence => write!(
                 formatter,
@@ -215,12 +236,14 @@ impl fmt::Display for Invalid {
                     "exact streams must be from 1 to {MAX_STREAMS} per direction, or 0 for automatic"
                 )
             }
-            Self::AutoStreams => write!(formatter, "the HTTP/1.1 stream limit must be from 1 to {MAX_STREAMS}"),
+            Self::AutoStreams => write!(
+                formatter,
+                "the HTTP/1.1 stream limit must be from 1 to {MAX_STREAMS}"
+            ),
         }
     }
 }
 
-/// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
     Help,
@@ -236,7 +259,6 @@ pub enum Refusal {
     Argument(String),
 }
 
-/// Reads the arguments after the program name.
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal> {
     let mut flags = Flags::default();
     let arguments = match flag::parse(&FLAGS, &mut flags, args) {
@@ -251,15 +273,20 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, Refusal
         return Ok(Parsed::Version);
     }
     if let Some(argument) = arguments.first() {
-        return Err(Refusal::Argument(format!("unexpected argument {}", quote(&argument.to_string_lossy()))));
+        return Err(Refusal::Argument(format!(
+            "unexpected argument {}",
+            quote(&argument.to_string_lossy())
+        )));
     }
     let config = flags.finish().map_err(Refusal::Argument)?;
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// The usage text for `program`.
 pub fn usage(program: &str) -> String {
-    format!("Usage: {program} [options]\n\nOptions:\n{}", flag::options(&FLAGS, &Flags::default()))
+    format!(
+        "Usage: {program} [options]\n\nOptions:\n{}",
+        flag::options(&FLAGS, &Flags::default())
+    )
 }
 
 #[derive(Default)]
@@ -280,7 +307,11 @@ impl Flags {
 }
 
 /// The choice named `text`, `auto` or empty being none.
-fn choice<T: Copy>(text: &str, choices: &[T], name: fn(T) -> &'static str) -> Result<Option<T>, String> {
+fn choice<T: Copy>(
+    text: &str,
+    choices: &[T],
+    name: fn(T) -> &'static str,
+) -> Result<Option<T>, String> {
     if matches!(text, "" | "auto") {
         return Ok(None);
     }
@@ -299,7 +330,9 @@ fn count(text: &str) -> Result<usize, &'static str> {
 fn origin(text: &str) -> Result<Option<Origin>, String> {
     match text {
         "" | "auto" => Ok(None),
-        text => Origin::parse(text).map(Some).map_err(|error| error.to_string()),
+        text => Origin::parse(text)
+            .map(Some)
+            .map_err(|error| error.to_string()),
     }
 }
 
@@ -311,13 +344,14 @@ fn url(text: &str) -> Result<Option<Origin>, String> {
     }
 }
 
-/// The origin an entered or pasted address names. Without a scheme it is HTTPS, or HTTP on the local network; HTTPS
-/// never falls back to HTTP, which would let anyone on the path force a plaintext test.
+/// Without a scheme an address is HTTPS, or HTTP on the local network; HTTPS never falls back to plaintext.
 pub fn server_origin(raw: &str) -> Result<Origin, String> {
     let raw = raw.trim();
     let (scheme, rest) = raw.split_once("://").unwrap_or(("", raw));
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     let scheme = match scheme {
         "" if local(authority) => "http",
         "" => "https",
@@ -326,11 +360,12 @@ pub fn server_origin(raw: &str) -> Result<Origin, String> {
     let origin = Origin::parse(&format!("{scheme}://{authority}"))
         .ok()
         .filter(|_| !authority.is_empty());
-    origin.ok_or_else(|| "use the server's address, for example https://meter.example or 192.168.1.20:7246".into())
+    origin.ok_or_else(|| {
+        "use the server's address, for example https://meter.example or 192.168.1.20:7246".into()
+    })
 }
 
-/// Whether `authority` names a host on the local network: a loopback, private or link-local address, or a name without
-/// a dot or under a local-only suffix.
+/// A loopback, private or link-local address, or a name without a dot or under a local-only suffix.
 fn local(authority: &str) -> bool {
     let host = match authority.strip_prefix('[') {
         Some(literal) => literal.split(']').next().unwrap_or_default(),
@@ -354,9 +389,12 @@ fn local(authority: &str) -> bool {
 pub fn kept_server() -> Option<PathBuf> {
     // A directory that climbs with `..` is refused, so the file stays where it belongs.
     let var = |name| {
-        std::env::var_os(name)
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute() && !path.components().any(|part| part == std::path::Component::ParentDir))
+        std::env::var_os(name).map(PathBuf::from).filter(|path| {
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| part == std::path::Component::ParentDir)
+        })
     };
     let home = || var("HOME");
     let directory = match () {
@@ -366,7 +404,6 @@ pub fn kept_server() -> Option<PathBuf> {
     Some(directory?.join("graphite-meter").join("server"))
 }
 
-/// The server kept at `path`, if one is and it still parses.
 pub fn recall(path: &std::path::Path) -> Option<Origin> {
     Origin::parse(std::fs::read_to_string(path).ok()?.trim()).ok()
 }
@@ -399,14 +436,16 @@ pub fn remember(path: &std::path::Path, origin: &Origin) {
 
 fn cadence(text: &str) -> Result<Cadence, &'static str> {
     let text = text.trim();
-    if let Some((_, cadence)) = CADENCES.iter().find(|(name, _)| name.eq_ignore_ascii_case(text)) {
+    if let Some((_, cadence)) = CADENCES
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(text))
+    {
         return Ok(*cadence);
     }
     let spacing = duration::parse(text).map(Cadence::Every);
     spacing.map_err(|_| "use reply-driven, fast, medium, slow or a duration such as 400ms")
 }
 
-/// The name of the preset `cadence` is.
 pub fn preset(cadence: Cadence) -> Option<&'static str> {
     CADENCES
         .iter()
@@ -414,7 +453,6 @@ pub fn preset(cadence: Cadence) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// A cadence as its flag spells it.
 fn cadence_name(cadence: Cadence) -> String {
     match (preset(cadence), cadence) {
         (None, Cadence::Every(spacing)) => duration::format(spacing),
@@ -432,7 +470,10 @@ fn stages(text: &str) -> Result<Vec<Stage>, String> {
             "upload" | "up" => Stage::Upload,
             "bidirectional" | "bidi" => Stage::Bidirectional,
             _ => {
-                return Err(format!("unknown stage {}: use latency, download, upload or bidirectional", quote(&part)));
+                return Err(format!(
+                    "unknown stage {}: use latency, download, upload or bidirectional",
+                    quote(&part)
+                ));
             }
         });
     }
@@ -443,17 +484,22 @@ fn stages(text: &str) -> Result<Vec<Stage>, String> {
 
 fn server(servers: &mut Vec<ServerId>, text: &str) -> Result<(), String> {
     let refused = || format!("select 1 to {MAX_SELECTED} different test server IDs");
-    if text.is_empty() || servers.len() >= MAX_SELECTED || servers.iter().any(|known| known.as_str() == text) {
+    if text.is_empty()
+        || servers.len() >= MAX_SELECTED
+        || servers.iter().any(|known| known.as_str() == text)
+    {
         return Err(refused());
     }
-    let id =
-        ServerId::parse(text).ok_or("a test server ID has 1 to 64 letters, digits, dots, underscores or hyphens")?;
+    let id = ServerId::parse(text)
+        .ok_or("a test server ID has 1 to 64 letters, digits, dots, underscores or hyphens")?;
     servers.push(id);
     Ok(())
 }
 
 fn show_origin(origin: &Option<Origin>) -> String {
-    origin.as_ref().map_or_else(|| "auto".into(), Origin::to_string)
+    origin
+        .as_ref()
+        .map_or_else(|| "auto".into(), Origin::to_string)
 }
 
 /// One flag row; `show` gives the value its usage default prints.
@@ -536,10 +582,12 @@ const FLAGS: [Flag<Flags>; 22] = [
 ];
 
 const PROTOCOLS: [Protocol; 3] = [Protocol::Http1, Protocol::Http2, Protocol::Http3];
-/// The transports a path can be set to by name.
-pub const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] =
-    [ThroughputTransport::FetchStream, ThroughputTransport::WebTransport];
-pub const LATENCY_TRANSPORTS: [LatencyTransport; 2] = [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
+pub const THROUGHPUT_TRANSPORTS: [ThroughputTransport; 2] = [
+    ThroughputTransport::FetchStream,
+    ThroughputTransport::WebTransport,
+];
+pub const LATENCY_TRANSPORTS: [LatencyTransport; 2] =
+    [LatencyTransport::WebSocket, LatencyTransport::WebTransport];
 
 #[cfg(test)]
 mod tests {
@@ -561,20 +609,39 @@ mod tests {
     fn no_flags_take_the_defaults_without_a_server() {
         let config = run("").unwrap();
         assert_eq!(config, Config::default());
-        assert_eq!((config.url.as_ref(), config.validate()), (None, Err(Invalid::NoServer)));
+        assert_eq!(
+            (config.url.as_ref(), config.validate()),
+            (None, Err(Invalid::NoServer))
+        );
         assert_eq!(run("-url=").unwrap().url, None);
-        let plan = [(Stage::Latency, 4), (Stage::Download, 10), (Stage::Upload, 10)];
-        assert_eq!(config.plan(), plan.map(|(stage, seconds)| (stage, Duration::from_secs(seconds))));
+        let plan = [
+            (Stage::Latency, 4),
+            (Stage::Download, 10),
+            (Stage::Upload, 10),
+        ];
+        assert_eq!(
+            config.plan(),
+            plan.map(|(stage, seconds)| (stage, Duration::from_secs(seconds)))
+        );
         assert!(run("-url http://bücher.example").is_err());
-        assert_eq!(run("-url meter.example").unwrap().url, Origin::parse("https://meter.example").ok());
+        assert_eq!(
+            run("-url meter.example").unwrap().url,
+            Origin::parse("https://meter.example").ok()
+        );
     }
 
     #[test]
     fn pasted_addresses_name_their_server() {
         for (raw, expected) in [
-            ("  https://Meter.Example/#/history\n", "https://meter.example"),
+            (
+                "  https://Meter.Example/#/history\n",
+                "https://meter.example",
+            ),
             ("meter.example", "https://meter.example"),
-            ("meter.example:8443/servers?x=1", "https://meter.example:8443"),
+            (
+                "meter.example:8443/servers?x=1",
+                "https://meter.example:8443",
+            ),
             ("user:secret@meter.example/", "https://meter.example"),
             ("HTTP://meter.example:80", "http://meter.example"),
             ("192.168.1.20:7246", "http://192.168.1.20:7246"),
@@ -583,9 +650,16 @@ mod tests {
             ("meter.home.arpa", "http://meter.home.arpa"),
             ("localhost:7246", "http://localhost:7246"),
             ("203.0.113.7", "https://203.0.113.7"),
-            ("[::ffff:192.168.1.2]:7246", "http://[::ffff:192.168.1.2]:7246"),
+            (
+                "[::ffff:192.168.1.2]:7246",
+                "http://[::ffff:192.168.1.2]:7246",
+            ),
         ] {
-            assert_eq!(server_origin(raw).map(|origin| origin.to_string()), Ok(expected.into()), "{raw:?}");
+            assert_eq!(
+                server_origin(raw).map(|origin| origin.to_string()),
+                Ok(expected.into()),
+                "{raw:?}"
+            );
         }
         for raw in ["", "ftp://meter.example", "https://", "two words"] {
             assert!(server_origin(raw).is_err(), "{raw:?}");

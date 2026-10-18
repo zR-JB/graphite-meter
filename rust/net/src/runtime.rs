@@ -11,8 +11,7 @@ use tokio::{
 /// A pool runs its pinned threads this many nice steps below the caller's threads on Linux.
 const PINNED_NICE: i32 = 5;
 
-/// Holds pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and a probing
-/// pool's latency runtime preempt them. Their threads end with the pool.
+/// Pinned current-thread runtimes for bulk transfers, niced on Linux so the caller's threads and latency runtime preempt them.
 #[derive(Default)]
 pub struct Pool {
     runtimes: Vec<Handle>,
@@ -34,12 +33,17 @@ impl Pool {
 
     fn spawn(runtime: &Handle, probing: bool) -> io::Result<Self> {
         if runtime.runtime_flavor() == RuntimeFlavor::CurrentThread {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "pinned runtimes need a multi-thread runtime"));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "pinned runtimes need a multi-thread runtime",
+            ));
         }
         let workers = runtime.metrics().num_workers();
         let (running, ended) = watch::channel(());
         let thread = |name: String, niced: bool| -> io::Result<Handle> {
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
             let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
             std::thread::Builder::new().name(name).spawn(move || {
                 if niced {
@@ -52,7 +56,9 @@ impl Pool {
         let runtimes = (0..if workers > 1 { workers } else { 0 })
             .map(|index| thread(format!("gm-worker-{index}"), true))
             .collect::<io::Result<_>>()?;
-        let latency = probing.then(|| thread("gm-latency".into(), false)).transpose()?;
+        let latency = probing
+            .then(|| thread("gm-latency".into(), false))
+            .transpose()?;
         Ok(Self {
             runtimes,
             latency,
@@ -78,7 +84,6 @@ impl Pool {
         &self.runtimes
     }
 
-    /// Hands out the latency runtime, or the caller's in a pool without one.
     pub fn latency(&self) -> Handle {
         self.latency.clone().unwrap_or_else(Handle::current)
     }

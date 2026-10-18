@@ -1,5 +1,4 @@
-// A worker's socket dial and its single-use ticket (api/wire.md#socket-credentials). A ticket whose dial lapsed
-// unanswered may be unspent, so close dials share it and retries stay inside the server's ticket limit.
+// A worker's socket dial and its single-use ticket; a lapsed dial's ticket may be unspent, so close dials share it.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";
@@ -22,7 +21,10 @@ export class Tickets {
       const response = await fetch(url, { ...request, method: "POST", cache: "no-store", signal });
       if (!response.ok) {
         release(response);
-        return { type: "ended", ending: refused(response, `socket ticket refused with HTTP ${response.status}`) };
+        return {
+          type: "ended",
+          ending: refused(response, `socket ticket refused with HTTP ${response.status}`),
+        };
       }
       const { token, expires } = socketTicket(await readJSON(response));
       this.#held = { url, token, until: Math.min(Date.now() + REUSE_MS, expires) };
@@ -32,7 +34,11 @@ export class Tickets {
         return { type: "broken", detail: `socket ticket: ${String(error)}` };
       return {
         type: "ended",
-        ending: { reason: "protocol-error", retry: false, detail: `socket ticket: ${error.message}` },
+        ending: {
+          reason: "protocol-error",
+          retry: false,
+          detail: `socket ticket: ${error.message}`,
+        },
       };
     }
   }

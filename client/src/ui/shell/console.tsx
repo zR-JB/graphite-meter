@@ -29,7 +29,6 @@ export interface Views {
   /** The status strip's facts, before the keyboard hints. */
   status(shell: Shell): Node;
   toast(shell: Shell): Node;
-  /** The connection indicator in the top bar. */
   connectivity(shell: Shell): Node;
 }
 
@@ -37,11 +36,16 @@ export interface Views {
 const SETTLES = new Set(["result-sweep", "pop", "grow-x"]);
 const finishSettled = (stage: HTMLElement) => {
   for (const animation of stage.getAnimations({ subtree: true }))
-    if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName)) animation.finish();
+    if (animation instanceof CSSAnimation && SETTLES.has(animation.animationName))
+      animation.finish();
 };
 
 /** Mounts the console into `root` and renders the URL it loaded with; the disposer takes it down again. */
-export function mountConsole(root: HTMLElement, app: App, views: Views): { shell: Shell; dispose(): void } {
+export function mountConsole(
+  root: HTMLElement,
+  app: App,
+  views: Views,
+): { shell: Shell; dispose(): void } {
   const [shell, dispose] = scope(() => {
     markDocument(app.preferences);
     const frame = (<main id="console" data-phase={app.run.phase} />) as HTMLElement;
@@ -59,10 +63,14 @@ export function mountConsole(root: HTMLElement, app: App, views: Views): { shell
     });
 
     const away = computed(() => ctl.workspace() !== "measurement");
-    const previous = computed(() => app.run.preparation() === "failed" && app.run.phase() !== "idle");
+    const previous = computed(
+      () => app.run.preparation() === "failed" && app.run.phase() !== "idle",
+    );
     const measurement = (
       <section
-        class={() => `stage measurement-stage${away() ? " away" : ""}${previous() ? " previous" : ""}`}
+        class={() =>
+          `stage measurement-stage${away() ? " away" : ""}${previous() ? " previous" : ""}`
+        }
         aria-label="Measurement workspace"
         tabindex="-1"
         data-flip={() => (away() ? undefined : "stage")}
@@ -102,7 +110,12 @@ export function mountConsole(root: HTMLElement, app: App, views: Views): { shell
       </Show>,
       <Show when={() => ctl.workspace() === "not-found"}>
         {() => (
-          <section class="stage history-stage" data-flip="stage" data-flip-resize="" inert={ctl.flyout}>
+          <section
+            class="stage history-stage"
+            data-flip="stage"
+            data-flip-resize=""
+            inert={ctl.flyout}
+          >
             <div class="empty-state">
               <h1>Page not found</h1>
               <p>That client route does not exist.</p>
@@ -167,8 +180,7 @@ function sheet(app: App, ctl: Controller, panel: Panel, title: string, build: ()
   );
 }
 
-/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell holds every run word,
-    so a change never moves the strip. */
+/** The keys the page answers, named in the strip while shortcuts are on; the run word's cell fits every run word. */
 function ShortcutHints(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const current = props.shell.runWord;

@@ -20,22 +20,32 @@ pub struct UnusableProxy {
 
 impl fmt::Display for UnusableProxy {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} is not a usable proxy: {}", self.variable, self.reason)
+        write!(
+            formatter,
+            "{} is not a usable proxy: {}",
+            self.variable, self.reason
+        )
     }
 }
 
 impl std::error::Error for UnusableProxy {}
 
-/// A SOCKS5 username and password.
 pub(crate) type Login = (Vec<u8>, Vec<u8>);
 
 /// A request goes through this proxy. It prints without its credentials.
 #[derive(Clone)]
 pub enum Upstream {
     /// Names an `http://` or `https://` proxy with its `Proxy-Authorization` value.
-    Http { origin: Origin, authorization: Option<String> },
+    Http {
+        origin: Origin,
+        authorization: Option<String>,
+    },
     /// Names a `socks5://` or `socks5h://` proxy with its login. The proxy resolves host names itself.
-    Socks { host: Host, port: u16, login: Option<Login> },
+    Socks {
+        host: Host,
+        port: u16,
+        login: Option<Login>,
+    },
 }
 
 impl Upstream {
@@ -47,7 +57,6 @@ impl Upstream {
     }
 }
 
-/// Prints without credentials.
 impl fmt::Debug for Upstream {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -82,7 +91,8 @@ impl Proxy {
 
     /// Reads each variable before its lowercase spelling and treats empty values as unset.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Self {
-        let set = |name: &'static str| Some((name, lookup(name).filter(|value| !value.is_empty())?));
+        let set =
+            |name: &'static str| Some((name, lookup(name).filter(|value| !value.is_empty())?));
         let read = |names: [&'static str; 2]| names.into_iter().find_map(set);
         let upstream = |names| {
             let (variable, raw) = read(names).filter(|(_, raw)| !raw.trim().is_empty())?;
@@ -95,7 +105,6 @@ impl Proxy {
         }
     }
 
-    /// Picks the proxy `target` goes through, if any.
     pub fn route(&self, target: &Origin) -> Result<Option<&Upstream>, UnusableProxy> {
         let setting = match target.scheme {
             Scheme::Https => &self.https,
@@ -137,16 +146,27 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     let (scheme, rest) = raw.split_once("://").unwrap_or(("http", raw));
     let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
     let (credentials, host) = match authority.rsplit_once('@') {
-        Some((credentials, host)) => (Some(credentials.split_once(':').unwrap_or((credentials, ""))), host),
+        Some((credentials, host)) => (
+            Some(credentials.split_once(':').unwrap_or((credentials, ""))),
+            host,
+        ),
         None => (None, authority),
     };
     let decode = |part| percent_encoding::percent_decode_str(part).collect::<Vec<u8>>();
     match scheme.to_ascii_lowercase().as_str() {
         "socks5" | "socks5h" => {
             let origin = Origin::parse(&format!("http://{host}")).map_err(|_| INVALID)?;
-            let port = if explicit_port(host) { origin.port } else { 1080 };
+            let port = if explicit_port(host) {
+                origin.port
+            } else {
+                1080
+            };
             let login = credentials.map(|(user, password)| (decode(user), decode(password)));
-            Ok(Upstream::Socks { host: origin.host, port, login })
+            Ok(Upstream::Socks {
+                host: origin.host,
+                port,
+                login,
+            })
         }
         scheme @ ("http" | "https") => {
             let origin = Origin::parse(&format!("{scheme}://{host}")).map_err(|_| INVALID)?;
@@ -154,23 +174,34 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
                 let pair = [decode(user), b":".to_vec(), decode(password)].concat();
                 format!("Basic {}", STANDARD.encode(pair))
             });
-            Ok(Upstream::Http { origin, authorization })
+            Ok(Upstream::Http {
+                origin,
+                authorization,
+            })
         }
         _ => Err("only HTTP, HTTPS and SOCKS5 proxies are supported"),
     }
 }
 
-/// Tells whether a `host[:port]` authority writes a port.
 fn explicit_port(authority: &str) -> bool {
-    let tail = authority.rsplit_once(']').map_or(authority, |(_, tail)| tail);
-    tail.split_once(':').is_some_and(|(_, port)| !port.is_empty())
+    let tail = authority
+        .rsplit_once(']')
+        .map_or(authority, |(_, tail)| tail);
+    tail.split_once(':')
+        .is_some_and(|(_, port)| !port.is_empty())
 }
 
 /// Parses `NO_PROXY`'s entries. A lone `*` anywhere bypasses every target.
 fn rules(list: &str) -> Vec<Rule> {
-    let entries: Vec<String> = list.split(',').map(|entry| entry.trim().to_ascii_lowercase()).collect();
+    let entries: Vec<String> = list
+        .split(',')
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .collect();
     if entries.iter().any(|entry| entry == "*") {
-        return vec![Rule { target: Bypass::All, port: None }];
+        return vec![Rule {
+            target: Bypass::All,
+            port: None,
+        }];
     }
     entries.iter().filter_map(|entry| rule(entry)).collect()
 }
@@ -179,10 +210,15 @@ fn rules(list: &str) -> Vec<Rule> {
 fn rule(entry: &str) -> Option<Rule> {
     let rule = |target, port: &str| match port {
         "" => Some(Rule { target, port: None }),
-        port => port.parse().ok().map(|port| Rule { target, port: Some(port) }),
+        port => port.parse().ok().map(|port| Rule {
+            target,
+            port: Some(port),
+        }),
     };
     // A network's address reads as an IP address does, so a leading zero names no network.
-    let address = entry.split_once('/').and_then(|(ip, _)| ip.parse::<IpAddr>().ok());
+    let address = entry
+        .split_once('/')
+        .and_then(|(ip, _)| ip.parse::<IpAddr>().ok());
     if let Some(network) = address.and_then(|_| entry.parse().ok()) {
         return rule(Bypass::Network(unmapped(network)), "");
     }
@@ -198,12 +234,20 @@ fn rule(entry: &str) -> Option<Rule> {
         return rule(Bypass::Address(address.to_canonical()), port);
     }
     // Only a leading `*.` loses its star, so `*example.com` names no host.
-    let host = if host.starts_with("*.") { &host[1..] } else { host };
+    let host = if host.starts_with("*.") {
+        &host[1..]
+    } else {
+        host
+    };
     let apex = !host.starts_with('.');
     if host.is_empty() || !host.is_ascii() {
         return None;
     }
-    let suffix = if apex { format!(".{host}") } else { host.to_owned() };
+    let suffix = if apex {
+        format!(".{host}")
+    } else {
+        host.to_owned()
+    };
     rule(Bypass::Domain { suffix, apex }, port)
 }
 
@@ -212,7 +256,10 @@ fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
     let ipnet::IpNet::V6(v6) = network else {
         return network;
     };
-    let mapped = v6.network().to_ipv4_mapped().zip(v6.prefix_len().checked_sub(96));
+    let mapped = v6
+        .network()
+        .to_ipv4_mapped()
+        .zip(v6.prefix_len().checked_sub(96));
     mapped
         .and_then(|(v4, prefix)| ipnet::Ipv4Net::new(v4, prefix).ok())
         .map_or(network, ipnet::IpNet::V4)

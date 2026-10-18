@@ -8,11 +8,8 @@ use crate::{
 use serde::{Deserialize, Serialize, de::Error as _};
 use std::{collections::HashSet, fmt, sync::Arc};
 
-/// A catalog holds at most this many servers, `self` included.
 const MAX_SERVERS: usize = 32;
-/// A selection holds at most this many servers.
 pub const MAX_SELECTED: usize = 4;
-/// An entry names at most this many additional origins.
 const MAX_ADDITIONAL_ORIGINS: usize = 32;
 
 /// A catalog server ID: 1 to 64 ASCII letters, digits, `.`, `_` or `-`; clones share the text.
@@ -71,7 +68,6 @@ pub struct ServerCatalog {
 }
 
 table! {
-    /// Why a catalog, or one entry of it, is invalid.
     pub enum CatalogError {
         message.0: &'static str,
     } {
@@ -92,14 +88,12 @@ impl fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// A received entry left out, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
     pub id: String,
     pub error: CatalogError,
 }
 
-/// A received catalog: its valid entries, and the entries left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
     pub catalog: ServerCatalog,
@@ -107,7 +101,6 @@ pub struct Received {
 }
 
 impl ServerCatalog {
-    /// The catalog of a server configured without one.
     pub fn singleton() -> Self {
         let own = ServerEntry {
             id: ServerId::own(),
@@ -116,12 +109,19 @@ impl ServerCatalog {
             location: String::new(),
             additional_origins: Vec::new(),
         };
-        Self { default_selection: vec![ServerId::own()], servers: vec![own] }
+        Self {
+            default_selection: vec![ServerId::own()],
+            servers: vec![own],
+        }
     }
 
-    /// Checks a catalog before a server publishes it.
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if !self.servers.first().is_some_and(|first| first.id == ServerId::own()) || self.servers.len() > MAX_SERVERS {
+        if !self
+            .servers
+            .first()
+            .is_some_and(|first| first.id == ServerId::own())
+            || self.servers.len() > MAX_SERVERS
+        {
             return Err(CatalogError::Servers);
         }
         for (index, entry) in self.servers.iter().enumerate() {
@@ -134,8 +134,8 @@ impl ServerCatalog {
     pub fn validate_selection(&self, selected: &[ServerId]) -> Result<(), CatalogError> {
         let mut seen = HashSet::new();
         let known = |id: &ServerId| self.servers.iter().any(|entry| entry.id == *id);
-        let valid =
-            (1..=MAX_SELECTED).contains(&selected.len()) && selected.iter().all(|id| seen.insert(id) && known(id));
+        let valid = (1..=MAX_SELECTED).contains(&selected.len())
+            && selected.iter().all(|id| seen.insert(id) && known(id));
         valid.then_some(()).ok_or(CatalogError::Selection)
     }
 
@@ -163,12 +163,18 @@ impl ServerCatalog {
             }
         }
         let known = |id: &ServerId| servers.iter().any(|entry| entry.id == *id);
-        let parsed = sent.default_selection.iter().filter_map(|id| ServerId::parse(id));
+        let parsed = sent
+            .default_selection
+            .iter()
+            .filter_map(|id| ServerId::parse(id));
         let mut default_selection: Vec<_> = parsed.filter(known).collect();
         if default_selection.is_empty() {
             default_selection.push(ServerId::own());
         }
-        let catalog = Self { default_selection, servers };
+        let catalog = Self {
+            default_selection,
+            servers,
+        };
         catalog.validate().map_err(refused)?;
         Ok(Received { catalog, rejected })
     }
@@ -179,11 +185,12 @@ impl ServerEntry {
     pub fn approves(&self, served: &Origin, preflight: &Preflight) -> bool {
         preflight.base_urls().all(|base| match base {
             BaseUrl::Served => true,
-            BaseUrl::Origin(target) => target.host == served.host || self.additional_origins.contains(target),
+            BaseUrl::Origin(target) => {
+                target.host == served.host || self.additional_origins.contains(target)
+            }
         })
     }
 
-    /// This entry's faults, given the entries before it.
     fn check(&self, earlier: &[Self]) -> Result<(), CatalogError> {
         if !is_metadata(&self.name) || !is_metadata(&self.location) {
             return Err(CatalogError::Identity);
@@ -191,7 +198,10 @@ impl ServerEntry {
         if self.url == BaseUrl::Served && self.id != ServerId::own() {
             return Err(CatalogError::Origin);
         }
-        if earlier.iter().any(|prior| prior.id == self.id || prior.url == self.url) {
+        if earlier
+            .iter()
+            .any(|prior| prior.id == self.id || prior.url == self.url)
+        {
             return Err(CatalogError::Duplicate);
         }
         if self.additional_origins.len() > MAX_ADDITIONAL_ORIGINS {
@@ -214,7 +224,13 @@ struct SentEntry {
 
 impl SentEntry {
     fn received(self, earlier: &[ServerEntry]) -> Result<ServerEntry, CatalogError> {
-        let Self { id, url, name, location, additional_origins } = self;
+        let Self {
+            id,
+            url,
+            name,
+            location,
+            additional_origins,
+        } = self;
         let id = ServerId::parse(&id).ok_or(CatalogError::Identity)?;
         let url = match url.as_str() {
             "." => BaseUrl::Served,
@@ -224,7 +240,13 @@ impl SentEntry {
             .iter()
             .map(|origin| received_origin(origin))
             .collect::<Result<_, _>>()?;
-        let entry = ServerEntry { id, url, name, location, additional_origins };
+        let entry = ServerEntry {
+            id,
+            url,
+            name,
+            location,
+            additional_origins,
+        };
         entry.check(earlier)?;
         Ok(entry)
     }

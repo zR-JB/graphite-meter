@@ -6,16 +6,24 @@ import { fakeNet, MARKER, page as publicPage, type Answer } from "./fakes.testut
 import { csrfHeaders, type PageConfig, type PageSession } from "./page";
 
 const page: PageConfig = { ...publicPage, auth: true };
-const self: CatalogEntry = { id: "self", url: page.origin, name: "Meter", additionalOrigins: ["https://cdn.example"] };
+const self: CatalogEntry = {
+  id: "self",
+  url: page.origin,
+  name: "Meter",
+  additionalOrigins: ["https://cdn.example"],
+};
 const peer: CatalogEntry = {
   id: "peer",
   url: "https://peer.example",
   name: "Peer",
   additionalOrigins: ["https://cdn.example:8443"],
 };
-const session = { headers: (method: string) => csrfHeaders(method, "theme=dark; __Host-gm_csrf=a%2Bb") } as PageSession;
+const session = {
+  headers: (method: string) => csrfHeaders(method, "theme=dark; __Host-gm_csrf=a%2Bb"),
+} as PageSession;
 const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, session);
-const sessionAuth = (entry: CatalogEntry, config: PageConfig, login: PageSession) => initialAuth(entry, config, login);
+const sessionAuth = (entry: CatalogEntry, config: PageConfig, login: PageSession) =>
+  initialAuth(entry, config, login);
 const TOKEN = "t".repeat(43);
 /** A grant whose monotonic deadline is `deadline` and whose wall-clock expiry is `expires`. */
 const held = (deadline: number, expires = Infinity) => ({
@@ -28,8 +36,16 @@ const grant = (deadline: number) => grantAuth(peer, held(deadline), () => 0);
 
 const OUTSIDE = "Request destination is outside the selected server";
 const omit: RequestRecipe = { headers: {}, credentials: "omit", redirect: "error" };
-const bearer: RequestRecipe = { headers: { Authorization: `Bearer ${TOKEN}` }, credentials: "omit", redirect: "error" };
-const cookie = (headers = {}): RequestRecipe => ({ headers, credentials: "include", redirect: "error" });
+const bearer: RequestRecipe = {
+  headers: { Authorization: `Bearer ${TOKEN}` },
+  credentials: "omit",
+  redirect: "error",
+};
+const cookie = (headers = {}): RequestRecipe => ({
+  headers,
+  credentials: "include",
+  redirect: "error",
+});
 
 test("credentials stay on their server's destinations, a grant on its HTTPS hostname, cookies on the page's", () => {
   const recipe = (auth: ServerAuth, url: string, method: string): unknown => {
@@ -49,7 +65,12 @@ test("credentials stay on their server's destinations, a grant on its HTTPS host
     [publicAuth(peer), "wss://peer.example/ws/ping", "GET", OUTSIDE],
     [grant(1), "https://peer.example:7249/upload", "POST", bearer],
     [grant(1), "http://peer.example:7246/probe", "GET", "Measurement grants require HTTPS"],
-    [grant(1), "https://cdn.example:8443/probe", "GET", "Measurement grants stay on their server's hostname"],
+    [
+      grant(1),
+      "https://cdn.example:8443/probe",
+      "GET",
+      "Measurement grants stay on their server's hostname",
+    ],
     [grant(0), "https://peer.example/probe", "GET", "Sign in to Peer"],
     [sessionAuth(self, page, session), "https://meter.example/probe", "GET", cookie()],
     [sessionAuth(self, page, session), "https://meter.example/probe", "HEAD", cookie()],
@@ -59,7 +80,12 @@ test("credentials stay on their server's destinations, a grant on its HTTPS host
       "post",
       cookie({ "X-CSRF-Token": "a+b" }),
     ],
-    [sessionAuth(self, page, session), "https://meter.example:7249/upload", "POST", cookie({ "X-CSRF-Token": "a+b" })],
+    [
+      sessionAuth(self, page, session),
+      "https://meter.example:7249/upload",
+      "POST",
+      cookie({ "X-CSRF-Token": "a+b" }),
+    ],
     [
       sessionAuth(self, page, session),
       "http://meter.example:7246/probe",
@@ -79,7 +105,9 @@ test("credentials stay on their server's destinations, a grant on its HTTPS host
 test("sockets get a ticket bound to their exact destination unless a cookie or nothing at all suffices", () => {
   expect(publicAuth(peer).ticket("https://peer.example", "/wt/download")).toBeNull();
   expect(sessionAuth(self, page, session).ticket(page.origin, "/ws/ping")).toBeNull();
-  expect(sessionAuth(self, page, session).ticket("https://meter.example:7249", "/wt/upload")).toEqual({
+  expect(
+    sessionAuth(self, page, session).ticket("https://meter.example:7249", "/wt/upload"),
+  ).toEqual({
     url: "https://meter.example:7249/wt/session?target=https%3A%2F%2Fmeter.example%3A7249%2Fwt%2Fupload",
     request: cookie({ "X-CSRF-Token": "a+b" }),
   });
@@ -103,7 +131,11 @@ test("only the page's own server at the page's origin rides the page's login", (
 
 test("the comparison code is base32 of the verifier hash's first five bytes, and the verifier stays here", async () => {
   for (const [verifier, challenge, code] of [
-    ["dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "CPJR5FQ2"],
+    [
+      "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      "CPJR5FQ2",
+    ],
     ["A".repeat(43), "DwBzhbb51LfusnSGBa_hqYSgo7-j8BTQnip4TOnlzRo", "B4AHHBNW"],
   ] as const)
     expect(await approvalChallenge(verifier)).toEqual({ challenge, code });
@@ -130,12 +162,18 @@ let net: ReturnType<typeof fakeNet> | undefined;
 afterEach(() => net?.restore());
 
 test("a marked refusal is a sign-in that ends what it refused; an unmarked one is an answer", async () => {
-  net = fakeNet((url) => (url.pathname === "/marked" ? { status: 403, headers: MARKER } : { status: 403 }));
+  net = fakeNet((url) =>
+    url.pathname === "/marked" ? { status: 403, headers: MARKER } : { status: 403 },
+  );
   expect((await publicAuth(peer).fetch("https://peer.example/plain")).status).toBe(403);
-  await expect(publicAuth(peer).fetch("https://peer.example/marked")).rejects.toBeInstanceOf(SignInRequired);
+  await expect(publicAuth(peer).fetch("https://peer.example/marked")).rejects.toBeInstanceOf(
+    SignInRequired,
+  );
   const ended: string[] = [];
   const ending = { ...session, end: (reason: string) => ended.push(reason) } as PageSession;
-  await expect(sessionAuth(self, page, ending).fetch(`${page.origin}/marked`)).rejects.toBeInstanceOf(SignInRequired);
+  await expect(
+    sessionAuth(self, page, ending).fetch(`${page.origin}/marked`),
+  ).rejects.toBeInstanceOf(SignInRequired);
   expect(ended).toEqual(["expired"]);
   // A refused grant is over: whatever follows is refused before any request.
   const auth = grantAuth(peer, held(60_000), net.now);
@@ -162,7 +200,11 @@ test("whether a grant ended is one 3 s probe for all who ask; only its marker or
     expect(await asked, JSON.stringify(next)).toEqual([ended, ended]);
   }
   expect(
-    net.requests.map(({ url, init }) => [url.href, init.credentials, new Headers(init.headers).get("Authorization")]),
+    net.requests.map(({ url, init }) => [
+      url.href,
+      init.credentials,
+      new Headers(init.headers).get("Authorization"),
+    ]),
   ).toEqual(Array(4).fill(["https://peer.example/probe", "omit", `Bearer ${TOKEN}`]));
   expect(() => auth.request("https://peer.example/probe", "GET")).toThrow(SignInRequired);
   // A grant past its deadline has ended without asking.
@@ -206,10 +248,13 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
     net = fakeNet(() => answers[Math.min(round++, answers.length - 1)]!);
     const wall = Date.now() - net.now();
     const signal = new AbortController().signal;
-    const exchanged = exchangeGrant(peer, "verifier", signal, net.now).catch((error: Error) => error.message);
+    const exchanged = exchangeGrant(peer, "verifier", signal, net.now).catch(
+      (error: Error) => error.message,
+    );
     await net.advance(130_000);
     // The wall-clock expiry is the monotonic deadline on the clock the page started on.
-    const expected = typeof outcome === "string" ? outcome : { ...outcome, expires: wall + outcome.deadline };
+    const expected =
+      typeof outcome === "string" ? outcome : { ...outcome, expires: wall + outcome.deadline };
     expect(await exchanged, JSON.stringify(answers)).toEqual(expected);
   }
   expect(net?.requests[0]?.init).toMatchObject({
@@ -222,7 +267,9 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
   net?.restore();
   let rounds = 0;
   net = fakeNet(() => (rounds++ ? { status: 410 } : "unreachable"));
-  const lost = exchangeGrant(peer, "verifier", new AbortController().signal, net.now).catch((e: Error) => e.message);
+  const lost = exchangeGrant(peer, "verifier", new AbortController().signal, net.now).catch(
+    (e: Error) => e.message,
+  );
   await net.advance(1_500);
   expect({ outcome: await lost, requests: net.sent("/auth/browser/token") }).toEqual({
     outcome: "The approval's answer was lost on the way. Sign in again.",
@@ -232,7 +279,9 @@ test("the grant exchange polls until approval and refuses invalid grants, the lo
   net?.restore();
   net = fakeNet(() => ({ status: 202 }));
   const cancel = new AbortController();
-  const exchanged = exchangeGrant(peer, "verifier", cancel.signal, net.now).catch((error: Error) => error.name);
+  const exchanged = exchangeGrant(peer, "verifier", cancel.signal, net.now).catch(
+    (error: Error) => error.name,
+  );
   await net.advance(1_500);
   cancel.abort();
   await net.advance(5_000);

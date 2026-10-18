@@ -42,7 +42,12 @@ export async function freePort(): Promise<number> {
 }
 
 export async function describe(id: string, name: string): Promise<Server> {
-  const [h1, tls, h2, h3] = [await freePort(), await freePort(), await freePort(), await freePort()];
+  const [h1, tls, h2, h3] = [
+    await freePort(),
+    await freePort(),
+    await freePort(),
+    await freePort(),
+  ];
   return {
     id,
     name,
@@ -55,10 +60,16 @@ export async function describe(id: string, name: string): Promise<Server> {
 
 const inherited = () =>
   Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("GM_AUTH_") && !key.startsWith("GM_SERVER_CATALOG")),
+    Object.entries(process.env).filter(
+      ([key]) => !key.startsWith("GM_AUTH_") && !key.startsWith("GM_SERVER_CATALOG"),
+    ),
   );
 
-export async function launch({ bin, cert, key }: Launch, server: Server, env: Record<string, string> = {}) {
+export async function launch(
+  { bin, cert, key }: Launch,
+  server: Server,
+  env: Record<string, string> = {},
+) {
   await mkdir(logs, { recursive: true });
   const child = Bun.spawn([bin], {
     env: {
@@ -105,9 +116,12 @@ export async function launch({ bin, cert, key }: Launch, server: Server, env: Re
   }
 }
 
-/** A TCP proxy from `listen` to `target` that holds each direction, all its connections together, to `bytesPerSec`:
-    a link, not loopback, so no browser's network thread saturates. Resolves with its close. */
-export async function pace(listen: number, target: number, bytesPerSec: number): Promise<() => void> {
+/** A TCP proxy from `listen` to `target` holding each direction to `bytesPerSec`, a link so no browser's network thread saturates; resolves with its close. */
+export async function pace(
+  listen: number,
+  target: number,
+  bytesPerSec: number,
+): Promise<() => void> {
   const link = () => {
     let free = 0;
     return (from: Socket, to: Socket) =>

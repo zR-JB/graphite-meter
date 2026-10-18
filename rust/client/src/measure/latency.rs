@@ -8,7 +8,6 @@ const DEADLINE_FLOOR: Duration = Duration::from_millis(250);
 const DEADLINE_CEILING: Duration = Duration::from_secs(10);
 const MIN_RTTVAR: Duration = Duration::from_millis(1);
 
-/// Says what became of one probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeOutcome {
     /// A reply matched after `rtt` and carried the server's own handling time.
@@ -18,17 +17,14 @@ pub enum ProbeOutcome {
     },
     /// The deadline passed first; a late reply does not change that.
     Timeout,
-    /// The channel ended before a verdict.
     Unresolved,
     SendFailed,
 }
 
-/// Tracks the replies, timeouts and continuity of one server's probes in one stage.
 #[derive(Debug, Clone, Default)]
 pub struct Latency {
     /// Counts replies by round trip rounded to the microsecond.
     rtts: BTreeMap<Duration, usize>,
-    /// Holds the counts only. `summary()` adds the statistics.
     counts: Summary,
     previous: Option<Duration>,
     variation: Duration,
@@ -37,7 +33,6 @@ pub struct Latency {
     handling: Duration,
 }
 
-/// Holds a population's statistics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub replies: usize,
@@ -85,7 +80,8 @@ impl Latency {
             self.variation = self.variation.saturating_add(rtt.abs_diff(previous));
             self.counts.jitter_pairs += 1;
         }
-        let micros = Duration::from_micros(u64::try_from((rtt.as_nanos() + 500) / 1000).unwrap_or(u64::MAX));
+        let micros =
+            Duration::from_micros(u64::try_from((rtt.as_nanos() + 500) / 1000).unwrap_or(u64::MAX));
         *self.rtts.entry(micros).or_default() += 1;
         self.counts.replies += 1;
         if handling <= rtt {
@@ -105,7 +101,15 @@ impl Latency {
         let percentile = |share: usize| (share * replies).div_ceil(100).max(1);
         // An even count takes its two middle replies, an odd one its single middle reply twice.
         let middle = (replies.div_ceil(2), replies / 2 + 1);
-        let ranks = [1, percentile(10), middle.0, middle.1, percentile(90), percentile(95), replies];
+        let ranks = [
+            1,
+            percentile(10),
+            middle.0,
+            middle.1,
+            percentile(90),
+            percentile(95),
+            replies,
+        ];
         let ranked = (replies > 0).then(|| self.ranked(ranks));
         Summary {
             p50: ranked.map(|[_, _, lower, upper, ..]| lower + (upper - lower) / 2),
@@ -140,7 +144,6 @@ impl Latency {
 }
 
 impl Summary {
-    /// Returns the share of timeouts among resolved probes, or none without a resolved probe.
     pub fn timeout_ratio(&self) -> Option<f64> {
         let resolved = self.replies + self.timeouts;
         (resolved > 0).then(|| self.timeouts as f64 / resolved as f64)
@@ -162,7 +165,8 @@ pub struct Population {
 impl Population {
     /// Returns the median a view shows, none without a reply or for an incomplete population of too few outcomes.
     pub fn median(&self) -> Option<Duration> {
-        let counted = self.complete || self.summary.replies + self.summary.timeouts >= FAILED_MEDIAN_OUTCOMES;
+        let counted =
+            self.complete || self.summary.replies + self.summary.timeouts >= FAILED_MEDIAN_OUTCOMES;
         self.summary.p50.filter(|_| counted)
     }
 }
@@ -176,7 +180,6 @@ pub fn added(loaded: Option<Duration>, idle: Option<Duration>) -> Option<f64> {
 /// A probe's deadline is SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms to 10 s (RFC 6298), learnt from every reply.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Deadline {
-    /// Holds SRTT and RTTVAR once a reply arrived.
     estimate: Option<(Duration, Duration)>,
 }
 
@@ -213,16 +216,25 @@ mod tests {
         for count in 1..=40_u64 {
             let mut latency = Latency::default();
             // The round trips repeat in scrambled order.
-            let mut rtts: Vec<_> = (0..count).map(|index| ms(1 + (index * 7919) % 13)).collect();
+            let mut rtts: Vec<_> = (0..count)
+                .map(|index| ms(1 + (index * 7919) % 13))
+                .collect();
             for &rtt in &rtts {
-                latency.record(ProbeOutcome::Reply { rtt, handling: Duration::ZERO });
+                latency.record(ProbeOutcome::Reply {
+                    rtt,
+                    handling: Duration::ZERO,
+                });
             }
             rtts.sort();
             let n = rtts.len();
             let rank = |rank: usize| rtts[rank - 1];
             let percentile = |share: usize| rank((share * n).div_ceil(100).max(1));
             let lower = rank(n.div_ceil(2));
-            let p50 = if n % 2 == 0 { lower + (rank(n / 2 + 1) - lower) / 2 } else { lower };
+            let p50 = if n % 2 == 0 {
+                lower + (rank(n / 2 + 1) - lower) / 2
+            } else {
+                lower
+            };
             let spread = Spread {
                 min: rtts[0],
                 p10: percentile(10),
@@ -230,7 +242,11 @@ mod tests {
                 max: rtts[n - 1],
             };
             let summary = latency.summary();
-            assert_eq!((summary.p50, summary.p95), (Some(p50), Some(percentile(95))), "{count} replies");
+            assert_eq!(
+                (summary.p50, summary.p95),
+                (Some(p50), Some(percentile(95))),
+                "{count} replies"
+            );
             assert_eq!(summary.spread, Some(spread), "{count} replies");
         }
     }
@@ -238,9 +254,15 @@ mod tests {
     #[test]
     fn an_incomplete_population_shows_its_median_from_three_outcomes() {
         let mut latency = Latency::default();
-        latency.record(ProbeOutcome::Reply { rtt: ms(10), handling: Duration::ZERO });
+        latency.record(ProbeOutcome::Reply {
+            rtt: ms(10),
+            handling: Duration::ZERO,
+        });
         latency.record(ProbeOutcome::Timeout);
-        let population = |complete, latency: &Latency| Population { summary: latency.summary(), complete };
+        let population = |complete, latency: &Latency| Population {
+            summary: latency.summary(),
+            complete,
+        };
         assert_eq!(population(true, &latency).median(), Some(ms(10)));
         assert_eq!(population(false, &latency).median(), None);
         latency.record(ProbeOutcome::Timeout);

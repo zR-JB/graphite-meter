@@ -18,7 +18,6 @@ const UNSUPPORTED = "Unsupported History database version. Saved data has not be
 const CLOSED = "History storage was closed before it opened.";
 const OLDER = `This result predates the ${HISTORY_LIMIT.toLocaleString("en-US")} newest in History and was not saved.`;
 
-/** A write History will never take; the message says why. */
 export class HistoryRefusal extends Error {}
 
 export type HistoryChange =
@@ -27,7 +26,6 @@ export type HistoryChange =
   | { type: "deleted"; ids: string[] }
   | { type: "cleared" }
   | { type: "malformed-removed" }
-  /** Another tab changed History. */
   | { type: "elsewhere" };
 
 const request = <T>(pending: IDBRequest<T>) =>
@@ -62,8 +60,7 @@ interface OpenRequest {
   waiter: { opened(db: IDBDatabase): void; failed(error: unknown): void; blocked(): void } | null;
 }
 
-/** Creates the database from nothing, or upgrades version 2's or 3's readable rows in place, unreadable ones left as
-    they are; any other version is refused untouched. An unawaited answer is closed. */
+/** Creates the database, or upgrades version 2's or 3's readable rows in place; other versions are refused untouched. */
 function openRequest(answered: () => void): OpenRequest {
   const opening = indexedDB.open(DATABASE, VERSION);
   const pending: OpenRequest = { blocked: false, waiter: null };
@@ -87,7 +84,9 @@ function openRequest(answered: () => void): OpenRequest {
       return upgrade.abort();
     }
     const db = opening.result;
-    db.createObjectStore(RESULTS, { keyPath: "id" }).createIndex(COMPLETED_AT, COMPLETED_AT, { unique: false });
+    db.createObjectStore(RESULTS, { keyPath: "id" }).createIndex(COMPLETED_AT, COMPLETED_AT, {
+      unique: false,
+    });
     db.createObjectStore(META, { keyPath: "key" });
   };
   opening.onsuccess = () => {
@@ -98,7 +97,8 @@ function openRequest(answered: () => void): OpenRequest {
   opening.onerror = () => {
     answered();
     // A database at a newer version stays so for the page's life.
-    const error = opening.error?.name === "VersionError" ? new HistoryRefusal(UNSUPPORTED) : opening.error;
+    const error =
+      opening.error?.name === "VersionError" ? new HistoryRefusal(UNSUPPORTED) : opening.error;
     pending.waiter?.failed(refusal ?? error ?? new Error("IndexedDB open failed"));
   };
   opening.onblocked = () => {
@@ -125,8 +125,7 @@ export class HistoryRepository {
     return clearCount(await request(tx.objectStore(META).get(CLEARS)));
   }
 
-  /** Saves `record` unless History was cleared since `clears` was read, and resolves whether it did. Past the limit
-      the oldest readable records go; when that is `record` itself, it is refused. */
+  /** Saves `record` unless History was cleared since `clears` was read; past the limit the oldest go, and if that is `record`, it is refused. */
   async put(record: HistoryRecord, clears: number): Promise<boolean> {
     // A record History could not read back would only sit in storage as malformed.
     if (!readHistoryRecord(record)) throw new HistoryRefusal(UNSAVABLE);
@@ -183,8 +182,7 @@ export class HistoryRepository {
     return written;
   }
 
-  /** The newest 2,000 readable records as `keep` trims them, and how many rows could not be read. An abort stops the
-      walk at the next row, never a write. */
+  /** The newest 2,000 readable records as `keep` trims them, and how many rows could not be read. */
   async list<T>(
     signal: AbortSignal,
     keep: (record: HistoryRecord) => T,
@@ -213,7 +211,9 @@ export class HistoryRepository {
     return { records, malformedCount: count - readable };
   }
 
-  async inspect(id: string): Promise<{ status: "ready"; record: HistoryRecord } | { status: "missing" | "malformed" }> {
+  async inspect(
+    id: string,
+  ): Promise<{ status: "ready"; record: HistoryRecord } | { status: "missing" | "malformed" }> {
     const tx = await this.#transaction("readonly");
     const value = await request(tx.objectStore(RESULTS).get(id));
     if (value === undefined) return { status: "missing" };
@@ -221,7 +221,6 @@ export class HistoryRepository {
     return record ? { status: "ready", record } : { status: "malformed" };
   }
 
-  /** Deletes every row History cannot read and resolves how many went. */
   async removeMalformed(): Promise<number> {
     const tx = await this.#transaction("readwrite");
     let removed = 0;
@@ -247,8 +246,7 @@ export class HistoryRepository {
     this.#changed({ type: "deleted", ids: [id] });
   }
 
-  /** Deletes every row, readable or not, and counts the clear: a write queued before it, in any tab, is dropped
-      whatever the clocks say. */
+  /** Deletes every row and counts the clear, so a write queued before it in any tab is dropped. */
   async clear(): Promise<void> {
     const tx = await this.#transaction("readwrite");
     const meta = tx.objectStore(META);
@@ -259,8 +257,7 @@ export class HistoryRepository {
     this.#changed({ type: "cleared" });
   }
 
-  /** This tab's changes as they land, and other tabs' as `elsewhere`; returns the unsubscriber. A list read while a
-      change lands may already hold it, so changes apply by id. */
+  /** This tab's changes as they land and other tabs' as `elsewhere`; changes apply by id, as a list read may already hold one. */
   onChange(listener: (change: HistoryChange) => void): () => void {
     this.#listeners.add(listener);
     if (!this.#channel && typeof BroadcastChannel === "function") {
@@ -274,7 +271,6 @@ export class HistoryRepository {
     };
   }
 
-  /** Lets go of the connection; the next operation opens it again. */
   close(): void {
     void this.#connection?.then(
       ({ drop }) => drop(),
@@ -283,7 +279,6 @@ export class HistoryRepository {
     this.#connection = null;
   }
 
-  /** Every operation is one transaction over both stores. */
   #transaction(mode: IDBTransactionMode): Promise<IDBTransaction> {
     const connection = (this.#connection ??= this.#connect());
     return connection.then(({ db }) => db.transaction([RESULTS, META], mode));

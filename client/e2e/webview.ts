@@ -22,8 +22,9 @@ interface ElementState {
 const artifacts = resolve("test-results/webview");
 // JSON is already a valid JavaScript expression for CDP evaluation.
 const encode = (value: unknown) =>
-  JSON.stringify(value, (_key, item) => (item instanceof RegExp ? { source: item.source, flags: item.flags } : item)) ??
-  "undefined";
+  JSON.stringify(value, (_key, item) =>
+    item instanceof RegExp ? { source: item.source, flags: item.flags } : item,
+  ) ?? "undefined";
 
 // Serialized into the page; names follow accname closely enough to skip aria-hidden text.
 function resolveSteps(steps: Step[]): Element[] {
@@ -69,7 +70,8 @@ function resolveSteps(steps: Step[]): Element[] {
     if (el.tagName === "SECTION") return el.ariaLabel ? "region" : "";
     return implicit[el.tagName] ?? "";
   };
-  const fromContent = /^(button|cell|checkbox|heading|link|menuitem|option|radio|switch|tab|tooltip)$/;
+  const fromContent =
+    /^(button|cell|checkbox|heading|link|menuitem|option|radio|switch|tab|tooltip)$/;
   const name = (el: Element) => {
     const ids = el.getAttribute("aria-labelledby")?.split(/\s+/);
     if (ids)
@@ -86,7 +88,9 @@ function resolveSteps(steps: Step[]): Element[] {
     return el.getAttribute("title") ?? "";
   };
   const within = (roots: Element[], keep: (el: Element) => boolean) =>
-    roots.flatMap((root) => [...root.querySelectorAll("*")].filter((el) => keep(el) && !hidden(el)));
+    roots.flatMap((root) =>
+      [...root.querySelectorAll("*")].filter((el) => keep(el) && !hidden(el)),
+    );
   let nodes: Element[] = [document.documentElement];
   for (const step of steps) {
     if (step.kind === "css")
@@ -96,7 +100,9 @@ function resolveSteps(steps: Step[]): Element[] {
     else if (step.kind === "role")
       nodes = within(
         nodes,
-        (el) => role(el) === step.role && (step.name === undefined || match(name(el), step.name, step.exact)),
+        (el) =>
+          role(el) === step.role &&
+          (step.name === undefined || match(name(el), step.name, step.exact)),
       );
     else nodes = nodes.slice(step.index, step.index + 1);
   }
@@ -109,8 +115,7 @@ function reportPolicyViolations() {
   );
 }
 
-/** Every page: the last clicks and their targets, so a click that started nothing shows where it landed, and where
- *  the pointer last moved, so a hover that opened nothing shows what it was over. */
+/** Every page: the last clicks and their targets, and where the pointer last moved, so a dead click or hover shows where it was. */
 function recordClicks() {
   const clicks: string[] = [];
   const pointer = { x: -1, y: -1, over: "" };
@@ -133,7 +138,9 @@ function recordClicks() {
     (event) => {
       const target = event.target as Element | null;
       const name = target?.closest("button")?.textContent?.trim().slice(0, 40);
-      clicks.push(`${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`);
+      clicks.push(
+        `${Math.round(performance.now())} ms ${target?.tagName ?? "?"}${name ? ` "${name}"` : ""}`,
+      );
       clicks.splice(0, clicks.length - 5);
     },
     true,
@@ -204,7 +211,9 @@ function recordStorage() {
     return request;
   };
   for (const type of ["visibilitychange", "freeze", "resume", "pagehide", "pageshow"])
-    document.addEventListener(type, () => lifecycle.push(`${type} ${document.visibilityState} at ${at()}`));
+    document.addEventListener(type, () =>
+      lifecycle.push(`${type} ${document.visibilityState} at ${at()}`),
+    );
   Object.assign(window, { __gmStorage: { opens, lifecycle } });
 }
 
@@ -250,7 +259,9 @@ export class Locator {
     return this.with({ kind: "nth", index });
   }
   all<T>(fn: string | ((elements: any[], arg?: any) => T), arg?: unknown) {
-    return this.page.evaluate<T>(`(${fn})((${resolveSteps})(${encode(this.steps)}), ${encode(arg)})`);
+    return this.page.evaluate<T>(
+      `(${fn})((${resolveSteps})(${encode(this.steps)}), ${encode(arg)})`,
+    );
   }
   evaluate<T>(fn: (element: any, arg?: any) => T, arg?: unknown): Promise<T> {
     const elements = `(${resolveSteps})(${encode(this.steps)})`;
@@ -316,7 +327,12 @@ export class Locator {
 }
 
 /** Browser work that never answers fails with its name and the page state, before the test timeout hides both. */
-export function within<T>(label: string, work: Promise<T>, ms = 30_000, explain?: () => Promise<unknown>) {
+export function within<T>(
+  label: string,
+  work: Promise<T>,
+  ms = 30_000,
+  explain?: () => Promise<unknown>,
+) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(async () => {
@@ -431,8 +447,11 @@ export class Page {
   async evaluate<T>(fn: ((arg: any) => T) | string, arg?: unknown): Promise<T> {
     const driver = await this.init();
     const source = typeof fn === "string" ? fn : `(${fn})(${encode(arg)})`;
-    return within(`evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`, driver.evaluate<T>(source), undefined, () =>
-      this.storage(),
+    return within(
+      `evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`,
+      driver.evaluate<T>(source),
+      undefined,
+      () => this.storage(),
     );
   }
   // Chrome's view runs one evaluate at a time, so these go through CDP to report why another hangs.
@@ -519,7 +538,10 @@ export class Page {
     const storage = await this.storage().then(JSON.stringify, String);
     const dom = await this.inspect("document.documentElement.outerHTML").catch(String);
     const log = [...this.errors, ...this.console].join("\n");
-    await Bun.write(`${stem}.txt`, `${await driver.url().catch(String)}\n\n${storage}\n\n${log}\n\n${dom}`);
+    await Bun.write(
+      `${stem}.txt`,
+      `${await driver.url().catch(String)}\n\n${storage}\n\n${log}\n\n${dom}`,
+    );
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
@@ -536,7 +558,9 @@ function locatorExpect(locator: Locator) {
       retry(async () => {
         const state = await locator.state();
         if (!ok(state))
-          throw new Error(`${message}: ${JSON.stringify(locator.steps)} ${JSON.stringify(state).slice(0, 800)}`);
+          throw new Error(
+            `${message}: ${JSON.stringify(locator.steps)} ${JSON.stringify(state).slice(0, 800)}`,
+          );
       }, options.timeout);
   const text = (state: ElementState[]) =>
     state
@@ -545,7 +569,11 @@ function locatorExpect(locator: Locator) {
       .replace(/\s+/g, " ")
       .trim();
   const same = (actual: string | undefined, wanted: Name, exact = true) =>
-    typeof wanted === "string" ? (exact ? actual === wanted : !!actual?.includes(wanted)) : wanted.test(actual ?? "");
+    typeof wanted === "string"
+      ? exact
+        ? actual === wanted
+        : !!actual?.includes(wanted)
+      : wanted.test(actual ?? "");
   return {
     toHaveCount: (count: number, options?: { timeout?: number }) =>
       assert((s) => s.length === count, `count ${count}`)(options),
@@ -554,7 +582,8 @@ function locatorExpect(locator: Locator) {
     toBeFocused: assert((s) => !!s[0]?.focused, "focused"),
     toHaveAttribute: (name: string, value: Name) =>
       assert((s) => same(s[0]?.attrs[name], value), `attribute ${name}`)(),
-    toHaveText: (value: Name, options?: { timeout?: number }) => assert((s) => same(text(s), value), "text")(options),
+    toHaveText: (value: Name, options?: { timeout?: number }) =>
+      assert((s) => same(text(s), value), "text")(options),
     toContainText: (value: Name) => assert((s) => same(text(s), value, false), "contains")(),
     toHaveValue: (value: string) => assert((s) => s[0]?.value === value, `value ${value}`)(),
   };
@@ -578,7 +607,6 @@ export const expect: any = Object.assign(
 type TestOptions = {
   monitorDisplay?: boolean;
   timeout?: number;
-  /** Needs the DevTools Protocol; other browsers skip it. */
   chrome?: boolean;
 };
 function pageTest(name: string, fn: (page: Page) => Promise<unknown>, options: TestOptions = {}) {
@@ -614,7 +642,10 @@ const axeSource = resolve("node_modules/axe-core/axe.min.js");
 export function settled() {
   const finite = document
     .getAnimations()
-    .filter((a) => a.timeline === document.timeline && a.effect?.getComputedTiming().iterations !== Infinity);
+    .filter(
+      (a) =>
+        a.timeline === document.timeline && a.effect?.getComputedTiming().iterations !== Infinity,
+    );
   return Promise.allSettled(finite.map((animation) => animation.finished));
 }
 

@@ -64,8 +64,7 @@
   [hidden]:not([hidden="until-found"]) {
     display: none !important;
   }
-  /* Every value still updates, in one frame rather than an animation. In the first layer, these important
-     declarations win over every later one. */
+  /* Values still update, in one frame; in the first layer, these important declarations win over every later one. */
   @media (prefers-reduced-motion: reduce) {
     *,
     ::before,
@@ -86,8 +85,7 @@
     overflow: clip;
     overscroll-behavior: none;
   }
-  /* Every scroll area gets one thin scrollbar. Chromium draws step buttons for the standard properties on Linux, so
-     engines with the pseudo-elements use those. */
+  /* One thin scrollbar per scroll area; Chromium on Linux draws step buttons for the standard properties, so it gets the pseudo-elements. */
   @supports not selector(::-webkit-scrollbar) {
     :root {
       scrollbar-color: var(--border-strong) transparent;
@@ -137,7 +135,6 @@
     text-decoration: underline;
     text-underline-offset: 3px;
   }
-  /* A field, or a field drawn around a number and its unit. */
   select,
   input:where([type="number"], [type="text"], [type="search"]),
   .field-unit {

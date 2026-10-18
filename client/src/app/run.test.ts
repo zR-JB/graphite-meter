@@ -22,16 +22,26 @@ function setup(
     blocker: signal(""),
     refusal,
     authorize: () => options.authorize ?? Promise.resolve(),
-    prepare: async () => ({ servers: peers.map(({ id }) => prepared(id, true)), dropped: [], focus: "self" }),
+    prepare: async () => ({
+      servers: peers.map(({ id }) => prepared(id, true)),
+      dropped: [],
+      focus: "self",
+    }),
     fits: (ms) => options.fits?.(ms) ?? true,
     recheck: () => {},
     finished: (finished) => offers.push(finished ? "offer" : "withdraw"),
-    open: (stage) => resources(peers.find(({ id }) => id === stage.server.server.id)!, stage, calls, clock),
+    open: (stage) =>
+      resources(peers.find(({ id }) => id === stage.server.server.id)!, stage, calls, clock),
     streams: (servers, activity) =>
       new Map(
         servers.map(({ server }) => [
           server.id,
-          { streams: { down: +activity.transfer.includes("down"), up: +activity.transfer.includes("up") } },
+          {
+            streams: {
+              down: +activity.transfer.includes("down"),
+              up: +activity.transfer.includes("up"),
+            },
+          },
         ]),
       ),
     clock,
@@ -39,7 +49,10 @@ function setup(
   return { clock, run, preferences, refusal, offers, calls };
 }
 
-const only = (stages: Partial<TestConfig["stages"]>, duration: Partial<TestConfig["duration"]> = {}) => ({
+const only = (
+  stages: Partial<TestConfig["stages"]>,
+  duration: Partial<TestConfig["duration"]> = {},
+) => ({
   stages: { latency: false, download: false, upload: false, bidirectional: false, ...stages },
   duration: { ...DEFAULT_CONFIG.duration, warmupMs: 0, ...duration },
 });
@@ -84,7 +97,10 @@ test("a start that prepares no server fails with words", async () => {
   const h = setup(only({ download: true }), { servers: [] });
   h.run.toggle();
   await h.clock.advance(10);
-  expect([h.run.preparation(), h.run.startError()]).toEqual(["failed", "Could not check the connection"]);
+  expect([h.run.preparation(), h.run.startError()]).toEqual([
+    "failed",
+    "Could not check the connection",
+  ]);
 });
 
 test("a gauge-only change mid-run never reaches the run", async () => {
@@ -102,10 +118,14 @@ test("a gauge-only change mid-run never reaches the run", async () => {
 
 test("lengthening a live test must fit the session for the time left, not the time run", async () => {
   const asked: number[] = [];
-  const h = setup(only({ download: true }, { downloadMs: 10_000 }), { fits: (ms) => (asked.push(ms), true) });
+  const h = setup(only({ download: true }, { downloadMs: 10_000 }), {
+    fits: (ms) => (asked.push(ms), true),
+  });
   h.run.toggle();
   await h.clock.advance(6_000);
-  expect(h.run.configure({ duration: { ...h.preferences.config().duration, downloadMs: 12_000 } })).toBe(true);
+  expect(
+    h.run.configure({ duration: { ...h.preferences.config().duration, downloadMs: 12_000 } }),
+  ).toBe(true);
   expect(asked).toHaveLength(1);
   expect(Math.abs(asked[0]! - (6_000 + 60_000))).toBeLessThan(200);
 });
@@ -149,7 +169,9 @@ test("a refusal speaks only for the change that caused it", async () => {
   const h = setup(only({ download: true }, { downloadMs: 2_000 }), { fits: () => false });
   h.run.toggle();
   await h.clock.advance(500);
-  expect(h.run.configure({ duration: { ...h.preferences.config().duration, downloadMs: 4_000 } })).toBe(false);
+  expect(
+    h.run.configure({ duration: { ...h.preferences.config().duration, downloadMs: 4_000 } }),
+  ).toBe(false);
   expect(h.run.refusal()).toBe("This change would extend the test beyond the current sign-in.");
   expect(h.run.plan()?.duration.downloadMs).toBe(2_000);
   expect(h.run.configure({ adaptive: true })).toBe(true);

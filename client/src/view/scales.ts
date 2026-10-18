@@ -31,9 +31,13 @@ function ceilStep(value: number, steps: readonly number[]): number {
   return (steps.find((step) => step * decade >= value) ?? 10) * decade;
 }
 
-/** The ladder step at or above `bytesPerSec` counted in the page's unit, so the dial's labels are round in the unit
-    they read: bits or bytes, decimal or binary, 2000 Mibit/s rather than 2 Gibit/s read as 2048. */
-function rateStep(bytesPerSec: number, units: Units, tier: number, steps: readonly number[]): number {
+/** The ladder step at or above `bytesPerSec` in the page's unit, so dial labels are round in it: 2000 Mibit/s, not 2048. */
+function rateStep(
+  bytesPerSec: number,
+  units: Units,
+  tier: number,
+  steps: readonly number[],
+): number {
   const unit = fromRateUnit(1, units, tier);
   return ceilStep(Math.min(bytesPerSec, MAX_BYTES_PER_SEC) / unit, steps) * unit;
 }
@@ -44,7 +48,6 @@ interface LivePeaks {
   lane: number;
   /** One tick's lanes together, as the dial shows them. */
   combined: number;
-  /** The run has not ended. */
   running: boolean;
 }
 
@@ -66,7 +69,10 @@ export function throughputScales(
     return { chartBytesPerSec: manual, gaugeBytesPerSec: manual, tier: rateTier(manual, units) };
   const down = results.bidirectional?.down?.reportedBytesPerSec ?? 0;
   const up = results.bidirectional?.up?.reportedBytesPerSec ?? 0;
-  const single = Math.max(results.download?.reportedBytesPerSec ?? 0, results.upload?.reportedBytesPerSec ?? 0);
+  const single = Math.max(
+    results.download?.reportedBytesPerSec ?? 0,
+    results.upload?.reportedBytesPerSec ?? 0,
+  );
   const settled = Math.max(single, down + up);
   const lane = Math.max(live?.lane ?? 0, single, down, up);
   const combined = Math.max(settled, live?.combined ?? 0);
@@ -76,7 +82,8 @@ export function throughputScales(
   // From the mega tier up the dial starts at 1 Gbit/s, where most connections fit, on the unit's own ladder.
   const floor = tier >= 2 ? rateStep(GIGABIT_BYTES_PER_SEC, units, tier, DIAL_STEPS) : 0;
   return {
-    chartBytesPerSec: lane > 0 ? rateStep(lane * RATE_HEADROOM, units, tier, CHART_STEPS) : REFERENCE_BYTES_PER_SEC,
+    chartBytesPerSec:
+      lane > 0 ? rateStep(lane * RATE_HEADROOM, units, tier, CHART_STEPS) : REFERENCE_BYTES_PER_SEC,
     gaugeBytesPerSec: Math.max(floor, rateStep(combined * RATE_HEADROOM, units, tier, DIAL_STEPS)),
     tier,
   };
@@ -95,8 +102,7 @@ export function latencyCeilingMs(values: readonly (number | null)[]): number {
   return Math.max(1, ceilStep(rank(sorted, 0.95) * LATENCY_HEADROOM, LATENCY_STEPS));
 }
 
-/** A reply track's top: the ladder step over 2.5× the p75, so the body of the replies keeps its shape and an outlier
-    is clamped with an arrow instead of flattening the rest. */
+/** A reply track's top: the ladder step over 2.5× the p75, so the body keeps its shape and an outlier is clamped with an arrow. */
 export function replyTrackMs(values: readonly (number | null)[]): number {
   const sorted = ascending(values);
   if (!sorted.length) return EMPTY_LATENCY_MS;
@@ -107,6 +113,7 @@ export function replyTrackMs(values: readonly (number | null)[]): number {
 export function latencyAxisMs(buckets: readonly LatencyBucket[], finished: boolean): number {
   const from = finished ? -Infinity : (buckets.at(-1)?.endT ?? 0) - LATENCY_WINDOW_MS;
   const medians: (number | null)[] = [];
-  for (let i = buckets.length - 1; i >= 0 && buckets[i]!.endT > from; i--) medians.push(buckets[i]!.medianRttMs);
+  for (let i = buckets.length - 1; i >= 0 && buckets[i]!.endT > from; i--)
+    medians.push(buckets[i]!.medianRttMs);
   return latencyCeilingMs(medians);
 }

@@ -10,7 +10,9 @@ use crate::{
 };
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf};
-use graphite_meter_net::quic::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, server_transport};
+use graphite_meter_net::quic::{
+    MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, server_transport,
+};
 use std::{
     sync::{
         Arc, Mutex,
@@ -32,7 +34,8 @@ pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
     let streams = limits
         .operations_per_client
         .checked_add(limits.sessions_per_client.get());
-    let streams = streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
+    let streams =
+        streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
     streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
@@ -46,7 +49,6 @@ pub fn floor_bytes(handshake: usize) -> usize {
     handshake.saturating_add(http3::CONNECTION_BYTES)
 }
 
-/// The floor noq itself charges each connection with these limits.
 pub fn noq_floor(limits: &Limits) -> Result<usize, String> {
     transport(limits).map(|transport| transport.connection_floor_bytes())
 }
@@ -65,7 +67,11 @@ pub fn endpoint_bytes(
     segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
-    let queue = if shards > 1 { super::shard::forwarding_bytes(packet)? } else { 0 };
+    let queue = if shards > 1 {
+        super::shard::forwarding_bytes(packet)?
+    } else {
+        0
+    };
     noq::receive_batch_bytes(packet, segments)
         .checked_add(packet.checked_mul(connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
@@ -85,7 +91,6 @@ pub(super) struct ConnectionBudget {
 
 #[derive(Debug, Default)]
 struct Held {
-    /// The credit and the share of the client whose upload reserved it.
     credit: Option<(Lease, Hold)>,
     undrawn: usize,
     overdraft: usize,
@@ -144,9 +149,7 @@ impl noq::SharedBudget for ConnectionBudget {
     }
 }
 
-/// The least growth of a send window worth a change.
 const SEND_WINDOW_STEP: u64 = 256 << 10;
-/// A send window shrinks after its demand stayed low this long.
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
 /// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
@@ -186,7 +189,10 @@ impl ReceiveWindow for QuicWindow {
         self.fund(keys)
     }
 
-    fn poll_data(stream: &mut RecvHalf, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, http3::Error>>> {
+    fn poll_data(
+        stream: &mut RecvHalf,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, http3::Error>>> {
         stream.poll_data(cx).map(Result::transpose)
     }
 }
@@ -194,19 +200,21 @@ impl ReceiveWindow for QuicWindow {
 /// The send window: 2 MiB, toward two BDPs up to 16 MiB with headroom, back to 2 MiB after 1 s of low demand.
 pub(super) struct SendWindow {
     limit: u64,
-    /// When the path's sent bytes were last read, and their count.
     last: Option<(Instant, u64)>,
     low_since: Option<Instant>,
 }
 
 impl Default for SendWindow {
     fn default() -> Self {
-        Self { limit: MIN_SEND_WINDOW, last: None, low_since: None }
+        Self {
+            limit: MIN_SEND_WINDOW,
+            last: None,
+            low_since: None,
+        }
     }
 }
 
 impl SendWindow {
-    /// Follows the connection's demand while requests run.
     pub(super) fn tune(&mut self, quic: &noq::Connection, busy: bool, budget: &Budget) {
         if !busy {
             return self.release(quic);
@@ -220,7 +228,11 @@ impl SendWindow {
         };
         let (now, sent) = (Instant::now(), path.udp_tx.bytes);
         if let Some((last, previous)) = self.last {
-            let target = desired(sent.saturating_sub(previous), path.rtt, now.duration_since(last));
+            let target = desired(
+                sent.saturating_sub(previous),
+                path.rtt,
+                now.duration_since(last),
+            );
             if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
                 let since = *self.low_since.get_or_insert(now);
                 if now.duration_since(since) >= SEND_WINDOW_SHRINK_DELAY {
@@ -270,6 +282,10 @@ mod tests {
         assert_eq!(desired(16 << 20, millis(50), millis(250)), 6_710_886);
         assert_eq!(desired(16 << 20, millis(100), millis(100)), MAX_SEND_WINDOW);
         assert_eq!(desired(1 << 20, millis(1), millis(250)), MIN_SEND_WINDOW);
-        assert_eq!(desired(1 << 20, millis(1), Duration::ZERO), MIN_SEND_WINDOW, "no time observed");
+        assert_eq!(
+            desired(1 << 20, millis(1), Duration::ZERO),
+            MIN_SEND_WINDOW,
+            "no time observed"
+        );
     }
 }

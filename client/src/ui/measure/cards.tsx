@@ -4,7 +4,15 @@ import type { RunResult } from "../../engine/run/result";
 import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
-import { fmtMs, fmtRate, fmtSpeed, MISSING, rateUnit, toRateUnit, type RateUnits } from "../../view/format";
+import {
+  fmtMs,
+  fmtRate,
+  fmtSpeed,
+  MISSING,
+  rateUnit,
+  toRateUnit,
+  type RateUnits,
+} from "../../view/format";
 import { replyTrackMs } from "../../view/scales";
 import { STAGE, TIP, type StageState } from "../../view/words";
 import { announce } from "../kit/announce";
@@ -31,7 +39,6 @@ import type { Live } from "./live";
 import { Figure, painter, setText } from "./paint";
 import { StageGraph, type Head } from "./strip";
 
-/** The figures a card's painter writes while its stage runs. */
 interface Figures {
   num: Figure;
   down: Figure;
@@ -40,7 +47,12 @@ interface Figures {
 }
 
 /** One stage's card. The headline is re-made, rising in, when the lens shows another server. */
-function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<string>; strip?: () => Node | null }): {
+function Card(props: {
+  card: Read<CardModel>;
+  reason: Read<string>;
+  lens: Read<string>;
+  strip?: () => Node | null;
+}): {
   element: HTMLElement;
   figures: Figures;
 } {
@@ -112,7 +124,9 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
     return (
       <div>
         <dt ref={tip(computed(() => card().facts[index]?.tip ?? ""))}>{fact.label}</dt>
-        <dd class={() => (value() === MISSING && !combined() ? "quiet" : undefined)}>{shown.box}</dd>
+        <dd class={() => (value() === MISSING && !combined() ? "quiet" : undefined)}>
+          {shown.box}
+        </dd>
       </div>
     );
   });
@@ -207,7 +221,11 @@ function Card(props: { card: Read<CardModel>; reason: Read<string>; lens: Read<s
 }
 
 /** The cards in a grid of up to four across, pairing up and then stacking as the console narrows. */
-function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) => HTMLElement; issues?: Node }): Node {
+function Summary(props: {
+  stages: Read<readonly Stage[]>;
+  card: (stage: Stage) => HTMLElement;
+  issues?: Node;
+}): Node {
   const grid = (
     <div class="result-cards" ref={tipGroup}>
       <For each={props.stages} by={(stage) => stage}>
@@ -251,7 +269,13 @@ export function ResultSummary(props: {
     Card({
       card: computed(() => {
         const status = evidence().status[stage];
-        return settledCard(stage, settled(status) ? status : "failed", evidence(), props.units(), props.showWire());
+        return settledCard(
+          stage,
+          settled(status) ? status : "failed",
+          evidence(),
+          props.units(),
+          props.showWire(),
+        );
       }),
       reason: computed(() => cardReason(issues(), stage, attributed())),
       lens,
@@ -266,7 +290,11 @@ export function ResultSummary(props: {
             <dl class={() => (attributed() ? "issues enter attributed" : "issues enter")}>
               {() =>
                 listed().map((issue: Issue) => [
-                  attributed() ? [<dt>{issue.server}</dt>, <dd>{issue.stages}</dd>] : <dt>{issue.stages}</dt>,
+                  attributed() ? (
+                    [<dt>{issue.server}</dt>, <dd>{issue.stages}</dd>]
+                  ) : (
+                    <dt>{issue.stages}</dt>
+                  ),
                   <dd class="reason">{issue.reason}</dd>,
                 ])
               }
@@ -280,8 +308,7 @@ export function ResultSummary(props: {
 
 const RUNNING_STATES = new Set<StageState>(["warmup", "running", "recovering"]);
 
-/** The live console's cards: settled stages from the run's results, the running one following the frame clock with its
-    strip's leading edge, the rest waiting; a completed run is announced once. */
+/** The live console's cards: settled stages from the results, the running one on the frame clock, the rest waiting. */
 export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }): Node {
   const { app, live } = props;
   const { run } = app;
@@ -329,7 +356,8 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     return {
       ...none,
       own: running && live.rateStage() === stage,
-      spoken: sample?.stage === stage ? (sample.down ?? 0) + (sample.bridgedUp ?? sample.up ?? 0) : null,
+      spoken:
+        sample?.stage === stage ? (sample.down ?? 0) + (sample.bridgedUp ?? sample.up ?? 0) : null,
       held: lastOf("down") + lastOf("up") || null,
       bytes: run.stageBytes(),
       shape: shapeSoFar(samples, stage, start),
@@ -338,7 +366,8 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
   const model = (stage: Stage) =>
     computed<CardModel>(() => {
       const status = evidence().status[stage];
-      if (settled(status)) return settledCard(stage, status, evidence(), units(), app.preferences.showWireEstimates());
+      if (settled(status))
+        return settledCard(stage, status, evidence(), units(), app.preferences.showWireEstimates());
       // A server shown alone that never ran the stage reads as skipped.
       const state: StageState = status === "not-run" ? "skipped" : live.states()[stage];
       return liveCard(stage, state, liveEvidence(stage, state), units());
@@ -373,7 +402,9 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
         buckets: live.buckets,
         ownBuckets,
         start,
-        span: computed(() => Math.max(points().end - start(), waiting() ? plan().duration.latencyMs : 0) || 1),
+        span: computed(
+          () => Math.max(points().end - start(), waiting() ? plan().duration.latencyMs : 0) || 1,
+        ),
         ceiling,
         latencyTop,
         baseline,
@@ -503,5 +534,10 @@ export function ResultCards(props: { app: App; live: Live; away: Read<boolean> }
     untrack(() => announce(resultSentence(cards)));
   });
 
-  return <Summary stages={computed(() => STAGES.filter((stage) => live.visibility(stage).card))} card={card} />;
+  return (
+    <Summary
+      stages={computed(() => STAGES.filter((stage) => live.visibility(stage).card))}
+      card={card}
+    />
+  );
 }

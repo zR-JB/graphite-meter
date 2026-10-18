@@ -42,7 +42,10 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await dialog.getByRole("button", { name: "Reset settings" }).click();
   await expect(dialog).toHaveCount(0);
   const pressed = (name: string) =>
-    expect(settings.getByRole("button", { name, exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(settings.getByRole("button", { name, exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   await pressed("Medium");
   await pressed("Bits");
   await pressed("Decimal");
@@ -84,14 +87,18 @@ test("a unit switch relabels the dial in place, on round ticks, without replayin
   await page.evaluate(() => {
     const key = document.querySelector(".run-button")!;
     const busy: (string | null)[] = [];
-    new MutationObserver((records) => busy.push(...records.map(() => key.getAttribute("aria-busy")))).observe(key, {
+    new MutationObserver((records) =>
+      busy.push(...records.map(() => key.getAttribute("aria-busy"))),
+    ).observe(key, {
       attributeFilter: ["aria-busy"],
     });
     Object.assign(window, { busy });
   });
   await run(page);
   expect(await page.evaluate(() => (window as any).busy)).toEqual([]);
-  expect(await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy"))).toBe(false);
+  expect(
+    await runButton(page, "Run again").evaluate((key: Element) => key.hasAttribute("aria-busy")),
+  ).toBe(false);
   const sweeps = () =>
     page.evaluate(
       () =>
@@ -99,11 +106,14 @@ test("a unit switch relabels the dial in place, on round ticks, without replayin
           .getAnimations()
           .filter(
             (animation) =>
-              (animation as CSSAnimation).animationName === "result-sweep" && animation.playState === "running",
+              (animation as CSSAnimation).animationName === "result-sweep" &&
+              animation.playState === "running",
           ).length,
     );
   // The result takes the dial a hand-off after the run completes; its sweep ends before the switch.
-  await expect.poll(() => page.locator(".result-arc").all((paths: Element[]) => paths.length)).toBeGreaterThan(0);
+  await expect
+    .poll(() => page.locator(".result-arc").all((paths: Element[]) => paths.length))
+    .toBeGreaterThan(0);
   await expect.poll(sweeps).toBe(0);
   const settings = await openSettings(page);
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
@@ -111,7 +121,9 @@ test("a unit switch relabels the dial in place, on round ticks, without replayin
   expect(await sweeps()).toBe(0);
   const labels = await page
     .locator(".gauge-ticks")
-    .evaluate((el: HTMLElement) => Array.from(el.querySelectorAll(".gauge-tick"), (tick) => tick.textContent));
+    .evaluate((el: HTMLElement) =>
+      Array.from(el.querySelectorAll(".gauge-tick"), (tick) => tick.textContent),
+    );
   expect(labels.length).toBeGreaterThan(1);
   for (const label of labels) expect(label).toMatch(/^\d+(\.\d{1,2})?$/);
 });
@@ -131,7 +143,9 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   await expect(dialog).toBeVisible();
   await page.evaluate(() => history.back());
   await expect(dialog).toHaveCount(0);
-  await expect.poll(() => settings.all((els: HTMLElement[]) => els.every((el) => el.inert))).toBe(true);
+  await expect
+    .poll(() => settings.all((els: HTMLElement[]) => els.every((el) => el.inert)))
+    .toBe(true);
   await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
 });
 
@@ -148,7 +162,9 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await page.getByRole("button", { name: "Details", exact: true }).click();
   const closed = (panel: typeof settings) =>
     expect.poll(() => panel.all((els: HTMLElement[]) => els.every((el) => el.inert))).toBe(true);
-  await settings.getByRole("button", { name: "Close Settings" }).evaluate((el: HTMLElement) => el.focus());
+  await settings
+    .getByRole("button", { name: "Close Settings" })
+    .evaluate((el: HTMLElement) => el.focus());
   await page.press("Escape");
   await closed(settings);
   expect(await details.all((els: HTMLElement[]) => els.some((el) => !el.inert))).toBe(true);
@@ -213,10 +229,14 @@ test("Space and R run the test from page load; a focused control keeps Space", a
   await page.press(" ");
   // Stop shows from the press; the run is under way once its first stage has started.
   await expect(runButton(page, "Stop test")).toBeVisible();
-  await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
+  await expect(
+    page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])'),
+  ).toHaveCount(1);
   await page.press("r");
   await expect(phase(page, "aborted")).toHaveCount(1);
-  await page.getByRole("switch", { name: /^Upload stage/ }).evaluate((el: HTMLElement) => el.focus());
+  await page
+    .getByRole("switch", { name: /^Upload stage/ })
+    .evaluate((el: HTMLElement) => el.focus());
   await page.press(" ");
   await expect(runButton(page, "Run again")).toBeVisible();
   await expect(phase(page, "aborted")).toHaveCount(1);
@@ -280,7 +300,11 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
   await page.press("Enter");
   await expect(menu).toHaveCount(0);
   await expect
-    .poll(() => page.locator('.panel[aria-label="Details"]').all((els: HTMLElement[]) => els.some((el) => !el.inert)))
+    .poll(() =>
+      page
+        .locator('.panel[aria-label="Details"]')
+        .all((els: HTMLElement[]) => els.some((el) => !el.inert)),
+    )
     .toBe(true);
 });
 
@@ -311,9 +335,11 @@ test("a docked sheet reopened while it leaves comes back from where it was", asy
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page);
   const travel = await page.evaluate(async () => {
-    const key = (key: string) => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    const key = (key: string) =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
-    const sheet = () => document.querySelector<HTMLElement>('dialog[aria-label="Details"]:not([aria-hidden])')!;
+    const sheet = () =>
+      document.querySelector<HTMLElement>('dialog[aria-label="Details"]:not([aria-hidden])')!;
     key("d");
     await wait(600);
     key("d");
@@ -339,7 +365,8 @@ test("two docked sheets open and close beside the stage in every frame", async (
   await page.setViewportSize({ width: 1700, height: 900 });
   await open(page);
   const overlaps = await page.evaluate(async () => {
-    const key = (key: string) => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    const key = (key: string) =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
     const found: string[] = [];
     let sampling = true;
@@ -354,9 +381,11 @@ test("two docked sheets open and close beside the stage in every frame", async (
         const stage = document.querySelector('[data-flip="stage"]')!.getBoundingClientRect();
         const run = document.querySelector(".run-button")!.getBoundingClientRect();
         for (const box of sheets("left"))
-          if (box.right > stage.left + 1.5) found.push(`left ${box.left} to ${box.right}, stage ${stage.left}`);
+          if (box.right > stage.left + 1.5)
+            found.push(`left ${box.left} to ${box.right}, stage ${stage.left}`);
         for (const box of sheets("right"))
-          if (box.left < stage.right - 1.5) found.push(`right ${box.left} to ${box.right}, stage ${stage.right}`);
+          if (box.left < stage.right - 1.5)
+            found.push(`right ${box.left} to ${box.right}, stage ${stage.right}`);
         if (run.left < stage.left - 1.5 || run.right > stage.right + 1.5)
           found.push(`run key ${run.left} to ${run.right} outside the stage`);
       }
@@ -385,8 +414,7 @@ test("Details hides this browser's address until its key is pressed, whatever th
   await open(page);
   await ready(page);
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  // A busy runner can still be sliding the sheet in; the address is pressed once it rests. Scroll-driven
-  // animations never finish, so only timed ones are waited for.
+  // A busy runner can still be sliding the sheet in, so wait for timed animations; scroll-driven ones never finish.
   await page.evaluate(() =>
     Promise.all(
       document

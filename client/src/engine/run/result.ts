@@ -20,7 +20,6 @@ export type Outcome = "complete" | "partial" | "incomplete";
 export interface ServerFailure {
   serverId: string;
   stage: Stage;
-  /** Run ms. */
   atMs: number;
   scope: Role;
   reason: FailureReason;
@@ -28,7 +27,6 @@ export interface ServerFailure {
   message: string;
 }
 
-/** A run-level transfer headline with its wire estimate. */
 type StageThroughput = ThroughputResult & { wire: WireModel | null };
 
 export interface StageResults {
@@ -36,7 +34,11 @@ export interface StageResults {
   download: StageThroughput | null;
   upload: StageThroughput | null;
   /** Each lane without its own estimate; one combined estimate when both lanes have one. */
-  bidirectional: { down: ThroughputResult | null; up: ThroughputResult | null; wire: WireModel | null } | null;
+  bidirectional: {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+    wire: WireModel | null;
+  } | null;
 }
 
 /** A server's share of the run; its throughput results come from its own full windows. */
@@ -69,7 +71,6 @@ export interface ServerMeasurementSummary {
 export interface MultiServerResult {
   /** The run's servers in catalog order, then those that failed their start check. */
   selection: ServerIdentity[];
-  /** Servers still in the run. */
   participants: string[];
   latencyFocus: string;
   servers: ServerMeasurementSummary[];
@@ -85,7 +86,6 @@ export interface RunResult extends StageResults {
   /** The latency focus server's populations. */
   latencyByStage: Record<Stage, LatencySummary | null>;
   addedLatency: AddedLatency | null;
-  /** Epoch ms. */
   startedAt: number;
   /** Run ms, preparation, finalization and page gaps included. */
   durationMs: number;
@@ -94,7 +94,8 @@ export interface RunResult extends StageResults {
 /** What each stage was measured against when it settled; the settings may have changed since. */
 export type StagePlans = Record<Stage, { planned: boolean; durationMs: number; early: boolean }>;
 
-export const failureScope = (stage: Stage): Role => (stage === "latency" ? "latency" : "throughput");
+export const failureScope = (stage: Stage): Role =>
+  stage === "latency" ? "latency" : "throughput";
 
 export const lanes = (
   results: Record<"latency" | "download" | "upload", unknown> & {
@@ -102,7 +103,9 @@ export const lanes = (
   },
   stage: Stage,
 ): unknown[] =>
-  stage === "bidirectional" ? [results.bidirectional?.down, results.bidirectional?.up] : [results[stage]];
+  stage === "bidirectional"
+    ? [results.bidirectional?.down, results.bidirectional?.up]
+    : [results[stage]];
 
 /** The run and each server share one rule: every lane, then no failure. */
 export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
@@ -111,7 +114,6 @@ export const stageStatus = (results: unknown[], failed: boolean): StageStatus =>
 export const outcomeOf = (statuses: StageStatus[], failures: number): Outcome =>
   statuses.includes("failed") ? "incomplete" : failures ? "partial" : "complete";
 
-/** The bytes every server moved, both directions. */
 export const movedBytes = (result: MultiServerResult) =>
   result.servers.reduce((sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up, 0);
 
@@ -122,20 +124,26 @@ export function incoherence(result: RunResult, plans: StagePlans): string[] {
   // Past the interval limit the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
   const firstKept = intervals.length ? STAGES.indexOf(intervals[0]!.stage) : STAGES.length;
   for (const failure of failures)
-    if (!Object.hasOwn(FAILURE_REASONS, failure.reason)) problems.push(`unknown failure reason ${failure.reason}`);
+    if (!Object.hasOwn(FAILURE_REASONS, failure.reason))
+      problems.push(`unknown failure reason ${failure.reason}`);
   for (const stage of STAGES) {
     const status = result.stages[stage];
     const explained = failures.some((f) => f.stage === stage && f.scope === failureScope(stage));
     const spans = intervals.filter((interval) => interval.stage === stage);
     const { planned, durationMs, early } = plans[stage];
-    if (planned === (status === "not-run")) problems.push(`${stage} is ${status} but planned ${planned}`);
+    if (planned === (status === "not-run"))
+      problems.push(`${stage} is ${status} but planned ${planned}`);
     if ((status === "failed" || status === "partial") && !explained)
       problems.push(`${stage} is ${status} without a stated reason`);
     if (status === "complete" && (explained || !lanes(result, stage).every(Boolean)))
       problems.push(`${stage} is complete without every result or with a failure`);
     if (status === "not-run" && (lanes(result, stage).some(Boolean) || spans.length))
       problems.push(`${stage} is not-run but has evidence`);
-    if (stage === "latency" || status !== "complete" || (omittedIntervals > 0 && STAGES.indexOf(stage) <= firstKept))
+    if (
+      stage === "latency" ||
+      status !== "complete" ||
+      (omittedIntervals > 0 && STAGES.indexOf(stage) <= firstKept)
+    )
       continue;
     if (!directions(stage).every((dir) => spans.some(({ headline }) => sufficient(headline, dir))))
       problems.push(`${stage} is complete without ${MIN_EVIDENCE_MS} ms of evidence`);

@@ -3,8 +3,8 @@ use crate::{
     measure::aggregate::{Fed, Receiver},
     model::LaneHealth,
     net::{
-        Attempt, CONTROL_TIMEOUT, Class, Client, Fault, GroupPlan, Incoming, Lanes, Request, Retry, Session,
-        ThroughputPath, Work, retrying,
+        Attempt, CONTROL_TIMEOUT, Class, Client, Fault, GroupPlan, Incoming, Lanes, Request, Retry,
+        Session, ThroughputPath, Work, retrying,
     },
 };
 use bytes::Bytes;
@@ -32,24 +32,20 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// The pause before a missed checkpoint is asked again.
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 /// How long a departed server's receiver may take to answer its finalize.
 const DEPART: Duration = Duration::from_secs(1);
 
-/// One stage's uploads to a server; dropping it ends its lanes and feed.
 pub struct UploadSession {
     start: Start,
     upload: Upload,
     replacing: Option<JoinHandle<Option<Result<Upload, Fault>>>>,
-    /// The server's one replacement receiver in this run was taken.
     replaced: Arc<AtomicBool>,
 }
 
 /// What a receiver starts from, so that a replacement starts the same lanes.
 #[derive(Clone)]
 struct Start {
-    /// The client its lanes go through.
     client: Client,
     control: Control,
     plans: Vec<GroupPlan>,
@@ -58,13 +54,11 @@ struct Start {
     token: CancellationToken,
 }
 
-/// A receiver: its upload ID, its number in the session, its lanes and what its feed reported.
 struct Upload {
     id: String,
     number: u32,
     lanes: Lanes,
     progress: watch::Receiver<Progress>,
-    /// Ends its lanes and feed.
     token: CancellationToken,
 }
 
@@ -73,7 +67,6 @@ struct Progress {
     ready: bool,
     latest: Option<Counters>,
     complete: bool,
-    /// The fault the feed ended with after recovery.
     ended: Option<Fault>,
 }
 
@@ -100,7 +93,11 @@ impl UploadSession {
             Protocol::Http3 => client.apart(),
             _ => client.clone(),
         };
-        let control = Control { client: connections, via, origin: path.origin.clone() };
+        let control = Control {
+            client: connections,
+            via,
+            origin: path.origin.clone(),
+        };
         let webtransport = path.transport == ThroughputTransport::WebTransport;
         let start = Start {
             client: client.clone(),
@@ -111,34 +108,55 @@ impl UploadSession {
             token,
         };
         let upload = start.clone().upload(0).await?;
-        Ok(Self { start, upload, replacing: None, replaced })
+        Ok(Self {
+            start,
+            upload,
+            replacing: None,
+            replaced,
+        })
     }
 
     /// Lanes open, the feed attached and the receiver counting.
     pub fn ready(&self) -> bool {
         let progress = self.upload.progress.borrow();
-        let counting = matches!(progress.latest, Some(latest) if latest.bytes() > 0 && latest.nanos() > 0);
+        let counting =
+            matches!(progress.latest, Some(latest) if latest.bytes() > 0 && latest.nanos() > 0);
         self.upload.lanes.ready() && progress.ready && counting
     }
 
-    /// The highest byte count the current receiver's feed reported.
     pub fn fed(&self) -> Option<Fed> {
         let latest = self.upload.progress.borrow().latest?;
-        Some(Fed { id: self.upload.number, bytes: latest.bytes() })
+        Some(Fed {
+            id: self.upload.number,
+            bytes: latest.bytes(),
+        })
     }
 
     /// A fresh checkpoint within `budget`, a miss asked again after a pause unless its fault is final.
     pub async fn checkpoint(&self, budget: Duration) -> Result<Receiver, Fault> {
-        let (deadline, id, control) = (Instant::now() + budget, Some(self.upload.id.as_str()), &self.start.control);
+        let (deadline, id, control) = (
+            Instant::now() + budget,
+            Some(self.upload.id.as_str()),
+            &self.start.control,
+        );
         loop {
             let request = control.request(Method::POST, Route::UploadCheckpoint, id);
-            let asked = control.client.json(control.via, request, json::decode::<Counters>);
+            let asked = control
+                .client
+                .json(control.via, request, json::decode::<Counters>);
             let fault = match timeout_at(deadline, asked).await {
-                Ok(Ok(counters)) => return Ok(Receiver { id: self.upload.number, counters }),
+                Ok(Ok(counters)) => {
+                    return Ok(Receiver {
+                        id: self.upload.number,
+                        counters,
+                    });
+                }
                 Ok(Err(fault)) => fault,
                 Err(_) => return Err(Fault::TimedOut("receiver checkpoint")),
             };
-            if fault.class() == Class::Final || deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY {
+            if fault.class() == Class::Final
+                || deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY
+            {
                 return Err(fault);
             }
             sleep(CHECKPOINT_RETRY).await;
@@ -172,7 +190,13 @@ impl UploadSession {
 
     /// Ends the lanes, then asks the receiver to finalize and waits for its `complete` record, within `budget`.
     pub async fn finish(self, budget: Duration) {
-        let Upload { id, lanes, mut progress, token, .. } = self.upload;
+        let Upload {
+            id,
+            lanes,
+            mut progress,
+            token,
+            ..
+        } = self.upload;
         drop(lanes);
         let finished = async {
             self.start.control.finalize(&id).await;
@@ -191,17 +215,17 @@ impl UploadSession {
         tokio::spawn(async move { timeout(DEPART, control.finalize(&id)).await });
     }
 
-    /// Ends the current receiver and starts another in its place.
     fn replace(&mut self) {
         self.upload.token.cancel();
         let (start, number) = (self.start.clone(), self.upload.number + 1);
         let token = start.token.clone();
-        self.replacing = Some(tokio::spawn(token.run_until_cancelled_owned(start.upload(number))));
+        self.replacing = Some(tokio::spawn(
+            token.run_until_cancelled_owned(start.upload(number)),
+        ));
     }
 }
 
 impl Start {
-    /// Mints receiver `number` and starts its feed and lanes.
     async fn upload(self, number: u32) -> Result<Upload, Fault> {
         let control = &self.control;
         let request = || control.request(Method::POST, Route::UploadSession, None);
@@ -209,23 +233,36 @@ impl Start {
         let id = retrying(mint).await?.upload_id;
         let token = self.token.child_token();
         let work = Work::Upload(id.clone());
-        let lanes = Lanes::start(&self.client, self.plans, work, self.stagger, token.child_token());
+        let lanes = Lanes::start(
+            &self.client,
+            self.plans,
+            work,
+            self.stagger,
+            token.child_token(),
+        );
         let (feed, progress) = watch::channel(Progress::default());
         let session = self.webtransport.then(|| lanes.session());
         let follow = follow(self.control.clone(), id.clone(), session, feed);
         tokio::spawn(token.clone().run_until_cancelled_owned(follow));
-        Ok(Upload { id, number, lanes, progress, token })
+        Ok(Upload {
+            id,
+            number,
+            lanes,
+            progress,
+            token,
+        })
     }
 }
 
 impl Control {
-    /// A request to `method` on `route` for upload `id`, if any.
     fn request(&self, method: Method, route: Route, id: Option<&str>) -> Request {
         let query = id.map(|id| ("id", id.to_owned())).into_iter().collect();
-        Request { query, ..Request::new(method, &self.origin, route) }
+        Request {
+            query,
+            ..Request::new(method, &self.origin, route)
+        }
     }
 
-    /// Asks the receiver of upload `id` to finalize and reads its answer.
     async fn finalize(&self, id: &str) {
         let request = self.request(Method::DELETE, Route::UploadProgress, Some(id));
         if let Ok(mut answer) = self.client.control(self.via, request).await {
@@ -247,7 +284,13 @@ async fn follow(
             let session = opened.and_then(|opened| opened.clone());
             let session = session.ok_or(Fault::Lost)?;
             let stream = session.accept_uni().await?;
-            read(&control, Source::Stream(stream, session), &progress, &mut false).await
+            read(
+                &control,
+                Source::Stream(stream, session),
+                &progress,
+                &mut false,
+            )
+            .await
         };
         match streamed.await {
             Ok(()) => return,
@@ -276,7 +319,6 @@ async fn follow(
     }
 }
 
-/// Where the feed's lines arrive.
 enum Source {
     Http(Incoming),
     Stream(RecvStream, Arc<Session>),
@@ -286,7 +328,10 @@ impl Source {
     async fn chunk(&mut self) -> Result<Option<Bytes>, Fault> {
         match self {
             Self::Http(feed) => feed.chunk().await,
-            Self::Stream(stream, session) => stream.read_chunk().await.map_err(|error| session.fault(error)),
+            Self::Stream(stream, session) => stream
+                .read_chunk()
+                .await
+                .map_err(|error| session.fault(error)),
         }
     }
 }
@@ -307,7 +352,10 @@ async fn read(
             let end = chunk.iter().position(|&byte| byte == b'\n');
             let taken = chunk.split_to(end.map_or(chunk.len(), |end| end + 1));
             if line.len() + taken.len() > MAX_RECORD_BYTES {
-                return Err(Fault::Malformed(format!("upload progress record exceeds {} KiB", MAX_RECORD_BYTES >> 10)));
+                return Err(Fault::Malformed(format!(
+                    "upload progress record exceeds {} KiB",
+                    MAX_RECORD_BYTES >> 10
+                )));
             }
             line.extend_from_slice(&taken);
             if end.is_none() {
@@ -326,7 +374,11 @@ async fn read(
 }
 
 /// Applies a record; true once `complete` arrived. A regressing observation is stale and ignored.
-fn apply(control: &Control, record: Record, progress: &watch::Sender<Progress>) -> Result<bool, Fault> {
+fn apply(
+    control: &Control,
+    record: Record,
+    progress: &watch::Sender<Progress>,
+) -> Result<bool, Fault> {
     let (counters, complete) = match record {
         Record::Ready => {
             progress.send_modify(|state| state.ready = true);
@@ -334,9 +386,14 @@ fn apply(control: &Control, record: Record, progress: &watch::Sender<Progress>) 
         }
         Record::Progress(counters) => (counters, false),
         Record::Complete(counters) => (counters, true),
-        Record::Error { code, .. } => return Err(control.client.upload_error(&control.origin, &code)),
+        Record::Error { code, .. } => {
+            return Err(control.client.upload_error(&control.origin, &code));
+        }
     };
-    let fresh = progress.borrow().latest.is_none_or(|latest| counters.follows(latest));
+    let fresh = progress
+        .borrow()
+        .latest
+        .is_none_or(|latest| counters.follows(latest));
     if fresh {
         progress.send_modify(|state| (state.latest, state.complete) = (Some(counters), complete));
     }

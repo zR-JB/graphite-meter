@@ -9,7 +9,9 @@ const BUSY_SHARE = 0.5;
 export function loadSummary(load: Probe["load"]): string | null {
   if (!load || load.max <= 0) return null;
   const slots = `${load.active} of ${load.max} slots`;
-  return load.active / load.max > BUSY_SHARE ? `${slots}, server busy: results may be affected` : slots;
+  return load.active / load.max > BUSY_SHARE
+    ? `${slots}, server busy: results may be affected`
+    : slots;
 }
 
 /** Keeps both sides apart, as in "Browser HTTP/1.1, server HTTP/2", and reads `unknown` until either reports. */
@@ -24,7 +26,10 @@ export function evidence(browser: string | null, server: string | null, unknown:
 
 const origins = (discovery: Discovery, role: Role) => [
   ...(
-    discovery[role] as ReadonlyMap<string, OriginTargets<{ transport: string; protocol: string; tls: boolean }>>
+    discovery[role] as ReadonlyMap<
+      string,
+      OriginTargets<{ transport: string; protocol: string; tls: boolean }>
+    >
   ).values(),
 ];
 
@@ -41,8 +46,7 @@ export function httpPaths(discovery: Discovery | null): string[] | null {
   ];
 }
 
-/** Lists the mechanisms the server advertises for `role`, noting origins this page cannot reach, or null before
-    discovery. */
+/** Lists the mechanisms the server advertises for `role`, noting origins this page cannot reach; null before discovery. */
 export function capabilities(discovery: Discovery | null, role: Role): string[] | null {
   if (!discovery) return null;
   const entries = origins(discovery, role);

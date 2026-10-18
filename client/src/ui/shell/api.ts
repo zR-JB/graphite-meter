@@ -6,7 +6,6 @@ import type { Panel, Route } from "./navigation";
 export interface Shell {
   readonly route: Read<Route>;
   readonly layout: Layout;
-  /** Whether the panel shows now (reactive). */
   shown(panel: Panel): boolean;
   /** `invoker` takes focus back when the surface closes, if it can still take it. */
   toggle(panel: Panel, invoker?: HTMLElement | null): void;
@@ -22,6 +21,5 @@ export interface Shell {
   startOver(): void;
   /** Start or stop a test, asking first before a new one replaces a result whose save failed. */
   toggleRun(): void;
-  /** What the run key does now: Start, Stop, Cancel or Run again. */
   readonly runWord: Read<string>;
 }

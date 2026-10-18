@@ -22,7 +22,6 @@ pub struct Lane(Arc<State>);
 struct State {
     start: Instant,
     deadline: Instant,
-    /// Nanoseconds from `start` to the peer's last movement.
     moved: AtomicU64,
     ending: OnceLock<LaneEnding>,
     decided: CancellationToken,
@@ -145,7 +144,10 @@ struct WorkState {
 
 impl Default for Work {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(WorkState { running: 0, idle_since: Instant::now() })))
+        Self(Arc::new(Mutex::new(WorkState {
+            running: 0,
+            idle_since: Instant::now(),
+        })))
     }
 }
 
@@ -162,7 +164,6 @@ impl Work {
     }
 }
 
-/// One piece of admitted work, ended when dropped.
 #[derive(Debug)]
 #[must_use = "dropping it ends the work"]
 pub struct WorkGuard(Work);
@@ -216,7 +217,14 @@ mod tests {
         fn lane(&self, lifetime: Duration) -> Lane {
             let hold = self.quota.acquire(&ClientKeys::Exempt, 1).unwrap();
             let auth = self.store.cookie(self.login.token.as_str()).unwrap();
-            Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &self.work, &self.shutdown, Some(&auth))
+            Exchange::start().admit(
+                ClientKeys::Exempt,
+                hold,
+                lifetime,
+                &self.work,
+                &self.shutdown,
+                Some(&auth),
+            )
         }
 
         fn revoke(&self) {
@@ -226,7 +234,6 @@ mod tests {
 
     const LONG: Duration = Duration::from_secs(3600);
 
-    /// The lane's ending and how long after admission it came.
     async fn ending(lane: &Lane) -> (LaneEnding, Duration) {
         let start = Instant::now();
         let ending = lane.ended().await;
@@ -236,7 +243,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_lane_ends_idle_exactly_thirty_seconds_after_its_last_movement() {
         let fixture = Fixture::new();
-        assert_eq!(ending(&fixture.lane(LONG)).await, (LaneEnding::Idle, IDLE_BOUND));
+        assert_eq!(
+            ending(&fixture.lane(LONG)).await,
+            (LaneEnding::Idle, IDLE_BOUND)
+        );
         let lane = fixture.lane(LONG);
         let mover = lane.clone();
         tokio::spawn(async move {
@@ -245,7 +255,10 @@ mod tests {
                 mover.moved();
             }
         });
-        assert_eq!(ending(&lane).await, (LaneEnding::Idle, Duration::from_secs(90)));
+        assert_eq!(
+            ending(&lane).await,
+            (LaneEnding::Idle, Duration::from_secs(90))
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -254,17 +267,27 @@ mod tests {
         let lane = fixture.lane(Duration::from_secs(10));
         assert_eq!(lane.due(), None);
         tokio::time::advance(Duration::from_secs(10)).await;
-        assert_eq!((lane.due(), lane.ending()), (Some(LaneEnding::Lifetime), Some(LaneEnding::Lifetime)));
+        assert_eq!(
+            (lane.due(), lane.ending()),
+            (Some(LaneEnding::Lifetime), Some(LaneEnding::Lifetime))
+        );
         let lane = fixture.lane(LONG);
         fixture.shutdown.cancel();
         fixture.revoke();
         assert_eq!(lane.due(), Some(LaneEnding::Revoked));
-        assert_eq!((lane.finish(), lane.ended().await), (LaneEnding::Revoked, LaneEnding::Revoked));
+        assert_eq!(
+            (lane.finish(), lane.ended().await),
+            (LaneEnding::Revoked, LaneEnding::Revoked)
+        );
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);
         assert_eq!(lane.finish(), LaneEnding::Finished);
         fixture.shutdown.cancel();
-        assert_eq!(lane.due(), Some(LaneEnding::Finished), "a decided ending stays");
+        assert_eq!(
+            lane.due(),
+            Some(LaneEnding::Finished),
+            "a decided ending stays"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -280,7 +303,11 @@ mod tests {
         assert_eq!(observer.await.unwrap(), LaneEnding::Finished);
         assert_eq!(
             (lane.ended().await, lane.finish(), lane.ending()),
-            (LaneEnding::Finished, LaneEnding::Finished, Some(LaneEnding::Finished))
+            (
+                LaneEnding::Finished,
+                LaneEnding::Finished,
+                Some(LaneEnding::Finished)
+            )
         );
 
         let fixture = Fixture::new();
@@ -291,13 +318,20 @@ mod tests {
             "a lifetime due with the idle bound wins"
         );
         fixture.revoke();
-        assert_eq!((lane.finish(), lane.ended().await), (LaneEnding::Lifetime, LaneEnding::Lifetime));
+        assert_eq!(
+            (lane.finish(), lane.ended().await),
+            (LaneEnding::Lifetime, LaneEnding::Lifetime)
+        );
 
         let fixture = Fixture::new();
         let lane = fixture.lane(LONG);
         fixture.revoke();
         fixture.shutdown.cancel();
-        assert_eq!(lane.ended().await, LaneEnding::Revoked, "revocation outranks a shutdown due at once");
+        assert_eq!(
+            lane.ended().await,
+            LaneEnding::Revoked,
+            "revocation outranks a shutdown due at once"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -307,13 +341,19 @@ mod tests {
         assert_eq!(fixture.work.idle_since(), Some(start));
         let (first, second) = (fixture.lane(LONG), fixture.lane(LONG));
         let clone = first.clone();
-        assert_eq!((fixture.quota.usage().active, fixture.work.idle_since()), (2, None));
+        assert_eq!(
+            (fixture.quota.usage().active, fixture.work.idle_since()),
+            (2, None)
+        );
         tokio::time::sleep(Duration::from_secs(3)).await;
         drop((first, second));
         assert_eq!(fixture.work.idle_since(), None, "a clone keeps the lane");
         tokio::time::sleep(Duration::from_secs(2)).await;
         drop(clone);
         assert_eq!(fixture.quota.usage().active, 0);
-        assert_eq!(fixture.work.idle_since(), Some(start + Duration::from_secs(5)));
+        assert_eq!(
+            fixture.work.idle_since(),
+            Some(start + Duration::from_secs(5))
+        );
     }
 }

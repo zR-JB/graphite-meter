@@ -13,9 +13,7 @@ pub struct Chrome {
 pub enum Progress {
     #[default]
     None,
-    /// The bar is under way without a known share.
     Busy,
-    /// The bar shows this percentage done.
     Share(u8),
 }
 
@@ -29,13 +27,11 @@ pub struct Link {
 }
 
 impl Progress {
-    /// Clears the bar.
     pub const CLEAR: &[u8] = b"\x1b]9;4;0\x07";
 }
 
 impl Chrome {
-    /// Emits the sequences that change what `shown` set, or set everything but an absent bar. Links are rewritten
-    /// once `redrawn` cells may cover them.
+    /// Emits what changed since `shown`; links are rewritten once `redrawn` cells may cover them.
     pub fn bytes(&self, shown: Option<&Self>, redrawn: bool, profile: Profile) -> Vec<u8> {
         let mut out = Vec::new();
         if shown.is_none_or(|shown| shown.title != self.title) {
@@ -52,7 +48,12 @@ impl Chrome {
         let relink = redrawn || shown.is_none_or(|shown| shown.links != self.links);
         for link in self.links.iter().filter(|_| relink) {
             let url: String = link.url.chars().filter(char::is_ascii_graphic).collect();
-            let _ = write!(out, "\x1b[{};{}H\x1b]8;;{url}\x1b\\", link.row + 1, link.column + 1);
+            let _ = write!(
+                out,
+                "\x1b[{};{}H\x1b]8;;{url}\x1b\\",
+                link.row + 1,
+                link.column + 1
+            );
             let _ = text::write(std::slice::from_ref(&link.text), profile, &mut out);
             out.pop();
             out.extend_from_slice(b"\x1b]8;;\x1b\\");
@@ -66,8 +67,13 @@ pub fn progress(var: impl Fn(&str) -> Option<String>) -> bool {
     let program = var("TERM_PROGRAM").unwrap_or_default();
     let version = || {
         let version = var("TERM_PROGRAM_VERSION").unwrap_or_default();
-        let parts = version.split('.').map(|part| part.parse::<u32>().unwrap_or(0));
-        parts.chain(std::iter::repeat(0)).take(3).collect::<Vec<_>>()
+        let parts = version
+            .split('.')
+            .map(|part| part.parse::<u32>().unwrap_or(0));
+        parts
+            .chain(std::iter::repeat(0))
+            .take(3)
+            .collect::<Vec<_>>()
     };
     var("WT_SESSION").is_some_and(|session| !session.is_empty())
         || var("ConEmuANSI").is_some_and(|ansi| ansi == "ON")

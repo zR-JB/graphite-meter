@@ -17,12 +17,13 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const RETRY_FIRST: Duration = Duration::from_millis(5);
 const RETRY_LAST: Duration = Duration::from_secs(1);
 
-/// Accepts connections from one socket.
 pub trait Listen {
     type Connection: Send + 'static;
 
     /// Yields the next connection, or `None` for an attempt the listener answered itself, such as with a Retry.
-    fn accept(&mut self) -> impl Future<Output = io::Result<Option<(Self::Connection, SocketAddr)>>> + Send;
+    fn accept(
+        &mut self,
+    ) -> impl Future<Output = io::Result<Option<(Self::Connection, SocketAddr)>>> + Send;
 
     /// Names the socket in accept failure lines, such as `tcp [::]:7246`.
     fn name(&self) -> String;
@@ -76,7 +77,11 @@ where
             Err(error) => {
                 delay = (delay * 2).clamp(RETRY_FIRST, RETRY_LAST);
                 let (name, retry) = (listener.name(), log::span(delay));
-                log!(Warn, "listen", "accept failed on {name}: {error}; retrying in {retry}");
+                log!(
+                    Warn,
+                    "listen",
+                    "accept failed on {name}: {error}; retrying in {retry}"
+                );
                 tokio::select! {
                     () = shutdown.cancelled() => break Ok(()),
                     () = sleep(delay) => continue,
@@ -111,7 +116,10 @@ where
     };
     let close = listener.closer();
     drop(listener);
-    let _ = timeout(SHUTDOWN_GRACE, async { while connections.join_next().await.is_some() {} }).await;
+    let _ = timeout(SHUTDOWN_GRACE, async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await;
     connections.shutdown().await;
     close.await;
     result
@@ -130,8 +138,7 @@ mod tests {
         task::JoinHandle,
     };
 
-    /// Starts a loop on a fresh local listener. Its connections run `serve` under shares of `quota` on pinned runtimes
-    /// beside a multi-thread test runtime.
+    /// A loop on a fresh local listener, its connections running `serve` under `quota` on pinned runtimes.
     async fn start<F>(
         quota: Quota,
         serve: impl Fn(TcpStream) -> F + Send + Sync + 'static,
@@ -146,7 +153,14 @@ mod tests {
         let task = tokio::spawn(async move {
             let pool = Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline());
             let hold = |peer: SocketAddr| quota.acquire(&ClientKeys::address(peer.ip()), 1).ok();
-            super::serve(listener, || pool.next(), &stop, hold, |socket, _| serve(socket)).await
+            super::serve(
+                listener,
+                || pool.next(),
+                &stop,
+                hold,
+                |socket, _| serve(socket),
+            )
+            .await
         });
         (address, shutdown, task)
     }
@@ -174,7 +188,11 @@ mod tests {
             }
         };
         let (address, shutdown, task) = start(quota.clone(), serve).await;
-        assert_eq!(greeting(address).await.unwrap(), "", "the panicking connection closes");
+        assert_eq!(
+            greeting(address).await.unwrap(),
+            "",
+            "the panicking connection closes"
+        );
         assert_eq!(greeting(address).await.unwrap(), "hello");
         let released = async {
             while quota.usage().active > 0 {
@@ -220,7 +238,11 @@ mod tests {
             .await
             .expect("the listener closes");
         assert!(!task.is_finished(), "the running connection drains");
-        drop(TcpListener::bind(address).await.expect("the address is free again"));
+        drop(
+            TcpListener::bind(address)
+                .await
+                .expect("the address is free again"),
+        );
         release.notify_one();
         let mut text = String::new();
         draining.read_to_string(&mut text).await.unwrap();
@@ -228,7 +250,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    /// Fails `failures` accepts and records when each was tried.
     struct Failing {
         failures: usize,
         tried: Arc<std::sync::Mutex<Vec<tokio::time::Instant>>>,
@@ -251,7 +272,6 @@ mod tests {
         }
     }
 
-    /// Answers a flood of attempts itself, each ready at once.
     struct Flooded;
 
     impl Listen for Flooded {
@@ -287,13 +307,19 @@ mod tests {
             let _ = done.send(());
         });
         let stopped = finished.recv_timeout(Duration::from_secs(5));
-        assert!(stopped.is_ok(), "the stop ran beside the flood and ended the loop");
+        assert!(
+            stopped.is_ok(),
+            "the stop ran beside the flood and ended the loop"
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_failed_accept_is_retried_after_a_delay_doubling_to_a_second() {
         let tried = Arc::default();
-        let listener = Failing { failures: 10, tried: Arc::clone(&tried) };
+        let listener = Failing {
+            failures: 10,
+            tried: Arc::clone(&tried),
+        };
         let shutdown = CancellationToken::new();
         let stop = shutdown.clone();
         let task = tokio::spawn(async move {
@@ -304,7 +330,10 @@ mod tests {
         shutdown.cancel();
         task.await.unwrap().unwrap();
         let tried = crate::lock(&tried);
-        let delays: Vec<_> = tried.windows(2).map(|pair| (pair[1] - pair[0]).as_millis()).collect();
+        let delays: Vec<_> = tried
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).as_millis())
+            .collect();
         assert_eq!(delays, [5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000]);
     }
 }

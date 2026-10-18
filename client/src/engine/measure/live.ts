@@ -15,7 +15,6 @@ interface Span {
   start: number;
   end: number;
   bytes: number;
-  /** Sums the bytes up to and including this span. */
   total: number;
 }
 
@@ -25,8 +24,7 @@ const windowMs = (regimeAgeMs: number) => {
   return Math.min(age, Math.max(MIN_WINDOW_MS, age * 0.85));
 };
 
-/** Grows an average and restarts it on a confirmed 25% drop or 20% rise. The first delivery only anchors it: a
-    drained socket buffer arrives at once and would lift the first readings on a slow link. */
+/** Grows an average and restarts it on a confirmed 25% drop or 20% rise; the first delivery, a drained buffer, only anchors it. */
 export class RateEstimator {
   /** Holds the bytes per second to show, 0 until there is evidence. */
   presented = 0;
@@ -59,7 +57,8 @@ export class RateEstimator {
       Math.max(this.#regimeStart, this.#evidence - FAST_WINDOW_MS),
       this.#candidate?.start ?? Infinity,
     );
-    while (this.#head < this.#spans.length - 1 && this.#spans[this.#head]!.end <= keep) this.#head++;
+    while (this.#head < this.#spans.length - 1 && this.#spans[this.#head]!.end <= keep)
+      this.#head++;
     if (this.#head >= 1024 && this.#head * 2 >= this.#spans.length) {
       this.#spans = this.#spans.slice(this.#head);
       this.#head = 0;
@@ -68,8 +67,7 @@ export class RateEstimator {
     return changed;
   }
 
-  /** Merges the older spans in pairs, all but the fast window and a pending regime change. A long steady regime's
-      window edge then falls in a longer span, evenly spread, and memory stays bounded. */
+  /** Merges older spans in pairs, all but the fast window and a pending regime change, so memory stays bounded. */
   #coarsen(): void {
     const fine = Math.min(this.#evidence - 2 * FAST_WINDOW_MS, this.#candidate?.start ?? Infinity);
     const spans = this.#spans;
@@ -114,7 +112,8 @@ export class RateEstimator {
     if (!candidate) {
       if (this.#evidence - this.#regimeStart < REGIME_READY_MS || this.presented <= 0) return false;
       const ratio = this.#fast / this.presented;
-      if (ratio < 0.75 || ratio > 1.2) this.#candidate = { up: ratio > 1.2, start, reference: this.presented };
+      if (ratio < 0.75 || ratio > 1.2)
+        this.#candidate = { up: ratio > 1.2, start, reference: this.presented };
       return false;
     }
     const ratio = candidate.reference > 0 ? this.#fast / candidate.reference : 1;
@@ -122,7 +121,11 @@ export class RateEstimator {
       this.#candidate = null;
       return false;
     }
-    if (this.#evidence - candidate.start < (candidate.up ? UPSHIFT_CONFIRM_MS : DOWNSHIFT_CONFIRM_MS)) return false;
+    if (
+      this.#evidence - candidate.start <
+      (candidate.up ? UPSHIFT_CONFIRM_MS : DOWNSHIFT_CONFIRM_MS)
+    )
+      return false;
     this.#regimeStart = candidate.start;
     this.#candidate = null;
     return true;
@@ -172,7 +175,6 @@ export class LiveRates {
     this.#servers.delete(id);
   }
 
-  /** Observes client-consumed bytes over the page time since the previous sample. */
   download(id: string, cumulative: number, now: number): void {
     const server = this.#servers.get(id);
     if (!server) return;
@@ -181,20 +183,19 @@ export class LiveRates {
     server.downAt = now;
   }
 
-  /** Observes receiver bytes over receiver time between consecutive records of one upload id. */
   receiver(id: string, frame: Checkpoint, now: number): void {
     const server = this.#servers.get(id);
     if (!server) return;
     const last = server.frame;
     server.frame = frame;
-    if (!last || last.id !== frame.id || frame.nanos <= last.nanos || frame.bytes < last.bytes) return;
+    if (!last || last.id !== frame.id || frame.nanos <= last.nanos || frame.bytes < last.bytes)
+      return;
     server.up.observe(frame.bytes - last.bytes, (frame.nanos - last.nanos) / 1e6);
     if (frame.bytes === last.bytes) return;
     if (server.arrivals.push(now) > 5) server.arrivals.shift();
     server.hints.clear();
   }
 
-  /** Records one locally timed POST completion. */
   hint(id: string, lane: number, bytes: number, elapsedMs: number, now: number): void {
     if (lane >= 0 && bytes > 0 && elapsedMs > 0)
       this.#servers.get(id)?.hints.set(lane, { rate: bytes / (elapsedMs / 1000), at: now });
@@ -208,8 +209,7 @@ export class LiveRates {
     return this.#seen[dir] ? sum : null;
   }
 
-  /** While a receiver pauses irregularly, fresh hints from every lane bridge it within ±25%. Returns null when no
-      server needed it. `lanes` is a server's upload lane count. */
+  /** While a receiver pauses irregularly, fresh hints from every lane bridge it within ±25%; null when no server needed it. */
   bridgedUpload(now: number, lanes: (id: string) => number): number | null {
     let total = 0;
     let bridged = false;

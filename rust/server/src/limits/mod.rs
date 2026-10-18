@@ -22,7 +22,12 @@ pub const CONNECTION_CREDIT: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as 
 
 /// A refused connection is closed at accept, before any request could carry a status, so only the log tells.
 static CLIENT_REFUSALS: PerPeer<ClientKey> = PerPeer::new();
-static TOTAL_REFUSALS: RateLimited = RateLimited::new(Level::Warn, "admission", "refused connections", module_path!());
+static TOTAL_REFUSALS: RateLimited = RateLimited::new(
+    Level::Warn,
+    "admission",
+    "refused connections",
+    module_path!(),
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -30,7 +35,6 @@ pub enum Transport {
     Quic,
 }
 
-/// The quotas every listener shares.
 pub struct Quotas {
     limits: Limits,
     connections: Quota,
@@ -46,7 +50,10 @@ impl Quotas {
         let quic_share = limits.connections_per_client.get().min(QUIC_PER_CLIENT);
         Self {
             limits,
-            connections: Quota::new(limits.connections.get(), limits.connections_per_client.get()),
+            connections: Quota::new(
+                limits.connections.get(),
+                limits.connections_per_client.get(),
+            ),
             quic: Quota::new(usize::MAX, quic_share),
             operations: Quota::new(limits.operations.get(), limits.operations_per_client.get()),
             sessions: Quota::new(limits.sessions.get(), limits.sessions_per_client.get()),
@@ -55,7 +62,12 @@ impl Quotas {
     }
 
     /// A connection from `peer` keyed by `keys`; a QUIC connection also takes one of the client's QUIC shares.
-    pub fn connection(&self, peer: IpAddr, keys: &ClientKeys, transport: Transport) -> Option<Hold> {
+    pub fn connection(
+        &self,
+        peer: IpAddr,
+        keys: &ClientKeys,
+        transport: Transport,
+    ) -> Option<Hold> {
         let quic = match self.connections.acquire(keys, 1) {
             Ok(hold) if transport == Transport::Tcp => return Some(hold),
             Ok(hold) => match self.quic.acquire(keys, 1) {
@@ -102,14 +114,14 @@ impl Quotas {
         self.connections.usage().active >= self.limits.connections.get() / 4
     }
 
-    /// A measurement handler.
     pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
         self.operations.acquire(keys, 1)
     }
 
     /// A WebTransport transfer session, which also takes a handler from the shared pool.
     pub fn session(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
-        self.sessions.acquire_within(keys, 1, Some(&self.operations))
+        self.sessions
+            .acquire_within(keys, 1, Some(&self.operations))
     }
 
     /// Receive-window credit for a connection an admitted client funds; none past its share or the clients' half.
@@ -122,7 +134,6 @@ impl Quotas {
         (self.operations.usage().active, self.limits.operations.get())
     }
 
-    /// The open connections.
     pub fn connections(&self) -> usize {
         self.connections.usage().active
     }
@@ -190,7 +201,10 @@ mod tests {
         let tcp: Vec<_> = (0..24)
             .map(|_| quotas.connection(ip, &source, Transport::Tcp).unwrap())
             .collect();
-        assert!(quotas.connection(ip, &source, Transport::Tcp).is_none(), "32 connections in all");
+        assert!(
+            quotas.connection(ip, &source, Transport::Tcp).is_none(),
+            "32 connections in all"
+        );
         drop((quic, tcp));
         assert!(!quotas.holds_quic(&source));
         let proxy = ClientKeys::Exempt;
@@ -202,7 +216,11 @@ mod tests {
 
     #[test]
     fn window_credit_covers_eight_connection_windows_per_client() {
-        let quotas = Quotas::new(limits(), &Budget::new(usize::MAX), Some(ClientKey::Principal(Principal::operator())));
+        let quotas = Quotas::new(
+            limits(),
+            &Budget::new(usize::MAX),
+            Some(ClientKey::Principal(Principal::operator())),
+        );
         let source = client("2001:db8::1");
         let funded: Vec<_> = (0..8)
             .map(|_| quotas.credit(&source, CONNECTION_CREDIT).unwrap())
@@ -212,7 +230,10 @@ mod tests {
         let logins: Vec<_> = ["a", "b", "c"]
             .map(|id| quotas.credit(&operator(id), 8 * CONNECTION_CREDIT))
             .into();
-        assert!(logins.iter().all(Option::is_some), "password logins are bounded one by one");
+        assert!(
+            logins.iter().all(Option::is_some),
+            "password logins are bounded one by one"
+        );
         drop(funded);
         assert!(quotas.credit(&source, 8 * CONNECTION_CREDIT).is_some());
     }

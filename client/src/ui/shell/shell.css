@@ -1,12 +1,14 @@
-/* The console's frame: the grid, the top bar, the workspaces, the side sheets and the status strip. The layout
-   owner stamps <html data-layout="docked2|docked1|flyout"> and data-bottom-sheet, so breakpoints live in one place. */
+/* The console's frame; the layout owner stamps <html data-layout> and data-bottom-sheet, so breakpoints live in one place. */
 @layer components {
   /* Dock columns are written inline from the resolved widths; they restyle the grid alone. */
   #console {
     position: relative;
     isolation: isolate;
     display: grid;
-    grid-template-rows: var(--topbar-h) minmax(0, 1fr) calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    grid-template-rows: var(--topbar-h) minmax(0, 1fr) calc(
+        var(--statusbar-h) +
+        env(safe-area-inset-bottom, 0px)
+      );
     grid-template-areas:
       "topbar   topbar  topbar"
       "leftdock stage   rightdock"
@@ -91,8 +93,7 @@
       font-weight: var(--w-strong);
     }
   }
-  /* A row of N 44 px keys with their 4 px gaps needs 48 N + 46 px. History and Details fold into More where the
-     row they leave fits, and Theme too where it does not; the way back to a live run is one key more. */
+  /* A row of N 44 px keys needs 48 N + 46 px: History and Details fold into More where that fits, Theme too where it does not. */
   .topbar-more,
   .topbar [data-more] {
     display: none;
@@ -177,8 +178,7 @@
       align-self: center;
     }
   }
-  /* While a run is under way the console is lit from above in the running stage's hue. One gradient, repainted
-     only while the hue moves. */
+  /* While a run is under way the console is lit from above in the running stage's hue, repainted only while the hue moves. */
   .measurement-stage {
     isolation: isolate;
     &::before {
@@ -213,8 +213,7 @@
     &[data-stage="bidirectional"] {
       --ambient: var(--phase-bidirectional);
     }
-    /* Under History the console keeps its layout and skips its rendering; it fades back in on return. Skipped
-       content never advances a transition, so none starts there. */
+    /* Under History the console keeps its layout and skips rendering; skipped content advances no transition, so none starts there. */
     &.away {
       content-visibility: hidden;
       animation: none;
@@ -335,8 +334,7 @@
     }
   }
 
-  /* One element in every layout: docked column, flyout below 1,200 px, bottom sheet on a phone. Closed, it stays
-     displayed past its edge so every engine slides it alike, then rests skipped (data-rest) keeping its layout. */
+  /* One element in every layout: docked column, flyout below 1,200 px, bottom sheet on a phone; closed, it rests skipped past its edge. */
   .sheet-layer {
     display: contents;
   }
@@ -354,16 +352,14 @@
     &[data-rest] {
       content-visibility: hidden;
     }
-    /* Skipped content never advances a transition, so none starts there: a style read forced at rest (an audit
-       after a theme change) applies at once. */
+    /* Skipped content advances no transition, so a style read forced at rest applies at once. */
     &[data-rest] *,
     &[data-rest] *::before,
     &[data-rest] *::after {
       transition: none !important;
     }
   }
-  /* Docked, the sheet is its column, flush with the bars and cut from the stage by one hairline; the column's move
-     is its slide. Closed, its column is 0 wide and it hangs past the viewport's edge. */
+  /* Docked, the sheet is its column, cut from the stage by one hairline; closed, the column is 0 wide and it hangs past the edge. */
   :root:not([data-layout="flyout"]) .side-sheet {
     grid-area: rightdock;
     justify-self: start;

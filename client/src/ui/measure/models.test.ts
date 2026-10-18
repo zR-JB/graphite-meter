@@ -5,7 +5,14 @@ import type { LatencySummary } from "../../engine/measure/latency";
 import type { MultiServerResult } from "../../engine/run/result";
 import { MISSING } from "../../view/format";
 import { POPULATION, reasonLabel, STAGE, STAGE_STATE } from "../../view/words";
-import { liveCard, serverIssues, settledCard, shownEvidence, type Evidence, type LiveEvidence } from "./cards-model";
+import {
+  liveCard,
+  serverIssues,
+  settledCard,
+  shownEvidence,
+  type Evidence,
+  type LiveEvidence,
+} from "./cards-model";
 import { lanesAxisMs, nearestMetric, present, stepMetric, values } from "./lanes-model";
 import { Lane, monotoneTangents, replyBars } from "./strip-model";
 import type { ThroughputSample } from "../../app/series";
@@ -25,7 +32,12 @@ const bucket = (startT: number, lo: number, hi: number, median = (lo + hi) / 2):
 
 test("reply bars join whole buckets to a bar's pitch, and a live bar only grows as its buckets close", () => {
   // Over 40 s on 400 px a 400 ms pitch joins pairs of 200 ms buckets on the first bucket's grid.
-  const buckets = [bucket(1000, 10, 15), bucket(1200, 11, 14), bucket(1400, 12, 17), bucket(1600, 13, 16)];
+  const buckets = [
+    bucket(1000, 10, 15),
+    bucket(1200, 11, 14),
+    bucket(1400, 12, 17),
+    bucket(1600, 13, 16),
+  ];
   const bars = (list: LatencyBucket[]) =>
     replyBars(list, "latency", 0, 40_000, 400).map(({ lo, hi, t0, t1 }) => [lo, hi, t0, t1]);
   expect(bars([...buckets, bucket(1800, 14, 18)])).toEqual([
@@ -33,7 +45,9 @@ test("reply bars join whole buckets to a bar's pitch, and a live bar only grows 
     [12, 17, 1400, 1800],
     [14, 18, 1800, 2000],
   ]);
-  expect(bars([...buckets, bucket(1800, 14, 18), bucket(2000, 15, 19)]).at(-1)).toEqual([14, 19, 1800, 2200]);
+  expect(bars([...buckets, bucket(1800, 14, 18), bucket(2000, 15, 19)]).at(-1)).toEqual([
+    14, 19, 1800, 2200,
+  ]);
   // A bucket of timeouts draws nothing; another stage's buckets belong to another strip.
   const silent = { ...bucket(2200, 1, 1), medianRttMs: null };
   expect(bars([silent, { ...bucket(2400, 5, 6), phase: "download" }])).toEqual([]);
@@ -68,7 +82,14 @@ test("a plot bin never averages across a recovery and its curves end at each con
     stage: "download",
     dir: "down",
   });
-  lane.fill([sample(10, 10, 0), sample(20, 90, 1), sample(120, 100, 1)], "download", "down", 0, 1_000, 10);
+  lane.fill(
+    [sample(10, 10, 0), sample(20, 90, 1), sample(120, 100, 1)],
+    "download",
+    "down",
+    0,
+    1_000,
+    10,
+  );
   expect([...lane.v.slice(0, lane.n)]).toEqual([90, 100]);
   const x = [0, 1, 2, 3];
   const y = [10, 20, 100, 90];
@@ -77,7 +98,12 @@ test("a plot bin never averages across a recovery and its curves end at each con
   expect([...tangents]).toEqual([10, 10, -10, -10]);
 });
 
-const summary = (p10: number, p50: number, p90: number, extra: Partial<LatencySummary> = {}): LatencySummary => ({
+const summary = (
+  p10: number,
+  p50: number,
+  p90: number,
+  extra: Partial<LatencySummary> = {},
+): LatencySummary => ({
   accountingComplete: true,
   probeCount: 40,
   timeoutCount: 2,
@@ -119,28 +145,69 @@ const transfer = (bytesPerSec: number): ThroughputResult => ({
   totalBytes: 373_800_000,
   reportedBytesPerSec: bytesPerSec,
 });
-const NOTHING: Evidence = { status: {}, download: null, upload: null, bidirectional: null, latency: null, idle: null };
+const NOTHING: Evidence = {
+  status: {},
+  download: null,
+  upload: null,
+  bidirectional: null,
+  latency: null,
+  idle: null,
+};
 
 test("a card keeps the same facts from Start to its result, and a one-direction pair keeps its unit", () => {
-  const facts = (card: ReturnType<typeof settledCard>) => card.facts.map(({ key, value }) => `${key} ${value}`);
-  const download = settledCard("download", "partial", { ...NOTHING, download: transfer(50e6) }, BITS, true);
+  const facts = (card: ReturnType<typeof settledCard>) =>
+    card.facts.map(({ key, value }) => `${key} ${value}`);
+  const download = settledCard(
+    "download",
+    "partial",
+    { ...NOTHING, download: transfer(50e6) },
+    BITS,
+    true,
+  );
   expect([download.figure, download.unit, download.wire]).toEqual(["400.0", "Mbit/s", null]);
-  expect(facts(download)).toEqual(["peak 440.0 Mbit/s", `stability ${MISSING}`, "transferred 373.8 MB"]);
+  expect(facts(download)).toEqual([
+    "peak 440.0 Mbit/s",
+    `stability ${MISSING}`,
+    "transferred 373.8 MB",
+  ]);
   const pending = liveCard("download", "upcoming", { own: false } as LiveEvidence, BITS);
-  expect(facts(pending)).toEqual([`peak ${MISSING}`, `stability ${MISSING}`, `transferred ${MISSING}`]);
+  expect(facts(pending)).toEqual([
+    `peak ${MISSING}`,
+    `stability ${MISSING}`,
+    `transferred ${MISSING}`,
+  ]);
   expect([pending.status, pending.quiet, pending.word]).toEqual(["pending", true, null]);
   const lanes = { down: transfer(5e6), up: null, wire: null };
-  const oneWay = settledCard("bidirectional", "failed", { ...NOTHING, bidirectional: lanes }, BITS, true);
-  expect([oneWay.figure, oneWay.pair, oneWay.unit]).toEqual([MISSING, { down: "40.00", up: MISSING }, "Mbit/s"]);
+  const oneWay = settledCard(
+    "bidirectional",
+    "failed",
+    { ...NOTHING, bidirectional: lanes },
+    BITS,
+    true,
+  );
+  expect([oneWay.figure, oneWay.pair, oneWay.unit]).toEqual([
+    MISSING,
+    { down: "40.00", up: MISSING },
+    "Mbit/s",
+  ]);
   const latency = settledCard(
     "latency",
     "complete",
-    { ...NOTHING, latency: { reportedMs: 12.34, jitterMs: 0.8, stabilityPct: 93.6 }, idle: summary(9.6, 12, 31.2) },
+    {
+      ...NOTHING,
+      latency: { reportedMs: 12.34, jitterMs: 0.8, stabilityPct: 93.6 },
+      idle: summary(9.6, 12, 31.2),
+    },
     BITS,
     true,
   );
   expect([latency.figure, latency.unit, latency.jitter]).toEqual(["12.3", "ms", "0.8 ms"]);
-  expect(facts(latency)).toEqual(["stability 93.6%", "range 8.6 to 61.2 ms", "replies 38", "timeouts 5.0%"]);
+  expect(facts(latency)).toEqual([
+    "stability 93.6%",
+    "range 8.6 to 61.2 ms",
+    "replies 38",
+    "timeouts 5.0%",
+  ]);
 });
 
 test("a running card follows its own stage only, says when replies stop, and a stopped one keeps its last value", () => {
@@ -173,9 +240,17 @@ test("a running card follows its own stage only, says when replies stop, and a s
   const silent = liveCard("latency", "running", evidence({ lost: true }), BITS);
   expect([silent.figure, silent.live, !!silent.spoken]).toEqual([MISSING, null, true]);
   const stopped = liveCard("download", "stopped", evidence({ own: false, held: 25e6 }), BITS);
-  expect([stopped.status, stopped.figure, stopped.word]).toEqual(["stopped", "200.0", STAGE_STATE.stopped]);
+  expect([stopped.status, stopped.figure, stopped.word]).toEqual([
+    "stopped",
+    "200.0",
+    STAGE_STATE.stopped,
+  ]);
   const pair = liveCard("bidirectional", "recovering", evidence({}), BITS);
-  expect([pair.status, pair.live, pair.word]).toEqual(["recovering", "pair", STAGE_STATE.recovering]);
+  expect([pair.status, pair.live, pair.word]).toEqual([
+    "recovering",
+    "pair",
+    STAGE_STATE.recovering,
+  ]);
 });
 
 test("a server's issues name the stages each reason ended", () => {
@@ -201,7 +276,12 @@ test("a server's issues name the stages each reason ended", () => {
       reason: reasonLabel("timeout"),
       throughput: ["download"],
     },
-    { server: "Oslo", stages: STAGE.latency.label, reason: reasonLabel("connection-lost"), throughput: [] },
+    {
+      server: "Oslo",
+      stages: STAGE.latency.label,
+      reason: reasonLabel("connection-lost"),
+      throughput: [],
+    },
   ]);
 });
 
@@ -224,11 +304,15 @@ test("shown together, the latency card reads the server latency is shown for, he
     bidirectional: null,
   } as unknown as Omit<Evidence, "idle">;
   const live = summary(121, 40);
-  const shown = (focus: string, lens = "") => shownEvidence({ details, lens, focus, run, idle: live });
+  const shown = (focus: string, lens = "") =>
+    shownEvidence({ details, lens, focus, run, idle: live });
   // Latency shown for the far server reads its result and its own replies, never the run's near headline.
   expect([shown("far").latency, shown("far").idle?.probeCount]).toEqual([far.latency as never, 9]);
   expect(shown("far").status).toEqual({ latency: "complete", download: "complete" });
-  expect([shown("near").latency, shown("near").idle?.probeCount]).toEqual([near.latency as never, 12]);
+  expect([shown("near").latency, shown("near").idle?.probeCount]).toEqual([
+    near.latency as never,
+    12,
+  ]);
   // A lens on one server reads that server alone; with no result yet, the run's own and the live replies.
   expect(shown("near", "far").latency).toBe(far.latency as never);
   expect(shownEvidence({ details: null, lens: "", focus: "far", run, idle: live }).idle).toBe(live);

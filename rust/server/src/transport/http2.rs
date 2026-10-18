@@ -52,13 +52,11 @@ const STREAM_WINDOW: u32 = 8 << 20;
 const MAX_CONCURRENT_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
-/// The client preface and first SETTINGS arrive within this.
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
 /// Unsent downloads wait in h2's scheduler, where control replies interleave.
 #[cfg(target_os = "linux")]
 const NOTSENT_LOWAT: u32 = 64 << 10;
 
-/// What an HTTP/2 listener's connections share.
 #[derive(Clone)]
 pub struct Http2 {
     pub app: Arc<App>,
@@ -67,7 +65,11 @@ pub struct Http2 {
 
 impl Http2 {
     /// An accepted connection's work, holding its floor from now; a connection whose floor does not fit closes.
-    pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
+    pub fn connection(
+        &self,
+        socket: TcpStream,
+        peer: SocketAddr,
+    ) -> impl Future<Output = ()> + Send + use<> {
         let floor = self.app.budget().lease(FLOOR_BYTES);
         let _ = socket.set_nodelay(true);
         #[cfg(target_os = "linux")]
@@ -82,7 +84,9 @@ impl Http2 {
                 () = listener.app.shutdown().cancelled() => return,
                 stream = tls::accept(&listener.tls, socket, peer) => stream,
             };
-            let Some(stream) = stream.filter(|stream| stream.get_ref().1.alpn_protocol() == Some(b"h2")) else {
+            let Some(stream) =
+                stream.filter(|stream| stream.get_ref().1.alpn_protocol() == Some(b"h2"))
+            else {
                 return;
             };
             let connection = Connection::new(Endpoint::H2, peer.ip());
@@ -91,7 +95,6 @@ impl Http2 {
         }
     }
 
-    /// Serves streams until the connection ends or its lifecycle closes it.
     async fn serve<S>(&self, stream: S, connection: Connection)
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -105,7 +108,8 @@ impl Http2 {
             .max_send_buffer_size(4 * FRAME_BYTES)
             .data_frame_budget(STATE_BYTES)
             .shared_budget(self.app.budget().h2(), STATE_BYTES);
-        let Ok(Ok(mut h2)) = timeout(PREFACE_BOUND, builder.handshake::<_, Bytes>(stream)).await else {
+        let Ok(Ok(mut h2)) = timeout(PREFACE_BOUND, builder.handshake::<_, Bytes>(stream)).await
+        else {
             return;
         };
         let window = Arc::new(Http2Window::new(self.app.clone()));
@@ -122,18 +126,28 @@ impl Http2 {
             while let Poll::Ready(Some(())) = streams.poll_next_unpin(cx) {}
             loop {
                 match h2.poll_accept(cx) {
-                    Poll::Ready(Some(Ok((request, respond)))) if streams.len() < MAX_CONCURRENT_STREAMS as usize => {
+                    Poll::Ready(Some(Ok((request, respond))))
+                        if streams.len() < MAX_CONCURRENT_STREAMS as usize =>
+                    {
                         streams.push(self.stream(request, respond, &connection, &window));
                         cx.waker().wake_by_ref();
                     }
-                    Poll::Ready(Some(Ok((_, mut respond)))) => respond.send_reset(Reason::REFUSED_STREAM),
+                    Poll::Ready(Some(Ok((_, mut respond)))) => {
+                        respond.send_reset(Reason::REFUSED_STREAM);
+                    }
                     Poll::Ready(Some(Err(_)) | None) => return Poll::Ready(()),
                     Poll::Pending => break,
                 }
             }
             // Queued END_STREAM and reset frames keep h2's streams after their futures end.
             let live = !streams.is_empty() || h2.has_streams();
-            while let Poll::Ready(event) = lifecycle.poll(cx, Activity { credited: window.raised(), streams: live }) {
+            while let Poll::Ready(event) = lifecycle.poll(
+                cx,
+                Activity {
+                    credited: window.raised(),
+                    streams: live,
+                },
+            ) {
                 match event {
                     Event::GoAway => {
                         h2.graceful_shutdown();
@@ -164,10 +178,15 @@ impl Http2 {
             let served = async {
                 match app.handle(request, &connection, exchange).await {
                     Outcome::Response(response) => {
-                        let mut reply = H2Reply { respond: &mut respond, stream: None };
+                        let mut reply = H2Reply {
+                            respond: &mut respond,
+                            stream: None,
+                        };
                         pump(&mut reply, response, head).await
                     }
-                    Outcome::WebSocket(..) | Outcome::WebTransport(..) | Outcome::Abort => Err(Aborted),
+                    Outcome::WebSocket(..) | Outcome::WebTransport(..) | Outcome::Abort => {
+                        Err(Aborted)
+                    }
                 }
             };
             if watch.bounded(served, &connection.work).await != Some(Ok(())) {
@@ -191,25 +210,36 @@ impl H2Reply<'_> {
 
 impl Sink for H2Reply<'_> {
     async fn head(&mut self, head: Parts, end: bool, _: &mut ReplyBound) -> Result<(), Aborted> {
-        let stream = self.respond.send_response(Response::from_parts(head, ()), end);
+        let stream = self
+            .respond
+            .send_response(Response::from_parts(head, ()), end);
         self.stream = Some(stream.map_err(|_| Aborted)?);
         Ok(())
     }
 
-    async fn data(&mut self, mut data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
+    async fn data(
+        &mut self,
+        mut data: Bytes,
+        last: bool,
+        bound: &mut ReplyBound,
+    ) -> Result<(), Aborted> {
         let stream = self.stream()?;
         while !data.is_empty() {
             let length = data.len().min(FRAME_BYTES);
             let capacity = capacity(stream, bound, length).await?;
             let chunk = data.split_to(length.min(capacity));
-            stream.send_data(chunk, last && data.is_empty()).map_err(|_| Aborted)?;
+            stream
+                .send_data(chunk, last && data.is_empty())
+                .map_err(|_| Aborted)?;
             bound.progressed();
         }
         Ok(())
     }
 
     async fn end(&mut self, _: &mut ReplyBound) -> Result<(), Aborted> {
-        self.stream()?.send_data(Bytes::new(), true).map_err(|_| Aborted)
+        self.stream()?
+            .send_data(Bytes::new(), true)
+            .map_err(|_| Aborted)
     }
 
     fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()> {
@@ -221,7 +251,11 @@ impl Sink for H2Reply<'_> {
 }
 
 /// Up to `length` bytes the stream may send, within peer flow control and h2's send buffer.
-async fn capacity(stream: &mut SendStream<Bytes>, bound: &mut ReplyBound, length: usize) -> Result<usize, Aborted> {
+async fn capacity(
+    stream: &mut SendStream<Bytes>,
+    bound: &mut ReplyBound,
+    length: usize,
+) -> Result<usize, Aborted> {
     stream.reserve_capacity(length);
     poll_fn(|cx| {
         loop {
@@ -245,7 +279,6 @@ async fn capacity(stream: &mut SendStream<Bytes>, bound: &mut ReplyBound, length
 /// A connection's socket, ended by a write blocked for the idle bound: a blocked socket stalls every stream.
 struct Stalled<S> {
     inner: S,
-    /// When the blocked write began.
     since: Option<Instant>,
     /// Due no later than the current stall's end, and re-armed only when it fires, so a stall costs no timer.
     timer: Pin<Box<Sleep>>,
@@ -275,7 +308,11 @@ impl<S> Stalled<S> {
         }
     }
 
-    fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
+    fn written(
+        &mut self,
+        cx: &mut Context<'_>,
+        result: Poll<io::Result<usize>>,
+    ) -> Poll<io::Result<usize>> {
         match result {
             Poll::Ready(Ok(written @ 1..)) => {
                 self.since = None;
@@ -289,9 +326,16 @@ impl<S> Stalled<S> {
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Stalled<S> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         let this = &mut *self;
-        if this.since.is_some_and(|since| since.elapsed() >= IDLE_BOUND) {
+        if this
+            .since
+            .is_some_and(|since| since.elapsed() >= IDLE_BOUND)
+        {
             return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
         }
         ready!(this.burst.poll_turn(cx));
@@ -306,7 +350,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for Stalled<S> {
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
         ready!(self.burst.poll_turn(cx));
         let result = Pin::new(&mut self.inner).poll_write(cx, bytes);
         self.written(cx, result)
@@ -345,9 +393,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
     }
 }
 
-/// The connection window until an admitted upload reads.
 const DEFAULT_WINDOW: u32 = 65_535;
-/// The connection window while admitted uploads read.
 const WINDOW: u32 = 24 << 20;
 
 /// The receive window: 64 KiB, 24 MiB while admitted uploads read, held to the end in the first raiser's share.
@@ -387,9 +433,15 @@ impl ReceiveWindow for Http2Window {
     fn raise(&self, stream: &mut RecvStream, keys: &ClientKeys) -> bool {
         let mut credit = lock(&self.credit);
         if credit.is_none() {
-            *credit = self.app.window_credit(keys, (WINDOW - DEFAULT_WINDOW) as usize);
+            *credit = self
+                .app
+                .window_credit(keys, (WINDOW - DEFAULT_WINDOW) as usize);
         }
-        if credit.is_some() && stream.flow_control().set_target_connection_window_size(WINDOW) {
+        if credit.is_some()
+            && stream
+                .flow_control()
+                .set_target_connection_window_size(WINDOW)
+        {
             self.raised.store(true, Ordering::Relaxed);
             return true;
         }
@@ -399,16 +451,20 @@ impl ReceiveWindow for Http2Window {
         false
     }
 
-    /// The last admitted upload to stop reading lowers the window again.
     fn reading(&self, stream: &mut RecvStream, reading: bool) {
         if reading {
             self.readers.fetch_add(1, Ordering::Relaxed);
         } else if self.readers.fetch_sub(1, Ordering::Relaxed) == 1 {
-            stream.flow_control().set_target_connection_window_size(DEFAULT_WINDOW);
+            stream
+                .flow_control()
+                .set_target_connection_window_size(DEFAULT_WINDOW);
         }
     }
 
-    fn poll_data(stream: &mut RecvStream, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, h2::Error>>> {
+    fn poll_data(
+        stream: &mut RecvStream,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, h2::Error>>> {
         let data = ready!(stream.poll_data(cx));
         if let Some(Ok(data)) = &data
             && let Err(error) = stream.flow_control().release_capacity(data.len())

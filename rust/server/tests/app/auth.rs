@@ -10,12 +10,16 @@ use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
-/// `api/password.testvectors.json` holds the operator's password and its pinned hash.
-pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-});
-pub(super) static HASH: std::sync::LazyLock<&str> = std::sync::LazyLock::new(|| VECTORS["hash"].as_str().unwrap());
+pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> =
+    std::sync::LazyLock::new(|| {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../api/password.testvectors.json"
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    });
+pub(super) static HASH: std::sync::LazyLock<&str> =
+    std::sync::LazyLock::new(|| VECTORS["hash"].as_str().unwrap());
 
 pub(super) fn auth_app(env: &[(&str, &str)]) -> App {
     let mut env = [ALL_LISTENERS.as_slice(), env].concat();
@@ -34,11 +38,14 @@ pub(super) fn store(app: &App) -> &Store {
 
 pub(super) fn login(app: &App, principal: Principal) -> NewLogin {
     store(app)
-        .sign_in(Identity { principal, name: "Local operator", provider: "local" })
+        .sign_in(Identity {
+            principal,
+            name: "Local operator",
+            provider: "local",
+        })
         .unwrap()
 }
 
-/// Builds a request naming the public host.
 pub(super) fn public(method: &str, uri: &str) -> Builder {
     Request::builder()
         .method(method)
@@ -50,7 +57,10 @@ pub(super) fn public(method: &str, uri: &str) -> Builder {
 pub(super) fn signed(method: &str, uri: &str, login: &NewLogin) -> Builder {
     public(method, uri)
         .header("origin", PUBLIC)
-        .header("cookie", format!("theme=dark; __Host-gm_session={}", login.token.as_str()))
+        .header(
+            "cookie",
+            format!("theme=dark; __Host-gm_session={}", login.token.as_str()),
+        )
         .header("x-csrf-token", login.csrf.as_str())
 }
 
@@ -77,7 +87,10 @@ async fn an_unauthenticated_request_gets_the_sign_in_refusal_and_the_app_root_a_
         &refused,
         &[
             ("graphite-meter-auth", Some("required")),
-            ("graphite-meter-auth-url", Some("https://meter.example/login")),
+            (
+                "graphite-meter-auth-url",
+                Some("https://meter.example/login"),
+            ),
             ("graphite-meter-browser-auth", Some("1")),
             ("connection", Some("close")),
             ("cache-control", Some("no-store")),
@@ -87,13 +100,26 @@ async fn an_unauthenticated_request_gets_the_sign_in_refusal_and_the_app_root_a_
         ],
     );
     let policy = header(&refused, "content-security-policy").unwrap();
-    assert!(policy.starts_with("default-src 'none'; style-src 'sha256-"), "{policy}");
+    assert!(
+        policy.starts_with("default-src 'none'; style-src 'sha256-"),
+        "{policy}"
+    );
     let root = tls(&app, empty(public("GET", "/"))).await;
     assert_eq!(root.status(), StatusCode::TEMPORARY_REDIRECT);
-    assert_eq!(header(&root, "location"), Some("https://meter.example/login"));
-    assert_eq!(text(root).await, "<a href=\"https://meter.example/login\">Temporary Redirect</a>.\n\n");
+    assert_eq!(
+        header(&root, "location"),
+        Some("https://meter.example/login")
+    );
+    assert_eq!(
+        text(root).await,
+        "<a href=\"https://meter.example/login\">Temporary Redirect</a>.\n\n"
+    );
 
-    let from_ui = tls(&app, empty(public("GET", "/probe").header("origin", PUBLIC))).await;
+    let from_ui = tls(
+        &app,
+        empty(public("GET", "/probe").header("origin", PUBLIC)),
+    )
+    .await;
     assert_headers(
         &from_ui,
         &[
@@ -101,10 +127,17 @@ async fn an_unauthenticated_request_gets_the_sign_in_refusal_and_the_app_root_a_
             ("access-control-allow-credentials", Some("true")),
         ],
     );
-    let measuring = tls(&app, empty(public("GET", "/probe").header("origin", BROWSER))).await;
+    let measuring = tls(
+        &app,
+        empty(public("GET", "/probe").header("origin", BROWSER)),
+    )
+    .await;
     assert_headers(
         &measuring,
-        &[("access-control-allow-origin", Some(BROWSER)), ("access-control-allow-credentials", None)],
+        &[
+            ("access-control-allow-origin", Some(BROWSER)),
+            ("access-control-allow-credentials", None),
+        ],
     );
     let twice = public("GET", "/probe")
         .header("origin", PUBLIC)
@@ -122,15 +155,27 @@ async fn only_https_at_the_public_hostname_is_trusted() {
     let login = login(&app, Principal::operator());
     let foreign = tls(
         &app,
-        empty(request("GET", "/probe").header("cookie", format!("__Host-gm_session={}", login.token.as_str()))),
+        empty(request("GET", "/probe").header(
+            "cookie",
+            format!("__Host-gm_session={}", login.token.as_str()),
+        )),
     )
     .await;
     assert_headers(
         &foreign,
-        &[("graphite-meter-auth", Some("required")), ("strict-transport-security", None)],
+        &[
+            ("graphite-meter-auth", Some("required")),
+            ("strict-transport-security", None),
+        ],
     );
     let direct = send(&app, Endpoint::H1, empty(signed("GET", "/probe", &login))).await;
-    assert_headers(&direct, &[("graphite-meter-auth", Some("required")), ("strict-transport-security", None)]);
+    assert_headers(
+        &direct,
+        &[
+            ("graphite-meter-auth", Some("required")),
+            ("strict-transport-security", None),
+        ],
+    );
     let root = send(&app, Endpoint::H1, empty(public("GET", "/"))).await;
     assert_eq!(
         root.status(),
@@ -146,11 +191,19 @@ async fn only_https_at_the_public_hostname_is_trusted() {
     let proxied = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("https"))).await;
     assert_eq!(proxied.status(), StatusCode::OK);
     let upgrade = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("wss"))).await;
-    assert_eq!(upgrade.status(), StatusCode::OK, "Traefik names a WebSocket upgrade's TLS wss");
+    assert_eq!(
+        upgrade.status(),
+        StatusCode::OK,
+        "Traefik names a WebSocket upgrade's TLS wss"
+    );
     let plain = send_from(&app, Endpoint::H1, "10.0.0.2", empty(forwarded("http"))).await;
     assert_eq!(plain.status(), StatusCode::FORBIDDEN);
     let spoofed = send_from(&app, Endpoint::H1, "192.0.2.1", empty(forwarded("https"))).await;
-    assert_eq!(spoofed.status(), StatusCode::FORBIDDEN, "only a trusted proxy forwards HTTPS");
+    assert_eq!(
+        spoofed.status(),
+        StatusCode::FORBIDDEN,
+        "only a trusted proxy forwards HTTPS"
+    );
 }
 
 #[tokio::test]
@@ -177,13 +230,19 @@ async fn a_cookie_login_measures_from_the_public_origin_and_proves_csrf_for_writ
         "a write proves its token"
     );
     let cross = signed("GET", "/probe", &login).header("sec-fetch-site", "cross-site");
-    assert_eq!(tls(&app, empty(cross)).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        tls(&app, empty(cross)).await.status(),
+        StatusCode::FORBIDDEN
+    );
     let mut elsewhere = signed("GET", "/probe", &login);
     elsewhere
         .headers_mut()
         .unwrap()
         .insert("origin", HeaderValue::from_static(BROWSER));
-    assert_eq!(tls(&app, empty(elsewhere)).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        tls(&app, empty(elsewhere)).await.status(),
+        StatusCode::FORBIDDEN
+    );
 }
 
 #[tokio::test]
@@ -191,23 +250,59 @@ async fn grants_measure_only_where_they_may_and_end_with_their_login() {
     let app = auth_app(&[]);
     let login = login(&app, Principal::operator());
     let browser = store(&app)
-        .grant(login.key, BrowserOrigin::parse(&HeaderValue::from_static(BROWSER)))
+        .grant(
+            login.key,
+            BrowserOrigin::parse(&HeaderValue::from_static(BROWSER)),
+        )
         .unwrap()
         .as_str()
         .to_owned();
-    let probe = tls(&app, empty(bearer("GET", "/probe", &browser).header("origin", BROWSER))).await;
+    let probe = tls(
+        &app,
+        empty(bearer("GET", "/probe", &browser).header("origin", BROWSER)),
+    )
+    .await;
     assert_eq!(probe.status(), StatusCode::OK);
     assert_headers(
         &probe,
-        &[("access-control-allow-origin", Some(BROWSER)), ("access-control-allow-credentials", None)],
+        &[
+            ("access-control-allow-origin", Some(BROWSER)),
+            ("access-control-allow-credentials", None),
+        ],
     );
-    for (path, origin) in [("/servers", BROWSER), ("/probe", PUBLIC), ("/probe", ""), ("/", BROWSER)] {
-        let refused = tls(&app, empty(bearer("GET", path, &browser).header("origin", origin))).await;
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{path} from {origin:?}");
+    for (path, origin) in [
+        ("/servers", BROWSER),
+        ("/probe", PUBLIC),
+        ("/probe", ""),
+        ("/", BROWSER),
+    ] {
+        let refused = tls(
+            &app,
+            empty(bearer("GET", path, &browser).header("origin", origin)),
+        )
+        .await;
+        assert_eq!(
+            refused.status(),
+            StatusCode::FORBIDDEN,
+            "{path} from {origin:?}"
+        );
     }
-    let native = store(&app).grant(login.key, None).unwrap().as_str().to_owned();
-    assert_eq!(tls(&app, empty(bearer("GET", "/servers", &native))).await.status(), StatusCode::OK);
-    let mint = bearer("POST", "/ws/session?target=https://meter.example/ws/ping", &native);
+    let native = store(&app)
+        .grant(login.key, None)
+        .unwrap()
+        .as_str()
+        .to_owned();
+    assert_eq!(
+        tls(&app, empty(bearer("GET", "/servers", &native)))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let mint = bearer(
+        "POST",
+        "/ws/session?target=https://meter.example/ws/ping",
+        &native,
+    );
     assert_eq!(
         tls(&app, empty(mint)).await.status(),
         StatusCode::FORBIDDEN,
@@ -237,8 +332,14 @@ async fn password_logins_fund_windows_past_one_client_s_share() {
         held.iter().flatten().count()
     };
     assert_eq!(funded(&auth_app(&[])), 3);
-    assert_eq!(funded(&super::oidc::oidc_app("https://localhost:1", &[], false)), 2);
+    assert_eq!(
+        funded(&super::oidc::oidc_app("https://localhost:1", &[], false)),
+        2
+    );
     let (open, source) = (app(&[]), ClientKeys::address("192.0.2.1".parse().unwrap()));
     let _held = open.window_credit(&source, share).unwrap();
-    assert!(open.window_credit(&source, 1).is_none(), "without auth a client keeps its share");
+    assert!(
+        open.window_credit(&source, 1).is_none(),
+        "without auth a client keeps its share"
+    );
 }

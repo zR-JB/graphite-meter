@@ -25,13 +25,23 @@ fn durations_parse_exactly() {
 
 #[test]
 fn malformed_negative_and_overlong_durations_are_refused() {
-    for text in ["", "1", "00", "+1s", " 1s", "1s ", "1e3s", "1d", "1\u{b5}s", ".s", "1s-1s", "１s"] {
-        assert_eq!(parse(text), Err("use a duration such as 800ms, 10s or 1m30s"), "{text:?}");
+    for text in [
+        "", "1", "00", "+1s", " 1s", "1s ", "1e3s", "1d", "1\u{b5}s", ".s", "1s-1s", "１s",
+    ] {
+        assert_eq!(
+            parse(text),
+            Err("use a duration such as 800ms, 10s or 1m30s"),
+            "{text:?}"
+        );
     }
     for text in ["-1s", "-0"] {
         assert_eq!(parse(text), Err("a duration cannot be negative"), "{text}");
     }
-    for text in ["18446744073709551616ns", "5124096h", "99999999999999999999999999999999999999999h"] {
+    for text in [
+        "18446744073709551616ns",
+        "5124096h",
+        "99999999999999999999999999999999999999999h",
+    ] {
         assert_eq!(parse(text), Err("duration too long"), "{text}");
     }
 }

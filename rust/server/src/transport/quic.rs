@@ -38,9 +38,7 @@ use tokio::{
     time::{MissedTickBehavior, interval, timeout},
 };
 
-/// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
-/// How often a connection's send window follows its demand.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 /// Connections closed once the shutdown drain ended have this long to send their close.
 const CLOSE_FLUSH: Duration = Duration::from_secs(1);
@@ -53,13 +51,11 @@ pub struct Listener {
     shard: Option<Shard>,
 }
 
-/// An accepted handshake and its share of its endpoint's connections.
 pub struct Arrival {
     incoming: noq::Incoming,
     occupant: Option<Occupant>,
 }
 
-/// What the endpoints' connections share.
 #[derive(Clone)]
 pub struct Http3 {
     app: Arc<App>,
@@ -73,7 +69,6 @@ impl Listener {
         self.endpoint.local_addr()
     }
 
-    /// The runtime the endpoint and its connections run on.
     pub fn runtime(&self) -> Handle {
         self.runtime.clone()
     }
@@ -84,7 +79,11 @@ impl Listen for Listener {
 
     /// The next handshake, or `None` once Retry answered it: a round trip protects admission from spoofed Initials.
     async fn accept(&mut self) -> io::Result<Option<(Arrival, SocketAddr)>> {
-        let incoming = self.endpoint.accept().await.ok_or(io::ErrorKind::InvalidInput)?;
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
+            .ok_or(io::ErrorKind::InvalidInput)?;
         let peer = incoming.remote_address();
         if !incoming.remote_address_validated() && self.app.quic_retry(peer.ip().to_canonical()) {
             let _ = incoming.retry();
@@ -117,9 +116,17 @@ impl Drop for Listener {
 
 impl Http3 {
     /// An incoming connection's work, holding its floor from now; one whose floor does not fit is refused.
-    pub fn connection(&self, arrival: Arrival, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
+    pub fn connection(
+        &self,
+        arrival: Arrival,
+        peer: SocketAddr,
+    ) -> impl Future<Output = ()> + Send + use<> {
         let floor = floor_bytes(self.certificates.handshake_bytes());
-        let budget = self.app.budget().lease(floor).map(|floor| self.budget(floor));
+        let budget = self
+            .app
+            .budget()
+            .lease(floor)
+            .map(|floor| self.budget(floor));
         let listener = self.clone();
         let Arrival { incoming, occupant } = arrival;
         async move {
@@ -151,7 +158,9 @@ impl Http3 {
             if let Err(error) = listener.serve(quic, budget, peer).await
                 && !ended_normally(&error)
             {
-                PEER_FAILURES.write(format_args!("HTTP/3 connection from {address} failed: {error}"));
+                PEER_FAILURES.write(format_args!(
+                    "HTTP/3 connection from {address} failed: {error}"
+                ));
             }
         }
     }
@@ -174,8 +183,17 @@ impl Http3 {
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
         let connection = Connection::new(Endpoint::Quic, peer.ip());
-        let window = Arc::new(QuicWindow::new(self.app.clone(), quic.clone(), budget.clone()));
-        let requests = Requests::new(self.app.clone(), connection.clone(), window.clone(), quic.clone());
+        let window = Arc::new(QuicWindow::new(
+            self.app.clone(),
+            quic.clone(),
+            budget.clone(),
+        ));
+        let requests = Requests::new(
+            self.app.clone(),
+            connection.clone(),
+            window.clone(),
+            quic.clone(),
+        );
         let mut http = server::Connection::new(quic.clone(), Some(budget));
         let mut lifecycle = Lifecycle::new(connection.work, Grace::Once);
         let (mut running, mut send_window) = (FuturesUnordered::new(), SendWindow::default());
@@ -214,6 +232,7 @@ fn ended_normally(error: &http3::Error) -> bool {
     error.graceful()
         || matches!(
             error,
-            http3::Error::Connection { local: false, .. } | http3::Error::Transport(noq::ConnectionError::TimedOut)
+            http3::Error::Connection { local: false, .. }
+                | http3::Error::Transport(noq::ConnectionError::TimedOut)
         )
 }

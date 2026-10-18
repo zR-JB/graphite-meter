@@ -24,29 +24,35 @@ async function signIn(page: Page) {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 
-test.chrome("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths", async (page) => {
-  await open(page, `${locked.url}/login`, {
-    servers: [{ id: "self", url: locked.url }],
-  });
-  await signIn(page);
-  for (const [path, kind, protocol] of [
-    [/^Automatic/, "fetch-stream", "http/1.1"],
-    [/^HTTP\/3/, "fetch-stream", "h3"],
-    [/^WebTransport/, "webtransport", "h3"],
-  ] as const) {
-    const settings = await openSettings(page);
-    await settings.getByRole("group", { name: "Throughput path" }).getByRole("radio", { name: path }).click();
-    await closeSettings(page);
-    await ready(page);
-    const saved = await run(page);
-    expect(saved.result.multiServer.participants).toEqual(["self"]);
-    expect(saved.result.multiServer.failures).toEqual([]);
-    expect(saved.result.multiServer.servers[0]!.throughput.transport).toBe(kind);
-    const [self] = saved.result.multiServer.servers;
-    expect(self!.throughput?.browserProtocol).toBe(protocol);
-    expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-  }
-});
+test.chrome(
+  "a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
+  async (page) => {
+    await open(page, `${locked.url}/login`, {
+      servers: [{ id: "self", url: locked.url }],
+    });
+    await signIn(page);
+    for (const [path, kind, protocol] of [
+      [/^Automatic/, "fetch-stream", "http/1.1"],
+      [/^HTTP\/3/, "fetch-stream", "h3"],
+      [/^WebTransport/, "webtransport", "h3"],
+    ] as const) {
+      const settings = await openSettings(page);
+      await settings
+        .getByRole("group", { name: "Throughput path" })
+        .getByRole("radio", { name: path })
+        .click();
+      await closeSettings(page);
+      await ready(page);
+      const saved = await run(page);
+      expect(saved.result.multiServer.participants).toEqual(["self"]);
+      expect(saved.result.multiServer.failures).toEqual([]);
+      expect(saved.result.multiServer.servers[0]!.throughput.transport).toBe(kind);
+      const [self] = saved.result.multiServer.servers;
+      expect(self!.throughput?.browserProtocol).toBe(protocol);
+      expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+    }
+  },
+);
 
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });
@@ -71,7 +77,10 @@ test("a wrong password keeps the card's host, show key and focus", async (page) 
     await expect(page.locator("[data-host]")).toHaveText(new URL(vault.server.url).host);
     await page.getByRole("button", { name: "Show password" }).click();
     await expect(field).toHaveAttribute("type", "text");
-    await expect(page.getByRole("button", { name: "Hide password" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Hide password" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   } finally {
     vault.kill("SIGKILL");
   }
@@ -98,7 +107,10 @@ test("a sign-out that would leave a result unsaved asks first, and signs out aft
     const state = { failing: false };
     Object.assign(window, { writes: state });
     const put = IDBObjectStore.prototype.put;
-    IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore["put"]>) {
+    IDBObjectStore.prototype.put = function (
+      this: IDBObjectStore,
+      ...args: Parameters<IDBObjectStore["put"]>
+    ) {
       if (state.failing && this.name === "results") throw new DOMException("busy", "UnknownError");
       return put.apply(this, args);
     };
@@ -222,11 +234,15 @@ test("an HTTP interface explains a protected HTTPS refusal", async (page) => {
   const servers = [{ id: "self", url: home.http }, frankfurt, amsterdam, locked];
   await open(page, home.http, { servers });
   const settings = await openSettings(page);
-  await expect(feedback(page, "Private")).toContainText("If it requires sign-in, open this interface over HTTPS");
+  await expect(feedback(page, "Private")).toContainText(
+    "If it requires sign-in, open this interface over HTTPS",
+  );
   await expect(settings.getByRole("button", { name: "Retry Private" })).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Sign in/ })).toHaveCount(0);
   await expect(feedback(page, "Amsterdam")).toContainText("Could not check the connection");
-  await expect(settings.locator('.server-status[data-state="verified"]')).toHaveCount(2, { timeout: 15_000 });
+  await expect(settings.locator('.server-status[data-state="verified"]')).toHaveCount(2, {
+    timeout: 15_000,
+  });
 });
 
 test("a full remote sign-in offers renewal instead of an approval link", async (page) => {
@@ -268,7 +284,9 @@ test("a failed approval offers only a new sign-in", async (page) => {
   await openSettings(page);
   const row = feedback(page, "Private");
   await row.getByRole("button", { name: "Sign in to Private" }).click();
-  await expect(row.getByRole("button", { name: "Sign in again to Private" })).toHaveText("Sign in again");
+  await expect(row.getByRole("button", { name: "Sign in again to Private" })).toHaveText(
+    "Sign in again",
+  );
   await expect(row).toContainText("The approval's answer was lost on the way. Sign in again.");
   await expect(row.getByRole("link")).toHaveCount(0);
   await expect(row.locator(".approval-code")).toHaveCount(0);
@@ -334,58 +352,60 @@ async function approve(row: Locator): Promise<Page> {
   }
 }
 
-test.chrome("a protected WebSocket peer approved through the sign-in link joins a run", async (page) => {
-  await page.addInitScript(() => (window.open = () => null));
-  await open(page, home.url, {
-    servers: [home, locked],
-  });
-  await page.cdp("Network.setCookieControls", {
-    enableThirdPartyCookieRestriction: true,
-    disableThirdPartyCookieMetadata: true,
-    disableThirdPartyCookieHeuristics: true,
-  });
-  await openSettings(page);
-  const row = feedback(page, "Private");
-  const signInButton = row.getByRole("button", { name: /^Sign in( again)? to Private$/ });
-  await signInButton.click();
-  const link = row.getByRole("link", { name: "Open sign-in page" });
-  const canceled = await link.getAttribute("href");
-  await row.getByRole("button", { name: "Cancel sign-in" }).click();
-  await signInButton.click();
-  await expect(link).toBeVisible();
-  expect(await link.getAttribute("href")).not.toBe(canceled);
-  await page.evaluate((origin) => {
-    const original = window.fetch.bind(window);
-    let outage = true;
-    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input), location.href);
-      const granted = new Headers(init?.headers).has("Authorization");
-      if (!outage || url.origin !== origin || !granted) return original(input, init);
-      outage = false;
-      return Promise.resolve(new Response(null, { status: 503 }));
-    }) as typeof fetch;
-  }, locked.url);
-  await (await approve(row)).close();
-  const retry = row.getByRole("button", { name: "Retry Private" });
-  await expect(retry).toBeVisible({ timeout: 10_000 });
-  await expect(signInButton).toHaveCount(0);
-  await retry.click();
-  await expect(row).toHaveCount(0);
-  await ready(page);
-  await page.cdp("Network.clearBrowserCookies");
-  const saved = await run(page);
-  expect(saved.result.multiServer.participants).toEqual(["self", "server-4"]);
-  expect(saved.result.multiServer.failures).toEqual([]);
-  expect(JSON.stringify(saved)).not.toContain("Bearer");
-});
+test.chrome(
+  "a protected WebSocket peer approved through the sign-in link joins a run",
+  async (page) => {
+    await page.addInitScript(() => (window.open = () => null));
+    await open(page, home.url, {
+      servers: [home, locked],
+    });
+    await page.cdp("Network.setCookieControls", {
+      enableThirdPartyCookieRestriction: true,
+      disableThirdPartyCookieMetadata: true,
+      disableThirdPartyCookieHeuristics: true,
+    });
+    await openSettings(page);
+    const row = feedback(page, "Private");
+    const signInButton = row.getByRole("button", { name: /^Sign in( again)? to Private$/ });
+    await signInButton.click();
+    const link = row.getByRole("link", { name: "Open sign-in page" });
+    const canceled = await link.getAttribute("href");
+    await row.getByRole("button", { name: "Cancel sign-in" }).click();
+    await signInButton.click();
+    await expect(link).toBeVisible();
+    expect(await link.getAttribute("href")).not.toBe(canceled);
+    await page.evaluate((origin) => {
+      const original = window.fetch.bind(window);
+      let outage = true;
+      window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), location.href);
+        const granted = new Headers(init?.headers).has("Authorization");
+        if (!outage || url.origin !== origin || !granted) return original(input, init);
+        outage = false;
+        return Promise.resolve(new Response(null, { status: 503 }));
+      }) as typeof fetch;
+    }, locked.url);
+    await (await approve(row)).close();
+    const retry = row.getByRole("button", { name: "Retry Private" });
+    await expect(retry).toBeVisible({ timeout: 10_000 });
+    await expect(signInButton).toHaveCount(0);
+    await retry.click();
+    await expect(row).toHaveCount(0);
+    await ready(page);
+    await page.cdp("Network.clearBrowserCookies");
+    const saved = await run(page);
+    expect(saved.result.multiServer.participants).toEqual(["self", "server-4"]);
+    expect(saved.result.multiServer.failures).toEqual([]);
+    expect(JSON.stringify(saved)).not.toContain("Bearer");
+  },
+);
 
 test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   await page.addInitScript(() => (window.open = () => null));
   await open(page, home.url, {
     servers: [home, locked],
     config: {
-      // Wherever the revocation lands, the interval before or after it spans the 800 ms evidence floor; in 1.5 s a
-      // dropout near the middle left neither, and the download failed.
+      // Wherever the revocation lands, an interval before or after it spans the 800 ms evidence floor; 1.5 s left neither.
       duration: { ...baseConfig.duration, downloadMs: 3000, uploadMs: 1000 },
     },
   });
@@ -410,7 +430,9 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   }
   const saved = await savedResult(page, startedAt, 20_000);
   expect(saved.result.outcome).toBe("partial");
-  const revoked = saved.result.multiServer.failures.find((failure) => failure.scope === "throughput");
+  const revoked = saved.result.multiServer.failures.find(
+    (failure) => failure.scope === "throughput",
+  );
   expect(revoked).toMatchObject({
     serverId: "server-4",
     reason: "sign-in-required",

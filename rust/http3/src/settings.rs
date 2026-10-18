@@ -28,8 +28,11 @@ pub(crate) const SERVER: [(u64, u64); 5] = [
     (WT_ENABLE_DRAFT02, 1),
     (WT_ENABLED, 1),
 ];
-pub(crate) const CLIENT: [(u64, u64); 3] =
-    [(MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION), (H3_DATAGRAM, 1), (WT_ENABLED, 1)];
+pub(crate) const CLIENT: [(u64, u64); 3] = [
+    (MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION),
+    (H3_DATAGRAM, 1),
+    (WT_ENABLED, 1),
+];
 
 /// A control stream's first bytes: its stream type, then the SETTINGS frame.
 pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {
@@ -108,7 +111,6 @@ impl Reader {
         })
     }
 
-    /// Takes the next part of the payload; returns the settings once the frame is complete.
     pub(crate) fn read(&mut self, payload: &mut impl Buf) -> Result<Option<Peer>, Code> {
         self.remaining -= payload.remaining() as u64;
         while let Some((id, value)) = self.pair.read(payload) {
@@ -134,7 +136,9 @@ impl Reader {
         let peer = &mut self.peer;
         match id {
             MAX_FIELD_SECTION_SIZE => peer.max_field_section_size = Some(value),
-            ENABLE_CONNECT_PROTOCOL | H3_DATAGRAM if value > 1 => return Err(Code::H3_SETTINGS_ERROR),
+            ENABLE_CONNECT_PROTOCOL | H3_DATAGRAM if value > 1 => {
+                return Err(Code::H3_SETTINGS_ERROR);
+            }
             ENABLE_CONNECT_PROTOCOL => peer.connect_protocol = value == 1,
             H3_DATAGRAM => {
                 peer.h3_datagram = value == 1;
@@ -162,7 +166,11 @@ mod tests {
         assert_eq!(FrameType(kind), FrameType::SETTINGS);
         let payload = &stream[stream.len() - length as usize..];
         let mut reader = Reader::new(length)?;
-        let mut peer = if payload.is_empty() { reader.read(&mut &payload[..])? } else { None };
+        let mut peer = if payload.is_empty() {
+            reader.read(&mut &payload[..])?
+        } else {
+            None
+        };
         for byte in payload.chunks(1) {
             assert!(peer.is_none());
             peer = reader.read(&mut &byte[..])?;
@@ -181,7 +189,14 @@ mod tests {
             (0x2b603742, 1),
             (GREASE, 1),
         ];
-        let firefox = [(0x01, 65536), (0x07, 20), (0x2b603742, 1), (0xffd277, 1), (0x33, 1), (0x08, 1)];
+        let firefox = [
+            (0x01, 65536),
+            (0x07, 20),
+            (0x2b603742, 1),
+            (0xffd277, 1),
+            (0x33, 1),
+            (0x08, 1),
+        ];
         let current = [(0x06, 10 << 20), (0x33, 1), (0x2c7cf000, 1)];
         for (settings, dialect) in [
             (&chromium[..], Dialect::Draft02),
@@ -192,46 +207,86 @@ mod tests {
         ] {
             let peer = parse(settings).unwrap();
             assert_eq!(peer.webtransport(true), Some(dialect), "{settings:x?}");
-            assert_eq!(peer.webtransport(false), None, "no datagram transport parameter");
+            assert_eq!(
+                peer.webtransport(false),
+                None,
+                "no datagram transport parameter"
+            );
         }
         let server = parse(&SERVER).unwrap();
-        assert_eq!((server.max_field_section_size, server.connect_protocol), (Some(4096), true));
-        assert_eq!(parse(&CLIENT).unwrap().max_field_section_size, Some(32 * 1024));
+        assert_eq!(
+            (server.max_field_section_size, server.connect_protocol),
+            (Some(4096), true)
+        );
+        assert_eq!(
+            parse(&CLIENT).unwrap().max_field_section_size,
+            Some(32 * 1024)
+        );
         assert_eq!(parse(&firefox).unwrap().max_field_section_size, None);
     }
 
     #[test]
     fn webtransport_needs_a_known_signal_and_datagrams() {
         for (settings, dialect) in [
-            (&[(0x2b603742, 1), (0xffd277, 1)][..], Some(Dialect::Draft02)),
+            (
+                &[(0x2b603742, 1), (0xffd277, 1)][..],
+                Some(Dialect::Draft02),
+            ),
             (&[(0x14e9cd29, 1), (0x33, 1)], None),
             (&[(0x2b603742, 1)], None),
             (&[(0x2b603742, 2), (0x33, 1)], None),
             (&[], None),
         ] {
-            assert_eq!(parse(settings).unwrap().webtransport(true), dialect, "{settings:x?}");
+            assert_eq!(
+                parse(settings).unwrap().webtransport(true),
+                dialect,
+                "{settings:x?}"
+            );
         }
-        for (settings, datagram_frames, checked) in
-            [(&[(0x33, 1)][..], false, Err(Code::H3_SETTINGS_ERROR)), (&[(0x33, 1)], true, Ok(()))]
-        {
-            assert_eq!(parse(settings).unwrap().check(datagram_frames), checked, "{settings:x?}");
+        for (settings, datagram_frames, checked) in [
+            (&[(0x33, 1)][..], false, Err(Code::H3_SETTINGS_ERROR)),
+            (&[(0x33, 1)], true, Ok(())),
+        ] {
+            assert_eq!(
+                parse(settings).unwrap().check(datagram_frames),
+                checked,
+                "{settings:x?}"
+            );
         }
     }
 
     #[test]
     fn invalid_settings_are_refused() {
-        for invalid in [&[(0x08, 2)][..], &[(0x33, 2)], &[(0x02, 0)], &[(0x00, 0)], &[(GREASE, 1), (GREASE, 2)]] {
+        for invalid in [
+            &[(0x08, 2)][..],
+            &[(0x33, 2)],
+            &[(0x02, 0)],
+            &[(0x00, 0)],
+            &[(GREASE, 1), (GREASE, 2)],
+        ] {
             assert_eq!(parse(invalid), Err(Code::H3_SETTINGS_ERROR), "{invalid:x?}");
         }
-        let many: Vec<_> = (0..=MAX_IDS as u64).map(|index| (0x21 + 0x1f * index, 0)).collect();
+        let many: Vec<_> = (0..=MAX_IDS as u64)
+            .map(|index| (0x21 + 0x1f * index, 0))
+            .collect();
         assert_eq!(parse(&many), Err(Code::H3_EXCESSIVE_LOAD));
         assert!(parse(&many[1..]).is_ok());
-        assert_eq!(Reader::new(MAX_LENGTH + 1).err(), Some(Code::H3_EXCESSIVE_LOAD));
+        assert_eq!(
+            Reader::new(MAX_LENGTH + 1).err(),
+            Some(Code::H3_EXCESSIVE_LOAD)
+        );
         assert!(Reader::new(MAX_LENGTH).is_ok());
         let mut reader = Reader::new(3).unwrap();
-        let peer = Peer { max_field_section_size: Some(0), ..Peer::default() };
+        let peer = Peer {
+            max_field_section_size: Some(0),
+            ..Peer::default()
+        };
         assert_eq!(reader.read(&mut &[0x06, 0x40, 0x00][..]), Ok(Some(peer)));
         let mut reader = Reader::new(3).unwrap();
-        assert_eq!(reader.read(&mut &[0x06, 0x80, 0x00][..]), Err(Code::H3_FRAME_ERROR), "a truncated value");
+        assert_eq!(
+            reader.read(&mut &[0x06, 0x80, 0x00][..]),
+            Err(Code::H3_FRAME_ERROR),
+            "a truncated value"
+        );
     }
 }

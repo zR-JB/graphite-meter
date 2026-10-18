@@ -23,7 +23,8 @@ fn entry(name: &str, url: &str) -> ServerEntry {
 /// Builds a catalog of `self` and Frankfurt, which may also measure on a transfer host.
 fn catalog() -> ServerCatalog {
     let mut frankfurt = entry("frankfurt", "https://fra.example.net");
-    frankfurt.additional_origins = vec![Origin::parse("https://transfer.example.net:8443").unwrap()];
+    frankfurt.additional_origins =
+        vec![Origin::parse("https://transfer.example.net:8443").unwrap()];
     let mut catalog = ServerCatalog::singleton();
     catalog.servers.push(frankfurt);
     catalog
@@ -53,7 +54,8 @@ fn a_published_catalog_holds_self_first_and_at_most_32_servers() {
     catalog.servers.swap(0, 1);
     assert_eq!(catalog.validate(), Err(CatalogError::Servers));
     let mut catalog = ServerCatalog::singleton();
-    let others = (1..32).map(|index| entry(&format!("s{index}"), &format!("https://s{index}.example")));
+    let others =
+        (1..32).map(|index| entry(&format!("s{index}"), &format!("https://s{index}.example")));
     catalog.servers.extend(others);
     assert_eq!(catalog.validate(), Ok(()));
     catalog.servers.push(entry("s32", "https://s32.example"));
@@ -64,13 +66,22 @@ fn a_published_catalog_holds_self_first_and_at_most_32_servers() {
 
 #[test]
 fn published_entries_are_unique_and_bounded() {
-    let (mut long_name, mut long_location) = (entry("a", "https://a.example"), entry("b", "https://b.example"));
+    let (mut long_name, mut long_location) = (
+        entry("a", "https://a.example"),
+        entry("b", "https://b.example"),
+    );
     long_name.name = "n".repeat(257);
     long_location.location = "l".repeat(257);
     let faults = [
         (entry("frankfurt", "."), CatalogError::Origin),
-        (entry("self", "https://other.example"), CatalogError::Duplicate),
-        (entry("other", "HTTPS://FRA.example.net:443"), CatalogError::Duplicate),
+        (
+            entry("self", "https://other.example"),
+            CatalogError::Duplicate,
+        ),
+        (
+            entry("other", "HTTPS://FRA.example.net:443"),
+            CatalogError::Duplicate,
+        ),
         (long_name, CatalogError::Identity),
     ];
     for (added, fault) in faults {
@@ -89,7 +100,10 @@ fn published_entries_are_unique_and_bounded() {
 #[test]
 fn server_ids_are_one_to_64_safe_ascii_bytes() {
     for text in ["a", "A.b_c-9", &"x".repeat(64)] {
-        assert_eq!(ServerId::parse(text).map(|id| id.to_string()).as_deref(), Some(text));
+        assert_eq!(
+            ServerId::parse(text).map(|id| id.to_string()).as_deref(),
+            Some(text)
+        );
     }
     for text in ["", "a b", "ü", "a/b", &"x".repeat(65)] {
         assert_eq!(ServerId::parse(text), None, "{text:?}");
@@ -104,9 +118,21 @@ fn selections_hold_one_to_four_distinct_known_servers() {
         .extend(["a", "b", "c"].map(|name| entry(name, &format!("https://{name}.example"))));
     let ids = |names: &[&str]| names.iter().map(|name| id(name)).collect::<Vec<_>>();
     assert_eq!(catalog.validate_selection(&ids(&["self"])), Ok(()));
-    assert_eq!(catalog.validate_selection(&ids(&["self", "frankfurt", "a", "b"])), Ok(()));
-    for selection in [&[][..], &["self", "frankfurt", "a", "b", "c"], &["a", "a"], &["unknown"]] {
-        assert_eq!(catalog.validate_selection(&ids(selection)), Err(CatalogError::Selection), "{selection:?}");
+    assert_eq!(
+        catalog.validate_selection(&ids(&["self", "frankfurt", "a", "b"])),
+        Ok(())
+    );
+    for selection in [
+        &[][..],
+        &["self", "frankfurt", "a", "b", "c"],
+        &["a", "a"],
+        &["unknown"],
+    ] {
+        assert_eq!(
+            catalog.validate_selection(&ids(selection)),
+            Err(CatalogError::Selection),
+            "{selection:?}"
+        );
     }
 }
 
@@ -127,14 +153,27 @@ fn a_received_entry_that_stays_invalid_is_left_out_alone() {
         ],
     });
     let (catalog, rejected) = received(document).unwrap();
-    let ids: Vec<_> = catalog.servers.iter().map(|entry| entry.id.as_str()).collect();
+    let ids: Vec<_> = catalog
+        .servers
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect();
     assert_eq!(ids, ["self", "frankfurt", "munich"]);
     let slash_dropped = BaseUrl::parse("https://fra.example.net").unwrap();
-    assert_eq!(catalog.servers[1].url, slash_dropped, "one slash may end it");
+    assert_eq!(
+        catalog.servers[1].url, slash_dropped,
+        "one slash may end it"
+    );
     let munich = serde_json::to_value(&catalog.servers[2]).unwrap();
-    assert_eq!(munich["additionalOrigins"], json!(["https://transfer.example:8443"]));
+    assert_eq!(
+        munich["additionalOrigins"],
+        json!(["https://transfer.example:8443"])
+    );
     assert_eq!(catalog.default_selection, [id("frankfurt")]);
-    let faults: Vec<_> = rejected.iter().map(|entry| (entry.id.as_str(), entry.error)).collect();
+    let faults: Vec<_> = rejected
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry.error))
+        .collect();
     assert_eq!(
         faults,
         [
@@ -154,7 +193,9 @@ fn a_received_catalog_still_holds_as_a_whole() {
     let other = |index: usize| json!({"id": format!("s{index}"), "url": format!("https://s{index}.example")});
     let (fallback, _) = received(json!({"defaultSelection": ["gone"], "servers": [own]})).unwrap();
     assert_eq!(fallback.default_selection, [ServerId::own()]);
-    let too_many: Vec<_> = std::iter::once(own.clone()).chain((1..33).map(other)).collect();
+    let too_many: Vec<_> = std::iter::once(own.clone())
+        .chain((1..33).map(other))
+        .collect();
     for document in [
         json!({"defaultSelection": ["self"], "servers": []}),
         json!({"defaultSelection": ["self"], "servers": [other(1), own]}),
@@ -171,17 +212,26 @@ fn discovery_may_use_the_entry_host_on_any_port_or_an_exact_additional_origin() 
     let frankfurt = &catalog().servers[1];
     let served = Origin::parse("https://fra.example.net").unwrap();
     let approves = |targets: &[&str]| {
-        let target = |base| json!({"baseUrl": base, "transport": "fetch-stream", "protocol": "http2"});
+        let target =
+            |base| json!({"baseUrl": base, "transport": "fetch-stream", "protocol": "http2"});
         let throughput: Vec<_> = targets.iter().map(target).collect();
-        let capabilities =
-            json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": []});
-        let document =
-            json!({"server": {"name": ""}, "engineVersion": "", "generation": "g", "capabilities": capabilities});
-        frankfurt.approves(&served, &Preflight::decode(&serde_json::to_vec(&document).unwrap()).unwrap())
+        let capabilities = json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": []});
+        let document = json!({"server": {"name": ""}, "engineVersion": "", "generation": "g", "capabilities": capabilities});
+        frankfurt.approves(
+            &served,
+            &Preflight::decode(&serde_json::to_vec(&document).unwrap()).unwrap(),
+        )
     };
-    assert!(approves(&[".", "https://FRA.example.net:7249", "http://fra.example.net:7246"]));
+    assert!(approves(&[
+        ".",
+        "https://FRA.example.net:7249",
+        "http://fra.example.net:7246"
+    ]));
     assert!(approves(&["https://transfer.example.net:8443"]));
-    assert!(!approves(&["https://transfer.example.net"]), "additional origins match exactly");
+    assert!(
+        !approves(&["https://transfer.example.net"]),
+        "additional origins match exactly"
+    );
     assert!(!approves(&["https://sub.fra.example.net"]));
     assert!(!approves(&[".", "https://other.example"]));
 }

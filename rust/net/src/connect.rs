@@ -15,7 +15,6 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 
-/// A proxy may send a CONNECT response head at most this long.
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 /// A proxy's handshake may take this long past the TCP connect.
 const PROXY_TIMEOUT: Duration = Duration::from_mins(1);
@@ -31,7 +30,6 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 /// Holds an open connection to a target, past any proxy and through TLS for HTTPS.
 pub struct Connection {
     pub stream: Box<dyn Stream>,
-    /// The target's TLS handshake agreed on this protocol.
     pub alpn: Option<Vec<u8>>,
     pub form: RequestForm,
 }
@@ -51,21 +49,21 @@ impl fmt::Debug for RequestForm {
             Self::Origin => formatter.write_str("Origin"),
             Self::Absolute { authorization } => formatter
                 .debug_struct("Absolute")
-                .field("authorization", &authorization.as_ref().map(|_| "<redacted>"))
+                .field(
+                    "authorization",
+                    &authorization.as_ref().map(|_| "<redacted>"),
+                )
                 .finish(),
         }
     }
 }
 
-/// Says why a connection could not be opened, decided where it failed.
 #[derive(Debug)]
 pub enum ConnectError {
     Proxy(UnusableProxy),
     /// The target or proxy resolved or connected nowhere in the dial timeout, or a handshake overran its bound.
     Unreachable(io::Error),
-    /// The proxy refused the connection or broke its protocol.
     Refused(String),
-    /// The TLS handshake with the target or an HTTPS proxy failed.
     Tls(rustls::Error),
     Io(io::Error),
 }
@@ -115,25 +113,49 @@ impl Connector {
         Self { proxy, verify }
     }
 
-    /// Connects to `target`, offering `alpn` in its TLS handshake when it is HTTPS.
-    pub async fn connect(&self, target: &Origin, alpn: Option<Protocol>) -> Result<Connection, ConnectError> {
+    pub async fn connect(
+        &self,
+        target: &Origin,
+        alpn: Option<Protocol>,
+    ) -> Result<Connection, ConnectError> {
         let tls = target.scheme == Scheme::Https;
         let (stream, form) = match self.proxy.route(target)? {
-            None => (Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>, RequestForm::Origin),
+            None => (
+                Box::new(reach(&target.host, target.port).await?) as Box<dyn Stream>,
+                RequestForm::Origin,
+            ),
             Some(upstream) => {
                 let (host, port) = upstream.address();
                 let stream = reach(host, port).await?;
-                bounded(PROXY_TIMEOUT, "proxy", self.through(upstream, stream, target, tls)).await?
+                bounded(
+                    PROXY_TIMEOUT,
+                    "proxy",
+                    self.through(upstream, stream, target, tls),
+                )
+                .await?
             }
         };
         if !tls {
-            return Ok(Connection { stream, alpn: None, form });
+            return Ok(Connection {
+                stream,
+                alpn: None,
+                form,
+            });
         }
         let config = client_config(&self.verify, alpn).await;
         let stream = BufReader::with_capacity(TLS_READ_BYTES, stream);
-        let stream = bounded(TLS_TIMEOUT, "TLS", secure(&TlsConnector::from(config), &target.host, stream)).await?;
+        let stream = bounded(
+            TLS_TIMEOUT,
+            "TLS",
+            secure(&TlsConnector::from(config), &target.host, stream),
+        )
+        .await?;
         let alpn = stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
-        Ok(Connection { stream: Box::new(stream), alpn, form })
+        Ok(Connection {
+            stream: Box::new(stream),
+            alpn,
+            form,
+        })
     }
 
     /// Runs the proxy's part on `stream`, first TLS for an HTTPS proxy, then SOCKS5, a CONNECT tunnel or nothing.
@@ -149,7 +171,10 @@ impl Connector {
                 socks(&mut stream, login.as_ref(), &target.host, target.port).await?;
                 return Ok((Box::new(stream), RequestForm::Origin));
             }
-            Upstream::Http { origin, authorization } => (origin, authorization),
+            Upstream::Http {
+                origin,
+                authorization,
+            } => (origin, authorization),
         };
         let stream: Box<dyn Stream> = match origin.scheme {
             Scheme::Https => {
@@ -159,9 +184,17 @@ impl Connector {
             Scheme::Http => Box::new(stream),
         };
         if tls {
-            Ok((tunnel(stream, target, authorization.as_deref()).await?, RequestForm::Origin))
+            Ok((
+                tunnel(stream, target, authorization.as_deref()).await?,
+                RequestForm::Origin,
+            ))
         } else {
-            Ok((stream, RequestForm::Absolute { authorization: authorization.clone() }))
+            Ok((
+                stream,
+                RequestForm::Absolute {
+                    authorization: authorization.clone(),
+                },
+            ))
         }
     }
 }
@@ -171,14 +204,21 @@ async fn bounded<T>(
     what: &str,
     handshake: impl Future<Output = Result<T, ConnectError>>,
 ) -> Result<T, ConnectError> {
-    tokio::time::timeout(limit, handshake).await.unwrap_or_else(|_| {
-        let silent = io::Error::new(io::ErrorKind::TimedOut, format!("{what} handshake timed out"));
-        Err(ConnectError::Unreachable(silent))
-    })
+    tokio::time::timeout(limit, handshake)
+        .await
+        .unwrap_or_else(|_| {
+            let silent = io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("{what} handshake timed out"),
+            );
+            Err(ConnectError::Unreachable(silent))
+        })
 }
 
 async fn reach(host: &Host, port: u16) -> Result<TcpStream, ConnectError> {
-    dial::dial(host, port).await.map_err(ConnectError::Unreachable)
+    dial::dial(host, port)
+        .await
+        .map_err(ConnectError::Unreachable)
 }
 
 async fn secure<S: Stream>(
@@ -187,11 +227,15 @@ async fn secure<S: Stream>(
     stream: S,
 ) -> Result<tokio_rustls::client::TlsStream<S>, ConnectError> {
     let name = match host {
-        Host::Name(name) => ServerName::try_from(name.clone()).map_err(|error| io::Error::other(error.to_string()))?,
+        Host::Name(name) => ServerName::try_from(name.clone())
+            .map_err(|error| io::Error::other(error.to_string()))?,
         Host::Ip(ip) => ServerName::IpAddress((*ip).into()),
     };
     tls.connect(name, stream).await.map_err(|error| {
-        match error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+        match error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        {
             Some(tls) => ConnectError::Tls(tls.clone()),
             None => ConnectError::Io(error),
         }
@@ -216,11 +260,18 @@ async fn tunnel(
     let status = head.lines().next().unwrap_or_default();
     let (version, rest) = status.split_once(' ').unwrap_or_default();
     let code = rest.split(' ').next().unwrap_or_default();
-    if !version.starts_with("HTTP/") || code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(ConnectError::Refused("proxy sent a malformed CONNECT response".into()));
+    if !version.starts_with("HTTP/")
+        || code.len() != 3
+        || !code.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(ConnectError::Refused(
+            "proxy sent a malformed CONNECT response".into(),
+        ));
     }
     if code != "200" {
-        return Err(ConnectError::Refused(format!("proxy refused CONNECT with {rest}")));
+        return Err(ConnectError::Refused(format!(
+            "proxy refused CONNECT with {rest}"
+        )));
     }
     Ok(stream)
 }
@@ -230,7 +281,9 @@ async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError>
     let mut head = Vec::new();
     while !(head.ends_with(b"\n\n") || head.ends_with(b"\n\r\n")) {
         if head.len() == MAX_HEAD_BYTES {
-            return Err(ConnectError::Refused("proxy sent an oversized CONNECT response".into()));
+            return Err(ConnectError::Refused(
+                "proxy sent an oversized CONNECT response".into(),
+            ));
         }
         head.push(stream.read_u8().await?);
     }
@@ -238,8 +291,17 @@ async fn read_head(stream: &mut Box<dyn Stream>) -> Result<String, ConnectError>
 }
 
 /// Runs SOCKS5 CONNECT (RFC 1928, RFC 1929) on `stream` to `host`, offering username and password only with a login.
-async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port: u16) -> Result<(), ConnectError> {
-    let greeting: &[u8] = if login.is_some() { &[5, 2, 0, 2] } else { &[5, 1, 0] };
+async fn socks(
+    stream: &mut TcpStream,
+    login: Option<&Login>,
+    host: &Host,
+    port: u16,
+) -> Result<(), ConnectError> {
+    let greeting: &[u8] = if login.is_some() {
+        &[5, 2, 0, 2]
+    } else {
+        &[5, 1, 0]
+    };
     stream.write_all(greeting).await?;
     let mut reply = [0; 2];
     stream.read_exact(&mut reply).await?;
@@ -247,7 +309,11 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
         ([5, 0], _) => {}
         ([5, 0xff], _) => return Err(failed("accepts none of the offered authentication methods")),
         ([5, 2], Some(login)) => authenticate(stream, login).await?,
-        ([5, method], _) => return Err(failed(format!("asked for unsupported authentication method {method}"))),
+        ([5, method], _) => {
+            return Err(failed(format!(
+                "asked for unsupported authentication method {method}"
+            )));
+        }
         _ => return Err(malformed()),
     }
     let address = match host {
@@ -256,7 +322,8 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
             IpAddr::V6(ip) => [&[4][..], &ip.octets()].concat(),
         },
         Host::Name(name) => {
-            let length = u8::try_from(name.len()).map_err(|_| failed("cannot carry a host name over 255 bytes"))?;
+            let length = u8::try_from(name.len())
+                .map_err(|_| failed("cannot carry a host name over 255 bytes"))?;
             [&[3, length][..], name.as_bytes()].concat()
         }
     };
@@ -279,8 +346,13 @@ async fn socks(stream: &mut TcpStream, login: Option<&Login>, host: &Host, port:
     Ok(())
 }
 
-async fn authenticate(stream: &mut TcpStream, (user, password): &Login) -> Result<(), ConnectError> {
-    let (Ok(user_length @ 1..), Ok(password_length)) = (u8::try_from(user.len()), u8::try_from(password.len())) else {
+async fn authenticate(
+    stream: &mut TcpStream,
+    (user, password): &Login,
+) -> Result<(), ConnectError> {
+    let (Ok(user_length @ 1..), Ok(password_length)) =
+        (u8::try_from(user.len()), u8::try_from(password.len()))
+    else {
         return Err(ConnectError::Refused(
             "a SOCKS5 username has 1 to 255 bytes, a password at most 255".into(),
         ));

@@ -29,18 +29,24 @@ test("each throughput axis holds what it draws, with headroom and no decade jump
     [1.25e9, 1.5e9, 2.5e9, 3],
   ] as const;
   for (const [rate, chartBytesPerSec, gaugeBytesPerSec, tier] of cases)
-    expect(throughputScales(NONE, rate === null ? null : tick(rate), "auto", BITS), `${rate}`).toEqual({
+    expect(
+      throughputScales(NONE, rate === null ? null : tick(rate), "auto", BITS),
+      `${rate}`,
+    ).toEqual({
       chartBytesPerSec,
       gaugeBytesPerSec,
       tier,
     });
   // The chart draws each bidirectional lane, the dial their sum, live or settled.
   const bidirectional = { chartBytesPerSec: 62.5e6, gaugeBytesPerSec: 125e6, tier: 2 };
-  expect(throughputScales(NONE, { lane: 50e6, combined: 100e6, running: true }, "auto", BITS)).toEqual(bidirectional);
+  expect(
+    throughputScales(NONE, { lane: 50e6, combined: 100e6, running: true }, "auto", BITS),
+  ).toEqual(bidirectional);
   const lanes = { ...NONE, bidirectional: { down: result(50e6), up: result(50e6), wire: null } };
   expect(throughputScales(lanes, null, "auto", BITS)).toEqual(bidirectional);
   expect(
-    throughputScales({ ...NONE, download: { ...result(6e6), wire: null } }, null, "auto", BITS).chartBytesPerSec,
+    throughputScales({ ...NONE, download: { ...result(6e6), wire: null } }, null, "auto", BITS)
+      .chartBytesPerSec,
   ).toBe(6.25e6);
   // A manual maximum is used exactly, not rounded to a step.
   expect(throughputScales(NONE, tick(1e9), 2e6, BITS)).toEqual({
@@ -51,8 +57,7 @@ test("each throughput axis holds what it draws, with headroom and no decade jump
 });
 
 test("the dial's ceiling is round in the unit the page reads, in each of the four units", () => {
-  // The dial reads idle, a tick at 1.1× the giga or gibi prefix (which still reads a prefix below) and a 2 Gbit/s tick
-  // as 1, 2 and 5 Gbit/s; 200 MB/s, 2000 MB/s, 500 MB/s; 1000 Mibit/s, 2000 Mibit/s, 2 Gibit/s; 200, 2000, 500 MiB/s.
+  // The dial reads idle, 1.1× the giga or gibi prefix and 2 Gbit/s as three round steps in each unit.
   const all: [Units, number, number, number][] = [
     [{ base: "base10", kind: "bits" }, 125e6, 250e6, 625e6],
     [{ base: "base10", kind: "bytes" }, 200e6, 2e9, 500e6],
@@ -69,8 +74,7 @@ test("the dial's ceiling is round in the unit the page reads, in each of the fou
 });
 
 test("a stage settling never rescales the page; a finished run reads in the tier History gives it", () => {
-  // Each case gives a live peak and the result it settled at, in bytes/s, the tier and dial through the run, and the
-  // run's tier once it ends, History's when a result settled, else the one its live figures were drawn in.
+  // Each case: a live peak and its settled result in bytes/s, the tier and dial through the run, and the run's tier once it ends.
   const cases = [
     // 1.3 Mbit/s live, 1.1 settled.
     [162_500, 137_500, 2, 125e6, 1],
@@ -80,7 +84,10 @@ test("a stage settling never rescales the page; a finished run reads in the tier
     [156.25e6, 143.75e6, 3, 250e6, 2],
   ] as const;
   for (const [peak, settled, tier, gaugeBytesPerSec, finishedTier] of cases) {
-    const results = { ...NONE, download: settled === null ? null : { ...result(settled), wire: null } };
+    const results = {
+      ...NONE,
+      download: settled === null ? null : { ...result(settled), wire: null },
+    };
     const running = throughputScales(NONE, tick(peak), "auto", BITS);
     expect([running.tier, running.gaugeBytesPerSec], `${peak}`).toEqual([tier, gaugeBytesPerSec]);
     expect(throughputScales(results, tick(peak), "auto", BITS), `${peak} settled`).toEqual(running);
@@ -98,7 +105,10 @@ test("a corrupt saved or live rate cannot overflow an axis", () => {
   for (const rate of [1e308, Number.MAX_VALUE]) {
     const saved = { ...NONE, download: { ...result(rate), wire: null } };
     expect(throughputScales(saved, null, "auto", BITS), `${rate}`).toEqual(top);
-    expect(throughputScales(saved, { ...tick(rate), running: false }, "auto", BITS), `${rate}`).toEqual(top);
+    expect(
+      throughputScales(saved, { ...tick(rate), running: false }, "auto", BITS),
+      `${rate}`,
+    ).toEqual(top);
   }
   expect(throughputScales(NONE, tick(Infinity), "auto", BITS)).toEqual(top);
   const idle = throughputScales(NONE, null, "auto", BITS);

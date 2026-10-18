@@ -1,7 +1,12 @@
 // The screenshot build's network and clock: fixed scenarios and timer-to-timer time, so runs pass alike at once.
 import type { ProbeOutcome } from "../../src/protocol/messages";
 import type { Clock } from "../../src/engine/run/clock";
-import type { LatencyBus, OpenProbeChannel, OpenStage, StageResources } from "../../src/engine/types";
+import type {
+  LatencyBus,
+  OpenProbeChannel,
+  OpenStage,
+  StageResources,
+} from "../../src/engine/types";
 
 export * from "../../src/engine/run/clock";
 
@@ -15,7 +20,6 @@ export interface Spread {
 
 /** One run as the fakes report it; capture.ts sets it on the page before each run. */
 export interface Scenario {
-  /** Epoch ms the run starts at. */
   epoch: number;
   /** Each server's payload rates, in bytes per second, and how far they wander from them. */
   down: number;
@@ -113,15 +117,16 @@ const PROBE_MS = 10;
 
 export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
   const plan = scenario();
-  // The rate holds each level for a while, as a link's does, so peaks and stability read like a real run's; each
-  // level's mirror follows it, so the mean stays the scenario's rate.
+  // The rate holds each level a while, as a link's does, and each level's mirror follows it, so the mean stays the scenario's.
   const rate = (dir: "down" | "up", ms: number) => {
     const level = Math.floor(ms / 1000);
     const offset = random(activity.stage.length * 7919 + (level >> 1))() - 0.5;
     return plan[dir] * (1 + plan.wander * (level & 1 ? -offset : offset));
   };
-  const spread = activity.stage === "latency" ? plan.idle : plan.loaded[activity.stage as "download" | "upload"];
-  const perTick = (activity.stage === "latency" ? plan.replies.idle : plan.replies.loaded) * (PROBE_MS / 1000);
+  const spread =
+    activity.stage === "latency" ? plan.idle : plan.loaded[activity.stage as "download" | "upload"];
+  const perTick =
+    (activity.stage === "latency" ? plan.replies.idle : plan.replies.loaded) * (PROBE_MS / 1000);
   let stop = () => {};
   let started = 0;
   let sent = 0;
@@ -146,7 +151,8 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
         stops.push(
           every(TICK_MS, () => {
             const ms = now - started;
-            if (activity.transfer.includes("down")) events.download(Math.round((rate("down", ms) * TICK_MS) / 1000));
+            if (activity.transfer.includes("down"))
+              events.download(Math.round((rate("down", ms) * TICK_MS) / 1000));
             if (activity.transfer.includes("up")) {
               sent += (rate("up", ms) * TICK_MS) / 1000;
               if (ms % RECEIVER_MS < TICK_MS) events.receiver(receiver());
@@ -161,7 +167,13 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
             owed += perTick;
             const outcomes: ProbeOutcome[] = [];
             for (let i = 0; i < Math.floor(owed); i++)
-              outcomes.push({ rttMs: rtt(), timedOut: false, handlingMs: null, observedAt: now, inWindow: true });
+              outcomes.push({
+                rttMs: rtt(),
+                timedOut: false,
+                handlingMs: null,
+                observedAt: now,
+                inWindow: true,
+              });
             owed -= outcomes.length;
             if (outcomes.length) events.probes(outcomes);
           }),
@@ -188,7 +200,9 @@ export const openProbeChannel: OpenProbeChannel = ({ target, intervalMs }, event
   let timer = setTimeout(function reply() {
     if (!answered) events.ready();
     answered = true;
-    events.outcomes([{ rttMs, timedOut: false, handlingMs: null, observedAt: performance.now(), inWindow: true }]);
+    events.outcomes([
+      { rttMs, timedOut: false, handlingMs: null, observedAt: performance.now(), inWindow: true },
+    ]);
     timer = setTimeout(reply, interval);
   }, rttMs);
   return {

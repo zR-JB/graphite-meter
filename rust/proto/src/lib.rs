@@ -12,7 +12,6 @@ macro_rules! table {
         $vis enum $name { $($(#[$vmeta])* $variant,)+ }
 
         impl $name {
-            /// Lists every variant in table order.
             pub const ALL: &[Self] = &[$(Self::$variant),+];
 
             /// Gives the variant's place in `ALL`. Variants are declared in table order without explicit discriminants.
@@ -26,7 +25,6 @@ macro_rules! table {
 
             $($(#[$cmeta])* pub const fn $column(self) -> $type { self.row().$index })+
 
-            /// Finds the first variant whose `column` equals `value`.
             pub fn find_by<V: PartialEq>(column: fn(Self) -> V, value: V) -> Option<Self> {
                 Self::ALL.iter().copied().find(|&variant| column(variant) == value)
             }

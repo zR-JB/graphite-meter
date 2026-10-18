@@ -14,7 +14,6 @@ const GRAVEYARD_MAX = 64;
 const BACKUP_FLOOR_MS = 8;
 const BACKUP_CEILING_MS = 1_000;
 
-/** Time as the prober sees it, so tests can drive it. */
 interface ProberClock {
   now(): number;
   /** Epoch ms at `now() === 0`: outcomes leave the realm on epoch time. */
@@ -29,7 +28,6 @@ interface ProberIO {
   dial(): void;
   /** Sends on the open connection; throws or rejects when the browser could not send. */
   send(text: string): void | Promise<void>;
-  /** Closes the current connection, which then answers nothing. */
   hangUp(): void;
   post(report: ProbeReport): void;
 }
@@ -63,7 +61,6 @@ export class Prober {
   #reconnectAt = Infinity;
   #backoff = 0;
   #stalled = false;
-  /** This connection had a matched reply. */
   #replied = false;
   #measuring = false;
   /** A window ended and its probes in flight have yet to resolve. */
@@ -94,7 +91,6 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** The connection was lost, or a dial failed. */
   closed(detail: string): void {
     if (this.#state === "stopped") return;
     if (this.#state === "open") this.#state = "connecting";
@@ -128,8 +124,7 @@ export class Prober {
   /** A message from the server, read at `at` before it was parsed. */
   frame(text: string, at: number): void {
     if (this.#state !== "open") return;
-    // A reply that reached a frozen worker is read only after the freeze, perhaps before the late timer.
-    // A timer this late means the worker or its page froze.
+    // A timer this late means the worker or its page froze; a reply that reached it is read only after the freeze.
     if (at - this.#timerAt > GAP_MS) this.wake();
     const reply = pong(text);
     if (!reply) return;
@@ -148,8 +143,10 @@ export class Prober {
     this.#rtt.observe(rttMs);
     // A reply at or after its deadline cannot erase the timeout.
     const late = at >= probe.deadline;
-    const handlingMs = reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
-    if (probe.measured) this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
+    const handlingMs =
+      reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
+    if (probe.measured)
+      this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
     if (!late && this.#stalled) {
       this.#stalled = false;
       this.io.post({ type: "resumed" });
@@ -169,22 +166,21 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain starting at once;
-      probes in flight keep their deadlines. */
+  /** From the next send on: a fixed cadence spaced from the last send, or a reply-driven chain at once. */
   pace(intervalMs: number | null, maxInFlight = this.#pace.maxInFlight): void {
     this.#pace = { intervalMs, maxInFlight };
     this.#backupAt = intervalMs === null ? this.clock.now() : Infinity;
     this.wake();
   }
 
-  /** Ends the measured window: its probes in flight drain to their own deadlines, each at most 10 s away, and the
-      drain is acknowledged; the bus probes on, unmeasured. */
+  /** Ends the measured window: its probes drain to their deadlines, at most 10 s away; the bus probes on, unmeasured. */
   stop(): void {
     if (this.#state === "stopped") return this.io.post({ type: "drained" });
     const now = this.clock.now();
     this.#measuring = false;
     this.#draining = true;
-    for (const probe of this.#pending.values()) if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
+    for (const probe of this.#pending.values())
+      if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
     this.#settle(now);
   }
 
@@ -193,8 +189,7 @@ export class Prober {
     this.#timerAt = Infinity;
     if (this.#state === "stopped") return;
     const now = this.clock.now();
-    // Probes in flight across a freeze get no verdict: their replies may be waiting unread, and their RTTs would
-    // carry the freeze.
+    // Probes in flight across a freeze get no verdict: their replies may wait unread, and their RTTs carry the freeze.
     if (now - due > GAP_MS) this.#interrupt();
     if (now >= this.#reconnectAt) {
       this.#reconnectAt = Infinity;
@@ -264,8 +259,7 @@ export class Prober {
     this.#settle(this.clock.now());
   }
 
-  /** Resolves each probe at the deadline fixed when it was sent: a timeout, or a send failure while its write is still
-      unconfirmed. */
+  /** Resolves each probe at its deadline: a timeout, or a send failure while its write is still unconfirmed. */
   #sweep(now: number): void {
     let evicted = false;
     let head = false;
@@ -279,7 +273,8 @@ export class Prober {
         continue;
       }
       this.#graveyard.set(id, probe.sentAt);
-      if (this.#graveyard.size > GRAVEYARD_MAX) this.#graveyard.delete(this.#graveyard.keys().next().value!);
+      if (this.#graveyard.size > GRAVEYARD_MAX)
+        this.#graveyard.delete(this.#graveyard.keys().next().value!);
       if (probe.measured) this.#record(probe, probe.deadline, true, null);
       evicted = true;
       head ||= id === this.#head;
@@ -316,7 +311,6 @@ export class Prober {
     this.#outbox = [];
   }
 
-  /** Measured probes in flight lose their verdict. */
   #interrupt(): void {
     let count = 0;
     for (const probe of this.#pending.values()) if (probe.measured) count++;
@@ -333,7 +327,6 @@ export class Prober {
     this.io.hangUp();
   }
 
-  /** The ended window's probes all resolved, each by its deadline at the latest. */
   #drained(now: number): void {
     this.#sweep(now);
     this.#flush();
@@ -361,7 +354,11 @@ export class Prober {
     if (this.#state === "open")
       at = Math.min(
         at,
-        intervalMs === null ? this.#backupAt : this.#pending.size < maxInFlight ? this.#sentAt + intervalMs : Infinity,
+        intervalMs === null
+          ? this.#backupAt
+          : this.#pending.size < maxInFlight
+            ? this.#sentAt + intervalMs
+            : Infinity,
       );
     if (at >= this.#timerAt) return;
     this.#timerAt = at;

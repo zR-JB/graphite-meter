@@ -33,8 +33,7 @@ interface Fault {
 const faults: Fault[] = [
   {
     name: "a stopped peer leaves the download it stalled",
-    // The fault lands once the page shows the stage, which a busy browser can show late; a stall must still end the
-    // window well before it closes to fail the stage rather than the next one.
+    // The fault lands once the page shows the stage, maybe late; a stall must still end the window well before it closes.
     downloadMs: 5_000,
     during: "download",
     act: async (_page, victim) => void victim.kill("SIGSTOP"),
@@ -83,48 +82,58 @@ const faults: Fault[] = [
   },
 ];
 
-test.chrome("a download graph leaves separate curves and fills across a page-clock gap", async (page) => {
-  await open(page, undefined, {
-    config: {
-      stages: { latency: false, download: true, upload: false, bidirectional: false },
-      duration: { ...baseConfig.duration, downloadMs: 5_000 },
-    },
-  });
-  await ready(page);
-  const startedAt = Date.now();
-  await runButton(page, "Start test").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector<SVGPathElement>(".graph .plot path.line")?.getTotalLength() ?? 0),
-    )
-    .toBeGreaterThan(0);
-  // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
-  await page.evaluate(() => {
-    const until = performance.now() + 2_000;
-    while (performance.now() < until) {}
-  });
-  await savedResult(page, startedAt, 20_000);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (document.querySelector(".graph .plot path.line")?.getAttribute("d")?.match(/M/g) ?? []).length >= 2,
+test.chrome(
+  "a download graph leaves separate curves and fills across a page-clock gap",
+  async (page) => {
+    await open(page, undefined, {
+      config: {
+        stages: { latency: false, download: true, upload: false, bidirectional: false },
+        duration: { ...baseConfig.duration, downloadMs: 5_000 },
+      },
+    });
+    await ready(page);
+    const startedAt = Date.now();
+    await runButton(page, "Start test").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.querySelector<SVGPathElement>(".graph .plot path.line")?.getTotalLength() ?? 0,
+        ),
+      )
+      .toBeGreaterThan(0);
+    // Pause the page while its transfer worker keeps running, then let the visible graph resume drawing.
+    await page.evaluate(() => {
+      const until = performance.now() + 2_000;
+      while (performance.now() < until) {}
+    });
+    await savedResult(page, startedAt, 20_000);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (document.querySelector(".graph .plot path.line")?.getAttribute("d")?.match(/M/g) ?? [])
+              .length >= 2,
+        ),
+      )
+      .toBe(true);
+    const [line, area] = await page.evaluate(() =>
+      [".graph .plot path.line", ".graph .plot path.area"].map(
+        (selector) => document.querySelector(selector)?.getAttribute("d") ?? "",
       ),
-    )
-    .toBe(true);
-  const [line, area] = await page.evaluate(() =>
-    [".graph .plot path.line", ".graph .plot path.area"].map(
-      (selector) => document.querySelector(selector)?.getAttribute("d") ?? "",
-    ),
-  );
-  expect((line!.match(/M/g) ?? []).length).toBeGreaterThanOrEqual(2);
-  expect((area!.match(/M/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
-  expect((area!.match(/Z/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
-});
+    );
+    expect((line!.match(/M/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((area!.match(/M/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+    expect((area!.match(/Z/g) ?? []).length).toBe((line!.match(/M/g) ?? []).length);
+  },
+);
 
 /** Waits until the running stage, planned for `stageMs`, has measured for `ms`, as its time left shows. */
 async function measuredFor(page: Page, stageMs: number, ms: number) {
   const left = () =>
-    page.evaluate(() => parseFloat(document.querySelector(".remaining:not(.handoff-out) .figure")?.textContent ?? ""));
+    page.evaluate(() =>
+      parseFloat(document.querySelector(".remaining:not(.handoff-out) .figure")?.textContent ?? ""),
+    );
   // A stage just begun can still show the time its predecessor ended on.
   await expect
     .poll(
@@ -139,14 +148,18 @@ async function measuredFor(page: Page, stageMs: number, ms: number) {
 
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Download stage time"]')!;
+    const input = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Download stage time"]',
+    )!;
     input.value = String(value / 1000);
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }, value);
 }
 
 // Freezing a page is Chrome's lifecycle control; no other browser offers it.
-for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name.includes("frozen")))
+for (const fault of faults.filter(
+  (fault) => browser === "chrome" || !fault.name.includes("frozen"),
+))
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");
     const peers = [frankfurt, victim.server];
@@ -168,7 +181,8 @@ for (const fault of faults.filter((fault) => browser === "chrome" || !fault.name
       await ready(page);
       const startedAt = Date.now();
       await runButton(page, "Start test").click();
-      if (fault.editDownloadMs) await page.getByRole("button", { name: "Settings", exact: true }).click();
+      if (fault.editDownloadMs)
+        await page.getByRole("button", { name: "Settings", exact: true }).click();
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });

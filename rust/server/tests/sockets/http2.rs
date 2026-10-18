@@ -12,14 +12,12 @@ use rustls::pki_types::ServerName;
 use std::{future::poll_fn, sync::Arc};
 use tokio_rustls::TlsConnector;
 
-/// A server with an HTTP/2 listener on a local port and a client trusting its certificate.
 struct H2 {
     server: Running,
     connector: TlsConnector,
     _scratch: Scratch,
 }
 
-/// A client connection and the task driving it, which ends when the connection closes.
 struct Connection {
     client: SendRequest<Bytes>,
     _driver: JoinHandle<Result<(), h2::Error>>,
@@ -32,13 +30,20 @@ impl H2 {
         let key = scratch.file("key.pem", &identity.key).unwrap();
         let (cert, key) = (cert.to_str().unwrap(), key.to_str().unwrap());
         let mut env = env.to_vec();
-        env.extend([("GM_TLS_CERT", cert), ("GM_TLS_KEY", key), ("GM_H2_ADDR", "localhost:0")]);
+        env.extend([
+            ("GM_TLS_CERT", cert),
+            ("GM_TLS_KEY", key),
+            ("GM_H2_ADDR", "localhost:0"),
+        ]);
         let server = start(&env).await;
         let connector = TlsConnector::from(Arc::new(identity.client(&[b"h2"])));
-        Self { server, connector, _scratch: scratch }
+        Self {
+            server,
+            connector,
+            _scratch: scratch,
+        }
     }
 
-    /// A connection whose streams open with `window` bytes of receive window.
     async fn connect(&self, window: u32) -> Connection {
         let socket = TcpStream::connect(self.server.h2.unwrap()).await.unwrap();
         let name = ServerName::try_from("localhost").unwrap();
@@ -50,13 +55,19 @@ impl H2 {
             .handshake(stream)
             .await
             .unwrap();
-        Connection { client, _driver: tokio::spawn(connection) }
+        Connection {
+            client,
+            _driver: tokio::spawn(connection),
+        }
     }
 }
 
 impl Connection {
-    /// Opens a request whose body the caller sends.
-    async fn open(&mut self, method: &str, path: &str) -> (client::ResponseFuture, SendStream<Bytes>) {
+    async fn open(
+        &mut self,
+        method: &str,
+        path: &str,
+    ) -> (client::ResponseFuture, SendStream<Bytes>) {
         self.send(method, path, false).await
     }
 
@@ -64,7 +75,12 @@ impl Connection {
         self.send(method, path, true).await.0.await.unwrap()
     }
 
-    async fn send(&mut self, method: &str, path: &str, end: bool) -> (client::ResponseFuture, SendStream<Bytes>) {
+    async fn send(
+        &mut self,
+        method: &str,
+        path: &str,
+        end: bool,
+    ) -> (client::ResponseFuture, SendStream<Bytes>) {
         poll_fn(|cx| self.client.poll_ready(cx)).await.unwrap();
         let request = Request::builder()
             .method(method)
@@ -75,7 +91,12 @@ impl Connection {
     }
 
     async fn json(&mut self, method: &str, path: &str) -> serde_json::Value {
-        serde_json::from_slice(&read(self.get(method, path).await.into_body()).await.unwrap()).unwrap()
+        serde_json::from_slice(
+            &read(self.get(method, path).await.into_body())
+                .await
+                .unwrap(),
+        )
+        .unwrap()
     }
 
     async fn upload_id(&mut self) -> String {
@@ -97,26 +118,30 @@ async fn read(mut body: RecvStream) -> Result<Vec<u8>, Option<Reason>> {
     Ok(bytes)
 }
 
-/// Sends `bytes` as flow control admits them.
 async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     while !bytes.is_empty() {
         stream.reserve_capacity(bytes.len());
         while stream.capacity() == 0 {
-            poll_fn(|cx| stream.poll_capacity(cx)).await.unwrap().unwrap();
+            poll_fn(|cx| stream.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
         }
         let chunk = bytes.split_to(stream.capacity().min(bytes.len()));
         stream.send_data(chunk, end && bytes.is_empty()).unwrap();
     }
 }
 
-/// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it
-/// below a mebibyte.
+/// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it below 1 MiB.
 async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {
     upload.send_data(Bytes::from_static(b"x"), false).unwrap();
     upload.reserve_capacity(4 << 20);
     let opened = async {
         while upload.capacity() < 2 * 65_535 {
-            poll_fn(|cx| upload.poll_capacity(cx)).await.unwrap().unwrap();
+            poll_fn(|cx| upload.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
         }
     };
     tokio::time::timeout(bound, opened).await.is_ok()
@@ -124,38 +149,67 @@ async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {
 
 #[tokio::test]
 async fn only_an_admitted_upload_opens_the_connection_window() {
-    let env = [("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"), ("GM_MAX_SESSIONS_PER_CLIENT", "1")];
+    let env = [
+        ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"),
+        ("GM_MAX_SESSIONS_PER_CLIENT", "1"),
+    ];
     let h2 = H2::start(&env).await;
     let mut admitted = h2.connect(65_535).await;
     let id = admitted.upload_id().await;
     let (answer, mut upload) = admitted.open("POST", &format!("/upload?id={id}")).await;
-    assert!(window_opens(&mut upload, Duration::from_secs(5)).await, "its first read opens the window");
+    assert!(
+        window_opens(&mut upload, Duration::from_secs(5)).await,
+        "its first read opens the window"
+    );
     upload.send_data(Bytes::new(), true).unwrap();
-    assert_eq!(read(answer.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
+    assert_eq!(
+        read(answer.await.unwrap().into_body()).await.unwrap(),
+        br#"{"bytes":1}"#
+    );
     h2.server.until_active(0).await;
 
     let mut refused = h2.connect(0).await;
     let _held = refused.get("GET", ENDLESS).await;
-    let (id, before) = (h2.server.upload_id().await, super::quic::settled(&h2.server.budget).await);
+    let (id, before) = (
+        h2.server.upload_id().await,
+        super::quic::settled(&h2.server.budget).await,
+    );
     let (answer, mut upload) = refused.open("POST", &format!("/upload?id={id}")).await;
-    assert_eq!(answer.await.unwrap().status(), 429, "the client's share is held");
+    assert_eq!(
+        answer.await.unwrap().status(),
+        429,
+        "the client's share is held"
+    );
     upload.send_data(Bytes::from_static(b"x"), false).unwrap();
     upload.reserve_capacity(4 << 20);
     // A round trip after the data: any grant it drew is in by the probe's answer.
     refused.get("GET", "/probe").await;
-    assert!(upload.capacity() < 65_535, "an unadmitted upload keeps the default window");
-    let held = super::quic::settled(&h2.server.budget).await.saturating_sub(before);
-    assert!(held < 1 << 20, "{held} bytes of credit without an admitted upload");
+    assert!(
+        upload.capacity() < 65_535,
+        "an unadmitted upload keeps the default window"
+    );
+    let held = super::quic::settled(&h2.server.budget)
+        .await
+        .saturating_sub(before);
+    assert!(
+        held < 1 << 20,
+        "{held} bytes of credit without an admitted upload"
+    );
 }
 
-/// Waits until the upload `id` counted `bytes`.
 async fn counted(connection: &mut Connection, id: &str, bytes: u64) {
     let reached = async {
-        while connection.json("POST", &format!("/upload/checkpoint?id={id}")).await["bytes"] != bytes {
+        while connection
+            .json("POST", &format!("/upload/checkpoint?id={id}"))
+            .await["bytes"]
+            != bytes
+        {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(10), reached).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), reached)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -172,7 +226,10 @@ async fn under_pressure_a_running_upload_keeps_its_window_after_the_one_that_rai
     upload.send_data(Bytes::from_static(b"x"), false).unwrap();
     counted(&mut connection, &id, 2).await;
     raiser.send_data(Bytes::new(), true).unwrap();
-    assert_eq!(read(raised.await.unwrap().into_body()).await.unwrap(), br#"{"bytes":1}"#);
+    assert_eq!(
+        read(raised.await.unwrap().into_body()).await.unwrap(),
+        br#"{"bytes":1}"#
+    );
     // More than the credit the window granted before, so the server must keep granting it.
     let sent = 26 << 20;
     send(&mut upload, Bytes::from(vec![7; sent]), false).await;
@@ -208,7 +265,10 @@ async fn an_upload_keeps_a_large_window_nearly_full() {
     upload.reserve_capacity(8 << 20);
     let refreshed = async {
         while upload.capacity() <= 7 << 20 {
-            poll_fn(|cx| upload.poll_capacity(cx)).await.unwrap().unwrap();
+            poll_fn(|cx| upload.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
         }
     };
     let refreshed = tokio::time::timeout(Duration::from_secs(2), refreshed).await;
@@ -241,14 +301,24 @@ async fn unadmitted_header_and_data_floods_stay_within_the_floor() {
     }
     let mut refused = 0;
     for (response, _) in held {
-        let response = tokio::time::timeout(Duration::from_secs(5), response).await.unwrap();
-        refused += usize::from(response.is_err_and(|error| error.reason() == Some(Reason::REFUSED_STREAM)));
+        let response = tokio::time::timeout(Duration::from_secs(5), response)
+            .await
+            .unwrap();
+        refused += usize::from(
+            response.is_err_and(|error| error.reason() == Some(Reason::REFUSED_STREAM)),
+        );
         let used = budget.usage().used.saturating_sub(idle);
-        assert!(used <= graphite_meter_server::transport::http2::FLOOR_BYTES, "{used} bytes");
+        assert!(
+            used <= graphite_meter_server::transport::http2::FLOOR_BYTES,
+            "{used} bytes"
+        );
     }
     assert!(refused > 0, "the flood reached the connection's allowance");
     let mut sibling = h2.connect(65_535).await;
-    assert_eq!(sibling.json("GET", "/probe").await["protocolNegotiated"], "h2");
+    assert_eq!(
+        sibling.json("GET", "/probe").await["protocolNegotiated"],
+        "h2"
+    );
 }
 
 #[tokio::test]
@@ -258,7 +328,9 @@ async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
     let mut connection = h2.connect(0).await;
     let download = connection.get("GET", ENDLESS).await;
     let id = h2.server.upload_id().await;
-    let feed = connection.get("GET", &format!("/upload/progress?id={id}")).await;
+    let feed = connection
+        .get("GET", &format!("/upload/progress?id={id}"))
+        .await;
     assert_eq!(feed.status(), 200);
     let (answer, mut upload) = connection.open("POST", &format!("/upload?id={id}")).await;
     send(&mut upload, Bytes::from_static(b"partial"), false).await;
@@ -271,7 +343,10 @@ async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
         Some(Reason::CANCEL),
         "an idle download is reset"
     );
-    assert_eq!(read(feed.into_body()).await.unwrap_err(), Some(Reason::CANCEL));
+    assert_eq!(
+        read(feed.into_body()).await.unwrap_err(),
+        Some(Reason::CANCEL)
+    );
     let answer = answer.await.unwrap();
     assert_eq!(answer.status(), 408);
     assert_eq!(answer.headers()["x-graphite-upload-refusal"], "idle");
@@ -279,7 +354,8 @@ async fn transfers_and_feeds_the_peer_leaves_idle_end_after_thirty_seconds() {
 }
 
 #[tokio::test]
-async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seconds_for_its_preface() {
+async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seconds_for_its_preface()
+ {
     let h2 = H2::start(&[]).await;
     let socket = TcpStream::connect(h2.server.h2.unwrap()).await.unwrap();
     let name = ServerName::try_from("localhost").unwrap();
@@ -305,6 +381,7 @@ async fn a_connection_announces_250_streams_and_64_kib_frames_and_waits_ten_seco
     let read = tokio::time::timeout(Duration::from_millis(50), stream.read(&mut [0; 1])).await;
     assert!(read.is_err(), "the connection waits for its preface");
     advance_clock(Duration::from_secs(1)).await;
-    let closed = tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut Vec::new())).await;
+    let closed =
+        tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut Vec::new())).await;
     assert!(closed.is_ok(), "the connection closed");
 }

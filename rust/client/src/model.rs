@@ -12,7 +12,6 @@ graphite_meter_proto::table! {
     #[derive(PartialOrd, Ord)]
     pub enum Stage {
         name.0: &'static str,
-        /// The directions the stage moves bytes in; none for latency.
         directions.1: &'static [Direction],
     } {
         Latency => ("latency", &[]),
@@ -38,7 +37,6 @@ impl Direction {
     pub const BOTH: [Self; 2] = [Self::Down, Self::Up];
 }
 
-/// One value per direction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Dir<T> {
     pub down: T,
@@ -47,12 +45,14 @@ pub struct Dir<T> {
 
 impl<T> Dir<T> {
     pub fn from_fn(mut value: impl FnMut(Direction) -> T) -> Self {
-        Self { down: value(Direction::Down), up: value(Direction::Up) }
+        Self {
+            down: value(Direction::Down),
+            up: value(Direction::Up),
+        }
     }
 }
 
 impl Dir<Option<Throughput>> {
-    /// The measured mean rates in bytes per second, its directions added.
     pub fn mean(&self) -> f64 {
         [self.down, self.up]
             .into_iter()
@@ -106,7 +106,10 @@ pub struct Failure {
 
 impl Failure {
     pub fn new(reason: FailureReason, text: impl Into<String>) -> Self {
-        Self { reason, text: text.into() }
+        Self {
+            reason,
+            text: text.into(),
+        }
     }
 }
 
@@ -126,7 +129,6 @@ pub enum LaneHealth {
     Failed(Failure),
 }
 
-/// A failure as a stage recorded it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerFailure {
     pub server: ServerId,
@@ -135,26 +137,20 @@ pub struct ServerFailure {
     pub at: Instant,
 }
 
-/// A direction's headline, if any, and its unique measured bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Throughput {
     pub rate: Option<Rate>,
     pub bytes: u64,
 }
 
-/// One server's share of a stage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerResult {
     pub server: ServerId,
-    /// The server left the run in this stage.
     pub left: bool,
-    /// Per direction the stage moves.
     pub throughput: Dir<Option<Throughput>>,
-    /// When the stage probed this server.
     pub latency: Option<Population>,
 }
 
-/// What a stage measured.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StageResult {
     pub stage: Stage,
@@ -178,9 +174,13 @@ pub enum StageStatus {
 
 impl StageResult {
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
-        let missing =
-            |direction: &Direction| self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none());
-        let focused = self.servers.iter().find(|server| Some(&server.server) == focus);
+        let missing = |direction: &Direction| {
+            self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none())
+        };
+        let focused = self
+            .servers
+            .iter()
+            .find(|server| Some(&server.server) == focus);
         let median = focused.and_then(|server| server.latency?.median());
         match () {
             _ if self.stopped => StageStatus::Stopped,
@@ -199,15 +199,24 @@ pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     if survivors.clone().any(|server| server.server == *first) {
         return Some(first.clone());
     }
-    let idle = results.iter().find(|result| result.stage == Stage::Latency)?;
+    let idle = results
+        .iter()
+        .find(|result| result.stage == Stage::Latency)?;
     let measured = |survivor: &&ServerResult| {
-        let mut servers = idle.servers.iter().filter(|server| server.server == survivor.server);
-        servers.any(|server| server.latency.and_then(|latency| latency.median()).is_some())
+        let mut servers = idle
+            .servers
+            .iter()
+            .filter(|server| server.server == survivor.server);
+        servers.any(|server| {
+            server
+                .latency
+                .and_then(|latency| latency.median())
+                .is_some()
+        })
     };
     survivors.find(measured).map(|server| server.server.clone())
 }
 
-/// How a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// Every planned stage finished with every server.
@@ -217,7 +226,6 @@ pub enum Outcome {
     /// A planned result is missing after measurement began.
     Incomplete,
     Stopped,
-    /// Nothing was measured.
     Failed,
 }
 
@@ -225,7 +233,10 @@ impl Outcome {
     /// From the stage results; the first carries the failures of selected servers that never began a stage.
     pub fn of(results: &[StageResult], plan: &[Stage]) -> Self {
         let focus = focus(results);
-        let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
+        let statuses: Vec<_> = results
+            .iter()
+            .map(|result| result.status(focus.as_ref()))
+            .collect();
         let ran = |stage: &Stage| results.iter().any(|result| result.stage == *stage);
         let planned = plan.iter().all(ran);
         match () {

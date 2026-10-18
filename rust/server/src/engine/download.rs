@@ -24,13 +24,21 @@ impl Block {
             .ok_or("the buffer budget cannot cover the download block")?;
         let mut bytes = vec![0; BLOCK_BYTES];
         getrandom::fill(&mut bytes).map_err(|error| format!("download block: {error}"))?;
-        Ok(Self { bytes: bytes.into(), meter, _lease: lease })
+        Ok(Self {
+            bytes: bytes.into(),
+            meter,
+            _lease: lease,
+        })
     }
 
     /// Opens a source of `bytes` payload bytes, one running transfer of the meter while any of its clones lives.
     pub fn source(&self, bytes: u64) -> DownloadSource {
         let transfer = (bytes > 0).then(|| self.meter.open()).flatten();
-        DownloadSource { block: self.bytes.clone(), remaining: bytes, transfer }
+        DownloadSource {
+            block: self.bytes.clone(),
+            remaining: bytes,
+            transfer,
+        }
     }
 
     pub fn meter(&self) -> &Meter {
@@ -47,7 +55,6 @@ pub struct DownloadSource {
 }
 
 impl DownloadSource {
-    /// Takes the next chunk of at most `max` bytes, or `None` once the payload is sent.
     pub fn next(&mut self, max: usize) -> Option<Bytes> {
         let chunk = self.peek(max)?;
         self.remaining -= chunk.len() as u64;
@@ -55,7 +62,6 @@ impl DownloadSource {
         Some(chunk)
     }
 
-    /// Shows the next chunk of at most `max` bytes without taking it.
     pub fn peek(&self, max: usize) -> Option<Bytes> {
         let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
         let length = remaining.min(max).min(self.block.len());
@@ -99,7 +105,10 @@ mod tests {
             assert_eq!((sent, source.remaining()), (total, 0));
         }
         assert_eq!(budget.usage().used, BLOCK_BYTES, "sources charge nothing");
-        let line = block.meter().line(std::time::Duration::from_secs(1)).unwrap();
+        let line = block
+            .meter()
+            .line(std::time::Duration::from_secs(1))
+            .unwrap();
         assert!(line.ends_with(" 2 transfers · 1.57 MB in 1.0 s"), "{line}");
         assert_eq!(block.source(10).next(4).map(|chunk| chunk.len()), Some(4));
         assert!(block.source(0).next(BLOCK_BYTES).is_none());

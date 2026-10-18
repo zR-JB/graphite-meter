@@ -37,11 +37,24 @@ const fn flag(
     set: fn(&mut Settings, &str) -> Result<(), String>,
     show: fn(&Settings) -> String,
 ) -> Flag<Settings> {
-    Flag { name, value, usage, env: None, set, show }
+    Flag {
+        name,
+        value,
+        usage,
+        env: None,
+        set,
+        show,
+    }
 }
 
 const FLAGS: [Flag<Settings>; 6] = [
-    flag("url", "url", "Server address", |s, v| put(&mut s.url, v.into()), |s| s.url.clone()),
+    flag(
+        "url",
+        "url",
+        "Server address",
+        |s, v| put(&mut s.url, v.into()),
+        |s| s.url.clone(),
+    ),
     flag(
         "warmup",
         "duration",
@@ -98,7 +111,16 @@ fn rest(args: &[&str]) -> Parsed {
 
 #[test]
 fn options_take_one_or_two_dashes_and_values_inline_or_next() {
-    let (parsed, settings) = run(&["-url", "-insecure", "-warmup", "1s", "--server", "a", "-server=b", "--insecure"]);
+    let (parsed, settings) = run(&[
+        "-url",
+        "-insecure",
+        "-warmup",
+        "1s",
+        "--server",
+        "a",
+        "-server=b",
+        "--insecure",
+    ]);
     assert_eq!(parsed, Ok(rest(&[])));
     let expected = Settings {
         url: "-insecure".into(),
@@ -122,17 +144,28 @@ fn switches_take_a_value_only_inline() {
     assert_eq!((parsed, settings.insecure), (Ok(rest(&["false"])), true));
     let (parsed, settings) = run(&["--insecure", "--insecure=FALSE"]);
     assert_eq!((parsed, settings.insecure), (Ok(rest(&[])), false));
-    for (text, value) in [("True", Ok(true)), ("1", Ok(true)), ("0", Ok(false)), ("t", Err("use true or false"))] {
+    for (text, value) in [
+        ("True", Ok(true)),
+        ("1", Ok(true)),
+        ("0", Ok(false)),
+        ("t", Err("use true or false")),
+    ] {
         assert_eq!(parse_bool(text), value, "{text}");
     }
 }
 
 #[test]
 fn parsing_stops_at_the_first_argument_that_is_no_option_or_after_two_dashes() {
-    assert_eq!(run(&["--", "-insecure"]), (Ok(rest(&["-insecure"])), Settings::default()));
+    assert_eq!(
+        run(&["--", "-insecure"]),
+        (Ok(rest(&["-insecure"])), Settings::default())
+    );
     assert_eq!(run(&["-", "-insecure"]).0, Ok(rest(&["-", "-insecure"])));
     let (parsed, settings) = run(&["-insecure", "--url=a", "rest", "-x"]);
-    assert_eq!((parsed, settings.insecure, settings.url.as_str()), (Ok(rest(&["rest", "-x"])), true, "a"));
+    assert_eq!(
+        (parsed, settings.insecure, settings.url.as_str()),
+        (Ok(rest(&["rest", "-x"])), true, "a")
+    );
     assert_eq!(run(&["-insecure", "--help", "-nope"]).0, Ok(Parsed::Help));
 }
 
@@ -144,9 +177,18 @@ fn refused_command_lines_name_the_option() {
         (&["---x"], "unknown option ---x"),
         (&["--=x"], "unknown option --"),
         (&["--url"], "option --url needs a value"),
-        (&["--insecure=maybe"], "invalid value \"maybe\" for --insecure: use true or false"),
-        (&["--name", "bad\n"], "invalid value \"bad\\n\" for --name: must not be bad"),
-        (&["-warmup=-1s"], "invalid value \"-1s\" for --warmup: a duration cannot be negative"),
+        (
+            &["--insecure=maybe"],
+            "invalid value \"maybe\" for --insecure: use true or false",
+        ),
+        (
+            &["--name", "bad\n"],
+            "invalid value \"bad\\n\" for --name: must not be bad",
+        ),
+        (
+            &["-warmup=-1s"],
+            "invalid value \"-1s\" for --warmup: a duration cannot be negative",
+        ),
         (&["--\u{202e}"], "unknown option -- "),
     ] {
         assert_eq!(run(args).0, Err(message.into()), "{args:?}");
@@ -162,6 +204,9 @@ fn usage_lists_named_options_in_table_order_with_set_defaults() {
   --name <name>        Name
 ";
     assert_eq!(flag::options(&FLAGS, &Settings::default()), expected);
-    let on = Settings { insecure: true, ..Settings::default() };
+    let on = Settings {
+        insecure: true,
+        ..Settings::default()
+    };
     assert!(flag::options(&FLAGS, &on).contains("Skip verification (default: true)"));
 }

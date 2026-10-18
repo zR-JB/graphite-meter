@@ -29,29 +29,33 @@ use tokio_tungstenite::{
 
 type Socket = WebSocketStream<TokioIo<Upgraded>>;
 
-/// A server's latency path as preparation chose it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LatencyPath {
     pub origin: Origin,
     pub transport: LatencyTransport,
 }
 
-/// An open latency bus; dropping it closes it.
 pub struct Bus(Channel);
 
 enum Channel {
-    WebSocket { socket: Box<Socket>, client: Client, origin: Origin },
+    WebSocket {
+        socket: Box<Socket>,
+        client: Client,
+        origin: Origin,
+    },
     Datagrams(Session),
 }
 
 impl Client {
-    /// A bus over `path`, within the control timeout.
     pub async fn bus(&self, path: &LatencyPath) -> Result<Bus, Fault> {
         let channel = match path.transport {
             LatencyTransport::WebTransport => {
                 // The session's drivers run beside the prober, never on a pinned runtime that also carries lanes.
                 let home = Handle::current();
-                Channel::Datagrams(self.session(Some(&home), &path.origin, Route::WtPing, vec![]).await?)
+                Channel::Datagrams(
+                    self.session(Some(&home), &path.origin, Route::WtPing, vec![])
+                        .await?,
+                )
             }
             LatencyTransport::WebSocket => {
                 let socket = timeout(CONTROL_TIMEOUT, self.websocket(&path.origin)).await;
@@ -75,18 +79,28 @@ impl Client {
             (header::UPGRADE, "websocket"),
             (header::SEC_WEBSOCKET_VERSION, "13"),
         ] {
-            head.headers_mut().insert(name, HeaderValue::from_static(value));
+            head.headers_mut()
+                .insert(name, HeaderValue::from_static(value));
         }
-        let key_value = HeaderValue::from_str(&key).map_err(|error| Fault::Malformed(error.to_string()))?;
-        head.headers_mut().insert(header::SEC_WEBSOCKET_KEY, key_value);
-        let mut conn = Conn::dial(self, origin, Protocol::Http1, ReadBuffer::Adaptive, None).await?;
-        let answer = conn.send(head, Payload::empty()).await.map_err(|failed| failed.fault)?;
+        let key_value =
+            HeaderValue::from_str(&key).map_err(|error| Fault::Malformed(error.to_string()))?;
+        head.headers_mut()
+            .insert(header::SEC_WEBSOCKET_KEY, key_value);
+        let mut conn =
+            Conn::dial(self, origin, Protocol::Http1, ReadBuffer::Adaptive, None).await?;
+        let answer = conn
+            .send(head, Payload::empty())
+            .await
+            .map_err(|failed| failed.fault)?;
         if answer.status() != StatusCode::SWITCHING_PROTOCOLS {
             let refusal = self.refusal(&request, answer.status(), answer.headers());
-            return Err(refusal.unwrap_or_else(|| Fault::Malformed("WebSocket upgrade was not accepted".into())));
+            return Err(refusal
+                .unwrap_or_else(|| Fault::Malformed("WebSocket upgrade was not accepted".into())));
         }
         if !upgraded(answer.headers(), &derive_accept_key(key.as_bytes())) {
-            return Err(Fault::Malformed("invalid WebSocket upgrade response".into()));
+            return Err(Fault::Malformed(
+                "invalid WebSocket upgrade response".into(),
+            ));
         }
         let upgraded = hyper::upgrade::on(answer).await;
         let upgraded = upgraded.map_err(|_| Fault::Lost)?;
@@ -96,7 +110,10 @@ impl Client {
             .max_write_buffer_size(4096)
             .max_message_size(Some(32 << 10))
             .max_frame_size(Some(32 << 10));
-        Ok(WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(config)).await)
+        Ok(
+            WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(config))
+                .await,
+        )
     }
 }
 
@@ -123,22 +140,31 @@ impl Bus {
                 let sent = socket.send(Message::text(ping.encode())).await;
                 sent.map_err(|_| Fault::Lost)
             }
-            Channel::Datagrams(session) => session.send_datagram(ping.write(&mut [0; Ping::MAX_BYTES])).await,
+            Channel::Datagrams(session) => {
+                session
+                    .send_datagram(ping.write(&mut [0; Ping::MAX_BYTES]))
+                    .await
+            }
         }
     }
 
-    /// The next reply and the instant its message arrived, before decoding; skips any other message; cancelling it
-    /// loses nothing.
+    /// The next reply and when its message arrived, skipping any other message; cancel-safe.
     pub async fn next(&mut self) -> Result<(Pong, Instant), Fault> {
         loop {
             let (pong, arrived) = match &mut self.0 {
-                Channel::WebSocket { socket, client, origin } => {
+                Channel::WebSocket {
+                    socket,
+                    client,
+                    origin,
+                } => {
                     let message = socket.next().await;
                     let arrived = Instant::now();
                     let pong = match message {
                         Some(Ok(Message::Text(text))) => Pong::decode(text.as_bytes()),
                         Some(Ok(Message::Binary(bytes))) => Pong::decode(&bytes),
-                        Some(Ok(Message::Close(frame))) => return Err(closed(client, origin, frame)),
+                        Some(Ok(Message::Close(frame))) => {
+                            return Err(closed(client, origin, frame));
+                        }
                         Some(Ok(_)) => None,
                         Some(Err(_)) => return Err(Fault::Lost),
                         None => return Err(Fault::Lost),
@@ -160,7 +186,8 @@ impl Bus {
 
 /// The fault a close frame names: its lane ending, else a lost bus.
 fn closed(client: &Client, origin: &Origin, frame: Option<CloseFrame>) -> Fault {
-    match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into())) {
+    match frame.and_then(|frame| LaneEnding::find_by(LaneEnding::websocket_code, frame.code.into()))
+    {
         Some(ending) => client.ending(origin, ending),
         None => Fault::Lost,
     }

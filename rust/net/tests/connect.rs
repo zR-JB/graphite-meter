@@ -13,7 +13,10 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
 fn connector(variable: &str, proxy: &str, verify: Verify) -> Connector {
     let (variable, proxy) = (variable.to_owned(), proxy.to_owned());
-    Connector::new(Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone())), verify)
+    Connector::new(
+        Proxy::from_lookup(move |name| (name == variable).then(|| proxy.clone())),
+        verify,
+    )
 }
 
 async fn connect(connector: &Connector, target: &str) -> Result<Connection, ConnectError> {
@@ -22,22 +25,32 @@ async fn connect(connector: &Connector, target: &str) -> Result<Connection, Conn
         .await
 }
 
-/// A peer on a loopback port that runs `serve` on its one connection.
-async fn peer<F, T>(serve: impl FnOnce(TcpStream) -> F + Send + 'static) -> (SocketAddr, JoinHandle<T>)
+async fn peer<F, T>(
+    serve: impl FnOnce(TcpStream) -> F + Send + 'static,
+) -> (SocketAddr, JoinHandle<T>)
 where
     F: Future<Output = T> + Send,
     T: Send + 'static,
 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    (address, tokio::spawn(async move { serve(listener.accept().await.unwrap().0).await }))
+    (
+        address,
+        tokio::spawn(async move { serve(listener.accept().await.unwrap().0).await }),
+    )
 }
 
 /// Accepts TLS offering `alpn` and returns what the client offered and the stream.
-async fn accept<S: AsyncRead + AsyncWrite + Unpin>(stream: S, alpn: &[&[u8]]) -> (Option<Vec<u8>>, TlsStream<S>) {
+async fn accept<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    alpn: &[&[u8]],
+) -> (Option<Vec<u8>>, TlsStream<S>) {
     let acceptor = TlsAcceptor::from(Arc::new(Identity::generate().unwrap().server(alpn)));
     let stream = acceptor.accept(stream).await.unwrap();
-    (stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec), stream)
+    (
+        stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec),
+        stream,
+    )
 }
 
 #[tokio::test]
@@ -53,9 +66,18 @@ async fn https_tunnels_through_connect_with_credentials_and_tls_inside() {
         (head, alpn)
     })
     .await;
-    let connector = connector("HTTPS_PROXY", &format!("http://user:s%40cret@{address}"), Verify::Insecure);
-    let mut connection = connect(&connector, "https://meter.test:8443").await.unwrap();
-    assert_eq!((connection.alpn.as_deref(), &connection.form), (Some(&b"h2"[..]), &RequestForm::Origin));
+    let connector = connector(
+        "HTTPS_PROXY",
+        &format!("http://user:s%40cret@{address}"),
+        Verify::Insecure,
+    );
+    let mut connection = connect(&connector, "https://meter.test:8443")
+        .await
+        .unwrap();
+    assert_eq!(
+        (connection.alpn.as_deref(), &connection.form),
+        (Some(&b"h2"[..]), &RequestForm::Origin)
+    );
     let mut inside = [0; 6];
     connection.stream.read_exact(&mut inside).await.unwrap();
     let (head, alpn) = proxy.await.unwrap();
@@ -80,7 +102,10 @@ async fn answering(response: Vec<u8>) -> (SocketAddr, JoinHandle<String>) {
 async fn a_connect_response_with_bare_line_feeds_opens_the_tunnel() {
     let (address, _proxy) = peer(|mut stream| async move {
         read_head(&mut stream).await.unwrap();
-        stream.write_all(b"HTTP/1.1 200 OK\nVia: tiny\n\n").await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\nVia: tiny\n\n")
+            .await
+            .unwrap();
         accept(stream, &[]).await
     })
     .await;
@@ -104,7 +129,11 @@ async fn connect_answers_other_than_200_are_refused() {
             "proxy refused CONNECT with 201 Created",
         ),
         ("meter.test:443", b"HTTP/1.1 OK\r\n\r\n".to_vec(), malformed),
-        ("meter.test:443", oversized, "proxy sent an oversized CONNECT response"),
+        (
+            "meter.test:443",
+            oversized,
+            "proxy sent an oversized CONNECT response",
+        ),
     ] {
         let (address, proxy) = answering(response).await;
         let connector = connector("HTTPS_PROXY", &address.to_string(), Verify::trusted());
@@ -126,9 +155,16 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
             drop(stream);
         })
         .await;
-        let connector = connector("HTTPS_PROXY", &format!("{scheme}://{address}"), Verify::trusted());
+        let connector = connector(
+            "HTTPS_PROXY",
+            &format!("{scheme}://{address}"),
+            Verify::trusted(),
+        );
         let started = Instant::now();
-        let refused = connect(&connector, "https://meter.test").await.err().unwrap();
+        let refused = connect(&connector, "https://meter.test")
+            .await
+            .err()
+            .unwrap();
         let ConnectError::Unreachable(error) = &refused else {
             panic!("{scheme}: {refused:?}");
         };
@@ -144,20 +180,41 @@ async fn a_proxy_that_accepts_and_stays_silent_fails_after_a_minute() {
 
 #[tokio::test]
 async fn cleartext_goes_to_an_http_proxy_in_absolute_form_carrying_its_credentials() {
-    let (address, proxy) = peer(|mut stream| async move { read_head(&mut stream).await.unwrap() }).await;
-    let connector = connector("http_proxy", &format!("user:secret@{address}"), Verify::trusted());
+    let (address, proxy) =
+        peer(|mut stream| async move { read_head(&mut stream).await.unwrap() }).await;
+    let connector = connector(
+        "http_proxy",
+        &format!("user:secret@{address}"),
+        Verify::trusted(),
+    );
     let mut connection = connect(&connector, "http://meter.test:8080").await.unwrap();
     let authorization = Some("Basic dXNlcjpzZWNyZXQ=".to_owned());
-    assert_eq!((connection.alpn, &connection.form), (None, &RequestForm::Absolute { authorization }));
-    let proxy_variable = |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}"));
-    let printed = format!("{:?} {:?}", connection.form, Proxy::from_lookup(proxy_variable));
-    assert!(!printed.contains("dXNlcjpzZWNyZXQ") && !printed.contains("secret"), "{printed}");
+    assert_eq!(
+        (connection.alpn, &connection.form),
+        (None, &RequestForm::Absolute { authorization })
+    );
+    let proxy_variable =
+        |name: &str| (name == "HTTP_PROXY").then(|| format!("user:secret@{address}"));
+    let printed = format!(
+        "{:?} {:?}",
+        connection.form,
+        Proxy::from_lookup(proxy_variable)
+    );
+    assert!(
+        !printed.contains("dXNlcjpzZWNyZXQ") && !printed.contains("secret"),
+        "{printed}"
+    );
     connection
         .stream
         .write_all(b"GET http://meter.test:8080/ HTTP/1.1\r\n\r\n")
         .await
         .unwrap();
-    assert!(proxy.await.unwrap().starts_with("GET http://meter.test:8080/ "));
+    assert!(
+        proxy
+            .await
+            .unwrap()
+            .starts_with("GET http://meter.test:8080/ ")
+    );
 }
 
 /// Answers a SOCKS5 greeting with `method` and a CONNECT with `status`, returning what it was sent.
@@ -177,7 +234,10 @@ async fn socks(method: u8, status: u8) -> (SocketAddr, JoinHandle<Vec<u8>>) {
             request.resize(5 + rest + 2, 0);
             stream.read_exact(&mut request[5..]).await.unwrap();
             sent.extend(request);
-            stream.write_all(&[5, status, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+            stream
+                .write_all(&[5, status, 0, 1, 0, 0, 0, 0, 0, 0])
+                .await
+                .unwrap();
         }
         sent
     })
@@ -186,34 +246,68 @@ async fn socks(method: u8, status: u8) -> (SocketAddr, JoinHandle<Vec<u8>>) {
 
 #[tokio::test]
 async fn socks5h_sends_addresses_as_ip_and_names_as_names_and_fails_closed() {
-    let v6 = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    let v6 = "2001:db8::1"
+        .parse::<std::net::Ipv6Addr>()
+        .unwrap()
+        .octets();
     for (target, address) in [
         ("http://192.0.2.1", vec![1, 192, 0, 2, 1, 0, 80]),
         ("http://[::ffff:192.0.2.1]:81", vec![1, 192, 0, 2, 1, 0, 81]),
-        ("http://[2001:db8::1]", [&[4][..], &v6[..], &[0, 80][..]].concat()),
-        ("http://meter.test", [&[3, 10][..], b"meter.test", &[0, 80][..]].concat()),
+        (
+            "http://[2001:db8::1]",
+            [&[4][..], &v6[..], &[0, 80][..]].concat(),
+        ),
+        (
+            "http://meter.test",
+            [&[3, 10][..], b"meter.test", &[0, 80][..]].concat(),
+        ),
     ] {
         let (proxy, sent) = socks(0, 0).await;
-        connect(&connector("HTTP_PROXY", &format!("socks5h://{proxy}"), Verify::trusted()), target)
-            .await
-            .unwrap();
-        assert_eq!(sent.await.unwrap(), [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(), "{target}");
+        connect(
+            &connector(
+                "HTTP_PROXY",
+                &format!("socks5h://{proxy}"),
+                Verify::trusted(),
+            ),
+            target,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sent.await.unwrap(),
+            [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(),
+            "{target}"
+        );
     }
     for (method, status, reason) in [
-        (0xff, 0, "accepts none of the offered authentication methods"),
+        (
+            0xff,
+            0,
+            "accepts none of the offered authentication methods",
+        ),
         (2, 0, "asked for unsupported authentication method 2"),
         (0, 5, "refused: connection refused"),
     ] {
         let (proxy, _) = socks(method, status).await;
-        let connector = connector("HTTP_PROXY", &format!("socks5://{proxy}"), Verify::trusted());
-        let refused = connect(&connector, "http://meter.test").await.err().unwrap();
+        let connector = connector(
+            "HTTP_PROXY",
+            &format!("socks5://{proxy}"),
+            Verify::trusted(),
+        );
+        let refused = connect(&connector, "http://meter.test")
+            .await
+            .err()
+            .unwrap();
         assert_eq!(refused.to_string(), format!("SOCKS5 proxy {reason}"));
     }
 }
 
 #[tokio::test]
 async fn socks5_offers_a_login_only_when_the_proxy_url_carries_one() {
-    for (answer, refused) in [(0, None), (1, Some("SOCKS5 proxy refused the username and password"))] {
+    for (answer, refused) in [
+        (0, None),
+        (1, Some("SOCKS5 proxy refused the username and password")),
+    ] {
         let (proxy, sent) = peer(move |mut stream| async move {
             let mut greeting = [0; 4];
             stream.read_exact(&mut greeting).await.unwrap();
@@ -224,14 +318,24 @@ async fn socks5_offers_a_login_only_when_the_proxy_url_carries_one() {
             if answer == 0 {
                 let mut request = [0; 10];
                 stream.read_exact(&mut request).await.unwrap();
-                stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                stream
+                    .write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+                    .await
+                    .unwrap();
             }
             [&greeting[..], &login].concat()
         })
         .await;
-        let connector = connector("HTTP_PROXY", &format!("socks5://user:p%3Aw@{proxy}"), Verify::trusted());
+        let connector = connector(
+            "HTTP_PROXY",
+            &format!("socks5://user:p%3Aw@{proxy}"),
+            Verify::trusted(),
+        );
         let result = connect(&connector, "http://192.0.2.1").await;
-        assert_eq!(result.err().map(|error| error.to_string()).as_deref(), refused);
+        assert_eq!(
+            result.err().map(|error| error.to_string()).as_deref(),
+            refused
+        );
         assert_eq!(sent.await.unwrap(), b"\x05\x02\x00\x02\x01\x04user\x03p:w");
     }
 }
@@ -244,7 +348,11 @@ async fn a_target_that_accepts_and_never_answers_tls_fails_after_ten_seconds() {
     })
     .await;
     let started = Instant::now();
-    let refused = connect(&Connector::new(Proxy::default(), Verify::Insecure), &format!("https://{address}")).await;
+    let refused = connect(
+        &Connector::new(Proxy::default(), Verify::Insecure),
+        &format!("https://{address}"),
+    )
+    .await;
     let Err(ConnectError::Unreachable(error)) = &refused else {
         panic!("{:?}", refused.err());
     };

@@ -6,8 +6,7 @@ export type Preset = keyof typeof DURATION_PRESETS;
 export const PRESETS = Object.keys(DURATION_PRESETS) as Preset[];
 export type Direction = 1 | -1;
 
-/** A stage's step grows with its time, so the keys reach an hour as readily as a second. It is chosen from the value
-    being left, so 10 s steps down by 0.5 s and up by 1 s. */
+/** A stage's step grows with its time and is chosen from the value being left, so 10 s steps down by 0.5 s and up by 1 s. */
 export function stageStepMs(ms: number, direction: Direction): number {
   const from = direction < 0 ? ms - 1 : ms;
   if (from < 10_000) return 500;
@@ -24,12 +23,10 @@ interface Field {
   min: number;
   max: number;
   format(value: number): string;
-  /** Reads a typed value, or null when the text is none. */
   parse(text: string): number | null;
 }
 
-/** Rounds a typed value to what the field shows, then holds it within its limits, last, so a server's limit is
-    never passed. Text that is no value keeps `current`. */
+/** Rounds a typed value to what the field shows, then clamps it last so a server's limit is never passed; non-values keep `current`. */
 export function typedValue(text: string, current: number, field: Field): number {
   const typed = field.parse(text);
   if (typed === null) return current;

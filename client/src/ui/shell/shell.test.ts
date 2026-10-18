@@ -25,7 +25,9 @@ test("a route change moves the docks when the docked panels change, the panes wh
     ["#/history", `#/history/${ID}?panels=settings`, true, true, DOCKS],
     ["#/not-found", "#/", true, true, null],
   ] as const)
-    expect(moves(parseRoute(from), parseRoute(to), docked, multiple), `${from} → ${to}`).toEqual(expected);
+    expect(moves(parseRoute(from), parseRoute(to), docked, multiple), `${from} → ${to}`).toEqual(
+      expected,
+    );
 });
 
 test("focus goes to an opened panel's title, back from a closed panel it was in, and to a workspace reached by Back", () => {
@@ -55,9 +57,21 @@ test("focus goes to an opened panel's title, back from a closed panel it was in,
       { holder: "settings", focused: () => false },
       { to: "invoker", panel: "settings" },
     ],
-    ["#/?panels=settings,endpoint", "#/", [], { holder: "settings" }, { to: "invoker", panel: "settings" }],
+    [
+      "#/?panels=settings,endpoint",
+      "#/",
+      [],
+      { holder: "settings" },
+      { to: "invoker", panel: "settings" },
+    ],
     ["#/history", "#/", [], { fromHistory: true }, { to: "workspace" }],
-    ["#/history?panels=settings", "#/?panels=settings", ["settings"], { fromHistory: true, flyout: true }, null],
+    [
+      "#/history?panels=settings",
+      "#/?panels=settings",
+      ["settings"],
+      { fromHistory: true, flyout: true },
+      null,
+    ],
     ["#/history", "#/?dialog=legal", [], { fromHistory: true }, null],
     ["#/history", "#/", [], {}, null],
   ] as const)

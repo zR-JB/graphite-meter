@@ -3,7 +3,6 @@ use bytes::{Buf, BufMut};
 
 pub(crate) const MAX: u64 = (1 << 62) - 1;
 
-/// An encoding whose first byte is `first` has this length.
 pub(crate) fn size(first: u8) -> usize {
     1 << (first >> 6)
 }
@@ -13,7 +12,9 @@ pub(crate) fn decode(input: &[u8]) -> Option<(u64, usize)> {
     let bytes = input.get(..size(*input.first()?))?;
     let value = bytes[1..]
         .iter()
-        .fold(u64::from(bytes[0] & 0x3f), |value, byte| value << 8 | u64::from(*byte));
+        .fold(u64::from(bytes[0] & 0x3f), |value, byte| {
+            value << 8 | u64::from(*byte)
+        });
     Some((value, bytes.len()))
 }
 
@@ -35,7 +36,6 @@ pub(crate) fn put(value: u64, output: &mut impl BufMut) {
     output.put_slice(&bytes[8 - size..]);
 }
 
-/// Reads one varint from chunks split anywhere.
 #[derive(Default)]
 pub(crate) struct Partial {
     bytes: [u8; 8],

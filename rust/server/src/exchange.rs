@@ -29,14 +29,16 @@ impl Exchange {
 
     /// Dates an exchange from before its request was parsed, such as from the first byte of an HTTP/1 head.
     pub fn until(deadline: Instant) -> Self {
-        Self(Watch { deadline, admitted: Arc::default() })
+        Self(Watch {
+            deadline,
+            admitted: Arc::default(),
+        })
     }
 
     pub fn deadline(&self) -> Instant {
         self.0.deadline
     }
 
-    /// The transport keeps this of the exchange it hands to the app.
     pub fn watch(&self) -> Watch {
         self.0.clone()
     }
@@ -56,7 +58,7 @@ impl Exchange {
     }
 }
 
-/// A watch is a transport's view of an exchange. It shows the deadline and whether, and for whom, it was admitted.
+/// A transport's view of an exchange: its deadline and whom it admitted.
 #[derive(Debug, Clone)]
 pub struct Watch {
     deadline: Instant,
@@ -116,7 +118,14 @@ mod tests {
         let hold = Quota::new(10, 10).acquire(&ClientKeys::Exempt, 1).unwrap();
         let keys = ClientKeys::address("192.0.2.1".parse().unwrap());
         let lifetime = Duration::from_secs(3600);
-        let _lane = exchange.admit(keys.clone(), hold, lifetime, &Work::default(), &CancellationToken::new(), None);
+        let _lane = exchange.admit(
+            keys.clone(),
+            hold,
+            lifetime,
+            &Work::default(),
+            &CancellationToken::new(),
+            None,
+        );
         assert_eq!(watch.admitted(), Some(&keys));
         let expired = tokio::time::timeout(EXCHANGE_BOUND * 2, watch.expired()).await;
         assert!(expired.is_err(), "an admitted exchange never expires");

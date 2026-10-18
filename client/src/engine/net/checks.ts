@@ -1,5 +1,4 @@
-// Connection checks for one server: discovery and proof that a chosen path carries data from this page. A failure
-// carries its row's words and whether time alone can clear it.
+// Connection checks for one server: discovery and proof that a chosen path carries data from this page.
 import {
   preflight,
   probe as probeDocument,
@@ -59,14 +58,12 @@ export class CheckError extends Error {
   }
 }
 
-/** A failed check as its server's row shows it. */
 export interface Failure {
   message: string;
   retry: Retry;
   signIn: boolean;
 }
 
-/** What a check needs of its server and this page. */
 export interface CheckContext {
   entry: CatalogEntry;
   auth: ServerAuth;
@@ -87,14 +84,16 @@ const PREPARATION_RTTS = 5;
 const COLLECT_MS = 1_500;
 const SESSION_CHECK_BYTES = 16 * 1024;
 
-const signsIn = (error: unknown) => [...causes(error)].some((cause) => cause instanceof SignInRequired);
+const signsIn = (error: unknown) =>
+  [...causes(error)].some((cause) => cause instanceof SignInRequired);
 
 export const CHECK_FAILED = "Could not check the connection";
 
 /** How a failed check reads on its server's row, `name` being the server's displayed name. */
 export function failureOf(error: unknown, name: string): Failure {
   if (signsIn(error)) return { message: `Sign in to ${name}`, retry: "needs-user", signIn: true };
-  if (error instanceof CheckError) return { message: error.message, retry: error.retry, signIn: false };
+  if (error instanceof CheckError)
+    return { message: error.message, retry: error.retry, signIn: false };
   const timedOut = error instanceof DOMException && error.name === "TimeoutError";
   return {
     message: timedOut ? "Connection check timed out" : CHECK_FAILED,
@@ -103,9 +102,12 @@ export function failureOf(error: unknown, name: string): Failure {
   };
 }
 
-/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal; its own deadline reads "Connection
-    check timed out". */
-export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>) {
+/** Runs `run` within `ms` of the owner's lifetime, even if it ignores its signal. */
+export async function withinBudget<T>(
+  owner: AbortSignal,
+  ms: number,
+  run: (signal: AbortSignal) => Promise<T>,
+) {
   owner.throwIfAborted();
   const deadline = AbortSignal.timeout(ms);
   const signal = AbortSignal.any([owner, deadline]);
@@ -120,8 +122,7 @@ export async function withinBudget<T>(owner: AbortSignal, ms: number, run: (sign
 
 let requests = 0;
 
-/** The browser's next-hop protocol for one unique URL, watched from before the request so that neither a full
-    Resource Timing buffer nor an older request's late entry can hide or replace it. */
+/** The browser's next-hop protocol for one unique URL, watched before the request so no buffered or late entry hides it. */
 function watchProtocol(url: string) {
   let protocol: string | null | undefined;
   let delivered: (() => void) | null = null;
@@ -162,7 +163,11 @@ function watchProtocol(url: string) {
   };
 }
 
-async function decoded<T>(response: Response, decode: (value: unknown) => T, message: string): Promise<T> {
+async function decoded<T>(
+  response: Response,
+  decode: (value: unknown) => T,
+  message: string,
+): Promise<T> {
   try {
     return decode(await readJSON(response));
   } catch (cause) {
@@ -172,7 +177,9 @@ async function decoded<T>(response: Response, decode: (value: unknown) => T, mes
 
 /** A plain refusal's first line says why, such as a proxy that names no client; any other body is released unread. */
 async function refusal(response: Response): Promise<string> {
-  const body = response.headers.get("Content-Type")?.startsWith("text/plain") ? response.body : null;
+  const body = response.headers.get("Content-Type")?.startsWith("text/plain")
+    ? response.body
+    : null;
   if (!body) {
     await release(response);
     return "";
@@ -196,7 +203,12 @@ async function refusal(response: Response): Promise<string> {
 }
 
 /** A failure after the request left: the page's sign-in gets its one expiry check, then the failure is worded. */
-async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, unreachable: string): Promise<never> {
+async function settled(
+  error: unknown,
+  auth: ServerAuth,
+  signal: AbortSignal,
+  unreachable: string,
+): Promise<never> {
   signal.throwIfAborted();
   if (auth.kind === "session" && !signsIn(error)) await auth.ended(signal);
   if (error instanceof CheckError || signsIn(error)) throw error;
@@ -205,8 +217,7 @@ async function settled(error: unknown, auth: ServerAuth, signal: AbortSignal, un
   });
 }
 
-/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no probe, socket
-    or other side effect. A browser policy refuses it before any request. */
+/** One GET /preflight, decoded, held to the catalog entry's origins and classified for this page; no other side effect. */
 export async function discover(context: CheckContext, signal: AbortSignal): Promise<Discovery> {
   const { entry, auth, page, now } = context;
   signal.throwIfAborted();
@@ -247,7 +258,9 @@ export async function discover(context: CheckContext, signal: AbortSignal): Prom
   } catch (error) {
     // A protected HTTPS server refuses another origin without CORS headers, which reads as a network failure.
     const hint =
-      entry.url.startsWith("https:") && !page.secure ? ". If it requires sign-in, open this interface over HTTPS." : "";
+      entry.url.startsWith("https:") && !page.secure
+        ? ". If it requires sign-in, open this interface over HTTPS."
+        : "";
     return settled(error, auth, signal, `Could not reach this test server${hint}`);
   } finally {
     timing.stop();
@@ -260,7 +273,10 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
   try {
     const response = await auth.fetch(url, { cache: "no-store", signal });
     if (!response.ok)
-      throw new CheckError(`Probe answered HTTP ${response.status}${await refusal(response)}`, "retryable");
+      throw new CheckError(
+        `Probe answered HTTP ${response.status}${await refusal(response)}`,
+        "retryable",
+      );
     const probe: Probe = await decoded(response, probeDocument, "Unexpected probe answer");
     return { probe, protocol: await timing.read(signal) };
   } catch (error) {
@@ -270,9 +286,13 @@ async function probeOrigin(origin: string, auth: ServerAuth, signal: AbortSignal
   }
 }
 
-/** The targets a check tries: Automatic's candidates in rank order, or only what an explicit choice resolves to.
-    Nothing to try fails before any request. */
-function targetsFor<R extends Role>(context: CheckContext, discovery: Discovery, role: R, selection: Selection) {
+/** The targets a check tries: Automatic's candidates in rank order, or what an explicit choice resolves to. */
+function targetsFor<R extends Role>(
+  context: CheckContext,
+  discovery: Discovery,
+  role: R,
+  selection: Selection,
+) {
   const requested = resolve(discovery, role, selection, context.page);
   if (!requested) {
     const { message, retry } = unresolvedReason(discovery, role, selection, context.page);
@@ -281,8 +301,7 @@ function targetsFor<R extends Role>(context: CheckContext, discovery: Discovery,
   return selection.kind === "auto" ? candidates(discovery, role, context.page) : [requested];
 }
 
-/** The first target that verifies, each within its own budget. Automatic stops at a sign-in refusal rather than
-    probing another endpoint; when all fail, the preferred target's failure says the most. */
+/** The first target that verifies; Automatic stops at a sign-in refusal, and the preferred target's failure says the most. */
 async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   targets: readonly T[],
   signal: AbortSignal,
@@ -309,8 +328,7 @@ async function firstVerified<T extends ThroughputTarget | LatencyTarget, P>(
   throw failure;
 }
 
-/** Proves the throughput path `selection` names: the HTTP view of its origin answers a probe over the protocol it
-    claims, and a WebTransport session delivers bytes. */
+/** Proves the throughput path `selection` names: its origin answers a probe over the claimed protocol, and a session delivers bytes. */
 export async function checkThroughput(
   context: CheckContext,
   discovery: Discovery,
@@ -336,10 +354,17 @@ async function verifyThroughput(
   const session = target.transport !== "fetch-stream";
   const view = session ? fetchView(discovery, target) : { ...target };
   // The browser adopts HTTP/3 only after an Alt-Svc answer, so an HTTP/3 target is probed until it is seen in use.
-  const bounded = view.protocol === "http3" ? AbortSignal.any([signal, AbortSignal.timeout(H3_DEADLINE_MS)]) : signal;
+  const bounded =
+    view.protocol === "http3"
+      ? AbortSignal.any([signal, AbortSignal.timeout(H3_DEADLINE_MS)])
+      : signal;
   let answer: { probe: Probe; protocol: string | null } | null = null;
   try {
-    for (let attempt = 0; attempt < (session || view.protocol !== "http3" ? 1 : H3_ATTEMPTS); attempt++) {
+    for (
+      let attempt = 0;
+      attempt < (session || view.protocol !== "http3" ? 1 : H3_ATTEMPTS);
+      attempt++
+    ) {
       if (attempt) await delay(Math.min(250, 50 * 2 ** (attempt - 1)), bounded);
       answer = await probeOrigin(view.origin, context.auth, bounded);
       if (protocolFromNextHop(answer.protocol) === "http3") break;
@@ -360,11 +385,20 @@ async function verifyThroughput(
     );
   if (!proven || view.protocol === "negotiated") view.protocol = observed ?? "negotiated";
   if (session) await verifySession(context.auth, target, signal);
-  return { target: session ? target : view, fetch: view, probe: answer!.probe, browserProtocol: answer!.protocol };
+  return {
+    target: session ? target : view,
+    fetch: view,
+    probe: answer!.probe,
+    browserProtocol: answer!.protocol,
+  };
 }
 
 /** Opening a session is not enough: the selected transfer must deliver a byte. */
-async function verifySession(auth: ServerAuth, target: SessionTarget, signal: AbortSignal): Promise<void> {
+async function verifySession(
+  auth: ServerAuth,
+  target: SessionTarget,
+  signal: AbortSignal,
+): Promise<void> {
   const datagrams = target.transport === "webtransport-datagram";
   let url = `${target.origin}${ROUTES.wtDownload}?bytes=${SESSION_CHECK_BYTES}${datagrams ? "&datagrams=1" : ""}`;
   const ticket = auth.ticket(target.origin, ROUTES.wtDownload);
@@ -400,7 +434,9 @@ async function verifySession(auth: ServerAuth, target: SessionTarget, signal: Ab
     if (!chunk?.value?.byteLength) throw new Error("the carrier delivered no bytes");
   } catch (cause) {
     signal.throwIfAborted();
-    const message = established ? "WebTransport session carried no bytes" : "WebTransport session did not establish";
+    const message = established
+      ? "WebTransport session carried no bytes"
+      : "WebTransport session did not establish";
     throw new CheckError(message, "retryable", { cause });
   } finally {
     clearTimeout(deadline);
@@ -409,8 +445,7 @@ async function verifySession(auth: ServerAuth, target: SessionTarget, signal: Ab
   }
 }
 
-/** The bus a latency check proved, still open at the preparation cadence so the idle monitor can take it over; until
-    then it closes with its check, at the latest when the check's budget ends. */
+/** The bus a latency check proved, kept open for the idle monitor to adopt; until then it closes with its check. */
 export interface CheckedBus {
   /** Its events go to `events` from now on, and the channel to its adopter. */
   adopt(events: ProbeChannelEvents): ProbeChannel;
@@ -451,7 +486,14 @@ export async function checkLatency(
           channel.dispose();
         },
       };
-      const path = { target, probe, rttMs, generation: discovery.generation, verifiedAt: context.now(), verifiedFor };
+      const path = {
+        target,
+        probe,
+        rttMs,
+        generation: discovery.generation,
+        verifiedAt: context.now(),
+        verifiedFor,
+      };
       return { path, bus };
     } catch (error) {
       void collecting.then(
@@ -467,9 +509,12 @@ export async function checkLatency(
 
 type Collected = { rttMs: number | null; channel: ProbeChannel; events: ProbeChannelEvents };
 
-/** Opens the bus at the preparation cadence: once it answers, replies are collected for a moment; their median, or
-    null without one, and the bus, still open, with the events it reports to. */
-function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortSignal): Promise<Collected> {
+/** Opens the bus at the preparation cadence and collects replies for a moment: their median or null, and the still-open bus. */
+function collectRtt(
+  context: CheckContext,
+  target: LatencyTarget,
+  signal: AbortSignal,
+): Promise<Collected> {
   if (signal.aborted) return Promise.reject(signal.reason);
   const { promise, resolve, reject } = Promise.withResolvers<Collected>();
   const rtts: number[] = [];
@@ -488,7 +533,9 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
       return reject(error);
     }
     const sorted = rtts.toSorted((a, b) => a - b);
-    collected = { rttMs: sorted.length ? midpointMedian(sorted.length, (rank) => sorted[rank]!) : null };
+    collected = {
+      rttMs: sorted.length ? midpointMedian(sorted.length, (rank) => sorted[rank]!) : null,
+    };
     if (channel) resolve({ ...collected, channel, events });
   };
   const abort = () => finish(signal.reason);
@@ -515,7 +562,10 @@ function collectRtt(context: CheckContext, target: LatencyTarget, signal: AbortS
     signInRequired: () => finish(new SignInRequired(identityOf(entry))),
   };
   try {
-    channel = context.openProbeChannel({ target, auth, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 }, events);
+    channel = context.openProbeChannel(
+      { target, auth, intervalMs: PREPARATION_INTERVAL_MS, maxInFlight: 2 },
+      events,
+    );
   } catch (error) {
     finish(new CheckError("Latency channel did not open", "retryable", { cause: error }));
     return promise;

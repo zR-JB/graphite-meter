@@ -1,4 +1,3 @@
-//! The Graphite Meter server.
 #![expect(
     clippy::result_large_err,
     reason = "refusals are responses, no larger than the outcomes they replace"

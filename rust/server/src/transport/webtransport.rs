@@ -17,34 +17,36 @@ use tokio::time::sleep;
 
 /// An establish-only download session closes after this long; its answer is the handshake.
 const VERIFY_LINGER: Duration = Duration::from_secs(5);
-/// A download datagram carries this much.
 const DATAGRAM_BYTES: usize = 1000;
 /// A datagram flood yields after this many sends, so sibling sessions run without a handoff per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
-/// A download stream writes at most this much at a time.
 const LANE_WRITE_BYTES: usize = 16 << 10;
 
-/// What an admitted session serves.
 pub enum Plan {
     /// The latency bus, one message per datagram.
     Ping,
-    /// `source`'s bytes in `form`.
-    Download { source: DownloadSource, form: Form },
+    Download {
+        source: DownloadSource,
+        form: Form,
+    },
     /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
     Upload(Upload),
 }
 
-/// How a download sends its bytes.
 #[derive(Clone, Copy)]
 pub enum Form {
-    /// On this many server streams at once.
     Streams(usize),
-    /// Repeated in datagrams.
     Datagrams,
 }
 
 /// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
-pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan, fund: impl FnMut() -> bool) {
+pub async fn serve(
+    stream: RequestStream,
+    headers: HeaderMap,
+    lane: Lane,
+    plan: Plan,
+    fund: impl FnMut() -> bool,
+) {
     let Ok(session) = Session::accept(stream, headers).await else {
         return;
     };
@@ -57,7 +59,9 @@ pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: 
             () = routed => lane.finish(),
         }
     };
-    session.close(ending.webtransport_code(), ending.reason()).await;
+    session
+        .close(ending.webtransport_code(), ending.reason())
+        .await;
 }
 
 async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() -> bool) {
@@ -102,8 +106,9 @@ async fn download(session: &Session, lane: &Lane, source: DownloadSource, form: 
             _ if source.remaining() == 0 => sleep(VERIFY_LINGER).await,
             Form::Datagrams => flood(session, &source).await,
             Form::Streams(streams) => {
-                let mut lanes: FuturesUnordered<_> =
-                    (0..streams).map(|_| download_stream(session, &source, lane)).collect();
+                let mut lanes: FuturesUnordered<_> = (0..streams)
+                    .map(|_| download_stream(session, &source, lane))
+                    .collect();
                 while lanes.next().await.is_some() {}
             }
         }

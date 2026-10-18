@@ -4,7 +4,6 @@ use std::{
     net::{SocketAddr, UdpSocket},
 };
 
-/// The UDP buffer each QUIC socket asks for.
 const BUFFER_BYTES: usize = 7 << 20;
 /// The least each of several sockets on one address keeps: a single fast connection's headroom.
 const SHARED_BUFFER_FLOOR: usize = 2 << 20;
@@ -27,7 +26,10 @@ pub fn bind_udp(address: SocketAddr, sockets: usize) -> io::Result<(UdpSocket, O
         #[cfg(target_os = "linux")]
         socket.set_reuse_port(true)?;
         #[cfg(not(target_os = "linux"))]
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "SO_REUSEPORT balances UDP only on Linux"));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "SO_REUSEPORT balances UDP only on Linux",
+        ));
     }
     socket.bind(&address.into())?;
     Ok((socket.into(), shortfall))
@@ -67,13 +69,19 @@ fn grow(socket: &socket2::Socket, buffer: Buffer, bytes: usize) -> Result<(), St
     #[cfg(target_os = "linux")]
     if size()? < bytes {
         let _ = match buffer {
-            Buffer::Receive => rustix::net::sockopt::set_socket_recv_buffer_size_force(socket, bytes),
+            Buffer::Receive => {
+                rustix::net::sockopt::set_socket_recv_buffer_size_force(socket, bytes)
+            }
             Buffer::Send => rustix::net::sockopt::set_socket_send_buffer_size_force(socket, bytes),
         };
     }
     let after = size()?;
     match after < bytes {
-        true => Err(format!("{name} buffer {} KiB of {} KiB wanted", after / 1024, bytes / 1024)),
+        true => Err(format!(
+            "{name} buffer {} KiB of {} KiB wanted",
+            after / 1024,
+            bytes / 1024
+        )),
         false => Ok(()),
     }
 }

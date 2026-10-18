@@ -18,7 +18,10 @@ test("the coordinated throughput the terminal client shares", async () => {
         aggregate.dropout(live, boundary.atMs);
       }
       const up = Object.fromEntries(
-        Object.entries(boundary.up).map(([id, r]: [string, any]) => [id, r && { ...r, receivedAtMs: boundary.atMs }]),
+        Object.entries(boundary.up).map(([id, r]: [string, any]) => [
+          id,
+          r && { ...r, receivedAtMs: boundary.atMs },
+        ]),
       );
       aggregate.observe({ atMs: boundary.atMs, down: boundary.down, up }, boundary.final);
       for (const [id, seen] of Object.entries<any>(boundary.observedUp ?? {}))
@@ -49,9 +52,10 @@ test("the coordinated throughput the terminal client shares", async () => {
     }));
     expect(intervals, vector.name).toEqual(vector.intervals);
     const { down, up } = aggregate.settle(vector.stage, false);
-    expect({ down: reported(down?.result ?? null), up: reported(up?.result ?? null) }, vector.name).toEqual(
-      vector.result,
-    );
+    expect(
+      { down: reported(down?.result ?? null), up: reported(up?.result ?? null) },
+      vector.name,
+    ).toEqual(vector.result);
     for (const [id, expected] of Object.entries<any>(vector.servers ?? {}))
       expect(
         {
@@ -78,7 +82,9 @@ test("a steady window too short on one direction's clock gives way to the full w
   // From the steady boundary on, the receiver's clock runs only 500 ms, which is too short to stand alone.
   at(2_000, 3_000, 1_500, 1_500);
   const { down, up } = aggregate.settle("bidirectional", true);
-  expect([down?.result.reportedBytesPerSec, up?.result.reportedBytesPerSec]).toEqual([1_500, 1_000]);
+  expect([down?.result.reportedBytesPerSec, up?.result.reportedBytesPerSec]).toEqual([
+    1_500, 1_000,
+  ]);
   expect(down?.window).toBe(up?.window);
   expect(aggregate.intervals[0]!.headline).toBe(down!.window);
 });
@@ -86,14 +92,14 @@ test("a steady window too short on one direction's clock gives way to the full w
 test("a stage's coverage counts from its first interval after the interval limit let it go", () => {
   const aggregate = new Aggregate();
   aggregate.begin("download", ["a"], 0);
-  for (let at = 10; at <= 1_300; at += 10) aggregate.begin("download", ["a"], at, "evidence-resumed");
+  for (let at = 10; at <= 1_300; at += 10)
+    aggregate.begin("download", ["a"], at, "evidence-resumed");
   expect(aggregate.omittedIntervals).toBeGreaterThan(0);
   expect(aggregate.coveredMs("download")).toBe(1_300);
 });
 
 test("a stage's stability is of its 250 ms rates however long it runs", () => {
-  // A link alternates between nothing and twice its mean every 250 ms and shows no stability, both before and after
-  // the rates kept for drawing merge at 4,096 buckets.
+  // A link alternating between nothing and twice its mean every 250 ms shows no stability, before and after buckets merge.
   for (const buckets of [4_094, 4_096, 8_192]) {
     const aggregate = new Aggregate();
     aggregate.begin("download", ["a"], 0);
@@ -150,7 +156,10 @@ test("a steady stretch after a burst reads the stability of its own rates", () =
   // One very fast bucket precedes a tail 0.05% either side of its mean, so the steady window is the tail alone.
   for (const burst of [1e8, 1e9, 8e9])
     for (const low of [4, 4_000, 40_000]) {
-      const rates = [burst, ...Array.from({ length: 40 }, (_, i) => low + (i % 2 ? low * 0.001 : 0))];
+      const rates = [
+        burst,
+        ...Array.from({ length: 40 }, (_, i) => low + (i % 2 ? low * 0.001 : 0)),
+      ];
       const aggregate = new Aggregate();
       aggregate.begin("download", ["a"], 0);
       aggregate.observe({ atMs: 0, down: { a: 0 }, up: {} });

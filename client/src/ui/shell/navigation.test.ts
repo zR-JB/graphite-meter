@@ -22,7 +22,10 @@ test("hashes parse to routes and serialize to their shortest canonical form", ()
     ["#/legal", "#/legal"],
     ["#/settings?dialog=legal", "#/?panels=settings&dialog=legal"],
     ["#/endpoint?panels=settings", "#/?panels=endpoint,settings"],
-    [`#/history/${ID}?panels=settings,settings&dialog=legal`, `#/history/${ID}?panels=settings&dialog=legal`],
+    [
+      `#/history/${ID}?panels=settings,settings&dialog=legal`,
+      `#/history/${ID}?panels=settings&dialog=legal`,
+    ],
     ["#/history?panels=bogus,endpoint", "#/history?panels=endpoint"],
     ["#/history?panels=valueOf,settings", "#/history?panels=settings"],
     ["#/?panels=toString", "#/"],
@@ -41,7 +44,9 @@ test("hashes parse to routes and serialize to their shortest canonical form", ()
 
 test("route changes keep what they do not touch; the last opened panel goes to the end", () => {
   const route = appRoute({ kind: "history", id: ID }, ["settings"], true);
-  expect(serializeRoute(withWorkspace(route, { kind: "measurement" }))).toBe("#/?panels=settings&dialog=legal");
+  expect(serializeRoute(withWorkspace(route, { kind: "measurement" }))).toBe(
+    "#/?panels=settings&dialog=legal",
+  );
   expect(serializeRoute(openPanel(openPanel(route, "details"), "settings"))).toBe(
     `#/history/${ID}?panels=endpoint,settings&dialog=legal`,
   );

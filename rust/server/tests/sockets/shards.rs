@@ -9,7 +9,9 @@ use futures_util::future::join_all;
 use graphite_meter_server::limits::QUIC_PER_CLIENT;
 
 async fn download(connection: &Connection, bytes: usize) -> usize {
-    let (answer, mut body) = connection.send("GET", &format!("/download?bytes={bytes}"), b"").await;
+    let (answer, mut body) = connection
+        .send("GET", &format!("/download?bytes={bytes}"), b"")
+        .await;
     assert_eq!(answer.status(), 200);
     read(&mut body).await.unwrap().len()
 }
@@ -22,7 +24,9 @@ async fn four_workers_run_two_endpoints_that_follow_rebound_clients() {
     let transfers = (2..10).map(|source| {
         let h3 = &h3;
         async move {
-            let connection = h3.connect_from(&format!("127.0.0.{source}"), transport(None)).await;
+            let connection = h3
+                .connect_from(&format!("127.0.0.{source}"), transport(None))
+                .await;
             download(&connection.unwrap(), 1 << 20).await
         }
     });
@@ -33,7 +37,11 @@ async fn four_workers_run_two_endpoints_that_follow_rebound_clients() {
     for rebind in 1..=16 {
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         connection.endpoint.rebind(socket).unwrap();
-        assert_eq!(download(&connection, 64 << 10).await, 64 << 10, "after rebind {rebind}");
+        assert_eq!(
+            download(&connection, 64 << 10).await,
+            64 << 10,
+            "after rebind {rebind}"
+        );
     }
 }
 
@@ -44,11 +52,17 @@ async fn retry_and_a_source_s_quic_share_hold_across_endpoints() {
     let mut held = vec![h3.connect_from("127.0.0.3", transport(None)).await.unwrap()];
     // Each handshake's new port reaches either endpoint.
     for _ in 0..16 {
-        assert!(retried(&h3, "127.0.0.3").await, "the source holds a connection on one endpoint");
+        assert!(
+            retried(&h3, "127.0.0.3").await,
+            "the source holds a connection on one endpoint"
+        );
     }
     for _ in 1..QUIC_PER_CLIENT {
         held.push(h3.connect_from("127.0.0.3", transport(None)).await.unwrap());
     }
     let refused = h3.connect_from("127.0.0.3", transport(None)).await;
-    assert!(refused.is_err(), "a source's QUIC share counts every endpoint's connections");
+    assert!(
+        refused.is_err(),
+        "a source's QUIC share counts every endpoint's connections"
+    );
 }

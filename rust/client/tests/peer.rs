@@ -1,5 +1,4 @@
-//! The network layer against canned peers, for what a real server never does, and under chosen proxy and trust
-//! settings: proxies, the trust store and grants over verified TLS.
+//! The network layer against canned peers: what a real server never does, proxies, the trust store and grants over TLS.
 use graphite_meter_client::{
     config::{Config, PathChoice},
     model::Stage,
@@ -49,22 +48,27 @@ fn origin(scheme: &str, address: SocketAddr) -> Origin {
     Origin::parse(&format!("{scheme}://localhost:{}", address.port())).unwrap()
 }
 
-/// A probe's answer as any JSON object.
 async fn probe(client: &Client, via: Protocol, origin: &Origin) -> Result<Value, Fault> {
     client
-        .json(via, Request::new(Method::GET, origin, Route::Probe), json::decode)
+        .json(
+            via,
+            Request::new(Method::GET, origin, Route::Probe),
+            json::decode,
+        )
         .await
 }
 
 fn ok(body: &str) -> String {
-    format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len())
+    format!(
+        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 
-/// An HTTP/1.1 peer, over TLS with `tls`, sending each request head with its connection's number to the receiver;
-/// `answer` gives the `n`th request's answer from its head, `None` ending its connection unanswered.
+/// An HTTP/1.1 peer, over TLS with `tls`, reporting each head with its connection's number; `answer` gives the `n`th answer or `None`.
 fn peer(
     listener: TcpListener,
     tls: Option<TlsAcceptor>,
@@ -74,8 +78,11 @@ fn peer(
     let (requests, answer) = (Arc::new(AtomicUsize::new(0)), Arc::new(answer));
     tokio::spawn(async move {
         for connection in 0.. {
-            let Ok((tcp, _)) = listener.accept().await else { return };
-            let (heads, requests, tls, answer) = (heads.clone(), requests.clone(), tls.clone(), answer.clone());
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let (heads, requests, tls, answer) =
+                (heads.clone(), requests.clone(), tls.clone(), answer.clone());
             tokio::spawn(async move {
                 let mut stream: Box<dyn Stream> = match tls {
                     Some(tls) => match tls.accept(tcp).await {
@@ -105,24 +112,36 @@ async fn an_abandoned_quic_dial_stops_sending() {
     let origin = Origin::parse(&format!("https://{}", silent.local_addr().unwrap())).unwrap();
     let client = client(false);
     let dial = client.dial(&origin, Protocol::Http3, ReadBuffer::Adaptive);
-    assert!(tokio::time::timeout(Duration::from_millis(200), dial).await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), dial)
+            .await
+            .is_err()
+    );
     // Its connection's close may still go out; a dial left running resends its Initial about a second in.
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut datagram = [0; 2048];
     while silent.try_recv(&mut datagram).is_ok() {}
-    let resent = tokio::time::timeout(Duration::from_millis(1200), silent.recv(&mut datagram)).await;
+    let resent =
+        tokio::time::timeout(Duration::from_millis(1200), silent.recv(&mut datagram)).await;
     assert!(resent.is_err(), "the abandoned dial kept sending");
 }
 
 /// A verifying client trusting only the roots of `file` and `directory`, as their variables would name them.
 fn trusting(file: &Path, directory: &Path) -> Client {
-    let (file, directory) = (file.as_os_str().to_owned(), directory.as_os_str().to_owned());
+    let (file, directory) = (
+        file.as_os_str().to_owned(),
+        directory.as_os_str().to_owned(),
+    );
     let trust = Trust::from_lookup(|name| match name {
         "SSL_CERT_FILE" => Some(file.clone()),
         "SSL_CERT_DIR" => Some(directory.clone()),
         _ => None::<OsString>,
     });
-    Client::with(Verify::Trusted(Arc::new(trust)), Proxy::default(), Arc::new(Pool::inline()))
+    Client::with(
+        Verify::Trusted(Arc::new(trust)),
+        Proxy::default(),
+        Arc::new(Pool::inline()),
+    )
 }
 
 fn acceptor(identity: &Identity) -> TlsAcceptor {
@@ -133,25 +152,39 @@ fn acceptor(identity: &Identity) -> TlsAcceptor {
 async fn all_proxy_is_not_read() {
     let (listener, address) = local().await;
     let mut heads = peer(listener, None, |_, _| Some(ok("{}")));
-    let (proxy, target) = (format!("http://{address}"), Origin::parse("http://meter.invalid").unwrap());
+    let (proxy, target) = (
+        format!("http://{address}"),
+        Origin::parse("http://meter.invalid").unwrap(),
+    );
     let through = |names: &'static [&'static str]| {
         let proxy = Proxy::from_lookup(|name| names.contains(&name).then(|| proxy.clone()));
         Client::with(Verify::trusted(), proxy, Arc::new(Pool::inline()))
     };
-    let probed = probe(&through(&["ALL_PROXY", "all_proxy"]), Protocol::Http1, &target).await;
+    let probed = probe(
+        &through(&["ALL_PROXY", "all_proxy"]),
+        Protocol::Http1,
+        &target,
+    )
+    .await;
     assert_matches!(probed, Err(Fault::Connect(ConnectError::Unreachable(_))));
     assert!(heads.try_recv().is_err(), "nothing went through ALL_PROXY");
     probe(&through(&["HTTP_PROXY"]), Protocol::Http1, &target)
         .await
         .unwrap();
     let (_, head) = heads.recv().await.unwrap();
-    assert!(head.starts_with("GET http://meter.invalid/probe HTTP/1.1\r\n"), "{head}");
+    assert!(
+        head.starts_with("GET http://meter.invalid/probe HTTP/1.1\r\n"),
+        "{head}"
+    );
 }
 
 #[tokio::test]
 async fn an_empty_trust_store_fails_only_tls_connections() {
     let scratch = Scratch::new().unwrap();
-    let verified = trusting(&scratch.file("empty.pem", "").unwrap(), &scratch.dir("none").unwrap());
+    let verified = trusting(
+        &scratch.file("empty.pem", "").unwrap(),
+        &scratch.dir("none").unwrap(),
+    );
     let ((plain, cleartext), (tls, secure)) = (local().await, local().await);
     let identity = Identity::generate().unwrap();
     let (_plain, _tls) = (
@@ -162,25 +195,45 @@ async fn an_empty_trust_store_fails_only_tls_connections() {
     probe(&verified, Protocol::Http1, &origin("http", cleartext))
         .await
         .unwrap();
-    let refused = probe(&verified, Protocol::Http1, &secure).await.unwrap_err();
+    let refused = probe(&verified, Protocol::Http1, &secure)
+        .await
+        .unwrap_err();
     assert_matches!(&refused, Fault::Connect(ConnectError::Tls(_)));
     let text = refused.to_string();
-    assert!(text.starts_with("Certificate not trusted: its issuer is unknown. "), "{text}");
-    probe(&client(true), Protocol::Http1, &secure).await.unwrap();
+    assert!(
+        text.starts_with("Certificate not trusted: its issuer is unknown. "),
+        "{text}"
+    );
+    probe(&client(true), Protocol::Http1, &secure)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server_s() {
-    let (scratch, mut identity) = (Scratch::new().unwrap(), Identity::self_signed("localhost").unwrap());
-    let client = trusting(&scratch.file("root.pem", &identity.certificate).unwrap(), &scratch.dir("none").unwrap());
+    let (scratch, mut identity) = (
+        Scratch::new().unwrap(),
+        Identity::self_signed("localhost").unwrap(),
+    );
+    let client = trusting(
+        &scratch.file("root.pem", &identity.certificate).unwrap(),
+        &scratch.dir("none").unwrap(),
+    );
     identity.ca = identity.certificate.clone();
     let refused = |request, _: &str| match request {
-        1 => Some("HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n".into()),
+        1 => Some(
+            "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n"
+                .into(),
+        ),
         _ => Some(ok("{}")),
     };
     let mut origins = Vec::new();
     let mut heads = Vec::new();
-    for answer in [refused, |_, _: &str| Some(ok("{}")), |_, _: &str| Some(ok("{}"))] {
+    for answer in [
+        refused,
+        |_, _: &str| Some(ok("{}")),
+        |_, _: &str| Some(ok("{}")),
+    ] {
         let (listener, address) = local().await;
         heads.push(peer(listener, Some(acceptor(&identity)), answer));
         origins.push(origin("https", address));
@@ -210,8 +263,21 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
             );
         }
     }
-    let (first, granted) = (Some("Bearer first-grant".to_owned()), Some("Bearer second-grant".to_owned()));
-    assert_eq!(sent, [first.clone(), first.clone(), granted.clone(), granted, first, None]);
+    let (first, granted) = (
+        Some("Bearer first-grant".to_owned()),
+        Some("Bearer second-grant".to_owned()),
+    );
+    assert_eq!(
+        sent,
+        [
+            first.clone(),
+            first.clone(),
+            granted.clone(),
+            granted,
+            first,
+            None
+        ]
+    );
     let revoked = client.upload_error(&second, "revoked");
     assert_matches!(&revoked, Fault::SignIn(issuer) if *issuer == second);
     probe(&client, Protocol::Http1, &second).await.unwrap();
@@ -222,7 +288,6 @@ async fn grants_travel_only_in_authorization_and_a_refusal_drops_only_its_server
     );
 }
 
-/// The path a request head asks for, without its query.
 fn target(head: &str) -> &str {
     let target = head.split(' ').nth(1).unwrap_or_default();
     target.split_once('?').map_or(target, |(path, _)| path)
@@ -250,8 +315,15 @@ async fn upload(
         protocol: Protocol::Http1,
     };
     let (client, token) = (client(false), CancellationToken::new());
-    let session =
-        UploadSession::open(&client, &path, Protocol::Http1, Vec::new(), Duration::ZERO, Arc::default(), token);
+    let session = UploadSession::open(
+        &client,
+        &path,
+        Protocol::Http1,
+        Vec::new(),
+        Duration::ZERO,
+        Arc::default(),
+        token,
+    );
     (session.await.unwrap(), heads)
 }
 
@@ -259,7 +331,9 @@ async fn upload(
 async fn a_departed_upload_session_asks_its_receiver_to_finalize() {
     let (session, mut heads) = upload(|_, head| match target(head) {
         "/upload/session" => Some(ok(r#"{"uploadId":"u0"}"#)),
-        "/upload/progress" if head.starts_with("GET ") => Some(feed(&[r#"{"type":"ready"}"#], false)),
+        "/upload/progress" if head.starts_with("GET ") => {
+            Some(feed(&[r#"{"type":"ready"}"#], false))
+        }
         _ => Some(ok("")),
     })
     .await;
@@ -310,12 +384,17 @@ async fn a_run_mints_its_receiver_over_its_throughput_check_s_connection() {
         throughput.port()
     );
     let (listener, served) = local().await;
-    let _discovery = peer(listener, None, move |_, head| discovery(head, true, &elsewhere));
+    let _discovery = peer(listener, None, move |_, head| {
+        discovery(head, true, &elsewhere)
+    });
     let paths = PathChoice {
         throughput_origin: Some(origin("http", throughput)),
         ..PathChoice::default()
     };
-    let config = Config { paths, ..downloads(&origin("http", served), Stage::Upload) };
+    let config = Config {
+        paths,
+        ..downloads(&origin("http", served), Stage::Upload)
+    };
     let prepared = prepare(&config, client(false)).await.unwrap();
     let paths = prepared.servers[0].path.clone().unwrap();
     assert_eq!(paths.throughput.origin, origin("http", throughput));

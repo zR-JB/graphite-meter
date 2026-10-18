@@ -28,7 +28,10 @@ const fn ms(ms: u64) -> Duration {
 }
 
 fn pong(ping: Ping) -> Pong {
-    Pong { id: ping.id, handling_nanos: 100 }
+    Pong {
+        id: ping.id,
+        handling_nanos: 100,
+    }
 }
 
 fn outcome(probe: Option<ProberEvent>) -> ProbeOutcome {
@@ -42,20 +45,37 @@ fn outcome(probe: Option<ProberEvent>) -> ProbeOutcome {
 fn a_lost_channel_redials_within_2_s_capped_at_the_window_end_after_500_ms_when_lost_early() {
     let t0 = Instant::now();
     let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);
-    assert_eq!(schedule.redial(t0, t0 + ms(100), None), None, "nothing answered yet");
+    assert_eq!(
+        schedule.redial(t0, t0 + ms(100), None),
+        None,
+        "nothing answered yet"
+    );
     let first = schedule.send(t0).unwrap();
     outcome(schedule.reply(pong(first), t0 + ms(20)));
-    assert_eq!(schedule.redial(t0, t0 + ms(100), None), Some((t0 + ms(600), t0 + ms(2100))));
-    assert_eq!(schedule.redial(t0, t0 + ms(1000), None), Some((t0 + ms(1000), t0 + ms(3000))));
+    assert_eq!(
+        schedule.redial(t0, t0 + ms(100), None),
+        Some((t0 + ms(600), t0 + ms(2100)))
+    );
+    assert_eq!(
+        schedule.redial(t0, t0 + ms(1000), None),
+        Some((t0 + ms(1000), t0 + ms(3000)))
+    );
     let end = Some(t0 + ms(1500));
-    assert_eq!(schedule.redial(t0, t0 + ms(100), end), Some((t0 + ms(600), t0 + ms(1500))));
+    assert_eq!(
+        schedule.redial(t0, t0 + ms(100), end),
+        Some((t0 + ms(600), t0 + ms(1500)))
+    );
     let near = Some(t0 + ms(500));
     assert_eq!(
         schedule.redial(t0, t0 + ms(100), near),
         Some((t0 + ms(100), t0 + ms(500))),
         "no wait near the end"
     );
-    assert_eq!(schedule.redial(t0, t0 + ms(500), near), None, "the window ended");
+    assert_eq!(
+        schedule.redial(t0, t0 + ms(500), near),
+        None,
+        "the window ended"
+    );
 }
 
 #[test]
@@ -64,13 +84,28 @@ fn a_reply_driven_probe_goes_on_the_reply_in_flight_and_never_on_a_late_one() {
     let mut schedule = Schedule::new(Cadence::ReplyDriven, 4, t0);
     let first = schedule.send(t0).unwrap();
     let backup = t0 + ms(250);
-    assert_eq!(schedule.wake(), Some(backup), "the first deadline backs the reply");
-    assert_eq!(outcome(schedule.expire(backup).pop()), ProbeOutcome::Timeout);
+    assert_eq!(
+        schedule.wake(),
+        Some(backup),
+        "the first deadline backs the reply"
+    );
+    assert_eq!(
+        outcome(schedule.expire(backup).pop()),
+        ProbeOutcome::Timeout
+    );
     let second = schedule.send(backup).unwrap();
     assert_eq!(schedule.reply(pong(first), backup + ms(50)), None);
-    assert_eq!(schedule.send(backup + ms(50)), None, "a late reply sent a probe");
+    assert_eq!(
+        schedule.send(backup + ms(50)),
+        None,
+        "a late reply sent a probe"
+    );
     outcome(schedule.reply(pong(second), backup + ms(60)));
-    assert_eq!(schedule.wake(), Some(backup + ms(60)), "the reply in flight sends at once");
+    assert_eq!(
+        schedule.wake(),
+        Some(backup + ms(60)),
+        "the reply in flight sends at once"
+    );
     assert!(schedule.send(backup + ms(60)).is_some());
 }
 
@@ -84,7 +119,11 @@ async fn reflector() -> Origin {
                 let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
                 while let Some(Ok(Message::Text(text))) = socket.next().await {
                     let ping = Ping::decode(text.as_bytes()).unwrap();
-                    if socket.send(Message::text(ping.reply(0).encode())).await.is_err() {
+                    if socket
+                        .send(Message::text(ping.reply(0).encode()))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -102,17 +141,30 @@ async fn a_reply_driven_prober_keeps_a_probe_in_flight_on_loopback() {
     };
     let client = Client::new(false, Arc::new(Pool::inline()));
     let start = Instant::now();
-    let mut prober = Prober::spawn(client, path, Stage::Latency, Cadence::ReplyDriven, CancellationToken::new());
+    let mut prober = Prober::spawn(
+        client,
+        path,
+        Stage::Latency,
+        Cadence::ReplyDriven,
+        CancellationToken::new(),
+    );
     tokio::time::sleep(ms(200)).await;
     let rtts: Vec<_> = prober
         .drain()
         .filter_map(|probe| match probe {
-            ProberEvent::Outcome { outcome: ProbeOutcome::Reply { rtt, .. }, .. } => Some(rtt),
+            ProberEvent::Outcome {
+                outcome: ProbeOutcome::Reply { rtt, .. },
+                ..
+            } => Some(rtt),
             _ => None,
         })
         .collect();
     let (busy, elapsed) = (rtts.iter().sum::<Duration>(), start.elapsed());
-    assert!(busy * 2 > elapsed, "{} replies were in flight {busy:?} of {elapsed:?}", rtts.len());
+    assert!(
+        busy * 2 > elapsed,
+        "{} replies were in flight {busy:?} of {elapsed:?}",
+        rtts.len()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -124,9 +176,18 @@ async fn a_first_dial_slower_than_a_redial_still_comes_up_while_the_run_waits() 
         tokio::time::sleep(ms(2500)).await;
         drop(tokio_tungstenite::accept_async(tcp).await);
     });
-    let path = LatencyPath { origin, transport: LatencyTransport::WebSocket };
+    let path = LatencyPath {
+        origin,
+        transport: LatencyTransport::WebSocket,
+    };
     let client = Client::new(false, Arc::new(Pool::inline()));
-    let mut prober = Prober::spawn(client, path, Stage::Latency, Cadence::ReplyDriven, CancellationToken::new());
+    let mut prober = Prober::spawn(
+        client,
+        path,
+        Stage::Latency,
+        Cadence::ReplyDriven,
+        CancellationToken::new(),
+    );
     let first = loop {
         tokio::time::sleep(ms(100)).await;
         if let Some(event) = prober.drain().next() {

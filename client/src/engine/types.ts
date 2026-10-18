@@ -7,7 +7,6 @@ import type { Activity, Stage } from "./run/schedule";
 export type { Ending, FailureReason, Probe, ProbeOutcome, RequestRecipe, Stage, TicketRecipe };
 export type Direction = "down" | "up";
 export const ROLES = ["throughput", "latency"] as const;
-/** A test measures up to this many servers at once. */
 export const MAX_SELECTED = 4;
 export const SELECTION_REFUSED = `Select 1 to ${MAX_SELECTED} test servers`;
 export type Role = (typeof ROLES)[number];
@@ -21,7 +20,6 @@ export const CADENCE_MS: Record<PingCadence, number | null> = {
   slow: 600,
 };
 
-/** A catalog server as results and history name it. */
 export interface ServerIdentity {
   id: string;
   url: string;
@@ -77,12 +75,10 @@ export interface OriginTargets<T> {
   targets: T[];
 }
 
-/** A server's preflight as this page can use it. */
 export interface Discovery {
   generation: string;
   engineVersion: string;
   server: { name: string; location?: string };
-  /** The longest stage the server admits. */
   maxStageMs: number;
   /** The origin that answered the preflight, and the protocol the browser used for it. */
   origin: string;
@@ -94,8 +90,7 @@ export interface Discovery {
   latency: Map<string, OriginTargets<LatencyTarget>>;
 }
 
-/** A path proven to work, and the selection it was proven for: Automatic stays valid while its first candidate does
-    not change; an explicit choice while it resolves to the verified target. */
+/** A path proven to work, and the selection it was proven for. */
 export interface VerifiedFor {
   selection: string;
   head: string;
@@ -128,20 +123,17 @@ export interface PreparedServer {
   auth: ServerAuth;
   discovery: Discovery;
   throughput: ThroughputPath;
-  /** Null when no planned stage probes latency. */
   latency: LatencyPath | null;
 }
 
-/** A server's credentials: none, the page's own sign-in, or a measurement grant. Requests never leave the server's
-    allowed destinations, and a grant never appears in a URL. */
+/** A server's credentials: none, the page's sign-in, or a measurement grant, which never appears in a URL. */
 export interface ServerAuth {
   readonly kind: "public" | "session" | "grant";
   /** Ms until the grant ends by whichever clock says less; Infinity for credentials without an end of their own. */
   left(): number;
   /** Throws SignInRequired when the grant is missing or ended. */
   request(url: string, method: string): RequestRecipe;
-  /** A control request: high priority, the recipe applied, a 403 carrying the sign-in marker thrown as
-      SignInRequired with its body released. */
+  /** A control request at high priority; a 403 with the sign-in marker throws SignInRequired, its body released. */
   fetch(url: string, init?: RequestInit): Promise<Response>;
   /** Null when a socket needs no ticket: public servers, and a WebSocket riding the page's own cookie. */
   ticket(origin: string, route: string): TicketRecipe | null;
@@ -163,11 +155,8 @@ export interface Stall {
   rotate?: boolean;
 }
 
-/** What one server's stage resources report to the run. */
 export interface StageEvents {
-  /** Client-consumed payload bytes of a measured download. */
   download(bytes: number): void;
-  /** A receiver observation of a measured upload. */
   receiver(checkpoint: Checkpoint): void;
   /** Client-consumed bytes before the measured window, which only the live rate reads. */
   warmupDownload(bytes: number): void;
@@ -196,7 +185,6 @@ export interface StageSetup {
   activity: Activity;
   /** Lanes per direction for this server and stage; 0 for a direction the stage does not move. */
   streams: Record<Direction, number>;
-  /** Upload lanes across every server of the stage. */
   uploadLanes: number;
   /** The lanes readiness waits for: those an HTTP/1.1 origin's pool runs at once; all of `streams` when absent. */
   gating?: Record<Direction, number>;
@@ -213,15 +201,12 @@ export interface StageSetup {
 
 /** One server's resources for one stage, shared by its warmup and measured window. */
 export interface StageResources {
-  /** Opens the carriers, receiver and probe channel, and resolves once they work, within 3.5 s. Loaded latency never
-      holds throughput back. */
+  /** Opens the carriers, receiver and probe channel, resolving once they work, within 3.5 s; loaded latency never holds throughput back. */
   prepare(signal: AbortSignal): Promise<void>;
-  /** The measured window starts: evidence from now on counts. */
   measure(): void;
   /** A receiver checkpoint; `final` issues fresh requests and retries a miss within 1.5 s. */
   checkpoint(signal: AbortSignal, final?: boolean): Promise<Checkpoint | null>;
-  /** Resolves once the download bytes the lanes had counted by `cutoff` (page time) reached `download`, with the
-      latest page time those counts stand at (null without download lanes); never rejects. */
+  /** Resolves once the download bytes counted by `cutoff` reached `download`, with the latest time they stand at; never rejects. */
   flush(cutoff: number): Promise<number | null>;
   /** Replaces an upload id the server no longer knows: the run's one rotation per server. */
   replaceUpload(signal: AbortSignal): Promise<void>;
@@ -235,16 +220,18 @@ export type OpenStage = (setup: StageSetup) => StageResources;
 
 export class ServerBusyError extends Error {}
 
-/** An error and its causes, outermost first. */
 export function* causes(error: unknown): Generator<Error> {
-  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++) yield error;
+  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++)
+    yield error;
 }
 
 const NETWORK_FAILURE =
   /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
 /** Engines word one network failure differently. */
 export const isNetworkFailure = (error: unknown) =>
-  [...causes(error)].some(({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message));
+  [...causes(error)].some(
+    ({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message),
+  );
 
 /** A failure that ended a stage's preparation, with the reason it would have reported as an event. */
 export class StageFailure extends Error {
@@ -260,13 +247,11 @@ export class StageFailure extends Error {
 export interface ProbeChannelOptions {
   target: LatencyTarget;
   auth: ServerAuth;
-  /** Fixed start-to-start spacing in ms, or null for reply-driven probing. */
   intervalMs: number | null;
   /** Probes in flight at most; a full window skips a send, never times one out. */
   maxInFlight: number;
 }
 export interface ProbeChannelEvents {
-  /** The first matched reply on each connection. */
   ready(): void;
   outcomes(batch: readonly ProbeOutcome[]): void;
   interrupted(count: number, reason: "unresolved" | "send-failed"): void;
@@ -280,16 +265,17 @@ export interface ProbeChannelEvents {
 export interface ProbeChannel {
   /** Outcomes count from now on; probes sent before never enter a population. */
   measure(): void;
-  /** Probes at this start-to-start spacing (null: on each reply), with at most `maxInFlight` in flight when given, from
-      the next send on; probes in flight keep their deadlines. */
+  /** Probes at this start-to-start spacing (null: on each reply), at most `maxInFlight` in flight, from the next send on. */
   pace(intervalMs: number | null, maxInFlight?: number): void;
-  /** Ends the measured window: its probes in flight drain to their own deadlines and resolve outside it; the bus
-      probes on, unmeasured, until disposed. */
+  /** Ends the measured window: its probes drain to their deadlines outside it, and the bus probes on, unmeasured, until disposed. */
   stop(): Promise<void>;
   /** Immediate release; `incomplete` first reports the probes it cuts off. */
   dispose(incomplete?: boolean): void;
 }
-export type OpenProbeChannel = (options: ProbeChannelOptions, events: ProbeChannelEvents) => ProbeChannel;
+export type OpenProbeChannel = (
+  options: ProbeChannelOptions,
+  events: ProbeChannelEvents,
+) => ProbeChannel;
 /** A probe channel that outlives its stage. */
 export interface LatencyBus extends ProbeChannel {
   /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
@@ -299,18 +285,21 @@ export interface LatencyBus extends ProbeChannel {
 /** The test settings as saved (localStorage `graphite-meter:v1` → `config`). */
 export interface TestConfig {
   stages: Record<Stage, boolean>;
-  /** Transfer stages probe no loaded latency while the latency stage is off. */
   skipLoadedLatencyWhenStageOff: boolean;
-  duration: { warmupMs: number; latencyMs: number; downloadMs: number; uploadMs: number; bidirectionalMs: number };
+  duration: {
+    warmupMs: number;
+    latencyMs: number;
+    downloadMs: number;
+    uploadMs: number;
+    bidirectionalMs: number;
+  };
   pingCadence: PingCadence;
   loadedPingCadence: PingCadence;
   /** Automatic: HTTP/1.1 lanes per direction at most; forced: exactly this many on every protocol. */
   transferStreams: { mode: "auto" | "forced"; count: number };
-  /** Lists the WebTransport datagram path among throughput choices. */
   experimentalDatagramThroughput: boolean;
   /** Saved selections: "auto", "protocol:<http1|http2|http3>", "transport:<kind>", "<origin>", "<origin>::wt[dg]". */
   transports: { throughputTarget: string; latencyTarget: string };
-  /** Finish stable stages early. */
   adaptive: boolean;
   visualization: { throughputMaxBytesPerSec: number | "auto" };
 }

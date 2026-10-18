@@ -6,7 +6,6 @@ import { createHistorySaving } from "./saving";
 
 const RETRYING = "Could not save this result locally. Future writes will be retried.";
 const record = (id: string) => ({ id }) as HistoryRecord;
-/** Lets every promise already settled run on. */
 const turns = async () => {
   for (let i = 0; i < 20; i++) await null;
 };
@@ -60,7 +59,6 @@ function memoryHistory() {
       rows.delete(id);
       notify({ type: "deleted", ids: [id] });
     },
-    /** Another tab changes History. */
     elsewhere(change: () => void) {
       change();
       notify({ type: "elsewhere" });
@@ -73,7 +71,8 @@ function windowEvents() {
   const target = {
     addEventListener: (type: string, listener: () => void) =>
       listeners.set(type, (listeners.get(type) ?? new Set()).add(listener)),
-    removeEventListener: (type: string, listener: () => void) => listeners.get(type)?.delete(listener),
+    removeEventListener: (type: string, listener: () => void) =>
+      listeners.get(type)?.delete(listener),
     dispatch: (type: string) => {
       for (const listener of listeners.get(type) ?? []) listener();
     },
@@ -137,7 +136,9 @@ test("other failures retry every 15 s and as the page returns until saved; a ref
 
   saver.offer(record("b"));
   await turns();
-  history.writes[3]!.answer(new HistoryRefusal("Browser storage is full. This result was not saved."));
+  history.writes[3]!.answer(
+    new HistoryRefusal("Browser storage is full. This result was not saved."),
+  );
   await turns();
   expect([saver.pending(), saver.unsaved(), saver.warning()]).toEqual([
     false,
@@ -250,7 +251,11 @@ test("a queued clear-count refusal stays handled while an earlier write is pendi
   expect(history.writes.map(({ id }) => id)).toEqual(["a"]);
   history.writes[0]!.answer();
   await turns();
-  expect([saver.pending(), saver.failed(), saver.warning()]).toEqual([false, true, "History storage is unavailable."]);
+  expect([saver.pending(), saver.failed(), saver.warning()]).toEqual([
+    false,
+    true,
+    "History storage is unavailable.",
+  ]);
   saver.dispose();
 });
 
@@ -360,7 +365,9 @@ test("failed holds only while the offered result's own write was refused or give
   // A refusal fails the result it refused, until another result is offered.
   saver.offer(record("c"));
   await turns();
-  history.writes[2]!.answer(new HistoryRefusal("Browser storage is full. This result was not saved."));
+  history.writes[2]!.answer(
+    new HistoryRefusal("Browser storage is full. This result was not saved."),
+  );
   await turns();
   expect([saver.unsaved(), saver.failed()]).toEqual([true, true]);
   saver.offer(record("d"));

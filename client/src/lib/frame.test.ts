@@ -4,7 +4,10 @@ import { afterAll, expect, test } from "bun:test";
 const frames = new Map<number, FrameRequestCallback>();
 let nextFrame = 0;
 const listeners = new Map<string, () => void>();
-const page = { hidden: false, addEventListener: (type: string, listener: () => void) => listeners.set(type, listener) };
+const page = {
+  hidden: false,
+  addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+};
 const saved = {
   document: globalThis.document,
   raf: globalThis.requestAnimationFrame,
@@ -12,7 +15,9 @@ const saved = {
 };
 Object.assign(globalThis, {
   document: page,
-  requestAnimationFrame: (callback: FrameRequestCallback) => (frames.set(++nextFrame, callback), nextFrame),
+  requestAnimationFrame: (callback: FrameRequestCallback) => (
+    frames.set(++nextFrame, callback), nextFrame
+  ),
   cancelAnimationFrame: (id: number) => frames.delete(id),
 });
 afterAll(() =>

@@ -3,16 +3,27 @@ import { json } from "../../protocol/pins.testutil";
 import { combinedModel, pathModel } from "./overhead";
 
 test("the wire multipliers the terminal client shares", async () => {
-  for (const { scheme, transport, protocol, ipVersion, multiplier } of (await json("wirerate.testvectors.json")).cases)
-    expect(pathModel({ protocol, secure: scheme === "https", ipVersion, transport }).totalMultiplier).toBeCloseTo(
-      multiplier,
-      9,
-    );
+  for (const { scheme, transport, protocol, ipVersion, multiplier } of (
+    await json("wirerate.testvectors.json")
+  ).cases)
+    expect(
+      pathModel({ protocol, secure: scheme === "https", ipVersion, transport }).totalMultiplier,
+    ).toBeCloseTo(multiplier, 9);
 });
 
 test("servers on different paths weigh their overhead by their bytes", () => {
-  const http1 = { protocol: "http1", secure: false, ipVersion: 4, transport: "fetch-stream" } as const;
-  const quic = { protocol: "http3", secure: true, ipVersion: 6, transport: "fetch-stream" } as const;
+  const http1 = {
+    protocol: "http1",
+    secure: false,
+    ipVersion: 4,
+    transport: "fetch-stream",
+  } as const;
+  const quic = {
+    protocol: "http3",
+    secure: true,
+    ipVersion: 6,
+    transport: "fetch-stream",
+  } as const;
   const model = combinedModel([
     { bytesPerSec: 3e8, path: http1 },
     { bytesPerSec: 1e8, path: quic },
@@ -20,7 +31,8 @@ test("servers on different paths weigh their overhead by their bytes", () => {
   const expected = (3 * pathModel(http1).totalMultiplier + pathModel(quic).totalMultiplier) / 4;
   expect(model.totalMultiplier).toBeCloseTo(expected, 12);
   expect(model.componentCount).toBe(2);
-  const share = (label: string) => model.factors.find((factor) => factor.label === label)?.contributionPct ?? 0;
+  const share = (label: string) =>
+    model.factors.find((factor) => factor.label === label)?.contributionPct ?? 0;
   expect(
     share("IPv4") +
       share("IPv6") +

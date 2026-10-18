@@ -1,4 +1,14 @@
-import { baseConfig, closeSettings, downloadOnly, home, open, openSettings, phase, ready, run } from "./fleet";
+import {
+  baseConfig,
+  closeSettings,
+  downloadOnly,
+  home,
+  open,
+  openSettings,
+  phase,
+  ready,
+  run,
+} from "./fleet";
 import { expect, settled, test, type Locator, type Page } from "./webview";
 
 const tip = (page: Page) => page.locator('[role="tooltip"]');
@@ -38,8 +48,7 @@ test("a pause on a control opens its tip while the hand drifts, and leaving clos
   await open(page, home.http);
   const settings = page.getByRole("button", { name: "Settings", exact: true });
   const { x, y } = await center(settings);
-  // A reading hand never holds still: the tip must open while it drifts a few pixels every step. A busy runner's
-  // timers fire late, so the hand drifts for a while rather than a number of steps.
+  // A reading hand never holds still: the tip must open while it drifts every step, for a while, as a busy runner's timers fire late.
   let opened = false;
   const until = performance.now() + 5_000;
   for (let step = 0; performance.now() < until && !opened; step++) {
@@ -87,7 +96,9 @@ test("explanations on click open only when asked, while a control still names it
   await settings.getByRole("button", { name: "On click", exact: true }).click();
   await closeSettings(page);
   await page.reload();
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.explanations)).toBe("click");
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.explanations))
+    .toBe("click");
 
   const fact = page.locator('.results .card[data-tone="latency"] dt[data-tip]');
   const { x, y } = await center(fact);
@@ -105,72 +116,87 @@ test("explanations on click open only when asked, while a control still names it
   await expect(tip(page)).toContainText("Settings");
 });
 
-test.chrome("a stage chip explains itself over its cut label, on a rest and on a long press", async (page) => {
-  await open(page, home.http, { config: downloadOnly });
-  await run(page);
-  const label = page.locator('.stage-track [data-tone="download"] .chip-label');
-  await label.evaluate((node: HTMLElement) => Object.assign(node.style, { flex: "none", maxWidth: "2ch" }));
-  await expect.poll(() => label.evaluate((node: HTMLElement) => node.dataset.tip)).toBe("");
-  const { x, y } = await center(label);
-  await moveMouse(page, x, y);
-  await expect(tip(page)).toContainText("Complete");
-  await moveMouse(page, x, y + 240);
-  await expect(tip(page)).toHaveCount(0);
-  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  await page.touch("start", x, y);
-  await expect(tip(page)).toContainText("Complete");
-  await page.touch("end");
-});
-
-test.chrome("a touch screen with a keyboard names the keys in the strip and in tips", async (page) => {
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-  await open(page, home.http);
-  expect(await page.evaluate(() => matchMedia("(any-hover: none)").matches)).toBe(true);
-  await expect(page.getByRole("group", { name: "Keyboard shortcuts" })).toBeVisible();
-  const focused = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
-  for (let stop = 0; stop < 8 && (await focused()) !== "Settings"; stop++) await page.press("Tab");
-  expect(await focused()).toBe("Settings");
-  await expect(tip(page)).toContainText("Settings (S)");
-});
-
-test.chrome("a finger's card terms are 24 px targets on a phone, and cards keep their layout", async (page) => {
-  await open(page, home.http);
-  await run(page);
-  // Where each card's labels and figures sit, by their text.
-  const layout = () =>
-    page.locator(".results .card .facts").all((lists: HTMLElement[]) =>
-      lists.flatMap((list) =>
-        Array.from(list.querySelectorAll("dt, dd"), (node) => {
-          const range = document.createRange();
-          range.selectNodeContents(node);
-          const { x, y, width, height } = range.getBoundingClientRect();
-          return [x, y, width, height].map(Math.round);
-        }),
-      ),
+test.chrome(
+  "a stage chip explains itself over its cut label, on a rest and on a long press",
+  async (page) => {
+    await open(page, home.http, { config: downloadOnly });
+    await run(page);
+    const label = page.locator('.stage-track [data-tone="download"] .chip-label');
+    await label.evaluate((node: HTMLElement) =>
+      Object.assign(node.style, { flex: "none", maxWidth: "2ch" }),
     );
-  // Wide cards stack their facts 22 px apart; a phone's wrap them in columns.
-  for (const width of [1000, 390]) {
-    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
-    await page.setViewportSize({ width, height: 900 });
-    await page.evaluate(settled);
-    const before = await layout();
+    await expect.poll(() => label.evaluate((node: HTMLElement) => node.dataset.tip)).toBe("");
+    const { x, y } = await center(label);
+    await moveMouse(page, x, y);
+    await expect(tip(page)).toContainText("Complete");
+    await moveMouse(page, x, y + 240);
+    await expect(tip(page)).toHaveCount(0);
     await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-    expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
-    expect(await layout()).toEqual(before);
-  }
-  const targets = await page.locator(".results .card .facts dt[data-tip]").all((terms: HTMLElement[]) =>
-    terms.map((term) => {
-      term.scrollIntoView({ block: "center" });
-      const box = term.getBoundingClientRect();
-      const hits = (y: number) => term.contains(document.elementFromPoint(box.x + box.width / 2, y));
-      const middle = box.y + box.height / 2;
-      return { tall: box.height >= 24, reached: hits(middle - 11) && hits(middle + 11) };
-    }),
-  );
-  expect(targets.length).toBeGreaterThan(0);
-  for (const target of targets) expect(target).toEqual({ tall: true, reached: true });
-});
+    await page.touch("start", x, y);
+    await expect(tip(page)).toContainText("Complete");
+    await page.touch("end");
+  },
+);
+
+test.chrome(
+  "a touch screen with a keyboard names the keys in the strip and in tips",
+  async (page) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    await open(page, home.http);
+    expect(await page.evaluate(() => matchMedia("(any-hover: none)").matches)).toBe(true);
+    await expect(page.getByRole("group", { name: "Keyboard shortcuts" })).toBeVisible();
+    const focused = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+    for (let stop = 0; stop < 8 && (await focused()) !== "Settings"; stop++)
+      await page.press("Tab");
+    expect(await focused()).toBe("Settings");
+    await expect(tip(page)).toContainText("Settings (S)");
+  },
+);
+
+test.chrome(
+  "a finger's card terms are 24 px targets on a phone, and cards keep their layout",
+  async (page) => {
+    await open(page, home.http);
+    await run(page);
+    // Where each card's labels and figures sit, by their text.
+    const layout = () =>
+      page.locator(".results .card .facts").all((lists: HTMLElement[]) =>
+        lists.flatMap((list) =>
+          Array.from(list.querySelectorAll("dt, dd"), (node) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const { x, y, width, height } = range.getBoundingClientRect();
+            return [x, y, width, height].map(Math.round);
+          }),
+        ),
+      );
+    // Wide cards stack their facts 22 px apart; a phone's wrap them in columns.
+    for (const width of [1000, 390]) {
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(settled);
+      const before = await layout();
+      await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      expect(await layout()).toEqual(before);
+    }
+    const targets = await page
+      .locator(".results .card .facts dt[data-tip]")
+      .all((terms: HTMLElement[]) =>
+        terms.map((term) => {
+          term.scrollIntoView({ block: "center" });
+          const box = term.getBoundingClientRect();
+          const hits = (y: number) =>
+            term.contains(document.elementFromPoint(box.x + box.width / 2, y));
+          const middle = box.y + box.height / 2;
+          return { tall: box.height >= 24, reached: hits(middle - 11) && hits(middle + 11) };
+        }),
+      );
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) expect(target).toEqual({ tall: true, reached: true });
+  },
+);
 
 test.chrome(
   "a finger scrolls past graphs, reads one by dragging sideways and toggles jargon by a tap",
@@ -216,46 +242,51 @@ test.chrome(
   },
 );
 
-test.chrome("a phone's sheet leaves on a short quick flick and springs back from a slow short drag", async (page) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.cdp("Emulation.setTouchEmulationEnabled", {
-    enabled: true,
-    maxTouchPoints: 1,
-  });
-  await open(page, home.http);
-  const sheet = page.locator("dialog.panel[open]");
-  // Each move carries its own time, so the page reads the finger's speed whatever the delivery takes.
-  async function drag(distance: number, ms: number) {
-    const head = await page.locator("dialog.panel[open] .sheet-head").evaluate((el: Element) => {
-      const box = el.getBoundingClientRect();
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+test.chrome(
+  "a phone's sheet leaves on a short quick flick and springs back from a slow short drag",
+  async (page) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.cdp("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 1,
     });
-    let clock = Date.now();
-    const at = (type: string, y?: number) =>
-      page.cdp("Input.dispatchTouchEvent", {
-        type,
-        timestamp: clock / 1000,
-        touchPoints: y === undefined ? [] : [{ x: head.x, y }],
+    await open(page, home.http);
+    const sheet = page.locator("dialog.panel[open]");
+    // Each move carries its own time, so the page reads the finger's speed whatever the delivery takes.
+    async function drag(distance: number, ms: number) {
+      const head = await page.locator("dialog.panel[open] .sheet-head").evaluate((el: Element) => {
+        const box = el.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       });
-    await at("touchStart", head.y);
-    const steps = Math.round(ms / 8);
-    for (let step = 1; step <= steps; step++) {
-      clock += ms / steps;
-      await at("touchMove", head.y + (distance * step) / steps);
+      let clock = Date.now();
+      const at = (type: string, y?: number) =>
+        page.cdp("Input.dispatchTouchEvent", {
+          type,
+          timestamp: clock / 1000,
+          touchPoints: y === undefined ? [] : [{ x: head.x, y }],
+        });
+      await at("touchStart", head.y);
+      const steps = Math.round(ms / 8);
+      for (let step = 1; step <= steps; step++) {
+        clock += ms / steps;
+        await at("touchMove", head.y + (distance * step) / steps);
+      }
+      clock += 8;
+      await at("touchEnd");
     }
-    clock += 8;
-    await at("touchEnd");
-  }
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(sheet).toHaveCount(1);
-  await drag(120, 1200);
-  await expect.poll(() => sheet.evaluate((el: Element) => getComputedStyle(el).transform)).toBe("none");
-  await expect(sheet).toHaveCount(1);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(sheet).toHaveCount(1);
+    await drag(120, 1200);
+    await expect
+      .poll(() => sheet.evaluate((el: Element) => getComputedStyle(el).transform))
+      .toBe("none");
+    await expect(sheet).toHaveCount(1);
 
-  await drag(60, 50);
-  await expect(sheet).toHaveCount(0);
-});
+    await drag(60, 50);
+    await expect(sheet).toHaveCount(0);
+  },
+);
 
 test.chrome(
   "a short phone's scrolled sheet scrolls back on a downward flick, and leaves from its head",
@@ -316,7 +347,11 @@ test.chrome("a pinch on a phone's sheet zooms the page and leaves the sheet open
   await page.evaluate(settled);
   let clock = Date.now();
   const touch = (type: string, points: { x: number; y: number; id: number }[]) =>
-    page.cdp("Input.dispatchTouchEvent", { type, timestamp: (clock += 8) / 1000, touchPoints: points });
+    page.cdp("Input.dispatchTouchEvent", {
+      type,
+      timestamp: (clock += 8) / 1000,
+      touchPoints: points,
+    });
   // In the sheet's content: the lower finger first, then the upper, then they spread apart.
   await touch("touchStart", [{ x: 90, y: 600, id: 0 }]);
   await touch("touchStart", [
@@ -359,44 +394,60 @@ test("a graph's reading stays inside a narrow card wherever it reads", async (pa
   }
 });
 
-test.chrome("a phone's top bar keeps every key in view, with a live run seen from History", async (page) => {
-  await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  await open(page, home.http, {
-    config: { ...baseConfig, duration: { ...baseConfig.duration, latencyMs: 30_000 } },
-  });
-  await ready(page);
-  const overflow = () =>
-    page.evaluate(
-      () =>
-        Math.max(...[...document.querySelector(".topbar")!.children].map((key) => key.getBoundingClientRect().right)) -
-        innerWidth,
-    );
-  const widths = [280, 300, 320, 340, 360, 390];
-  for (const width of widths) {
-    await page.setViewportSize({ width, height: 800 });
-    expect(await overflow(), `idle at ${width}`).toBeLessThanOrEqual(0);
-  }
-  await page.press("r");
-  await expect(phase(page, "latency")).toHaveCount(1, { timeout: 10_000 });
-  await page.evaluate(() => (location.hash = "#/history"));
-  await expect(page.locator(".return-live")).toHaveCount(1);
-  for (const width of widths) {
-    await page.setViewportSize({ width, height: 800 });
-    expect(await overflow(), `live at ${width}`).toBeLessThanOrEqual(0);
-  }
-});
+test.chrome(
+  "a phone's top bar keeps every key in view, with a live run seen from History",
+  async (page) => {
+    await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await open(page, home.http, {
+      config: { ...baseConfig, duration: { ...baseConfig.duration, latencyMs: 30_000 } },
+    });
+    await ready(page);
+    const overflow = () =>
+      page.evaluate(
+        () =>
+          Math.max(
+            ...[...document.querySelector(".topbar")!.children].map(
+              (key) => key.getBoundingClientRect().right,
+            ),
+          ) - innerWidth,
+      );
+    const widths = [280, 300, 320, 340, 360, 390];
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 800 });
+      expect(await overflow(), `idle at ${width}`).toBeLessThanOrEqual(0);
+    }
+    await page.press("r");
+    await expect(phase(page, "latency")).toHaveCount(1, { timeout: 10_000 });
+    await page.evaluate(() => (location.hash = "#/history"));
+    await expect(page.locator(".return-live")).toHaveCount(1);
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 800 });
+      expect(await overflow(), `live at ${width}`).toBeLessThanOrEqual(0);
+    }
+  },
+);
 
 test("the diagnostic report copies on a page without the Clipboard API, and says when it cannot", async (page) => {
   // As on a plain-HTTP page: no Clipboard API; the copy command's selection is recorded, or refused on request.
   await page.addInitScript(() => {
-    Object.defineProperty(Navigator.prototype, "clipboard", { get: () => undefined, configurable: true });
+    Object.defineProperty(Navigator.prototype, "clipboard", {
+      get: () => undefined,
+      configurable: true,
+    });
     const state = { copied: "", refuse: false };
     Object.assign(window, { copying: state });
     const exec = Document.prototype.execCommand;
-    Document.prototype.execCommand = function (this: Document, command: string, ...rest: [boolean?, string?]) {
+    Document.prototype.execCommand = function (
+      this: Document,
+      command: string,
+      ...rest: [boolean?, string?]
+    ) {
       if (command !== "copy") return exec.call(this, command, ...rest);
       if (state.refuse) return false;
-      state.copied = String(getSelection()) || (document.activeElement as HTMLTextAreaElement | null)?.value || "";
+      state.copied =
+        String(getSelection()) ||
+        (document.activeElement as HTMLTextAreaElement | null)?.value ||
+        "";
       return exec.call(this, command, ...rest);
     };
   });
@@ -405,10 +456,14 @@ test("the diagnostic report copies on a page without the Clipboard API, and says
   const copy = page.getByRole("button", { name: /^Copy diagnostic report/ });
   // The labels share one cell; the one shown is the one not hidden.
   const shown = () =>
-    copy.evaluate((button: Element) => button.querySelector(":scope > span:not(.hidden)")?.textContent?.trim());
+    copy.evaluate((button: Element) =>
+      button.querySelector(":scope > span:not(.hidden)")?.textContent?.trim(),
+    );
   await copy.click();
   await expect.poll(shown).toBe("Copied");
-  expect((await page.evaluate(() => (window as any).copying.copied as string)).length).toBeGreaterThan(100);
+  expect(
+    (await page.evaluate(() => (window as any).copying.copied as string)).length,
+  ).toBeGreaterThan(100);
   await expect.poll(shown, { timeout: 4_000 }).toBe("Copy diagnostic report");
   await page.evaluate(() => ((window as any).copying.refuse = true));
   await copy.click();
@@ -424,7 +479,9 @@ test("a Settings change that reshapes the console moves it as a stage chip does"
     .locator(".chips")
     .evaluate((chips: Element) =>
       [...chips.querySelectorAll<HTMLElement>("button")]
-        .find((key) => /^Latency/.test((key.getAttribute("aria-label") ?? key.textContent ?? "").trim()))!
+        .find((key) =>
+          /^Latency/.test((key.getAttribute("aria-label") ?? key.textContent ?? "").trim()),
+        )!
         .click(),
     );
   await expect(page.locator(".latency-panel")).toHaveCount(0);
@@ -434,7 +491,9 @@ test("a Settings change that reshapes the console moves it as a stage chip does"
     .getByRole("switch", { name: "Skip loaded latency if the Latency stage is off" })
     .evaluate((input: HTMLElement) => input.click());
   expect(
-    await page.locator('[data-flip="controls"]').evaluate((el: Element) => el.getAnimations().length),
+    await page
+      .locator('[data-flip="controls"]')
+      .evaluate((el: Element) => el.getAnimations().length),
   ).toBeGreaterThan(0);
   await expect(page.locator(".latency-panel")).toHaveCount(1);
 });

@@ -20,8 +20,7 @@ function parse(line: string): ProgressRecord | null {
   }
 }
 
-/** Emits each observation of `body` and resolves with the terminal record that ended it, or null; always releases
-    the stream. */
+/** Emits each observation of `body` and resolves with its terminal record, or null; always releases the stream. */
 export async function readRecords(
   body: ReadableStream<Uint8Array>,
   emit: (record: FeedRecord) => void,

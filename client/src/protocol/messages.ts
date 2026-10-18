@@ -9,14 +9,12 @@ export interface RequestRecipe {
   redirect: RequestRedirect;
 }
 
-/** How to mint a single-use socket ticket for one destination. */
 export interface TicketRecipe {
   url: string;
   request: RequestRecipe;
 }
 
-/** How a lane, feed or channel ended. With `retry` a reconnect may recover it. With `rotate` the server no longer knows
-    the upload id, so the run may replace the receiver once. */
+/** How a lane, feed or channel ended; `retry` may recover it, `rotate` lets the run replace an upload id the server forgot. */
 export interface Ending {
   reason: FailureReason;
   retry: boolean;
@@ -25,8 +23,7 @@ export interface Ending {
   retryAfterMs?: number;
 }
 
-/** One resolved probe, timed on the page's monotonic clock. A reply after the stage's cutoff resolves its probe but
-    stays out of the window's statistics (`inWindow: false`). */
+/** One resolved probe on the page's monotonic clock; a reply after the stage's cutoff stays out of the window (`inWindow: false`). */
 export interface ProbeOutcome {
   rttMs: number;
   timedOut: boolean;
@@ -42,8 +39,7 @@ interface BytesReport {
   epoch: number;
 }
 
-/** A worker's terminal report is an ending classified from the server's answer, or a network break, which the owner
-    classifies because a sign-in or grant that ended shows first as one. */
+/** A worker's terminal report: an ending from the server's answer, or a network break the owner classifies, as an ended sign-in shows as one. */
 export type EndReport = { type: "ended"; ending: Ending } | { type: "broken"; detail: string };
 
 /** A lane answers `flush` with its epoch's download total as counted by `at`. */
@@ -70,12 +66,21 @@ export type LaneCommand =
   | { type: "flush"; at: number };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
-export type LaneReport = BytesReport | { type: "posted"; bytes: number; elapsedMs: number } | EndReport | Flushed;
+export type LaneReport =
+  | BytesReport
+  | { type: "posted"; bytes: number; elapsedMs: number }
+  | EndReport
+  | Flushed;
 
-/** A session worker (re)dials with `download` or `upload` after its previous ending. `stop` finalizes an upload and
-    is acknowledged by `stopped` whatever ended the session. `flush` is a lane's. */
+/** A session worker (re)dials with `download` or `upload`; `stop` finalizes an upload and is acknowledged by `stopped`. */
 export type SessionCommand =
-  | { type: "download"; url: string; ticket: TicketRecipe | null; datagrams: boolean; epoch: number }
+  | {
+      type: "download";
+      url: string;
+      ticket: TicketRecipe | null;
+      datagrams: boolean;
+      epoch: number;
+    }
   | {
       type: "upload";
       url: string;
@@ -104,7 +109,6 @@ export type ProbeCommand =
       url: string;
       transport: "websocket" | "webtransport";
       ticket: TicketRecipe | null;
-      /** Start-to-start spacing in ms. With null a probe leaves on each reply. */
       intervalMs: number | null;
       maxInFlight: number;
     }

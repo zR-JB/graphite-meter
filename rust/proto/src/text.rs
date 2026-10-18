@@ -4,7 +4,9 @@ use std::str::FromStr;
 
 /// A field of digits only, at most `digits` of them, that fits `T`.
 pub(crate) fn decimal<T: FromStr>(field: &str, digits: usize) -> Option<T> {
-    let digits_only = !field.is_empty() && field.len() <= digits && field.bytes().all(|byte| byte.is_ascii_digit());
+    let digits_only = !field.is_empty()
+        && field.len() <= digits
+        && field.bytes().all(|byte| byte.is_ascii_digit());
     digits_only.then(|| field.parse().ok()).flatten()
 }
 

@@ -1,5 +1,4 @@
-// One upload id's receiver (api/upload.md): every feed observation, direct or relayed, passes one monotonic guard, and
-// whoever carries the feed finalizes the id once.
+// One upload id's receiver: every feed observation passes one monotonic guard, and the feed's carrier finalizes the id once.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release } from "../../protocol/documents";
 import type { FeedRecord } from "../../protocol/messages";
@@ -20,7 +19,6 @@ const QUIET_MS = 250;
 const SILENT_CHECKS = 6;
 
 export interface ReceiverHost {
-  /** Run ms. */
   now(): number;
   /** An observation that passed the guard; `grew` when the receiver's bytes did. */
   observed(checkpoint: Checkpoint, grew: boolean): void;
@@ -40,7 +38,6 @@ export class Receiver {
   readonly #opened = Promise.withResolvers<void>();
   /** Aborted by a terminal record that passed the guard. */
   readonly #complete = new AbortController();
-  /** The latest observation that passed the guard. */
   #last: Checkpoint | null = null;
   /** Receiver time advanced since the quiet check last looked. */
   #advanced = true;
@@ -77,7 +74,6 @@ export class Receiver {
     return abortable(this.#opened.promise, signal);
   }
 
-  /** An observation from the feed, whoever carries it. */
   record(record: FeedRecord): void {
     if (this.#closed.signal.aborted) return;
     if (record.type === "ready") {
@@ -113,37 +109,50 @@ export class Receiver {
     if (!this.#backoff) return;
     const check = () => {
       if (!this.#advanced)
-        this.checkpoint(this.#closed.signal).catch((error) => error instanceof SignInRequired && this.#host.signIn());
+        this.checkpoint(this.#closed.signal).catch(
+          (error) => error instanceof SignInRequired && this.#host.signIn(),
+        );
       this.#advanced = false;
       void delay(QUIET_MS, this.#closed.signal).then(() => this.#closed.signal.aborted || check());
     };
     check();
   }
 
-  /** An ordinary checkpoint joins the one in flight; a final one issues fresh requests and retries a miss within its
-      bound. Either feeds the receiver like a record. */
+  /** An ordinary checkpoint joins the one in flight; a final one asks afresh and retries a miss within its bound. */
   checkpoint(signal: AbortSignal, final = false): Promise<Checkpoint | null> {
     if (final) return this.#final(AbortSignal.any([signal, AbortSignal.timeout(CHECKPOINT_MS)]));
     this.#inFlight ??= this.#request().finally(() => (this.#inFlight = null));
     return abortable(this.#inFlight, signal);
   }
 
-  /** Finalizes an HTTP feed's id, then waits a grace for the terminal record. A session finalizes its own id as it
-      stops; one it could not finalize (its worker died or never got its command) is backed up without waiting. */
+  /** Finalizes an HTTP feed's id and waits a grace for its terminal record; a session's unfinalized id is backed up at once. */
   async finish(): Promise<void> {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
         // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
-        void this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true }).then(
-          (response) => release(response),
-          () => {},
-        );
+        void this.#auth
+          .fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true })
+          .then(
+            (response) => release(response),
+            () => {},
+          );
       else
         try {
-          const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(FINAL_GRACE_MS)]);
-          const response = await this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", signal });
+          const signal = AbortSignal.any([
+            this.#closed.signal,
+            AbortSignal.timeout(FINAL_GRACE_MS),
+          ]);
+          const response = await this.#auth.fetch(this.#feed, {
+            method: "DELETE",
+            cache: "no-store",
+            signal,
+          });
           release(response);
-          if (response.ok) await delay(FINAL_GRACE_MS, AbortSignal.any([this.#closed.signal, this.#complete.signal]));
+          if (response.ok)
+            await delay(
+              FINAL_GRACE_MS,
+              AbortSignal.any([this.#closed.signal, this.#complete.signal]),
+            );
         } catch {
           // Finalization is cleanup: the measured window already closed.
         }
@@ -229,13 +238,16 @@ export class Receiver {
     }
   }
 
-  /** One checkpoint; a refusal, a malformed answer or a closed receiver is none. An observation that overtook the
-      answer is newer, so it was taken after the request reached the receiver: it answers instead. */
+  /** One checkpoint, or none on refusal; an observation that overtook the answer is newer, so it answers instead. */
   async #request(): Promise<Checkpoint | null> {
     if (this.#closed.signal.aborted) return null;
     const requestedAtMs = this.#host.now();
     const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(CHECKPOINT_MS)]);
-    const response = await this.#auth.fetch(this.#checkpoint, { method: "POST", cache: "no-store", signal });
+    const response = await this.#auth.fetch(this.#checkpoint, {
+      method: "POST",
+      cache: "no-store",
+      signal,
+    });
     if (!response.ok) {
       release(response);
       return null;

@@ -36,10 +36,13 @@ export function values(summary: LatencySummary | null, current: number | null = 
 
 /** Lists the drawn metrics a row is read at, along the axis; P95 has no mark, so it is spoken, never pointed at. */
 export const present = (row: Values): Metric[] =>
-  METRICS.filter((metric) => metric !== "p95" && row[metric] !== null).sort((a, b) => row[a]! - row[b]!);
+  METRICS.filter((metric) => metric !== "p95" && row[metric] !== null).sort(
+    (a, b) => row[a]! - row[b]!,
+  );
 
 /** The rows' axis follows the dial's ladder over their P90s, so the boxes fill it and one slow reply never sets it. */
-export const lanesAxisMs = (rows: readonly Values[]) => latencyCeilingMs(rows.map((row) => row.p90 ?? row.center));
+export const lanesAxisMs = (rows: readonly Values[]) =>
+  latencyCeilingMs(rows.map((row) => row.p90 ?? row.center));
 
 /** Finds the measured metric nearest a value on the axis, so a hand follows from marker to marker; null with none. */
 export function nearestMetric(row: Values, ms: number): Metric | null {
@@ -49,8 +52,7 @@ export function nearestMetric(row: Values, ms: number): Metric | null {
   return best;
 }
 
-/** Steps a slider key through the present metrics, null for any other key; from no reading, a step down takes the
-    last. */
+/** Steps a slider key through the present metrics, null for other keys; from no reading, a step down takes the last. */
 export function stepMetric(row: Values, from: Metric | null, key: string): Metric | null {
   const metrics = present(row);
   const index = from === null ? -1 : metrics.indexOf(from);
@@ -75,11 +77,11 @@ export function stepMetric(row: Values, from: Metric | null, key: string): Metri
 /** A twentieth of the probes timing out is worth a look. */
 export const TIMEOUTS_WARN = 0.05;
 
-/** Gives the share of resolved probes that timed out; null before any resolved. */
 export const timeoutShare = (summary: LatencySummary | null) =>
   summary?.probeCount ? summary.timeoutCount / summary.probeCount : null;
 
-export const fmtTimeouts = (ratio: number | null) => (ratio === null ? MISSING : fmtPercent(ratio * 100));
+export const fmtTimeouts = (ratio: number | null) =>
+  ratio === null ? MISSING : fmtPercent(ratio * 100);
 
 /** Unknown outcomes or anything but a reply make the figure say it explains them. */
 export const accountingNotice = (summary: LatencySummary | null) =>
@@ -104,7 +106,8 @@ function accounting(summary: LatencySummary): string {
 /** Explains the figure, its outcomes when it has a notice, else what the share counts. */
 export function timeoutsTip(label: string, summary: LatencySummary | null): string {
   if (!summary?.probeCount && !accountingNotice(summary)) return "";
-  if (accountingNotice(summary)) return `${label} probe outcomes\n${accounting(summary!)}\n${NOT_LOSS}`;
+  if (accountingNotice(summary))
+    return `${label} probe outcomes\n${accounting(summary!)}\n${NOT_LOSS}`;
   return `Timeouts\n${fmtCount(summary!.timeoutCount)} of ${fmtCount(summary!.probeCount)} probes had no reply before the deadline\n${NOT_LOSS}`;
 }
 
@@ -114,7 +117,12 @@ export const serverHandling = (timing: NonNullable<LatencySummary["reflectorTimi
   `(${fmtCount(timing.sampleCount)} paired replies)`;
 
 /** Words a row as a screen reader hears it, every figure it has, or that it waits. */
-export function laneDescription(label: string, row: Values, summary: LatencySummary | null, added: number | null) {
+export function laneDescription(
+  label: string,
+  row: Values,
+  summary: LatencySummary | null,
+  added: number | null,
+) {
   const ms = (value: number) => `${fmtMs(value)} ms`;
   const ratio = timeoutShare(summary);
   const figures = [

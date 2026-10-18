@@ -10,7 +10,14 @@ import type {
   StageResults,
   StageStatus,
 } from "../engine/run/result";
-import { Run, type DroppedServer, type LiveSample, type Phase, type RunOptions, type RunPlan } from "../engine/run/run";
+import {
+  Run,
+  type DroppedServer,
+  type LiveSample,
+  type Phase,
+  type RunOptions,
+  type RunPlan,
+} from "../engine/run/run";
 import { CHECK_FAILED } from "../engine/net/checks";
 import { adaptWarmup, planned, STAGES, totalMs, type Stage } from "../engine/run/schedule";
 import type { FailureReason, OpenStage, PreparedServer, Stall, TestConfig } from "../engine/types";
@@ -30,8 +37,7 @@ interface RunEnvironment {
   refusal: Read<string>;
   /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again; throws the words to show when one refuses `config`, an AbortError when newer
-      intent superseded the start. */
+  /** Checks the selected servers again; throws the words to show when one refuses `config`, or an AbortError when superseded. */
   prepare(
     signal: AbortSignal,
     config: TestConfig,
@@ -47,33 +53,41 @@ interface RunEnvironment {
   clock?: Clock;
 }
 
-export type Preparation = "idle" | "authenticating" | "checking" | "launching" | "blocked" | "failed";
+export type Preparation =
+  | "idle"
+  | "authenticating"
+  | "checking"
+  | "launching"
+  | "blocked"
+  | "failed";
 /** What the console shows; `data-phase` carries it. */
 export type ShownPhase = "idle" | Phase | "complete" | "aborted" | "error";
 type Step = "preparing" | "running" | "finalizing";
 
 interface ServerSeries {
   buckets: LatencyBucket[];
-  /** Bumped whenever `buckets` changes in place. */
   version: Signal<number>;
   summaries: Signal<Partial<Record<Stage, LatencySummary | null>>>;
 }
 
-/** One server's latency series as views read it. */
 interface LatencySeries {
   readonly buckets: readonly LatencyBucket[];
   readonly version: Read<number>;
   readonly summaries: Read<Partial<Record<Stage, LatencySummary | null>>>;
 }
 
-const NO_RESULTS: StageResults = { latency: null, download: null, upload: null, bidirectional: null };
+const NO_RESULTS: StageResults = {
+  latency: null,
+  download: null,
+  upload: null,
+  bidirectional: null,
+};
 
 export function createRun(env: RunEnvironment) {
   const { preferences } = env;
   const phase = signal<ShownPhase>("idle");
   const stage = signal<Stage | null>(null);
   const step = signal<Step | null>(null);
-  /** Timeline ms where the shown segment starts. */
   const shownAt = signal(0);
   const progress = signal({ elapsedMs: 0, budgetMs: 0 });
   const stall = signal<Stall | null>(null);
@@ -98,7 +112,6 @@ export function createRun(env: RunEnvironment) {
   const prepared = signal<readonly PreparedServer[]>([]);
 
   let run: Run | null = null;
-  /** The RTT the current run's warmup adapts to. */
   let rttMs = 0;
   let release = () => {};
   let pending: AbortController | null = null;
@@ -110,11 +123,14 @@ export function createRun(env: RunEnvironment) {
   let spanMs = 0;
 
   const running = computed(() => !["idle", "complete", "aborted", "error"].includes(phase()));
-  const preparing = computed(() => ["authenticating", "checking", "launching"].includes(preparation()));
+  const preparing = computed(() =>
+    ["authenticating", "checking", "launching"].includes(preparation()),
+  );
 
   const series = (id: string): ServerSeries => {
     let entry = serverSeries.get(id);
-    if (!entry) serverSeries.set(id, (entry = { buckets: [], version: signal(0), summaries: signal({}) }));
+    if (!entry)
+      serverSeries.set(id, (entry = { buckets: [], version: signal(0), summaries: signal({}) }));
     return entry;
   };
 
@@ -178,7 +194,11 @@ export function createRun(env: RunEnvironment) {
           if (sample.warmup) return live.set(sample);
           // A new stage counts from the last reading; a count that went backwards starts over.
           if (sample.stage !== stageBase.stage || sample.bytes < stageBase.last)
-            stageBase = { stage: sample.stage, bytes: sample.bytes < stageBase.last ? 0 : stageBase.last, last: 0 };
+            stageBase = {
+              stage: sample.stage,
+              bytes: sample.bytes < stageBase.last ? 0 : stageBase.last,
+              last: 0,
+            };
           stageBase.last = sample.bytes;
           for (const dir of ["down", "up"] as const) {
             const bytesPerSec = sample[dir];
@@ -259,7 +279,10 @@ export function createRun(env: RunEnvironment) {
   }
 
   async function launch(config: TestConfig, signal: AbortSignal): Promise<void> {
-    await env.authorize(totalMs(adaptWarmup(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS, signal);
+    await env.authorize(
+      totalMs(adaptWarmup(config, LONGEST_WARMUP_RTT_MS)) + SESSION_MARGIN_MS,
+      signal,
+    );
     signal.throwIfAborted();
     preparation.set("checking");
     const ready = await env.prepare(signal, config);
@@ -267,10 +290,13 @@ export function createRun(env: RunEnvironment) {
     if (!ready.servers.length)
       throw new Error(
         ready.dropped
-          .map(({ server, message }) => (ready.dropped.length > 1 ? `${server.name}: ${message}` : message))
+          .map(({ server, message }) =>
+            ready.dropped.length > 1 ? `${server.name}: ${message}` : message,
+          )
           .join("; ") || CHECK_FAILED,
       );
-    const focus = ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
+    const focus =
+      ready.servers.find(({ server }) => server.id === ready.focus) ?? ready.servers[0]!;
     const runPlan = adaptWarmup(config, focus.latency?.rttMs ?? 0);
     const next = new Run({
       servers: ready.servers,
@@ -298,7 +324,6 @@ export function createRun(env: RunEnvironment) {
     next.start();
   }
 
-  /** Start, Stop or Cancel: what the run key does now. */
   function toggle(): void {
     if (running.peek()) {
       cancel();
@@ -352,8 +377,7 @@ export function createRun(env: RunEnvironment) {
     untrack(cancel);
   });
 
-  /** May this stage be turned on or off now? While a test runs, the run's own rule decides, read again as its stage
-      moves on. */
+  /** Whether a stage may be turned on or off now; while a test runs, the run's own rule decides. */
   const canToggle = (name: Stage) => {
     if (preparing()) return false;
     if (!running()) return true;
@@ -361,8 +385,7 @@ export function createRun(env: RunEnvironment) {
     return run?.canChange(name) ?? false;
   };
 
-  /** The one writer of test settings: refused while a start prepares; while a run is live only stages, durations,
-      early finish and the gauge maximum may change, a stage only until it begins. Returns whether it applied. */
+  /** The one writer of test settings; while a run is live only stages, durations, early finish and the gauge may change. */
   function configure(patch: Partial<TestConfig>): boolean {
     const keys = Object.keys(patch);
     // A refusal speaks for the change that caused it, never for a later one.
@@ -370,7 +393,11 @@ export function createRun(env: RunEnvironment) {
     // The gauge's maximum is the page's alone, so it may change even while a start prepares.
     if (preparing.peek() && keys.some((key) => key !== "visualization")) return false;
     const current = run && running.peek() ? run : null;
-    if (current && keys.some((key) => !["stages", "duration", "adaptive", "visualization"].includes(key))) return false;
+    if (
+      current &&
+      keys.some((key) => !["stages", "duration", "adaptive", "visualization"].includes(key))
+    )
+      return false;
     const candidate = { ...preferences.config.peek(), ...patch };
     if (
       !STAGES.some((name) => planned(candidate, name)) ||
@@ -379,7 +406,12 @@ export function createRun(env: RunEnvironment) {
       return false;
     if (current && keys.some((key) => key !== "visualization")) {
       const runPlan = adaptWarmup(
-        { ...current.plan, stages: candidate.stages, duration: candidate.duration, adaptive: candidate.adaptive },
+        {
+          ...current.plan,
+          stages: candidate.stages,
+          duration: candidate.duration,
+          adaptive: candidate.adaptive,
+        },
         rttMs,
       );
       const refuse = (message: string) => (refusal.set(message), false);
@@ -387,9 +419,15 @@ export function createRun(env: RunEnvironment) {
       if (totalMs(runPlan) > totalMs(current.plan) && !env.fits(remainingMs + SESSION_MARGIN_MS))
         return refuse("This change would extend the test beyond the current sign-in.");
       try {
-        current.reconfigure({ stages: runPlan.stages, duration: runPlan.duration, adaptive: runPlan.adaptive });
+        current.reconfigure({
+          stages: runPlan.stages,
+          duration: runPlan.duration,
+          adaptive: runPlan.adaptive,
+        });
       } catch (cause) {
-        return refuse(cause instanceof Error ? cause.message : "This change cannot apply to the running test.");
+        return refuse(
+          cause instanceof Error ? cause.message : "This change cannot apply to the running test.",
+        );
       }
       plan.set(current.plan);
       spanMs = totalMs(current.plan);
@@ -407,7 +445,6 @@ export function createRun(env: RunEnvironment) {
     return configure({ stages });
   }
 
-  /** Start over: the shown run and its result go. */
   function returnToStart(): void {
     cancel();
     releaseRun();
@@ -415,7 +452,6 @@ export function createRun(env: RunEnvironment) {
     reset();
   }
 
-  /** Ends a live run for the reason given, keeping what it measured. */
   function end(reason: FailureReason, message: string): void {
     if (running.peek()) run?.end(reason, message);
   }

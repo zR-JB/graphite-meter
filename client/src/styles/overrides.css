@@ -23,13 +23,11 @@
   [data-tip]:not(button, a, label, [role="switch"]) {
     cursor: help;
   }
-  /* Curated jargon carries a mark. */
   [data-tip="term"] {
     text-decoration: underline dotted color-mix(in srgb, currentColor 50%, transparent);
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
   }
-  /* Every explained word brightens. */
   @media (hover: hover) {
     [data-tip]:is(:hover, :focus-visible) {
       color: var(--text);
@@ -63,7 +61,6 @@
     scale: 0.4;
   }
 }
-/* A measured span grows from its middle. */
 @keyframes grow-x {
   from {
     scale: 0 1;

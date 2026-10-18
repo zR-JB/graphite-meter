@@ -9,10 +9,8 @@ use ratatui_core::{
 };
 use std::borrow::Cow;
 
-/// Maps each row and column within a braille cell to its dot.
 const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
-/// Draws a frame and records where its pressable regions landed, the topmost last.
 pub struct Canvas<'a> {
     buffer: &'a mut Buffer,
     profile: Profile,
@@ -21,7 +19,11 @@ pub struct Canvas<'a> {
 
 impl<'a> Canvas<'a> {
     pub fn new(buffer: &'a mut Buffer, profile: Profile) -> Self {
-        Self { buffer, profile, hits: Vec::new() }
+        Self {
+            buffer,
+            profile,
+            hits: Vec::new(),
+        }
     }
 
     pub fn area(&self) -> Rect {
@@ -35,19 +37,26 @@ impl<'a> Canvas<'a> {
     /// Fills `area` with a tile's color from 256 colors on. With fewer the canvas stays flat.
     pub fn fill(&mut self, area: Rect, color: Color) {
         if self.profile >= Profile::Ansi256 {
-            self.plate(area, Style { bg: Some(color), ..Style::default() });
+            self.plate(
+                area,
+                Style {
+                    bg: Some(color),
+                    ..Style::default()
+                },
+            );
         }
     }
 
     /// Paints `area` in `style`'s background in every profile that has color, as a key's plate.
     pub fn plate(&mut self, area: Rect, style: Style) {
-        let Some(bg) = paint(style.bg, self.profile) else { return };
+        let Some(bg) = paint(style.bg, self.profile) else {
+            return;
+        };
         for (x, y) in cells(area.intersection(self.buffer.area)) {
             self.buffer[(x, y)].set_bg(bg);
         }
     }
 
-    /// Blanks `area`, its colors with it.
     pub fn clear(&mut self, area: Rect) {
         for (x, y) in cells(area.intersection(self.buffer.area)) {
             self.buffer[(x, y)].reset();
@@ -68,21 +77,26 @@ impl<'a> Canvas<'a> {
             }
             let text: Cow<'_, str> = match span.text.chars().all(safe) {
                 true => Cow::Borrowed(&span.text),
-                false => Cow::Owned(span.text.chars().map(|c| if safe(c) { c } else { ' ' }).collect()),
+                false => Cow::Owned(
+                    span.text
+                        .chars()
+                        .map(|c| if safe(c) { c } else { ' ' })
+                        .collect(),
+                ),
             };
             let style = self.painted(span.style);
-            (at, _) = self.buffer.set_stringn(at, y, text, usize::from(end - at), style);
+            (at, _) = self
+                .buffer
+                .set_stringn(at, y, text, usize::from(end - at), style);
         }
         at
     }
 
-    /// Writes `line` ending at the right edge of the `width` cells from `x`.
     pub fn right(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + width - shown, y, shown, line);
     }
 
-    /// Writes `line` centred in the `width` cells from `x`.
     pub fn center(&mut self, x: u16, y: u16, width: u16, line: &Line) {
         let shown = u16::try_from(line.width()).unwrap_or(u16::MAX).min(width);
         self.line(x + (width - shown) / 2, y, shown, line);
@@ -92,8 +106,9 @@ impl<'a> Canvas<'a> {
     pub fn dots(&mut self, dots: &Dots) {
         let area = dots.area.intersection(self.buffer.area);
         for (x, y) in cells(area) {
-            let (mask, color, _) =
-                dots.cells[usize::from(y - dots.area.y) * usize::from(dots.area.width) + usize::from(x - dots.area.x)];
+            let (mask, color, _) = dots.cells[usize::from(y - dots.area.y)
+                * usize::from(dots.area.width)
+                + usize::from(x - dots.area.x)];
             if mask == 0 {
                 continue;
             }
@@ -104,7 +119,6 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Lets a press in `area` reach `target`.
     pub fn hit(&mut self, area: Rect, target: Target) {
         self.hits.push((area, target));
     }
@@ -121,8 +135,9 @@ impl<'a> Canvas<'a> {
         let ((red, green, blue), soft) = (rgb(canvas), rgb(soft));
         let toward = |color: Paint| match color {
             Paint::Rgb(r, g, b) => {
-                let blend =
-                    |own: u8, base: u8| (f64::from(own) * (1.0 - share) + f64::from(base) * share).round() as u8;
+                let blend = |own: u8, base: u8| {
+                    (f64::from(own) * (1.0 - share) + f64::from(base) * share).round() as u8
+                };
                 Paint::Rgb(blend(r, red), blend(g, green), blend(b, blue))
             }
             other => other,
@@ -164,13 +179,11 @@ pub fn paint(color: Option<Color>, profile: Profile) -> Option<Paint> {
     }
 }
 
-/// Walks every cell of `area`, row by row.
 fn cells(area: Rect) -> impl Iterator<Item = (u16, u16)> {
     (area.y..area.bottom()).flat_map(move |y| (area.x..area.right()).map(move |x| (x, y)))
 }
 
-/// Lays braille dots over an area, two across and four down a cell. A cell shows its highest rank's dots in that
-/// rank's first color, so a mark drawn over a trace stays whole.
+/// Braille dots, two across and four down a cell; a cell shows its highest rank's dots, so a mark over a trace stays whole.
 pub struct Dots {
     area: Rect,
     cells: Vec<(u8, Option<Color>, u8)>,
@@ -184,15 +197,19 @@ impl Dots {
         }
     }
 
-    /// Counts the dots across and down the area.
     pub fn size(&self) -> (usize, usize) {
-        (usize::from(self.area.width) * 2, usize::from(self.area.height) * 4)
+        (
+            usize::from(self.area.width) * 2,
+            usize::from(self.area.height) * 4,
+        )
     }
 
     /// Lights the dot `x` across and `y` down in `color` at `rank`. One off the area is dropped.
     pub fn set(&mut self, x: isize, y: isize, color: Color, rank: u8) {
         let (width, height) = self.size();
-        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else { return };
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
         if x >= width || y >= height {
             return;
         }

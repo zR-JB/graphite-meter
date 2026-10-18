@@ -1,5 +1,3 @@
-//! The running server over real sockets.
-
 mod auth;
 mod connection;
 mod delayed;
@@ -42,7 +40,10 @@ async fn advance_clock(duration: Duration) {
 
 fn config(env: &[(&str, &str)]) -> Config {
     let lookup = |name: &str| {
-        let given = env.iter().find(|(key, _)| *key == name).map(|(_, value)| *value);
+        let given = env
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| *value);
         let local = (name == "GM_H1_ADDR").then_some("127.0.0.1:0");
         given.or(local).map(OsString::from)
     };
@@ -57,14 +58,12 @@ fn pool() -> Pool {
     Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline())
 }
 
-/// A server serves on local ports until stopped.
 struct Running {
     address: SocketAddr,
     tls: Option<SocketAddr>,
     h2: Option<SocketAddr>,
     quic: Option<SocketAddr>,
     companion: Option<SocketAddr>,
-    /// This many endpoints share the HTTP/3 port.
     endpoints: usize,
     budget: Budget,
     app: Arc<App>,
@@ -85,9 +84,18 @@ async fn bind(env: &[(&str, &str)]) -> Server {
 
 async fn start(env: &[(&str, &str)]) -> Running {
     let server = bind(env).await;
-    let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
-    let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
-    let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.app().budget().clone());
+    let (address, tls) = (
+        server.local_addr(Endpoint::H1).unwrap(),
+        server.local_addr(Endpoint::H1Tls),
+    );
+    let (h2, quic) = (
+        server.local_addr(Endpoint::H2),
+        server.local_addr(Endpoint::Quic),
+    );
+    let (companion, budget) = (
+        server.local_addr(Endpoint::H3Companion),
+        server.app().budget().clone(),
+    );
     let (endpoints, app) = (server.quic_endpoints(), server.app());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
@@ -108,7 +116,6 @@ async fn start(env: &[(&str, &str)]) -> Running {
 }
 
 impl Running {
-    /// Starts the shutdown. The task ends once connections drained.
     fn stop(self) -> JoinHandle<Result<(), String>> {
         self.stop.send(()).unwrap();
         self.task
@@ -122,25 +129,28 @@ impl Running {
     async fn get(&self, path: &str) -> Answer {
         let mut client = self.connect().await;
         client
-            .send(&format!("GET {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n"))
+            .send(&format!(
+                "GET {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n"
+            ))
             .await;
         client.answer().await.unwrap()
     }
 
-    /// Reads the handlers in use, as `/probe` reports them.
     async fn active(&self) -> u64 {
-        let probe: serde_json::Value = serde_json::from_slice(&self.get("/probe").await.body).unwrap();
+        let probe: serde_json::Value =
+            serde_json::from_slice(&self.get("/probe").await.body).unwrap();
         probe["load"]["active"].as_u64().unwrap()
     }
 
-    /// Waits until `/probe` reports `active` handlers.
     async fn until_active(&self, active: u64) {
         let reached = async {
             while self.active().await != active {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), reached).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), reached)
+            .await
+            .unwrap();
     }
 
     async fn upload_id(&self) -> String {
@@ -151,7 +161,6 @@ impl Running {
     }
 }
 
-/// An answer holds its status line, header fields with lower-case names, and body.
 #[derive(Debug)]
 struct Answer {
     status: u16,
@@ -168,7 +177,6 @@ impl Answer {
     }
 }
 
-/// A client speaks HTTP/1.1 over a raw stream.
 struct Client<S> {
     stream: BufReader<S>,
     /// The next answer has no body, as the answer to HEAD.
@@ -177,23 +185,30 @@ struct Client<S> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     fn new(stream: S) -> Self {
-        Self { stream: BufReader::new(stream), bodiless: false }
+        Self {
+            stream: BufReader::new(stream),
+            bodiless: false,
+        }
     }
 
     async fn send(&mut self, bytes: &str) {
         self.bodiless = bytes.starts_with("HEAD ");
-        self.stream.get_mut().write_all(bytes.as_bytes()).await.unwrap();
+        self.stream
+            .get_mut()
+            .write_all(bytes.as_bytes())
+            .await
+            .unwrap();
     }
 
-    /// Sends `line` (method and target) with `body` on this connection.
     async fn request(&mut self, line: &str, body: &str) -> Answer {
         let length = body.len();
-        self.send(&format!("{line} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{body}"))
-            .await;
+        self.send(&format!(
+            "{line} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{body}"
+        ))
+        .await;
         self.answer().await.unwrap()
     }
 
-    /// Reads the next answer head, or `None` when the connection ends first.
     async fn head(&mut self) -> Option<Answer> {
         let mut line = String::new();
         if self.stream.read_line(&mut line).await.ok()? == 0 {
@@ -209,10 +224,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 None => break,
             }
         }
-        Some(Answer { status, headers, body: Vec::new() })
+        Some(Answer {
+            status,
+            headers,
+            body: Vec::new(),
+        })
     }
 
-    /// Reads the next whole answer, or `None` when the connection ends first.
     async fn answer(&mut self) -> Option<Answer> {
         let mut answer = self.head().await?;
         if self.bodiless || matches!(answer.status, 101 | 204) {
@@ -231,7 +249,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         Some(answer)
     }
 
-    /// Reads the next chunk of a chunked body, or `None` at its end.
     async fn chunk(&mut self) -> Option<Vec<u8>> {
         let mut line = String::new();
         self.stream.read_line(&mut line).await.ok()?;
@@ -242,7 +259,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         (length > 0).then_some(chunk)
     }
 
-    /// Reads until the connection ends, returning how many bytes came.
     async fn drain(&mut self) -> usize {
         let mut buffer = vec![0; 64 << 10];
         let mut total = 0;

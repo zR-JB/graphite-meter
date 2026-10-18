@@ -18,12 +18,12 @@ const GIVE_PX = 56;
 /** The spring settles at rest within this, or ends as it crosses out. */
 const SETTLE_MS = 600;
 
-const rubber = (offset: number) => (offset >= 0 ? offset : -GIVE_PX * (1 - 1 / (1 - offset / GIVE_PX / 2)));
+const rubber = (offset: number) =>
+  offset >= 0 ? offset : -GIVE_PX * (1 - 1 / (1 - offset / GIVE_PX / 2));
 
 interface Gesture {
   id: number;
   edge: Edge;
-  /** The sheet goes this far out to be hidden. */
   size: number;
   startX: number;
   startY: number;
@@ -35,12 +35,10 @@ interface Gesture {
   content: Element | null;
 }
 
-/** Attaches the drag to `sheet` until the returned detach runs. `--sheet-drag` on its parent, 0 to 1, fades the
-    scrim with it. */
+/** Attaches the drag to `sheet` until detached; `--sheet-drag` on its parent, 0 to 1, fades the scrim with it. */
 export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () => void): () => void {
   const host = sheet.parentElement ?? sheet;
-  // Checks every box from the finger up to the sheet for a scroll from its top, since what scrolls depends on the
-  // layout, the content's body or the sheet itself on a short screen.
+  // Checks every box from the finger up to the sheet for a scroll from its top, since what scrolls depends on the layout.
   const scrolledAbove = (from: Element) => {
     for (let node: Element | null = from; node; node = node === sheet ? null : node.parentElement)
       if (node.scrollTop > 0) return true;
@@ -54,14 +52,17 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
   const extent = (at: Edge) =>
     at === "bottom"
       ? sheet.offsetHeight
-      : sheet.offsetWidth + (Number.parseFloat(getComputedStyle(sheet).getPropertyValue("--space-4")) || 0);
+      : sheet.offsetWidth +
+        (Number.parseFloat(getComputedStyle(sheet).getPropertyValue("--space-4")) || 0);
   const along = (at: Edge, touch: Touch) =>
     at === "bottom" ? touch.clientY : at === "right" ? touch.clientX : -touch.clientX;
   const place = (at: Edge, shown: number, size: number) => {
     offset = shown;
     sheet.style.transition = "none";
     sheet.style.transform =
-      at === "bottom" ? `translateY(${shown}px)` : `translateX(${at === "left" ? -shown : shown}px)`;
+      at === "bottom"
+        ? `translateY(${shown}px)`
+        : `translateX(${at === "left" ? -shown : shown}px)`;
     host.style.setProperty("--sheet-drag", String(Math.max(0, Math.min(1, shown / size))));
   };
   const reset = () => {
@@ -85,7 +86,8 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
     const touch = event.touches[0];
     if (!touch || !(event.target instanceof Element)) return;
     // A control that takes a sideways or held finger keeps it.
-    if (event.target.closest("input, select, textarea, [role='slider'], [role='separator']")) return;
+    if (event.target.closest("input, select, textarea, [role='slider'], [role='separator']"))
+      return;
     const at = edge();
     const caught = !!stop;
     stop?.();
@@ -125,14 +127,18 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
     event.preventDefault();
     const position = along(at, touch);
     current.samples.push({ t: event.timeStamp, p: position });
-    while (current.samples.length > 2 && event.timeStamp - current.samples[0]!.t > VELOCITY_WINDOW_MS)
+    while (
+      current.samples.length > 2 &&
+      event.timeStamp - current.samples[0]!.t > VELOCITY_WINDOW_MS
+    )
       current.samples.shift();
     place(at, rubber(current.from + position - current.origin), current.size);
   }
 
   function end(event: TouchEvent) {
     const current = gesture;
-    if (!current || ![...event.changedTouches].some((each) => each.identifier === current.id)) return;
+    if (!current || ![...event.changedTouches].some((each) => each.identifier === current.id))
+      return;
     settle(current, event.type === "touchend", event.timeStamp);
   }
 
@@ -144,8 +150,11 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
     const first = samples[0];
     const last = samples.at(-1);
     const velocity =
-      first && last && last.t > first.t && time - last.t <= HELD_MS ? (last.p - first.p) / (last.t - first.t) : 0;
-    const leave = lifted && offset + velocity * PROJECT_MS > Math.min(size * LEAVE_SHARE, LEAVE_MAX_PX);
+      first && last && last.t > first.t && time - last.t <= HELD_MS
+        ? (last.p - first.p) / (last.t - first.t)
+        : 0;
+    const leave =
+      lifted && offset + velocity * PROJECT_MS > Math.min(size * LEAVE_SHARE, LEAVE_MAX_PX);
     const target = leave ? size : 0;
     // Left out of view, the route closes it and the stylesheet's closed place takes over where it already is.
     const finish = () => {
@@ -177,7 +186,8 @@ export function dragSheet(sheet: HTMLElement, edge: () => Edge, onDismiss: () =>
     ["touchend", end],
     ["touchcancel", end],
   ] as const;
-  for (const [type, listener] of listeners) sheet.addEventListener(type, listener, { passive: type !== "touchmove" });
+  for (const [type, listener] of listeners)
+    sheet.addEventListener(type, listener, { passive: type !== "touchmove" });
   return () => {
     for (const [type, listener] of listeners) sheet.removeEventListener(type, listener);
     gesture = null;

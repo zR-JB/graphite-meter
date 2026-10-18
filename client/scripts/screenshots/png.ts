@@ -4,7 +4,6 @@ import { deflateSync, inflateSync } from "node:zlib";
 export interface Image {
   width: number;
   height: number;
-  /** RGBA, row by row. */
   data: Uint8Array;
 }
 
@@ -24,7 +23,8 @@ export function decode(png: Uint8Array): Image {
     if (type === "IHDR") {
       [width, height] = [body.readUInt32BE(0), body.readUInt32BE(4)];
       channels = { 2: 3, 6: 4 }[body[9]!] ?? 0;
-      if (body[8] !== 8 || !channels || body[12] !== 0) throw new Error("only 8-bit RGB(A) without interlace");
+      if (body[8] !== 8 || !channels || body[12] !== 0)
+        throw new Error("only 8-bit RGB(A) without interlace");
     } else if (type === "IDAT") chunks.push(body);
     at += 12 + length;
   }
@@ -40,7 +40,9 @@ export function decode(png: Uint8Array): Image {
       const c = y && x >= channels ? rows[(y - 1) * stride + x - channels]! : 0;
       const p = a + b - c;
       const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - b), Math.abs(p - c)];
-      const predicted = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][filter]!;
+      const predicted = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][
+        filter
+      ]!;
       rows[y * stride + x] = (line[x]! + predicted) & 255;
     }
   }
@@ -71,7 +73,8 @@ function palette(image: Image): number[][] {
     let span = -1;
     for (let channel = 0; channel < 4; channel++) {
       let [low, high] = [255, 0];
-      for (const color of box) [low, high] = [Math.min(low, color[channel]!), Math.max(high, color[channel]!)];
+      for (const color of box)
+        [low, high] = [Math.min(low, color[channel]!), Math.max(high, color[channel]!)];
       if (high - low > span) [widest, span] = [channel, high - low];
     }
     return { widest, span, weight: box.reduce((sum, color) => sum + color[4]!, 0) };
@@ -87,7 +90,10 @@ function palette(image: Image): number[][] {
     if (best < 0) break;
     const box = boxes[best]!;
     const { widest, weight } = extent(box);
-    box.sort((a, b) => a[widest]! - b[widest]! || a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]! || a[3]! - b[3]!);
+    box.sort(
+      (a, b) =>
+        a[widest]! - b[widest]! || a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]! || a[3]! - b[3]!,
+    );
     let half = 0;
     let cut = 1;
     for (; cut < box.length - 1 && (half += box[cut - 1]![4]!) < weight / 2; cut++);
@@ -127,7 +133,12 @@ export function encode(image: Image): Uint8Array {
     error.fill(0, next, next + width + 2);
     for (let x = 0; x < width; x++) {
       const at = (y * width + x) * 4;
-      const [r, g, b, a] = image.data.subarray(at, at + 4) as unknown as [number, number, number, number];
+      const [r, g, b, a] = image.data.subarray(at, at + 4) as unknown as [
+        number,
+        number,
+        number,
+        number,
+      ];
       const alpha = Math.min(255, Math.max(0, Math.round(a + error[current + x + 1]!)));
       const index = pick(r, g, b, alpha);
       indices[y * (width + 1) + 1 + x] = index;

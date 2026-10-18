@@ -1,6 +1,5 @@
 //! Holds the QPACK static table (RFC 9204 Appendix A).
 
-/// An entry's index is its position.
 pub(super) const STATIC: [(&str, &str); 99] = [
     (":authority", ""),
     (":path", "/"),
@@ -59,8 +58,14 @@ pub(super) const STATIC: [(&str, &str); 99] = [
     ("content-type", "text/plain;charset=utf-8"),
     ("range", "bytes=0-"),
     ("strict-transport-security", "max-age=31536000"),
-    ("strict-transport-security", "max-age=31536000; includesubdomains"),
-    ("strict-transport-security", "max-age=31536000; includesubdomains; preload"),
+    (
+        "strict-transport-security",
+        "max-age=31536000; includesubdomains",
+    ),
+    (
+        "strict-transport-security",
+        "max-age=31536000; includesubdomains; preload",
+    ),
     ("vary", "accept-encoding"),
     ("vary", "origin"),
     ("x-content-type-options", "nosniff"),
@@ -87,7 +92,10 @@ pub(super) const STATIC: [(&str, &str); 99] = [
     ("access-control-request-method", "post"),
     ("alt-svc", "clear"),
     ("authorization", ""),
-    ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'"),
+    (
+        "content-security-policy",
+        "script-src 'none'; object-src 'none'; base-uri 'none'",
+    ),
     ("early-data", "1"),
     ("expect-ct", ""),
     ("forwarded", ""),

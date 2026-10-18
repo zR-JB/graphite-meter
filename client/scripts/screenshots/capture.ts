@@ -5,7 +5,15 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { bundles } from "../../bundle";
 import { DEFAULT_CONFIG } from "../../src/app/preferences";
-import { catalog, HISTORY_DB, open, openSettings, phase, runButton, spawnPeer } from "../../e2e/fleet";
+import {
+  catalog,
+  HISTORY_DB,
+  open,
+  openSettings,
+  phase,
+  runButton,
+  spawnPeer,
+} from "../../e2e/fleet";
 import { expect, Page, settled } from "../../e2e/webview";
 import type { Scenario, Spread } from "./fakes";
 import { decode, encode } from "./png";
@@ -14,7 +22,8 @@ type Theme = "light" | "dark";
 const THEMES: Theme[] = ["light", "dark"];
 const version = process.env.GM_SCREENSHOT_VERSION;
 const cellsPath = process.env.GM_SCREENSHOT_TERMINAL;
-if (!version || !cellsPath) throw new Error("GM_SCREENSHOT_VERSION and GM_SCREENSHOT_TERMINAL are required");
+if (!version || !cellsPath)
+  throw new Error("GM_SCREENSHOT_VERSION and GM_SCREENSHOT_TERMINAL are required");
 const assets = resolve("../docs/assets");
 // History reads its relative times against this moment; every page starts its clock there.
 const NOW = Date.UTC(2026, 9, 17, 9, 13, 30);
@@ -36,17 +45,23 @@ async function fakeApp() {
   const plugin: BunPlugin = {
     name: "screenshot fakes",
     setup(build) {
-      build.onResolve({ filter: /^\.\.?\/(engine\/lanes\/(probes|stage)|clock|checks)$/ }, ({ path, importer }) => {
-        const swap = swaps[importer]?.[path];
-        if (swap) swapped++;
-        return swap ? { path: swap } : undefined;
-      });
+      build.onResolve(
+        { filter: /^\.\.?\/(engine\/lanes\/(probes|stage)|clock|checks)$/ },
+        ({ path, importer }) => {
+          const swap = swaps[importer]?.[path];
+          if (swap) swapped++;
+          return swap ? { path: swap } : undefined;
+        },
+      );
     },
   };
   const outdir = await mkdtemp(join(tmpdir(), "gm-screenshots-"));
   const revision = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]).stdout.toString().trim();
-  const { workers, app } = await bundles(outdir, { profile: "prod", version: version!, revision }, [plugin]);
-  if (swapped !== 4) throw new Error(`the fakes replaced ${swapped} of 4 imports; an importer above changed them`);
+  const { workers, app } = await bundles(outdir, { profile: "prod", version: version!, revision }, [
+    plugin,
+  ]);
+  if (swapped !== 4)
+    throw new Error(`the fakes replaced ${swapped} of 4 imports; an importer above changed them`);
   const files = new Map<string, Uint8Array>();
   for (const output of workers.outputs)
     files.set(`/assets/${basename(output.path)}`, await Bun.file(output.path).bytes());
@@ -57,12 +72,21 @@ async function fakeApp() {
 const build = await fakeApp();
 // Servers of its own: the fleet's carry a location the README's servers never had.
 const unplaced = { GM_SERVER_LOCATION: "" };
-const [frankfurt, amsterdam] = await Promise.all([spawnPeer("Frankfurt", unplaced), spawnPeer("Amsterdam", unplaced)]);
-const home = await spawnPeer("Home", { ...unplaced, ...catalog(frankfurt.server, amsterdam.server) });
+const [frankfurt, amsterdam] = await Promise.all([
+  spawnPeer("Frankfurt", unplaced),
+  spawnPeer("Amsterdam", unplaced),
+]);
+const home = await spawnPeer("Home", {
+  ...unplaced,
+  ...catalog(frankfurt.server, amsterdam.server),
+});
 const servers = [home, frankfurt, amsterdam];
 const rtt = Object.fromEntries(
   servers.flatMap(({ server }, index) =>
-    [server.http, server.url, server.h2, server.h3].map((url) => [new URL(url).origin, [10.1, 11.7, 15.8][index]]),
+    [server.http, server.url, server.h2, server.h3].map((url) => [
+      new URL(url).origin,
+      [10.1, 11.7, 15.8][index],
+    ]),
   ),
 );
 
@@ -79,7 +103,11 @@ function pin({ now, rtt }: { now: number; rtt: Record<string, number> }) {
       return at();
     }
   } as DateConstructor;
-  Reflect.set(globalThis, "__gmSetNow", (moment: number) => ([base, anchor] = [moment, Real.now()]));
+  Reflect.set(
+    globalThis,
+    "__gmSetNow",
+    (moment: number) => ([base, anchor] = [moment, Real.now()]),
+  );
   Reflect.set(globalThis, "__gmScenario", { epoch: now, rtt });
 }
 
@@ -89,7 +117,9 @@ const setNow = (page: Page, moment: number) =>
 async function device(size: { width: number; height: number }, phone: boolean) {
   const page = new Page({ monitorDisplay: false });
   await page.onCdp("Fetch.requestPaused", (event) => {
-    const { requestId, request } = (event as { data: { requestId: string; request: { url: string } } }).data;
+    const { requestId, request } = (
+      event as { data: { requestId: string; request: { url: string } } }
+    ).data;
     const path = new URL(request.url).pathname;
     const body = /^\/assets\/main-[^/]+\.js$/.test(path) ? build.main : build.files.get(path);
     const answer = body
@@ -103,7 +133,11 @@ async function device(size: { width: number; height: number }, phone: boolean) {
     answer.catch((error) => console.error(`serving ${path}: ${error.message}`));
   });
   await page.cdp("Fetch.enable", { patterns: [{ urlPattern: "*/assets/*.js" }] });
-  await page.cdp("Emulation.setDeviceMetricsOverride", { ...size, deviceScaleFactor: 2, mobile: phone });
+  await page.cdp("Emulation.setDeviceMetricsOverride", {
+    ...size,
+    deviceScaleFactor: 2,
+    mobile: phone,
+  });
   if (phone) {
     await page.cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await page.cdp("Emulation.setUserAgentOverride", { userAgent: PHONE_AGENT });
@@ -123,14 +157,22 @@ const media = (page: Page, theme: Theme) =>
     ],
   });
 
-const spread = (median: number, jitter: number, min: number, max: number): Spread => ({ median, jitter, min, max });
+const spread = (median: number, jitter: number, min: number, max: number): Spread => ({
+  median,
+  jitter,
+  min,
+  max,
+});
 const mbit = (rate: number) => (rate * 1e6) / 8;
 
 /** One run of `scenario` that ends at `completedAt`, through to its saved result. */
 async function play(page: Page, completedAt: number, scenario: Omit<Scenario, "epoch" | "rtt">) {
   await setNow(page, completedAt);
   const patch = { epoch: completedAt - 20_000, ...scenario };
-  await page.evaluate((patch) => Object.assign(Reflect.get(globalThis, "__gmScenario"), patch), patch);
+  await page.evaluate(
+    (patch) => Object.assign(Reflect.get(globalThis, "__gmScenario"), patch),
+    patch,
+  );
   const saved = () => page.evaluate(countResults, HISTORY_DB);
   const before = await saved();
   await runButton(page, /^(Start test|Run again)$/).click();
@@ -158,10 +200,13 @@ async function shoot(page: Page): Promise<Record<Theme, string>> {
     await media(page, theme);
     await page.evaluate(async () => {
       await document.fonts.ready;
-      for (let frame = 0; frame < 3; frame++) await new Promise((done) => requestAnimationFrame(done));
+      for (let frame = 0; frame < 3; frame++)
+        await new Promise((done) => requestAnimationFrame(done));
     });
     await page.evaluate(settled);
-    shots[theme] = (await page.cdp<{ data: string }>("Page.captureScreenshot", { format: "png" })).data;
+    shots[theme] = (
+      await page.cdp<{ data: string }>("Page.captureScreenshot", { format: "png" })
+    ).data;
   }
   return shots;
 }
@@ -214,9 +259,30 @@ const phoneRun = ({ ago, down, up, servers, idle, loaded: [loadedDown, loadedUp]
     replies: { idle: 365, loaded: 4 },
   });
 const runs: PhoneRun[] = [
-  { ago: 95_000, down: 527.4, up: 315.19, servers: 1, idle: spread(4.9, 0.32, 4.1, 6.2), loaded: [21.8, 16.6] },
-  { ago: 75_000, down: 865.5, up: 572.94, servers: 1, idle: spread(3.7, 0.3, 3.1, 4.8), loaded: [15.6, 13.4] },
-  { ago: 40_000, down: 1196, up: 863.82, servers: 1, idle: spread(2.7, 0.2, 2.2, 3.4), loaded: [11.8, 12.1] },
+  {
+    ago: 95_000,
+    down: 527.4,
+    up: 315.19,
+    servers: 1,
+    idle: spread(4.9, 0.32, 4.1, 6.2),
+    loaded: [21.8, 16.6],
+  },
+  {
+    ago: 75_000,
+    down: 865.5,
+    up: 572.94,
+    servers: 1,
+    idle: spread(3.7, 0.3, 3.1, 4.8),
+    loaded: [15.6, 13.4],
+  },
+  {
+    ago: 40_000,
+    down: 1196,
+    up: 863.82,
+    servers: 1,
+    idle: spread(2.7, 0.2, 2.2, 3.4),
+    loaded: [11.8, 12.1],
+  },
 ];
 for (const [index, spec] of runs.entries()) {
   if (index) await reload(phone);
@@ -225,10 +291,20 @@ for (const [index, spec] of runs.entries()) {
 const phoneResult = await shoot(phone);
 await phone.evaluate(
   (servers) => localStorage.setItem("graphite-meter:server-selection:v1", JSON.stringify(servers)),
-  [{ id: "self", url: home.server.url }, frankfurt.server, amsterdam.server].map(({ id, url }) => ({ id, url })),
+  [{ id: "self", url: home.server.url }, frankfurt.server, amsterdam.server].map(({ id, url }) => ({
+    id,
+    url,
+  })),
 );
 await reload(phone);
-await phoneRun({ ago: 20_000, down: 1193, up: 852.02, servers: 3, idle: spread(3, 1, 1.6, 7.2), loaded: [11.9, 14.9] });
+await phoneRun({
+  ago: 20_000,
+  down: 1193,
+  up: 852.02,
+  servers: 3,
+  idle: spread(3, 1, 1.6, 7.2),
+  loaded: [11.9, 14.9],
+});
 await setNow(phone, NOW);
 await phone.goto(`${home.server.url}/#/history`);
 await expect(phone.locator(".result-row")).toHaveCount(4);
@@ -243,8 +319,20 @@ for (const { kill } of servers) kill();
 if (errors.length) throw new Error(`the app reported errors:\n${errors.join("\n")}`);
 
 const PALETTE = {
-  light: { app: "#f1f2f5", edge: "#cdd3dc", line: "#d3d8df", backdrop: ["#e2e6ed", "#cdd5e0"], shadow: 0.22 },
-  dark: { app: "#0d1013", edge: "#2c323b", line: "#2a2f37", backdrop: ["#1e242e", "#11151c"], shadow: 0.6 },
+  light: {
+    app: "#f1f2f5",
+    edge: "#cdd3dc",
+    line: "#d3d8df",
+    backdrop: ["#e2e6ed", "#cdd5e0"],
+    shadow: 0.22,
+  },
+  dark: {
+    app: "#0d1013",
+    edge: "#2c323b",
+    line: "#2a2f37",
+    backdrop: ["#1e242e", "#11151c"],
+    shadow: 0.6,
+  },
 };
 const png = (data: string) => `data:image/png;base64,${data}`;
 
@@ -299,8 +387,7 @@ function terminalHtml(theme: Theme, canvas: string) {
 }
 
 type Cell = [string, string, string, boolean];
-/** Draws the console's cells as a terminal at 2x would: 18x40 px cells, IBM Plex Mono, and the line, block and
-    braille glyphs drawn rather than taken from a font, as terminals do. */
+/** Draws the console's cells as a 2x terminal would: 18x40 px cells, IBM Plex Mono, line, block and braille glyphs drawn, not from a font. */
 async function paintTerminal({
   rows,
   canvas,
@@ -342,7 +429,9 @@ async function paintTerminal({
       if (arms) {
         const [l, r, u, d] = arms as [number, number, number, number];
         // Each arm runs past the centre by half the crossing arm, so corners close.
-        const [across, along] = [Math.max(u, d), Math.max(l, r)].map((weight) => Math.floor(thickness(weight) / 2) + 1);
+        const [across, along] = [Math.max(u, d), Math.max(l, r)].map(
+          (weight) => Math.floor(thickness(weight) / 2) + 1,
+        );
         const [cx, cy] = [left + cw / 2, top + ch / 2];
         const row = (weight: number) => top + Math.floor((ch - thickness(weight)) / 2);
         const column = (weight: number) => left + Math.floor((cw - thickness(weight)) / 2);
@@ -351,12 +440,19 @@ async function paintTerminal({
         if (u) g.fillRect(column(u), top, thickness(u), ch / 2 + along!);
         if (d) g.fillRect(column(d), cy - along!, thickness(d), ch / 2 + along!);
       } else if (symbol === "┊") {
-        for (let dash = 0; dash < 4; dash++) g.fillRect(left + (cw - 2) / 2, top + dash * 10 + 2.5, 2, 5);
+        for (let dash = 0; dash < 4; dash++)
+          g.fillRect(left + (cw - 2) / 2, top + dash * 10 + 2.5, 2, 5);
       } else if (code >= 0x2800 && code <= 0x28ff) {
         DOTS.forEach(([column, line], bit) => {
           if (!((code - 0x2800) & (1 << bit))) return;
           g.beginPath();
-          g.arc(left + (cw * (1 + 2 * column!)) / 4, top + (ch * (1 + 2 * line!)) / 8, cw / 8, 0, 2 * Math.PI);
+          g.arc(
+            left + (cw * (1 + 2 * column!)) / 4,
+            top + (ch * (1 + 2 * line!)) / 8,
+            cw / 8,
+            0,
+            2 * Math.PI,
+          );
           g.fill();
         });
       } else if (symbol === "●" || symbol === "◆") {
@@ -389,9 +485,17 @@ async function render(
   after?: () => Promise<unknown>,
 ) {
   const scale = width / size.width;
-  await page.cdp("Emulation.setDeviceMetricsOverride", { ...size, deviceScaleFactor: scale, mobile: false });
-  await page.cdp("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } });
-  const { frameTree } = await page.cdp<{ frameTree: { frame: { id: string } } }>("Page.getFrameTree");
+  await page.cdp("Emulation.setDeviceMetricsOverride", {
+    ...size,
+    deviceScaleFactor: scale,
+    mobile: false,
+  });
+  await page.cdp("Emulation.setDefaultBackgroundColorOverride", {
+    color: { r: 0, g: 0, b: 0, a: 0 },
+  });
+  const { frameTree } = await page.cdp<{ frameTree: { frame: { id: string } } }>(
+    "Page.getFrameTree",
+  );
   await page.cdp("Page.setDocumentContent", { frameId: frameTree.frame.id, html });
   await page.evaluate(() => Promise.all([...document.images].map((image) => image.decode())));
   await after?.();
@@ -400,7 +504,10 @@ async function render(
   const height = Math.round(size.height * scale);
   if (image.width !== width || image.height < height)
     throw new Error(`${name} came out ${image.width}x${image.height}`);
-  await Bun.write(join(assets, name), encode({ width, height, data: image.data.subarray(0, width * height * 4) }));
+  await Bun.write(
+    join(assets, name),
+    encode({ width, height, data: image.data.subarray(0, width * height * 4) }),
+  );
 }
 
 const fontFile = async (name: string) =>
@@ -410,15 +517,27 @@ const fonts = {
   mono600: await fontFile("ibm-plex-mono-600-latin1.woff2"),
   pi: await fontFile("ibm-plex-sans-var-pi.woff2"),
 };
-const terminal: Record<Theme, { canvas: string; rows: Cell[][] }> = await Bun.file(cellsPath).json();
+const terminal: Record<Theme, { canvas: string; rows: Cell[][] }> =
+  await Bun.file(cellsPath).json();
 const studio = new Page({ monitorDisplay: false });
 await studio.goto("about:blank");
 for (const theme of THEMES) {
   await render(studio, heroHtml(theme), { width: 3480, height: 2300 }, 2400, `hero-${theme}.png`);
-  await render(studio, phonesHtml(theme), { width: 1772, height: 1364 }, 1400, `phones-${theme}.png`);
+  await render(
+    studio,
+    phonesHtml(theme),
+    { width: 1772, height: 1364 },
+    1400,
+    `phones-${theme}.png`,
+  );
   const { canvas, rows } = terminal[theme];
-  await render(studio, terminalHtml(theme, canvas), { width: 2240, height: 1680 }, 2000, `terminal-${theme}.png`, () =>
-    studio.evaluate(paintTerminal, { rows, canvas, fonts }),
+  await render(
+    studio,
+    terminalHtml(theme, canvas),
+    { width: 2240, height: 1680 },
+    2000,
+    `terminal-${theme}.png`,
+    () => studio.evaluate(paintTerminal, { rows, canvas, fonts }),
   );
 }
 await studio.close();

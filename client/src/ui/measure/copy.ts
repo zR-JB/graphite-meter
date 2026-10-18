@@ -17,7 +17,11 @@ export const DIAL = {
   noReplies: (time: string) => `No replies for ${time}`,
   /** What a finished run lacks: the stages with no result, else what it measured in part; "" when it names none. */
   unfinished: (failed: readonly string[], partial: readonly string[]) =>
-    failed.length ? `${listed(failed)} failed` : partial.length ? `${listed(partial)} measured in part` : "",
+    failed.length
+      ? `${listed(failed)} failed`
+      : partial.length
+        ? `${listed(partial)} measured in part`
+        : "",
   unavailable: (throughput: boolean, latency: boolean) =>
     throughput && latency
       ? "Throughput and latency paths are unavailable"
@@ -40,7 +44,6 @@ export const LANES = {
   picker: "Show latency to",
 } as const;
 
-/** A card's facts, each with its explainer. */
 export const FACT = {
   peak: { label: "Peak", tip: TIP.peak },
   stability: { label: "Stability", tip: TIP.rateStability },

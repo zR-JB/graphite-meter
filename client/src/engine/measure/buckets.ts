@@ -2,14 +2,12 @@
 import type { Stage } from "../run/schedule";
 import { midpointMedian, nearestRank } from "./latency";
 
-/** A presented series keeps this many points. */
 export const SERIES_LIMIT = 1_200;
 const MIN_WIDTH_MS = 200;
 /** A late outcome may still revise a closed bucket this far back. */
 export const REVISION_MS = 10_000;
 
 export interface LatencyBucket {
-  /** Names the stage the probes belong to, or "idle" between runs. */
   phase: Stage | "idle";
   /** Buckets with different ids belong to separate lines. */
   continuityId: number;
@@ -25,10 +23,12 @@ export interface LatencyBucket {
   timeoutCount: number;
 }
 
-/** Returns a width at which a stage of `spanMs` fits the series. With a fixed probe spacing it holds a whole number
-    of probes, so no bucket is empty by construction. */
+/** A width at which a stage of `spanMs` fits the series; with a fixed probe spacing no bucket is empty by construction. */
 export function bucketWidth(spanMs: number, intervalMs: number | null): number {
-  const base = Math.max(MIN_WIDTH_MS, Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS);
+  const base = Math.max(
+    MIN_WIDTH_MS,
+    Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS,
+  );
   return intervalMs ? Math.ceil(base / intervalMs) * intervalMs : base;
 }
 
@@ -46,23 +46,26 @@ export class LatencyBuckets {
   #width = MIN_WIDTH_MS;
   #intervalMs: number | null = null;
   #pending: Open | null = null;
-  /** A late outcome may still revise these closed buckets. */
   #closed: Open[] = [];
   /** Holds closed buckets revised since the last report. They go out once per tick, not once per outcome. */
   #revised = new Set<Open>();
 
-  /** `emit` receives every bucket that closes with probes in it, and every revision of one at the next
-      `closeThrough` or `flush`. */
+  /** `emit` receives each bucket that closes with probes, and each revision at the next `closeThrough` or `flush`. */
   constructor(readonly emit: (bucket: LatencyBucket) => void) {}
 
-  reset(t: number, phase: Stage, continuity: number, spanMs: number, intervalMs: number | null): void {
+  reset(
+    t: number,
+    phase: Stage,
+    continuity: number,
+    spanMs: number,
+    intervalMs: number | null,
+  ): void {
     this.#phase = phase;
     this.#intervalMs = intervalMs;
     this.#width = bucketWidth(spanMs, intervalMs);
     this.restart(t, continuity);
   }
 
-  /** Starts a new line from `t` with the same stage and width. */
   restart(t: number, continuity: number): void {
     this.#continuity = continuity;
     this.#pending = this.#open(t);
@@ -80,7 +83,10 @@ export class LatencyBuckets {
     this.#pending ??= this.#open(t);
     this.#close(t);
     const pending = this.#pending!;
-    const target = t >= pending.startT ? pending : this.#closed.findLast((each) => t >= each.startT && t < each.endT);
+    const target =
+      t >= pending.startT
+        ? pending
+        : this.#closed.findLast((each) => t >= each.startT && t < each.endT);
     if (!target) return;
     target.pings++;
     if (timedOut) target.timeouts++;
@@ -103,7 +109,9 @@ export class LatencyBuckets {
     while (this.#pending && t >= this.#pending.endT) {
       const pending = this.#pending;
       // A page suspended for hours skips the empty time, since only the revision horizon can still take late outcomes.
-      const skipped = pending.pings ? 0 : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
+      const skipped = pending.pings
+        ? 0
+        : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
       if (skipped > 0) {
         // Everything closed before the pause ends outside the horizon.
         this.#closed = [];
@@ -122,13 +130,13 @@ export class LatencyBuckets {
     return this.#pending?.endT ?? null;
   }
 
-  /** Emits the open bucket cut at `atT` and forgets everything. */
   flush(atT: number): void {
     this.#report();
     const pending = this.#pending;
     this.#pending = null;
     this.#closed = [];
-    if (pending?.pings) this.emit(this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))));
+    if (pending?.pings)
+      this.emit(this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))));
   }
 
   #open(startT: number): Open {

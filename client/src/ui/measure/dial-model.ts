@@ -7,7 +7,6 @@ export const SWEEP_DEG = 270;
 export const ARC_START = 0.75 * Math.PI;
 export const ARC_SWEEP = (SWEEP_DEG * Math.PI) / 180;
 const TICKS = 8;
-/** The label fractions of the ring, in label order. */
 export const DIAL_LABELS = [0, 0.25, 0.5, 0.75, 1] as const;
 const LABEL_CLEARANCE = 8;
 const NOTE_GAP = 8;
@@ -32,7 +31,6 @@ export interface DialLayout {
   headRadius: number;
   /** The whole ring, which the track and every result arc stroke. */
   track: string;
-  /** The tick marks as one path. */
   ticks: string;
   labels: (Point & { anchorX: Anchor; anchorY: Anchor })[];
   /** Where a note hung under the ring starts: just under the tick ends. */
@@ -44,7 +42,8 @@ export interface DialLayout {
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;
-const anchor = (direction: number): Anchor => (direction < -EPSILON ? "end" : direction > EPSILON ? "start" : "center");
+const anchor = (direction: number): Anchor =>
+  direction < -EPSILON ? "end" : direction > EPSILON ? "start" : "center";
 
 /** One geometry for the SVG and the DOM labels, in CSS pixels of the face; `note` is a band hung under the ring. */
 export function dialLayout(faceWidth: number, faceHeight: number, note = 0): DialLayout {
@@ -58,7 +57,8 @@ export function dialLayout(faceWidth: number, faceHeight: number, note = 0): Dia
       ((height - 42) / (1 + Math.SQRT1_2) - 11) / TICK_REACH,
       // The labeled ring stays centered and its note still fits under the tick ends.
       note
-        ? ((height / 2 - DROP * LABEL_CLEARANCE - NOTE_GAP - note) / (DROP + Math.SQRT1_2) - 3) / TICK_REACH
+        ? ((height / 2 - DROP * LABEL_CLEARANCE - NOTE_GAP - note) / (DROP + Math.SQRT1_2) - 3) /
+            TICK_REACH
         : Number.POSITIVE_INFINITY,
     ),
   );
@@ -120,7 +120,6 @@ export function gaugeFraction(bytesPerSec: number, scale: number): number {
   return (i - 1 + (value - low) / (KNOTS[i]! - low)) / SPANS;
 }
 
-/** The rate at a fraction of the ring: the inverse of `gaugeFraction`. */
 export function gaugeValue(fraction: number, scale: number): number {
   const f = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
   if (f >= 1) return scaleOf(scale);
@@ -129,8 +128,7 @@ export function gaugeValue(fraction: number, scale: number): number {
   return scaleOf(scale) * (low + (f * SPANS - i) * (KNOTS[i + 1]! - low));
 }
 
-/** A finished transfer stage's result on the ring. A one-sided bidirectional result is dashed and named by the
-    direction that survived; its rate is that direction's alone. */
+/** A finished transfer stage's result on the ring; a one-sided bidirectional result is dashed and named by its surviving direction. */
 export interface ResultArc {
   stage: TransferStage;
   direction: TransferStage;
@@ -140,21 +138,35 @@ export interface ResultArc {
 
 type Rated = { reportedBytesPerSec: number } | null | undefined;
 
-/** Every transfer result, the longest first, so each shorter one lies over it; a combined bidirectional value needs
-    both lanes, and a zero lane is evidence. */
+/** Every transfer result, longest first so shorter ones lie over it; a combined bidirectional value needs both lanes. */
 export function resultArcs(
-  results: { download: Rated; upload: Rated; bidirectional: { down: Rated; up: Rated } | null } | null,
+  results: {
+    download: Rated;
+    upload: Rated;
+    bidirectional: { down: Rated; up: Rated } | null;
+  } | null,
 ): ResultArc[] {
   if (!results) return [];
   const arcs: ResultArc[] = [];
   for (const stage of ["download", "upload"] as const) {
     const result = results[stage];
-    if (result) arcs.push({ stage, direction: stage, bytesPerSec: result.reportedBytesPerSec, dashed: false });
+    if (result)
+      arcs.push({
+        stage,
+        direction: stage,
+        bytesPerSec: result.reportedBytesPerSec,
+        dashed: false,
+      });
   }
   const down = results.bidirectional?.down?.reportedBytesPerSec;
   const up = results.bidirectional?.up?.reportedBytesPerSec;
   if (down != null && up != null)
-    arcs.push({ stage: "bidirectional", direction: "bidirectional", bytesPerSec: down + up, dashed: false });
+    arcs.push({
+      stage: "bidirectional",
+      direction: "bidirectional",
+      bytesPerSec: down + up,
+      dashed: false,
+    });
   else if (down != null || up != null)
     arcs.push({
       stage: "bidirectional",
@@ -162,7 +174,8 @@ export function resultArcs(
       bytesPerSec: (down ?? up)!,
       dashed: true,
     });
-  const value = (arc: ResultArc) => (Number.isFinite(arc.bytesPerSec) ? arc.bytesPerSec : -Infinity);
+  const value = (arc: ResultArc) =>
+    Number.isFinite(arc.bytesPerSec) ? arc.bytesPerSec : -Infinity;
   return arcs.sort((a, b) => value(b) - value(a));
 }
 
@@ -172,7 +185,6 @@ export const headlineArc = (arcs: readonly ResultArc[]): ResultArc | null =>
     .map((stage) => arcs.find((arc) => arc.stage === stage))
     .find(Boolean) ?? null;
 
-/** An arc's name, as its bead's tip gives it. */
 export const arcLabel = (arc: ResultArc) =>
   arc.dashed
     ? `${STAGE.bidirectional.label}, ${STAGE[arc.direction].label.toLowerCase()} only`
@@ -181,11 +193,17 @@ export const arcLabel = (arc: ResultArc) =>
 type Bead = "bead" | "stacked" | "split";
 
 /** How each head sits against the higher ones: nearly level shows its trailing half, overlapping gets a halo. */
-export function beadKinds(fractions: readonly number[], radius: number, headRadius: number): Bead[] {
-  const along = (fraction: number) => (Number.isFinite(fraction) ? fraction : 0) * ARC_SWEEP * radius;
+export function beadKinds(
+  fractions: readonly number[],
+  radius: number,
+  headRadius: number,
+): Bead[] {
+  const along = (fraction: number) =>
+    (Number.isFinite(fraction) ? fraction : 0) * ARC_SWEEP * radius;
   return fractions.map((fraction, index) => {
     let nearest = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < index; i++) nearest = Math.min(nearest, Math.abs(along(fraction) - along(fractions[i]!)));
+    for (let i = 0; i < index; i++)
+      nearest = Math.min(nearest, Math.abs(along(fraction) - along(fractions[i]!)));
     return nearest < headRadius ? "split" : nearest < headRadius * 2 + 2 ? "stacked" : "bead";
   });
 }
@@ -209,7 +227,6 @@ const FRAME_GAP_MS = 50;
 
 /** What the needle is told when what the dial shows changes, not every frame. */
 interface NeedleInput {
-  /** The dial shows a value the needle can point at. */
   visible: boolean;
   /** A run ending in a speed result: the needle waits where it stands for the result to take over. */
   hold: boolean;
@@ -219,8 +236,7 @@ interface NeedleInput {
   course: string;
 }
 
-/** The needle's course in degrees: it follows the live value and drains to zero between stages, so each hands the ring
-    to the next through zero. */
+/** The needle's course in degrees: it follows the live value and drains to zero between stages. */
 export class Needle {
   #from = 0;
   #at = 0;
@@ -238,7 +254,8 @@ export class Needle {
 
   /** The angle at `now`, `target` being the live value's angle or null while the dial shows none. */
   angle(now: number, target: number | null): number {
-    const end = this.#end === "zero" ? 0 : this.#end === "still" ? this.#from : (target ?? this.#drawn);
+    const end =
+      this.#end === "zero" ? 0 : this.#end === "still" ? this.#from : (target ?? this.#drawn);
     const u = this.#ms > 0 ? Math.max(0, (now - this.#at) / this.#ms) : 1;
     // A cubic Hermite from where the move began, at the speed it had, to rest on its end.
     const angle =
@@ -248,7 +265,8 @@ export class Needle {
           this.#speed * this.#ms * (u ** 3 - 2 * u ** 2 + u) +
           end * (3 * u ** 2 - 2 * u ** 3);
     if (now > this.#drawnAt) {
-      this.#velocity = now - this.#drawnAt <= FRAME_GAP_MS ? (angle - this.#drawn) / (now - this.#drawnAt) : 0;
+      this.#velocity =
+        now - this.#drawnAt <= FRAME_GAP_MS ? (angle - this.#drawn) / (now - this.#drawnAt) : 0;
       this.#drawnAt = now;
     }
     this.#drawn = angle;

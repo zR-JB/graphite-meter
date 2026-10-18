@@ -17,7 +17,9 @@ const MAX_NORMALIZED_BYTES: usize = 48 << 10;
 /// The catalog from whichever source is present, an empty value counting as present; with neither, `self` alone.
 pub(super) fn load(inline: Option<String>, file: Option<String>) -> Result<ServerCatalog, String> {
     match (inline, file) {
-        (Some(_), Some(_)) => Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into()),
+        (Some(_), Some(_)) => {
+            Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into())
+        }
         (None, None) => Ok(ServerCatalog::singleton()),
         (Some(inline), None) => parse(inline.as_bytes()),
         (None, Some(path)) => parse(&read(&path)?),
@@ -29,7 +31,12 @@ fn read(path: &str) -> Result<Vec<u8>, String> {
         return Err("GM_SERVER_CATALOG_FILE must be an absolute path without '..'".into());
     }
     let mut data = Vec::new();
-    let failed = |action, error| format!("GM_SERVER_CATALOG_FILE: {}", could_not(&format!("{action} {path}"), &error));
+    let failed = |action, error| {
+        format!(
+            "GM_SERVER_CATALOG_FILE: {}",
+            could_not(&format!("{action} {path}"), &error)
+        )
+    };
     let file = File::open(path).map_err(|error| failed("open", error))?;
     file.take(MAX_INPUT_BYTES as u64 + 1)
         .read_to_end(&mut data)
@@ -58,20 +65,28 @@ struct Entry {
 /// Parses either catalog form, with `self` added first.
 pub(super) fn parse(data: &[u8]) -> Result<ServerCatalog, String> {
     if data.len() > MAX_INPUT_BYTES {
-        return Err(format!("server catalog exceeds {} KiB", MAX_INPUT_BYTES >> 10));
+        return Err(format!(
+            "server catalog exceeds {} KiB",
+            MAX_INPUT_BYTES >> 10
+        ));
     }
     let mut catalog = ServerCatalog::singleton();
     if data.trim_ascii_start().starts_with(b"[") {
-        let origins: Vec<String> =
-            serde_json::from_slice(data).map_err(|error| format!("server catalog origins: {error}"))?;
+        let origins: Vec<String> = serde_json::from_slice(data)
+            .map_err(|error| format!("server catalog origins: {error}"))?;
         for text in origins {
-            let origin = origin(&text).map_err(|error| format!("server catalog origin {}: {error}", quote(&text)))?;
+            let origin = origin(&text)
+                .map_err(|error| format!("server catalog origin {}: {error}", quote(&text)))?;
             catalog.servers.push(listed(&text, origin));
         }
     } else {
-        let document: Document = json::decode(data).map_err(|error| format!("server catalog: {error}"))?;
+        let document: Document =
+            json::decode(data).map_err(|error| format!("server catalog: {error}"))?;
         if let Some(selection) = document.default_selection {
-            catalog.default_selection = selection.iter().map(|id| server_id(id)).collect::<Result<_, _>>()?;
+            catalog.default_selection = selection
+                .iter()
+                .map(|id| server_id(id))
+                .collect::<Result<_, _>>()?;
         }
         for entry in document.servers {
             catalog.servers.push(entry.into_server()?);
@@ -93,7 +108,8 @@ impl Entry {
         if self.id == "self" {
             return Err("self is added automatically; omit it from servers".into());
         }
-        let url = origin(&self.url).map_err(|error| format!("server {}: {error}", quote(&self.id)))?;
+        let url =
+            origin(&self.url).map_err(|error| format!("server {}: {error}", quote(&self.id)))?;
         let origins = self.additional_origins.iter().map(|text| origin(text));
         let additional_origins = origins.collect::<Result<_, _>>();
         Ok(ServerEntry {
@@ -139,7 +155,11 @@ fn listed(text: &str, url: Origin) -> ServerEntry {
 fn origin_key(origin: &str) -> String {
     let key = origin.to_ascii_lowercase();
     let key = key.strip_suffix(':').unwrap_or(&key);
-    let default = if key.starts_with("https:") { ":443" } else { ":80" };
+    let default = if key.starts_with("https:") {
+        ":443"
+    } else {
+        ":80"
+    };
     key.strip_suffix(default).unwrap_or(key).to_owned()
 }
 
@@ -148,21 +168,31 @@ mod tests {
     use super::*;
 
     fn ids(catalog: &ServerCatalog) -> Vec<&str> {
-        catalog.servers.iter().map(|entry| entry.id.as_str()).collect()
+        catalog
+            .servers
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect()
     }
 
     #[test]
     fn array_ids_stay_those_saved_selections_name() {
-        let catalog = parse(br#"["https://EXAMPLE.net:443/", "http://[2001:DB8:0:0::1]:8080", "http://h:"]"#).unwrap();
+        let catalog =
+            parse(br#"["https://EXAMPLE.net:443/", "http://[2001:DB8:0:0::1]:8080", "http://h:"]"#)
+                .unwrap();
         let saved = [
             "server-35d5ef135871623822d3d4779a9ecac1",
             "server-e191cb5c2e7a8cc33ccdc0b44dda2e01",
             "server-4f8d848825a112f9057c104f83e580e7",
         ];
         assert_eq!(ids(&catalog)[1..], saved);
-        let names: Vec<_> = catalog.servers[1..].iter().map(|entry| entry.name.as_str()).collect();
+        let names: Vec<_> = catalog.servers[1..]
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
         assert_eq!(names, ["example.net", "[2001:db8:0:0::1]:8080", "h"]);
-        let reordered = parse(br#"["http://[2001:db8:0:0::1]:8080", "https://example.net"]"#).unwrap();
+        let reordered =
+            parse(br#"["http://[2001:db8:0:0::1]:8080", "https://example.net"]"#).unwrap();
         assert_eq!(ids(&reordered)[1..], [ids(&catalog)[2], ids(&catalog)[1]]);
         assert_eq!(catalog.default_selection, [ServerId::own()]);
     }
@@ -175,21 +205,51 @@ mod tests {
         )
         .unwrap();
         let remote = &catalog.servers[1];
-        assert_eq!((catalog.servers[0].id.as_str(), remote.id.as_str()), ("self", "remote"));
-        assert_eq!(remote.url, BaseUrl::Origin(Origin::parse("https://example.net").unwrap()));
-        assert_eq!(remote.additional_origins, [Origin::parse("https://transfer.example.net").unwrap()]);
+        assert_eq!(
+            (catalog.servers[0].id.as_str(), remote.id.as_str()),
+            ("self", "remote")
+        );
+        assert_eq!(
+            remote.url,
+            BaseUrl::Origin(Origin::parse("https://example.net").unwrap())
+        );
+        assert_eq!(
+            remote.additional_origins,
+            [Origin::parse("https://transfer.example.net").unwrap()]
+        );
         for (document, message) in [
-            (r#"{"servers":[{"id":"self","url":"https://a.example"}]}"#, "self is added automatically"),
-            (r#"{"servers":[{"id":"a","url":"https://a.example/path"}]}"#, "server \"a\": expected"),
-            (r#"{"servers":[],"extra":1}"#, "server catalog: unknown field"),
-            (r#"{"defaultSelection":[],"servers":[]}"#, "select one to four"),
-            (r#"{"defaultSelection":["gone"],"servers":[]}"#, "select one to four"),
+            (
+                r#"{"servers":[{"id":"self","url":"https://a.example"}]}"#,
+                "self is added automatically",
+            ),
+            (
+                r#"{"servers":[{"id":"a","url":"https://a.example/path"}]}"#,
+                "server \"a\": expected",
+            ),
+            (
+                r#"{"servers":[],"extra":1}"#,
+                "server catalog: unknown field",
+            ),
+            (
+                r#"{"defaultSelection":[],"servers":[]}"#,
+                "select one to four",
+            ),
+            (
+                r#"{"defaultSelection":["gone"],"servers":[]}"#,
+                "select one to four",
+            ),
             (
                 r#"{"servers":[{"id":"a b","url":"https://a.example"}]}"#,
                 "invalid catalog server identity",
             ),
-            (r#"["https://a.example","https://A.example:443"]"#, "duplicate catalog server"),
-            (r#"["ftp://a.example"]"#, "server catalog origin \"ftp://a.example\": expected"),
+            (
+                r#"["https://a.example","https://A.example:443"]"#,
+                "duplicate catalog server",
+            ),
+            (
+                r#"["ftp://a.example"]"#,
+                "server catalog origin \"ftp://a.example\": expected",
+            ),
         ] {
             let error = parse(document.as_bytes()).unwrap_err();
             assert!(error.contains(message), "{document}: {error}");

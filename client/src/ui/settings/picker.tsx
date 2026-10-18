@@ -10,7 +10,12 @@ import { choices, roleLine, type Choice } from "./paths";
 import type { Edits } from "./settings";
 import { Unfold } from "./unfold";
 
-export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boolean>; edits: Edits }): Node {
+export function ConnectionPicker(props: {
+  app: App;
+  role: Role;
+  locked: Read<boolean>;
+  edits: Edits;
+}): Node {
   const { app, role, locked } = props;
   const { servers } = app;
   const config = app.preferences.config;
@@ -38,12 +43,16 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
 
   const choose = (value: string) =>
     props.edits.edit("connection", () =>
-      app.run.configure({ transports: { ...config.peek().transports, [TRANSPORT_KEY[role]]: value } }),
+      app.run.configure({
+        transports: { ...config.peek().transports, [TRANSPORT_KEY[role]]: value },
+      }),
     );
   const row = (option: Read<Choice>) => (
     <label
       class={() =>
-        option().unavailable !== null || (locked() && option().value !== selected()) ? "unavailable" : false
+        option().unavailable !== null || (locked() && option().value !== selected())
+          ? "unavailable"
+          : false
       }
     >
       <input
@@ -74,7 +83,11 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
     const views = servers.views();
     return ids.flatMap((id) => {
       const view = views.get(id);
-      return view && view.readiness !== "sign-in" && !(ids.length > 1 && view.readiness === "failed") ? [view] : [];
+      return view &&
+        view.readiness !== "sign-in" &&
+        !(ids.length > 1 && view.readiness === "failed")
+        ? [view]
+        : [];
     });
   });
   const line = computed(() => {
@@ -95,7 +108,12 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
   });
 
   return (
-    <div class="picker" role="group" aria-labelledby={labelId} ref={(element) => (picker = element)}>
+    <div
+      class="picker"
+      role="group"
+      aria-labelledby={labelId}
+      ref={(element) => (picker = element)}
+    >
       <div class="list-label">
         <span id={labelId} ref={tip(() => PATH_TIP[role])}>
           {PATH[role]}
@@ -120,7 +138,10 @@ export function ConnectionPicker(props: { app: App; role: Role; locked: Read<boo
               type="button"
               aria-expanded={() => String(unfolded())}
               ref={tip(() =>
-                ["Unavailable paths", ...folded().map((option) => `${option.label}: ${option.unavailable}`)].join("\n"),
+                [
+                  "Unavailable paths",
+                  ...folded().map((option) => `${option.label}: ${option.unavailable}`),
+                ].join("\n"),
               )}
               onclick={() => unfolded.set(!unfolded.peek())}
             >

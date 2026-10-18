@@ -14,11 +14,12 @@ const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(30);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_PROBES: u32 = 9;
 
-/// The addresses `host` names, without a lookup for an IP address.
 pub(crate) async fn resolve(host: &Host, port: u16) -> io::Result<Vec<SocketAddr>> {
     match host {
         Host::Ip(ip) => Ok(vec![SocketAddr::new(*ip, port)]),
-        Host::Name(name) => Ok(tokio::net::lookup_host((name.as_str(), port)).await?.collect()),
+        Host::Name(name) => Ok(tokio::net::lookup_host((name.as_str(), port))
+            .await?
+            .collect()),
     }
 }
 
@@ -40,11 +41,17 @@ pub(crate) async fn dial(host: &Host, port: u16) -> io::Result<TcpStream> {
 /// The addresses of the first address's family, then the others, each in the resolver's order.
 fn families(addresses: Vec<SocketAddr>) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
     let first_v6 = addresses.first().is_some_and(SocketAddr::is_ipv6);
-    addresses.into_iter().partition(|address| address.is_ipv6() == first_v6)
+    addresses
+        .into_iter()
+        .partition(|address| address.is_ipv6() == first_v6)
 }
 
 /// The primaries in turn, raced by fallbacks after the delay or on failure; with both failed, the primaries' error.
-async fn parallel(primaries: &[SocketAddr], fallbacks: &[SocketAddr], deadline: Instant) -> io::Result<TcpStream> {
+async fn parallel(
+    primaries: &[SocketAddr],
+    fallbacks: &[SocketAddr],
+    deadline: Instant,
+) -> io::Result<TcpStream> {
     if fallbacks.is_empty() {
         return serial(primaries, deadline).await;
     }
@@ -75,7 +82,10 @@ async fn serial(addresses: &[SocketAddr], deadline: Instant) -> io::Result<TcpSt
             first.get_or_insert(io::ErrorKind::TimedOut.into());
             break;
         }
-        let attempt = tokio::time::timeout(share(left, addresses.len() - index), TcpStream::connect(address));
+        let attempt = tokio::time::timeout(
+            share(left, addresses.len() - index),
+            TcpStream::connect(address),
+        );
         match attempt.await {
             Ok(Ok(stream)) => return Ok(stream),
             Ok(Err(error)) => first.get_or_insert(error),
@@ -109,8 +119,13 @@ mod tests {
 
     #[test]
     fn the_first_address_picks_the_family_tried_first() {
-        let [a, b, c, d]: [SocketAddr; 4] = ["192.0.2.1:1", "192.0.2.2:1", "[2001:db8::1]:1", "[2001:db8::2]:1"]
-            .map(|address| address.parse().unwrap());
+        let [a, b, c, d]: [SocketAddr; 4] = [
+            "192.0.2.1:1",
+            "192.0.2.2:1",
+            "[2001:db8::1]:1",
+            "[2001:db8::2]:1",
+        ]
+        .map(|address| address.parse().unwrap());
         assert_eq!(families(vec![a, c, b, d]), (vec![a, b], vec![c, d]));
         assert_eq!(families(vec![c, a, d]), (vec![c, d], vec![a]));
         assert_eq!(families(vec![a]), (vec![a], vec![]));
@@ -119,9 +134,18 @@ mod tests {
     #[test]
     fn each_address_gets_an_equal_share_of_at_least_two_seconds_while_time_lasts() {
         let seconds = Duration::from_secs_f64;
-        for (left, addresses, expected) in [(9.0, 2, 4.5), (9.0, 1, 9.0), (9.0, 10, 2.0), (3.0, 2, 2.0), (1.0, 3, 1.0)]
-        {
-            assert_eq!(share(seconds(left), addresses), seconds(expected), "{left} s for {addresses}");
+        for (left, addresses, expected) in [
+            (9.0, 2, 4.5),
+            (9.0, 1, 9.0),
+            (9.0, 10, 2.0),
+            (3.0, 2, 2.0),
+            (1.0, 3, 1.0),
+        ] {
+            assert_eq!(
+                share(seconds(left), addresses),
+                seconds(expected),
+                "{left} s for {addresses}"
+            );
         }
     }
 
@@ -134,8 +158,11 @@ mod tests {
     /// An address whose full accept queue drops new handshakes, so a connect to it hangs.
     #[cfg(target_os = "linux")]
     fn silent() -> (socket2::Socket, std::net::TcpStream) {
-        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
-        socket.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into()).unwrap();
+        let socket =
+            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        socket
+            .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+            .unwrap();
         socket.listen(0).unwrap();
         let address = socket.local_addr().unwrap().as_socket().unwrap();
         let queued = std::net::TcpStream::connect(address).unwrap();
@@ -149,7 +176,9 @@ mod tests {
         let (_open, live) = listener().await;
         let started = Instant::now();
         let primaries = [queued.peer_addr().unwrap()];
-        let stream = parallel(&primaries, &[live], Instant::now() + TIMEOUT).await.unwrap();
+        let stream = parallel(&primaries, &[live], Instant::now() + TIMEOUT)
+            .await
+            .unwrap();
         assert_eq!(stream.peer_addr().unwrap(), live);
         // Paused time may jump past the delay while the loopback connect is in flight.
         let elapsed = started.elapsed();
@@ -159,7 +188,9 @@ mod tests {
     #[tokio::test]
     async fn dialled_connections_probe_idle_peers() {
         let (_open, live) = listener().await;
-        let stream = dial(&Host::Name("localhost".into()), live.port()).await.unwrap();
+        let stream = dial(&Host::Name("localhost".into()), live.port())
+            .await
+            .unwrap();
         let socket = socket2::SockRef::from(&stream);
         assert!(socket.keepalive().unwrap() && stream.nodelay().unwrap());
         #[cfg(target_os = "linux")]

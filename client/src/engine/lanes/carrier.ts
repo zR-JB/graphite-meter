@@ -1,5 +1,4 @@
-// Carries one stage direction over fetch lanes, a worker each, or one WebTransport session worker. A worker lives as
-// long as its carrier, so a lane that ends reopens on it and a session's unspent ticket survives its redials.
+// One stage direction over fetch lanes, a worker each, or one WebTransport session worker that outlives its redials.
 import type {
   FeedRecord,
   Flushed,
@@ -22,19 +21,23 @@ const STAGGER_MS = 75;
 const SPREAD_MS = 1_000;
 
 export interface CarrierHost {
-  /** Counts download bytes of the current measurement epoch. */
   bytes(bytes: number): void;
   posted(lane: number, bytes: number, elapsedMs: number): void;
   record(record: FeedRecord): void;
   /** A lane delivered for the first time since it opened. */
   delivered(): void;
   /** Settles a lane's ending. Returns true when the lane should reopen, after `delayMs`. */
-  ended(lane: number, ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
+  ended(
+    lane: number,
+    ending: Ending,
+    broken: boolean,
+    delayMs: number,
+    signal: AbortSignal,
+  ): Promise<boolean>;
 }
 
 export interface CarrierPlan {
   worker: string;
-  /** Fetch lanes, or one session. */
   lanes: number;
   /** Lanes that must deliver before the carrier is ready. */
   gating: number;
@@ -52,7 +55,6 @@ interface Lane {
   counted: number;
   /** Bytes reported while a flush awaits this lane's answer, which counts them itself. Null when none awaits. */
   held: number | null;
-  /** Resolves the flush awaiting this lane's answer. */
   flushed: ((answer: Flushed) => void) | null;
   /** The lane answered the final flush, so what it counts later lies past the boundary. */
   cut: boolean;
@@ -70,7 +72,8 @@ export class Carrier {
   constructor(plan: CarrierPlan, host: CarrierHost) {
     this.#plan = plan;
     this.#host = host;
-    const stagger = plan.lanes > 1 ? Math.min(STAGGER_MS, Math.floor(SPREAD_MS / (plan.lanes - 1))) : 0;
+    const stagger =
+      plan.lanes > 1 ? Math.min(STAGGER_MS, Math.floor(SPREAD_MS / (plan.lanes - 1))) : 0;
     for (let index = 0; index < plan.lanes; index++) {
       const lane: Lane = {
         index,
@@ -82,10 +85,15 @@ export class Carrier {
         flushed: null,
         cut: false,
       };
-      lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) => this.#report(lane, data);
+      lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
+        this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
       lane.worker.onerror = ({ message }) =>
-        void this.#ended(lane, { reason: "connection-lost", retry: false, detail: `worker failed: ${message}` });
+        void this.#ended(lane, {
+          reason: "connection-lost",
+          retry: false,
+          detail: `worker failed: ${message}`,
+        });
       this.#lanes.push(lane);
       if (index) void delay(index * stagger, this.#done.signal).then(() => this.#open(lane));
       else this.#open(lane);
@@ -112,8 +120,7 @@ export class Carrier {
     }
   }
 
-  /** Collects every lane's download count at `cutoff` (page time, 250 ms at most) and resolves with the latest time
-      those counts stand at, so a rate read there never overstates; null without lanes. */
+  /** Collects every lane's download count at `cutoff` and resolves with the latest time they stand at, so a rate never overstates. */
   async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;
@@ -132,7 +139,10 @@ export class Carrier {
           lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + cutoff });
         }),
     );
-    await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
+    await Promise.race([
+      Promise.all(answers),
+      delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal])),
+    ]);
     answered.abort();
     for (const lane of this.#lanes) {
       if (lane.flushed) {
@@ -211,7 +221,15 @@ export class Carrier {
 
   async #ended(lane: Lane, ending: Ending, broken = false): Promise<void> {
     lane.delivered = false;
-    if (await this.#host.ended(lane.index, ending, broken, lane.backoff.after(ending), this.#done.signal))
+    if (
+      await this.#host.ended(
+        lane.index,
+        ending,
+        broken,
+        lane.backoff.after(ending),
+        this.#done.signal,
+      )
+    )
       this.#open(lane);
   }
 }

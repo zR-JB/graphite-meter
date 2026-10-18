@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { json } from "../../protocol/pins.testutil";
 import { Population, RttEstimator } from "./latency";
 
-const reply = (rttMs: number, timedOut = false) => ({ rttMs, timedOut, handlingMs: null, inWindow: true });
+const reply = (rttMs: number, timedOut = false) => ({
+  rttMs,
+  timedOut,
+  handlingMs: null,
+  inWindow: true,
+});
 
 test("the shared latency vectors", async () => {
   for (const vector of await json("latency.testvectors.json")) {
@@ -50,7 +55,8 @@ test("summaries taken while a stage runs equal one summary of the whole stage", 
 
 test("only whole positive counts of lost probes count", () => {
   const population = new Population();
-  for (const count of [Number.POSITIVE_INFINITY, 1.5, 2 ** 60, -1, 0]) population.interrupt(count, "send-failed");
+  for (const count of [Number.POSITIVE_INFINITY, 1.5, 2 ** 60, -1, 0])
+    population.interrupt(count, "send-failed");
   population.interrupt(2, "unresolved");
   expect(population.summary()).toMatchObject({ sendFailureCount: 0, unresolvedCount: 2 });
 });

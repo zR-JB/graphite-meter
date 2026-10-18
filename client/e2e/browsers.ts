@@ -3,7 +3,8 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const browser: "chrome" | "firefox" = process.env.GM_E2E_BROWSER === "firefox" ? "firefox" : "chrome";
+export const browser: "chrome" | "firefox" =
+  process.env.GM_E2E_BROWSER === "firefox" ? "firefox" : "chrome";
 
 export interface Driver {
   /** Evaluates an expression, awaiting a promise; the value comes back as JSON. */
@@ -47,7 +48,9 @@ function removeProfiles() {
   const profiles: string[] = [];
   try {
     for (const task of readdirSync(tasks))
-      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8").split(" ").filter(Boolean)) {
+      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8")
+        .split(" ")
+        .filter(Boolean)) {
         const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
         // Chrome rewrites its argv into one space-separated title.
         const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(cmdline);
@@ -70,12 +73,18 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
       type: "chrome",
       url: false,
       path: process.env.BUN_CHROME_PATH,
-      argv: ["--hide-scrollbars", ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean)],
+      argv: [
+        "--hide-scrollbars",
+        ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean),
+      ],
       stderr: process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
     },
     dataStore: "ephemeral",
     console: (type, ...args) =>
-      events.console(type, args.map((arg) => (arg as { description?: string })?.description ?? arg).join(" ")),
+      events.console(
+        type,
+        args.map((arg) => (arg as { description?: string })?.description ?? arg).join(" "),
+      ),
   });
   await view.navigate("about:blank");
   await view.cdp("Runtime.enable");
@@ -110,7 +119,8 @@ async function chromeDriver(events: DriverEvents): Promise<Driver> {
       await view.cdp("Network.enable");
       await view.cdp("Network.setBlockedURLs", { urls });
     },
-    screenshot: async () => Buffer.from((await view.cdp<{ data: string }>("Page.captureScreenshot")).data, "base64"),
+    screenshot: async () =>
+      Buffer.from((await view.cdp<{ data: string }>("Page.captureScreenshot")).data, "base64"),
     async close() {
       // A page with a test still running asks before it is left; leaving answers yes.
       await view.cdp("Page.enable");
@@ -158,12 +168,10 @@ function launchFirefox(): Promise<Bidi> {
       join(profile, "user.js"),
       [
         'user_pref("devtools.jsonview.enabled", false);',
-        // A runner has no pointing device, so Firefox would report a pointer without hover and the app would act as on
-        // a phone; the suite tests a desktop with a mouse, as Chrome reports one (fine pointer 2 + hover 4).
+        // A runner has no pointing device, so Firefox would report a phone's pointer; the suite tests a desktop mouse, as Chrome reports.
         'user_pref("ui.primaryPointerCapabilities", 6);',
         'user_pref("ui.allPointerCapabilities", 6);',
-        // A machine's policies can install extensions into every profile, such as an ad blocker that holds each request
-        // and fetches its lists mid-test; a proxy nobody listens on keeps them out, and loopback is never proxied.
+        // Machine policies can install extensions that hold requests mid-test; a proxy nobody listens on keeps them out, and loopback is never proxied.
         'user_pref("network.proxy.type", 1);',
         'user_pref("network.proxy.http", "127.0.0.1");',
         'user_pref("network.proxy.http_port", 9);',
@@ -221,9 +229,11 @@ function launchFirefox(): Promise<Bidi> {
       const call = pending.get(message.id);
       if (call) {
         pending.delete(message.id);
-        if (message.type === "error") call.reject(new Error(`${message.error}: ${message.message}`));
+        if (message.type === "error")
+          call.reject(new Error(`${message.error}: ${message.message}`));
         else call.resolve(message.result);
-      } else if (message.method) for (const listener of listeners) listener(message.method, message.params);
+      } else if (message.method)
+        for (const listener of listeners) listener(message.method, message.params);
     };
     const bidi: Bidi = {
       send(method, params = {}) {
@@ -303,7 +313,11 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
   }
   await begin();
   const off = bidi.on((method, params) => {
-    if (method === "log.entryAdded" && params.source?.context === context && !NETWORK_REPORT.test(params.text)) {
+    if (
+      method === "log.entryAdded" &&
+      params.source?.context === context &&
+      !NETWORK_REPORT.test(params.text)
+    ) {
       if (params.type === "javascript")
         events.exception(
           [
@@ -335,7 +349,9 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       awaitPromise: true,
     });
     if (result.type === "exception")
-      throw new Error(result.exceptionDetails.exception?.value?.message ?? result.exceptionDetails.text);
+      throw new Error(
+        result.exceptionDetails.exception?.value?.message ?? result.exceptionDetails.text,
+      );
     const value = result.result.value;
     return value === undefined ? (undefined as T) : JSON.parse(value);
   };
@@ -423,7 +439,10 @@ async function firefoxDriver(events: DriverEvents): Promise<Driver> {
       if (!blocked.length || !interception) await intercept(blocked.length > 0);
     },
     screenshot: async () =>
-      Buffer.from((await bidi.send("browsingContext.captureScreenshot", { context })).data, "base64"),
+      Buffer.from(
+        (await bidi.send("browsingContext.captureScreenshot", { context })).data,
+        "base64",
+      ),
     async close() {
       off();
       await intercept(false);

@@ -4,8 +4,7 @@ const PER_ORIGIN = 2;
 const BACKGROUND = 4;
 
 export interface Limiter {
-  /** Resolves with the slot's release once a check may start. `priority` is 0 for a selected server and is read
-      again on every drain, so a server selected meanwhile moves ahead. Aborting while queued rejects. */
+  /** Resolves with the slot's release once a check may start; `priority` 0 is a selected server, read again on every drain. */
   acquire(origin: string, priority: () => number, signal: AbortSignal): Promise<() => void>;
   /** Starts what now fits, after priorities changed. */
   drain(): void;
@@ -30,7 +29,11 @@ export function createLimiter(): Limiter {
       queue.splice(index, 1)[0]!.start();
     }
   }
-  function acquire(origin: string, priority: () => number, signal: AbortSignal): Promise<() => void> {
+  function acquire(
+    origin: string,
+    priority: () => number,
+    signal: AbortSignal,
+  ): Promise<() => void> {
     const { promise, resolve, reject } = Promise.withResolvers<() => void>();
     if (signal.aborted) {
       reject(signal.reason);

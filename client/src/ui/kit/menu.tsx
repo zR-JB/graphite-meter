@@ -47,8 +47,8 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
     </button>
   ) as HTMLButtonElement;
   const items = () =>
-    [...menu.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')].filter((item) =>
-      item.checkVisibility(),
+    [...menu.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')].filter(
+      (item) => item.checkVisibility(),
     );
   const focus = (list: HTMLButtonElement[], index: number) => {
     for (const [position, item] of list.entries()) item.tabIndex = position === index ? 0 : -1;
@@ -102,7 +102,9 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
             item.run(trigger);
           }}
         >
-          <span>{() => <Icon name={typeof item.icon === "string" ? item.icon : item.icon()} />}</span>
+          <span>
+            {() => <Icon name={typeof item.icon === "string" ? item.icon : item.icon()} />}
+          </span>
           <span>
             <strong>{item.title}</strong>
             {item.detail && <small>{item.detail}</small>}

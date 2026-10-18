@@ -30,7 +30,8 @@ let session: Session | null = null;
 self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch);
   else if (data.type === "flush") post(reports.flushed(data.at));
-  else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
+  else if (data.type === "stop")
+    void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
   else session = new Session(data);
 };
 
@@ -58,8 +59,7 @@ class Session {
     void this.#dial().catch(this.#broken);
   }
 
-  /** Stops moving bytes. An upload id is finalized whatever became of the session; only a live feed can bring the
-      terminal record, so only an open session waits for it before closing. */
+  /** Stops moving bytes; an upload id is finalized regardless, and only an open session waits for the terminal record. */
   stop(): Promise<void> {
     return (this.#stopping ??= this.#stop());
   }
@@ -103,7 +103,9 @@ class Session {
     }
     let transport: WebTransport;
     try {
-      transport = new WebTransport(withToken(command.url, token), { congestionControl: "throughput" });
+      transport = new WebTransport(withToken(command.url, token), {
+        congestionControl: "throughput",
+      });
     } catch (error) {
       return this.#broken(error);
     }
@@ -142,8 +144,7 @@ class Session {
     }
   }
 
-  /** Every datagram is counted with its own clock reading, so a cutoff knows which side of it each one fell on;
-      the reading also serves the report window and the yield. */
+  /** Every datagram is counted with its own clock reading, so a cutoff knows which side each fell on. */
   async #readDatagrams(transport: WebTransport): Promise<void> {
     try {
       const reader = transport.datagrams.readable.getReader();
@@ -172,14 +173,14 @@ class Session {
   async #relay(transport: WebTransport): Promise<void> {
     try {
       const incoming = transport.incomingUnidirectionalStreams.getReader();
-      for (let next = await incoming.read(); !next.done; next = await incoming.read()) void this.#follow(next.value);
+      for (let next = await incoming.read(); !next.done; next = await incoming.read())
+        void this.#follow(next.value);
     } catch (error) {
       this.#broken(error);
     }
   }
 
-  /** Records flow during the stop too, so the terminal one arrives. A refusal ends the session; a feed that ends
-      before it can be recovered by a fresh session, as the server reopens the feed. */
+  /** Records flow during the stop so the terminal one arrives; a refusal ends the session, and a fresh session recovers a cut feed. */
   async #follow(stream: ReadableStream<Uint8Array>): Promise<void> {
     // Progress counts are cumulative: a flood reaches the page as its newest; every other record goes at once.
     let held: FeedRecord | null = null;
@@ -240,11 +241,14 @@ class Session {
       let yielded = performance.now();
       let unclocked = 0;
       while (this.#state === "open") {
-        // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved write: the size is
-        // read again after each yield.
+        // The path MTU estimate can shrink and an oversized datagram drops silently, so the size is read again after each yield.
         if (!payload) {
           const size = Math.min(block.length, datagrams.maxDatagramSize);
-          if (!size) return this.#end({ type: "ended", ending: lost("webtransport datagram size collapsed") });
+          if (!size)
+            return this.#end({
+              type: "ended",
+              ending: lost("webtransport datagram size collapsed"),
+            });
           payload = block.subarray(0, size);
         }
         await writer.ready;
@@ -265,7 +269,12 @@ class Session {
   async #finalize({ url, request }: Upload["finalize"], feeding: boolean): Promise<void> {
     try {
       const signal = AbortSignal.timeout(FINAL_GRACE_MS);
-      const response = await fetch(url, { ...request, method: "DELETE", cache: "no-store", signal });
+      const response = await fetch(url, {
+        ...request,
+        method: "DELETE",
+        cache: "no-store",
+        signal,
+      });
       release(response);
       if (!response.ok || !feeding) return;
     } catch {
@@ -277,8 +286,9 @@ class Session {
   }
 }
 
-/** A close the server named, or a break. */
 function endOf(code: number | undefined): EndReport {
   const ending = sessionClosed(code);
-  return ending ? { type: "ended", ending } : { type: "broken", detail: "webtransport session closed" };
+  return ending
+    ? { type: "ended", ending }
+    : { type: "broken", detail: "webtransport session closed" };
 }

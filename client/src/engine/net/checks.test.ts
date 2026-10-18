@@ -2,17 +2,32 @@ import { afterEach, expect, test } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import type { Discovery } from "../types";
 import { checkLatency, checkThroughput, discover, failureOf, type CheckContext } from "./checks";
-import { FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, publicAuth, type Answer, ws } from "./fakes.testutil";
+import {
+  FakeBuses,
+  fakeNet,
+  h,
+  MARKER,
+  page,
+  preflight,
+  PROBE,
+  publicAuth,
+  type Answer,
+  ws,
+} from "./fakes.testutil";
 import { parseSelection, type Selection } from "./paths";
 
 const entry: CatalogEntry = { id: "self", url: page.origin, name: "Meter", additionalOrigins: [] };
 let net: ReturnType<typeof fakeNet> | undefined;
 afterEach(() => net?.restore());
 
-/** Discovers a server offering `throughput` and `latency`, whose probes answer as `probe` says, then `run`s its check
-    of `choice`. It yields what the check returned or the words its row shows, and when it settled. */
+/** Discovers a server offering `throughput` and `latency`, then `run`s its check of `choice`; yields the result or row words and when it settled. */
 async function check<P>(
-  run: (context: CheckContext, known: Discovery, selection: Selection, signal: AbortSignal) => Promise<P>,
+  run: (
+    context: CheckContext,
+    known: Discovery,
+    selection: Selection,
+    signal: AbortSignal,
+  ) => Promise<P>,
   choice: string,
   offer: { throughput: object[]; latency?: object[] },
   probe: (url: URL, attempt: number) => Answer,
@@ -21,10 +36,18 @@ async function check<P>(
   net?.restore();
   let attempt = 0;
   const fake = fakeNet((url) =>
-    url.pathname === "/preflight" ? { body: preflight(offer.throughput, offer.latency) } : probe(url, attempt++),
+    url.pathname === "/preflight"
+      ? { body: preflight(offer.throughput, offer.latency) }
+      : probe(url, attempt++),
   );
   net = fake;
-  const context: CheckContext = { entry, auth: publicAuth(entry), page, openProbeChannel: buses.open, now: fake.now };
+  const context: CheckContext = {
+    entry,
+    auth: publicAuth(entry),
+    page,
+    openProbeChannel: buses.open,
+    now: fake.now,
+  };
   const signal = new AbortController().signal;
   const known = await discover(context, signal);
   const outcome = run(context, known, parseSelection(choice), signal).then(
@@ -44,7 +67,9 @@ test("HTTP/3 is probed until the browser uses it; past its 2 s bound the last an
     [[], 2_000, "Connection check timed out"],
   ] as const) {
     const result = await check(checkThroughput, "protocol:http3", offer, (_, attempt) =>
-      hops.length ? { body: PROBE, afterMs: 300, hop: hops[Math.min(attempt, hops.length - 1)] } : "hang",
+      hops.length
+        ? { body: PROBE, afterMs: 300, hop: hops[Math.min(attempt, hops.length - 1)] }
+        : "hang",
     );
     const shown = "value" in result ? result.value.browserProtocol : result.failure.message;
     expect({ at: result.at, shown }, hops.join()).toEqual({ at, shown: outcome });
@@ -58,15 +83,25 @@ test("Automatic gives each candidate its own budget and stops at a sign-in refus
     url.port ? { body: PROBE, hop: "h2" } : "hang",
   );
   expect(
-    "value" in fallback && { at: fallback.at, ...fallback.value.verifiedFor, id: fallback.value.target.id },
+    "value" in fallback && {
+      at: fallback.at,
+      ...fallback.value.verifiedFor,
+      id: fallback.value.target.id,
+    },
   ).toEqual({
     at: 2_500,
     selection: "auto",
     head: page.origin,
     id: "https://meter.example:8443",
   });
-  const refused = await check(checkThroughput, "auto", offer, () => ({ status: 403, headers: MARKER }));
-  expect(refused).toEqual({ at: 0, failure: { message: "Sign in to Meter", retry: "needs-user", signIn: true } });
+  const refused = await check(checkThroughput, "auto", offer, () => ({
+    status: 403,
+    headers: MARKER,
+  }));
+  expect(refused).toEqual({
+    at: 0,
+    failure: { message: "Sign in to Meter", retry: "needs-user", signIn: true },
+  });
   expect(net?.requests.map(({ url }) => url.origin + url.pathname)).toEqual([
     `${page.origin}/preflight`,
     `${page.origin}/probe`,
@@ -77,7 +112,10 @@ test("a latency path needs its probe and a bus answering within 3.5 s; five repl
   const offer = { throughput: [], latency: [ws(".")] };
   const buses = new FakeBuses();
   const replies = await check(checkLatency, "auto", offer, () => ({ body: PROBE }), buses);
-  expect("value" in replies && { at: replies.at, rttMs: replies.value.path.rttMs }).toEqual({ at: 490, rttMs: 10 });
+  expect("value" in replies && { at: replies.at, rttMs: replies.value.path.rttMs }).toEqual({
+    at: 490,
+    rttMs: 10,
+  });
   // A bus nobody adopted closes with its check's budget.
   expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true]);
   const silent = new FakeBuses();

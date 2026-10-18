@@ -43,7 +43,10 @@ test("a server supports what it advertises; latency targets are no HTTP paths", 
     [{ baseUrl: ".", transport: "webtransport" }],
   );
   expect(httpPaths(discovery)).toEqual(["HTTP/2 (TLS)", "HTTP/1.1 (clear)"]);
-  expect(capabilities(discovery, "throughput")).toEqual(["Fetch streams", "Some clear origins blocked by this page"]);
+  expect(capabilities(discovery, "throughput")).toEqual([
+    "Fetch streams",
+    "Some clear origins blocked by this page",
+  ]);
   expect(capabilities(discovery, "latency")).toEqual(["WebTransport datagrams"]);
   expect(httpPaths(null)).toBeNull();
 });

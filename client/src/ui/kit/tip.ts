@@ -32,7 +32,6 @@ export const tip =
 /** Jargon: a quiet mark, a shorter rest, and a click or tap opens it outright. */
 export const term = (text: () => string) => tip(text, "term");
 
-/** " (key)" while the key acts. */
 export const keyHint = (key: string, acts = true) => (acts ? ` (${key})` : "");
 
 function register(node: HTMLElement, text: () => string, kind: Kind): void {
@@ -76,13 +75,13 @@ interface Open {
 
 let open: Open | null = null;
 let coolUntil = 0;
-/** Where a mouse or pen came to rest, and the node it rests on. */
 let rest: { node: HTMLElement; x: number; y: number; timer: number } | null = null;
 let closing = 0;
 /** A click answers the pointer: a control's tip waits until the pointer leaves it and comes back. */
 let clicked: HTMLElement | null = null;
 /** A finger or long-pressing mouse, until it lifts or drifts away. */
-let press: { node: HTMLElement; x: number; y: number; timer: number; opened: boolean } | null = null;
+let press: { node: HTMLElement; x: number; y: number; timer: number; opened: boolean } | null =
+  null;
 let lastPointer = "";
 
 let anchoring: boolean | undefined;
@@ -161,10 +160,10 @@ function show(node: HTMLElement, entry: Entry, pinned = false, keyboard = false)
   bubble.popover = "manual";
   bubble.setAttribute("role", "tooltip");
   bubble.style.setProperty("position-anchor", `--${id}`);
-  // One tip anchor at a time, on the element whose tip shows, beside any anchor of its own; a tip still fading from
-  // this element gives way at once.
+  // One tip anchor at a time, on the element whose tip shows; a tip still fading from it gives way at once.
   const names = anchorNames(node);
-  for (const name of names.filter((each) => TIP_ANCHOR.test(each))) document.getElementById(name.slice(2))?.remove();
+  for (const name of names.filter((each) => TIP_ANCHOR.test(each)))
+    document.getElementById(name.slice(2))?.remove();
   setAnchors(node, [...names.filter((each) => !TIP_ANCHOR.test(each)), `--${id}`]);
   if (instant) bubble.dataset.show = "true";
   const describedBy = node.getAttribute("aria-describedby");
@@ -213,13 +212,15 @@ function hide(): void {
   bubble.style.pointerEvents = "none";
   bubble.dataset.show = "false";
   // The bubble keeps its anchor while it fades, so it fades where it stood.
-  void Promise.allSettled(bubble.getAnimations().map((animation) => animation.finished)).then(() => {
-    bubble.remove();
-    setAnchors(
-      node,
-      anchorNames(node).filter((name) => name !== `--${bubble.id}`),
-    );
-  });
+  void Promise.allSettled(bubble.getAnimations().map((animation) => animation.finished)).then(
+    () => {
+      bubble.remove();
+      setAnchors(
+        node,
+        anchorNames(node).filter((name) => name !== `--${bubble.id}`),
+      );
+    },
+  );
   listen(false);
 }
 
@@ -253,7 +254,8 @@ function settle(event: PointerEvent): void {
   const found = find(event.target);
   if (!found || !hovers(event) || event.buttons) return;
   const [node, entry] = found;
-  if (open?.node === node || clicked === node || (traits(node, entry).explains && explainOnClick())) return;
+  if (open?.node === node || clicked === node || (traits(node, entry).explains && explainOnClick()))
+    return;
   const { clientX: x, clientY: y } = event;
   if (rest?.node === node && Math.hypot(x - rest.x, y - rest.y) <= REST_PX) return;
   cancelRest();
@@ -370,7 +372,12 @@ const closeOnEscape = (event: KeyboardEvent) => {
   event.stopPropagation();
 };
 const toggle = (event: Event) => {
-  if ((event as ToggleEvent).newState === "closed" && open && (event.target as Node).contains(open.node)) hide();
+  if (
+    (event as ToggleEvent).newState === "closed" &&
+    open &&
+    (event.target as Node).contains(open.node)
+  )
+    hide();
 };
 const visibility = () => {
   if (document.visibilityState !== "visible") hide();
@@ -391,10 +398,11 @@ function listen(on: boolean): void {
   document[method]("scroll", scroll, true);
 }
 
-/** Installs the page's listeners once. */
 export function installTips(): void {
-  const on = <K extends keyof DocumentEventMap>(type: K, listener: (event: DocumentEventMap[K]) => void) =>
-    document.addEventListener(type, listener, true);
+  const on = <K extends keyof DocumentEventMap>(
+    type: K,
+    listener: (event: DocumentEventMap[K]) => void,
+  ) => document.addEventListener(type, listener, true);
   on("pointerover", pointerover);
   on("pointerout", pointerout);
   on("pointermove", pointermove);

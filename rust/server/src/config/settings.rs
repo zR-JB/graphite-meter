@@ -25,7 +25,6 @@ pub(super) struct TrustedProxies(pub Vec<IpNet>);
 trait Value {
     fn set(&mut self, text: &str) -> Result<(), String>;
 
-    /// The value as a usage default, empty for none.
     fn show(&self) -> String;
 }
 
@@ -91,7 +90,11 @@ impl Value for Duration {
     }
 
     fn show(&self) -> String {
-        if self.is_zero() { String::new() } else { duration::format(*self) }
+        if self.is_zero() {
+            String::new()
+        } else {
+            duration::format(*self)
+        }
     }
 }
 
@@ -132,9 +135,12 @@ impl Value for TrustedProxies {
         self.0 = split_list(text)
             .iter()
             .map(|cidr| {
-                let prefix = prefix(cidr).map_err(|error| format!("{cidr:?} is not a CIDR: {error}"))?;
+                let prefix =
+                    prefix(cidr).map_err(|error| format!("{cidr:?} is not a CIDR: {error}"))?;
                 match prefix.prefix_len() {
-                    0 => Err(format!("{cidr:?} trusts every address; list only the proxy's own CIDR")),
+                    0 => Err(format!(
+                        "{cidr:?} trusts every address; list only the proxy's own CIDR"
+                    )),
                     _ => Ok(prefix.trunc()),
                 }
             })
@@ -149,7 +155,9 @@ impl Value for TrustedProxies {
 
 /// A CIDR without a sign or leading zero in its prefix length.
 fn prefix(cidr: &str) -> Result<IpNet, String> {
-    let (address, bits) = cidr.rsplit_once('/').ok_or("the prefix length after '/' is missing")?;
+    let (address, bits) = cidr
+        .rsplit_once('/')
+        .ok_or("the prefix length after '/' is missing")?;
     let address = address
         .parse()
         .map_err(|_| format!("{address:?} is not an IP address"))?;
@@ -158,10 +166,10 @@ fn prefix(cidr: &str) -> Result<IpNet, String> {
         .filter(|bits| canonical && bits.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|bits| bits.parse::<u8>().ok())
         .ok_or_else(|| format!("prefix length {bits:?} is not a number without leading zeros"))?;
-    IpNet::new(address, bits).map_err(|_| format!("prefix length {bits} is too long for the address"))
+    IpNet::new(address, bits)
+        .map_err(|_| format!("prefix length {bits} is too long for the address"))
 }
 
-/// Comma-separated entries, trimmed, empty ones dropped.
 fn split_list(text: &str) -> Vec<String> {
     text.split(',')
         .map(str::trim)
@@ -170,13 +178,11 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// How much longer than the stage limit an unset operation lifetime runs.
 const STAGE_MARGIN: Duration = Duration::from_mins(1);
 
 /// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
 macro_rules! settings {
     ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $placeholder:expr, $usage:literal;)+) => {
-        /// Settings as given, before validation.
         pub(super) struct Settings {
             $(pub $field: $type,)+
             pub catalog: ServerCatalog,
@@ -334,7 +340,6 @@ impl Settings {
         }
     }
 
-    /// Whether any authentication setting but the mode was given.
     pub fn auth_given(&self) -> bool {
         self.given
             .iter()
@@ -353,5 +358,9 @@ Commands:
 
 Options:
 ";
-    write!(usage, "{COMMANDS}{}", flag::options(SETTINGS, &Settings::default()))
+    write!(
+        usage,
+        "{COMMANDS}{}",
+        flag::options(SETTINGS, &Settings::default())
+    )
 }

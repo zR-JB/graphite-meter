@@ -13,9 +13,17 @@ use tokio::{
 fn client(url: &str, stages: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
     command.args(["--report", "-url", url, "-stages", stages]);
-    command.args(["-latency-duration", "1s", "-download-duration", "1s", "-loaded-latency=false"]);
+    command.args([
+        "-latency-duration",
+        "1s",
+        "-download-duration",
+        "1s",
+        "-loaded-latency=false",
+    ]);
     for name in ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"] {
-        command.env_remove(name).env_remove(name.to_ascii_lowercase());
+        command
+            .env_remove(name)
+            .env_remove(name.to_ascii_lowercase());
     }
     command
         .stdin(Stdio::null())
@@ -31,10 +39,13 @@ async fn finished(child: Child) -> (Option<i32>, String, String) {
         .unwrap()
         .unwrap();
     let text = |bytes| String::from_utf8(bytes).unwrap();
-    (output.status.code(), text(output.stdout), text(output.stderr))
+    (
+        output.status.code(),
+        text(output.stdout),
+        text(output.stderr),
+    )
 }
 
-/// The path of the next request on `stream`, once its head arrived.
 async fn path(stream: &mut TcpStream) -> Option<String> {
     graphite_meter_testkit::read_head(stream)
         .await?
@@ -53,7 +64,10 @@ async fn peer(body: fn(&str) -> &'static str, refusal: &'static str) -> String {
                 while let Some(path) = path(&mut stream).await {
                     let answer = match body(&path) {
                         "" => refusal.to_owned(),
-                        body => format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}", body.len()),
+                        body => format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{body}",
+                            body.len()
+                        ),
                     };
                     if stream.write_all(answer.as_bytes()).await.is_err() {
                         return;
@@ -67,17 +81,23 @@ async fn peer(body: fn(&str) -> &'static str, refusal: &'static str) -> String {
 
 #[tokio::test]
 async fn a_protected_server_exits_1_asking_for_a_terminal() {
-    let refusal = "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n";
+    let refusal =
+        "HTTP/1.1 403 Forbidden\r\ngraphite-meter-auth: required\r\ncontent-length: 0\r\n\r\n";
     let url = peer(|_| "", refusal).await;
     let refused = "graphite-meter-client: Sign-in required; run graphite-meter-client in a terminal to sign in.\n";
     let child = client(&url, "latency").spawn().unwrap();
-    assert_eq!(finished(child).await, (Some(1), String::new(), refused.into()));
+    assert_eq!(
+        finished(child).await,
+        (Some(1), String::new(), refused.into())
+    );
 }
 
 /// A server named A that answers its server catalog, preflight and probe, and refuses everything else.
 async fn refusing_downloads() -> String {
     let body = |path: &str| match path {
-        "/servers" => r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#,
+        "/servers" => {
+            r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"A"}]}"#
+        }
         "/preflight" => concat!(
             r#"{"server":{"name":"A","location":""},"engineVersion":"1","generation":"1","#,
             r#""capabilities":{"uploadCheckpoint":true,"maxStageMs":300000,"#,
@@ -94,10 +114,15 @@ async fn refusing_downloads() -> String {
 
 #[tokio::test]
 async fn a_run_whose_server_left_ends_its_report_with_why() {
-    let child = client(&refusing_downloads().await, "download").spawn().unwrap();
+    let child = client(&refusing_downloads().await, "download")
+        .spawn()
+        .unwrap();
     let (status, report, stderr) = finished(child).await;
     assert_eq!((status, stderr.as_str()), (Some(1), ""), "{report}");
-    assert!(report.starts_with("Graphite Meter  Failed  A · "), "{report}");
+    assert!(
+        report.starts_with("Graphite Meter  Failed  A · "),
+        "{report}"
+    );
     assert!(
         report.ends_with(" s\n\nAll selected test servers failed. A: HTTP 404 from /download\n"),
         "{report}"
@@ -111,5 +136,8 @@ async fn a_report_into_a_closed_pipe_exits_141_quietly() {
     drop(reader);
     let mut command = client(&refusing_downloads().await, "download");
     let (status, report, stderr) = finished(command.stdout(writer).spawn().unwrap()).await;
-    assert_eq!((status, report, stderr), (Some(141), String::new(), String::new()));
+    assert_eq!(
+        (status, report, stderr),
+        (Some(141), String::new(), String::new())
+    );
 }

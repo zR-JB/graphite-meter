@@ -36,7 +36,6 @@ function value(text: string): HTMLSpanElement {
   return shown;
 }
 
-/** Records when each box last started a roll. */
 const rolled = new WeakMap<Element, number>();
 /** Tells whether `box` changed too soon to roll again. Its roll then ends where it was going and the change swaps. */
 function hurried(box: Element): boolean {

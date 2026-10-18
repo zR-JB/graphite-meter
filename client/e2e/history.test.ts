@@ -1,5 +1,15 @@
 import { upgradeRecord } from "../src/app/history/records";
-import { countSaves, home, latencyOnly, open, phase, ready, run, runButton, HISTORY_DB } from "./fleet";
+import {
+  countSaves,
+  home,
+  latencyOnly,
+  open,
+  phase,
+  ready,
+  run,
+  runButton,
+  HISTORY_DB,
+} from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
@@ -138,7 +148,9 @@ function stored(page: Page) {
           }
           tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("read aborted"));
           const rows = tx.objectStore(db.resultsStore).getAll();
-          const meta = stores.includes(db.metadataStore) ? tx.objectStore(db.metadataStore).get(db.clearsKey) : null;
+          const meta = stores.includes(db.metadataStore)
+            ? tx.objectStore(db.metadataStore).get(db.clearsKey)
+            : null;
           tx.oncomplete = () => {
             database.close();
             resolve({
@@ -177,10 +189,11 @@ test("closing History stops an unfinished archive scan and preserves its records
         this.source.objectStore.transaction.mode === "readonly"
       ) {
         stats.deliveries++;
-        // Interrupt the actual scan, without slowing cursor deliveries or
-        // relying on the test driver to catch a brief intermediate state.
+        // Interrupt the actual scan, without slowing cursor deliveries or relying on the driver to catch a brief state.
         if (stats.deliveries === 20) {
-          const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close History"]');
+          const close = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Close History"]',
+          );
           if (!close) throw new Error("History scan has no dismiss control");
           stats.dismissed = true;
           close.click();
@@ -201,7 +214,9 @@ test("closing History stops an unfinished archive scan and preserves its records
   expect(stopped.deliveries).toBeGreaterThanOrEqual(20);
   expect(stopped.deliveries).toBeLessThan(250);
   await Bun.sleep(200);
-  expect(await page.evaluate(() => (window as any).archiveScan.deliveries)).toBe(stopped.deliveries);
+  expect(await page.evaluate(() => (window as any).archiveScan.deliveries)).toBe(
+    stopped.deliveries,
+  );
   await page.evaluate(() => {
     IDBCursor.prototype.continue = (window as any).originalCursorContinue;
   });
@@ -222,7 +237,9 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   await expect(heading).toHaveText("2000");
   await page.locator('.column-head button:has([data-tone="download"])').click();
   await expect
-    .poll(() => page.evaluate(() => document.querySelector(".result-row")?.getAttribute("data-history-id")))
+    .poll(() =>
+      page.evaluate(() => document.querySelector(".result-row")?.getAttribute("data-history-id")),
+    )
     .toBe(id(1_999));
   await expect(rows).toHaveCount(50);
 
@@ -250,7 +267,8 @@ test("folded at phone width, another order names itself and Sort by date brings 
   await seed(page, { records: [record(1), record(2, Date.now())] });
   await page.setViewportSize({ width: 375, height: 812 });
   await history(page);
-  const headings = () => page.locator(".history-table h3").all((els: Element[]) => els.map((el) => el.textContent));
+  const headings = () =>
+    page.locator(".history-table h3").all((els: Element[]) => els.map((el) => el.textContent));
   await expect.poll(headings).toHaveLength(2);
   const days = await headings();
   await page.locator('.column-head button:has([data-tone="idle"])').click();
@@ -270,9 +288,15 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   const orders = () =>
     page.evaluate(() =>
       Array.from(
-        document.querySelectorAll<HTMLElement>('[role="radiogroup"][aria-label="Sort by"] [role="radio"]'),
+        document.querySelectorAll<HTMLElement>(
+          '[role="radiogroup"][aria-label="Sort by"] [role="radio"]',
+        ),
         (radio) =>
-          [radio.getAttribute("aria-checked") === "true", radio.tabIndex === 0, radio === document.activeElement]
+          [
+            radio.getAttribute("aria-checked") === "true",
+            radio.tabIndex === 0,
+            radio === document.activeElement,
+          ]
             .map(Number)
             .join(""),
       ),
@@ -282,8 +306,7 @@ test("Sort by is one tab stop whose arrows, Home and End choose the order", asyn
   const only = (at: number, state: string) =>
     Array.from({ length: count }, (_, index) => (index === at ? state : "000"));
   expect(await orders()).toEqual(only(0, "110"));
-  // The popover gives focus to its first column; Tab passes the columns and the heading's term to the chosen order
-  // alone, and leaves the group again.
+  // The popover focuses its first column; Tab passes the columns and the heading's term to the chosen order alone, then leaves.
   const role = () => page.evaluate(() => document.activeElement?.getAttribute("role"));
   await expect.poll(role).toBe("checkbox");
   for (let stop = 0; stop < 10 && (await role()) !== "radio"; stop++) await page.press("Tab");
@@ -340,7 +363,9 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
   }
   await expect(handle).toHaveAttribute("aria-valuenow", "522");
   await expect
-    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit))
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).historySplit),
+    )
     .toBe(522 / 1280);
   await page.reload();
   await expect.poll(list).toBe(522);
@@ -354,14 +379,20 @@ test("the keyboard moves the list's split within both panes' limits, and it surv
 test("version 2's readable rows are upgraded; unsupported and malformed rows are skipped, kept and clearable", async (page) => {
   await fixturePage(page);
   const readable = legacy(1);
-  const old = [{ ...legacy(2), schemaVersion: 1 }, { ...legacy(3), schemaVersion: 2 }, legacy(4, 1e20)];
+  const old = [
+    { ...legacy(2), schemaVersion: 1 },
+    { ...legacy(3), schemaVersion: 2 },
+    legacy(4, 1e20),
+  ];
   const broken = legacy(5);
   Object.assign(broken.stages.latency.result, { reportedMs: "fast" });
   await seed(page, { records: [readable, broken, ...old], version: 2 });
   const before = await stored(page);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(1);
-  await expect(page.locator(".history-workspace")).toContainText("4 unreadable results were skipped.");
+  await expect(page.locator(".history-workspace")).toContainText(
+    "4 unreadable results were skipped.",
+  );
   const upgraded = {
     ...before,
     version: HISTORY_DB.version,
@@ -437,7 +468,10 @@ test("version 3's run-wide engine version moves to its latency server, and a res
   await seed(page, { records: [schema5], version: 3 });
   await history(page, schema5.id);
   const upgraded = upgradeRecord(schema5)!;
-  expect(upgraded.result.multiServer.servers.map((each) => each.engineVersion)).toEqual([undefined, "0.9.1"]);
+  expect(upgraded.result.multiServer.servers.map((each) => each.engineVersion)).toEqual([
+    undefined,
+    "0.9.1",
+  ]);
   await expect
     .poll(() => stored(page))
     .toEqual({ records: [upgraded], clears: undefined, version: HISTORY_DB.version });
@@ -450,7 +484,10 @@ test("version 3's run-wide engine version moves to its latency server, and a res
         Build: { Client: "e2e", ...build },
       });
   await shows("oslo", "IPv4", { Server: "0.9.1" });
-  await page.locator(".detail-pane .facts").getByRole("combobox", { name: "Server", exact: true }).fill("self");
+  await page
+    .locator(".detail-pane .facts")
+    .getByRole("combobox", { name: "Server", exact: true })
+    .fill("self");
   await shows("self", "IPv6", {});
   expect((await facts(page)).Build).toEqual({ Client: "e2e" });
   const lens = page.getByRole("combobox", { name: "Servers shown in this result" });
@@ -486,7 +523,9 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
   await expect.poll(async () => (await stored(page)).records.length, { timeout: 20_000 }).toBe(4);
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(3);
-  await expect(page.locator(".history-workspace")).toContainText("1 unreadable result was skipped.");
+  await expect(page.locator(".history-workspace")).toContainText(
+    "1 unreadable result was skipped.",
+  );
 });
 
 test("History refuses other database versions at once and on Retry, and never changes them", async (page) => {
@@ -558,7 +597,8 @@ test("History refuses other database versions at once and on Retry, and never ch
     .poll(async () => {
       const { opens } = await page.storage();
       return (
-        opens.length > tried && opens.every(({ events }) => events.some((event) => /^(success|error)/.test(event)))
+        opens.length > tried &&
+        opens.every(({ events }) => events.some((event) => /^(success|error)/.test(event)))
       );
     }, OPEN_BOUND)
     .toBe(true);
@@ -593,7 +633,9 @@ test("History never waits on a version 2 connection, and upgrades once that conn
   await expect
     .poll(async () => {
       const { databases, opens } = await page.storage();
-      const pending = opens.filter(({ events }) => !events.some((event) => /^(success|error)/.test(event)));
+      const pending = opens.filter(
+        ({ events }) => !events.some((event) => /^(success|error)/.test(event)),
+      );
       return { databases, pending };
     }, OPEN_BOUND)
     .toEqual({ databases: [{ name: HISTORY_DB.name, version: HISTORY_DB.version }], pending: [] });
@@ -698,7 +740,9 @@ test("a result kept on show while another is read takes no action, and Delete na
   );
   await expect(prompt).toContainText(when);
   await prompt.getByRole("button", { name: "Delete result" }).click();
-  await expect.poll(async () => (await stored(page)).records.map((row: any) => row.id)).toEqual([id(1)]);
+  await expect
+    .poll(async () => (await stored(page)).records.map((row: any) => row.id))
+    .toEqual([id(1)]);
 });
 
 test("a result read late takes focus only while focus stays where it was chosen", async (page) => {
@@ -715,12 +759,17 @@ test("a result read late takes focus only while focus stays where it was chosen"
     await page.locator(`a[data-history-id="${result}"]`).click();
     // Focus moves to a control outside History before the read lands.
     if (away)
-      await page.getByRole("button", { name: "Settings", exact: true }).evaluate((key: HTMLElement) => key.focus());
+      await page
+        .getByRole("button", { name: "Settings", exact: true })
+        .evaluate((key: HTMLElement) => key.focus());
     await release(page);
     await expect(page.locator(".detail-pane:not([inert]) .result-detail")).toHaveCount(1);
     await expect
       .poll(() =>
-        page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.className),
+        page.evaluate(
+          () =>
+            document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.className,
+        ),
       )
       .toBe(away ? "Settings" : "result-detail");
   }
@@ -733,7 +782,8 @@ test("Up and Down open the results beside the open one on its history entry, pas
   await history(page, id(50));
   await expect(page.locator(".result-detail")).toHaveCount(1, OPEN_BOUND);
   const entries = await page.evaluate(() => history.length);
-  const open = () => page.evaluate(() => decodeURIComponent(location.hash.replace("#/history/", "")));
+  const open = () =>
+    page.evaluate(() => decodeURIComponent(location.hash.replace("#/history/", "")));
   for (const [key, expected] of [
     ["ArrowDown", id(51)],
     ["ArrowUp", id(50)],
@@ -772,7 +822,6 @@ test("Up and Down open the results beside the open one on its history entry, pas
 test("closing a linked result far down the list returns to its row", async (page) => {
   await fixturePage(page);
   await seed(page, { records: Array.from({ length: 60 }, (_, index) => record(index + 1)) });
-  // Beside the list, and over it.
   for (const [width, close] of [
     [1280, "Close result"],
     [700, "Results"],

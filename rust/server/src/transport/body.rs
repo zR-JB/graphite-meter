@@ -19,7 +19,6 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep_until};
 
-/// A reply's body and what bounds writing it.
 pub struct Body {
     content: Content,
     bound: Option<Bound>,
@@ -53,7 +52,6 @@ impl From<Aborted> for io::Error {
 }
 
 enum Content {
-    /// A document in one frame; empty once sent.
     Full(Bytes),
     Download(DownloadSource),
     Feed(Pin<Box<dyn Stream<Item = Bytes> + Send>>),
@@ -65,29 +63,43 @@ impl Body {
     }
 
     pub fn full(bytes: impl Into<Bytes>) -> Self {
-        Self { content: Content::Full(bytes.into()), bound: None }
+        Self {
+            content: Content::Full(bytes.into()),
+            bound: None,
+        }
     }
 
     pub fn download(source: DownloadSource) -> Self {
-        Self { content: Content::Download(source), bound: None }
+        Self {
+            content: Content::Download(source),
+            bound: None,
+        }
     }
 
-    /// A progress feed's lines until it ends.
     pub fn feed(feed: ProgressFeed) -> Self {
-        let lines = stream::unfold(feed, |mut feed| async move { feed.next().await.map(|line| (line, feed)) });
-        Self { content: Content::Feed(Box::pin(lines)), bound: None }
+        let lines = stream::unfold(feed, |mut feed| async move {
+            feed.next().await.map(|line| (line, feed))
+        });
+        Self {
+            content: Content::Feed(Box::pin(lines)),
+            bound: None,
+        }
     }
 
-    /// The body as `lane`'s work, which ends with it.
     pub fn with_lane(self, lane: Lane) -> Self {
-        Self { bound: Some(Bound::Lane(lane)), ..self }
+        Self {
+            bound: Some(Bound::Lane(lane)),
+            ..self
+        }
     }
 
     pub fn until(self, deadline: Instant) -> Self {
-        Self { bound: Some(Bound::Until(deadline)), ..self }
+        Self {
+            bound: Some(Bound::Until(deadline)),
+            ..self
+        }
     }
 
-    /// Bounds the reply by `deadline` unless it is bound already.
     pub(crate) fn bound_by_default(&mut self, deadline: Instant) {
         self.bound.get_or_insert(Bound::Until(deadline));
     }
@@ -98,10 +110,15 @@ impl http_body::Body for Body {
     type Error = Aborted;
 
     /// Each frame first checks the lane, decided without waiting, so a reader that never blocks sees it end.
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
         let this = self.get_mut();
         if let Some(Bound::Lane(lane)) = &this.bound
-            && lane.due().is_some_and(|ending| ending != LaneEnding::Finished)
+            && lane
+                .due()
+                .is_some_and(|ending| ending != LaneEnding::Finished)
         {
             return Poll::Ready(Some(Err(Aborted)));
         }
@@ -147,7 +164,6 @@ enum Rule {
 type Ended = Pin<Box<dyn Future<Output = LaneEnding> + Send>>;
 
 impl ReplyBound {
-    /// The bound of `body`, which the app bounded.
     pub fn of(body: &Body) -> Self {
         match body.bound.as_ref().expect("the app bounds every reply") {
             Bound::Lane(lane) => {
@@ -163,7 +179,9 @@ impl ReplyBound {
     pub fn check(&mut self, cx: &mut Context<'_>) -> Result<(), Aborted> {
         let aborted = match &mut self.0 {
             Rule::Until(deadline) => deadline.as_mut().poll(cx).is_ready(),
-            Rule::Lane(lane, _) => lane.ending().is_some_and(|ending| ending != LaneEnding::Finished),
+            Rule::Lane(lane, _) => lane
+                .ending()
+                .is_some_and(|ending| ending != LaneEnding::Finished),
         };
         if aborted { Err(Aborted) } else { Ok(()) }
     }
@@ -179,7 +197,6 @@ impl ReplyBound {
         }
     }
 
-    /// Bytes of the reply were written.
     pub fn progressed(&self) {
         if let Rule::Lane(lane, _) = &self.0 {
             lane.moved();
@@ -195,23 +212,31 @@ impl ReplyBound {
     }
 }
 
-/// An HTTP/2 or HTTP/3 stream a reply is pumped into.
 pub(crate) trait Sink {
     /// Writes the head; `end` when nothing follows it.
-    async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
+    async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound)
+    -> Result<(), Aborted>;
 
     /// Writes non-empty `data` as flow control admits, ending the stream when `last`; each frame is progress.
-    async fn data(&mut self, data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted>;
+    async fn data(
+        &mut self,
+        data: Bytes,
+        last: bool,
+        bound: &mut ReplyBound,
+    ) -> Result<(), Aborted>;
 
     /// Ends the stream after a body whose last data did not.
     async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
-    /// Ready once the peer abandoned the reply.
     fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()>;
 }
 
 /// Writes a reply within its bound: its head, then, unless it answers HEAD, its data.
-pub(crate) async fn pump(sink: &mut impl Sink, response: Response<Body>, head: bool) -> Result<(), Aborted> {
+pub(crate) async fn pump(
+    sink: &mut impl Sink,
+    response: Response<Body>,
+    head: bool,
+) -> Result<(), Aborted> {
     let (parts, mut body) = response.into_parts();
     let mut bound = ReplyBound::of(&body);
     let end = head || http_body::Body::is_end_stream(&body);
@@ -254,7 +279,6 @@ fn next_data(
     }
 }
 
-/// Completes `write` unless the reply's bound ends it first.
 pub(crate) async fn within<T, E>(
     bound: &mut ReplyBound,
     write: impl Future<Output = Result<T, E>>,
@@ -292,7 +316,14 @@ mod tests {
     fn lane(shutdown: &CancellationToken) -> Lane {
         let hold = Quota::new(10, 10).acquire(&ClientKeys::Exempt, 1).unwrap();
         let lifetime = Duration::from_secs(3600);
-        Exchange::start().admit(ClientKeys::Exempt, hold, lifetime, &Work::default(), shutdown, None)
+        Exchange::start().admit(
+            ClientKeys::Exempt,
+            hold,
+            lifetime,
+            &Work::default(),
+            shutdown,
+            None,
+        )
     }
 
     async fn check(bound: &mut ReplyBound) -> Result<(), Aborted> {
@@ -321,10 +352,21 @@ mod tests {
         advance(IDLE_BOUND - Duration::from_secs(1)).await;
         bound.progressed();
         advance(IDLE_BOUND - Duration::from_secs(1)).await;
-        assert_eq!(blocked(&mut bound).await, Ok(()), "a write restarts the stall bound");
+        assert_eq!(
+            blocked(&mut bound).await,
+            Ok(()),
+            "a write restarts the stall bound"
+        );
         advance(Duration::from_secs(1)).await;
-        assert_eq!(blocked(&mut bound).await, Err(Aborted), "thirty seconds without a write");
-        assert_eq!((check(&mut bound).await, bound.delivered()), (Err(Aborted), Err(Aborted)));
+        assert_eq!(
+            blocked(&mut bound).await,
+            Err(Aborted),
+            "thirty seconds without a write"
+        );
+        assert_eq!(
+            (check(&mut bound).await, bound.delivered()),
+            (Err(Aborted), Err(Aborted))
+        );
 
         let lane = self::lane(&shutdown);
         let bound = ReplyBound::of(&Body::empty().with_lane(lane.clone()));
@@ -336,7 +378,8 @@ mod tests {
     async fn a_lane_ending_otherwise_aborts_its_body_at_the_next_frame() {
         let shutdown = CancellationToken::new();
         let block = Block::new(&Budget::new(usize::MAX), Default::default()).unwrap();
-        let mut body = Body::download(block.source(BLOCK_BYTES as u64 * 4)).with_lane(lane(&shutdown));
+        let mut body =
+            Body::download(block.source(BLOCK_BYTES as u64 * 4)).with_lane(lane(&shutdown));
         assert!(body.frame().await.unwrap().is_ok());
         shutdown.cancel();
         assert_eq!(body.frame().await.unwrap().unwrap_err(), Aborted);

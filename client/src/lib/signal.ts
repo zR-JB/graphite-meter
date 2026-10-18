@@ -18,7 +18,6 @@ class Node<T = unknown> implements Owner {
   observers: Node[] = [];
   owned: (() => void)[] | null = null;
   disposed = false;
-  /** What the last run of a computed threw. */
   failure: { error: unknown } | null = null;
   state: State;
   constructor(
@@ -172,7 +171,10 @@ export interface Signal<T> extends Read<T> {
 
 export function signal<T>(value: T): Signal<T> {
   const node = new Node(value, null, false, 0);
-  return Object.assign(() => get(node), { peek: () => node.value, set: (next: T) => set(node, next) });
+  return Object.assign(() => get(node), {
+    peek: () => node.value,
+    set: (next: T) => set(node, next),
+  });
 }
 
 export function computed<T>(fn: () => T): Read<T> {

@@ -29,10 +29,16 @@ test("a document with a malformed target, capability, stage limit or text is ref
     { ...golden, capabilities: { ...required, maxStageMs } },
     { ...golden, capabilities: { ...required, uploadCheckpoint } },
     { ...golden, capabilities: { ...golden.capabilities, uploadCheckpoint: false } },
-    { ...golden, capabilities: { ...golden.capabilities, latency: [{ baseUrl: ".", transport: "" }] } },
     {
       ...golden,
-      capabilities: { ...golden.capabilities, latency: [{ baseUrl: "https://a.example/x", transport: "websocket" }] },
+      capabilities: { ...golden.capabilities, latency: [{ baseUrl: ".", transport: "" }] },
+    },
+    {
+      ...golden,
+      capabilities: {
+        ...golden.capabilities,
+        latency: [{ baseUrl: "https://a.example/x", transport: "websocket" }],
+      },
     },
     ...["\u202e", "\u2066", "\u061c", "\u200f", "\u0007", "\u0085"].map((hidden) => ({
       ...golden,
@@ -40,7 +46,10 @@ test("a document with a malformed target, capability, stage limit or text is ref
     })),
     {
       ...golden,
-      capabilities: { ...golden.capabilities, throughput: Array(33).fill(golden.capabilities.throughput[0]) },
+      capabilities: {
+        ...golden.capabilities,
+        throughput: Array(33).fill(golden.capabilities.throughput[0]),
+      },
     },
   ];
   for (const document of refused) expect(() => preflight(document)).toThrow();
@@ -55,7 +64,8 @@ test("a name in any script or emoji sequence is kept, as the terminal client kee
     "\ufeffHome",
     "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f} Glasgow",
   ];
-  for (const name of names) expect(preflight({ ...golden, server: { ...golden.server, name } }).server.name).toBe(name);
+  for (const name of names)
+    expect(preflight({ ...golden, server: { ...golden.server, name } }).server.name).toBe(name);
 });
 
 test("a catalog binds unique IDs to canonical origins with self first", () => {
@@ -65,7 +75,12 @@ test("a catalog binds unique IDs to canonical origins with self first", () => {
       defaultSelection: ["self", "b"],
       servers: [
         { id: "self", url: ".", name: "" },
-        { id: "b", url: "https://B.example:443/", name: "B", additionalOrigins: ["https://t.example:8443"] },
+        {
+          id: "b",
+          url: "https://B.example:443/",
+          name: "B",
+          additionalOrigins: ["https://t.example:8443"],
+        },
         { id: "constructor", url: "http://10.0.0.2:7246", name: "Lab" },
       ],
     },
@@ -85,5 +100,7 @@ test("a catalog binds unique IDs to canonical origins with self first", () => {
     [server(".", "self"), server("https://a.example:0")],
   ])
     expect(() => catalog({ defaultSelection: ["self"], servers }, page)).toThrow();
-  expect(() => catalog({ defaultSelection: ["missing"], servers: [server(".", "self")] }, page)).toThrow();
+  expect(() =>
+    catalog({ defaultSelection: ["missing"], servers: [server(".", "self")] }, page),
+  ).toThrow();
 });

@@ -7,7 +7,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-/// The longest origin text a contract accepts.
 const MAX_ORIGIN_BYTES: usize = 2048;
 
 table! {
@@ -97,10 +96,14 @@ impl Origin {
         let (host, port) = match authority.strip_prefix('[') {
             Some(literal) => {
                 let (ip, port) = literal.split_once(']').ok_or(OriginError)?;
-                (Host::Ip(ip.parse::<Ipv6Addr>().map_err(|_| OriginError)?.into()), port)
+                (
+                    Host::Ip(ip.parse::<Ipv6Addr>().map_err(|_| OriginError)?.into()),
+                    port,
+                )
             }
             None => {
-                let (name, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+                let (name, port) =
+                    authority.split_at(authority.find(':').unwrap_or(authority.len()));
                 (Host::parse(name)?, port)
             }
         };
@@ -152,7 +155,6 @@ impl BaseUrl {
         }
     }
 
-    /// The origin this names, given the origin that served the document.
     pub fn resolve<'a>(&'a self, served: &'a Origin) -> &'a Origin {
         match self {
             Self::Served => served,

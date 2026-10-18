@@ -1,5 +1,4 @@
-// Provides fakes for driving a real run, page time that moves only when a test says so and servers whose lanes report
-// at a fixed rate. Tests of the run and of the views' model share them.
+// Fakes for driving a real run: page time that moves only when a test says so, and servers reporting at a fixed rate.
 import type {
   Checkpoint,
   Discovery,
@@ -19,7 +18,6 @@ interface Timer {
   fn: () => void;
 }
 
-/** Page time moves only when a test says so. Promise continuations settle before each timer. */
 export class FakeClock implements Clock {
   t = 0;
   #timers: Timer[] = [];
@@ -86,14 +84,24 @@ export interface Peer {
 
 export function prepared(id: string, latency: boolean, signedOut = false): PreparedServer {
   const origin = `https://${id}.example`;
-  const fetch: FetchTarget = { id: origin, origin, transport: "fetch-stream", protocol: "http1", tls: true };
+  const fetch: FetchTarget = {
+    id: origin,
+    origin,
+    transport: "fetch-stream",
+    protocol: "http1",
+    tls: true,
+  };
   const probe = {
     clientIp: "192.0.2.1",
     clientIpVersion: 4,
     clientIpSource: "socket",
     protocolNegotiated: "http/1.1",
   } as const;
-  const verified = { generation: "g", verifiedAt: 0, verifiedFor: { selection: "auto", head: origin } };
+  const verified = {
+    generation: "g",
+    verifiedAt: 0,
+    verifiedFor: { selection: "auto", head: origin },
+  };
   return {
     server: { id, url: origin, name: id },
     auth: { ended: async () => signedOut } as Partial<ServerAuth> as ServerAuth,
@@ -111,7 +119,12 @@ export function prepared(id: string, latency: boolean, signedOut = false): Prepa
 }
 
 /** Lanes report every 20 ms at `rate` bytes per ms, receivers every 100 ms, from the window on. */
-export function resources(peer: Peer, setup: StageSetup, calls: string[], clock: FakeClock): StageResources {
+export function resources(
+  peer: Peer,
+  setup: StageSetup,
+  calls: string[],
+  clock: FakeClock,
+): StageResources {
   const { activity, events } = setup;
   const rate = peer.rate ?? 1;
   const tag = `${peer.id}:${activity.stage}`;
@@ -120,7 +133,12 @@ export function resources(peer: Peer, setup: StageSetup, calls: string[], clock:
   let stopLanes = () => {};
   const receiver = (): Checkpoint => {
     const ms = clock.t - started;
-    return { id: tag, bytes: Math.round(ms * rate), nanos: Math.round(ms * 1e6) + 1, receivedAtMs: setup.now() };
+    return {
+      id: tag,
+      bytes: Math.round(ms * rate),
+      nanos: Math.round(ms * 1e6) + 1,
+      receivedAtMs: setup.now(),
+    };
   };
   const stop = () => {
     measuring = false;
@@ -138,7 +156,8 @@ export function resources(peer: Peer, setup: StageSetup, calls: string[], clock:
       if (activity.transfer.length)
         stopLanes = clock.every(20, () => {
           const ms = clock.t - started;
-          const moves = (dir: "down" | "up") => activity.transfer.includes(dir) && !peer.silent?.(activity, ms, dir);
+          const moves = (dir: "down" | "up") =>
+            activity.transfer.includes(dir) && !peer.silent?.(activity, ms, dir);
           if (moves("down")) events.download(rate * 20);
           if (moves("up") && peer.receives !== false && ms % 100 < 20) events.receiver(receiver());
         });
@@ -156,11 +175,16 @@ export function resources(peer: Peer, setup: StageSetup, calls: string[], clock:
     },
     // A receiver that is absent, or silent at this moment, answers no checkpoint either.
     checkpoint(signal) {
-      const answer = peer.receives === false || peer.silent?.(activity, clock.t - started, "up") ? null : receiver();
+      const answer =
+        peer.receives === false || peer.silent?.(activity, clock.t - started, "up")
+          ? null
+          : receiver();
       return (
         peer.checkpoint?.(signal) ??
         (measuring && peer.checkpointLagMs
-          ? new Promise<Checkpoint | null>((resolve) => clock.after(peer.checkpointLagMs!, () => resolve(answer)))
+          ? new Promise<Checkpoint | null>((resolve) =>
+              clock.after(peer.checkpointLagMs!, () => resolve(answer)),
+            )
           : Promise.resolve(answer))
       );
     },

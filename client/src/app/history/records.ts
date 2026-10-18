@@ -15,22 +15,18 @@ import { STAGES, type Stage, type TransferStage } from "../../engine/run/schedul
 import type { HttpProtocol } from "../../engine/types";
 import { isRecord } from "../../lib/decode";
 
-/** Readable records kept and listed: the newest by completion. */
 export const HISTORY_LIMIT = 2_000;
 
 export interface HistoryRecord {
   schemaVersion: 6;
   /** A v4 UUID when this client saved it; older rows may carry any text. */
   id: string;
-  /** Epoch ms of the run's completion. */
   completedAt: number;
-  /** The client version that saved it. */
   build: string;
   result: RunResult;
 }
 
-/** A finished run as History keeps it, apart from the result on screen: one its own evidence contradicts is saved
-    as incomplete, while the view keeps the outcome the run reported. */
+/** A finished run as History keeps it: one its own evidence contradicts is saved as incomplete. */
 export function historyRecord(run: { result: RunResult; plans: StagePlans }): HistoryRecord {
   const record: HistoryRecord = {
     schemaVersion: 6,
@@ -57,8 +53,7 @@ function createUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** Stored leaves are finite numbers, text of at most 2,048 characters, booleans, null or absent; objects and lists
-    hold at most 512 entries and nest at most 8 deep. */
+/** Stored leaves are finite numbers, text up to 2,048 characters, booleans or null; at most 512 entries, 8 deep. */
 function plain(value: unknown, depth = 0): boolean {
   if (value == null || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
@@ -68,8 +63,7 @@ function plain(value: unknown, depth = 0): boolean {
   return entries.length <= 512 && entries.every((entry) => plain(entry, depth + 1));
 }
 
-// Checked in place rather than decoded: a record keeps every field, and only those History's views dereference
-// are checked.
+// Checked in place rather than decoded, and only the fields History's views dereference.
 type Check = (value: unknown) => boolean;
 const finite: Check = (value) => Number.isFinite(value);
 const text: Check = (value) => typeof value === "string";
@@ -115,10 +109,16 @@ function recordShape(upgraded: boolean): Check {
     }),
   );
   const measured = {
-    latency: nullable(shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) })),
+    latency: nullable(
+      shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) }),
+    ),
     latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
     addedLatency: nullable(
-      shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
+      shape({
+        download: nullable(finite),
+        upload: nullable(finite),
+        bidirectional: nullable(finite),
+      }),
     ),
     download: rate,
     upload: rate,
@@ -128,7 +128,6 @@ function recordShape(upgraded: boolean): Check {
   return shape({
     schemaVersion: (value) => value === (upgraded ? 6 : 5),
     id: text,
-    // Any time a Date holds.
     completedAt: (value) => typeof value === "number" && Math.abs(value) <= 8.64e15,
     build: text,
     ...(upgraded ? {} : { engine: text }),
@@ -145,13 +144,22 @@ function recordShape(upgraded: boolean): Check {
             ...measured,
             server: shape({ id: text }),
             ...(upgraded ? { engineVersion: nullable(text) } : {}),
-            throughput: shape({ transport: text, ...(upgraded ? { protocol: among(PROTOCOLS) } : {}) }),
+            throughput: shape({
+              transport: text,
+              ...(upgraded ? { protocol: among(PROTOCOLS) } : {}),
+            }),
             latencyTarget: nullable(shape({ transport: text })),
             totalBytes: shape({ down: finite, up: finite }),
             stages,
           }),
         ),
-        failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
+        failures: list(
+          shape({
+            serverId: text,
+            stage: (value) => STAGES.includes(value as Stage),
+            reason: text,
+          }),
+        ),
       }),
     }),
   });
@@ -159,13 +167,13 @@ function recordShape(upgraded: boolean): Check {
 const readable = recordShape(true);
 const stored = recordShape(false);
 
-/** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  return isRecord(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
+  return isRecord(value) && plain(value) && readable(value)
+    ? (value as unknown as HistoryRecord)
+    : null;
 }
 
-/** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
-    either, and it is then left as stored. */
+/** A schema 4 or 5 row in this build's form; null when its own release could not read it either. */
 export function upgradeRecord(value: unknown): HistoryRecord | null {
   if (!isRecord(value) || !plain(value)) return null;
   try {
@@ -190,11 +198,12 @@ const NAMED: Record<string, HttpProtocol> = {
 const lane = <T extends Omit<ThroughputResult, "quietMs"> | null>(saved: T): T =>
   saved && {
     ...saved,
-    peakBytesPerSec: Number.isFinite(saved.peakBytesPerSec) ? saved.peakBytesPerSec : saved.reportedBytesPerSec,
+    peakBytesPerSec: Number.isFinite(saved.peakBytesPerSec)
+      ? saved.peakBytesPerSec
+      : saved.reportedBytesPerSec,
   };
 const latency = (saved: LatencyResult | null): LatencyResult | null =>
   saved && { ...saved, stabilityPct: saved.stabilityPct ?? null };
-// A status this build does not know reads as not run.
 const stageStatuses = (saved: Record<Stage, StageStatus>) =>
   Object.fromEntries(
     STAGES.map((stage) => [stage, STATUSES.includes(saved[stage]) ? saved[stage] : "not-run"]),
@@ -206,7 +215,8 @@ type Schema5 = Omit<HistoryRecord, "schemaVersion"> & { schemaVersion: 5; engine
 function current({ result, engine, ...record }: Schema5): HistoryRecord {
   const { download, upload, bidirectional, multiServer } = result;
   const owner =
-    multiServer.servers.find(({ server }) => server.id === multiServer.latencyFocus) ?? multiServer.servers[0];
+    multiServer.servers.find(({ server }) => server.id === multiServer.latencyFocus) ??
+    multiServer.servers[0];
   return {
     ...record,
     schemaVersion: 6,
@@ -257,10 +267,18 @@ interface Schema4 {
   outcome?: Outcome | null;
   multiServer?: MultiServerResult | null;
   stages: {
-    latency: { status: StageStatus; result: LatencyResult | null; lanes: Record<Stage, Lane4 | null> };
+    latency: {
+      status: StageStatus;
+      result: LatencyResult | null;
+      lanes: Record<Stage, Lane4 | null>;
+    };
     download: { status: StageStatus; result: ThroughputResult | null };
     upload: { status: StageStatus; result: ThroughputResult | null };
-    bidirectional: { status: StageStatus; down: ThroughputResult | null; up: ThroughputResult | null };
+    bidirectional: {
+      status: StageStatus;
+      down: ThroughputResult | null;
+      up: ThroughputResult | null;
+    };
   };
   bufferbloat: { addedMs?: Partial<AddedLatency> } | null;
   totalBytes: number;
@@ -331,7 +349,9 @@ function lift(saved: Schema4): Schema5 {
   const wire = (stage: TransferStage, measuredRate: number): WireModel | null => {
     const breakdown = wireEstimates?.breakdown[stage];
     const estimated = wireEstimates?.[`${stage}BytesPerSec`];
-    return breakdown && estimated && measuredRate ? { ...breakdown, totalMultiplier: estimated / measuredRate } : null;
+    return breakdown && estimated && measuredRate
+      ? { ...breakdown, totalMultiplier: estimated / measuredRate }
+      : null;
   };
   const transfer = (stage: "download" | "upload") => {
     const result = stages[stage].result;
@@ -340,10 +360,9 @@ function lift(saved: Schema4): Schema5 {
   const { down, up, status } = stages.bidirectional;
   const results = {
     latency: stages.latency.result,
-    latencyByStage: Object.fromEntries(STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])])) as Record<
-      Stage,
-      LatencySummary | null
-    >,
+    latencyByStage: Object.fromEntries(
+      STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])]),
+    ) as Record<Stage, LatencySummary | null>,
     addedLatency: saved.bufferbloat?.addedMs
       ? { download: null, upload: null, bidirectional: null, ...saved.bufferbloat.addedMs }
       : null,
@@ -355,13 +374,15 @@ function lift(saved: Schema4): Schema5 {
         : {
             down,
             up,
-            wire: down && up ? wire("bidirectional", down.reportedBytesPerSec + up.reportedBytesPerSec) : null,
+            wire:
+              down && up
+                ? wire("bidirectional", down.reportedBytesPerSec + up.reportedBytesPerSec)
+                : null,
           },
   };
-  const statuses = Object.fromEntries(STAGES.map((stage) => [stage, stages[stage].status])) as Record<
-    Stage,
-    StageStatus
-  >;
+  const statuses = Object.fromEntries(
+    STAGES.map((stage) => [stage, stages[stage].status]),
+  ) as Record<Stage, StageStatus>;
   const settled = Object.values(statuses);
   const server = {
     id: "self",
@@ -379,7 +400,10 @@ function lift(saved: Schema4): Schema5 {
     result: {
       ...results,
       multiServer: saved.multiServer
-        ? { ...saved.multiServer, servers: saved.multiServer.servers.map((entry) => ({ ...entry, stages: statuses })) }
+        ? {
+            ...saved.multiServer,
+            servers: saved.multiServer.servers.map((entry) => ({ ...entry, stages: statuses })),
+          }
         : {
             selection: [server],
             participants: [server.id],
@@ -406,7 +430,11 @@ function lift(saved: Schema4): Schema5 {
           },
       outcome:
         saved.outcome ??
-        (settled.includes("failed") ? "incomplete" : settled.includes("partial") ? "partial" : "complete"),
+        (settled.includes("failed")
+          ? "incomplete"
+          : settled.includes("partial")
+            ? "partial"
+            : "complete"),
       stages: statuses,
       startedAt: saved.startedAt,
       durationMs: saved.durationMs,
@@ -419,13 +447,11 @@ export type HistorySort = "date" | "download" | "upload" | "bidirectional" | "id
 /** Latency reads best lowest first; dates and rates highest first. */
 export const naturalDescending = (sort: HistorySort) => sort !== "idle" && sort !== "loaded";
 
-/** What History's list shows of a record and orders it by: a few hundred bytes of a record's kilobytes, so the list
-    stays small while History is open. A record is read whole only as it opens. */
+/** What History's list keeps of a record: a few hundred bytes of its kilobytes; a record is read whole only as it opens. */
 export interface HistoryEntry {
   id: string;
   completedAt: number;
   outcome: Outcome;
-  /** How many servers ran, and the first one's name. */
   servers: number;
   server: string;
   stages: Record<Stage, StageStatus>;
@@ -435,7 +461,6 @@ export interface HistoryEntry {
   loadedStage: TransferStage | null;
   /** The one direction a bidirectional stage kept, when it kept only one. */
   lone: "down" | "up" | null;
-  /** The value each sort orders it by. */
   keys: Record<HistorySort, number | null>;
 }
 
@@ -449,7 +474,10 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
   let loadedStage: TransferStage | null = null;
   for (const stage of LOADED) {
     const median = result.latencyByStage[stage]?.p50Ms;
-    if (median != null && (loadedStage === null || median > result.latencyByStage[loadedStage]!.p50Ms!))
+    if (
+      median != null &&
+      (loadedStage === null || median > result.latencyByStage[loadedStage]!.p50Ms!)
+    )
       loadedStage = stage;
   }
   const selection = result.multiServer.selection;
@@ -477,7 +505,11 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
 }
 
 /** Missing values last in either direction; equal ones newest first, then by id. */
-export function sortHistory(entries: readonly HistoryEntry[], sort: HistorySort, descending: boolean): HistoryEntry[] {
+export function sortHistory(
+  entries: readonly HistoryEntry[],
+  sort: HistorySort,
+  descending: boolean,
+): HistoryEntry[] {
   return entries.toSorted((a, b) => {
     const [x, y] = [a.keys[sort], b.keys[sort]];
     if (x === y) return b.completedAt - a.completedAt || b.id.localeCompare(a.id);

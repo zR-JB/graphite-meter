@@ -36,8 +36,7 @@ export function GaugePanel(props: { app: App; shell: Shell }): Node {
   const short = media("(max-height: 520px) and (orientation: landscape)");
   const portrait = media("(orientation: portrait)");
   const wide = computed(() => width() >= 760 || (short() && width() >= 560));
-  // Beside the lanes the ring centers on their axis and its note hangs just under it; short, the note keeps to the
-  // column under the ring.
+  // Beside the lanes the ring centers on their axis with its note just under it; short, the note keeps under the ring.
   const hung = computed(() => wide() && !portrait() && !short());
   effect(() => {
     const list = section.classList;
@@ -85,7 +84,9 @@ function Lens(props: { app: App; live: Live }): Node {
   });
   const stayed = computed(() => {
     const details = app.run.details();
-    return details ? servers().filter(({ id }) => details.participants.includes(id)).length : servers().length;
+    return details
+      ? servers().filter(({ id }) => details.participants.includes(id)).length
+      : servers().length;
   });
   return (
     <Show when={() => servers().length > 1}>
@@ -97,7 +98,9 @@ function Lens(props: { app: App; live: Live }): Node {
             servers={servers}
             value={live.lens}
             onChange={live.showServer}
-            aggregate={() => allServersLabel(servers().length, stayed(), servers().length - unmeasured().length)}
+            aggregate={() =>
+              allServersLabel(servers().length, stayed(), servers().length - unmeasured().length)
+            }
             unavailable={unmeasured}
             disabled={app.run.running}
           />

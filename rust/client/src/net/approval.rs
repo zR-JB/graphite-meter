@@ -20,23 +20,17 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
-/// How long an approval waits for the operator.
 const LIFETIME: Duration = Duration::from_mins(2);
-/// The spacing of token polls.
 const POLL: Duration = Duration::from_secs(1);
 
-/// A sign-in at a server waiting for the operator's approval.
 pub struct Approval {
     pub origin: Origin,
-    /// The approval page with the challenge.
     pub url: String,
-    /// The code the page shows too.
     pub code: String,
     pub deadline: Instant,
     verifier: String,
 }
 
-/// Why an approval gave no grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unapproved {
     Expired,
@@ -46,8 +40,12 @@ pub enum Unapproved {
 /// Why `origin` refuses sign-in: it is not HTTPS, or TLS goes unverified.
 pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
     match () {
-        _ if insecure => Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure)."),
-        _ if origin.scheme == Scheme::Http => Some("Sign-in needs a server address that starts with https://."),
+        _ if insecure => {
+            Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure).")
+        }
+        _ if origin.scheme == Scheme::Http => {
+            Some("Sign-in needs a server address that starts with https://.")
+        }
         _ => None,
     }
 }
@@ -69,15 +67,13 @@ impl Approval {
         }
     }
 
-    /// The grant once approved at `client`'s server.
     pub async fn grant(&self, client: &Client) -> Result<String, Unapproved> {
         let conn = &tokio::sync::Mutex::new(None);
         self.wait(|| async move { self.poll(client, &mut *conn.lock().await).await })
             .await
     }
 
-    /// The grant `poll` brings, asked every second; polls outlast network failures until the deadline, which reports
-    /// the last of them.
+    /// The grant `poll` brings, asked every second; network failures are retried until the deadline reports the last.
     pub async fn wait<F>(&self, mut poll: impl FnMut() -> F) -> Result<String, Unapproved>
     where
         F: Future<Output = Result<Option<String>, Fault>>,
@@ -91,27 +87,46 @@ impl Approval {
             match polled {
                 Ok(Ok(Some(token))) => return Ok(token),
                 Ok(Ok(None)) => unreachable = None,
-                Ok(Err(fault @ Fault::Malformed(_))) => return Err(Unapproved::Failed(fault.failure())),
+                Ok(Err(fault @ Fault::Malformed(_))) => {
+                    return Err(Unapproved::Failed(fault.failure()));
+                }
                 Ok(Err(fault)) if !cut => unreachable = Some(fault),
                 _ => {}
             }
             if cut || next >= self.deadline {
                 sleep_until(self.deadline).await;
-                return Err(unreachable.map_or(Unapproved::Expired, |fault| Unapproved::Failed(fault.failure())));
+                return Err(unreachable.map_or(Unapproved::Expired, |fault| {
+                    Unapproved::Failed(fault.failure())
+                }));
             }
             sleep_until(next).await;
         }
     }
 
     /// One token exchange over `conn`, kept for the next while it stays usable: the grant, or none while pending.
-    async fn poll(&self, client: &Client, conn: &mut Option<Conn>) -> Result<Option<String>, Fault> {
+    async fn poll(
+        &self,
+        client: &Client,
+        conn: &mut Option<Conn>,
+    ) -> Result<Option<String>, Fault> {
         let exchange = async {
             let mut ready = match conn.take().filter(Conn::usable) {
                 Some(ready) => ready,
-                None => Conn::dial(client, &self.origin, Protocol::Negotiated, ReadBuffer::Adaptive, None).await?,
+                None => {
+                    Conn::dial(
+                        client,
+                        &self.origin,
+                        Protocol::Negotiated,
+                        ReadBuffer::Adaptive,
+                        None,
+                    )
+                    .await?
+                }
             };
             let body = Bytes::from(format!(r#"{{"verifier":"{}"}}"#, self.verifier));
-            let answer = ready.send(self.head(body.len())?, Payload::once(body)).await;
+            let answer = ready
+                .send(self.head(body.len())?, Payload::once(body))
+                .await;
             let answer = answer.map_err(|failed| failed.fault)?;
             *conn = Some(ready);
             let status = answer.status();
@@ -123,7 +138,10 @@ impl Approval {
             match status {
                 StatusCode::ACCEPTED => Ok(None),
                 StatusCode::OK => grant(document?),
-                status => Err(Fault::Malformed(format!("sign-in answered HTTP {}", status.as_u16()))),
+                status => Err(Fault::Malformed(format!(
+                    "sign-in answered HTTP {}",
+                    status.as_u16()
+                ))),
             }
         };
         let exchanged = timeout(CONTROL_TIMEOUT, exchange).await;
@@ -134,7 +152,10 @@ impl Approval {
         http::Request::builder()
             .method(Method::POST)
             .uri(format!("{}{}", self.origin, AuthRoute::CliToken.path()))
-            .header(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )
             .header(header::CONTENT_LENGTH, length)
             .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
             .body(())
@@ -143,7 +164,6 @@ impl Approval {
 }
 
 impl Unapproved {
-    /// The failure a view shows.
     pub fn failure(&self) -> Failure {
         match self {
             Self::Expired => Failure::new(FailureReason::SignInRequired, EXPIRED),
@@ -152,5 +172,4 @@ impl Unapproved {
     }
 }
 
-/// What an expired approval asks the operator to do.
 pub const EXPIRED: &str = "Sign-in expired";

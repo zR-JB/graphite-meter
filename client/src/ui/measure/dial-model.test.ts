@@ -25,7 +25,11 @@ test("the ring fills the measured face, keeps its labels inside and a hung note 
     [358, 257.8, 0],
     [308.6, 289.8, 0],
   ] as const) {
-    const { center, radius, arcWidth, labels, noteTop, noteWidth, faceMin } = dialLayout(width, height, note);
+    const { center, radius, arcWidth, labels, noteTop, noteWidth, faceMin } = dialLayout(
+      width,
+      height,
+      note,
+    );
     expect(center.x).toBeCloseTo(width / 2, 6);
     expect(radius + arcWidth / 2).toBeLessThan(Math.min(width / 2, center.y));
     for (const { x, y } of labels) {
@@ -43,19 +47,17 @@ test("the ring fills the measured face, keeps its labels inside and a hung note 
   // A bigger face draws a bigger ring, and a face too small still draws a legible one.
   expect(dialLayout(560, 482).radius).toBeGreaterThan(dialLayout(300, 320).radius);
   expect(dialLayout(0, 0).radius).toBeGreaterThan(0);
-  expect(dialLayout(300, 320).labels.map(({ anchorX, anchorY }) => `${anchorX} ${anchorY}`)).toEqual([
-    "end start",
-    "end end",
-    "center end",
-    "start end",
-    "start start",
-  ]);
+  expect(
+    dialLayout(300, 320).labels.map(({ anchorX, anchorY }) => `${anchorX} ${anchorY}`),
+  ).toEqual(["end start", "end end", "center end", "start end", "start start"]);
 });
 
 test("the transfer curve is monotonic, bounded and invertible, and a gigabit ring reads round labels", () => {
   const scale = 1_000;
   const knots = [0, 5, 10, 50, 100, 250, 500, 750, 1_000];
-  const values = [...knots, ...knots.slice(1).map((v, i) => (v + knots[i]!) / 2)].sort((a, b) => a - b);
+  const values = [...knots, ...knots.slice(1).map((v, i) => (v + knots[i]!) / 2)].sort(
+    (a, b) => a - b,
+  );
   let previous = -1;
   for (const value of values) {
     const fraction = gaugeFraction(value, scale);
@@ -64,7 +66,8 @@ test("the transfer curve is monotonic, bounded and invertible, and a gigabit rin
     expect(gaugeValue(fraction, scale)).toBeCloseTo(value, 8);
     previous = fraction;
   }
-  for (const odd of [Number.NaN, -5, Number.POSITIVE_INFINITY]) expect(gaugeFraction(odd, scale)).toBe(odd > 0 ? 1 : 0);
+  for (const odd of [Number.NaN, -5, Number.POSITIVE_INFINITY])
+    expect(gaugeFraction(odd, scale)).toBe(odd > 0 ? 1 : 0);
   expect(gaugeFraction(5, 0)).toBe(1);
   const gigabit = 125e6;
   const mbit = (bytesPerSec: number) => (bytesPerSec * 8) / 1e6;
@@ -92,13 +95,18 @@ const bidirectional = (down: number | null, up: number | null) => ({
 });
 
 test("result arcs lie longest first, need both lanes for a combined value, and read out by role", () => {
-  const arcs = (download: number | null, upload: number | null, bidi: ReturnType<typeof bidirectional> | null) =>
+  const arcs = (
+    download: number | null,
+    upload: number | null,
+    bidi: ReturnType<typeof bidirectional> | null,
+  ) =>
     resultArcs({
       download: download === null ? null : result(download),
       upload: upload === null ? null : result(upload),
       bidirectional: bidi,
     }).map(
-      ({ stage, direction, bytesPerSec, dashed }) => `${stage}:${direction}:${bytesPerSec}${dashed ? ":dashed" : ""}`,
+      ({ stage, direction, bytesPerSec, dashed }) =>
+        `${stage}:${direction}:${bytesPerSec}${dashed ? ":dashed" : ""}`,
     );
   expect(arcs(10, 20, bidirectional(30, 40))).toEqual([
     "bidirectional:bidirectional:70",

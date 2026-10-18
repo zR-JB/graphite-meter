@@ -2,7 +2,8 @@
 import { animate, pageMs } from "./frame";
 import { batch, effect, onCleanup, signal, untrack, type Read, type Signal } from "./signal";
 
-const query = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+const query =
+  typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 const still = signal(query?.matches ?? false);
 query?.addEventListener("change", () => still.set(query.matches));
 /** Every value still updates, in one frame rather than an animation. */
@@ -23,8 +24,7 @@ interface Sample {
   now?: number;
 }
 
-/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples: samples
-    correct the value, never step it. The offset from the sample fades linearly, so a clock keeps its own pace. */
+/** A number a painter reads with `at(now)`, gliding to each sample over the interval between samples; corrections never step it. */
 export class Glide {
   #from: number;
   #to: number;
@@ -38,7 +38,6 @@ export class Glide {
     this.#from = this.#to = value;
   }
 
-  /** The last sample. */
   get target(): number {
     return this.#to;
   }
@@ -66,7 +65,8 @@ export class Glide {
     let fixed = false;
     if (sample.over !== undefined) [glide, fixed] = [sample.over, true];
     else if (remaining > 0 && !snap) [glide, fixed] = [remaining, true];
-    else if (now - this.#at < SAMPLE_GAP_MS) glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, now - this.#at));
+    else if (now - this.#at < SAMPLE_GAP_MS)
+      glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, now - this.#at));
     this.#from = snap || !(glide > 0) ? value : seen;
     this.#to = value;
     this.#at = now;
@@ -76,7 +76,6 @@ export class Glide {
     this.#fixed = fixed;
   }
 
-  /** Stops where it is now. */
   hold(now = pageMs()): void {
     this.set(this.at(now), { snap: true, now });
   }
@@ -116,7 +115,8 @@ class Handoff<T> {
   set(value: T): void {
     this.#latest = value;
     const hidden = typeof document !== "undefined" && document.hidden;
-    if (this.keyOf(value) === this.#key || still.peek() || hidden || this.#fadeMs() <= 0) return this.#swap();
+    if (this.keyOf(value) === this.#key || still.peek() || hidden || this.#fadeMs() <= 0)
+      return this.#swap();
     this.#out.set(true);
     let start: number | null = null;
     this.#stop ??= animate((now) => {
@@ -128,7 +128,6 @@ class Handoff<T> {
     });
   }
 
-  /** How long the shown view fades out. */
   #fadeMs(): number {
     return typeof this.outMs === "function" ? this.outMs(this.#shown.peek()) : this.outMs;
   }
@@ -149,7 +148,11 @@ class Handoff<T> {
 }
 
 /** A hand-off that follows `get`, released with its owner. */
-export function handoff<T>(get: () => T, keyOf: (value: T) => unknown, outMs?: Handoff<T>["outMs"]): Handoff<T> {
+export function handoff<T>(
+  get: () => T,
+  keyOf: (value: T) => unknown,
+  outMs?: Handoff<T>["outMs"],
+): Handoff<T> {
   const view = new Handoff(untrack(get), keyOf, outMs);
   effect(() => {
     const value = get();

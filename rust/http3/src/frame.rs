@@ -82,14 +82,17 @@ impl Header {
         let mut rest = &mut bytes[..];
         put_header(kind, second, &mut rest);
         let end = (16 - rest.len()) as u8;
-        Self { bytes, end, written: 0 }
+        Self {
+            bytes,
+            end,
+            written: 0,
+        }
     }
 
     pub(crate) fn len(&self) -> u8 {
         self.end
     }
 
-    /// The bytes not yet written.
     pub(crate) fn rest(&self) -> &[u8] {
         &self.bytes[usize::from(self.written)..usize::from(self.end)]
     }
@@ -103,7 +106,6 @@ impl Header {
     }
 }
 
-/// Reads two varints in sequence.
 #[derive(Default)]
 pub(crate) struct Pair {
     first: Option<u64>,
@@ -126,7 +128,10 @@ impl Pair {
     }
 
     /// Reads a unidirectional stream's type, followed by a session ID on WebTransport streams.
-    pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(StreamType, Option<u64>)> {
+    pub(crate) fn stream_type(
+        &mut self,
+        input: &mut impl Buf,
+    ) -> Option<(StreamType, Option<u64>)> {
         match StreamType(self.first.map_or_else(|| self.varint.read(input), Some)?) {
             StreamType::WEBTRANSPORT => {
                 self.first = Some(StreamType::WEBTRANSPORT.0);
@@ -140,19 +145,13 @@ impl Pair {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Piece<K> {
-    Header {
-        kind: K,
-        length: u64,
-    },
-    /// Holds part of the current frame's payload, sliced from the input without copying.
+    Header { kind: K, length: u64 },
     Payload(Bytes),
 }
 
-/// Splits a stream into headers of `K`, frame or capsule types, and payload slices.
 #[derive(Default)]
 pub(crate) struct Reader<K> {
     header: Pair,
-    /// The current frame still owes this many payload bytes.
     pub(crate) remaining: u64,
     kind: PhantomData<K>,
 }
@@ -162,17 +161,20 @@ impl<K: Kind> Reader<K> {
         if self.remaining == 0 {
             let (kind, length) = self.header.read(input)?;
             self.remaining = length;
-            return Some(Piece::Header { kind: K::from_wire(kind), length });
+            return Some(Piece::Header {
+                kind: K::from_wire(kind),
+                length,
+            });
         }
         if input.is_empty() {
             return None;
         }
-        let take = usize::try_from(self.remaining).map_or(input.len(), |remaining| remaining.min(input.len()));
+        let take = usize::try_from(self.remaining)
+            .map_or(input.len(), |remaining| remaining.min(input.len()));
         self.remaining -= take as u64;
         Some(Piece::Payload(input.split_to(take)))
     }
 
-    /// Reports whether the stream may end here without truncating a frame.
     pub(crate) fn at_boundary(&self) -> bool {
         self.remaining == 0 && self.header.is_empty()
     }
@@ -204,7 +206,9 @@ mod tests {
                 while let Some(piece) = reader.next(&mut part) {
                     match piece {
                         Piece::Header { kind, .. } => frames.push((kind, Vec::new())),
-                        Piece::Payload(bytes) => frames.last_mut().unwrap().1.extend_from_slice(&bytes),
+                        Piece::Payload(bytes) => {
+                            frames.last_mut().unwrap().1.extend_from_slice(&bytes);
+                        }
                     }
                 }
                 assert!(part.is_empty());

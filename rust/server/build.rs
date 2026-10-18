@@ -22,16 +22,24 @@ fn embed() -> Result<(), String> {
         if configured.is_empty() {
             return Err("GM_ASSET_DIR must name a directory".into());
         }
-        // A relative directory resolves against this package.
-        let root = graphite_meter_legal::inside(&graphite_meter_legal::checkout()?, Path::new(&configured))?;
+        let root = graphite_meter_legal::inside(
+            &graphite_meter_legal::checkout()?,
+            Path::new(&configured),
+        )?;
         if reviewed.as_ref().is_some_and(|reviewed| *reviewed != root) {
-            return Err("reviewed builds embed the browser app from GM_LEGAL_DIR/browser-assets".into());
+            return Err(
+                "reviewed builds embed the browser app from GM_LEGAL_DIR/browser-assets".into(),
+            );
         }
         println!("cargo:rerun-if-changed={}", root.display());
-        for (number, file) in scan::scan(&root, reviewed.is_some())?.into_iter().enumerate() {
+        for (number, file) in scan::scan(&root, reviewed.is_some())?
+            .into_iter()
+            .enumerate()
+        {
             // rustc includes this checked copy, never the source file.
             let snapshot = format!("browser-asset-{number}");
-            fs::write(output.join(&snapshot), &file.bytes).map_err(|error| format!("{snapshot}: {error}"))?;
+            fs::write(output.join(&snapshot), &file.bytes)
+                .map_err(|error| format!("{snapshot}: {error}"))?;
             let (name, content_type) = (file.name, file.content_type);
             manifest.push_str(&format!(
                 "    Asset {{ path: {name:?}, content_type: {content_type:?}, \

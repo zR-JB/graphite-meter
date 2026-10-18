@@ -1,5 +1,11 @@
 // Per-server credentials; a grant goes only to its issuer's HTTPS host, never in a URL, and expires on either clock.
-import { grant as grantDocument, readJSON, release, signInMarker, type CatalogEntry } from "../../protocol/documents";
+import {
+  grant as grantDocument,
+  readJSON,
+  release,
+  signInMarker,
+  type CatalogEntry,
+} from "../../protocol/documents";
 import { AUTH_ROUTES, ROUTES } from "../../protocol/routes";
 import { delay } from "../run/clock";
 import { identityOf, SignInRequired, type RequestRecipe, type ServerAuth } from "../types";
@@ -10,7 +16,6 @@ import { allowsOrigin } from "./paths";
 /** A measurement grant is held in memory only, as its bearer token and when its parent login ends. */
 export interface Grant {
   token: string;
-  /** Monotonic page ms. */
   deadline: number;
   /** Epoch ms by this page's clock, which runs on through a suspend that can pause the monotonic one. */
   expires: number;
@@ -39,7 +44,13 @@ function credentials(
       const merged = new Headers(init.headers);
       for (const [name, value] of Object.entries(headers)) merged.set(name, value);
       // Checkpoints and session control must stay responsive during bulk transfers.
-      const response = await fetch(url, { priority: "high", ...init, headers: merged, credentials, redirect });
+      const response = await fetch(url, {
+        priority: "high",
+        ...init,
+        headers: merged,
+        credentials,
+        redirect,
+      });
       if (init.signal?.aborted || !signInMarker(response)) return response;
       await release(response);
       refused();
@@ -76,8 +87,14 @@ function sessionAuth(entry: CatalogEntry, page: PageConfig, session: PageSession
     forever,
     (target, method) => {
       // The page's cookies and CSRF token reach only its own secure hostname, never an additional origin.
-      if (target.origin !== page.origin && (target.protocol !== "https:" || target.hostname !== host))
-        throw new CheckError("Session credentials stay on this page's secure hostname", "impossible");
+      if (
+        target.origin !== page.origin &&
+        (target.protocol !== "https:" || target.hostname !== host)
+      )
+        throw new CheckError(
+          "Session credentials stay on this page's secure hostname",
+          "impossible",
+        );
       return { headers: session.headers(method), credentials: "include", redirect: "error" };
     },
     (signal) => session.expired(signal),
@@ -106,7 +123,8 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
     "grant",
     left,
     (target) => {
-      if (target.protocol !== "https:") throw new CheckError("Measurement grants require HTTPS", "impossible");
+      if (target.protocol !== "https:")
+        throw new CheckError("Measurement grants require HTTPS", "impossible");
       // The issuer accepts its grant only on its own hostname, never on an additional origin.
       if (target.hostname !== issuer)
         throw new CheckError("Measurement grants stay on their server's hostname", "impossible");
@@ -119,16 +137,26 @@ export function grantAuth(entry: CatalogEntry, grant: Grant, now: () => number):
 }
 
 /** The page's own server rides the page's sign-in when there is one. Every other server starts public. */
-export const initialAuth = (entry: CatalogEntry, page: PageConfig, session: PageSession): ServerAuth =>
-  entry.id === "self" && entry.url === page.origin && page.auth ? sessionAuth(entry, page, session) : publicAuth(entry);
+export const initialAuth = (
+  entry: CatalogEntry,
+  page: PageConfig,
+  session: PageSession,
+): ServerAuth =>
+  entry.id === "self" && entry.url === page.origin && page.auth
+    ? sessionAuth(entry, page, session)
+    : publicAuth(entry);
 
-const base64url = (bytes: Uint8Array) => bytes.toBase64({ alphabet: "base64url", omitPadding: true });
+const base64url = (bytes: Uint8Array) =>
+  bytes.toBase64({ alphabet: "base64url", omitPadding: true });
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-/** Derives the approval's public challenge and the comparison code both pages show, which is RFC 4648 base32 of the
-    first five bytes of the verifier's SHA-256, eight characters. */
-export async function approvalChallenge(verifier: string): Promise<{ challenge: string; code: string }> {
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+/** The approval's public challenge and its comparison code: RFC 4648 base32 of the first five bytes of the verifier's SHA-256. */
+export async function approvalChallenge(
+  verifier: string,
+): Promise<{ challenge: string; code: string }> {
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+  );
   let code = "";
   let value = 0;
   let bits = 0;
@@ -140,8 +168,7 @@ export async function approvalChallenge(verifier: string): Promise<{ challenge: 
   return { challenge: base64url(hash), code };
 }
 
-/** Begins a fresh approval for `entry`, with the page to open, the code to compare, and the verifier, which never
-    leaves this page except in the exchange's body. */
+/** Begins a fresh approval for `entry`; the verifier never leaves this page except in the exchange's body. */
 export async function beginApproval(
   entry: CatalogEntry,
   page: PageConfig,
@@ -166,8 +193,7 @@ const MAX_GRANT_MS = 8 * 3_600_000;
 const POLL_MS = 1_000;
 const EXCHANGE_TIMEOUT_MS = 5_000;
 
-/** Polls the verifier-bound exchange until the user approves; failures retry next round, which answers the grant
-    already issued, and a refusal is final. */
+/** Polls the verifier-bound exchange until approved; failures retry next round and a refusal is final. */
 export async function exchangeGrant(
   entry: CatalogEntry,
   verifier: string,
@@ -202,12 +228,18 @@ export async function exchangeGrant(
       if (!answer.remainingMs || answer.remainingMs > MAX_GRANT_MS)
         throw new Error("Could not read the measurement grant.");
       const { token, remainingMs, maximumLifetimeMs } = answer;
-      return { token, deadline: sentAt + remainingMs, expires: sentWall + remainingMs, maximumLifetimeMs };
+      return {
+        token,
+        deadline: sentAt + remainingMs,
+        expires: sentWall + remainingMs,
+        maximumLifetimeMs,
+      };
     }
     if (response) {
       release(response);
       if (response.status === 429) throw new ApprovalLimitError();
-      if (response.status === 410) throw new Error("The approval's answer was lost on the way. Sign in again.");
+      if (response.status === 410)
+        throw new Error("The approval's answer was lost on the way. Sign in again.");
       if (response.status !== 202 && response.status !== 408 && response.status < 500)
         throw new Error(`Could not finish the sign-in (HTTP ${response.status}).`);
     }

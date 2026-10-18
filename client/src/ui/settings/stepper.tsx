@@ -19,7 +19,6 @@ export function Stepper(props: {
   value: () => number;
   min: number;
   max: () => number;
-  /** Gives the step size from `value` in `direction`. */
   step(value: number, direction: Direction): number;
   format(value: number): string;
   parse(text: string): number | null;
@@ -28,7 +27,6 @@ export function Stepper(props: {
   /** The value is a few digits, so the field keeps 3ch and phones offer digits. */
   count?: boolean;
   disabled: () => boolean;
-  /** Applies a value, or returns false when it is refused. */
   onChange(value: number): boolean;
 }): Node {
   const unit = props.unit ?? 1;
@@ -47,12 +45,12 @@ export function Stepper(props: {
   /** Steps `times` times from `from`. A limit holds the value in place. */
   const stepped = (from: number, direction: Direction, times = 1) => {
     let next = from;
-    for (let i = 0; i < times; i++) next = clamp(stepOnGrid(next, props.step(next, direction), direction));
+    for (let i = 0; i < times; i++)
+      next = clamp(stepOnGrid(next, props.step(next, direction), direction));
     return next;
   };
   let field!: HTMLInputElement;
-  /** Gives what a step starts from, a typed draft (9 typed over 10 steps up to 10) or else the value. Text that reads
-      as no value steps the value as it was. */
+  /** What a step starts from: a typed draft (9 typed over 10 steps up to 10), else the value; text that is no value steps the value. */
   const origin = () => {
     const current = props.value();
     if (field.value === text.peek()) return current;
@@ -66,9 +64,9 @@ export function Stepper(props: {
     field.value = props.format(applied ? next : current);
     return applied;
   };
-  /** Applies the value `times` steps from a typed draft or the value, and tells whether it applied. */
   const nudge = (direction: Direction, times = 1) => apply(stepped(origin(), direction, times));
-  const atLimit = (direction: Direction) => (direction > 0 ? props.value() >= props.max() : props.value() <= props.min);
+  const atLimit = (direction: Direction) =>
+    direction > 0 ? props.value() >= props.max() : props.value() <= props.min;
 
   const key = (direction: Direction) => (
     <button
@@ -76,7 +74,9 @@ export function Stepper(props: {
       class="btn btn-icon btn-quiet"
       tabindex="-1"
       aria-label={() => `${props.label()}, ${direction > 0 ? "increase" : "decrease"}`}
-      aria-disabled={() => String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)}
+      aria-disabled={() =>
+        String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)
+      }
       disabled={props.disabled}
       onpointerdown={(event) => {
         if (event.button !== 0) return;
@@ -146,7 +146,8 @@ export function Stepper(props: {
             }
             const step = KEYS[event.key];
             // Home and End reach the limits, as a spin button's do.
-            const limit = event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
+            const limit =
+              event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
             if (!step && limit === null) return;
             event.preventDefault();
             apply(step ? stepped(origin(), ...step) : limit!);

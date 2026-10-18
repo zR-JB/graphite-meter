@@ -55,8 +55,7 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   let token = "";
   const end: End = (detail) => {
     if (own.signal.aborted) return;
-    // An answer, a refusal too, spent the ticket. A WebTransport dial ended at its budget may never have reached the
-    // server, while a WebSocket one always waits for the browser's answer.
+    // Any answer spent the ticket; a WebTransport dial ended at its budget may never have reached the server, unlike a WebSocket one.
     if (transport === "websocket" || !expired.aborted) tickets.spent(token);
     own.abort();
     if (connection === own) connection = send = null;
@@ -91,9 +90,14 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   }
 }
 
-/** A refused upgrade closes as 1006, invisible to script. A dial past its budget stays open, reported as an outage:
-    the browser may queue it behind another to the host, and closing it would only delay the next. */
-function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End, opened: (write: Send) => void): void {
+/** A refused upgrade closes as 1006, invisible to script; a dial past its budget stays open as an outage, since closing would delay the next. */
+function socket(
+  url: string,
+  closed: AbortSignal,
+  expired: AbortSignal,
+  end: End,
+  opened: (write: Send) => void,
+): void {
   const ws = new WebSocket(url);
   closed.addEventListener("abort", () => ws.close());
   const lapse = () => prober.lapsed("websocket did not establish");
@@ -112,7 +116,13 @@ function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End
 }
 
 /** One wire message per datagram, so reading needs no framing. */
-function session(url: string, closed: AbortSignal, budget: AbortSignal, end: End, opened: (write: Send) => void): void {
+function session(
+  url: string,
+  closed: AbortSignal,
+  budget: AbortSignal,
+  end: End,
+  opened: (write: Send) => void,
+): void {
   const wt = new WebTransport(url, { congestionControl: "low-latency" });
   let grace: ReturnType<typeof setTimeout> | undefined;
   closed.addEventListener("abort", () => {
@@ -143,5 +153,7 @@ function session(url: string, closed: AbortSignal, budget: AbortSignal, end: End
       const at = performance.now();
       prober.frame(decoder.decode(value), at);
     }
-  })().catch((error) => (established ? broke(String(error)) : end("webtransport did not establish")));
+  })().catch((error) =>
+    established ? broke(String(error)) : end("webtransport did not establish"),
+  );
 }

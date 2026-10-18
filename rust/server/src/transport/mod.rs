@@ -1,5 +1,3 @@
-//! What carries requests and replies over the network.
-
 pub mod accept;
 pub mod body;
 pub mod http1;
@@ -21,8 +19,12 @@ use tokio::{io::BufReader, net::TcpStream};
 use tokio_rustls::server::TlsStream;
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
-pub(crate) static PEER_FAILURES: RateLimited =
-    RateLimited::new(Level::Info, "peer", "peer connection failures", module_path!());
+pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(
+    Level::Info,
+    "peer",
+    "peer connection failures",
+    module_path!(),
+);
 
 /// Bytes a connection's socket moves before its task lets the other tasks on its pinned runtime run.
 const BURST_BYTES: usize = 256 << 10;
@@ -32,8 +34,7 @@ const BURST_BYTES: usize = 256 << 10;
 pub(crate) struct Burst(usize);
 
 impl Burst {
-    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran,
-    /// and the thread offers its CPU to threads waiting for it.
+    /// Past `BURST_BYTES`, pending once, woken after every other ready task and the I/O driver ran.
     pub fn poll_turn(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.0 < BURST_BYTES {
             return Poll::Ready(());
@@ -126,12 +127,17 @@ mod tests {
         let accepted = listener.accept().unwrap().0;
         accepted.set_nonblocking(true).unwrap();
         // Registered with the first runtime's driver, which nothing polls again.
-        let mut socket = first.block_on(async { TcpStream::from_std(accepted) }).unwrap();
+        let mut socket = first
+            .block_on(async { TcpStream::from_std(accepted) })
+            .unwrap();
         let read = second.block_on(async move {
             socket.rehome().unwrap();
             std::io::Write::write_all(&mut peer, b"ping").unwrap();
             let mut buffer = [0; 4];
-            let reading = tokio::time::timeout(std::time::Duration::from_secs(5), socket.read_exact(&mut buffer));
+            let reading = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                socket.read_exact(&mut buffer),
+            );
             reading.await.map(|_| buffer)
         });
         assert_eq!(read.unwrap(), *b"ping");

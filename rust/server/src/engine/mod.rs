@@ -35,12 +35,10 @@ struct Counts {
     transfers: AtomicUsize,
 }
 
-/// A running transfer, counted until dropped.
 #[derive(Debug)]
 pub struct Transfer(Arc<Counts>);
 
 impl Meter {
-    /// A meter that counts only when `enabled`.
     pub fn new(enabled: bool) -> Self {
         Self(enabled.then(Arc::default))
     }
@@ -64,7 +62,9 @@ impl Meter {
         let gbits = bytes as f64 * 8.0 / window.as_secs_f64() / 1e9;
         let megabytes = bytes as f64 / 1e6;
         let seconds = window.as_secs_f64();
-        Some(format!("{gbits:.2} Gbit/s · {transfers} transfers · {megabytes:.2} MB in {seconds:.1} s"))
+        Some(format!(
+            "{gbits:.2} Gbit/s · {transfers} transfers · {megabytes:.2} MB in {seconds:.1} s"
+        ))
     }
 }
 
@@ -98,7 +98,12 @@ pub struct UploadSink {
 
 impl UploadSink {
     fn new(aggregate: Arc<Aggregate>, lane: Lane, transfer: Option<Arc<Transfer>>) -> Self {
-        Self { aggregate, lane, bytes: 0, transfer }
+        Self {
+            aggregate,
+            lane,
+            bytes: 0,
+            transfer,
+        }
     }
 
     /// Counts bytes received from the peer, once per chunk or batch; receiving any is the lane's movement.
@@ -142,7 +147,6 @@ impl Drop for UploadSink {
 
 /// After the first accepted chunk a `progress` record follows this often.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-/// A blank line follows this long after the feed's last line.
 const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
 
 /// One reader's lines (`api/upload.md#progress-records`), from `ready` to `complete` or an `error`, on any transport.
@@ -156,7 +160,6 @@ pub struct ProgressFeed {
     last_line: Instant,
 }
 
-/// What the aggregate's state calls for.
 enum Step {
     Wait,
     Line(Record),

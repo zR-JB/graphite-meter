@@ -2,15 +2,25 @@
 import { jest, spyOn } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { delay } from "../run/clock";
-import type { OpenProbeChannel, ProbeChannelEvents, ProbeChannelOptions, TestConfig } from "../types";
+import type {
+  OpenProbeChannel,
+  ProbeChannelEvents,
+  ProbeChannelOptions,
+  TestConfig,
+} from "../types";
 import { initialAuth } from "./auth";
 import type { PageConfig, PageSession } from "./page";
 
-/** The app's default test settings, as a server set sees them. */
 export const CONFIG: TestConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
-  duration: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
+  duration: {
+    warmupMs: 800,
+    latencyMs: 4_000,
+    downloadMs: 10_000,
+    uploadMs: 10_000,
+    bidirectionalMs: 10_000,
+  },
   pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 4 },
@@ -28,14 +38,26 @@ export const page: PageConfig = {
   webTransport: "available",
 };
 
-/** Credentials for a server that needs none. */
 export const publicAuth = (entry: CatalogEntry) => initialAuth(entry, page, {} as PageSession);
 
 export const MARKER = { "Graphite-Meter-Auth": "required" };
-export const PROBE = { clientIp: "192.0.2.1", clientIpVersion: 4, clientIpSource: "socket", protocolNegotiated: "h2" };
+export const PROBE = {
+  clientIp: "192.0.2.1",
+  clientIpVersion: 4,
+  clientIpSource: "socket",
+  protocolNegotiated: "h2",
+};
 
-export const h = (baseUrl: string, protocol: string) => ({ baseUrl, transport: "fetch-stream", protocol });
-export const wt = (baseUrl: string, transport = "webtransport") => ({ baseUrl, transport, protocol: "http3" });
+export const h = (baseUrl: string, protocol: string) => ({
+  baseUrl,
+  transport: "fetch-stream",
+  protocol,
+});
+export const wt = (baseUrl: string, transport = "webtransport") => ({
+  baseUrl,
+  transport,
+  protocol: "http3",
+});
 export const ws = (baseUrl: string) => ({ baseUrl, transport: "websocket" });
 export const preflight = (throughput: object[], latency: object[] = []) => ({
   server: { name: "Meter" },
@@ -44,10 +66,15 @@ export const preflight = (throughput: object[], latency: object[] = []) => ({
   capabilities: { throughput, latency, uploadCheckpoint: true, maxStageMs: 300_000 },
 });
 
-/** One answer: a JSON body after `afterMs` with the next hop the browser reports (h2 unless named; null when it names
-    none), a request that never answers, or one that cannot reach the server. */
+/** One answer: a JSON body after `afterMs` with the hop the browser reports (h2 unless named, null for none), a hang, or unreachable. */
 export type Answer =
-  | { status?: number; body?: unknown; headers?: Record<string, string>; afterMs?: number; hop?: string | null }
+  | {
+      status?: number;
+      body?: unknown;
+      headers?: Record<string, string>;
+      afterMs?: number;
+      hop?: string | null;
+    }
   | "hang"
   | "unreachable";
 
@@ -70,7 +97,9 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
     const answer = route(url, init);
     if (answer === "unreachable") throw new TypeError("Failed to fetch");
     if (answer === "hang")
-      return new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+      return new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      );
     if (answer.afterMs) await delay(answer.afterMs, signal);
     signal.throwIfAborted();
     hops.set(String(input), answer.hop === undefined ? "h2" : (answer.hop ?? ""));
@@ -84,8 +113,8 @@ export function fakeNet(route: (url: URL, init: RequestInit) => Answer) {
   });
   return {
     requests,
-    /** When each request to `pathname` was sent, in page ms. */
-    sent: (pathname: string) => requests.filter(({ url }) => url.pathname === pathname).map(({ at }) => at),
+    sent: (pathname: string) =>
+      requests.filter(({ url }) => url.pathname === pathname).map(({ at }) => at),
     now: () => performance.now(),
     /** Fires the timers due within `ms` in order, letting what each starts settle before the next. */
     async advance(ms = 0): Promise<void> {
@@ -111,8 +140,7 @@ interface Bus {
   disposed: boolean;
 }
 
-/** Latency buses that answer `rttMs` after measuring starts and once per interval after the next reply, or never
-    while `rttMs` is null; every bus opened stays listed. */
+/** Latency buses answering `rttMs` after measuring starts and once per interval after each reply, or never while it is null. */
 export class FakeBuses {
   rttMs: number | null = 10;
   readonly opened: Bus[] = [];
@@ -125,7 +153,15 @@ export class FakeBuses {
         const rttMs = this.rttMs;
         if (rttMs === null) return;
         if (first) events.ready();
-        events.outcomes([{ rttMs, timedOut: false, handlingMs: null, observedAt: performance.now(), inWindow: true }]);
+        events.outcomes([
+          {
+            rttMs,
+            timedOut: false,
+            handlingMs: null,
+            observedAt: performance.now(),
+            inWindow: true,
+          },
+        ]);
         reply(bus.intervalMs ?? rttMs, false);
       }, waitMs);
     };

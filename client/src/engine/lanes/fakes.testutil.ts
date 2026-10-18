@@ -35,7 +35,10 @@ export function useFakeWorkers(): void {
   beforeEach(() => {
     jest.useFakeTimers();
     FakeWorker.spawned = [];
-    Object.assign(globalThis, { Worker: FakeWorker, WORKERS: { lane: "lane", session: "session", probe: "probe" } });
+    Object.assign(globalThis, {
+      Worker: FakeWorker,
+      WORKERS: { lane: "lane", session: "session", probe: "probe" },
+    });
   });
   afterEach(() => {
     jest.useRealTimers();

@@ -14,11 +14,8 @@ use std::{
 /// A server serves the browser's notice at this path from the report's suffix.
 pub const BROWSER_NOTICE: &str = "legal/THIRD_PARTY_NOTICES.txt";
 
-/// Holds the notices a build embedded.
 pub struct Notices {
-    /// Holds the zlib-compressed report and its length.
     payload: Option<(&'static [u8], usize)>,
-    /// The browser's notice starts here in the report.
     browser: Option<usize>,
     /// The build's plain marker is a development build's, a reviewed build's with its report's SHA-256, or nothing.
     marker: &'static str,
@@ -28,8 +25,17 @@ pub struct Notices {
 impl Notices {
     /// The generated `legal.rs` calls this.
     #[doc(hidden)]
-    pub const fn new(payload: Option<(&'static [u8], usize)>, browser: Option<usize>, marker: &'static str) -> Self {
-        Self { payload, browser, marker, report: OnceLock::new() }
+    pub const fn new(
+        payload: Option<(&'static [u8], usize)>,
+        browser: Option<usize>,
+        marker: &'static str,
+    ) -> Self {
+        Self {
+            payload,
+            browser,
+            marker,
+            report: OnceLock::new(),
+        }
     }
 
     /// Keeps the build's plain marker, which release verification reads, in the executable.
@@ -49,7 +55,6 @@ impl Notices {
         Some(report)
     }
 
-    /// Returns the browser's notice in a server build that embeds the browser app.
     pub fn browser(&self) -> Option<&[u8]> {
         let start = self.browser?;
         Some(&self.report()?[start..])
@@ -59,7 +64,9 @@ impl Notices {
 /// Writes `report` and returns the exit status, 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
 pub fn print(mut out: impl Write, report: &[u8]) -> io::Result<u8> {
     match out.write_all(report).and_then(|()| out.flush()) {
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+            Ok(if cfg!(unix) { 141 } else { 0 })
+        }
         written => written.map(|()| 0),
     }
 }

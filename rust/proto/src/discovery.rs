@@ -10,10 +10,9 @@ pub const MAX_RESPONSE_BYTES: usize = 64 << 10;
 const MAX_TARGETS: usize = 32;
 /// Server names, locations, engine versions and generations hold at most this many bytes of safe text.
 const MAX_METADATA_BYTES: usize = 256;
-/// A server's stage limit unless its operator sets one.
 pub const DEFAULT_STAGE_LIMIT: Duration = Duration::from_mins(5);
-/// The stage limits a server may advertise.
-pub const STAGE_LIMITS: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_hours(24);
+pub const STAGE_LIMITS: RangeInclusive<Duration> =
+    Duration::from_secs(1)..=Duration::from_hours(24);
 
 named! {
     pub enum ThroughputTransport {
@@ -105,7 +104,12 @@ impl Preflight {
     /// Reads a preflight; invalid metadata, stage limit or known target refuses it; unknown transports are skipped.
     pub fn decode(data: &[u8]) -> Result<Self, serde_json::Error> {
         let preflight: Self = json::decode(data)?;
-        let Self { server, engine_version, generation, capabilities } = &preflight;
+        let Self {
+            server,
+            engine_version,
+            generation,
+            capabilities,
+        } = &preflight;
         let metadata = [&server.name, &server.location, engine_version, generation];
         if generation.is_empty() || !metadata.iter().all(|text| is_metadata(text)) {
             return Err(serde_json::Error::custom("invalid discovery metadata"));
@@ -118,13 +122,21 @@ impl Preflight {
 
     /// Every target's base URL, throughput targets first.
     pub fn base_urls(&self) -> impl Iterator<Item = &BaseUrl> {
-        let throughput = self.capabilities.throughput.iter().map(|target| &target.base_url);
-        throughput.chain(self.capabilities.latency.iter().map(|target| &target.base_url))
+        let throughput = self
+            .capabilities
+            .throughput
+            .iter()
+            .map(|target| &target.base_url);
+        throughput.chain(
+            self.capabilities
+                .latency
+                .iter()
+                .map(|target| &target.base_url),
+        )
     }
 }
 
 impl Capabilities {
-    /// The longest stage a client may plan against this server.
     pub fn stage_limit(&self) -> Duration {
         Duration::from_millis(self.max_stage_ms)
     }
@@ -134,7 +146,9 @@ pub(crate) fn is_metadata(metadata: &str) -> bool {
     metadata.len() <= MAX_METADATA_BYTES && metadata.chars().all(text::safe)
 }
 
-fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ThroughputTarget>, D::Error> {
+fn throughput_targets<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ThroughputTarget>, D::Error> {
     #[derive(Default, Deserialize)]
     #[serde(default, rename_all = "camelCase")]
     struct Sent {
@@ -143,9 +157,16 @@ fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<
         protocol: String,
     }
     let mut targets = Vec::new();
-    for Sent { base_url, transport, protocol } in bounded(deserializer)? {
+    for Sent {
+        base_url,
+        transport,
+        protocol,
+    } in bounded(deserializer)?
+    {
         if transport.is_empty() || protocol.is_empty() {
-            return Err(D::Error::custom("a throughput target lacks its transport or protocol"));
+            return Err(D::Error::custom(
+                "a throughput target lacks its transport or protocol",
+            ));
         }
         let (Some(transport), Some(protocol)) = (
             ThroughputTransport::find_by(ThroughputTransport::name, &transport),
@@ -153,12 +174,18 @@ fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<
         ) else {
             continue;
         };
-        targets.push(ThroughputTarget { base_url: base_url_of(&base_url)?, transport, protocol });
+        targets.push(ThroughputTarget {
+            base_url: base_url_of(&base_url)?,
+            transport,
+            protocol,
+        });
     }
     Ok(targets)
 }
 
-fn latency_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<LatencyTarget>, D::Error> {
+fn latency_targets<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<LatencyTarget>, D::Error> {
     #[derive(Default, Deserialize)]
     #[serde(default, rename_all = "camelCase")]
     struct Sent {
@@ -166,18 +193,27 @@ fn latency_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Lat
         transport: String,
     }
     let mut targets = Vec::new();
-    for Sent { base_url, transport } in bounded(deserializer)? {
+    for Sent {
+        base_url,
+        transport,
+    } in bounded(deserializer)?
+    {
         if transport.is_empty() {
             return Err(D::Error::custom("a latency target lacks its transport"));
         }
         if let Some(transport) = LatencyTransport::find_by(LatencyTransport::name, &transport) {
-            targets.push(LatencyTarget { base_url: base_url_of(&base_url)?, transport });
+            targets.push(LatencyTarget {
+                base_url: base_url_of(&base_url)?,
+                transport,
+            });
         }
     }
     Ok(targets)
 }
 
-fn bounded<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Vec<T>, D::Error> {
+fn bounded<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error> {
     let sent = Vec::<T>::deserialize(deserializer)?;
     match sent.len() {
         0..=MAX_TARGETS => Ok(sent),
@@ -198,7 +234,11 @@ pub enum IpFamily {
 
 impl IpFamily {
     pub fn of(address: IpAddr) -> Self {
-        if address.is_ipv4() { Self::V4 } else { Self::V6 }
+        if address.is_ipv4() {
+            Self::V4
+        } else {
+            Self::V6
+        }
     }
 
     pub fn version(self) -> u8 {

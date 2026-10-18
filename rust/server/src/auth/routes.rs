@@ -33,12 +33,9 @@ use subtle::ConstantTimeEq;
 use tokio::time::Instant;
 use zeroize::Zeroizing;
 
-/// A controller route reads at most this many body bytes.
 const FORM_BYTES: usize = 4096;
-/// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
-/// A form's fields in order, zeroized when dropped.
 pub(super) type Form = Zeroizing<Vec<(String, String)>>;
 
 /// Answers a controller route the policy let through; a path no route claims is not found.
@@ -59,8 +56,12 @@ pub(super) async fn handle<B: http_body::Body>(
     let oidc = auth.sign_in.oidc.as_deref();
     let mut answer = match (route, auth.sign_in.password.as_ref(), oidc) {
         (Some(AuthRoute::Login), ..) => login_page(auth, &request),
-        (Some(AuthRoute::Password), Some(password), _) => sign_in(auth, password, request, peer).await,
-        (Some(AuthRoute::OidcStart), _, Some(provider)) => oidc::start(auth, provider, request, peer).await,
+        (Some(AuthRoute::Password), Some(password), _) => {
+            sign_in(auth, password, request, peer).await
+        }
+        (Some(AuthRoute::OidcStart), _, Some(provider)) => {
+            oidc::start(auth, provider, request, peer).await
+        }
         (Some(AuthRoute::OidcCallback), _, Some(provider)) => {
             oidc::callback(auth, provider, request.into_parts().0, deadline, peer).await
         }
@@ -74,25 +75,36 @@ pub(super) async fn handle<B: http_body::Body>(
         (Some(route @ (AuthRoute::CliToken | AuthRoute::BrowserToken)), ..) => {
             approval::token(auth, request, route == AuthRoute::BrowserToken).await
         }
-        (Some(AuthRoute::Logout), ..) => sign_out(auth, lease, form(request).await.1.filter(|_| from_public)),
-        (Some(AuthRoute::Password | AuthRoute::OidcStart | AuthRoute::OidcCallback), ..) | (None, ..) => {
-            response::status(StatusCode::NOT_FOUND)
+        (Some(AuthRoute::Logout), ..) => {
+            sign_out(auth, lease, form(request).await.1.filter(|_| from_public))
         }
+        (Some(AuthRoute::Password | AuthRoute::OidcStart | AuthRoute::OidcCallback), ..)
+        | (None, ..) => response::status(StatusCode::NOT_FOUND),
     };
     let forms = oidc
         .and_then(Oidc::provider)
         .filter(|_| matches!(route, Some(AuthRoute::Login | AuthRoute::OidcStart)));
-    protect(answer.headers_mut(), true, forms.as_ref().map(|provider| provider.origin.as_str()));
+    protect(
+        answer.headers_mut(),
+        true,
+        forms.as_ref().map(|provider| provider.origin.as_str()),
+    );
     answer
 }
 
 /// A ticket for an HTTPS `target` route of `kind` on the public hostname, minted by a cookie login or a browser grant.
-pub(super) fn mint<B>(auth: &Enabled, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
+pub(super) fn mint<B>(
+    auth: &Enabled,
+    request: &Request<B>,
+    lease: Option<&AuthLease>,
+    kind: Kind,
+) -> Response<Body> {
     let Some(lease) = lease.filter(|lease| lease.via() != &Via::Bearer(None)) else {
         return response::status(StatusCode::FORBIDDEN);
     };
     let target = query::get(request.uri().query(), "target").unwrap_or_default();
-    let Some((origin, path)) = Origin::split(target.strip_suffix('#').unwrap_or(&target)).ok() else {
+    let Some((origin, path)) = Origin::split(target.strip_suffix('#').unwrap_or(&target)).ok()
+    else {
         return response::status(StatusCode::BAD_REQUEST);
     };
     let route = Route::find_by(Route::path, path).filter(|route| route.kind() == kind);
@@ -125,7 +137,12 @@ fn login_page<B>(auth: &Enabled, request: &Request<B>) -> Response<Body> {
     }
     .render();
     let mut answer = response::html(page);
-    set_cookie(&mut answer, Cookie::Login, &csrf, SystemTime::now() + FORM_LIFETIME);
+    set_cookie(
+        &mut answer,
+        Cookie::Login,
+        &csrf,
+        SystemTime::now() + FORM_LIFETIME,
+    );
     answer
 }
 
@@ -189,21 +206,35 @@ pub(super) fn establish(
     if let Some(prior) = prior {
         auth.store.sign_out(prior, false);
     }
-    set_cookie(&mut answer, Cookie::Session, login.token.as_str(), login.expires);
-    set_cookie(&mut answer, Cookie::Csrf, login.csrf.as_str(), login.expires);
+    set_cookie(
+        &mut answer,
+        Cookie::Session,
+        login.token.as_str(),
+        login.expires,
+    );
+    set_cookie(
+        &mut answer,
+        Cookie::Csrf,
+        login.csrf.as_str(),
+        login.expires,
+    );
     clear_cookie(&mut answer, Cookie::Login);
     Ok(answer)
 }
 
 /// Checks a sign-in form: posted from the public origin with the token its login cookie holds.
 pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Result<(), Reason> {
-    let origin = headers.get(header::ORIGIN).filter(|origin| !origin.is_empty());
+    let origin = headers
+        .get(header::ORIGIN)
+        .filter(|origin| !origin.is_empty());
     match (origin, cookie(headers, Cookie::Login)) {
         (None, _) => Err(Reason::CsrfOriginMissing),
         (Some(origin), _) if *origin != auth.policy.origin => Err(Reason::CsrfOriginMismatch),
         (_, None) => Err(Reason::CsrfCookieMissing),
         _ if proof.is_empty() => Err(Reason::CsrfTokenMissing),
-        (_, Some(token)) if token.len() <= 20 || !bool::from(token.as_bytes().ct_eq(proof.as_bytes())) => {
+        (_, Some(token))
+            if token.len() <= 20 || !bool::from(token.as_bytes().ct_eq(proof.as_bytes())) =>
+        {
             Err(Reason::CsrfTokenMismatch)
         }
         _ => Ok(()),
@@ -211,7 +242,11 @@ pub(super) fn check_csrf(auth: &Enabled, headers: &HeaderMap, proof: &str) -> Re
 }
 
 /// Back to the sign-in page with the refusal's notice, keeping the approval challenge.
-pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
+pub(super) fn rejected(
+    auth: &Enabled,
+    reason: Reason,
+    challenge: Option<&Challenge>,
+) -> Response<Body> {
     auth.security.refused(reason);
     let notice = reason.notice();
     redirect(&match challenge {
@@ -220,7 +255,6 @@ pub(super) fn rejected(auth: &Enabled, reason: Reason, challenge: Option<&Challe
     })
 }
 
-/// The signed-in login's name, provider, expiry and CSRF token.
 fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -235,7 +269,10 @@ fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
     let Some(login) = lease.and_then(|lease| auth.store.view(lease.login())) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
-    let remaining = login.expires.duration_since(SystemTime::now()).unwrap_or_default();
+    let remaining = login
+        .expires
+        .duration_since(SystemTime::now())
+        .unwrap_or_default();
     response::json_of(&Report {
         name: login.name,
         provider: login.provider,
@@ -263,20 +300,26 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Re
     answer
 }
 
-/// A 303 answering a form post.
 pub(super) fn redirect(target: &str) -> Response<Body> {
     let target = HeaderValue::from_str(target).expect("targets are ASCII");
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Sets `cookie` to `value` until `expires`.
-pub(super) fn set_cookie(answer: &mut Response<Body>, cookie: Cookie, value: &str, expires: SystemTime) {
-    let age = expires.duration_since(SystemTime::now()).map_or(0, |age| age.as_secs());
+pub(super) fn set_cookie(
+    answer: &mut Response<Body>,
+    cookie: Cookie,
+    value: &str,
+    expires: SystemTime,
+) {
+    let age = expires
+        .duration_since(SystemTime::now())
+        .map_or(0, |age| age.as_secs());
     let (name, same_site) = (cookie.name(), cookie.same_site());
     let http_only = if cookie.script() { "" } else { "; HttpOnly" };
     let date = http_date(expires);
-    let cookie =
-        format!("{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}");
+    let cookie = format!(
+        "{name}={value}; Path=/; Expires={date}; Max-Age={age}{http_only}; Secure; SameSite={same_site}"
+    );
     let cookie = HeaderValue::from_str(&cookie).expect("cookies are ASCII");
     answer.headers_mut().append(header::SET_COOKIE, cookie);
 }
@@ -298,7 +341,8 @@ pub(super) async fn form<B: http_body::Body>(request: Request<B>) -> (Parts, Opt
         return (head, None);
     }
     let bytes = self::body(body).await;
-    let form = bytes.and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?).map(Zeroizing::new));
+    let form =
+        bytes.and_then(|bytes| query::form(std::str::from_utf8(&bytes).ok()?).map(Zeroizing::new));
     (head, form)
 }
 

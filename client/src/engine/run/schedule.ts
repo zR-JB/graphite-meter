@@ -21,7 +21,6 @@ export interface Activity {
 
 export interface Segment {
   phase: "warmup" | Stage;
-  /** Run-clock milliseconds. */
   start: number;
   end: number;
   activity: Activity;
@@ -38,12 +37,12 @@ const TRANSFER: Record<Stage, Activity["transfer"]> = {
   bidirectional: ["down", "up"],
 };
 
-/** Each planned stage's activity, in stage order. */
 export const activities = (plan: Plan): Activity[] =>
   STAGES.filter((stage) => planned(plan, stage)).map((stage) => ({
     stage,
     transfer: [...TRANSFER[stage]],
-    loadedLatency: stage !== "latency" && (planned(plan, "latency") || !plan.skipLoadedLatencyWhenStageOff),
+    loadedLatency:
+      stage !== "latency" && (planned(plan, "latency") || !plan.skipLoadedLatencyWhenStageOff),
   }));
 
 /** Stages run in order, and a stage may be turned on or off until it begins. */
@@ -76,20 +75,25 @@ export function timeline(plan: Plan): Segment[] {
   return segments;
 }
 
-/** The whole timeline's length. */
 export const totalMs = (plan: Plan) => timeline(plan).at(-1)?.end ?? 0;
 
-/** The segment covering `elapsed`, or undefined past the end. */
 export const segmentAt = (segments: readonly Segment[], elapsed: number) =>
   segments.find((segment) => elapsed >= segment.start && elapsed < segment.end);
 
-/** The unfinished timeline under a changed plan. What ran stays; the running segment takes its new length (never
-    ending before now); stages not started yet follow. `between` means no segment is active. */
-export function replan(segments: readonly Segment[], elapsed: number, plan: Plan, between = false): Segment[] {
+/** The unfinished timeline under a changed plan: what ran stays, the running segment takes its new length, later stages follow. */
+export function replan(
+  segments: readonly Segment[],
+  elapsed: number,
+  plan: Plan,
+  between = false,
+): Segment[] {
   const active = between ? undefined : segmentAt(segments, elapsed);
-  const kept = active ? segments.filter((s) => s.start < active.start) : segments.filter((s) => s.end <= elapsed);
+  const kept = active
+    ? segments.filter((s) => s.start < active.start)
+    : segments.filter((s) => s.end <= elapsed);
   if (active) {
-    const ms = active.phase === "warmup" ? plan.duration.warmupMs : plan.duration[`${active.phase}Ms`];
+    const ms =
+      active.phase === "warmup" ? plan.duration.warmupMs : plan.duration[`${active.phase}Ms`];
     kept.push({ ...active, end: Math.max(elapsed, active.start + ms) });
   }
   let cursor = kept.at(-1)?.end ?? 0;
@@ -97,18 +101,34 @@ export function replan(segments: readonly Segment[], elapsed: number, plan: Plan
     // A stage whose window began stays as it is.
     if (kept.some((segment) => segment.phase === next.stage)) continue;
     // A running warmup keeps its activity, so the window reuses its connections and latency policy.
-    const warmup = kept.find((segment) => segment.phase === "warmup" && segment.activity.stage === next.stage);
+    const warmup = kept.find(
+      (segment) => segment.phase === "warmup" && segment.activity.stage === next.stage,
+    );
     const activity = warmup?.activity ?? next;
     if (!warmup && plan.duration.warmupMs > 0) {
-      kept.push({ phase: "warmup", start: cursor, end: (cursor += plan.duration.warmupMs), activity });
+      kept.push({
+        phase: "warmup",
+        start: cursor,
+        end: (cursor += plan.duration.warmupMs),
+        activity,
+      });
     }
-    kept.push({ phase: next.stage, start: cursor, end: (cursor += plan.duration[`${next.stage}Ms`]), activity });
+    kept.push({
+      phase: next.stage,
+      start: cursor,
+      end: (cursor += plan.duration[`${next.stage}Ms`]),
+      activity,
+    });
   }
   return kept;
 }
 
 /** Ends `active` at `elapsed` and moves the untouched tail forward by the time removed. */
-export function truncate(segments: readonly Segment[], active: Segment, elapsed: number): Segment[] {
+export function truncate(
+  segments: readonly Segment[],
+  active: Segment,
+  elapsed: number,
+): Segment[] {
   const boundary = Math.min(active.end, Math.max(active.start, elapsed));
   const removed = active.end - boundary;
   return segments.map((segment) =>

@@ -35,12 +35,10 @@ interface ReportSources {
   servers: readonly { id: string; url: string; name: string; location?: string }[];
   /** Holds the addresses servers saw for this browser, which are scrubbed from free text too. */
   clientIps: readonly string[];
-  /** Holds plain state, from the build, environment and settings to the servers' views and the run. */
   state: Record<string, unknown>;
 }
 
-/** Renders pretty JSON in which servers read "server-N", their names "Server N" and this browser's address
-    "client-address", with secrets gone. */
+/** Pretty JSON where servers read "server-N", their names "Server N" and this browser's address "client-address", secrets gone. */
 export function diagnosticReport({ page, servers, clientIps, state }: ReportSources): string {
   const hosts = new Map<string, string>();
   const words = new Map<string, string>();
@@ -63,7 +61,10 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   // The pattern matches whole words, longest first, so an ID never rewrites part of another word or name.
   const known = [...words.keys()].sort((a, b) => b.length - a.length);
   const pattern = known.length
-    ? new RegExp(`(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`, "g")
+    ? new RegExp(
+        `(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`,
+        "g",
+      )
     : null;
   const scrub = (text: string) => {
     const out = text.replace(URLISH, (url) => {
@@ -90,7 +91,8 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   return JSON.stringify(
     {
       report: "Graphite Meter diagnostics",
-      anonymized: "Servers, names and locations are numbered; this browser's address and credentials are left out.",
+      anonymized:
+        "Servers, names and locations are numbered; this browser's address and credentials are left out.",
       hosts: Object.fromEntries([...hosts].map(([hostname, label]) => [label, hostKind(hostname)])),
       ...body,
     },

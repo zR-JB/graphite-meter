@@ -11,7 +11,11 @@ const INDEX: &str = "<html><head><style>html{background:#131518}</style><script>
                      <body></body></html>";
 
 const fn asset(path: &'static str, content_type: &'static str, bytes: &'static [u8]) -> Asset {
-    Asset { path, content_type, bytes }
+    Asset {
+        path,
+        content_type,
+        bytes,
+    }
 }
 
 const SCRIPT: &str = "text/javascript; charset=utf-8";
@@ -27,11 +31,14 @@ static FILES: &[Asset] = &[
 
 const REPORT: &str = "project\nrust crates\nbrowser notice\n";
 
-/// Builds the report with the browser's notice as its suffix.
 fn notices() -> &'static Notices {
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(REPORT.as_bytes(), 9).leak();
     let browser = REPORT.len() - "browser notice\n".len();
-    Box::leak(Box::new(Notices::new(Some((compressed, REPORT.len())), Some(browser), "")))
+    Box::leak(Box::new(Notices::new(
+        Some((compressed, REPORT.len())),
+        Some(browser),
+        "",
+    )))
 }
 
 fn served(env: &[(&str, &str)]) -> App {
@@ -41,7 +48,9 @@ fn served(env: &[(&str, &str)]) -> App {
 async fn get(app: &App, method: &str, path: &str, headers: &[(&str, &str)]) -> Response<Body> {
     let request = headers
         .iter()
-        .fold(request(method, path), |request, (name, value)| request.header(*name, *value));
+        .fold(request(method, path), |request, (name, value)| {
+            request.header(*name, *value)
+        });
     send(app, Endpoint::H1, empty(request)).await
 }
 
@@ -63,8 +72,13 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     ] {
         assert_eq!(header(&response, name), Some(value), "{name}");
     }
-    let policy = header(&response, "content-security-policy").unwrap().to_owned();
-    let (script, style) = (sha256("let theme='dark';"), sha256("html{background:#131518}"));
+    let policy = header(&response, "content-security-policy")
+        .unwrap()
+        .to_owned();
+    let (script, style) = (
+        sha256("let theme='dark';"),
+        sha256("html{background:#131518}"),
+    );
     let expected = format!(
         "default-src 'self'; script-src 'self' 'sha256-{script}'; style-src 'self' 'sha256-{style}'; \
          img-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; \
@@ -76,7 +90,9 @@ async fn the_index_carries_the_server_meta_tags_under_the_page_policy() {
     assert_eq!(text(response).await, INDEX.replace("</head>", meta));
     let off = served(&[]);
     let index = text(send(&off, Endpoint::H1, empty(request("GET", "/"))).await).await;
-    assert!(index.contains("<meta name=\"graphite-meter-result-history-default\" content=\"false\"></head>"));
+    assert!(index.contains(
+        "<meta name=\"graphite-meter-result-history-default\" content=\"false\"></head>"
+    ));
     assert!(!index.contains("graphite-meter-auth"));
     let auth = Assets::new(FILES, notices(), true, false)
         .get("/", &HeaderMap::new())
@@ -102,7 +118,10 @@ fn a_shell_naming_its_trusted_types_policy_has_the_page_require_it() {
             .ends_with(required)
     );
     let unmarked = Assets::new(FILES, notices(), false, false).policy(&[]);
-    assert!(unmarked.ends_with("frame-ancestors 'none'; connect-src 'self'"), "{unmarked}");
+    assert!(
+        unmarked.ends_with("frame-ancestors 'none'; connect-src 'self'"),
+        "{unmarked}"
+    );
 }
 
 #[tokio::test]
@@ -110,14 +129,26 @@ async fn only_exact_embedded_names_are_served_on_ui_listeners() {
     let app = served(&ALL_LISTENERS);
     let get = |endpoint, path| send(&app, endpoint, empty(request("GET", path)));
     let script = get(Endpoint::H1Tls, "/assets/app-1a2b.js").await;
-    assert_eq!(header(&script, "content-type"), Some("text/javascript; charset=utf-8"));
-    assert_eq!(header(&script, "cache-control"), Some("public, max-age=31536000, immutable"));
+    assert_eq!(
+        header(&script, "content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert_eq!(
+        header(&script, "cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
     // A worker runs under its own script's policy, so scripts carry the page's.
-    assert!(header(&script, "content-security-policy").is_some_and(|policy| policy.contains("connect-src")));
+    assert!(
+        header(&script, "content-security-policy")
+            .is_some_and(|policy| policy.contains("connect-src"))
+    );
     assert_eq!(text(script).await, "export {};");
     let icon = get(Endpoint::H1Tls, "/favicon.svg").await;
     assert_eq!(
-        (header(&icon, "content-type"), header(&icon, "cache-control")),
+        (
+            header(&icon, "content-type"),
+            header(&icon, "cache-control")
+        ),
         (Some("image/svg+xml"), Some("no-cache"))
     );
     for path in [
@@ -151,34 +182,70 @@ async fn a_client_gets_the_copy_it_accepts_and_revalidates_by_tag() {
         ("br;q=0, gzip;q=0.5", "gzip", Some("gzip")),
         ("identity", "export {};", None),
     ] {
-        let response = get(&app, "GET", "/assets/app-1a2b.js", &[("accept-encoding", accept)]).await;
+        let response = get(
+            &app,
+            "GET",
+            "/assets/app-1a2b.js",
+            &[("accept-encoding", accept)],
+        )
+        .await;
         assert_eq!(header(&response, "content-encoding"), encoding, "{accept}");
         assert_eq!(header(&response, "vary"), Some("Accept-Encoding"));
-        assert_eq!(header(&response, "content-type"), Some("text/javascript; charset=utf-8"));
-        assert_eq!(header(&response, "content-length"), Some(body.len().to_string().as_str()));
+        assert_eq!(
+            header(&response, "content-type"),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert_eq!(
+            header(&response, "content-length"),
+            Some(body.len().to_string().as_str())
+        );
         tags.push((encoding, header(&response, "etag").unwrap().to_owned()));
         assert_eq!(text(response).await, body);
     }
     tags.sort();
     tags.dedup();
     assert_eq!(tags.len(), 3);
-    let head = get(&app, "HEAD", "/assets/app-1a2b.js", &[("accept-encoding", "br")]).await;
+    let head = get(
+        &app,
+        "HEAD",
+        "/assets/app-1a2b.js",
+        &[("accept-encoding", "br")],
+    )
+    .await;
     assert_eq!(header(&head, "content-length"), Some("6"));
     let held = format!("\"other\", W/{}", tags[2].1);
     let accept = ("accept-encoding", "gzip");
-    let unchanged = get(&app, "GET", "/assets/app-1a2b.js", &[accept, ("if-none-match", &held)]).await;
+    let unchanged = get(
+        &app,
+        "GET",
+        "/assets/app-1a2b.js",
+        &[accept, ("if-none-match", &held)],
+    )
+    .await;
     assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(header(&unchanged, "vary"), Some("Accept-Encoding"));
     for name in ["content-encoding", "content-type", "content-length"] {
         assert_eq!(header(&unchanged, name), None, "{name}");
     }
     assert_eq!(header(&unchanged, "etag"), Some(tags[2].1.as_str()));
-    assert_eq!(header(&unchanged, "cache-control"), Some("public, max-age=31536000, immutable"));
+    assert_eq!(
+        header(&unchanged, "cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
     assert_eq!(text(unchanged).await, "");
-    let changed = get(&app, "GET", "/favicon.svg", &[("if-none-match", "\"other\"")]).await;
+    let changed = get(
+        &app,
+        "GET",
+        "/favicon.svg",
+        &[("if-none-match", "\"other\"")],
+    )
+    .await;
     assert_eq!(text(changed).await, "<svg/>");
     let font = get(&app, "GET", "/fonts/face.woff2", &[]).await;
-    assert_eq!(header(&font, "cache-control"), Some("public, max-age=604800"));
+    assert_eq!(
+        header(&font, "cache-control"),
+        Some("public, max-age=604800")
+    );
     let index = get(&app, "GET", "/", &[("accept-encoding", "br, gzip")]).await;
     for name in ["content-encoding", "vary", "etag"] {
         assert_eq!(header(&index, name), None, "{name}");
@@ -215,12 +282,21 @@ async fn the_page_connects_to_catalog_servers_and_offered_targets() {
     };
     for (endpoint, peer, request, expected) in [
         (Endpoint::H1, "192.0.2.1", empty(request("GET", "/")), plain),
-        (Endpoint::H1Tls, "192.0.2.1", empty(request("GET", "/")), secure),
+        (
+            Endpoint::H1Tls,
+            "192.0.2.1",
+            empty(request("GET", "/")),
+            secure,
+        ),
         (Endpoint::H1, "10.1.2.3", proxied(), secure),
         (Endpoint::H1, "192.0.2.1", proxied(), plain),
     ] {
         let response = send_from(&app, endpoint, peer, request).await;
         let policy = header(&response, "content-security-policy").unwrap();
-        assert_eq!(policy.rsplit("; ").next().unwrap(), expected, "{endpoint:?} from {peer}");
+        assert_eq!(
+            policy.rsplit("; ").next().unwrap(),
+            expected,
+            "{endpoint:?} from {peer}"
+        );
     }
 }

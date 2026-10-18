@@ -1,15 +1,32 @@
 // History as data: columns and units, each row's words, day groups, the span, and how a change lands in a read list.
-import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistorySort } from "../../app/history/records";
+import {
+  HISTORY_LIMIT,
+  historyEntry,
+  type HistoryEntry,
+  type HistorySort,
+} from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { HistoryColumn } from "../../app/preferences";
 import type { Outcome, StageStatus } from "../../engine/run/result";
-import { fmtAddedMs, fmtMs, fmtSpeed, MISSING, rateTier, rateUnit, toRateUnit, type Units } from "../../view/format";
+import {
+  fmtAddedMs,
+  fmtMs,
+  fmtSpeed,
+  MISSING,
+  rateTier,
+  rateUnit,
+  toRateUnit,
+  type Units,
+} from "../../view/format";
 import { LATENCY, OUTCOME, STAGE, STAGE_STATE, TIP } from "../../view/words";
 import type { IconName } from "../kit/icon";
 
 export const PAGE_ROWS = 50;
 
-export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon: IconName; tip: string }> = {
+export const COLUMN: Record<
+  HistoryColumn,
+  { label: string; short: string; icon: IconName; tip: string }
+> = {
   download: {
     ...STAGE.download,
     tip: "Download\nPayload bytes received per second\nMean of the last interval, warmup left out",
@@ -18,7 +35,10 @@ export const COLUMN: Record<HistoryColumn, { label: string; short: string; icon:
     ...STAGE.upload,
     tip: "Upload\nPayload bytes the server received per second\nTimed at the server; queued bytes do not count",
   },
-  bidirectional: { ...STAGE.bidirectional, tip: "Bidirectional\nDownload and upload at once, added together" },
+  bidirectional: {
+    ...STAGE.bidirectional,
+    tip: "Bidirectional\nDownload and upload at once, added together",
+  },
   idle: { ...LATENCY.idle, icon: STAGE.latency.icon, tip: TIP.latency },
   loaded: {
     ...LATENCY.loaded,
@@ -68,9 +88,11 @@ export interface Scale {
   unit: string;
 }
 
-/** Each column's unit from every loaded record, not only the rows shown: latency in ms, a rate in the tier of its
-    upper median, so one fast outlier never sets it. */
-export function columnScales(records: readonly HistoryEntry[], units: Units): Record<HistoryColumn, Scale> {
+/** Each column's unit from every loaded record: latency in ms, a rate in its upper median's tier, so one outlier never sets it. */
+export function columnScales(
+  records: readonly HistoryEntry[],
+  units: Units,
+): Record<HistoryColumn, Scale> {
   const scale = (column: HistoryColumn): Scale => {
     const values = new Float64Array(records.length);
     let count = 0;
@@ -123,7 +145,11 @@ export function daysAt(now: number): Days {
 /** Recent days, then months, so a sparse archive never gets a heading per result. */
 function dayHeading(time: number, days: Days): string {
   const day = new Date(time).toDateString();
-  return day === days.today ? "Today" : day === days.yesterday ? "Yesterday" : DATES.month.format(time);
+  return day === days.today
+    ? "Today"
+    : day === days.yesterday
+      ? "Yesterday"
+      : DATES.month.format(time);
 }
 
 /** One date when the oldest and newest share a day, else a range that names a shared year once. */
@@ -152,7 +178,6 @@ export interface Cell {
 interface RowBase {
   id: string;
   completedAt: number;
-  /** For the `datetime` attribute. */
   iso: string;
   heading: string;
 }
@@ -162,7 +187,6 @@ export type Row =
       /** The exact time, for the title and the accessible name. */
       exact: string;
       primary: string;
-      /** The server, or how many ran. */
       where: string;
       outcome: Outcome;
       cells: Cell[];
@@ -176,7 +200,6 @@ export interface RowContext {
   columns: readonly HistoryColumn[];
   scales: Record<HistoryColumn, Pick<Scale, "tier" | "unit">>;
   units: Units;
-  /** The list is in date order, under day headings. */
   byDay: boolean;
 }
 
@@ -190,7 +213,8 @@ const STATUS_WORD: Record<StageStatus, string> = {
 /** Under a rate, the latency its load added; under idle, its jitter; under loaded, whose load it was. */
 function note(entry: HistoryEntry, column: HistoryColumn): string {
   if (column === "idle") return entry.jitterMs == null ? "" : `jitter ${fmtMs(entry.jitterMs)}`;
-  if (column === "loaded") return entry.loadedStage ? STAGE[entry.loadedStage].short.toLowerCase() : "";
+  if (column === "loaded")
+    return entry.loadedStage ? STAGE[entry.loadedStage].short.toLowerCase() : "";
   const added = entry.addedLatency?.[column];
   return added == null ? "" : `${fmtAddedMs(added)} ms`;
 }
@@ -199,7 +223,8 @@ function note(entry: HistoryEntry, column: HistoryColumn): string {
 function missing(entry: HistoryEntry, column: HistoryColumn): string {
   if (column === "loaded") return MISSING;
   if (column === "idle") return STATUS_WORD[entry.stages.latency];
-  if (column === "bidirectional" && entry.lone) return entry.lone === "down" ? "Down only" : "Up only";
+  if (column === "bidirectional" && entry.lone)
+    return entry.lone === "down" ? "Down only" : "Up only";
   return STATUS_WORD[entry.stages[column]];
 }
 
@@ -207,11 +232,16 @@ const notePhrase = (column: HistoryColumn, text: string) =>
   column === "idle" ? `${text} ms` : column === "loaded" ? `under ${text}` : `${text} added`;
 
 /** The words that follow the calendar: in date order the heading and time; otherwise the day and time, or a date. */
-function dated(completedAt: number, byDay: boolean, days: Days): { heading: string; primary: string } {
+function dated(
+  completedAt: number,
+  byDay: boolean,
+  days: Days,
+): { heading: string; primary: string } {
   const time = DATES.time.format(completedAt);
   const heading = dayHeading(completedAt, days);
   const recent = heading === "Today" || heading === "Yesterday";
-  if (byDay) return { heading, primary: recent ? time : `${DATES.day.format(completedAt)}, ${time}` };
+  if (byDay)
+    return { heading, primary: recent ? time : `${DATES.day.format(completedAt)}, ${time}` };
   if (!recent && new Date(completedAt).getFullYear() !== days.year)
     return { heading: "", primary: dateLabel(completedAt) };
   return { heading: "", primary: `${recent ? heading : DATES.day.format(completedAt)}, ${time}` };
@@ -270,8 +300,7 @@ function presentRow(entry: HistoryEntry, context: RowContext, days: Days): Row {
   }
 }
 
-/** Rows worded under one context, kept by id. A row stays the same object until what it shows changes, so its DOM is
-    built again only then: across midnight, only the rows whose day words change. */
+/** Rows worded under one context, kept by id; a row stays the same object until what it shows changes. */
 export function rowPresenter(context: RowContext): (entry: HistoryEntry, days: Days) => Row {
   const kept = new Map<string, { row: Row; days: Days }>();
   return (listed, days) => {
@@ -314,13 +343,13 @@ export function groupRows(rows: readonly Row[]): Group[] {
   return groups;
 }
 
-/** `added` in the list, replacing the same id; at the limit the oldest other record gives way, so a result opened
-    past the newest 2,000 shows and the count stays 2,000. */
+/** `added` in the list, replacing the same id; at the limit the oldest other gives way, so the count stays 2,000. */
 export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry): HistoryEntry[] {
   const rest = records.filter(({ id }) => id !== added.id);
   if (rest.length >= HISTORY_LIMIT) {
     let oldest = 0;
-    for (let i = 1; i < rest.length; i++) if (rest[i]!.completedAt < rest[oldest]!.completedAt) oldest = i;
+    for (let i = 1; i < rest.length; i++)
+      if (rest[i]!.completedAt < rest[oldest]!.completedAt) oldest = i;
     rest.splice(oldest, 1);
   }
   rest.push(added);
@@ -329,13 +358,14 @@ export function withEntry(records: readonly HistoryEntry[], added: HistoryEntry)
 
 export interface Listed {
   records: readonly HistoryEntry[];
-  /** Rows that could not be read. */
   malformed: number;
 }
 
-/** This tab's change applied to a list. Each sets rows by id, so replaying one the list already holds changes
-    nothing: a list read while changes landed takes them all again. */
-export function applyChange(listed: Listed, change: Exclude<HistoryChange, { type: "elsewhere" }>): Listed {
+/** This tab's change applied to a list, by id, so replaying one the list already holds changes nothing. */
+export function applyChange(
+  listed: Listed,
+  change: Exclude<HistoryChange, { type: "elsewhere" }>,
+): Listed {
   switch (change.type) {
     case "saved":
       return { ...listed, records: withEntry(listed.records, historyEntry(change.record)) };

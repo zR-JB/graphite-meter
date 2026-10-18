@@ -53,11 +53,20 @@ const retryAfterMs = ({ headers }: Response) => {
 export const refused = (response: Response, detail = `HTTP ${response.status}`): Ending =>
   signInMarker(response)
     ? { ...SIGN_IN, detail }
-    : refusal(response.status, response.headers.get("X-Graphite-Upload-Refusal"), detail, retryAfterMs(response));
+    : refusal(
+        response.status,
+        response.headers.get("X-Graphite-Upload-Refusal"),
+        detail,
+        retryAfterMs(response),
+      );
 
 /** Only an admission refusal reconnects a download; any other status is an unexpected answer. */
 export const downloadRefused = (response: Response): Ending => ({
-  ...(signInMarker(response) ? SIGN_IN : response.status === 429 || response.status === 503 ? BUSY : UNEXPECTED),
+  ...(signInMarker(response)
+    ? SIGN_IN
+    : response.status === 429 || response.status === 503
+      ? BUSY
+      : UNEXPECTED),
   detail: `HTTP ${response.status}`,
   retryAfterMs: retryAfterMs(response),
 });
@@ -76,15 +85,17 @@ export const sessionClosed = (code: number | undefined): Ending | null =>
       ? { reason: "timeout", retry: true, detail: "webtransport session reached its bound" }
       : null;
 
-/** One lane's or feed's restart pause: 300 ms, doubled by consecutive busy refusals and raised by a Retry-After,
-    within 1.2 s. */
+/** One lane's or feed's restart pause: 300 ms, doubled by busy refusals and raised by Retry-After, within 1.2 s. */
 export class Backoff {
   #busy = 0;
 
   after(ending: Ending): number {
     const streak = ending.reason === "server-busy" ? this.#busy : 0;
     this.#busy = ending.reason === "server-busy" ? streak + 1 : 0;
-    return Math.min(BUSY_RESTART_CAP_MS, Math.max(RESTART_MS * 2 ** streak, ending.retryAfterMs ?? 0));
+    return Math.min(
+      BUSY_RESTART_CAP_MS,
+      Math.max(RESTART_MS * 2 ** streak, ending.retryAfterMs ?? 0),
+    );
   }
 
   /** Delivery ends a busy streak. */
@@ -92,7 +103,6 @@ export class Backoff {
     this.#busy = 0;
   }
 
-  /** Refused as busy since it last delivered. */
   get busy(): boolean {
     return this.#busy > 0;
   }

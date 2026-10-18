@@ -27,10 +27,22 @@ test("a login must cover the planned test: renew when it ends too soon, refuse w
   for (const [answer, outcome, ended] of [
     [lifetime(60_000), 60_000, null],
     [lifetime(59_999), "Sign in again before starting this long test.", "renew"],
-    [lifetime(59_999, 59_999), "This test is longer than a sign-in can last. Shorten it before starting.", null],
+    [
+      lifetime(59_999, 59_999),
+      "This test is longer than a sign-in can last. Shorten it before starting.",
+      null,
+    ],
     [{ status: 500 }, unreadable, null],
     [
-      { body: { name: "Ada", provider: "password", csrf: "a+b", remainingMs: 2, maximumLifetimeMs: 1 } },
+      {
+        body: {
+          name: "Ada",
+          provider: "password",
+          csrf: "a+b",
+          remainingMs: 2,
+          maximumLifetimeMs: 1,
+        },
+      },
       unreadable,
       null,
     ],
@@ -42,7 +54,9 @@ test("a login must cover the planned test: renew when it ends too soon, refuse w
       .coverage(60_000, new AbortController().signal)
       .catch((error: CoverageError) => error.message);
     await net!.advance(5_000);
-    expect({ outcome: await covered, ended: session.ended.peek() }, JSON.stringify(answer)).toEqual({ outcome, ended });
+    expect({ outcome: await covered, ended: session.ended.peek() }, JSON.stringify(answer)).toEqual(
+      { outcome, ended },
+    );
   }
   // A start canceled while its coverage is read ends as an abort, never as a renewal.
   const session = signedIn(() => lifetime(1));
@@ -50,7 +64,10 @@ test("a login must cover the planned test: renew when it ends too soon, refuse w
   const covered = session.coverage(60_000, cancel.signal).catch((error: Error) => error.name);
   await net!.advance(50);
   cancel.abort();
-  expect({ outcome: await covered, ended: session.ended.peek() }).toEqual({ outcome: "AbortError", ended: null });
+  expect({ outcome: await covered, ended: session.ended.peek() }).toEqual({
+    outcome: "AbortError",
+    ended: null,
+  });
   // Without authentication there is nothing to cover and nothing is asked.
   const open = signedIn(() => "unreachable", publicPage);
   expect(await open.coverage(60_000, new AbortController().signal)).toBeNull();

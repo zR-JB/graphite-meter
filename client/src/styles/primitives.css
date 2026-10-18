@@ -13,12 +13,15 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  /* A stage's area is its light on the page: a rule in its hue and a wash that fades out, no box. The lanes
-     read this way; the kept results are panels. */
+  /* A stage's area is its light on the page: a rule in its hue and a fading wash, no box; kept results are panels. */
   .stage-area {
     --wash: 0%;
     border-top: 2px solid color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
-    background: linear-gradient(180deg, color-mix(in oklab, var(--tone) var(--wash), transparent), transparent 180px);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 180px
+    );
     transition:
       --wash calc(0.54 * var(--dur-graph)) var(--ease-out-head),
       border-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
@@ -39,8 +42,7 @@
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
   }
-  /* A hand-off's fades run on the compositor (lib/motion.ts sets --dur-handoff-out); the frame clock only flips the
-     class. */
+  /* A hand-off's fades run on the compositor; the frame clock only flips the class. */
   .handoff {
     transition:
       opacity var(--dur-handoff-in) var(--ease-out),
@@ -93,8 +95,7 @@
     white-space: nowrap;
     transition: var(--transition-control);
   }
-  /* A key's hit box never moves under the pointer, so a press near its edge still lands: the press deepens the
-     fill, and the glyph gives and springs back as it lifts. */
+  /* A key's hit box never moves, so a press near its edge lands: the press deepens the fill and the glyph springs back. */
   .btn:active:not(:disabled, [aria-disabled="true"]) {
     background-image: linear-gradient(var(--selected-wash) 0 0);
   }
@@ -169,10 +170,11 @@
     }
   }
   /* A press, or a toggle whose surface is open, takes the selected wash; after hover, so it wins there. */
-  :is(.btn-quiet, .head-actions .btn):is(:active, [aria-expanded="true"], [aria-pressed="true"]):not(
-    :disabled,
-    [aria-disabled="true"]
-  ) {
+  :is(.btn-quiet, .head-actions .btn):is(
+    :active,
+    [aria-expanded="true"],
+    [aria-pressed="true"]
+  ):not(:disabled, [aria-disabled="true"]) {
     background: var(--selected-wash) padding-box;
   }
   @media (pointer: coarse) {
@@ -278,7 +280,8 @@
     gap: var(--space-1) var(--space-4);
     min-width: 0;
     min-height: 48px;
-    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2) calc(var(--panel-pad) + var(--row-inset));
+    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
+      calc(var(--panel-pad) + var(--row-inset));
     overflow: hidden;
     scrollbar-gutter: stable;
     border-bottom: var(--hairline) solid transparent;
@@ -402,8 +405,7 @@
       padding-block: 2px;
     }
   }
-  /* A label over a control that takes the row's width: the label sits as a one-line row's would, the control under
-     it on the same inset. */
+  /* A label over a full-width control sits as a one-line row's would, the control under it on the same inset. */
   .kv > .stacked {
     flex-direction: column;
     flex-wrap: nowrap;
@@ -547,8 +549,7 @@
     background: var(--brand);
     color: var(--text-inverse);
   }
-  /* The check is drawn in as the box fills, and out as it empties. Individual transforms only:
-     the minifier folds a `scale` beside `transform` into it, where `:checked` cannot undo it. */
+  /* The check draws in as the box fills; individual transforms only, as the minifier folds `scale` into `transform`. */
   input.check[type="checkbox"]::after {
     content: "";
     width: 9px;
@@ -765,7 +766,6 @@
     color: var(--text);
     box-shadow: var(--elev-float);
   }
-  /* A dialog holds reading text over a scrim. */
   dialog.float {
     background: var(--surface-1);
   }
@@ -907,8 +907,7 @@
     }
   }
 
-  /* A tip is ink: the one dark plate on a light page and the one light plate on a dark one, so it never reads as
-     part of the instrument. */
+  /* A tip is ink, the one dark plate on a light page and light on a dark one, so it never reads as part of the instrument. */
   .tooltip {
     position: fixed;
     inset: auto;

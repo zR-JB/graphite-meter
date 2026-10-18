@@ -13,7 +13,6 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use ring::digest::{SHA256, digest};
 use std::collections::HashMap;
 
-/// One embedded file.
 pub struct Asset {
     pub path: &'static str,
     pub content_type: &'static str,
@@ -23,14 +22,12 @@ pub struct Asset {
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
-/// A file as served.
 pub struct Served {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub bytes: Bytes,
 }
 
-/// An embedded file with its content tag.
 struct Tagged {
     asset: &'static Asset,
     tag: HeaderValue,
@@ -42,12 +39,10 @@ struct File {
     encoded: Vec<(&'static str, Tagged)>,
 }
 
-/// The browser app as one configuration serves it.
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
     notice_tag: Option<HeaderValue>,
-    /// The index with the server's meta tags.
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
@@ -61,17 +56,23 @@ impl Assets {
         Self::new(EMBEDDED, &NOTICES, auth, history_default)
     }
 
-    pub fn new(files: &'static [Asset], notices: &'static Notices, auth: bool, history_default: bool) -> Self {
+    pub fn new(
+        files: &'static [Asset],
+        notices: &'static Notices,
+        auth: bool,
+        history_default: bool,
+    ) -> Self {
         let index = files
             .iter()
             .find(|file| file.path == "index.html")
             .map(|file| file.bytes);
-        let inline = [("script", "script-src"), ("style", "style-src")].map(|(tag, directive)| {
-            match index.and_then(|html| inline_hash(html, tag)) {
+        let inline =
+            [("script", "script-src"), ("style", "style-src")].map(|(tag, directive)| match index
+                .and_then(|html| inline_hash(html, tag))
+            {
                 Some(hash) => format!("{directive} 'self' 'sha256-{hash}'"),
                 None => format!("{directive} 'self'"),
-            }
-        });
+            });
         let trusted_types = index
             .and_then(trusted_types_policy)
             .map(|name| format!("require-trusted-types-for 'script'; trusted-types {name}"));
@@ -80,22 +81,38 @@ impl Assets {
         } else {
             ""
         };
-        let meta = format!("{auth}<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">");
+        let meta = format!(
+            "{auth}<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">"
+        );
         let index = index.map(|html| {
             let html = std::str::from_utf8(html).expect("the build checked the index");
             Bytes::from(html.replacen("</head>", &format!("{meta}</head>"), 1))
         });
-        let tagged = |asset: &'static Asset| Tagged { asset, tag: tag(asset.bytes) };
+        let tagged = |asset: &'static Asset| Tagged {
+            asset,
+            tag: tag(asset.bytes),
+        };
         let copy = |path: String| files.iter().find(|file| file.path == path).map(tagged);
         let files = files
             .iter()
-            .filter(|file| !matches!(file.path.rsplit_once('.'), Some((_, "br" | "gz"))) && file.path != "index.html")
+            .filter(|file| {
+                !matches!(file.path.rsplit_once('.'), Some((_, "br" | "gz")))
+                    && file.path != "index.html"
+            })
             .map(|file| {
                 let encoded = [("br", ".br"), ("gzip", ".gz")]
                     .into_iter()
-                    .filter_map(|(coding, suffix)| Some((coding, copy(format!("{}{suffix}", file.path))?)))
+                    .filter_map(|(coding, suffix)| {
+                        Some((coding, copy(format!("{}{suffix}", file.path))?))
+                    })
                     .collect();
-                (file.path, File { plain: tagged(file), encoded })
+                (
+                    file.path,
+                    File {
+                        plain: tagged(file),
+                        encoded,
+                    },
+                )
             })
             .collect();
         Self {
@@ -108,8 +125,7 @@ impl Assets {
         }
     }
 
-    /// The file at `path`, a request path without its query, as `request` asks for it: `/` is the index, only exact
-    /// names match, and a client gets the precompressed copy it accepts or a 304 for the tag it holds.
+    /// `/` is the index and only exact names match; a client gets the precompressed copy it accepts, or a 304.
     pub fn get(&self, path: &str, request: &HeaderMap) -> Option<Served> {
         let text = |name: header::HeaderName| {
             request
@@ -119,7 +135,12 @@ impl Assets {
         };
         let mut headers = HeaderMap::new();
         let (content_type, cache, bytes, tag) = if path == "/" {
-            ("text/html; charset=utf-8", "no-store", self.index.clone()?, None)
+            (
+                "text/html; charset=utf-8",
+                "no-store",
+                self.index.clone()?,
+                None,
+            )
         } else if path.strip_prefix('/') == Some(BROWSER_NOTICE) {
             let bytes = self.notices.browser()?;
             (
@@ -131,8 +152,7 @@ impl Assets {
         } else {
             let name = path.strip_prefix('/')?;
             let file = self.files.get(name)?;
-            // The bundler names every file under assets/ by its content hash; the fonts are unmodified upstream
-            // faces, reused for a week before a reload checks their tag.
+            // Bundle names carry their content hash; the unmodified upstream fonts revalidate weekly.
             let cache = match name {
                 _ if name.starts_with("assets/") => "public, max-age=31536000, immutable",
                 _ if name.starts_with("fonts/") => "public, max-age=604800",
@@ -142,7 +162,11 @@ impl Assets {
                 headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
             }
             let accept = text(header::ACCEPT_ENCODING);
-            let served = match file.encoded.iter().find(|(coding, _)| accepts(accept, coding)) {
+            let served = match file
+                .encoded
+                .iter()
+                .find(|(coding, _)| accepts(accept, coding))
+            {
                 Some((coding, copy)) => {
                     headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(coding));
                     copy
@@ -150,7 +174,12 @@ impl Assets {
                 None => &file.plain,
             };
             let Tagged { asset, tag } = served;
-            (asset.content_type, cache, Bytes::from_static(asset.bytes), Some(tag))
+            (
+                asset.content_type,
+                cache,
+                Bytes::from_static(asset.bytes),
+                Some(tag),
+            )
         };
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
         if let Some(tag) = tag {
@@ -165,7 +194,11 @@ impl Assets {
             });
         }
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-        Some(Served { status: StatusCode::OK, headers, bytes })
+        Some(Served {
+            status: StatusCode::OK,
+            headers,
+            bytes,
+        })
     }
 
     /// The page's content security policy, connecting to `connect` beyond 'self'.
@@ -173,7 +206,9 @@ impl Assets {
         let [script, style] = &self.inline;
         let connect = connect
             .iter()
-            .fold("connect-src 'self'".to_owned(), |all, source| all + " " + source);
+            .fold("connect-src 'self'".to_owned(), |all, source| {
+                all + " " + source
+            });
         [
             "default-src 'self'",
             script,
@@ -202,12 +237,10 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     Some(sha256(content))
 }
 
-/// `text`'s base64 SHA-256, as a CSP hash source names it.
 pub(crate) fn sha256(text: &str) -> String {
     STANDARD.encode(digest(&SHA256, text.as_bytes()))
 }
 
-/// The policy name the index's Trusted Types marker carries.
 fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, marker) = html.split_once("<meta name=\"graphite-meter-trusted-types\" content=\"")?;
@@ -218,7 +251,10 @@ fn trusted_types_policy(html: &[u8]) -> Option<&str> {
 
 /// The quoted base64 of the first 12 bytes of the SHA-256 of `bytes`.
 fn tag(bytes: &[u8]) -> HeaderValue {
-    let tag = format!("\"{}\"", URL_SAFE_NO_PAD.encode(&digest(&SHA256, bytes).as_ref()[..12]));
+    let tag = format!(
+        "\"{}\"",
+        URL_SAFE_NO_PAD.encode(&digest(&SHA256, bytes).as_ref()[..12])
+    );
     HeaderValue::try_from(tag).expect("base64 is a valid header value")
 }
 
@@ -245,10 +281,16 @@ fn none_match(mut header: &str, tag: Option<&HeaderValue>) -> bool {
         if header.starts_with('*') {
             return true;
         }
-        let Some(quoted) = header.strip_prefix("W/").unwrap_or(header).strip_prefix('"') else {
+        let Some(quoted) = header
+            .strip_prefix("W/")
+            .unwrap_or(header)
+            .strip_prefix('"')
+        else {
             return false;
         };
-        let Some(end) = quoted.find(|c: char| c.is_ascii() && c != '!' && !('#'..='~').contains(&c)) else {
+        let Some(end) =
+            quoted.find(|c: char| c.is_ascii() && c != '!' && !('#'..='~').contains(&c))
+        else {
             return false;
         };
         if !quoted[end..].starts_with('"') {
@@ -267,11 +309,21 @@ mod tests {
 
     #[test]
     fn only_a_marker_with_a_valid_name_names_a_trusted_types_policy() {
-        let marker =
-            |name: &str| format!("<head><meta name=\"graphite-meter-trusted-types\" content=\"{name}\" /></head>");
-        assert_eq!(trusted_types_policy(marker("graphite-meter").as_bytes()), Some("graphite-meter"));
+        let marker = |name: &str| {
+            format!(
+                "<head><meta name=\"graphite-meter-trusted-types\" content=\"{name}\" /></head>"
+            )
+        };
+        assert_eq!(
+            trusted_types_policy(marker("graphite-meter").as_bytes()),
+            Some("graphite-meter")
+        );
         for invalid in ["", "a b", "a'; script-src *"] {
-            assert_eq!(trusted_types_policy(marker(invalid).as_bytes()), None, "{invalid}");
+            assert_eq!(
+                trusted_types_policy(marker(invalid).as_bytes()),
+                None,
+                "{invalid}"
+            );
         }
         assert_eq!(trusted_types_policy(b"<head></head>"), None);
     }

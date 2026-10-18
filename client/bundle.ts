@@ -1,5 +1,4 @@
-// The app's bundles, shared by the build and the screenshot pipeline: the workers first so the app can name them, then
-// the app with the build's facts defined.
+// The app's bundles, shared by the build and the screenshot pipeline: the workers first, so the app can name them.
 import type { BunPlugin } from "bun";
 import { readdir } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
@@ -10,7 +9,11 @@ export interface Facts {
   revision: string;
 }
 
-export async function bundles(outdir: string, { profile, version, revision }: Facts, plugins: BunPlugin[] = []) {
+export async function bundles(
+  outdir: string,
+  { profile, version, revision }: Facts,
+  plugins: BunPlugin[] = [],
+) {
   const options = {
     outdir,
     minify: true,
@@ -31,7 +34,9 @@ export async function bundles(outdir: string, { profile, version, revision }: Fa
     "BUILD.clientVersion": JSON.stringify(version ? `v${version}` : revision),
   };
   for (const output of workers.outputs.filter((each) => each.kind === "entry-point"))
-    define[`WORKERS.${basename(output.path).replace(/-[^-]+\.js$/, "")}`] = JSON.stringify(asset(output.path));
+    define[`WORKERS.${basename(output.path).replace(/-[^-]+\.js$/, "")}`] = JSON.stringify(
+      asset(output.path),
+    );
   // Fonts keep their names under fonts/: the sign-in pages load two of them before the app exists.
   const app = await Bun.build({
     ...options,

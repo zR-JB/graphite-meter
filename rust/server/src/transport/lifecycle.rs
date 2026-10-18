@@ -10,12 +10,9 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep, sleep_until};
 
-/// What a connection's driver does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    /// Send GOAWAY: no new requests.
     GoAway,
-    /// Close the connection.
     Close,
 }
 
@@ -28,16 +25,13 @@ pub enum Grace {
     Once,
 }
 
-/// What a connection's driver observes for its lifecycle at each poll.
 #[derive(Debug, Clone, Copy)]
 pub struct Activity {
     /// The receive window is raised for admitted uploads.
     pub credited: bool,
-    /// Request streams are live.
     pub streams: bool,
 }
 
-/// One connection's lifecycle, which its driver polls with what it observes.
 #[derive(Debug)]
 pub struct Lifecycle {
     work: Work,
@@ -47,9 +41,7 @@ pub struct Lifecycle {
     idle_since: Option<Instant>,
     /// When a credited connection without admitted work goes away.
     stale: Option<Pin<Box<Sleep>>>,
-    /// When a connection without streams goes away.
     quiet: Option<Pin<Box<Sleep>>>,
-    /// When a connection that went away closes.
     closing: Option<Pin<Box<Sleep>>>,
 }
 
@@ -88,8 +80,7 @@ impl Lifecycle {
         }
     }
 
-    /// Restarts the stale bound when the admitted work's idle period changes or the connection gets credit while
-    /// idle, and the grace when work that outlived it ends on a connection with fresh graces.
+    /// Restarts the stale bound on a new idle period or on credit while idle, and the grace when outliving work ends.
     fn observe(&mut self, credited: bool) {
         let since = self.work.idle_since();
         if since != self.idle_since {
@@ -106,13 +97,14 @@ impl Lifecycle {
         }
     }
 
-    /// Whether the connection has gone `CONNECTION_IDLE` without a stream.
     fn quiet(&mut self, cx: &mut Context<'_>, streams: bool) -> bool {
         if streams {
             self.quiet = None;
             return false;
         }
-        let quiet = self.quiet.get_or_insert_with(|| Box::pin(sleep(CONNECTION_IDLE)));
+        let quiet = self
+            .quiet
+            .get_or_insert_with(|| Box::pin(sleep(CONNECTION_IDLE)));
         quiet.as_mut().poll(cx).is_ready()
     }
 }
@@ -136,13 +128,22 @@ mod tests {
             let work = Work::default();
             let mut lifecycle = Lifecycle::new(work.clone(), grace);
             advance(CONNECTION_IDLE * 2).await;
-            assert!(poll(&mut lifecycle, false, true).await.is_pending(), "no credit, no idle rule");
+            assert!(
+                poll(&mut lifecycle, false, true).await.is_pending(),
+                "no credit, no idle rule"
+            );
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(CONNECTION_IDLE - MILLI).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending(), "unadmitted streams do not count");
+            assert!(
+                poll(&mut lifecycle, true, true).await.is_pending(),
+                "unadmitted streams do not count"
+            );
             advance(MILLI).await;
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::GoAway)
+            );
             advance(SHUTDOWN_GRACE - MILLI).await;
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(MILLI).await;
@@ -162,10 +163,16 @@ mod tests {
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(CONNECTION_IDLE).await;
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::GoAway)
+            );
             let racing = work.start();
             advance(SHUTDOWN_GRACE * 4).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending(), "running work is not cut");
+            assert!(
+                poll(&mut lifecycle, true, true).await.is_pending(),
+                "running work is not cut"
+            );
             drop(racing);
             if grace == Grace::Fresh {
                 assert!(poll(&mut lifecycle, true, true).await.is_pending());
@@ -173,7 +180,10 @@ mod tests {
                 assert!(poll(&mut lifecycle, true, true).await.is_pending());
                 advance(MILLI).await;
             }
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::Close));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::Close)
+            );
         }
     }
 
@@ -184,9 +194,15 @@ mod tests {
         drop(work.start());
         assert!(poll(&mut lifecycle, false, true).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
-        assert!(poll(&mut lifecycle, true, true).await.is_pending(), "credited after its work ended");
+        assert!(
+            poll(&mut lifecycle, true, true).await.is_pending(),
+            "credited after its work ended"
+        );
         advance(MILLI).await;
-        assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::GoAway)
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -194,13 +210,22 @@ mod tests {
         let mut lifecycle = Lifecycle::new(Work::default(), Grace::Fresh);
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
-        assert!(poll(&mut lifecycle, false, true).await.is_pending(), "a stream restarts the bound");
+        assert!(
+            poll(&mut lifecycle, false, true).await.is_pending(),
+            "a stream restarts the bound"
+        );
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(MILLI).await;
-        assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::GoAway));
+        assert_eq!(
+            poll(&mut lifecycle, false, false).await,
+            Poll::Ready(Event::GoAway)
+        );
         advance(SHUTDOWN_GRACE).await;
-        assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::Close));
+        assert_eq!(
+            poll(&mut lifecycle, false, false).await,
+            Poll::Ready(Event::Close)
+        );
     }
 }

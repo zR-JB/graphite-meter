@@ -1,6 +1,11 @@
 // The page's own facts and its sign-in, which adds cookies and CSRF to its requests.
 import { signal, type Read } from "../../lib/signal";
-import { readJSON, release, session as sessionDocument, signInMarker } from "../../protocol/documents";
+import {
+  readJSON,
+  release,
+  session as sessionDocument,
+  signInMarker,
+} from "../../protocol/documents";
 import { AUTH_ROUTES } from "../../protocol/routes";
 
 export interface PageConfig {
@@ -14,13 +19,19 @@ export interface PageConfig {
 }
 
 export function readPageConfig(): PageConfig {
-  const meta = (name: string) => document.querySelector(`meta[name="${name}"]`)?.getAttribute("content");
+  const meta = (name: string) =>
+    document.querySelector(`meta[name="${name}"]`)?.getAttribute("content");
   return {
     origin: location.origin,
     secure: location.protocol === "https:",
     auth: meta("graphite-meter-auth") === "enabled",
     historyDefault: meta("graphite-meter-result-history-default") === "true",
-    webTransport: typeof WebTransport !== "undefined" ? "available" : isSecureContext ? "no-api" : "insecure-page",
+    webTransport:
+      typeof WebTransport !== "undefined"
+        ? "available"
+        : isSecureContext
+          ? "no-api"
+          : "insecure-page",
   };
 }
 
@@ -39,7 +50,6 @@ export interface PageSession {
   /** Set once when the page's sign-in ends. The app then saves what it can and navigates to sign-in. */
   readonly ended: Read<SessionEnd | null>;
   end(reason: SessionEnd): void;
-  /** Adds the sign-in's CSRF token, which its readable cookie mirrors, to requests that change state. */
   headers(method: string): Record<string, string>;
   /** Asks the page's own server, with its cookies, CSRF on unsafe methods, and no redirect with credentials. */
   fetch(input: string, init?: RequestInit): Promise<Response>;
@@ -51,13 +61,13 @@ export interface PageSession {
   account(signal: AbortSignal): Promise<Account | null>;
 }
 
-/** One check whether a sign-in or grant ended gets this long. */
 export const ENDED_CHECK_MS = 3_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Asks whether a sign-in or grant ended, from one `check` in flight for everyone who asks, so an expiry never fans
-    out into a burst from parallel lanes. An asker that gave up hears no. A failed check is no evidence. */
-export function endedCheck(check: () => Promise<Response>): (signal?: AbortSignal) => Promise<boolean> {
+/** Asks whether a sign-in or grant ended through one shared check in flight, so an expiry never fans out; a failure is no evidence. */
+export function endedCheck(
+  check: () => Promise<Response>,
+): (signal?: AbortSignal) => Promise<boolean> {
   let checking: Promise<boolean> | null = null;
   const marked = () =>
     check().then(
@@ -92,10 +102,12 @@ export function createPageSession(config: PageConfig, now: () => number): PageSe
   const end = (reason: SessionEnd) => {
     if (config.auth && !ended.peek()) ended.set(reason);
   };
-  const loginHeaders = (method: string) => (config.auth ? csrfHeaders(method, document.cookie) : {});
+  const loginHeaders = (method: string) =>
+    config.auth ? csrfHeaders(method, document.cookie) : {};
   async function request(input: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
-    for (const [name, value] of Object.entries(loginHeaders(init.method ?? "GET"))) headers.set(name, value);
+    for (const [name, value] of Object.entries(loginHeaders(init.method ?? "GET")))
+      headers.set(name, value);
     const credentials = config.auth ? "include" : init.credentials;
     // A hop that redirects a credentialed request to a sign-in page must not pass for its answer.
     const redirect = credentials === "include" || credentials === "omit" ? "error" : init.redirect;
@@ -142,7 +154,9 @@ export function createPageSession(config: PageConfig, now: () => number): PageSe
       }
       signal.throwIfAborted();
       if (requiredMs > lifetime.maximumLifetimeMs)
-        throw new CoverageError("This test is longer than a sign-in can last. Shorten it before starting.");
+        throw new CoverageError(
+          "This test is longer than a sign-in can last. Shorten it before starting.",
+        );
       if (requiredMs > lifetime.remainingMs) {
         end("renew");
         throw new CoverageError("Sign in again before starting this long test.");

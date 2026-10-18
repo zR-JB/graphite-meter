@@ -1,8 +1,9 @@
-//! The Linux endpoint set: `SO_REUSEPORT` sockets on one address. Where the kernel routes by connection ID, a new
-//! connection starts on the least loaded endpoint so a latency session and its transfers get separate threads.
+//! `SO_REUSEPORT` endpoints on one address; where the kernel routes by connection ID, new connections go to the least loaded.
 
 use super::HANDSHAKE_BOUND;
-use noq::{AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta};
+use noq::{
+    AsyncUdpSocket, ConnectionId, ConnectionIdGenerator, InvalidCid, UdpSender, udp::RecvMeta,
+};
 use std::{
     collections::VecDeque,
     hash::{BuildHasher, RandomState},
@@ -34,9 +35,15 @@ const CID_BYTES: usize = 1 + HASHED_CID_BYTES;
 /// The IDs a client may choose for a new connection's first packets (RFC 9000, 7.2).
 const CLIENT_CID_BYTES: RangeInclusive<usize> = 8..=20;
 
-/// A factory for `EndpointConfig::cid_generator` whose connection IDs name `shard`.
-pub(super) fn cid_generator(shard: u8) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> {
-    Arc::new(move || Box::new(ShardCids { shard, hash: RandomState::new() }))
+pub(super) fn cid_generator(
+    shard: u8,
+) -> Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> {
+    Arc::new(move || {
+        Box::new(ShardCids {
+            shard,
+            hash: RandomState::new(),
+        })
+    })
 }
 
 /// The shard's index, then noq's hashed connection ID format, which noq does not export.
@@ -80,15 +87,13 @@ impl ConnectionIdGenerator for ShardCids {
     }
 }
 
-/// A datagram another endpoint received for this one.
 #[derive(Debug)]
 struct Forwarded {
     meta: RecvMeta,
     datagram: Box<[u8]>,
 }
 
-/// An endpoint's forwarding at its worst: every queue slot holding a datagram at the endpoints' payload limit, and
-/// every new connection its socket keeps.
+/// Forwarding at its worst: every queue slot full at the payload limit, and every new connection kept.
 pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
     max_datagram
         .checked_add(size_of::<Forwarded>())?
@@ -96,8 +101,7 @@ pub(super) fn forwarding_bytes(max_datagram: usize) -> Option<usize> {
         .checked_add(size_of::<FirstFlight>().checked_mul(FIRST_FLIGHTS)?)
 }
 
-/// Has the kernel deliver each datagram to the group socket its connection ID names (see `named`), else hash it.
-/// Sockets join in endpoint order, so a socket's index is its endpoint's.
+/// Has the kernel deliver each datagram to the socket its connection ID names; sockets join in endpoint order.
 pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     cfg_select! {
         target_os = "linux" => {
@@ -133,8 +137,7 @@ pub(super) fn route_in_kernel(socket: &std::net::UdpSocket) -> io::Result<()> {
     }
 }
 
-/// Every endpoint's queue, which each socket forwards into, and connections, which steer new ones when the kernel
-/// routes.
+/// Every endpoint's queue and connection count, which steer new connections when the kernel routes.
 #[derive(Debug, Clone)]
 pub(super) struct Router {
     queues: Arc<[mpsc::Sender<Forwarded>]>,
@@ -157,7 +160,6 @@ impl Shard {
     }
 }
 
-/// A connection's share of its endpoint's count.
 #[derive(Debug)]
 pub(super) struct Occupant(Shard);
 
@@ -167,7 +169,6 @@ impl Drop for Occupant {
     }
 }
 
-/// What a datagram's destination connection ID says of its endpoint.
 #[derive(Debug, PartialEq)]
 enum Named {
     /// One of the set's IDs, naming its endpoint, or an endpoint past the set.
@@ -183,18 +184,18 @@ fn named(datagram: &[u8]) -> Named {
         [first, named, ..] if first & LONG_HEADER == 0 => Named::Endpoint(usize::from(named)),
         [_, _, _, _, _, len, ref rest @ ..] => match rest.get(..usize::from(len)) {
             Some(id) if id.len() == CID_BYTES => Named::Endpoint(usize::from(id[0])),
-            Some(id) if CLIENT_CID_BYTES.contains(&id.len()) => Named::Client(ConnectionId::new(id)),
+            Some(id) if CLIENT_CID_BYTES.contains(&id.len()) => {
+                Named::Client(ConnectionId::new(id))
+            }
             _ => Named::Nothing,
         },
         _ => Named::Nothing,
     }
 }
 
-/// A new connection's client ID, the endpoint its first packet went to, and when.
 type FirstFlight = (ConnectionId, usize, Instant);
 
-/// The endpoints a socket sent new connections to, so that every packet of a first flight, resent ones too, follows
-/// the first while its handshake may last.
+/// A socket's recent new connections, so every packet of a first flight follows the first.
 #[derive(Debug)]
 struct FirstFlights(VecDeque<FirstFlight>);
 
@@ -221,7 +222,6 @@ impl FirstFlights {
     }
 }
 
-/// The datagrams other endpoints forwarded to one.
 #[derive(Debug)]
 pub(super) struct Inbox(mpsc::Receiver<Forwarded>);
 
@@ -235,21 +235,43 @@ impl Router {
             })
             .unzip();
         let connections = (0..shards).map(|_| AtomicUsize::new(0)).collect();
-        (Self { queues: queues.into(), connections, steering, max_datagram }, inboxes)
+        (
+            Self {
+                queues: queues.into(),
+                connections,
+                steering,
+                max_datagram,
+            },
+            inboxes,
+        )
     }
 
     pub(super) fn shard(&self, index: usize) -> Shard {
-        Shard { connections: self.connections.clone(), index }
+        Shard {
+            connections: self.connections.clone(),
+            index,
+        }
     }
 
     /// Where a new connection at `shard` runs: the endpoint holding the fewest connections, `shard` among equals.
     fn steer(&self, shard: usize) -> usize {
         let held = |index: usize| self.connections[index].load(Ordering::Relaxed);
-        (0..self.connections.len()).fold(shard, |least, index| if held(index) < held(least) { index } else { least })
+        (0..self.connections.len()).fold(shard, |least, index| {
+            if held(index) < held(least) {
+                index
+            } else {
+                least
+            }
+        })
     }
 
     /// The other endpoint a datagram goes to: the one its ID names, or the one its new connection went to.
-    fn destination(&self, shard: usize, flights: &mut FirstFlights, datagram: &[u8]) -> Option<usize> {
+    fn destination(
+        &self,
+        shard: usize,
+        flights: &mut FirstFlights,
+        datagram: &[u8],
+    ) -> Option<usize> {
         let to = match named(datagram) {
             Named::Endpoint(to) => to,
             Named::Client(id) if self.steering => flights.endpoint(id, || self.steer(shard)),
@@ -283,7 +305,10 @@ impl Router {
         }
         let mut meta = *meta;
         (meta.len, meta.stride) = (datagram.len(), datagram.len());
-        let _ = self.queues[shard].try_send(Forwarded { meta, datagram: datagram.into() });
+        let _ = self.queues[shard].try_send(Forwarded {
+            meta,
+            datagram: datagram.into(),
+        });
     }
 }
 
@@ -298,8 +323,19 @@ pub(super) struct ShardSocket {
 }
 
 impl ShardSocket {
-    pub(super) fn new(socket: Box<dyn AsyncUdpSocket>, shard: usize, router: Router, inbox: Inbox) -> Self {
-        Self { socket, shard, router, inbox, flights: FirstFlights::new() }
+    pub(super) fn new(
+        socket: Box<dyn AsyncUdpSocket>,
+        shard: usize,
+        router: Router,
+        inbox: Inbox,
+    ) -> Self {
+        Self {
+            socket,
+            shard,
+            router,
+            inbox,
+            flights: FirstFlights::new(),
+        }
     }
 }
 
@@ -315,8 +351,7 @@ impl AsyncUdpSocket for ShardSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         let slots = bufs.len().min(meta.len());
-        // Forwarded datagrams fill at most half the slots so that the socket keeps its turn; an empty queue registers
-        // the waker forwarding wakes.
+        // Forwarded datagrams fill at most half the slots, so the socket keeps its turn.
         let mut filled = 0;
         while filled < slots.div_ceil(2) {
             let Poll::Ready(Some(forwarded)) = self.inbox.0.poll_recv(cx) else {
@@ -329,12 +364,16 @@ impl AsyncUdpSocket for ShardSocket {
             }
         }
         if filled < slots {
-            let received = self
-                .socket
-                .poll_recv(cx, &mut bufs[filled..slots], &mut meta[filled..slots]);
+            let received =
+                self.socket
+                    .poll_recv(cx, &mut bufs[filled..slots], &mut meta[filled..slots]);
             match received {
                 Poll::Ready(Ok(received)) => {
-                    for (buf, info) in bufs[filled..].iter_mut().zip(&mut meta[filled..]).take(received) {
+                    for (buf, info) in bufs[filled..]
+                        .iter_mut()
+                        .zip(&mut meta[filled..])
+                        .take(received)
+                    {
                         self.router.route(self.shard, &mut self.flights, buf, info);
                     }
                     filled += received;
@@ -344,7 +383,11 @@ impl AsyncUdpSocket for ShardSocket {
                 _ => {}
             }
         }
-        if filled == 0 { Poll::Pending } else { Poll::Ready(Ok(filled)) }
+        if filled == 0 {
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(filled))
+        }
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -367,7 +410,6 @@ mod tests {
 
     const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4433);
 
-    /// A short-header packet whose destination connection ID begins with `shard`.
     fn short(shard: u8, len: usize) -> Vec<u8> {
         let mut packet = vec![0x40, shard];
         packet.resize(len, 0xa5);
@@ -380,7 +422,6 @@ mod tests {
         meta
     }
 
-    /// A long-header packet whose destination connection ID is `id`.
     fn long(id: &[u8], len: usize) -> Vec<u8> {
         let mut packet = vec![0xc0, 0, 0, 0, 1, u8::try_from(id.len()).unwrap()];
         packet.extend_from_slice(id);
@@ -424,8 +465,7 @@ mod tests {
         let held = router.shard(1).occupy();
         // It keeps its endpoint once that holds it, and so does every packet of its first flight.
         assert!(stays(&router, 1, &mut flights, &first));
-        // A second connection at endpoint 1 goes to endpoint 0, the first of the least held, and its resent packets
-        // follow, though endpoint 0 holds it by then and endpoint 2 is empty.
+        // A second connection at endpoint 1 goes to the least held endpoint 0, and its resent packets follow.
         let second = long(&[9; 20], 1200);
         assert!(!stays(&router, 1, &mut flights, &second));
         let _second = router.shard(0).occupy();
@@ -471,16 +511,28 @@ mod tests {
         let sockets = [first, bind(address)];
         route_in_kernel(&sockets[0]).unwrap();
         for socket in &sockets {
-            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
         }
         let id = |shard| cid_generator(shard)().generate_cid();
-        for (packet, to) in [(short(1, 40), 1), (short(0, 40), 0), (long(&id(1), 60), 1), (long(&id(0), 60), 0)] {
+        for (packet, to) in [
+            (short(1, 40), 1),
+            (short(0, 40), 0),
+            (long(&id(1), 60), 1),
+            (long(&id(0), 60), 0),
+        ] {
             // Each client port hashes to either socket; the ID decides.
             for _ in 0..8 {
                 let client = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
                 client.send_to(&packet, address).unwrap();
                 let mut buf = [0; 64];
-                assert_eq!(sockets[to].recv(&mut buf).unwrap(), packet.len(), "{:02x?}", &packet[..2]);
+                assert_eq!(
+                    sockets[to].recv(&mut buf).unwrap(),
+                    packet.len(),
+                    "{:02x?}",
+                    &packet[..2]
+                );
             }
         }
     }
@@ -503,7 +555,10 @@ mod tests {
             let mut buf = packet.clone();
             let mut meta = received(buf.len(), buf.len());
             router.route(1, &mut flights, &mut buf, &mut meta);
-            let (kept, head) = (if stays { packet.len() } else { 0 }, &packet[..2.min(packet.len())]);
+            let (kept, head) = (
+                if stays { packet.len() } else { 0 },
+                &packet[..2.min(packet.len())],
+            );
             assert_eq!(meta.len, kept, "{head:02x?}");
             assert_eq!(buf, packet);
         }

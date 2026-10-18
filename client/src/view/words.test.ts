@@ -19,7 +19,13 @@ test("a known failure reads as its label, and any other reason as a measurement 
 });
 
 test("a stage's state follows what the runner said about it", () => {
-  const facts: StageFacts = { planned: true, settled: null, phase: null, stalled: false, ended: null };
+  const facts: StageFacts = {
+    planned: true,
+    settled: null,
+    phase: null,
+    stalled: false,
+    ended: null,
+  };
   const cases: [Partial<StageFacts>, StageState][] = [
     [{}, "upcoming"],
     [{ phase: "connecting" }, "upcoming"],
@@ -40,7 +46,8 @@ test("a stage's state follows what the runner said about it", () => {
     [{ phase: "upload", settled: "complete", ended: "complete" }, "complete"],
     [{ settled: "complete", ended: "stopped" }, "complete"],
   ];
-  for (const [change, state] of cases) expect(stageState({ ...facts, ...change }), JSON.stringify(change)).toBe(state);
+  for (const [change, state] of cases)
+    expect(stageState({ ...facts, ...change }), JSON.stringify(change)).toBe(state);
 });
 
 test("a server reads its name and location once, and all servers count who stayed", () => {
@@ -52,14 +59,16 @@ test("a server reads its name and location once, and all servers count who staye
     [{ name: "Frankfurt" }, "Frankfurt"],
     [{ name: "Edge", location: "" }, "Edge"],
   ];
-  for (const [server, label] of servers) expect(serverLabel(server), JSON.stringify(server)).toBe(label);
+  for (const [server, label] of servers)
+    expect(serverLabel(server), JSON.stringify(server)).toBe(label);
   const counts: [number, number, number, string][] = [
     [3, 3, 3, "All 3 servers"],
     [3, 2, 3, "2 of 3 servers"],
     [3, 0, 1, "1 of 3 servers"],
     [3, 0, 0, "0 of 3 servers"],
   ];
-  for (const [total, stayed, measured, label] of counts) expect(allServersLabel(total, stayed, measured)).toBe(label);
+  for (const [total, stayed, measured, label] of counts)
+    expect(allServersLabel(total, stayed, measured)).toBe(label);
 });
 
 test("the stage limit names the server and each planned stage past it", () => {
@@ -71,7 +80,9 @@ test("the stage limit names the server and each planned stage past it", () => {
   const one = stageLimitError(only(true, false), oslo);
   expect(one).toContain("Oslo");
   expect([one.includes("Download"), one.includes("Upload")]).toEqual([true, false]);
-  expect(stageLimitError(DEFAULT_CONFIG, oslo)).toContain(listed(["Latency", "Download", "Upload"]));
+  expect(stageLimitError(DEFAULT_CONFIG, oslo)).toContain(
+    listed(["Latency", "Download", "Upload"]),
+  );
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 300_000, server: "Oslo" })).toBe("");
   expect(stageLimitError(DEFAULT_CONFIG, { ms: 86_400_000, server: null })).toBe("");
 });

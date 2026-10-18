@@ -51,14 +51,17 @@ test("the session endings the browser acts on match the lane ending pin", async 
   expect(sessionClosed(endings.revoked!.session)?.reason).toBe("sign-in-required");
   for (const bound of [endings.idle!, endings.lifetime!])
     expect(sessionClosed(bound.session)).toMatchObject({ reason: "timeout", retry: true });
-  for (const other of [endings.finished!, endings.shutdown!]) expect(sessionClosed(other.session)).toBeNull();
+  for (const other of [endings.finished!, endings.shutdown!])
+    expect(sessionClosed(other.session)).toBeNull();
 });
 
 test("a restart pauses 300 ms; busy refusals double it within 1.2 s, a Retry-After raises it, delivery resets", () => {
   const busy: Ending = { reason: "server-busy", retry: true, detail: "" };
   const lost: Ending = { reason: "connection-lost", retry: true, detail: "" };
   const backoff = new Backoff();
-  expect([busy, busy, busy, busy].map((ending) => backoff.after(ending))).toEqual([300, 600, 1_200, 1_200]);
+  expect([busy, busy, busy, busy].map((ending) => backoff.after(ending))).toEqual([
+    300, 600, 1_200, 1_200,
+  ]);
   expect(backoff.busy).toBe(true);
   expect([lost, busy].map((ending) => backoff.after(ending))).toEqual([300, 300]);
   backoff.reset();

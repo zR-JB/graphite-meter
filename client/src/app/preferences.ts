@@ -9,9 +9,27 @@ import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
 const SAVE_DELAY_MS = 250;
 
 export const DURATION_PRESETS: Record<"short" | "medium" | "long", TestConfig["duration"]> = {
-  short: { warmupMs: 600, latencyMs: 2_500, downloadMs: 5_000, uploadMs: 5_000, bidirectionalMs: 5_000 },
-  medium: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
-  long: { warmupMs: 1_200, latencyMs: 6_000, downloadMs: 20_000, uploadMs: 20_000, bidirectionalMs: 20_000 },
+  short: {
+    warmupMs: 600,
+    latencyMs: 2_500,
+    downloadMs: 5_000,
+    uploadMs: 5_000,
+    bidirectionalMs: 5_000,
+  },
+  medium: {
+    warmupMs: 800,
+    latencyMs: 4_000,
+    downloadMs: 10_000,
+    uploadMs: 10_000,
+    bidirectionalMs: 10_000,
+  },
+  long: {
+    warmupMs: 1_200,
+    latencyMs: 6_000,
+    downloadMs: 20_000,
+    uploadMs: 20_000,
+    bidirectionalMs: 20_000,
+  },
 };
 
 export const DEFAULT_CONFIG: TestConfig = {
@@ -44,7 +62,6 @@ function clampDuration(key: DurationKey, value: unknown): number {
     : DEFAULT_CONFIG.duration[key];
 }
 
-/** The History list's share of its body width until the user moves it. */
 export const HISTORY_SPLIT = 0.42;
 
 export const HISTORY_COLUMNS = ["download", "upload", "bidirectional", "idle", "loaded"] as const;
@@ -52,7 +69,6 @@ export type HistoryColumn = (typeof HISTORY_COLUMNS)[number];
 export type Theme = "dark" | "light" | "auto";
 type HistoryPreference = "default" | "enabled" | "disabled";
 
-/** In the order they are stored. */
 export interface Preferences {
   config: TestConfig;
   unitBase: "base10" | "base2";
@@ -66,7 +82,6 @@ export interface Preferences {
   historyColumns: HistoryColumn[];
   /** Docked sheet widths in px, clamped where they are used. */
   dockWidth: { left: number; right: number };
-  /** The History list's share of its body width. */
   historySplit: number;
 }
 
@@ -87,7 +102,8 @@ export function readPreferences(stored: unknown): Preferences {
   const stages = record(config.stages);
   const duration = record(config.duration);
   // Earlier versions skipped a stage by giving it 0 ms; only its switch skips now.
-  const skipped = (key: DurationKey) => key !== "warmupMs" && typeof duration[key] === "number" && duration[key] <= 0;
+  const skipped = (key: DurationKey) =>
+    key !== "warmupMs" && typeof duration[key] === "number" && duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
   const dock = record(saved.dockWidth);
@@ -95,7 +111,8 @@ export function readPreferences(stored: unknown): Preferences {
     ? [...new Set(saved.historyColumns.filter((column) => HISTORY_COLUMNS.includes(column)))]
     : [];
   const base = DEFAULT_CONFIG;
-  const stage = (name: keyof TestConfig["stages"]) => flag(stages[name], base.stages[name]) && !skipped(`${name}Ms`);
+  const stage = (name: keyof TestConfig["stages"]) =>
+    flag(stages[name], base.stages[name]) && !skipped(`${name}Ms`);
   return {
     config: {
       stages: {
@@ -104,7 +121,10 @@ export function readPreferences(stored: unknown): Preferences {
         upload: stage("upload"),
         bidirectional: stage("bidirectional"),
       },
-      skipLoadedLatencyWhenStageOff: flag(config.skipLoadedLatencyWhenStageOff, base.skipLoadedLatencyWhenStageOff),
+      skipLoadedLatencyWhenStageOff: flag(
+        config.skipLoadedLatencyWhenStageOff,
+        base.skipLoadedLatencyWhenStageOff,
+      ),
       duration: Object.fromEntries(
         (Object.keys(DURATION_LIMITS) as DurationKey[]).map((key) => [
           key,
@@ -115,9 +135,15 @@ export function readPreferences(stored: unknown): Preferences {
       loadedPingCadence: choice(config.loadedPingCadence, CADENCES, base.loadedPingCadence),
       transferStreams: {
         mode: choice(streams.mode, ["auto", "forced"], "auto"),
-        count: typeof streams.count === "number" ? normalizeStreamCount(streams.count) : base.transferStreams.count,
+        count:
+          typeof streams.count === "number"
+            ? normalizeStreamCount(streams.count)
+            : base.transferStreams.count,
       },
-      experimentalDatagramThroughput: flag(config.experimentalDatagramThroughput, base.experimentalDatagramThroughput),
+      experimentalDatagramThroughput: flag(
+        config.experimentalDatagramThroughput,
+        base.experimentalDatagramThroughput,
+      ),
       transports: {
         throughputTarget: text(transports.throughputTarget, "auto"),
         latencyTarget: text(transports.latencyTarget, "auto"),
@@ -125,7 +151,10 @@ export function readPreferences(stored: unknown): Preferences {
       // Earlier versions saved { enabled }.
       adaptive: flag(record(config.adaptive).enabled ?? config.adaptive, base.adaptive),
       visualization: {
-        throughputMaxBytesPerSec: positive(record(config.visualization).throughputMaxBytesPerSec, "auto" as const),
+        throughputMaxBytesPerSec: positive(
+          record(config.visualization).throughputMaxBytesPerSec,
+          "auto" as const,
+        ),
       },
     },
     unitBase: choice(saved.unitBase, ["base10", "base2"], "base10"),
@@ -134,7 +163,11 @@ export function readPreferences(stored: unknown): Preferences {
     showWireEstimates: flag(saved.showWireEstimates, true),
     keyShortcuts: flag(saved.keyShortcuts, true),
     explanations: choice(saved.explanations, ["hover", "click"], "hover"),
-    resultHistoryPreference: choice(saved.resultHistoryPreference, ["default", "enabled", "disabled"], "default"),
+    resultHistoryPreference: choice(
+      saved.resultHistoryPreference,
+      ["default", "enabled", "disabled"],
+      "default",
+    ),
     historyColumns: columns.length ? columns : ["download", "upload", "idle", "loaded"],
     dockWidth: { left: positive(dock.left, 420), right: positive(dock.right, 420) },
     historySplit:
@@ -147,7 +180,6 @@ export function readPreferences(stored: unknown): Preferences {
 export type PreferenceSignals = { readonly [K in keyof Preferences]: Read<Preferences[K]> };
 
 export interface PreferenceStore extends PreferenceSignals {
-  /** The one writer. */
   set(patch: Partial<Preferences>): void;
   dispose(): void;
 }
@@ -162,8 +194,7 @@ function read(storage: Storage | null): unknown {
   }
 }
 
-/** Loads, saves and follows other tabs' History choices; a save rewrites only this tab's changed fields over a fresh
-    read, so tabs keep each other's changes. */
+/** Loads, saves and follows other tabs' History choices; a save rewrites only this tab's changed fields over a fresh read. */
 export function createPreferences(
   storage: Storage | null,
   target: Pick<Window, "addEventListener" | "removeEventListener">,
@@ -203,7 +234,10 @@ export function createPreferences(
         next.resultHistoryPreference !== signals.resultHistoryPreference.peek()
       )
         signals.resultHistoryPreference.set(next.resultHistoryPreference);
-      if (!dirty.has("historyColumns") && String(next.historyColumns) !== String(signals.historyColumns.peek()))
+      if (
+        !dirty.has("historyColumns") &&
+        String(next.historyColumns) !== String(signals.historyColumns.peek())
+      )
         signals.historyColumns.set(next.historyColumns);
     });
   };

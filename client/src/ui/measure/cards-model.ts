@@ -21,11 +21,26 @@ import {
   toRateUnit,
   type RateUnits,
 } from "../../view/format";
-import { POPULATION, reasonLabel, STAGE, STAGE_STATE, TIP, type StageState, type Word } from "../../view/words";
+import {
+  POPULATION,
+  reasonLabel,
+  STAGE,
+  STAGE_STATE,
+  TIP,
+  type StageState,
+  type Word,
+} from "../../view/words";
 import { CARDS, FACT, type FactKey } from "./copy";
 
-/** Sets the card's look, its edge, glow and quiet dash. */
-type CardStatus = "pending" | "not-run" | "active" | "recovering" | "stopped" | "complete" | "partial" | "failed";
+type CardStatus =
+  | "pending"
+  | "not-run"
+  | "active"
+  | "recovering"
+  | "stopped"
+  | "complete"
+  | "partial"
+  | "failed";
 
 interface Fact {
   key: FactKey;
@@ -61,11 +76,14 @@ type Transfer = ThroughputResult & { wire?: WireModel | null };
 
 /** The evidence a card shows, the run's or one server's share of it. */
 export interface Evidence {
-  /** Settled stages only. */
   status: Partial<Record<Stage, StageStatus>>;
   download: Transfer | null;
   upload: Transfer | null;
-  bidirectional: { down: ThroughputResult | null; up: ThroughputResult | null; wire?: WireModel | null } | null;
+  bidirectional: {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+    wire?: WireModel | null;
+  } | null;
   latency: LatencyResult | null;
   /** The latency card's spread, replies and timeouts read the idle population. */
   idle: LatencySummary | null;
@@ -74,7 +92,15 @@ export interface Evidence {
 /** Takes one server's share of a multi-server result; nothing is settled for a server that measured nothing. */
 export function serverEvidence(details: MultiServerResult, id: string): Evidence {
   const server = details.servers.find((entry) => entry.server.id === id);
-  if (!server) return { status: {}, download: null, upload: null, bidirectional: null, latency: null, idle: null };
+  if (!server)
+    return {
+      status: {},
+      download: null,
+      upload: null,
+      bidirectional: null,
+      latency: null,
+      idle: null,
+    };
   return {
     status: server.stages,
     download: server.download,
@@ -85,8 +111,7 @@ export function serverEvidence(details: MultiServerResult, id: string): Evidence
   };
 }
 
-/** What the cards read: the lens's server, or all together, where latency reads only its shown server so headline and
-    spread never mix servers. */
+/** What the cards read: the lens's server, or all together; latency reads only its shown server so figures never mix servers. */
 export function shownEvidence(view: {
   details: MultiServerResult | null;
   lens: string;
@@ -108,8 +133,9 @@ export function shownEvidence(view: {
 }
 
 const SETTLED = new Set<StageStatus>(["complete", "partial", "failed"]);
-export const settled = (status: StageStatus | null | undefined): status is "complete" | "partial" | "failed" =>
-  !!status && SETTLED.has(status);
+export const settled = (
+  status: StageStatus | null | undefined,
+): status is "complete" | "partial" | "failed" => !!status && SETTLED.has(status);
 
 const LOOK: Record<StageState, CardStatus> = {
   skipped: "not-run",
@@ -128,7 +154,11 @@ const QUIET = new Set<CardStatus>(["pending", "not-run"]);
 /** A card's state: a stage running its warmup is Running, one a stopped run never reached is Skipped. */
 function wordOf(state: StageState): Word | null {
   if (state === "upcoming" || state === "complete") return null;
-  return state === "warmup" ? STAGE_STATE.running : state === "unreached" ? STAGE_STATE.skipped : STAGE_STATE[state];
+  return state === "warmup"
+    ? STAGE_STATE.running
+    : state === "unreached"
+      ? STAGE_STATE.skipped
+      : STAGE_STATE[state];
 }
 
 const TRANSFER_FACTS: readonly FactKey[] = ["peak", "stability", "transferred"];
@@ -140,7 +170,6 @@ const FACTS: Record<Stage, readonly FactKey[]> = {
 };
 type Known = Partial<Record<FactKey, string>>;
 
-/** Fills the stage's fixed facts from `known`. */
 function facts(stage: Stage, known: Known): Fact[] {
   return FACTS[stage].map((key) => ({
     key,
@@ -152,7 +181,6 @@ function facts(stage: Stage, known: Known): Fact[] {
 
 const percent = (pct: number | null | undefined) => (pct == null ? undefined : fmtPercent(pct));
 
-/** Reads the idle replies' spread, count and unanswered share. */
 const idleFacts = (idle: LatencySummary | null): Known => ({
   range: idle ? fmtLatencyRange(idle.minMs, idle.maxMs) : undefined,
   replies: idle ? String(idle.probeCount - idle.timeoutCount) : undefined,
@@ -165,11 +193,18 @@ const noData = (ms: number | undefined) => (ms !== undefined && ms >= 500 ? fmtD
 const STACK = ["application-framing", "tls-records", "transport", "ip", "ethernet"];
 
 /** From half a percent of overhead the wire rate sits under the headline, its layers in its tip. */
-function wire(model: WireModel | null | undefined, bytesPerSec: number, units: RateUnits): CardModel["wire"] {
+function wire(
+  model: WireModel | null | undefined,
+  bytesPerSec: number,
+  units: RateUnits,
+): CardModel["wire"] {
   if (!model || model.totalMultiplier < 1.005) return null;
   const shown = model.factors
     .filter((factor) => factor.contributionPct > 0)
-    .sort((a, b) => STACK.indexOf(a.key) - STACK.indexOf(b.key) || b.contributionPct - a.contributionPct);
+    .sort(
+      (a, b) =>
+        STACK.indexOf(a.key) - STACK.indexOf(b.key) || b.contributionPct - a.contributionPct,
+    );
   const split = new Set(shown.map((factor) => factor.key)).size < shown.length;
   const extra = (model.totalMultiplier - 1) * 100;
   return {
@@ -189,7 +224,8 @@ function pairOf(down: number | null, up: number | null, units: RateUnits) {
   const reference = down !== null && up !== null ? down + up : (down ?? up);
   if (reference === null) return null;
   const tier = units.tier ?? rateTier(reference, units);
-  const figure = (value: number | null) => (value === null ? MISSING : fmtSpeed(toRateUnit(value, units, tier)));
+  const figure = (value: number | null) =>
+    value === null ? MISSING : fmtSpeed(toRateUnit(value, units, tier));
   return { pair: { down: figure(down), up: figure(up) }, unit: rateUnit(units, tier) };
 }
 
@@ -213,7 +249,6 @@ const blank = (stage: Stage, state: StageState): CardModel => {
   };
 };
 
-/** Builds a settled stage's card, live or saved. */
 export function settledCard(
   stage: Stage,
   status: "complete" | "partial" | "failed",
@@ -289,14 +324,17 @@ export interface LiveEvidence {
   /** A stopped stage keeps the last value its series measured. */
   held: number | null;
   idle: LatencySummary | null;
-  /** This stage's measured bytes so far. */
   bytes: number;
   /** Peak and Stability so far come from the stage's series by the second. */
   shape: { peak: number; stability: number | null } | null;
 }
 
-/** Builds the card of a stage still to come, running, stopped, or one the run will never settle. */
-export function liveCard(stage: Stage, state: StageState, live: LiveEvidence, units: RateUnits): CardModel {
+export function liveCard(
+  stage: Stage,
+  state: StageState,
+  live: LiveEvidence,
+  units: RateUnits,
+): CardModel {
   const card = blank(stage, state);
   const running = card.status === "active" || card.status === "recovering";
   const stopped = card.status === "stopped";
@@ -329,8 +367,11 @@ export function liveCard(stage: Stage, state: StageState, live: LiveEvidence, un
     transferred: card.warming ? undefined : fmtBytes(live.bytes, units.base),
     stability: percent(live.shape?.stability),
   };
-  if (stage !== "bidirectional") known.peak = live.shape ? fmtRate(live.shape.peak, units) : undefined;
-  const held = stopped ? reading(live.held) : { figure: MISSING, unit: rateUnit(units, units.tier ?? 0) };
+  if (stage !== "bidirectional")
+    known.peak = live.shape ? fmtRate(live.shape.peak, units) : undefined;
+  const held = stopped
+    ? reading(live.held)
+    : { figure: MISSING, unit: rateUnit(units, units.tier ?? 0) };
   return {
     ...card,
     ...held,
@@ -375,21 +416,28 @@ export interface Issue {
   throughput: Stage[];
 }
 
-/** Lists failed server stages, one line per server and reason saying who, which stages and why. A transfer's lost
-    probes are named as the lanes name them; only throughput failures mark a card. `scope` narrows to one server. */
+/** Lists failed server stages, one line per server and reason; only throughput failures mark a card, and `scope` narrows to one server. */
 export function serverIssues(details: MultiServerResult, scope = ""): Issue[] {
-  const lines = new Map<string, { server: string; stages: string[]; reason: string; throughput: Stage[] }>();
+  const lines = new Map<
+    string,
+    { server: string; stages: string[]; reason: string; throughput: Stage[] }
+  >();
   for (const failure of details.failures) {
     if (scope && failure.serverId !== scope) continue;
     const key = `${failure.serverId} ${failure.reason}`;
     let line = lines.get(key);
     if (!line) {
-      const server = details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
+      const server =
+        details.selection.find((entry) => entry.id === failure.serverId)?.name ?? "Server";
       line = { server, stages: [], reason: reasonLabel(failure.reason), throughput: [] };
       lines.set(key, line);
     }
     const latency = failure.scope === "latency";
-    line.stages.push(latency && failure.stage !== "latency" ? POPULATION[failure.stage] : STAGE[failure.stage].label);
+    line.stages.push(
+      latency && failure.stage !== "latency"
+        ? POPULATION[failure.stage]
+        : STAGE[failure.stage].label,
+    );
     if (!latency) line.throughput.push(failure.stage);
   }
   return [...lines.values()].map(({ stages, ...line }) => ({ ...line, stages: stages.join(", ") }));

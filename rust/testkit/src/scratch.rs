@@ -14,7 +14,9 @@ impl Scratch {
         // A temporary directory that climbs with `..` is refused, so scratch files stay below it.
         let base = std::env::temp_dir().to_string_lossy().into_owned();
         if base.contains("..") {
-            return Err(io::Error::other(format!("the temporary directory {base} must not contain ..")));
+            return Err(io::Error::other(format!(
+                "the temporary directory {base} must not contain .."
+            )));
         }
         loop {
             let suffix = RandomState::new().hash_one(std::process::id());
@@ -34,12 +36,13 @@ impl Scratch {
     /// `name` below the scratch directory; a name that climbs out with `..` is refused.
     fn inside(&self, name: &str) -> io::Result<PathBuf> {
         if name.contains("..") {
-            return Err(io::Error::other(format!("scratch name {name} must not contain ..")));
+            return Err(io::Error::other(format!(
+                "scratch name {name} must not contain .."
+            )));
         }
         Ok(self.0.join(name))
     }
 
-    /// Writes `contents` to `name`, creating its directories.
     pub fn file(&self, name: &str, contents: &str) -> io::Result<PathBuf> {
         let path = self.inside(name)?;
         std::fs::create_dir_all(path.parent().unwrap_or(&self.0))?;

@@ -1,5 +1,13 @@
 // Loads the server's legal notices once per page life; a failed load is retried when asked.
-import { array, boolean, DecodeError, object, string, type Decoded, type Decoder } from "../../lib/decode";
+import {
+  array,
+  boolean,
+  DecodeError,
+  object,
+  string,
+  type Decoded,
+  type Decoder,
+} from "../../lib/decode";
 import { displayText, readJSON } from "../../protocol/documents";
 
 /** Decodes a link the page may follow, http(s), absolute or relative to the page. */

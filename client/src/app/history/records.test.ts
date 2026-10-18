@@ -18,17 +18,36 @@ import {
 Object.assign(globalThis, { BUILD: { clientVersion: "v9.9.9" } });
 afterEach(() => void delete (crypto as { randomUUID?: unknown }).randomUUID);
 
-const rate = (bps: number) => ({ reportedBytesPerSec: bps, peakBytesPerSec: bps, stabilityPct: 91, totalBytes: 4e8 });
+const rate = (bps: number) => ({
+  reportedBytesPerSec: bps,
+  peakBytesPerSec: bps,
+  stabilityPct: 91,
+  totalBytes: 4e8,
+});
 const population = (p50Ms: number) => ({ p50Ms, probeCount: 40 }) as LatencySummary;
-const wire = { factors: [{ key: "ip", label: "IP", contributionPct: 2.7 }], mtuBytes: 1_500, totalMultiplier: 1.04 };
+const wire = {
+  factors: [{ key: "ip", label: "IP", contributionPct: 2.7 }],
+  mtuBytes: 1_500,
+  totalMultiplier: 1.04,
+};
 const none = { latency: null, download: null, upload: null, bidirectional: null };
 const identity = { id: "a", name: "Edge", url: "https://a.example" };
 const measured = {
   latency: { reportedMs: 12, jitterMs: 1.5, stabilityPct: 88 },
-  latencyByStage: { ...none, latency: population(12), download: population(30), upload: population(25) },
+  latencyByStage: {
+    ...none,
+    latency: population(12),
+    download: population(30),
+    upload: population(25),
+  },
   addedLatency: { download: 18, upload: 13, bidirectional: null },
 };
-const stages = { latency: "complete", download: "complete", upload: "complete", bidirectional: "partial" } as const;
+const stages = {
+  latency: "complete",
+  download: "complete",
+  upload: "complete",
+  bidirectional: "partial",
+} as const;
 const full: HistoryRecord = {
   schemaVersion: 6,
   id: "00000000-0000-4000-8000-000000000001",
@@ -60,7 +79,14 @@ const full: HistoryRecord = {
       intervals: [],
       omittedIntervals: 0,
       failures: [
-        { serverId: "a", stage: "bidirectional", atMs: 3e4, scope: "throughput", reason: "timeout", message: "" },
+        {
+          serverId: "a",
+          stage: "bidirectional",
+          atMs: 3e4,
+          scope: "throughput",
+          reason: "timeout",
+          message: "",
+        },
       ],
     },
     outcome: "partial",
@@ -82,7 +108,12 @@ const latencyOnly: RunResult = {
   stages: { latency: "complete", download: "not-run", upload: "not-run", bidirectional: "not-run" },
 };
 const off = { planned: false, durationMs: 10_000, early: false };
-const plans: StagePlans = { latency: { ...off, planned: true }, download: off, upload: off, bidirectional: off };
+const plans: StagePlans = {
+  latency: { ...off, planned: true },
+  download: off,
+  upload: off,
+  bidirectional: off,
+};
 
 test("a finished run is saved apart from the shown result, and as incomplete when its evidence contradicts it", () => {
   const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -110,13 +141,17 @@ test("a finished run is saved apart from the shown result, and as incomplete whe
     const before = Date.now();
     const record = historyRecord({ result: shown, plans: settled });
     expect(record, name).toMatchObject({ schemaVersion: 6, build: "v9.9.9" });
-    expect(record.id, name).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(record.id, name).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(record.completedAt, name).toBeWithin(before, Date.now() + 1);
     expect(record.result, name).toEqual({ ...result, outcome });
     expect(shown, name).toEqual(result);
     shown.multiServer.selection[0]!.name = "changed later";
     expect(record.result.multiServer.selection[0]!.name, name).toBe("Edge");
-    expect(errors.mock.calls, name).toEqual(logged ? [["Incoherent result saved as incomplete:", logged]] : []);
+    expect(errors.mock.calls, name).toEqual(
+      logged ? [["Incoherent result saved as incomplete:", logged]] : [],
+    );
     expect(readHistoryRecord(record), name).toEqual(record);
   }
   errors.mockRestore();
@@ -135,7 +170,6 @@ test("without randomUUID, on plain-HTTP LAN pages, ids are still v4 UUIDs", () =
   random.mockRestore();
 });
 
-/** `record` with the value at a dotted path replaced; nothing in the copy is shared. */
 function altered(record: unknown, path: string, value: unknown): unknown {
   const copy = JSON.parse(JSON.stringify(record));
   const keys = path.split(".");
@@ -227,9 +261,10 @@ test("a stored row is readable only when every field History dereferences holds,
     ["extra", () => {}, false],
   ];
   for (const [path, value, readable] of cases)
-    expect(readHistoryRecord(altered(full, path, value)) !== null, `${path} = ${String(value).slice(0, 20)}`).toBe(
-      readable,
-    );
+    expect(
+      readHistoryRecord(altered(full, path, value)) !== null,
+      `${path} = ${String(value).slice(0, 20)}`,
+    ).toBe(readable);
   for (const value of [null, "record", [full]]) expect(readHistoryRecord(value)).toBeNull();
 });
 
@@ -268,7 +303,9 @@ test("an older build's row upgrades to this build's form, and the row itself sta
   for (const [path, stored, read] of cases) {
     const row = altered(v5, path, stored);
     const before = structuredClone(row);
-    expect(upgradeRecord(row), `${path} = ${stored}`).toEqual(altered(full, path, read) as HistoryRecord);
+    expect(upgradeRecord(row), `${path} = ${stored}`).toEqual(
+      altered(full, path, read) as HistoryRecord,
+    );
     expect(row, path).toEqual(before);
   }
 });
@@ -278,10 +315,16 @@ test("schema 5's engine version moves to the server it belonged to: the latency 
   const both = (latencyFocus: string, engine = "1.2.3") => ({
     ...v5,
     engine,
-    result: { ...v5.result, multiServer: { ...v5.result.multiServer, latencyFocus, servers: [unversioned, second] } },
+    result: {
+      ...v5.result,
+      multiServer: { ...v5.result.multiServer, latencyFocus, servers: [unversioned, second] },
+    },
   });
   const servers = (row: unknown) =>
-    upgradeRecord(row)!.result.multiServer.servers.map((each) => [each.server.id, each.engineVersion]);
+    upgradeRecord(row)!.result.multiServer.servers.map((each) => [
+      each.server.id,
+      each.engineVersion,
+    ]);
   expect(servers(both("b"))).toEqual([
     ["a", undefined],
     ["b", "1.2.3"],
@@ -328,7 +371,12 @@ const summary4 = (center: number) => ({
 });
 const breakdown = { factors: [], mtuBytes: 1_500, transport: "http2" };
 const latency4 = { reportedMs: 12, jitterMs: 2, stabilityScore: 1, band: "high" };
-const download4 = { reportedBytesPerSec: 1_000, peakBytesPerSec: 1_100, totalBytes: 5_000, stabilityPct: 3 };
+const download4 = {
+  reportedBytesPerSec: 1_000,
+  peakBytesPerSec: 1_100,
+  totalBytes: 5_000,
+  stabilityPct: 3,
+};
 const flat = {
   schemaVersion: 4,
   id: "old",
@@ -336,7 +384,11 @@ const flat = {
   completedAt: 200,
   durationMs: 100,
   stages: {
-    latency: { status: "complete", result: latency4, lanes: { ...none, latency: lane4(12), download: lane4(18) } },
+    latency: {
+      status: "complete",
+      result: latency4,
+      lanes: { ...none, latency: lane4(12), download: lane4(18) },
+    },
     download: { status: "complete", result: download4 },
     upload: { status: "failed", result: null },
     bidirectional: { status: "not-run", down: null, up: null },
@@ -344,7 +396,10 @@ const flat = {
   bufferbloat: { idleMs: 12, loadedMs: 18, increaseMs: 6, grade: "A", addedMs: { download: 6 } },
   totalBytes: 5_000,
   server: { name: "Home", location: "Here", engine: "e4" },
-  transport: { throughput: { protocol: "h2", kind: "fetch-stream" }, latency: { protocol: null, kind: "websocket" } },
+  transport: {
+    throughput: { protocol: "h2", kind: "fetch-stream" },
+    latency: { protocol: null, kind: "websocket" },
+  },
   ipVersion: 6,
   client: { build: "v0.8.6" },
   failures: [{ stage: "upload", direction: "up", reason: "timeout" }],
@@ -356,7 +411,12 @@ const flat = {
     bidirectionalBytesPerSec: 3_300,
   },
 };
-const statuses4 = { latency: "complete", download: "complete", upload: "failed", bidirectional: "not-run" };
+const statuses4 = {
+  latency: "complete",
+  download: "complete",
+  upload: "failed",
+  bidirectional: "not-run",
+};
 const results4 = {
   latency: { ...latency4, stabilityPct: null },
   latencyByStage: { ...none, latency: summary4(12), download: summary4(18) },
@@ -368,7 +428,12 @@ const results4 = {
 const home = { id: "self", url: "", name: "Home", location: "Here" };
 /** `flat` as read: `changes` to its result, measured alike by its one server, with `entry` changes to that server. */
 const lifted = (changes: object = {}, entry: object = {}, server: object = home) => {
-  const { stages, outcome, ...evidence } = { ...results4, stages: statuses4, outcome: "incomplete", ...changes };
+  const { stages, outcome, ...evidence } = {
+    ...results4,
+    stages: statuses4,
+    outcome: "incomplete",
+    ...changes,
+  };
   const measuredBy = {
     server,
     engineVersion: "e4",
@@ -404,18 +469,29 @@ const lifted = (changes: object = {}, entry: object = {}, server: object = home)
 };
 
 test("a schema 4 row upgrades to schema 6 with its servers, without its grade or failures", () => {
-  const bidirectional = { status: "partial", down: { ...download4, reportedBytesPerSec: 2_000 }, up: download4 };
+  const bidirectional = {
+    status: "partial",
+    down: { ...download4, reportedBytesPerSec: 2_000 },
+    up: download4,
+  };
   const saved = { ...full.result.multiServer, servers: [{ ...unversioned, stages: {} }] };
   const cases: [string, unknown, unknown][] = [
     ["one server, its grade dropped and its wire rate a model", flat, lifted()],
     ["its own outcome kept", { ...flat, outcome: "partial" }, lifted({ outcome: "partial" })],
     [
       "both bidirectional lanes, with one wire model",
-      { ...flat, stages: { ...flat.stages, upload: { status: "complete", result: null }, bidirectional } },
+      {
+        ...flat,
+        stages: { ...flat.stages, upload: { status: "complete", result: null }, bidirectional },
+      },
       lifted({
         stages: { ...statuses4, upload: "complete", bidirectional: "partial" },
         outcome: "partial",
-        bidirectional: { down: bidirectional.down, up: download4, wire: { ...breakdown, totalMultiplier: 1.1 } },
+        bidirectional: {
+          down: bidirectional.down,
+          up: download4,
+          wire: { ...breakdown, totalMultiplier: 1.1 },
+        },
       }),
     ],
     [
@@ -434,7 +510,10 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
         wireEstimates: null,
         ipVersion: null,
         server: { name: "Home", location: null, engine: "e4" },
-        transport: { throughput: { protocol: null, kind: null }, latency: { protocol: null, kind: null } },
+        transport: {
+          throughput: { protocol: null, kind: null },
+          latency: { protocol: null, kind: null },
+        },
       },
       lifted(
         { addedLatency: null, download: { ...download4, wire: null } },
@@ -449,7 +528,10 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
         ...lifted(),
         result: {
           ...lifted().result,
-          multiServer: { ...saved, servers: [{ ...unversioned, engineVersion: "e4", stages: statuses4 }] },
+          multiServer: {
+            ...saved,
+            servers: [{ ...unversioned, engineVersion: "e4", stages: statuses4 }],
+          },
         },
       },
     ],
@@ -474,7 +556,8 @@ test("a schema 4 row upgrades to schema 6 with its servers, without its grade or
     ["wireEstimates.breakdown", null],
     ["multiServer", { servers: {} }],
   ];
-  for (const [path, value] of broken) expect(upgradeRecord(altered(flat, path, value)), path).toBeNull();
+  for (const [path, value] of broken)
+    expect(upgradeRecord(altered(flat, path, value)), path).toBeNull();
 });
 
 test("a row no release could read stays unreadable rather than upgraded into made-up stages or rates", () => {
@@ -503,7 +586,9 @@ test("History sorts missing values last, equal ones newest first, each field in 
   });
   const loaded = (medians: Partial<Record<Stage, number>>) => ({
     ...none,
-    ...Object.fromEntries(Object.entries(medians).map(([stage, p50Ms]) => [stage, population(p50Ms)])),
+    ...Object.fromEntries(
+      Object.entries(medians).map(([stage, p50Ms]) => [stage, population(p50Ms)]),
+    ),
   });
   const transfer = (bps: number) => ({ ...rate(bps), wire: null });
   const idle = (reportedMs: number) => ({ reportedMs, jitterMs: null, stabilityPct: null });
@@ -524,7 +609,10 @@ test("History sorts missing values last, equal ones newest first, each field in 
       latencyByStage: loaded({ download: 20, bidirectional: 5 }),
     }),
     // A large surviving lane must not outrank a complete bidirectional result.
-    record("c", 3, { bidirectional: { down: rate(1_000), up: null, wire: null }, latency: idle(10) }),
+    record("c", 3, {
+      bidirectional: { down: rate(1_000), up: null, wire: null },
+      latency: idle(10),
+    }),
     // Ties go newest first, then by id: ids here run against completion times.
     record("d", 5, { download: transfer(10) }),
     record("e", 4, { download: transfer(10) }),
@@ -548,7 +636,9 @@ test("History sorts missing values last, equal ones newest first, each field in 
     expect(order.join(""), `${sort} ${descending}`).toBe(expected);
   }
   expect(records.map(({ keys }) => keys.bidirectional)).toEqual([10, 30, null, null, null, null]);
-  const natural = (["date", "download", "upload", "bidirectional", "idle", "loaded"] as const).map(naturalDescending);
+  const natural = (["date", "download", "upload", "bidirectional", "idle", "loaded"] as const).map(
+    naturalDescending,
+  );
   expect(natural).toEqual([true, true, true, true, false, false]);
 });
 
@@ -561,5 +651,6 @@ test("a recent completion reads as now, then in minutes for an hour", () => {
     [3_599_999, "59 min ago"],
     [3_600_000, null],
   ];
-  for (const [elapsed, expected] of cases) expect(recentCompletion(1_000_000, 1_000_000 + elapsed)).toBe(expected);
+  for (const [elapsed, expected] of cases)
+    expect(recentCompletion(1_000_000, 1_000_000 + elapsed)).toBe(expected);
 });

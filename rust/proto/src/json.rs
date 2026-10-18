@@ -28,8 +28,11 @@ fn check(text: &str) -> Result<(), serde_json::Error> {
             b'}' | b']' => drop(open.pop()),
             b',' => name_next = matches!(open.last(), Some(Some(_))),
             b'"' => {
-                let mut strings = serde_json::Deserializer::from_str(&text[at..]).into_iter::<String>();
-                let Some(string) = strings.next().transpose()? else { break };
+                let mut strings =
+                    serde_json::Deserializer::from_str(&text[at..]).into_iter::<String>();
+                let Some(string) = strings.next().transpose()? else {
+                    break;
+                };
                 at += strings.byte_offset();
                 if name_next
                     && let Some(Some(names)) = open.last_mut()

@@ -6,8 +6,7 @@ use crate::{
 };
 use ratatui_core::layout::Rect;
 
-/// Draws `points` over `window` seconds as a line up to `head`, the live value now, its tip in `tip` and the area
-/// under it fading into `field`. A gap breaks it.
+/// Draws `points` over `window` seconds as a line up to `head`, its tip in `tip`, the area under it fading into `field`.
 pub fn line(
     canvas: &mut Canvas,
     area: Rect,
@@ -23,7 +22,9 @@ pub fn line(
         let share = (value / top).clamp(0.0, 1.0);
         (down - 1) as isize - (share * (down - 1) as f64).round() as isize
     };
-    let last = points.last().map_or(f64::NEG_INFINITY, |point| point.at.as_secs_f64());
+    let last = points
+        .last()
+        .map_or(f64::NEG_INFINITY, |point| point.at.as_secs_f64());
     let head = head.filter(|&(at, _)| at > last);
     let (mut next, mut previous, mut tipped) = (0, None::<isize>, None);
     // Tracks each cell column's highest dot of the line.
@@ -36,9 +37,13 @@ pub fn line(
         let before = next.checked_sub(1).map(|index| &points[index]);
         let value = match (before, points.get(next)) {
             (Some(before), _) if before.value.is_none() => None,
-            (Some(before), Some(after)) => Some(between(before, after.at.as_secs_f64(), after.value, at)),
+            (Some(before), Some(after)) => {
+                Some(between(before, after.at.as_secs_f64(), after.value, at))
+            }
             (Some(before), None) => match head {
-                Some((head_at, head_value)) if at <= head_at => Some(between(before, head_at, Some(head_value), at)),
+                Some((head_at, head_value)) if at <= head_at => {
+                    Some(between(before, head_at, Some(head_value), at))
+                }
                 _ if at <= last + span / across as f64 => before.value,
                 _ => None,
             },
@@ -52,7 +57,13 @@ pub fn line(
         let crest = &mut crests[x / 2];
         *crest = Some(crest.map_or(y, |crest| crest.min(y)));
         // A steep step fills the column between, so the line stays whole.
-        let from = previous.map_or(y, |previous| if (previous - y).abs() > 1 { previous } else { y });
+        let from = previous.map_or(y, |previous| {
+            if (previous - y).abs() > 1 {
+                previous
+            } else {
+                y
+            }
+        });
         for dot in from.min(y)..=from.max(y) {
             dots.set(x as isize, dot, color, 1);
         }
@@ -77,19 +88,25 @@ pub fn line(
     canvas.dots(&dots);
 }
 
-/// Interpolates the value at `at` between `before` and a later point at `after_at`, along the line between them.
 fn between(before: &Point, after_at: f64, after: Option<f64>, at: f64) -> f64 {
     let (from, to) = (before.at.as_secs_f64(), after_at);
     match (before.value, after) {
-        (Some(a), Some(b)) if to > from => a + (b - a) * ((at - from) / (to - from)).clamp(0.0, 1.0),
+        (Some(a), Some(b)) if to > from => {
+            a + (b - a) * ((at - from) / (to - from)).clamp(0.0, 1.0)
+        }
         (Some(a), _) => a,
         _ => 0.0,
     }
 }
 
-/// Draws `points` over `window` seconds as one bar a cell from the fastest to the slowest value it holds, on a scale
-/// to `top`. A bar past it ends at the top in an arrowhead.
-pub fn bars(canvas: &mut Canvas, area: Rect, points: &[Point], (top, window): (f64, (f64, f64)), color: Color) {
+/// Draws `points` as one bar a cell from fastest to slowest, scaled to `top`; a bar past it ends in an arrowhead.
+pub fn bars(
+    canvas: &mut Canvas,
+    area: Rect,
+    points: &[Point],
+    (top, window): (f64, (f64, f64)),
+    color: Color,
+) {
     let mut dots = Dots::new(area);
     let (_, down) = dots.size();
     let span = (window.1 - window.0).max(f64::EPSILON);
@@ -103,10 +120,14 @@ pub fn bars(canvas: &mut Canvas, area: Rect, points: &[Point], (top, window): (f
         let (low, high) = range.get_or_insert((point.low, point.peak));
         (*low, *high) = (low.min(point.low), high.max(point.peak));
     }
-    let row = |value: f64| (down - 1) as isize - ((value / top).clamp(0.0, 1.0) * (down - 1) as f64).round() as isize;
+    let row = |value: f64| {
+        (down - 1) as isize - ((value / top).clamp(0.0, 1.0) * (down - 1) as f64).round() as isize
+    };
     let mut over = Vec::new();
     for (cell, range) in ranges.iter().enumerate() {
-        let Some(&(low, high)) = range.as_ref() else { continue };
+        let Some(&(low, high)) = range.as_ref() else {
+            continue;
+        };
         for dot in row(high)..=row(low) {
             dots.set(2 * cell as isize, dot, color, 1);
         }

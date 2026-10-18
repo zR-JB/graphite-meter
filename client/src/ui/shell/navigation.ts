@@ -15,7 +15,11 @@ const PANEL_OF = new Map<string, Panel>([
   ["endpoint", "details"],
 ]);
 
-export const appRoute = (workspace: Workspace = MEASUREMENT, panels: readonly Panel[] = [], legal = false): Route => ({
+export const appRoute = (
+  workspace: Workspace = MEASUREMENT,
+  panels: readonly Panel[] = [],
+  legal = false,
+): Route => ({
   kind: "app",
   workspace,
   panels: [...new Set(panels)],
@@ -27,7 +31,9 @@ export function parseRoute(hash: string): Route {
   if (text.length > MAX_HASH) return { kind: "not-found" };
   const [path = "", query = ""] = text.split("?", 2);
   const params = new URLSearchParams(query);
-  const panels = (params.get("panels") ?? "").split(",").flatMap((word) => PANEL_OF.get(word) ?? []);
+  const panels = (params.get("panels") ?? "")
+    .split(",")
+    .flatMap((word) => PANEL_OF.get(word) ?? []);
   const legal = params.get("dialog") === "legal";
   if (path === "" || path === "/") return appRoute(MEASUREMENT, panels, legal);
   if (path === "/history") return appRoute({ kind: "history", id: null }, panels, legal);
@@ -69,19 +75,25 @@ export function serializeRoute(route: Route): string {
   return query.length ? `${path}?${query.join("&")}` : path;
 }
 
-const app = (route: Route) => (route.kind === "app" ? route : (appRoute() as Extract<Route, { kind: "app" }>));
+const app = (route: Route) =>
+  route.kind === "app" ? route : (appRoute() as Extract<Route, { kind: "app" }>);
 export const withWorkspace = (route: Route, workspace: Workspace) =>
   appRoute(workspace, app(route).panels, app(route).legal);
 /** The panel moves to the end: the end is the last opened. */
 export const openPanel = (route: Route, panel: Panel) =>
-  appRoute(app(route).workspace, [...app(route).panels.filter((each) => each !== panel), panel], app(route).legal);
+  appRoute(
+    app(route).workspace,
+    [...app(route).panels.filter((each) => each !== panel), panel],
+    app(route).legal,
+  );
 export const closePanel = (route: Route, panel: Panel) =>
   appRoute(
     app(route).workspace,
     app(route).panels.filter((each) => each !== panel),
     app(route).legal,
   );
-export const withLegal = (route: Route, legal: boolean) => appRoute(app(route).workspace, app(route).panels, legal);
+export const withLegal = (route: Route, legal: boolean) =>
+  appRoute(app(route).workspace, app(route).panels, legal);
 
 /** Where only one panel fits, a route keeps the last one opened. */
 export const fitPanels = (route: Route, multiple: boolean): Route =>
@@ -96,7 +108,6 @@ interface Marker {
 }
 
 interface Navigator {
-  /** Opens `next` on a new history entry. */
   push(next: Route): void;
   /** Rewrites the current entry, keeping where it was pushed from. */
   replace(next: Route): void;
@@ -108,8 +119,7 @@ interface Navigator {
   dispose(): void;
 }
 
-/** Owns the URL. `commit` renders a route in the frame of the input that asked for it; `fromHistory` marks the
-    browser's own navigations (Back, Forward, links, the first load). */
+/** Owns the URL: `commit` renders a route for the input that asked; `fromHistory` marks the browser's own navigations. */
 export function createNavigator(env: {
   location: Pick<Location, "hash">;
   history: Pick<History, "state" | "pushState" | "replaceState" | "back">;
@@ -133,7 +143,8 @@ export function createNavigator(env: {
   const write = (route: Route, replace: boolean) => {
     const hash = serializeRoute(route);
     if (replace) history.replaceState(marker(), "", hash);
-    else if (location.hash !== hash) history.pushState({ graphiteRoute: true, parent: location.hash }, "", hash);
+    else if (location.hash !== hash)
+      history.pushState({ graphiteRoute: true, parent: location.hash }, "", hash);
   };
   const go = (next: Route, replace: boolean) => {
     const route = fit(next);

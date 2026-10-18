@@ -29,13 +29,20 @@ pub fn handshake<B>(request: &Request<B>) -> Result<Response<Body>, Response<Bod
     let mut normalized = Request::new(());
     *normalized.version_mut() = request.version();
     *normalized.headers_mut() = request.headers().clone();
-    for (name, token) in [(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")] {
+    for (name, token) in [
+        (header::CONNECTION, "Upgrade"),
+        (header::UPGRADE, "websocket"),
+    ] {
         if request.headers().get_all(&name).iter().any(|value| {
-            value
-                .to_str()
-                .is_ok_and(|value| value.split(',').any(|part| part.trim().eq_ignore_ascii_case(token)))
+            value.to_str().is_ok_and(|value| {
+                value
+                    .split(',')
+                    .any(|part| part.trim().eq_ignore_ascii_case(token))
+            })
         }) {
-            normalized.headers_mut().insert(name, HeaderValue::from_static(token));
+            normalized
+                .headers_mut()
+                .insert(name, HeaderValue::from_static(token));
         }
     }
     let answer = match create_response_with_body(&normalized, || ()) {
@@ -45,13 +52,26 @@ pub fn handshake<B>(request: &Request<B>) -> Result<Response<Body>, Response<Bod
             | ProtocolError::MissingUpgradeWebSocketHeader,
         )) => Err(refusal(
             StatusCode::UPGRADE_REQUIRED,
-            &[(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")],
+            &[
+                (header::CONNECTION, "Upgrade"),
+                (header::UPGRADE, "websocket"),
+            ],
         )),
-        _ if request.method() != Method::GET => Err(refusal(StatusCode::METHOD_NOT_ALLOWED, &[(header::ALLOW, "GET")])),
-        Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => {
-            Err(refusal(StatusCode::BAD_REQUEST, &[(header::SEC_WEBSOCKET_VERSION, "13")]))
-        }
-        _ if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 => {
+        _ if request.method() != Method::GET => Err(refusal(
+            StatusCode::METHOD_NOT_ALLOWED,
+            &[(header::ALLOW, "GET")],
+        )),
+        Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)) => Err(refusal(
+            StatusCode::BAD_REQUEST,
+            &[(header::SEC_WEBSOCKET_VERSION, "13")],
+        )),
+        _ if request
+            .headers()
+            .get_all(header::SEC_WEBSOCKET_KEY)
+            .iter()
+            .count()
+            > 1 =>
+        {
             Err(refusal(StatusCode::BAD_REQUEST, &[]))
         }
         Ok(accepted) => Ok(accepted),
@@ -65,13 +85,14 @@ fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -
     let mut response = Response::new(());
     *response.status_mut() = status;
     for (name, value) in headers {
-        response.headers_mut().insert(name, HeaderValue::from_static(value));
+        response
+            .headers_mut()
+            .insert(name, HeaderValue::from_static(value));
     }
     response
 }
 
-/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head, until `lane` ends or
-/// the peer leaves.
+/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head.
 pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, lane: Lane) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
@@ -79,7 +100,8 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, la
         .max_write_buffer_size(8192)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let mut socket = WebSocketStream::from_partially_read(stream, read.into(), Role::Server, Some(config)).await;
+    let mut socket =
+        WebSocketStream::from_partially_read(stream, read.into(), Role::Server, Some(config)).await;
     let (code, reason) = tokio::select! {
         biased;
         ending = lane.ended() => close(ending),
@@ -91,7 +113,10 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, la
             Err(_) => return,
         },
     };
-    let frame = CloseFrame { code, reason: reason.into() };
+    let frame = CloseFrame {
+        code,
+        reason: reason.into(),
+    };
     let closing = async {
         socket.close(Some(frame)).await?;
         // Reading until the peer's close keeps its unread messages from resetting the connection.
@@ -105,7 +130,6 @@ fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
     (CloseCode::from(ending.websocket_code()), ending.reason())
 }
 
-/// Answers each PING, text or binary, until the peer closes.
 async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     socket: &mut WebSocketStream<S>,
     lane: &Lane,

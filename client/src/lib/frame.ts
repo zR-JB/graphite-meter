@@ -1,9 +1,7 @@
 // The one frame clock: a requestAnimationFrame loop that runs only while something moves on a visible page.
 
-/** Monotonic page milliseconds, the timeline that frame timestamps share. */
 export const pageMs = (): number => performance.now();
 
-/** Paints one frame at `now` and returns whether it still moves. */
 type Painter = (now: number) => boolean;
 
 const painters = new Set<Painter>();
@@ -15,7 +13,8 @@ let watching = false;
 const visible = () => typeof document === "undefined" || !document.hidden;
 
 function request(): void {
-  if (!pending && painters.size && visible()) pending = globalThis.requestAnimationFrame?.(frame) ?? 0;
+  if (!pending && painters.size && visible())
+    pending = globalThis.requestAnimationFrame?.(frame) ?? 0;
 }
 
 function frame(now: number): void {
@@ -42,8 +41,7 @@ function release(): void {
   pending = 0;
 }
 
-// Painters stay registered while the page is hidden and resume from their own clocks when it shows again. The page's
-// one visibility listener stays from the first painter on, rather than come and go with every motion.
+// Painters stay registered while the page is hidden and resume from their own clocks; one visibility listener stays from the first painter on.
 function wake(): void {
   if (visible()) request();
   else release();
@@ -63,7 +61,6 @@ export function animate(paint: Painter): () => void {
   };
 }
 
-/** Runs `fn` once on the next frame. */
 export const nextFrame = (fn: (now: number) => void) =>
   animate((now) => {
     fn(now);

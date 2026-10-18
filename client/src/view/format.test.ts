@@ -86,12 +86,17 @@ test("a prefix is promoted only from 1.2× its step, as the terminal clients jud
     [1e16, "base2", "bits", "Tibit/s"],
   ] as const;
   for (const [bytesPerSec, base, kind, unit] of cases)
-    expect(rateUnit({ base, kind }, rateTier(bytesPerSec, { base, kind })), `${bytesPerSec}`).toBe(unit);
+    expect(rateUnit({ base, kind }, rateTier(bytesPerSec, { base, kind })), `${bytesPerSec}`).toBe(
+      unit,
+    );
   // A page that sets a tier reads every rate in it, zero included.
   expect(fmtRate(0, { base: "base10", kind: "bits", tier: 2 })).toBe("0.00 Mbit/s");
   expect(fmtRate(gigabit(1.1), { base: "base10", kind: "bits" })).toBe("1100 Mbit/s");
   // The terminal clients judge the tier before rounding. The browser reads the same.
-  expect([gigabit(1.1996), gigabit(1.2)].map((rate) => fmtRate(rate, BITS))).toEqual(["1200 Mbit/s", "1.20 Gbit/s"]);
+  expect([gigabit(1.1996), gigabit(1.2)].map((rate) => fmtRate(rate, BITS))).toEqual([
+    "1200 Mbit/s",
+    "1.20 Gbit/s",
+  ]);
 });
 
 test("durations read in seconds while they round below a minute, then in minutes and hours", () => {
@@ -112,13 +117,30 @@ test("durations read in seconds while they round below a minute, then in minutes
 });
 
 test("a typed stage time snaps to the time the stepper shows, and stays there", () => {
-  const shown = [500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000].map((ms) => fmtStageTime(ms));
-  expect(shown).toEqual(["0.5 s", "2.5 s", "4 s", "45 s", "59.9 s", "1 min 30 s", "1 h 30 min", "2 h"]);
-  expect(shown.map(parseDuration)).toEqual([500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000]);
+  const shown = [500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000].map((ms) =>
+    fmtStageTime(ms),
+  );
+  expect(shown).toEqual([
+    "0.5 s",
+    "2.5 s",
+    "4 s",
+    "45 s",
+    "59.9 s",
+    "1 min 30 s",
+    "1 h 30 min",
+    "2 h",
+  ]);
+  expect(shown.map(parseDuration)).toEqual([
+    500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000,
+  ]);
   const snap = (ms: number) => parseDuration(fmtStageTime(ms))!;
-  const typed = [0, 450, 2_250, 12_340, 59_940, 59_960, 61_500, 599_990, 3_599_400, 3_599_700, 5_429_000, 86_399_000];
+  const typed = [
+    0, 450, 2_250, 12_340, 59_940, 59_960, 61_500, 599_990, 3_599_400, 3_599_700, 5_429_000,
+    86_399_000,
+  ];
   expect(typed.map(snap)).toEqual([
-    0, 500, 2_300, 12_300, 59_900, 60_000, 62_000, 600_000, 3_599_000, 3_600_000, 5_400_000, 86_400_000,
+    0, 500, 2_300, 12_300, 59_900, 60_000, 62_000, 600_000, 3_599_000, 3_600_000, 5_400_000,
+    86_400_000,
   ]);
   for (let ms = 0; ms <= 86_400_000; ms += ms < 120_000 ? 10 : ms < 7_200_000 ? 1_000 : 7_000) {
     const snapped = snap(ms);
@@ -143,8 +165,22 @@ test("typed times are seconds unless they name a unit or read as a clock", () =>
     "1 2": 3_000,
   };
   for (const [text, ms] of Object.entries(typed)) expect(parseDuration(text), text).toBe(ms);
-  const unreadable = ["", "abc", "h", "2x", "1 fortnight", ".5", "1.", "1.5.5", "-5", "1e3", "1:75", "1:30:00:00"];
-  for (const text of [...unreadable, `${"9".repeat(400)}:00`]) expect(parseDuration(text), text).toBeNull();
+  const unreadable = [
+    "",
+    "abc",
+    "h",
+    "2x",
+    "1 fortnight",
+    ".5",
+    "1.",
+    "1.5.5",
+    "-5",
+    "1e3",
+    "1:75",
+    "1:30:00:00",
+  ];
+  for (const text of [...unreadable, `${"9".repeat(400)}:00`])
+    expect(parseDuration(text), text).toBeNull();
 });
 
 test("a share reads as the terminal clients show it: two decimals below 1%, one from there", () => {
@@ -174,7 +210,8 @@ test("progress, ticks, ranges and counts read as documented", () => {
     [120_000, 300_000, "120.0 / 5 min"],
     [121_000, 300_000, "121.0 / 5 min"],
   ] as const;
-  for (const [elapsed, total, text] of progress) expect(fmtProgress(elapsed, total), `${elapsed}`).toBe(text);
+  for (const [elapsed, total, text] of progress)
+    expect(fmtProgress(elapsed, total), `${elapsed}`).toBe(text);
   const ticks = [
     [0.25, "0.25"],
     [2.5, "2.5"],
@@ -187,13 +224,21 @@ test("progress, ticks, ranges and counts read as documented", () => {
     [-1e-9, "-0.000000001"],
   ] as const;
   for (const [value, text] of ticks) expect(fmtTick(value), `${value}`).toBe(text);
-  expect([fmtLatencyRange(0.04, 12.34), fmtLatencyRange(12.31, 12.34), fmtLatencyRange(12, 250)]).toEqual([
-    "< 0.1 to 12.3 ms",
-    "12.3 to 12.3 ms",
-    "12.0 to 250 ms",
+  expect([
+    fmtLatencyRange(0.04, 12.34),
+    fmtLatencyRange(12.31, 12.34),
+    fmtLatencyRange(12, 250),
+  ]).toEqual(["< 0.1 to 12.3 ms", "12.3 to 12.3 ms", "12.0 to 250 ms"]);
+  const counted = [0, 1, 2, 1_204, 1_234_567.891].map((count) =>
+    fmtCounted(count, "reply", "replies"),
+  );
+  expect(counted).toEqual([
+    "0 replies",
+    "1 reply",
+    "2 replies",
+    "1,204 replies",
+    "1,234,567.891 replies",
   ]);
-  const counted = [0, 1, 2, 1_204, 1_234_567.891].map((count) => fmtCounted(count, "reply", "replies"));
-  expect(counted).toEqual(["0 replies", "1 reply", "2 replies", "1,204 replies", "1,234,567.891 replies"]);
   expect(fmtCounted(3, "server")).toBe("3 servers");
 });
 

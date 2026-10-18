@@ -20,7 +20,8 @@ export function tipGroup(list: HTMLElement): void {
   const settle = () => {
     const found = facts();
     const stop = found.find((fact) => fact.tabIndex === 0) ?? found[0];
-    for (const fact of found) if ((fact === stop) !== (fact.tabIndex === 0)) fact.tabIndex = fact === stop ? 0 : -1;
+    for (const fact of found)
+      if ((fact === stop) !== (fact.tabIndex === 0)) fact.tabIndex = fact === stop ? 0 : -1;
   };
   const observer = new MutationObserver(settle);
   observer.observe(list, { childList: true, subtree: true, attributeFilter: ["tabindex"] });

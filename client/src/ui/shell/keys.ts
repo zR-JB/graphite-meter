@@ -10,15 +10,11 @@ export interface KeyFacts {
   shortcuts: boolean;
   saving: boolean;
   workspace: "measurement" | "history" | "not-found";
-  /** A History result is open. */
   detail: boolean;
   /** Lists the visible panels, the last opened last. */
   panels: readonly Panel[];
-  /** The panel holding focus. */
   focused: Panel | null;
-  /** The visible panel flies over the stage. */
   flyout: boolean;
-  /** A start is being prepared. */
   pending: boolean;
 }
 
@@ -40,7 +36,6 @@ export interface Binding {
   /** Tells whether the key acts at all. The History key acts only while results are saved. */
   when(facts: Pick<KeyFacts, "saving">): boolean;
   command: Command;
-  /** The status strip names it. */
   hint: boolean;
 }
 
@@ -70,7 +65,14 @@ export const BINDINGS = {
     command: { kind: "history" },
     hint: true,
   },
-  theme: { key: "t", cap: "T", label: "Theme", when: always, command: { kind: "theme" }, hint: false },
+  theme: {
+    key: "t",
+    cap: "T",
+    label: "Theme",
+    when: always,
+    command: { kind: "theme" },
+    hint: false,
+  },
 } as const satisfies Record<string, Binding>;
 
 /** Space runs the test where no focused control takes it. R does wherever text entry does not. */
@@ -93,7 +95,8 @@ function dismiss(facts: KeyFacts): Command | null {
   if (facts.focused) return { kind: "close", panel: facts.focused };
   if (facts.flyout && last) return { kind: "close", panel: last };
   if (facts.editable) return null;
-  if (facts.workspace === "history") return facts.detail ? { kind: "close-detail" } : { kind: "close-history" };
+  if (facts.workspace === "history")
+    return facts.detail ? { kind: "close-detail" } : { kind: "close-history" };
   if (facts.workspace !== "measurement") return null;
   if (last) return { kind: "close", panel: last };
   return facts.pending ? { kind: "cancel-start" } : null;

@@ -14,11 +14,23 @@ test("a timeout counts as a probe, never as an RTT, and a timeout-only bucket ha
   presented.observe(20, 9_999, true);
   presented.closeThrough(200);
   expect(emitted).toEqual([
-    expect.objectContaining({ phase: "download", continuityId: 3, pingCount: 2, timeoutCount: 1, medianRttMs: 20 }),
+    expect.objectContaining({
+      phase: "download",
+      continuityId: 3,
+      pingCount: 2,
+      timeoutCount: 1,
+      medianRttMs: 20,
+    }),
   ]);
   presented.observe(205, 0, true);
   presented.flush(300);
-  expect(emitted[1]).toMatchObject({ startT: 200, endT: 300, pingCount: 1, timeoutCount: 1, medianRttMs: null });
+  expect(emitted[1]).toMatchObject({
+    startT: 200,
+    endT: 300,
+    pingCount: 1,
+    timeoutCount: 1,
+    medianRttMs: null,
+  });
 });
 
 test("a bucket closes at its end without a later probe, and late outcomes revise the bucket that owns their time once per tick", () => {

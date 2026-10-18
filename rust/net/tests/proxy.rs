@@ -3,7 +3,10 @@ use graphite_meter_net::Proxy;
 use graphite_meter_proto::origin::Origin;
 
 fn from(variables: &[(&str, &str)]) -> Proxy {
-    let variables: Vec<(String, String)> = variables.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let variables: Vec<(String, String)> = variables
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
     Proxy::from_lookup(move |name| {
         variables
             .iter()
@@ -32,8 +35,15 @@ fn an_unusable_value_fails_each_request_it_would_carry_naming_the_variable() {
         via(&proxy, "https://meter.example"),
         "https_proxy is not a usable proxy: only HTTP, HTTPS and SOCKS5 proxies are supported"
     );
-    assert_eq!(via(&proxy, "http://meter.example"), "HTTP_PROXY is not a usable proxy: invalid proxy URL");
-    assert_eq!(via(&proxy, "https://skip.example"), "-", "a bypassed target is not carried");
+    assert_eq!(
+        via(&proxy, "http://meter.example"),
+        "HTTP_PROXY is not a usable proxy: invalid proxy URL"
+    );
+    assert_eq!(
+        via(&proxy, "https://skip.example"),
+        "-",
+        "a bypassed target is not carried"
+    );
     assert_eq!(via(&proxy, "http://127.0.0.1"), "-");
 }
 
@@ -75,7 +85,10 @@ fn no_proxy_and_loopback_bypass_the_proxy() {
     }
     assert_eq!(
         via(
-            &from(&[("HTTPS_PROXY", "proxy.example:1"), ("NO_PROXY", "a.example, *")]),
+            &from(&[
+                ("HTTPS_PROXY", "proxy.example:1"),
+                ("NO_PROXY", "a.example, *")
+            ]),
             "https://b.example"
         ),
         "-"

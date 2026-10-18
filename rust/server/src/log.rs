@@ -1,5 +1,4 @@
-//! Log lines with a time, level, topic and source, and limits for lines peers or load can repeat.
-//! Messages read `what happened: detail; what next`, lowercase, no full stop, and keep one word per meaning.
+//! Log lines read `what happened: detail; what next`: lowercase, no full stop, one word per meaning.
 
 use jiff::{Timestamp, tz::TimeZone};
 use std::{
@@ -39,7 +38,6 @@ impl Level {
         }
     }
 
-    /// The label's and the message's terminal colors.
     fn colors(self) -> (&'static str, &'static str) {
         match self {
             Self::Debug => ("34", "2"),
@@ -61,8 +59,9 @@ enum Style {
 /// Color on a terminal that is not `TERM=dumb` unless `NO_COLOR` is set; `FORCE_COLOR` asks for it anywhere.
 static STYLE: LazyLock<Style> = LazyLock::new(|| {
     let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0");
-    let terminal =
-        cfg!(unix) && std::io::stderr().is_terminal() && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
+    let terminal = cfg!(unix)
+        && std::io::stderr().is_terminal()
+        && std::env::var_os("TERM").is_some_and(|term| term != "dumb");
     if !set("NO_COLOR") && (set("FORCE_COLOR") || terminal) {
         Style::Color
     } else {
@@ -72,7 +71,6 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
 
 /// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled pipe never blocks.
 const QUEUE: usize = 1024;
-/// How long `flush` waits for the queue to drain.
 const FLUSH_WAIT: Duration = Duration::from_secs(2);
 
 enum Entry {
@@ -84,26 +82,38 @@ enum Entry {
 /// The writer thread's queue; none if the thread could not start, and lines are then written in place.
 static WRITER: LazyLock<Option<SyncSender<Entry>>> = LazyLock::new(|| {
     let (queue, entries) = mpsc::sync_channel(QUEUE);
-    let writer = std::thread::Builder::new().name("gm-log".into()).spawn(move || {
-        for entry in entries {
-            match entry {
-                Entry::Line(line) => emit(&line),
-                Entry::Flush(done) => drop(done.send(())),
+    let writer = std::thread::Builder::new()
+        .name("gm-log".into())
+        .spawn(move || {
+            for entry in entries {
+                match entry {
+                    Entry::Line(line) => emit(&line),
+                    Entry::Flush(done) => drop(done.send(())),
+                }
+                let dropped = DROPPED.swap(0, Ordering::Relaxed);
+                if dropped > 0 {
+                    let message =
+                        format_args!("log lines dropped: {dropped}; stderr was not taking writes");
+                    emit(&line(
+                        Level::Warn,
+                        "log",
+                        module_path!(),
+                        message,
+                        &now(),
+                        *STYLE,
+                    ));
+                }
             }
-            let dropped = DROPPED.swap(0, Ordering::Relaxed);
-            if dropped > 0 {
-                let message = format_args!("log lines dropped: {dropped}; stderr was not taking writes");
-                emit(&line(Level::Warn, "log", module_path!(), message, &now(), *STYLE));
-            }
-        }
-    });
+        });
     writer.ok().map(|_| queue)
 });
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
 pub fn write(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>) {
     let line = line(level, topic, module, message, &now(), *STYLE);
-    let Some(writer) = WRITER.as_ref() else { return emit(&line) };
+    let Some(writer) = WRITER.as_ref() else {
+        return emit(&line);
+    };
     match writer.try_send(Entry::Line(line)) {
         Ok(()) => {}
         Err(TrySendError::Full(_)) => {
@@ -119,7 +129,9 @@ pub fn write(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_
 
 /// Waits until the lines logged so far are written, at most `FLUSH_WAIT`, so lines logged before an exit survive it.
 pub fn flush() {
-    let Some(writer) = WRITER.as_ref() else { return };
+    let Some(writer) = WRITER.as_ref() else {
+        return;
+    };
     let (done, written) = mpsc::sync_channel(1);
     let deadline = Instant::now() + FLUSH_WAIT;
     let mut entry = Entry::Flush(done);
@@ -157,7 +169,10 @@ fn stamp(time: SystemTime, zone: Option<&TimeZone>) -> String {
     zone.and_then(|zone| {
         let at = Timestamp::try_from(time).ok()?;
         let (local, offset) = (zone.to_datetime(at), zone.to_offset(at).seconds());
-        let (sign, minutes) = (if offset < 0 { '-' } else { '+' }, offset.unsigned_abs() / 60);
+        let (sign, minutes) = (
+            if offset < 0 { '-' } else { '+' },
+            offset.unsigned_abs() / 60,
+        );
         Some(format!(
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{sign}{:02}:{:02}",
             local.year(),
@@ -177,7 +192,14 @@ fn stamp(time: SystemTime, zone: Option<&TimeZone>) -> String {
 const TOPIC_WIDTH: usize = 10;
 
 /// One log line, control characters escaped against peer text; warnings and errors name their module.
-fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, time: &str, style: Style) -> String {
+fn line(
+    level: Level,
+    topic: &str,
+    module: &str,
+    message: fmt::Arguments<'_>,
+    time: &str,
+    style: Style,
+) -> String {
     let mut text = String::new();
     for character in message.to_string().chars() {
         if character.is_control() {
@@ -190,7 +212,9 @@ fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, ti
         .split_once("::")
         .map(|(_, path)| path)
         .filter(|_| matches!(level, Level::Warn | Level::Error));
-    let source = module.map(|module| format!(" ({module})")).unwrap_or_default();
+    let source = module
+        .map(|module| format!(" ({module})"))
+        .unwrap_or_default();
     let (topic, label) = (format!("{topic}:"), level.label());
     match style {
         Style::Plain => format!("{time} {label:<5} {topic:<TOPIC_WIDTH$} {text}{source}\n"),
@@ -199,8 +223,13 @@ fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, ti
             let advice = text
                 .split_once("; ")
                 .filter(|_| matches!(level, Level::Warn | Level::Error));
-            let (what, advice) = advice.map_or((text.as_str(), None), |(what, advice)| (what, Some(advice)));
-            let dim = if source.is_empty() { source } else { format!("\x1b[2m{source}\x1b[0m") };
+            let (what, advice) =
+                advice.map_or((text.as_str(), None), |(what, advice)| (what, Some(advice)));
+            let dim = if source.is_empty() {
+                source
+            } else {
+                format!("\x1b[2m{source}\x1b[0m")
+            };
             let mut line = format!(
                 "\x1b[2m{time}\x1b[0m \x1b[{badge}m{label:<5}\x1b[0m \x1b[1m{topic:<TOPIC_WIDTH$}\x1b[0m \
                  \x1b[{color}m{what}\x1b[0m{dim}\n"
@@ -218,7 +247,13 @@ fn line(level: Level, topic: &str, module: &str, message: fmt::Arguments<'_>, ti
 pub fn span(span: Duration) -> String {
     let (millis, seconds) = (span.as_millis(), span.as_secs());
     let (minutes, hours) = (seconds / 60 % 60, seconds / 3600);
-    let part = |value: u64, unit: &str| if value > 0 { format!(" {value} {unit}") } else { String::new() };
+    let part = |value: u64, unit: &str| {
+        if value > 0 {
+            format!(" {value} {unit}")
+        } else {
+            String::new()
+        }
+    };
     match seconds {
         0 => format!("{millis} ms"),
         1..60 if millis / 100 % 10 > 0 => format!("{seconds}.{} s", millis / 100 % 10),
@@ -234,7 +269,6 @@ const INTERVAL: Duration = Duration::from_mins(1);
 pub struct RateLimited {
     level: Level,
     topic: &'static str,
-    /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     module: &'static str,
     state: Mutex<Pace>,
@@ -260,13 +294,21 @@ impl Pace {
 
 impl RateLimited {
     /// `module` is the caller's `module_path!()`.
-    pub const fn new(level: Level, topic: &'static str, what: &'static str, module: &'static str) -> Self {
+    pub const fn new(
+        level: Level,
+        topic: &'static str,
+        what: &'static str,
+        module: &'static str,
+    ) -> Self {
         Self {
             level,
             topic,
             what,
             module,
-            state: Mutex::new(Pace { next: None, held: 0 }),
+            state: Mutex::new(Pace {
+                next: None,
+                held: 0,
+            }),
         }
     }
 
@@ -278,7 +320,10 @@ impl RateLimited {
                 self.level,
                 self.topic,
                 self.module,
-                format_args!("{message} (and {held} more {} in the last minute)", self.what),
+                format_args!(
+                    "{message} (and {held} more {} in the last minute)",
+                    self.what
+                ),
             ),
             None => {}
         }
@@ -308,7 +353,13 @@ impl<K: PartialEq> PerPeer<K> {
             peers.retain(|(_, pace)| pace.next.is_some_and(|next| now < next));
         }
         (peers.len() < PEERS).then(|| {
-            peers.push((peer, Pace { next: Some(now + INTERVAL), held: 0 }));
+            peers.push((
+                peer,
+                Pace {
+                    next: Some(now + INTERVAL),
+                    held: 0,
+                },
+            ));
             0
         })
     }
@@ -323,7 +374,10 @@ impl Latch {
     pub fn update(&self, start: bool, end: bool) -> Option<bool> {
         let on = self.0.load(Ordering::Relaxed);
         let changed = if on { end } else { start };
-        let swap = || self.0.compare_exchange(on, !on, Ordering::Relaxed, Ordering::Relaxed);
+        let swap = || {
+            self.0
+                .compare_exchange(on, !on, Ordering::Relaxed, Ordering::Relaxed)
+        };
         (changed && swap().is_ok()).then_some(!on)
     }
 }
@@ -336,10 +390,26 @@ mod tests {
     fn lines_carry_level_topic_and_source_in_each_style_and_escape_control_characters() {
         let time = "2025-10-06T14:31:02Z";
         let tls = "graphite_meter_server::transport::tls";
-        let warn = |style| line(Level::Warn, "tls", tls, format_args!("key\u{1b}[31m\nnext; renew it"), time, style);
+        let warn = |style| {
+            line(
+                Level::Warn,
+                "tls",
+                tls,
+                format_args!("key\u{1b}[31m\nnext; renew it"),
+                time,
+                style,
+            )
+        };
         let plain = "2025-10-06T14:31:02Z WARN  tls:       key\\u{1b}[31m\\nnext; renew it (transport::tls)\n";
         assert_eq!(warn(Style::Plain), plain);
-        let info = line(Level::Info, "listen", tls, format_args!("ready"), time, Style::Plain);
+        let info = line(
+            Level::Info,
+            "listen",
+            tls,
+            format_args!("ready"),
+            time,
+            Style::Plain,
+        );
         assert_eq!(
             info, "2025-10-06T14:31:02Z INFO  listen:    ready\n",
             "only warnings and errors name a source"
@@ -361,26 +431,41 @@ mod tests {
     }
 
     #[test]
-    fn each_peer_writes_once_a_minute_counting_the_lines_held_back_and_at_most_sixty_four_are_paced() {
+    fn each_peer_writes_once_a_minute_counting_the_lines_held_back_and_at_most_sixty_four_are_paced()
+     {
         let paced = PerPeer::new();
         let start = Instant::now();
         let at = |seconds| start + Duration::from_secs(seconds);
         assert_eq!(paced.admit_at(0, at(0)), Some(0));
         assert_eq!(paced.admit_at(0, at(30)), None);
-        assert_eq!(paced.admit_at(1, at(30)), Some(0), "each peer has its own minute");
+        assert_eq!(
+            paced.admit_at(1, at(30)),
+            Some(0),
+            "each peer has its own minute"
+        );
         assert_eq!(paced.admit_at(0, at(59)), None);
         assert_eq!(paced.admit_at(0, at(60)), Some(2));
         for peer in 2..PEERS {
             assert_eq!(paced.admit_at(peer, at(61)), Some(0));
         }
-        assert_eq!(paced.admit_at(PEERS, at(61)), None, "no slot while every peer's minute runs");
-        assert_eq!(paced.admit_at(PEERS, at(90)), Some(0), "the slot of the peer whose minute ended");
+        assert_eq!(
+            paced.admit_at(PEERS, at(61)),
+            None,
+            "no slot while every peer's minute runs"
+        );
+        assert_eq!(
+            paced.admit_at(PEERS, at(90)),
+            Some(0),
+            "the slot of the peer whose minute ended"
+        );
         assert_eq!(crate::lock(&paced.0).len(), PEERS);
     }
 
     #[test]
     fn times_carry_the_zone_offset_in_effect_and_fall_back_to_utc() {
-        let berlin = jiff::tz::TimeZoneDatabase::bundled().get("Europe/Berlin").unwrap();
+        let berlin = jiff::tz::TimeZoneDatabase::bundled()
+            .get("Europe/Berlin")
+            .unwrap();
         let utc = |fields| crate::clock::utc(fields).unwrap();
         for (fields, local) in [
             ([2026, 1, 15, 12, 0, 0], "2026-01-15T13:00:00+01:00"),
@@ -392,7 +477,10 @@ mod tests {
         ] {
             assert_eq!(stamp(utc(fields), Some(&berlin)), local);
         }
-        assert_eq!(stamp(utc([2026, 1, 15, 12, 0, 0]), None), "2026-01-15T12:00:00Z");
+        assert_eq!(
+            stamp(utc([2026, 1, 15, 12, 0, 0]), None),
+            "2026-01-15T12:00:00Z"
+        );
         let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(400_000_000_000);
         assert_eq!(stamp(beyond, Some(&berlin)), crate::clock::rfc3339(beyond));
     }

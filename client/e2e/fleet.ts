@@ -20,8 +20,13 @@ export const HISTORY_DB = {
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
-// The runner always launches these five.
-export const [home, frankfurt, amsterdam, helsinki, locked] = fleet as [Server, Server, Server, Server, Server];
+export const [home, frankfurt, amsterdam, helsinki, locked] = fleet as [
+  Server,
+  Server,
+  Server,
+  Server,
+  Server,
+];
 export const password: string = env.password;
 export const passwordHash: string = env.passwordHash;
 
@@ -31,8 +36,7 @@ export const catalog = (...servers: Server[]) => ({
   }),
 });
 
-/** A server of its own; `env` may depend on it, such as a public URL for sign-in. A `paced` one serves its HTTPS
-    origin through a link of that many bytes per second each way. */
+/** A server of its own, `env` possibly depending on it; a `paced` one serves its HTTPS origin through a link of that many bytes per second. */
 export async function spawnPeer(
   name: string,
   env: Record<string, string> | ((server: Server) => Record<string, string>) = {},
@@ -78,8 +82,12 @@ export const baseConfig = {
   transferStreams: { mode: "forced", count: 1 },
 };
 /** The shortest tests that save a result, without and with a throughput card. */
-export const latencyOnly = { stages: { latency: true, download: false, upload: false, bidirectional: false } };
-export const downloadOnly = { stages: { latency: false, download: true, upload: false, bidirectional: false } };
+export const latencyOnly = {
+  stages: { latency: true, download: false, upload: false, bidirectional: false },
+};
+export const downloadOnly = {
+  stages: { latency: false, download: true, upload: false, bidirectional: false },
+};
 
 export interface Seed {
   servers?: Pick<Server, "id" | "url">[];
@@ -87,11 +95,17 @@ export interface Seed {
 }
 
 /** The plan each stage ran under, as far as saved settings tell: an adaptive run may have finished any stage early. */
-export const plansOf = (config: Pick<RunnerConfig, "stages" | "duration" | "adaptive">): StagePlans =>
+export const plansOf = (
+  config: Pick<RunnerConfig, "stages" | "duration" | "adaptive">,
+): StagePlans =>
   Object.fromEntries(
     STAGES.map((stage) => [
       stage,
-      { planned: planned(config, stage), durationMs: config.duration[`${stage}Ms`], early: config.adaptive },
+      {
+        planned: planned(config, stage),
+        durationMs: config.duration[`${stage}Ms`],
+        early: config.adaptive,
+      },
     ]),
   ) as StagePlans;
 
@@ -100,8 +114,12 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
   await page.addInitScript(
     ({ servers, config }) => {
       if (localStorage.getItem("graphite-meter:v1")) return;
-      if (servers) localStorage.setItem("graphite-meter:server-selection:v1", JSON.stringify(servers));
-      localStorage.setItem("graphite-meter:v1", JSON.stringify({ config, resultHistoryPreference: "enabled" }));
+      if (servers)
+        localStorage.setItem("graphite-meter:server-selection:v1", JSON.stringify(servers));
+      localStorage.setItem(
+        "graphite-meter:v1",
+        JSON.stringify({ config, resultHistoryPreference: "enabled" }),
+      );
     },
     {
       servers: seed.servers?.map(({ id, url }) => ({ id, url })),
@@ -138,7 +156,6 @@ export async function ready(page: Page) {
   await closeSettings(page);
 }
 
-/** Counts History saves announced to other tabs from now on. */
 export async function countSaves(page: Page) {
   await page.evaluate(() => {
     Object.assign(window, { saves: 0 });
@@ -147,7 +164,8 @@ export async function countSaves(page: Page) {
   return () => page.evaluate<number>(() => (window as any).saves);
 }
 
-export const runButton = (page: Page, name: string | RegExp) => page.getByRole("button", { name, exact: true });
+export const runButton = (page: Page, name: string | RegExp) =>
+  page.getByRole("button", { name, exact: true });
 
 export const phase = (page: Page, name: string) => page.locator(`#console[data-phase="${name}"]`);
 
@@ -170,7 +188,9 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
       { timeout },
     )
     .toBe(true);
-  const config = await page.evaluate(() => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config);
+  const config = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config,
+  );
   expect(incoherence(record!.result, plansOf(config))).toEqual([]);
   // History views have no stage track; the live view must show what was saved.
   for (const stage of STAGES) {

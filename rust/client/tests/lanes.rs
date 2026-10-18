@@ -34,8 +34,14 @@ async fn local() -> (TcpListener, Origin) {
 }
 
 /// Answers downloads only once an upload arrived, and reads uploads until they end; says when each arrived.
-async fn bidirectional(mut stream: TcpStream, uploading: watch::Sender<bool>, downloading: watch::Sender<bool>) {
-    let Some(head) = read_head(&mut stream).await else { return };
+async fn bidirectional(
+    mut stream: TcpStream,
+    uploading: watch::Sender<bool>,
+    downloading: watch::Sender<bool>,
+) {
+    let Some(head) = read_head(&mut stream).await else {
+        return;
+    };
     if head.starts_with("POST /upload?") {
         uploading.send_replace(true);
         let mut buffer = vec![0; 64 << 10];
@@ -52,12 +58,19 @@ async fn bidirectional(mut stream: TcpStream, uploading: watch::Sender<bool>, do
 
 #[tokio::test]
 async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() {
-    let ((listener, origin), uploading, downloading) =
-        (local().await, watch::Sender::new(false), watch::Sender::new(false));
+    let ((listener, origin), uploading, downloading) = (
+        local().await,
+        watch::Sender::new(false),
+        watch::Sender::new(false),
+    );
     let (mut uploaded, mut downloaded) = (uploading.subscribe(), downloading.subscribe());
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(bidirectional(stream, uploading.clone(), downloading.clone()));
+            tokio::spawn(bidirectional(
+                stream,
+                uploading.clone(),
+                downloading.clone(),
+            ));
         }
     });
     let path = ThroughputPath {
@@ -67,18 +80,35 @@ async fn bidirectional_upload_lanes_start_while_downloads_wait_for_headers() {
     };
     let plans = topology(&path, Stage::Bidirectional, Dir { down: 1, up: 1 });
     let (client, token) = (client(), CancellationToken::new());
-    let download = Lanes::start(&client, plans.clone(), Work::Download, Duration::ZERO, token.clone());
+    let download = Lanes::start(
+        &client,
+        plans.clone(),
+        Work::Download,
+        Duration::ZERO,
+        token.clone(),
+    );
     downloaded.wait_for(|down| *down).await.unwrap();
     assert!(!download.ready(), "the download waits for its headers");
-    let _upload = Lanes::start(&client, plans, Work::Upload("fixture".into()), Duration::ZERO, token.clone());
+    let _upload = Lanes::start(
+        &client,
+        plans,
+        Work::Upload("fixture".into()),
+        Duration::ZERO,
+        token.clone(),
+    );
     let started = tokio::time::timeout(Duration::from_secs(5), uploaded.wait_for(|up| *up)).await;
-    assert!(started.is_ok(), "upload lanes waited for download readiness");
+    assert!(
+        started.is_ok(),
+        "upload lanes waited for download readiness"
+    );
     let answered = async {
         while !(download.ready() && download.bytes() == 1024) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(5), answered).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), answered)
+        .await
+        .unwrap();
     token.cancel();
 }
 
@@ -100,7 +130,13 @@ async fn a_websocket_bus_closed_as_revoked_asks_its_server_for_sign_in() {
         transport: LatencyTransport::WebSocket,
     };
     let mut bus = client().bus(&path).await.unwrap();
-    assert_eq!(bus.next().await.unwrap().0, Pong { id: 7, handling_nanos: 42 });
+    assert_eq!(
+        bus.next().await.unwrap().0,
+        Pong {
+            id: 7,
+            handling_nanos: 42
+        }
+    );
     let fault = bus.next().await.unwrap_err();
     assert_matches!(&fault, Fault::SignIn(server) if *server == origin);
 }

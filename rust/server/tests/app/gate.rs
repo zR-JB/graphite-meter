@@ -8,24 +8,46 @@ use http::{StatusCode, Version};
 fn each_endpoint_mounts_the_routes_of_its_listener() {
     let mounted = |endpoint: Endpoint| {
         let routes = Route::ALL.iter().filter(|route| endpoint.mounts(**route));
-        routes.map(|route| route.path()).collect::<Vec<_>>().join(" ")
+        routes
+            .map(|route| route.path())
+            .collect::<Vec<_>>()
+            .join(" ")
     };
     let ui = "/preflight /probe /download /upload /upload/session /upload/progress /wt/session /ws/session /ws/ping \
               /servers /upload/checkpoint";
-    let h2 = "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
+    let h2 =
+        "/probe /download /upload /upload/session /upload/progress /wt/session /upload/checkpoint";
     let companion = "/probe /upload/session /upload/progress /wt/session /upload/checkpoint";
     let quic = "/probe /download /upload /upload/session /upload/progress /wt/session /wt/download /wt/upload \
                 /wt/ping /upload/checkpoint";
     let expected = [ui, ui, h2, companion, quic];
     assert_eq!(Endpoint::ALL.map(mounted), expected);
-    assert_eq!(Endpoint::ALL.map(Endpoint::ui), [true, true, false, false, false]);
-    assert_eq!(Endpoint::ALL.map(Endpoint::bootstrap), [false, false, false, true, false]);
+    assert_eq!(
+        Endpoint::ALL.map(Endpoint::ui),
+        [true, true, false, false, false]
+    );
+    assert_eq!(
+        Endpoint::ALL.map(Endpoint::bootstrap),
+        [false, false, false, true, false]
+    );
 }
 
 #[tokio::test]
 async fn webtransport_sessions_are_admitted_before_their_upgrade() {
-    let app = app(&[ALL_LISTENERS.as_slice(), &[("GM_MAX_SESSIONS_PER_CLIENT", "1")]].concat());
-    let connect = async |path: &str| outcome(&app, Endpoint::Quic, "192.0.2.1", empty(request("CONNECT", path))).await;
+    let app = app(&[
+        ALL_LISTENERS.as_slice(),
+        &[("GM_MAX_SESSIONS_PER_CLIENT", "1")],
+    ]
+    .concat());
+    let connect = async |path: &str| {
+        outcome(
+            &app,
+            Endpoint::Quic,
+            "192.0.2.1",
+            empty(request("CONNECT", path)),
+        )
+        .await
+    };
     let Outcome::WebTransport(accepted, download, _) = connect("/wt/download").await else {
         panic!("a session");
     };
@@ -34,11 +56,19 @@ async fn webtransport_sessions_are_admitted_before_their_upgrade() {
     let Outcome::Response(refused) = connect("/wt/download").await else {
         panic!("a refusal");
     };
-    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS, "one transfer session per client");
+    assert_eq!(
+        refused.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "one transfer session per client"
+    );
     let Outcome::WebTransport(_, ping, _) = connect("/wt/ping").await else {
         panic!("a bus");
     };
-    assert_eq!(active(&app).await, 2, "the bus is an operation beside the session");
+    assert_eq!(
+        active(&app).await,
+        2,
+        "the bus is an operation beside the session"
+    );
     drop((download, ping));
     assert_eq!(active(&app).await, 0);
 }
@@ -49,9 +79,14 @@ async fn an_http11_request_names_exactly_one_valid_host() {
     let bare = |version| Request::builder().uri("/nope").version(version);
     for (builder, refusal) in [
         (bare(Version::HTTP_11), "missing Host header"),
-        (bare(Version::HTTP_11).header("host", "speed example"), "malformed Host header"),
         (
-            bare(Version::HTTP_11).header("host", "a").header("host", "a"),
+            bare(Version::HTTP_11).header("host", "speed example"),
+            "malformed Host header",
+        ),
+        (
+            bare(Version::HTTP_11)
+                .header("host", "a")
+                .header("host", "a"),
             "more than one Host header",
         ),
     ] {
@@ -65,17 +100,24 @@ async fn an_http11_request_names_exactly_one_valid_host() {
     let valid = [
         (Endpoint::H1, bare(Version::HTTP_10)),
         (Endpoint::H2, bare(Version::HTTP_2)),
-        (Endpoint::H1, bare(Version::HTTP_11).header("host", "[fe80::1%25eth0]:7246")),
+        (
+            Endpoint::H1,
+            bare(Version::HTTP_11).header("host", "[fe80::1%25eth0]:7246"),
+        ),
     ];
     for (endpoint, builder) in valid {
-        assert_eq!(send(&app, endpoint, empty(builder)).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            send(&app, endpoint, empty(builder)).await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 }
 
 #[tokio::test]
 async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
     let app = app(&ALL_LISTENERS);
-    let pin = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/routes.txt")).unwrap();
+    let pin = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/routes.txt"))
+        .unwrap();
     let routes = pin
         .lines()
         .filter(|line| !line.starts_with('#') && !line.trim().is_empty());
@@ -93,14 +135,21 @@ async fn every_route_answers_its_cors_preflight_from_the_route_pin() {
             .unwrap();
         let response = send(&app, endpoint, empty(request("OPTIONS", path))).await;
         if kind != "http" {
-            assert_ne!(response.status(), StatusCode::NO_CONTENT, "{path} is no plain HTTP route");
+            assert_ne!(
+                response.status(),
+                StatusCode::NO_CONTENT,
+                "{path} is no plain HTTP route"
+            );
             continue;
         }
         assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
         let cors = [
             ("access-control-allow-origin", "*"),
             ("timing-allow-origin", "*"),
-            ("access-control-expose-headers", "X-Graphite-Upload-Refusal, Retry-After"),
+            (
+                "access-control-expose-headers",
+                "X-Graphite-Upload-Refusal, Retry-After",
+            ),
             ("access-control-allow-methods", "GET, POST, DELETE, OPTIONS"),
             ("access-control-allow-headers", "*"),
             ("access-control-max-age", "7200"),
@@ -121,7 +170,11 @@ async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() 
     ] {
         let response = send(&app, Endpoint::H2, empty(request(method, path))).await;
         let refusal = (response.status(), header(&response, "allow"));
-        assert_eq!(refusal, (StatusCode::METHOD_NOT_ALLOWED, Some(allow)), "{method} {path}");
+        assert_eq!(
+            refusal,
+            (StatusCode::METHOD_NOT_ALLOWED, Some(allow)),
+            "{method} {path}"
+        );
     }
 }
 
@@ -129,12 +182,35 @@ async fn a_method_a_route_does_not_answer_is_refused_with_the_methods_it_does() 
 async fn head_answers_an_upload_feed_s_head_alike_on_every_listener() {
     let app = app(&ALL_LISTENERS);
     for endpoint in [Endpoint::H1, Endpoint::H2] {
-        let minted = json(send(&app, endpoint, empty(request("POST", "/upload/session"))).await).await;
+        let minted =
+            json(send(&app, endpoint, empty(request("POST", "/upload/session"))).await).await;
         let id = minted["uploadId"].as_str().unwrap();
-        let head = send(&app, endpoint, empty(request("HEAD", &format!("/upload/progress?id={id}")))).await;
-        assert_eq!(header(&head, "content-type"), Some("application/x-ndjson"), "{endpoint:?}");
-        assert_eq!((head.status(), text(head).await), (StatusCode::OK, String::new()), "{endpoint:?}");
-        let unknown = send(&app, endpoint, empty(request("HEAD", "/upload/progress?id=gmu_x"))).await;
-        assert_eq!(header(&unknown, "x-graphite-upload-refusal"), Some("invalid"), "{endpoint:?}");
+        let head = send(
+            &app,
+            endpoint,
+            empty(request("HEAD", &format!("/upload/progress?id={id}"))),
+        )
+        .await;
+        assert_eq!(
+            header(&head, "content-type"),
+            Some("application/x-ndjson"),
+            "{endpoint:?}"
+        );
+        assert_eq!(
+            (head.status(), text(head).await),
+            (StatusCode::OK, String::new()),
+            "{endpoint:?}"
+        );
+        let unknown = send(
+            &app,
+            endpoint,
+            empty(request("HEAD", "/upload/progress?id=gmu_x")),
+        )
+        .await;
+        assert_eq!(
+            header(&unknown, "x-graphite-upload-refusal"),
+            Some("invalid"),
+            "{endpoint:?}"
+        );
     }
 }

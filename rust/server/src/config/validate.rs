@@ -1,8 +1,8 @@
 //! Cross-field validation into a `Config`: catalog, authentication, limits, listeners, origins.
 
 use super::{
-    Auth, Config, Groups, Lifetimes, Limits, ListenAddress, Listener, ListenerKind, Methods, Oidc, Outbound,
-    PublicOrigins, Secret, TlsFiles,
+    Auth, Config, Groups, Lifetimes, Limits, ListenAddress, Listener, ListenerKind, Methods, Oidc,
+    Outbound, PublicOrigins, Secret, TlsFiles,
     settings::{Advertised, Settings},
 };
 use graphite_meter_proto::{
@@ -14,13 +14,17 @@ use jiff::tz::TimeZone;
 use std::{collections::HashMap, num::NonZero};
 use zeroize::Zeroizing;
 
-pub(super) fn config(settings: Settings, outbound: Outbound, log_zone: Option<TimeZone>) -> Result<Config, String> {
+pub(super) fn config(
+    settings: Settings,
+    outbound: Outbound,
+    log_zone: Option<TimeZone>,
+) -> Result<Config, String> {
     let mut catalog = settings.catalog.clone();
     catalog.servers[0].name.clone_from(&settings.name);
     catalog.servers[0].location.clone_from(&settings.location);
-    catalog
-        .validate()
-        .map_err(|error| format!("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalog: {error}"))?;
+    catalog.validate().map_err(|error| {
+        format!("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalog: {error}")
+    })?;
     let auth = auth(&settings)?;
     let (limits, lifetimes) = limits(&settings)?;
     let listeners = listeners(&settings)?;
@@ -50,14 +54,27 @@ pub(super) fn config(settings: Settings, outbound: Outbound, log_zone: Option<Ti
 }
 
 fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
-    let operations = ("GM_MAX_ACTIVE_MEASUREMENTS", settings.max_active_measurements);
-    let client_operations = ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", settings.max_active_measurements_per_client);
+    let operations = (
+        "GM_MAX_ACTIVE_MEASUREMENTS",
+        settings.max_active_measurements,
+    );
+    let client_operations = (
+        "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
+        settings.max_active_measurements_per_client,
+    );
     let sessions = ("GM_MAX_ACTIVE_SESSIONS", settings.max_active_sessions);
-    let client_sessions = ("GM_MAX_SESSIONS_PER_CLIENT", settings.max_sessions_per_client);
+    let client_sessions = (
+        "GM_MAX_SESSIONS_PER_CLIENT",
+        settings.max_sessions_per_client,
+    );
     let connections = ("GM_MAX_CONNECTIONS", settings.max_connections);
-    let client_connections = ("GM_MAX_CONNECTIONS_PER_CLIENT", settings.max_connections_per_client);
-    let positive =
-        |(name, value): (&str, usize)| NonZero::new(value).ok_or_else(|| format!("{name} must be greater than zero"));
+    let client_connections = (
+        "GM_MAX_CONNECTIONS_PER_CLIENT",
+        settings.max_connections_per_client,
+    );
+    let positive = |(name, value): (&str, usize)| {
+        NonZero::new(value).ok_or_else(|| format!("{name} must be greater than zero"))
+    };
     let limits = Limits {
         operations: positive(operations)?,
         operations_per_client: positive(client_operations)?,
@@ -94,13 +111,28 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     Ok((limits, lifetimes))
 }
 
-/// Each listener's address and public origin settings as given.
 fn natives(settings: &Settings) -> [(ListenerKind, &str, &str); 4] {
     [
-        (ListenerKind::H1, &settings.h1_addr, &settings.h1_public_origin),
-        (ListenerKind::H1Tls, &settings.h1_tls_addr, &settings.h1_tls_public_origin),
-        (ListenerKind::H2, &settings.h2_addr, &settings.h2_public_origin),
-        (ListenerKind::H3, &settings.h3_addr, &settings.h3_public_origin),
+        (
+            ListenerKind::H1,
+            &settings.h1_addr,
+            &settings.h1_public_origin,
+        ),
+        (
+            ListenerKind::H1Tls,
+            &settings.h1_tls_addr,
+            &settings.h1_tls_public_origin,
+        ),
+        (
+            ListenerKind::H2,
+            &settings.h2_addr,
+            &settings.h2_public_origin,
+        ),
+        (
+            ListenerKind::H3,
+            &settings.h3_addr,
+            &settings.h3_public_origin,
+        ),
     ]
 }
 
@@ -124,7 +156,11 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
         .filter(|(_, (_, address, _))| !address.is_empty())
         .collect();
     if !tls.is_empty() && (settings.tls_cert.is_empty() || settings.tls_key.is_empty()) {
-        let set = tls.iter().map(|(name, _)| **name).collect::<Vec<_>>().join(" and ");
+        let set = tls
+            .iter()
+            .map(|(name, _)| **name)
+            .collect::<Vec<_>>()
+            .join(" and ");
         return Err(format!(
             "TLS certificate missing for {set}: GM_TLS_CERT and GM_TLS_KEY must both be set; set them, or leave {set} empty"
         ));
@@ -132,9 +168,14 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
     let mut enabled: Vec<(ListenerKind, ListenAddress, &str)> = Vec::new();
     for &(kind, address, public) in natives.iter().filter(|(_, address, _)| !address.is_empty()) {
         let parsed = ListenAddress::parse(address);
-        let parsed = parsed.ok_or_else(|| format!("{}_ADDR must be :port or host:port", kind.env()))?;
+        let parsed =
+            parsed.ok_or_else(|| format!("{}_ADDR must be :port or host:port", kind.env()))?;
         if let Some((other, ..)) = enabled.iter().find(|(_, known, _)| *known == parsed) {
-            return Err(format!("{}_ADDR and {}_ADDR must differ", other.env(), kind.env()));
+            return Err(format!(
+                "{}_ADDR and {}_ADDR must differ",
+                other.env(),
+                kind.env()
+            ));
         }
         enabled.push((kind, parsed, public));
     }
@@ -145,7 +186,10 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
                 .any(|&(native, address, _)| native == kind && address.is_empty())
         })
     {
-        return Err(format!("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}", kind.name()));
+        return Err(format!(
+            "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint {:?}",
+            kind.name()
+        ));
     }
     Ok(enabled
         .into_iter()
@@ -159,7 +203,8 @@ fn listeners(settings: &Settings) -> Result<Vec<Listener>, String> {
 }
 
 fn origins(settings: &Settings) -> Result<PublicOrigins, String> {
-    let mut throughput = !settings.public_origins.is_empty() || !settings.public_throughput_origins.is_empty();
+    let mut throughput =
+        !settings.public_origins.is_empty() || !settings.public_throughput_origins.is_empty();
     let mut deterministic: HashMap<Origin, Protocol> = HashMap::new();
     for (kind, address, public) in natives(settings) {
         let origin = Origin::parse(public)
@@ -167,7 +212,10 @@ fn origins(settings: &Settings) -> Result<PublicOrigins, String> {
             .filter(|origin| origin.scheme == kind.scheme());
         if !public.is_empty() && origin.is_none() {
             let scheme = kind.scheme().name();
-            return Err(format!("{}_PUBLIC_ORIGIN must be an origin with {scheme} scheme", kind.env()));
+            return Err(format!(
+                "{}_PUBLIC_ORIGIN must be an origin with {scheme} scheme",
+                kind.env()
+            ));
         }
         if address.is_empty() || !advertised(settings, kind) {
             continue;
@@ -190,7 +238,8 @@ fn origins(settings: &Settings) -> Result<PublicOrigins, String> {
             let origin = match text.as_str() {
                 "self" => BaseUrl::Served,
                 text => BaseUrl::Origin(
-                    Origin::parse(text).map_err(|_| format!("{env} contains invalid origin {}", quote(text)))?,
+                    Origin::parse(text)
+                        .map_err(|_| format!("{env} contains invalid origin {}", quote(text)))?,
                 ),
             };
             if let BaseUrl::Origin(origin) = &origin
@@ -209,14 +258,24 @@ fn origins(settings: &Settings) -> Result<PublicOrigins, String> {
         return Err("configuration advertises no throughput endpoint".into());
     }
     let [both, throughput, latency] = parsed;
-    Ok(PublicOrigins { both, throughput, latency })
+    Ok(PublicOrigins {
+        both,
+        throughput,
+        latency,
+    })
 }
 
 fn public_lists(settings: &Settings) -> [(&'static str, &Vec<String>); 3] {
     [
         ("GM_PUBLIC_ORIGINS", &settings.public_origins),
-        ("GM_PUBLIC_THROUGHPUT_ORIGINS", &settings.public_throughput_origins),
-        ("GM_PUBLIC_LATENCY_ORIGINS", &settings.public_latency_origins),
+        (
+            "GM_PUBLIC_THROUGHPUT_ORIGINS",
+            &settings.public_throughput_origins,
+        ),
+        (
+            "GM_PUBLIC_LATENCY_ORIGINS",
+            &settings.public_latency_origins,
+        ),
     ]
 }
 
@@ -236,32 +295,59 @@ fn auth(settings: &Settings) -> Result<Option<Auth>, String> {
         .ok()
         .filter(|origin| origin.scheme == Scheme::Https)
         .ok_or("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")?;
-    if public.rsplit_once(':').is_some_and(|(_, port)| port == "443") {
+    if public
+        .rsplit_once(':')
+        .is_some_and(|(_, port)| port == "443")
+    {
         return Err("GM_AUTH_PUBLIC_URL must omit the default HTTPS port".into());
     }
     let methods = methods(settings, wanted)?;
     advertised_auth_origins(settings, &public_origin)?;
     let provider = settings.auth_oidc_provider_name.clone();
-    Ok(Some(Auth { public_origin, methods, provider }))
+    Ok(Some(Auth {
+        public_origin,
+        methods,
+        provider,
+    }))
 }
 
 /// Both exclusions first, then each method's sources, then the provider's settings.
-fn methods(settings: &Settings, (wants_password, wants_oidc): (bool, bool)) -> Result<Methods, String> {
-    let password = secret(&settings.auth_password_hash, &settings.auth_password_hash_file);
-    let client_secret = secret(&settings.auth_oidc_client_secret, &settings.auth_oidc_client_secret_file);
+fn methods(
+    settings: &Settings,
+    (wants_password, wants_oidc): (bool, bool),
+) -> Result<Methods, String> {
+    let password = secret(
+        &settings.auth_password_hash,
+        &settings.auth_password_hash_file,
+    );
+    let client_secret = secret(
+        &settings.auth_oidc_client_secret,
+        &settings.auth_oidc_client_secret_file,
+    );
     let (issuer, client_id) = (&settings.auth_oidc_issuer, &settings.auth_oidc_client_id);
     let groups = &settings.auth_oidc_allowed_groups;
-    let oidc_given = !issuer.is_empty() || !client_id.is_empty() || client_secret.is_some() || !groups.is_empty();
+    let oidc_given = !issuer.is_empty()
+        || !client_id.is_empty()
+        || client_secret.is_some()
+        || !groups.is_empty();
     let name = &settings.auth_oidc_provider_name;
-    let failure = if !settings.auth_password_hash.is_empty() && !settings.auth_password_hash_file.is_empty() {
+    let failure = if !settings.auth_password_hash.is_empty()
+        && !settings.auth_password_hash_file.is_empty()
+    {
         "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
-    } else if !settings.auth_oidc_client_secret.is_empty() && !settings.auth_oidc_client_secret_file.is_empty() {
+    } else if !settings.auth_oidc_client_secret.is_empty()
+        && !settings.auth_oidc_client_secret_file.is_empty()
+    {
         "GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive"
     } else if wants_password && password.is_none() {
         "password authentication requires exactly one password hash source"
     } else if !wants_password && password.is_some() {
         "password hash configured while password authentication is disabled"
-    } else if wants_oidc && (issuer.is_empty() || client_id.is_empty() || groups.is_empty() || client_secret.is_none())
+    } else if wants_oidc
+        && (issuer.is_empty()
+            || client_id.is_empty()
+            || groups.is_empty()
+            || client_secret.is_none())
     {
         "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups"
     } else if !wants_oidc && oidc_given {
@@ -273,14 +359,15 @@ fn methods(settings: &Settings, (wants_password, wants_oidc): (bool, bool)) -> R
     } else if name.len() > 64 || !name.chars().all(safe) {
         "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters"
     } else {
-        let oidc = client_secret
-            .zip(Groups::new(groups.clone()))
-            .map(|(secret, allowed_groups)| Oidc {
-                issuer: issuer.clone(),
-                client_id: client_id.clone(),
-                secret,
-                allowed_groups,
-            });
+        let oidc =
+            client_secret
+                .zip(Groups::new(groups.clone()))
+                .map(|(secret, allowed_groups)| Oidc {
+                    issuer: issuer.clone(),
+                    client_id: client_id.clone(),
+                    secret,
+                    allowed_groups,
+                });
         // The checks above leave each mode exactly its methods' secrets.
         if wants_oidc && oidc.is_none() {
             return Err("GM_AUTH_MODE has no configured method".into());
@@ -300,7 +387,8 @@ fn secret(inline: &str, file: &str) -> Option<Secret> {
 
 /// An HTTPS URL with an ASCII host and path, and no credentials, query or fragment.
 fn https_issuer(issuer: &str) -> bool {
-    Origin::split(issuer).is_ok_and(|(origin, rest)| origin.scheme == Scheme::Https && !rest.contains('?'))
+    Origin::split(issuer)
+        .is_ok_and(|(origin, rest)| origin.scheme == Scheme::Https && !rest.contains('?'))
 }
 
 /// Under authentication clear HTTP/1.1 is not advertised, and advertised origins share the sign-in hostname.
@@ -324,10 +412,12 @@ fn advertised_auth_origins(settings: &Settings, public: &Origin) -> Result<(), S
         .into_iter()
         .filter(|(_, text)| !text.is_empty() && *text != "self")
     {
-        let same_host =
-            Origin::split(text).is_ok_and(|(origin, _)| origin.scheme == Scheme::Https && origin.host == public.host);
+        let same_host = Origin::split(text)
+            .is_ok_and(|(origin, _)| origin.scheme == Scheme::Https && origin.host == public.host);
         if !same_host {
-            return Err(format!("{env} must use HTTPS and the canonical authentication hostname"));
+            return Err(format!(
+                "{env} must use HTTPS and the canonical authentication hostname"
+            ));
         }
     }
     Ok(())

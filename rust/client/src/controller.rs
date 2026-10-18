@@ -29,7 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 /// Why a run without the interface does not sign in.
 pub const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 const REJECTED: &str = "the server refused the approved sign-in; check its sign-in configuration";
-/// What a failure from a panic says.
 const INTERNAL: &str = "Internal error";
 
 /// A failure from a panic; `connection-lost` would send a server away for the client's own bug.
@@ -44,7 +43,6 @@ pub enum Command {
     Stop,
 }
 
-/// What an operation does: check the paths, or run over them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Check,
@@ -68,7 +66,6 @@ struct Operation {
     task: JoinHandle<State>,
 }
 
-/// Runs the operations commands ask for and sends their events.
 pub struct Controller {
     /// What each operation starts from; its stop token is replaced.
     work: Work,
@@ -85,7 +82,11 @@ impl Controller {
             outbound: None,
             stop: CancellationToken::new(),
         };
-        Self { work, current: None, idle: State::default() }
+        Self {
+            work,
+            current: None,
+            idle: State::default(),
+        }
     }
 
     /// The same controller connecting through `proxy` and verifying as `verify` says, unless a config is insecure.
@@ -108,7 +109,6 @@ impl Controller {
         }
     }
 
-    /// Waits until no operation is left.
     pub async fn settled(&mut self) {
         if let Some(current) = self.current.take() {
             self.idle = current.task.await.unwrap_or_default();
@@ -128,8 +128,15 @@ impl Controller {
             previous.token.cancel();
         }
         let token = CancellationToken::new();
-        let work = Work { stop: token.child_token(), ..self.work.clone() };
-        let (stop, idle, settings) = (work.stop.clone(), std::mem::take(&mut self.idle), config.clone());
+        let work = Work {
+            stop: token.child_token(),
+            ..self.work.clone()
+        };
+        let (stop, idle, settings) = (
+            work.stop.clone(),
+            std::mem::take(&mut self.idle),
+            config.clone(),
+        );
         let task = tokio::spawn(async move {
             let state = match previous {
                 Some(previous) => previous.task.await.unwrap_or_default(),
@@ -137,7 +144,14 @@ impl Controller {
             };
             work.operate(settings, kind, state).await
         });
-        self.current = Some(Operation { kind, config, replaced, token, stop, task });
+        self.current = Some(Operation {
+            kind,
+            config,
+            replaced,
+            token,
+            stop,
+            task,
+        });
     }
 }
 
@@ -149,12 +163,10 @@ impl Drop for Controller {
     }
 }
 
-/// One operation's view of the controller.
 #[derive(Clone)]
 struct Work {
     events: Events,
     runtimes: Arc<Pool>,
-    /// Whether an operator can approve sign-ins.
     interactive: bool,
     /// The proxies and verification of checked clients in place of the environment's.
     outbound: Option<(Verify, Proxy)>,
@@ -192,7 +204,10 @@ impl Work {
         let started = Instant::now();
         self.events.send(Event::Checking(Kind::Run));
         let key = config.key();
-        let reused = state.prepared.take().filter(|check| check.reusable(&key, started));
+        let reused = state
+            .prepared
+            .take()
+            .filter(|check| check.reusable(&key, started));
         let prepared = match reused {
             Some(prepared) => Some(Ok(prepared)),
             None => self.prepare(config, state).await,
@@ -207,11 +222,19 @@ impl Work {
             None => (Outcome::Stopped, None),
         };
         let elapsed = started.elapsed();
-        self.events.send(Event::RunFinished { outcome, error, elapsed });
+        self.events.send(Event::RunFinished {
+            outcome,
+            error,
+            elapsed,
+        });
     }
 
     /// Prepares `config` with kept grants, signing in while a server asks and an operator approves; none once stopped.
-    async fn prepare(&self, config: &Config, state: &mut State) -> Option<Result<Prepared, Failure>> {
+    async fn prepare(
+        &self,
+        config: &Config,
+        state: &mut State,
+    ) -> Option<Result<Prepared, Failure>> {
         let mut approved = Vec::new();
         loop {
             let client = match &self.outbound {
@@ -223,14 +246,21 @@ impl Work {
             for (origin, grant) in &state.grants {
                 client.grant(origin, grant);
             }
-            let mut prepared = self.stop.run_until_cancelled(prepare(config, client.clone())).await?;
+            let mut prepared = self
+                .stop
+                .run_until_cancelled(prepare(config, client.clone()))
+                .await?;
             let Some((origin, issuer)) = asking(&prepared, config.url.as_ref()) else {
                 return Some(prepared);
             };
             let refusal = match approval::refusal(&origin, config.insecure) {
-                _ if !self.interactive => Some(Failure::new(FailureReason::SignInRequired, SIGN_IN)),
+                _ if !self.interactive => {
+                    Some(Failure::new(FailureReason::SignInRequired, SIGN_IN))
+                }
                 Some(text) => Some(Failure::new(FailureReason::PreparationFailed, text)),
-                None if approved.contains(&origin) => Some(Failure::new(FailureReason::SignInRequired, REJECTED)),
+                None if approved.contains(&origin) => {
+                    Some(Failure::new(FailureReason::SignInRequired, REJECTED))
+                }
                 None => None,
             };
             if let Some(refusal) = refusal {
@@ -246,10 +276,24 @@ impl Work {
     }
 
     /// The grant of the operator's approval at `origin`, or why none came; none once stopped.
-    async fn sign_in(&self, origin: &Origin, issuer: String, client: &Client) -> Option<Result<String, Failure>> {
+    async fn sign_in(
+        &self,
+        origin: &Origin,
+        issuer: String,
+        client: &Client,
+    ) -> Option<Result<String, Failure>> {
         let approval = Approval::new(origin);
-        let (url, code, deadline) = (approval.url.clone(), approval.code.clone(), approval.deadline);
-        let prompt = SignInPrompt { issuer, url, code, deadline };
+        let (url, code, deadline) = (
+            approval.url.clone(),
+            approval.code.clone(),
+            approval.deadline,
+        );
+        let prompt = SignInPrompt {
+            issuer,
+            url,
+            code,
+            deadline,
+        };
         self.events.send(Event::SignIn(prompt));
         let granted = self.stop.run_until_cancelled(approval.grant(client)).await;
         let end = match &granted {
@@ -291,7 +335,11 @@ async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Futur
     }
     let (failure, elapsed) = (internal(), started.elapsed());
     events.send(match kind {
-        Kind::Run => Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), elapsed },
+        Kind::Run => Event::RunFinished {
+            outcome: Outcome::Failed,
+            error: Some(failure),
+            elapsed,
+        },
         Kind::Check => Event::CheckFailed(failure),
     });
 }
@@ -300,7 +348,9 @@ async fn guarded(events: &Events, kind: Kind, started: Instant, work: impl Futur
 fn asking(prepared: &Result<Prepared, Failure>, url: Option<&Origin>) -> Option<(Origin, String)> {
     let asks = |failure: &Failure| failure.reason == FailureReason::SignInRequired;
     match prepared {
-        Err(failure) => url.filter(|_| asks(failure)).map(|url| (url.clone(), url.to_string())),
+        Err(failure) => url
+            .filter(|_| asks(failure))
+            .map(|url| (url.clone(), url.to_string())),
         Ok(prepared) => prepared
             .servers
             .iter()
@@ -335,16 +385,29 @@ mod tests {
     async fn an_operation_that_panics_ends_its_run_or_check_as_failed() {
         let (events, mut received) = Events::channel();
         for kind in [Kind::Run, Kind::Check] {
-            guarded(&events, kind, Instant::now(), async { panic!("an operation's bug") }).await;
+            guarded(&events, kind, Instant::now(), async {
+                panic!("an operation's bug")
+            })
+            .await;
             let failure = match (kind, received.try_recv().unwrap()) {
-                (Kind::Run, Event::RunFinished { outcome: Outcome::Failed, error: Some(failure), .. }) => failure,
+                (
+                    Kind::Run,
+                    Event::RunFinished {
+                        outcome: Outcome::Failed,
+                        error: Some(failure),
+                        ..
+                    },
+                ) => failure,
                 (Kind::Check, Event::CheckFailed(failure)) => failure,
                 (_, event) => panic!("{event:?}"),
             };
             assert_eq!(failure.text, INTERNAL);
         }
         guarded(&events, Kind::Run, Instant::now(), async {}).await;
-        assert!(received.try_recv().is_err(), "a finished operation sends nothing more");
+        assert!(
+            received.try_recv().is_err(),
+            "a finished operation sends nothing more"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -358,11 +421,20 @@ mod tests {
             let ended = received.try_recv().ok();
             match kind {
                 Kind::Check => assert_eq!(ended, None),
-                Kind::Run => assert_matches!(ended, Some(Event::RunFinished { outcome: Outcome::Stopped, .. })),
+                Kind::Run => assert_matches!(
+                    ended,
+                    Some(Event::RunFinished {
+                        outcome: Outcome::Stopped,
+                        ..
+                    })
+                ),
             }
         }
         let stop = CancellationToken::new();
         bounded(&events, Kind::Run, Instant::now(), &stop, async {}).await;
-        assert!(received.try_recv().is_err(), "a run that ends needs no grace");
+        assert!(
+            received.try_recv().is_err(),
+            "a run that ends needs no grace"
+        );
     }
 }

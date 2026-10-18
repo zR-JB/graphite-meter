@@ -1,7 +1,8 @@
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, ClientIpSource, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol, Preflight,
-        Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
+        Capabilities, ClientIpSource, IpFamily, LatencyTarget, LatencyTransport, Load,
+        NegotiatedProtocol, Preflight, Probe, Protocol, ServerInfo, ThroughputTarget,
+        ThroughputTransport,
     },
     origin::BaseUrl,
     token::{self, SocketTicket},
@@ -21,7 +22,11 @@ fn golden(text: &str) -> Value {
 fn edited(document: impl Serialize, pointer: &str, value: Option<Value>) -> Vec<u8> {
     let mut document = serde_json::to_value(document).unwrap();
     let (parent, name) = pointer.rsplit_once('/').unwrap();
-    let object = document.pointer_mut(parent).unwrap().as_object_mut().unwrap();
+    let object = document
+        .pointer_mut(parent)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
     match value {
         Some(value) => object.insert(name.into(), value),
         None => object.remove(name),
@@ -37,7 +42,11 @@ fn probe_with(pointer: &str, value: Value) -> Result<Probe, serde_json::Error> {
     Probe::decode(&edited(probe(), pointer, Some(value)))
 }
 
-fn throughput(base_url: &str, transport: ThroughputTransport, protocol: Protocol) -> ThroughputTarget {
+fn throughput(
+    base_url: &str,
+    transport: ThroughputTransport,
+    protocol: Protocol,
+) -> ThroughputTarget {
     ThroughputTarget {
         base_url: BaseUrl::parse(base_url).unwrap(),
         transport,
@@ -46,24 +55,37 @@ fn throughput(base_url: &str, transport: ThroughputTransport, protocol: Protocol
 }
 
 fn latency(base_url: &str, transport: LatencyTransport) -> LatencyTarget {
-    LatencyTarget { base_url: BaseUrl::parse(base_url).unwrap(), transport }
+    LatencyTarget {
+        base_url: BaseUrl::parse(base_url).unwrap(),
+        transport,
+    }
 }
 
-/// Builds the preflight `preflight.golden.json` describes.
 fn preflight() -> Preflight {
     let tls = "https://speed.example:7249";
     Preflight {
-        server: ServerInfo { name: "graphite-meter".into(), location: "fra".into() },
+        server: ServerInfo {
+            name: "graphite-meter".into(),
+            location: "fra".into(),
+        },
         engine_version: "0.1.0-test".into(),
         generation: "test-generation".into(),
         capabilities: Capabilities {
             upload_checkpoint: true,
             max_stage_ms: 300_000,
             throughput: vec![
-                throughput("http://speed.example:7246", ThroughputTransport::FetchStream, Protocol::Http1),
+                throughput(
+                    "http://speed.example:7246",
+                    ThroughputTransport::FetchStream,
+                    Protocol::Http1,
+                ),
                 throughput(tls, ThroughputTransport::FetchStream, Protocol::Http3),
                 throughput(tls, ThroughputTransport::WebTransport, Protocol::Http3),
-                throughput(tls, ThroughputTransport::WebTransportDatagram, Protocol::Http3),
+                throughput(
+                    tls,
+                    ThroughputTransport::WebTransportDatagram,
+                    Protocol::Http3,
+                ),
                 throughput(".", ThroughputTransport::FetchStream, Protocol::Negotiated),
             ],
             latency: vec![
@@ -75,30 +97,42 @@ fn preflight() -> Preflight {
     }
 }
 
-/// Builds the probe `probe.golden.json` describes.
 fn probe() -> Probe {
     Probe {
         client_ip: "198.51.100.4".into(),
         client_ip_version: IpFamily::V4,
         client_ip_source: ClientIpSource::Socket,
         protocol_negotiated: NegotiatedProtocol::Http3,
-        load: Some(Load { active: 3, max: 256 }),
+        load: Some(Load {
+            active: 3,
+            max: 256,
+        }),
     }
 }
 
 #[test]
 fn a_preflight_encodes_and_decodes_as_its_golden() {
-    assert_eq!(serde_json::to_value(preflight()).unwrap(), golden(PREFLIGHT));
+    assert_eq!(
+        serde_json::to_value(preflight()).unwrap(),
+        golden(PREFLIGHT)
+    );
     let decoded = Preflight::decode(PREFLIGHT.as_bytes()).unwrap();
     assert_eq!(decoded, preflight());
-    assert_eq!(decoded.base_urls().count(), 8, "throughput and latency targets");
+    assert_eq!(
+        decoded.base_urls().count(),
+        8,
+        "throughput and latency targets"
+    );
 }
 
 #[test]
 fn a_newer_preflight_keeps_its_known_targets_and_ignores_the_rest() {
     let forward = golden(include_str!("../../../api/preflight.forward.golden.json"));
     let decoded = Preflight::decode(&serde_json::to_vec(&forward["document"]).unwrap()).unwrap();
-    assert_eq!(decoded.engine_version, "9.0.0", "never a compatibility test");
+    assert_eq!(
+        decoded.engine_version, "9.0.0",
+        "never a compatibility test"
+    );
     let targets = json!({"throughput": decoded.capabilities.throughput, "latency": decoded.capabilities.latency});
     assert_eq!(targets, forward["decoded"]);
 }
@@ -113,11 +147,18 @@ fn targets_need_their_transport_and_protocol_and_known_ones_a_valid_origin() {
         json!({"baseUrl": "https://speed.example/", "transport": "fetch-stream", "protocol": "http2"}),
         json!({"transport": "fetch-stream", "protocol": "http2"}),
     ] {
-        assert!(preflight_with("/capabilities/throughput", json!([target])).is_err(), "{target}");
+        assert!(
+            preflight_with("/capabilities/throughput", json!([target])).is_err(),
+            "{target}"
+        );
     }
-    let unknown = json!({"baseUrl": "not an origin", "transport": "fetch-stream", "protocol": "http4"});
+    let unknown =
+        json!({"baseUrl": "not an origin", "transport": "fetch-stream", "protocol": "http4"});
     let decoded = preflight_with("/capabilities/throughput", json!([unknown])).unwrap();
-    assert!(decoded.capabilities.throughput.is_empty(), "skipped before its origin is checked");
+    assert!(
+        decoded.capabilities.throughput.is_empty(),
+        "skipped before its origin is checked"
+    );
     let untransported = json!({"baseUrl": ".", "protocol": "ignored"});
     assert!(preflight_with("/capabilities/latency", json!([untransported])).is_err());
     let protocol = json!({"baseUrl": ".", "transport": "websocket", "protocol": 3});
@@ -146,15 +187,26 @@ fn target_lists_hold_at_most_32_counted_as_sent() {
 #[test]
 fn metadata_holds_at_most_256_bytes_and_a_generation() {
     let at_limit = "é".repeat(128);
-    for field in ["/server/name", "/server/location", "/engineVersion", "/generation"] {
+    for field in [
+        "/server/name",
+        "/server/location",
+        "/engineVersion",
+        "/generation",
+    ] {
         assert!(preflight_with(field, json!(at_limit)).is_ok(), "{field}");
-        assert!(preflight_with(field, json!(format!("{at_limit}x"))).is_err(), "{field}");
+        assert!(
+            preflight_with(field, json!(format!("{at_limit}x"))).is_err(),
+            "{field}"
+        );
     }
     assert!(preflight_with("/generation", json!("")).is_err());
     assert!(Preflight::decode(&edited(preflight(), "/generation", None)).is_err());
     assert!(preflight_with("/engineVersion", json!("")).is_ok());
     for unsafe_text in ["bell\u{7}", "\u{202e}reversed", "line\nbreak"] {
-        assert!(preflight_with("/server/location", json!(unsafe_text)).is_err(), "{unsafe_text:?}");
+        assert!(
+            preflight_with("/server/location", json!(unsafe_text)).is_err(),
+            "{unsafe_text:?}"
+        );
     }
 }
 
@@ -165,7 +217,10 @@ fn stage_limits_range_from_a_second_to_a_day_and_are_required() {
         let decoded = preflight_with("/capabilities/maxStageMs", json!(limit));
         assert_eq!(decoded.is_ok(), valid, "{limit}");
         if let Ok(preflight) = decoded {
-            assert_eq!(preflight.capabilities.stage_limit(), Duration::from_millis(limit as u64));
+            assert_eq!(
+                preflight.capabilities.stage_limit(),
+                Duration::from_millis(limit as u64)
+            );
         }
     }
     assert!(preflight_with("/capabilities/maxStageMs", json!(1000.5)).is_err());
@@ -177,9 +232,16 @@ fn stage_limits_range_from_a_second_to_a_day_and_are_required() {
 
 #[test]
 fn unknown_members_are_ignored_and_repeated_ones_refused() {
-    let added = preflight_with("/capabilities/future", json!({"nested": [1e300, {"x": null}]}));
+    let added = preflight_with(
+        "/capabilities/future",
+        json!({"nested": [1e300, {"x": null}]}),
+    );
     assert_eq!(added.unwrap(), preflight());
-    let repeated = PREFLIGHT.replacen(r#""generation""#, r#""x": {"a": 1, "a": 2}, "generation""#, 1);
+    let repeated = PREFLIGHT.replacen(
+        r#""generation""#,
+        r#""x": {"a": 1, "a": 2}, "generation""#,
+        1,
+    );
     assert!(Preflight::decode(repeated.as_bytes()).is_err());
 }
 
@@ -188,7 +250,10 @@ fn a_probe_encodes_and_decodes_as_its_golden() {
     let text = include_str!("../../../api/probe.golden.json");
     assert_eq!(serde_json::to_value(probe()).unwrap(), golden(text));
     assert_eq!(Probe::decode(text.as_bytes()).unwrap(), probe());
-    let unloaded = Probe { load: None, ..probe() };
+    let unloaded = Probe {
+        load: None,
+        ..probe()
+    };
     assert!(!serde_json::to_string(&unloaded).unwrap().contains("load"));
 }
 
@@ -222,19 +287,34 @@ fn probe_evidence_holds_published_values_only() {
 fn tokens_and_upload_ids_are_nonempty_and_at_most_8192_bytes() {
     assert!(token::valid("t") && token::valid(&"t".repeat(8192)));
     assert!(!token::valid("") && !token::valid(&"t".repeat(8193)));
-    for (id, valid) in [(String::new(), false), ("u".repeat(8192), true), ("u".repeat(8193), false)] {
+    for (id, valid) in [
+        (String::new(), false),
+        ("u".repeat(8192), true),
+        ("u".repeat(8193), false),
+    ] {
         let body = serde_json::to_vec(&json!({"uploadId": id})).unwrap();
         assert_eq!(Session::decode(&body).is_ok(), valid, "{} bytes", id.len());
     }
     assert!(Session::decode(br#"{"uploadId":1}"#).is_err());
-    let session = Session { upload_id: "abc".into() };
-    assert_eq!(serde_json::to_string(&session).unwrap(), r#"{"uploadId":"abc"}"#);
+    let session = Session {
+        upload_id: "abc".into(),
+    };
+    assert_eq!(
+        serde_json::to_string(&session).unwrap(),
+        r#"{"uploadId":"abc"}"#
+    );
 }
 
 #[test]
 fn a_socket_ticket_without_authentication_is_empty_and_expired() {
     let unauthenticated = serde_json::to_string(&SocketTicket::unauthenticated()).unwrap();
     assert_eq!(unauthenticated, r#"{"token":"","expires":0}"#);
-    let ticket = SocketTicket { token: "t".into(), expires: 1_790_000_000_000 };
-    assert_eq!(serde_json::to_string(&ticket).unwrap(), r#"{"token":"t","expires":1790000000000}"#);
+    let ticket = SocketTicket {
+        token: "t".into(),
+        expires: 1_790_000_000_000,
+    };
+    assert_eq!(
+        serde_json::to_string(&ticket).unwrap(),
+        r#"{"token":"t","expires":1790000000000}"#
+    );
 }

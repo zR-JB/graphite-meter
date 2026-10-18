@@ -66,8 +66,7 @@ async function download({
   }
 }
 
-/** Reads an answer to its end without keeping it; false, and the rest canceled, once it passes MAX_ANSWER_BYTES. A
-    failed read is the next request's to find. */
+/** Reads an answer to its end without keeping it; false, the rest canceled, once past MAX_ANSWER_BYTES. */
 async function drained(response: Response): Promise<boolean> {
   const reader = response.body?.getReader();
   if (!reader) return true;
@@ -89,7 +88,11 @@ async function upload({
   sharing,
   rttMs,
 }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  const largest = largestPost(streams, sharing, (navigator as { deviceMemory?: number }).deviceMemory);
+  const largest = largestPost(
+    streams,
+    sharing,
+    (navigator as { deviceMemory?: number }).deviceMemory,
+  );
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
@@ -101,20 +104,27 @@ async function upload({
   for (;;) {
     const startedAt = performance.now();
     try {
-      const response = await fetch(url, { ...request, method: "POST", cache: "no-store", body: body.slice(0, bytes) });
+      const response = await fetch(url, {
+        ...request,
+        method: "POST",
+        cache: "no-store",
+        body: body.slice(0, bytes),
+      });
       // An unread echo pins the keep-alive connection the next POST needs; it is counted, never kept.
-      if (!(await drained(response))) return { type: "broken", detail: "the upload answer was too large" };
+      if (!(await drained(response)))
+        return { type: "broken", detail: "the upload answer was too large" };
       if (!response.ok) return { type: "ended", ending: refused(response) };
       const elapsedMs = performance.now() - startedAt;
       post({ type: "posted", bytes, elapsedMs });
       if (!(elapsedMs > 0)) continue;
       turnaround = Math.min(turnaround, elapsedMs);
-      // The rate counts each POST's turnaround as time, so a POST sized to span its send time and one turnaround
-      // sends for the send time.
+      // The rate counts each POST's turnaround as time, so a POST sized to its send time plus one turnaround sends for the send time.
       rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
       const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
       const want = (rate * (sendMs + turnaround)) / 1000;
-      bytes = Math.floor(Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))));
+      bytes = Math.floor(
+        Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))),
+      );
     } catch (error) {
       return { type: "broken", detail: String(error) };
     }

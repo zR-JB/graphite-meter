@@ -29,14 +29,14 @@ export function Splitter(props: {
   /** Which edge of the panel the splitter sits on: the panel grows toward it. */
   edge: "left" | "right";
   label: string;
-  /** The panel's width in px, and its limits. */
   value: Read<number>;
   min: Read<number>;
   max: Read<number>;
   onChange(px: number): void;
   onReset(): void;
 }): Node {
-  const clamp = (px: number) => Math.min(props.max.peek(), Math.max(props.min.peek(), Math.round(px)));
+  const clamp = (px: number) =>
+    Math.min(props.max.peek(), Math.max(props.min.peek(), Math.round(px)));
   const grows = props.edge === "right" ? 1 : -1;
   // A move that lands where the panel already is writes nothing, so a limit never rewrites a preference.
   const change = (px: number) => {

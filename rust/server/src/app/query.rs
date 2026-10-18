@@ -13,10 +13,14 @@ pub fn get(query: Option<&str>, name: &str) -> Option<String> {
     values(query, name).next()
 }
 
-/// Every value of `name` in order; pairs holding `;` or a bad escape are left out.
 pub fn values<'a>(query: Option<&'a str>, name: &'a str) -> impl Iterator<Item = String> + 'a {
-    let pairs = query.into_iter().flat_map(|query| query.split('&')).filter_map(pair);
-    pairs.filter(move |(key, _)| key == name).map(|(_, value)| value)
+    let pairs = query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter_map(pair);
+    pairs
+        .filter(move |(key, _)| key == name)
+        .map(|(_, value)| value)
 }
 
 /// A URL-encoded form's fields; `None` when one holds `;` or a bad escape, or a name repeats.
@@ -32,7 +36,6 @@ pub fn form(body: &str) -> Option<Vec<(String, String)>> {
     Some(fields)
 }
 
-/// `pairs` URL-encoded in their order.
 pub fn encode(pairs: &[(&str, &str)]) -> String {
     let pair = |(name, value): &(&str, &str)| format!("{}={}", escape(name), escape(value));
     pairs.iter().map(pair).collect::<Vec<_>>().join("&")
@@ -40,8 +43,14 @@ pub fn encode(pairs: &[(&str, &str)]) -> String {
 
 /// Unreserved bytes stay, a space becomes `+`, every other byte is percent-encoded.
 pub fn escape(text: &str) -> String {
-    const ESCAPED: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
-    utf8_percent_encode(text, ESCAPED).to_string().replace("%20", "+")
+    const ESCAPED: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'_')
+        .remove(b'.')
+        .remove(b'~');
+    utf8_percent_encode(text, ESCAPED)
+        .to_string()
+        .replace("%20", "+")
 }
 
 fn pair(text: &str) -> Option<(String, String)> {
@@ -59,7 +68,10 @@ fn decode(text: &str) -> Option<String> {
             .get(at + 1..at + 3)
             .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
     };
-    let valid = bytes.iter().enumerate().all(|(at, &byte)| byte != b'%' || escaped(at));
+    let valid = bytes
+        .iter()
+        .enumerate()
+        .all(|(at, &byte)| byte != b'%' || escaped(at));
     valid.then(|| {
         percent_decode_str(&text.replace('+', " "))
             .decode_utf8_lossy()
@@ -78,16 +90,22 @@ pub fn transfer_bytes(query: Option<&str>) -> u64 {
 /// `streams=`: missing, non-numeric or below one reads as one, and above the cap as the cap.
 pub fn streams(query: Option<&str>) -> usize {
     let streams = get(query, "streams").as_deref().and_then(integer);
-    streams.map_or(1, |streams| streams.clamp(1, MAX_LANE_STREAMS as i64) as usize)
+    streams.map_or(1, |streams| {
+        streams.clamp(1, MAX_LANE_STREAMS as i64) as usize
+    })
 }
 
 /// `datagrams=` asks for datagrams unless it spells zero or false.
 pub fn datagrams(query: Option<&str>) -> bool {
-    let Some(value) = get(query, "datagrams") else { return false };
+    let Some(value) = get(query, "datagrams") else {
+        return false;
+    };
     let value = value.trim();
     match integer(value) {
         Some(number) => number != 0,
-        None => !["false", "off", "no"].iter().any(|no| value.eq_ignore_ascii_case(no)),
+        None => !["false", "off", "no"]
+            .iter()
+            .any(|no| value.eq_ignore_ascii_case(no)),
     }
 }
 
@@ -121,11 +139,19 @@ mod tests {
         ] {
             assert_eq!(transfer_bytes(query), bytes, "{query:?}");
         }
-        for (query, streams) in [(None, 1), (Some("streams=0"), 1), (Some("streams=x"), 1), (Some("streams=5"), 5)] {
+        for (query, streams) in [
+            (None, 1),
+            (Some("streams=0"), 1),
+            (Some("streams=x"), 1),
+            (Some("streams=5"), 5),
+        ] {
             assert_eq!(super::streams(query), streams, "{query:?}");
         }
         assert_eq!(streams(Some("streams=17")), MAX_LANE_STREAMS);
-        assert_eq!(streams(Some("streams=99999999999999999999")), MAX_LANE_STREAMS);
+        assert_eq!(
+            streams(Some("streams=99999999999999999999")),
+            MAX_LANE_STREAMS
+        );
     }
 
     #[test]

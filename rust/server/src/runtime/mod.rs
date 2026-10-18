@@ -36,7 +36,6 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-/// A server with its listeners bound.
 pub struct Server {
     app: Arc<App>,
     pool: Pool,
@@ -78,7 +77,9 @@ impl Server {
             count => format!("{count} other servers"),
         };
         let location = Some(config.location()).filter(|location| !location.is_empty());
-        let location = location.map(|location| format!(" ({location})")).unwrap_or_default();
+        let location = location
+            .map(|location| format!(" ({location})"))
+            .unwrap_or_default();
         log!(
             Info,
             "config",
@@ -86,7 +87,10 @@ impl Server {
             config.name()
         );
         let (tls, hosts) = (config.tls.clone(), tls::covered_hosts(&config));
-        let oidc_only = matches!(config.auth.as_ref().map(|auth| &auth.methods), Some(Methods { password: None, .. }));
+        let oidc_only = matches!(
+            config.auth.as_ref().map(|auth| &auth.methods),
+            Some(Methods { password: None, .. })
+        );
         let terms = Terms::of(&config)?;
         let endpoint_bytes = Arc::new(AtomicUsize::new(configured_endpoint(&config)?));
         let endpoint = endpoint_bytes.clone();
@@ -95,10 +99,9 @@ impl Server {
             Some(files) => {
                 let load = move || Certificates::load(files, hosts, SystemTime::now(), fits);
                 let load = tokio::task::spawn_blocking(load);
-                Some(Arc::new(
-                    load.await
-                        .map_err(|error| format!("certificate loading failed: {error}"))??,
-                ))
+                Some(Arc::new(load.await.map_err(|error| {
+                    format!("certificate loading failed: {error}")
+                })??))
             }
             None => None,
         };
@@ -115,29 +118,47 @@ impl Server {
             .find(|listening| listening.endpoint == Endpoint::H3Companion);
         if let (Some(companion), Some(certificates)) = (companion, &certificates) {
             let fits = |bytes| terms.check(certificates.handshake_bytes(), bytes);
-            let binding = Binding { app: &app, certificates, fits };
+            let binding = Binding {
+                app: &app,
+                certificates,
+                fits,
+            };
             let local = companion.socket.local_addr();
-            let local = local.map_err(|error| format!("could not read the HTTP/3 port: {error}"))?;
+            let local =
+                local.map_err(|error| format!("could not read the HTTP/3 port: {error}"))?;
             let bound = binding.bind(local, &pool)?;
             endpoint_bytes.store(bound.bytes, Ordering::Relaxed);
             let (endpoint, address) = (Endpoint::Quic, companion.address.clone());
-            listeners.push(Listening { endpoint, address, socket: Socket::Quic(Box::new(bound)) });
+            listeners.push(Listening {
+                endpoint,
+                address,
+                socket: Socket::Quic(Box::new(bound)),
+            });
         }
-        Ok(Self { app, pool, listeners, certificates })
+        Ok(Self {
+            app,
+            pool,
+            listeners,
+            certificates,
+        })
     }
 
-    /// Where the listener of `endpoint` accepts.
     pub fn local_addr(&self, endpoint: Endpoint) -> Option<SocketAddr> {
-        let listening = self.listeners.iter().find(|listening| listening.endpoint == endpoint)?;
+        let listening = self
+            .listeners
+            .iter()
+            .find(|listening| listening.endpoint == endpoint)?;
         listening.socket.local_addr().ok()
     }
 
-    /// How many endpoints share the HTTP/3 port.
     pub fn quic_endpoints(&self) -> usize {
-        let quic = self.listeners.iter().find_map(|listening| match &listening.socket {
-            Socket::Quic(quic) => Some(quic.listeners.len()),
-            _ => None,
-        });
+        let quic = self
+            .listeners
+            .iter()
+            .find_map(|listening| match &listening.socket {
+                Socket::Quic(quic) => Some(quic.listeners.len()),
+                _ => None,
+            });
         quic.unwrap_or(0)
     }
 
@@ -147,44 +168,86 @@ impl Server {
 
     /// Serves until `stop`, then closes every listener at once, ends running lanes and drains connections.
     pub async fn serve(self, stop: impl Future<Output = ()>) -> Result<(), String> {
-        let Self { app, pool, listeners, certificates } = self;
+        let Self {
+            app,
+            pool,
+            listeners,
+            certificates,
+        } = self;
         let shutdown = app.shutdown().clone();
         let (pool, stopping, auth) = (&pool, &shutdown, app.auth().enabled());
         let mut accepting = FuturesUnordered::<Accepting<'_>>::new();
-        for Listening { endpoint, address, socket } in listeners {
+        for Listening {
+            endpoint,
+            address,
+            socket,
+        } in listeners
+        {
             let role = endpoint.protocol();
             let (app, next) = (app.clone(), || pool.next());
             let protocol = match socket {
                 Socket::Http1(socket, tls) => {
-                    let http1 = Http1 { app: app.clone(), endpoint, tls, buses: Handle::current() };
+                    let http1 = Http1 {
+                        app: app.clone(),
+                        endpoint,
+                        tls,
+                        buses: Handle::current(),
+                    };
                     let serve = move |socket, peer| http1.connection(socket, peer);
-                    accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    accepting.push(listen(
+                        app,
+                        socket,
+                        next,
+                        stopping,
+                        role,
+                        Transport::Tcp,
+                        serve,
+                    ));
                     "tcp"
                 }
                 Socket::Http2(socket, tls) => {
-                    let http2 = Http2 { app: app.clone(), tls };
+                    let http2 = Http2 {
+                        app: app.clone(),
+                        tls,
+                    };
                     let serve = move |socket, peer| http2.connection(socket, peer);
-                    accepting.push(listen(app, socket, next, stopping, role, Transport::Tcp, serve));
+                    accepting.push(listen(
+                        app,
+                        socket,
+                        next,
+                        stopping,
+                        role,
+                        Transport::Tcp,
+                        serve,
+                    ));
                     "tcp"
                 }
                 Socket::Quic(quic) => {
                     // Each endpoint accepts, answers Retry and runs its connections on its own runtime.
                     for listener in quic.listeners {
                         let (runtime, http3) = (listener.runtime(), quic.http3.clone());
-                        let (app, stopping, next) = (app.clone(), shutdown.clone(), runtime.clone());
+                        let (app, stopping, next) =
+                            (app.clone(), shutdown.clone(), runtime.clone());
                         let serve = move |incoming, peer| http3.connection(incoming, peer);
                         let serving = runtime.spawn(async move {
                             let next = move || next.clone();
-                            listen(app, listener, next, &stopping, role, Transport::Quic, serve).await
+                            listen(app, listener, next, &stopping, role, Transport::Quic, serve)
+                                .await
                         });
-                        accepting
-                            .push(Box::pin(async move { serving.await.map_err(|error| format!("{role}: {error}"))? }));
+                        accepting.push(Box::pin(async move {
+                            serving.await.map_err(|error| format!("{role}: {error}"))?
+                        }));
                     }
                     "udp"
                 }
             };
             let place = format!("{address}/{protocol}");
-            log!(Info, "listen", "{place:<21} {role:<9} {}", endpoint.roles(auth));
+            log!(
+                Info,
+                "listen",
+                "{place:<21} {role:<9} {}",
+                endpoint.roles(auth)
+            );
         }
         let tasks = async {
             tokio::join!(
@@ -209,7 +272,11 @@ impl Server {
                     ended.and(Err("a listener stopped accepting; stopping the server".into()))
                 }
             };
-            log!(Info, "server", "stop requested; closing listeners and draining connections");
+            log!(
+                Info,
+                "server",
+                "stop requested; closing listeners and draining connections"
+            );
             shutdown.cancel();
             while let Some(ended) = accepting.next().await {
                 result = result.and(ended);
@@ -269,7 +336,6 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 /// Verbose logs report transfer rates every second and the admission counters every thirty.
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
-/// The security log reports sign-in outcomes every minute.
 const SECURITY_LOG: Duration = Duration::from_mins(1);
 
 /// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
@@ -292,13 +358,11 @@ fn release_memory(pool: &Pool) {
     }
 }
 
-/// Collects the calling thread's heap and purges every arena.
 fn collect() {
     #[cfg(target_env = "musl")]
     rustfs_mimalloc::heap::Heap::main().collect(true);
 }
 
-/// Logs the minute's sign-in outcomes whenever one changed.
 async fn log_security(security: &Security) {
     let (mut ticks, mut last) = (interval(SECURITY_LOG), [0; COUNTERS]);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -311,7 +375,6 @@ async fn log_security(security: &Security) {
     }
 }
 
-/// Logs transfer rates every second and the admission counters every thirty seconds.
 async fn log_verbose(app: &App) {
     let (mut transfers, mut admission) = (interval(TRANSFER_LOG), interval(ADMISSION_LOG));
     transfers.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -332,10 +395,17 @@ async fn log_verbose(app: &App) {
 }
 
 /// Binds every enabled listener's TCP socket, HTTP/3's for its companion, and names the ports they bound in `config`.
-async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>) -> Result<Vec<Listening>, String> {
+async fn bind_all(
+    config: &mut Config,
+    certificates: Option<&Arc<Certificates>>,
+) -> Result<Vec<Listening>, String> {
     let mut listeners = Vec::new();
     for listener in &mut config.listeners {
-        let acceptor = |alpn: &[u8]| certificates.expect("validation requires TLS files").acceptor(alpn);
+        let acceptor = |alpn: &[u8]| {
+            certificates
+                .expect("validation requires TLS files")
+                .acceptor(alpn)
+        };
         let address = &mut listener.address;
         let socket = bind(address)
             .await
@@ -345,11 +415,21 @@ async fn bind_all(config: &mut Config, certificates: Option<&Arc<Certificates>>)
         }
         let (endpoint, socket) = match listener.kind {
             ListenerKind::H1 => (Endpoint::H1, Socket::Http1(socket, None)),
-            ListenerKind::H1Tls => (Endpoint::H1Tls, Socket::Http1(socket, Some(acceptor(b"http/1.1")))),
+            ListenerKind::H1Tls => (
+                Endpoint::H1Tls,
+                Socket::Http1(socket, Some(acceptor(b"http/1.1"))),
+            ),
             ListenerKind::H2 => (Endpoint::H2, Socket::Http2(socket, acceptor(b"h2"))),
-            ListenerKind::H3 => (Endpoint::H3Companion, Socket::Http1(socket, Some(acceptor(b"http/1.1")))),
+            ListenerKind::H3 => (
+                Endpoint::H3Companion,
+                Socket::Http1(socket, Some(acceptor(b"http/1.1"))),
+            ),
         };
-        listeners.push(Listening { endpoint, address: address.clone(), socket });
+        listeners.push(Listening {
+            endpoint,
+            address: address.clone(),
+            socket,
+        });
     }
     Ok(listeners)
 }
@@ -361,17 +441,24 @@ async fn bind(address: &ListenAddress) -> io::Result<TcpListener> {
         return TcpListener::bind(address.to_string()).await;
     }
     let ipv4 = || TcpListener::bind((Ipv4Addr::UNSPECIFIED, port));
-    let dual = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None).and_then(|socket| {
-        socket.set_only_v6(false)?;
-        Ok(socket)
-    });
+    let dual = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None).and_then(
+        |socket| {
+            socket.set_only_v6(false)?;
+            Ok(socket)
+        },
+    );
     let Ok(socket) = dual else {
         return ipv4().await;
     };
     #[cfg(unix)]
     socket.set_reuse_address(true)?;
     match socket.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)).into()) {
-        Err(error) if matches!(error.kind(), io::ErrorKind::AddrNotAvailable | io::ErrorKind::Unsupported) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::AddrNotAvailable | io::ErrorKind::Unsupported
+            ) =>
+        {
             ipv4().await
         }
         Err(error) => Err(error),
@@ -391,8 +478,14 @@ pub fn check_budget(config: &Config) -> Result<(), String> {
 /// The QUIC endpoint's buffers without its socket's, or none without HTTP/3.
 fn configured_endpoint(config: &Config) -> Result<usize, String> {
     match config.listener(ListenerKind::H3) {
-        Some(_) => quic::endpoint_bytes(&noq::EndpointConfig::default(), 1, config.limits.connections.get(), 0, 1)
-            .ok_or_else(|| quic::OVERFLOW.into()),
+        Some(_) => quic::endpoint_bytes(
+            &noq::EndpointConfig::default(),
+            1,
+            config.limits.connections.get(),
+            0,
+            1,
+        )
+        .ok_or_else(|| quic::OVERFLOW.into()),
         None => Ok(0),
     }
 }
@@ -429,7 +522,8 @@ impl Terms {
         if minimum > limit as u128 {
             // The kernel may double endpoint buffers and handshakes grow floors, so the advice keeps a tenth spare.
             const GIB: u128 = 1 << 30;
-            let fits = (limit as u128).saturating_sub(endpoint as u128 + BLOCK_BYTES as u128) / (floor as u128).max(1);
+            let fits = (limit as u128).saturating_sub(endpoint as u128 + BLOCK_BYTES as u128)
+                / (floor as u128).max(1);
             let fits = match fits * 9 / 10 {
                 spare @ 32.. => spare / 32 * 32,
                 spare => spare.max(1),
@@ -448,7 +542,6 @@ impl Terms {
     }
 }
 
-/// Bytes in binary units with at most one decimal, such as `1.5 MiB` or `256 KiB`.
 fn binary(bytes: u128) -> String {
     let (mut value, mut unit) = (bytes as f64, "B");
     for next in ["KiB", "MiB", "GiB", "TiB"] {
@@ -473,7 +566,9 @@ mod background_tests {
 
     fn app() -> App {
         let none = |_: &str| None::<OsString>;
-        let Ok(Loaded::Config(config)) = config::load(none, Vec::<OsString>::new(), &mut Vec::new()) else {
+        let Ok(Loaded::Config(config)) =
+            config::load(none, Vec::<OsString>::new(), &mut Vec::new())
+        else {
             panic!("the default configuration loads");
         };
         App::new(*config, CancellationToken::new()).unwrap()
@@ -510,12 +605,20 @@ mod background_tests {
             assert_eq!(released(), 0);
             advance(Duration::from_millis(1)).await;
             settle().await;
-            assert_eq!(released(), 1, "two seconds after the last connection closed");
+            assert_eq!(
+                released(),
+                1,
+                "two seconds after the last connection closed"
+            );
 
             let again = app.connection(peer, Transport::Tcp).unwrap();
             advance(IDLE_RELEASE * 3).await;
             settle().await;
-            assert_eq!(released(), 1, "nothing is released while a connection is open");
+            assert_eq!(
+                released(),
+                1,
+                "nothing is released while a connection is open"
+            );
             drop(again);
             settle().await;
             advance(IDLE_RELEASE).await;
@@ -531,7 +634,11 @@ mod background_tests {
                 advance(IDLE_RELEASE - Duration::from_millis(500)).await;
                 settle().await;
             }
-            assert_eq!(released(), 2, "short connections every 1.5 s release nothing");
+            assert_eq!(
+                released(),
+                2,
+                "short connections every 1.5 s release nothing"
+            );
             advance(Duration::from_millis(500)).await;
             settle().await;
             assert_eq!(released(), 3, "two seconds after the last of them");
@@ -550,7 +657,11 @@ mod terms_tests {
     use std::ffi::OsString;
 
     fn config(env: &[(&str, &str)]) -> Config {
-        let lookup = |name: &str| env.iter().find(|(key, _)| *key == name).map(|(_, value)| value.into());
+        let lookup = |name: &str| {
+            env.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.into())
+        };
         match config::load(lookup, Vec::<OsString>::new(), &mut Vec::new()) {
             Ok(Loaded::Config(config)) => *config,
             other => panic!("{other:?}"),
@@ -570,8 +681,15 @@ mod terms_tests {
             ("GM_MAX_SESSIONS_PER_CLIENT", &max),
         ];
         let refused = check_budget(&config(&[&TLS[..], &huge[..]].concat()));
-        assert_eq!(refused, Err("per-client stream budgets exceed the QUIC stream limit".into()));
-        assert_eq!(check_budget(&config(&huge[1..])), Ok(()), "only HTTP/3 counts streams");
+        assert_eq!(
+            refused,
+            Err("per-client stream budgets exceed the QUIC stream limit".into())
+        );
+        assert_eq!(
+            check_budget(&config(&huge[1..])),
+            Ok(()),
+            "only HTTP/3 counts streams"
+        );
     }
 
     #[test]
@@ -594,19 +712,33 @@ mod terms_tests {
         assert_eq!(lines.len(), 3, "{refused}");
         assert_eq!(
             lines[0],
-            format!("GM_MAX_BUFFER_BYTES {} is short of {} for 2 connections", terms.limit, terms.limit + 2)
+            format!(
+                "GM_MAX_BUFFER_BYTES {} is short of {} for 2 connections",
+                terms.limit,
+                terms.limit + 2
+            )
         );
         assert!(
             lines[2] == "raise GM_MAX_BUFFER_BYTES to 1073741824 or lower GM_MAX_CONNECTIONS to 1",
             "a handshake byte more on each connection: {refused}"
         );
-        assert!(terms.check(0, endpoint + 1).is_err(), "the endpoint's socket buffers count");
+        assert!(
+            terms.check(0, endpoint + 1).is_err(),
+            "the endpoint's socket buffers count"
+        );
     }
 
     #[test]
     fn noqs_stream_floor_at_per_client_limits_equal_to_the_totals() {
-        let totals = [("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "256"), ("GM_MAX_SESSIONS_PER_CLIENT", "64")];
+        let totals = [
+            ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "256"),
+            ("GM_MAX_SESSIONS_PER_CLIENT", "64"),
+        ];
         let floor = quic::noq_floor(&config(&totals).limits).unwrap();
-        assert_eq!(floor >> 10, 978, "noq's stream floor for 324 request streams, without HTTP/3's state");
+        assert_eq!(
+            floor >> 10,
+            978,
+            "noq's stream floor for 324 request streams, without HTTP/3's state"
+        );
     }
 }

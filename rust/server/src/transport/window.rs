@@ -15,20 +15,23 @@ use std::{
 };
 use tokio::time::Instant;
 
-/// An upload refused a raised receive window asks again after this pause.
 pub(crate) const FUNDING_RETRY: Duration = Duration::from_millis(100);
 
 /// Says whether an upload reads at the raised window, asked at its first admitted read and after refusal pauses.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Funding {
-    /// A refusal holds the next ask until the instant.
     Unfunded(Option<Instant>),
     Funded,
 }
 
 impl Funding {
     /// Asks `raise` with the admitted client's keys once that is due.
-    pub(crate) fn fund(&mut self, watch: &Watch, budget: &Budget, raise: impl FnOnce(&ClientKeys) -> bool) {
+    pub(crate) fn fund(
+        &mut self,
+        watch: &Watch,
+        budget: &Budget,
+        raise: impl FnOnce(&ClientKeys) -> bool,
+    ) {
         let Self::Unfunded(retry) = *self else {
             return;
         };
@@ -45,7 +48,6 @@ impl Funding {
     }
 }
 
-/// Exposes a connection's receive window as its request bodies read it.
 pub(crate) trait ReceiveWindow: Send + Sync + 'static {
     type Stream: Send + Unpin;
     type Error;
@@ -58,7 +60,10 @@ pub(crate) trait ReceiveWindow: Send + Sync + 'static {
     /// An admitted upload began (`true`) or stopped reading on the connection, funded or not.
     fn reading(&self, _stream: &mut Self::Stream, _reading: bool) {}
 
-    fn poll_data(stream: &mut Self::Stream, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Self::Error>>>;
+    fn poll_data(
+        stream: &mut Self::Stream,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Self::Error>>>;
 
     fn is_end_stream(_stream: &Self::Stream) -> bool {
         false
@@ -93,7 +98,10 @@ impl<W: ReceiveWindow> http_body::Body for Incoming<W> {
     type Data = Bytes;
     type Error = W::Error;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, W::Error>>> {
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, W::Error>>> {
         let this = self.get_mut();
         if this.finished {
             return Poll::Ready(None);
@@ -103,8 +111,9 @@ impl<W: ReceiveWindow> http_body::Body for Incoming<W> {
             this.reading = true;
             window.reading(stream, true);
         }
-        this.funding
-            .fund(&this.watch, window.budget(), |keys| window.raise(stream, keys));
+        this.funding.fund(&this.watch, window.budget(), |keys| {
+            window.raise(stream, keys)
+        });
         let frame = ready!(W::poll_data(stream, cx));
         this.finished = !matches!(frame, Some(Ok(_)));
         Poll::Ready(frame.map(|data| data.map(Frame::data)))

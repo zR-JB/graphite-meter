@@ -1,7 +1,13 @@
 // Paths in words for Settings and Details, the choices each picker offers and why one cannot be chosen.
 import type { ServerView } from "../../engine/net/connection";
 import type { PageConfig } from "../../engine/net/page";
-import { blockedReason, parseSelection, PROTOCOL_LABEL, resolve, unresolvedReason } from "../../engine/net/paths";
+import {
+  blockedReason,
+  parseSelection,
+  PROTOCOL_LABEL,
+  resolve,
+  unresolvedReason,
+} from "../../engine/net/paths";
 import { TRANSPORT_KEY } from "../../engine/net/servers";
 import type {
   Discovery,
@@ -25,8 +31,7 @@ interface PathTarget {
   protocol?: HttpProtocol;
 }
 
-/** The mechanism, its carrier, and both together: "Fetch streams over HTTP/1.1 (TLS)". A WebSocket names HTTP/1.1
-    only when its origin's fetch target does. */
+/** The mechanism and its carrier together: "Fetch streams over HTTP/1.1 (TLS)"; a WebSocket names HTTP/1.1 only when its origin's fetch target does. */
 export function describePath(
   discovery: Discovery | null,
   role: Role,
@@ -52,32 +57,43 @@ export function describePath(
 }
 
 /** The target a role uses on one server now: its verified path's, else what the saved choice resolves to. */
-export function shownTarget(view: ServerView | undefined, role: Role, page: Browser): Target | null {
+export function shownTarget(
+  view: ServerView | undefined,
+  role: Role,
+  page: Browser,
+): Target | null {
   if (!view) return null;
   const path = view[role].path;
   if (path) return path.target;
-  return view.discovery ? resolve(view.discovery, role, parseSelection(view[role].selection), page) : null;
+  return view.discovery
+    ? resolve(view.discovery, role, parseSelection(view[role].selection), page)
+    : null;
 }
 
 export const pathSummary = (discovery: Discovery | null, role: Role, target: PathTarget | null) =>
   target ? describePath(discovery, role, target).summary : "Selection unresolved";
 
-const origins = (discovery: Discovery, role: Role) => discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
+const origins = (discovery: Discovery, role: Role) =>
+  discovery[role] as ReadonlyMap<string, OriginTargets<Target>>;
 
-/** Why one server cannot run `value` for `role`; null when it can. */
-function unavailable(discovery: Discovery | null, role: Role, value: string, page: Browser): string | null {
+function unavailable(
+  discovery: Discovery | null,
+  role: Role,
+  value: string,
+  page: Browser,
+): string | null {
   if (!discovery) return "Checking server transports…";
   const selection = parseSelection(value);
-  return resolve(discovery, role, selection, page) ? null : unresolvedReason(discovery, role, selection, page).message;
+  return resolve(discovery, role, selection, page)
+    ? null
+    : unresolvedReason(discovery, role, selection, page).message;
 }
 
 export interface Choice {
-  /** The saved selection the choice writes. */
   value: string;
   label: string;
   /** The choice group whose note the row shows. */
   group: string;
-  /** Why it cannot be chosen; null when it can. */
   unavailable: string | null;
 }
 
@@ -98,10 +114,11 @@ const GROUPS: Record<Role, readonly (readonly [string, string])[]> = {
 };
 
 const groupOf = (target: Target) =>
-  target.transport === "fetch-stream" ? `protocol:${target.protocol}` : `transport:${target.transport}`;
+  target.transport === "fetch-stream"
+    ? `protocol:${target.protocol}`
+    : `transport:${target.transport}`;
 
-/** Every choice a picker offers: one server's advertised mechanisms, or for several the groups every answering server
-    can run. */
+/** Every choice a picker offers: one server's advertised mechanisms, or for several the groups every answering server can run. */
 export function choices(
   role: Role,
   servers: readonly ServerIdentity[],
@@ -110,8 +127,11 @@ export function choices(
   page: Browser,
 ): Choice[] {
   const selected = config.transports[TRANSPORT_KEY[role]];
-  const datagrams = role === "throughput" && (config.experimentalDatagramThroughput || selected === DATAGRAMS);
-  const groups = datagrams ? [...GROUPS[role], [DATAGRAMS, TRANSPORT["webtransport-datagram"]] as const] : GROUPS[role];
+  const datagrams =
+    role === "throughput" && (config.experimentalDatagramThroughput || selected === DATAGRAMS);
+  const groups = datagrams
+    ? [...GROUPS[role], [DATAGRAMS, TRANSPORT["webtransport-datagram"]] as const]
+    : GROUPS[role];
   if (servers.length <= 1) {
     const view = servers[0] && views.get(servers[0].id);
     const known = view?.discovery ?? null;
@@ -119,7 +139,10 @@ export function choices(
     const targets = known
       ? [...origins(known, role).values()]
           .flatMap((entry) => entry.targets)
-          .filter((target) => target.transport !== "webtransport-datagram" || datagrams || target.id === selected)
+          .filter(
+            (target) =>
+              target.transport !== "webtransport-datagram" || datagrams || target.id === selected,
+          )
       : [];
     const rows = [
       ...groups
@@ -164,8 +187,7 @@ export function choices(
 
 type RoleState = ServerView["throughput"]["state"];
 
-/** The check line under a picker: one server's own state and words, or the worst of several and how many are
-    ready; a failure's message stands in for its status word. Null when no server is left to state. */
+/** The check line under a picker: one server's state, or the worst of several and how many are ready; null with no server left. */
 export function roleLine(
   role: Role,
   considered: readonly ServerView[],
@@ -176,7 +198,8 @@ export function roleLine(
   if (!first) return null;
   if (!several) {
     const { state, message } = first[role];
-    if (state === "failed" && message) return { state, status: { label: message, tone: "err" }, summary: null };
+    if (state === "failed" && message)
+      return { state, status: { label: message, tone: "err" }, summary: null };
     return {
       state,
       status: READINESS[state],
@@ -184,11 +207,16 @@ export function roleLine(
     };
   }
   const states = considered.map((view) => view[role].state);
-  const state = (["checking", "failed", "unchecked"] as const).find((each) => states.includes(each)) ?? "verified";
+  const state =
+    (["checking", "failed", "unchecked"] as const).find((each) => states.includes(each)) ??
+    "verified";
   const verified = states.filter((each) => each === "verified").length;
   return {
     state,
     status: READINESS[state],
-    summary: verified === states.length ? "Resolved per server" : `${verified} of ${states.length} servers ready`,
+    summary:
+      verified === states.length
+        ? "Resolved per server"
+        : `${verified} of ${states.length} servers ready`,
   };
 }

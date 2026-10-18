@@ -6,7 +6,13 @@ import type { ServerIdentity } from "../../engine/types";
 import type { LatencySummary } from "../../engine/measure/latency";
 import { needsPings } from "../../engine/net/streams";
 import type { Phase } from "../../engine/run/run";
-import { activities, planned, STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
+import {
+  activities,
+  planned,
+  STAGES,
+  type Stage,
+  type TransferStage,
+} from "../../engine/run/schedule";
 import { nextFrame, pageMs } from "../../lib/frame";
 import { Glide } from "../../lib/motion";
 import { batch, computed, effect, scope, signal, untrack, type Read } from "../../lib/signal";
@@ -26,7 +32,6 @@ export type Live = ReturnType<typeof createLive>;
 
 const lives = new WeakMap<App, Live>();
 
-/** Gives the app's live values, made once and kept as long as the app. */
 export function liveOf(app: App): Live {
   let live = lives.get(app);
   if (!live) {
@@ -38,7 +43,10 @@ export function liveOf(app: App): Live {
 
 function createLive(app: App) {
   const { run, preferences, servers } = app;
-  const units = computed<Units>(() => ({ base: preferences.unitBase(), kind: preferences.unitKind() }));
+  const units = computed<Units>(() => ({
+    base: preferences.unitBase(),
+    kind: preferences.unitKind(),
+  }));
   let movedAt = Number.NEGATIVE_INFINITY;
   const moved = signal(0);
   const bump = () => {
@@ -46,8 +54,7 @@ function createLive(app: App) {
     moved.set(moved.peek() + 1);
   };
 
-  // The peaks are running maxima of what the live ticks drew, a warmup's included, so the axes never step back and
-  // the scale is sized before the window opens; a new run starts them over.
+  // The peaks are running maxima of what live ticks drew, warmups included, so axes never step back; a new run starts them over.
   const peaks = signal({ lane: 0, combined: 0 });
   effect(() => {
     run.throughputVersion();
@@ -61,7 +68,10 @@ function createLive(app: App) {
       const down = sample?.down ?? 0;
       const up = sample?.up ?? 0;
       if (Math.max(down, up) > current.lane || down + up > current.combined)
-        peaks.set({ lane: Math.max(current.lane, down, up), combined: Math.max(current.combined, down + up) });
+        peaks.set({
+          lane: Math.max(current.lane, down, up),
+          combined: Math.max(current.combined, down + up),
+        });
     });
   });
   const scales = computed(() =>
@@ -87,8 +97,12 @@ function createLive(app: App) {
         rateStage.set(null);
         stalled = false;
       }
-      if (!sample || (sample.down === null && sample.up === null) || (sample.stalled && stalled)) return;
-      const correction = { snap: rateStage.peek() === null, over: sample.stalled ? STALL_FADE_MS : undefined };
+      if (!sample || (sample.down === null && sample.up === null) || (sample.stalled && stalled))
+        return;
+      const correction = {
+        snap: rateStage.peek() === null,
+        over: sample.stalled ? STALL_FADE_MS : undefined,
+      };
       stalled = sample.stalled;
       down.set(sample.down ?? 0, correction);
       up.set(sample.bridgedUp ?? sample.up ?? 0, correction);
@@ -97,17 +111,24 @@ function createLive(app: App) {
     });
   });
 
-  // The result lens and the latency focus live here. Showing every server follows the run's focus, which moves to a
-  // survivor when its server leaves; a server shown alone takes the focus when it measured latency.
+  // The result lens and the latency focus; all servers follow the run's focus, and a server shown alone takes it when it measured latency.
   const lens = signal("");
   const chosen = signal<string | null>(null);
   const measuredLatency = (id: string | null) =>
-    !!id && (run.details.peek()?.servers.some((entry) => entry.server.id === id && entry.latencyTarget) ?? true);
+    !!id &&
+    (run.details.peek()?.servers.some((entry) => entry.server.id === id && entry.latencyTarget) ??
+      true);
   function showServer(id: string): void {
     const pin = app.latencyPin.peek();
     batch(() => {
       lens.set(id);
-      chosen.set(measuredLatency(id) ? id : measuredLatency(pin) ? pin : (run.details.peek()?.latencyFocus ?? null));
+      chosen.set(
+        measuredLatency(id)
+          ? id
+          : measuredLatency(pin)
+            ? pin
+            : (run.details.peek()?.latencyFocus ?? null),
+      );
     });
   }
   /** Shows one server's latency, mid-run included; every server is probed alike, only the view changes. */
@@ -135,8 +156,7 @@ function createLive(app: App) {
     const id = focus();
     return id ? run.latency(id) : null;
   });
-  // A late reply revises a closed bucket, so the series changes hundreds of times a second while replies are fast;
-  // views follow it at most once a frame.
+  // A late reply revises a closed bucket hundreds of times a second, so views follow the series at most once a frame.
   const bucketFrame = signal(0);
   let bucketPending: (() => void) | null = null;
   effect(() => {
@@ -149,7 +169,6 @@ function createLive(app: App) {
         });
     });
   });
-  /** Gives the focus server's buckets, as of this frame. */
   const buckets = (): readonly LatencyBucket[] => {
     bucketFrame();
     return series()?.buckets ?? [];
@@ -176,7 +195,11 @@ function createLive(app: App) {
   /** The dial reads milliseconds through the latency stage, its warmup included, and after a latency-only run. */
   const msScale = computed(() => {
     const phase = run.phase();
-    return phase === "latency" || (phase === "warmup" && run.stage() === "latency") || completedRtt() !== null;
+    return (
+      phase === "latency" ||
+      (phase === "warmup" && run.stage() === "latency") ||
+      completedRtt() !== null
+    );
   });
   const latencyAxis = computed(() => latencyAxisMs(buckets(), !run.running()));
   // The round trip shows only on the millisecond scale; between runs the idle probes move it unseen and wake nothing.
@@ -190,8 +213,7 @@ function createLive(app: App) {
     });
   });
 
-  /** Counts each transfer stage's samples in the series, with the first and the last time, as a key that changes only
-      when that stage's samples do, so a strip whose stage is not running never redraws for another's. */
+  /** Each transfer stage's sample count and first and last time, as a key that changes only with that stage's samples. */
   const stageSamples = computed(() => {
     run.throughputVersion();
     const seen: Partial<Record<TransferStage, { count: number; first: number; last: number }>> = {};
@@ -244,7 +266,11 @@ function createLive(app: App) {
         budget.set(0);
       } else if (progress !== stale) {
         const running = step === "running" && progress.budgetMs > 0;
-        phaseClock.set(progress.elapsedMs, { rate: running ? 1 : 0, max: progress.budgetMs, snap: fresh });
+        phaseClock.set(progress.elapsedMs, {
+          rate: running ? 1 : 0,
+          max: progress.budgetMs,
+          snap: fresh,
+        });
         budget.set(progress.budgetMs);
         fresh = false;
       }
@@ -266,8 +292,7 @@ function createLive(app: App) {
     });
   });
 
-  // One projection of the run's facts gives each stage's state in the shown run; a run that ended keeps the phase it
-  // ended in for its stage.
+  // Each stage's state in the shown run, from one projection of its facts; an ended run keeps its last phase for its stage.
   const lastPhase = signal<Phase | null>(null);
   effect(() => {
     const phase = run.phase();
@@ -284,7 +309,13 @@ function createLive(app: App) {
     const statuses = run.statuses();
     const stall = run.stall() !== null;
     const ended =
-      phase === "complete" ? "complete" : phase === "aborted" ? "stopped" : phase === "error" ? "error" : null;
+      phase === "complete"
+        ? "complete"
+        : phase === "aborted"
+          ? "stopped"
+          : phase === "error"
+            ? "error"
+            : null;
     const plan = shownPlan();
     const entries = STAGES.map((stage) => {
       const mine = current === stage;
@@ -296,7 +327,10 @@ function createLive(app: App) {
         ended,
       });
       // A run that failed leaves the stage it was in waiting, as its result never says otherwise.
-      return [stage, ended === "error" && state === "failed" && !statuses[stage] ? "upcoming" : state] as const;
+      return [
+        stage,
+        ended === "error" && state === "failed" && !statuses[stage] ? "upcoming" : state,
+      ] as const;
     });
     return Object.fromEntries(entries) as Record<Stage, StageState>;
   });
@@ -314,10 +348,11 @@ function createLive(app: App) {
   /** A start the servers already refuse reads as blocked before anyone presses Start. */
   const preparation = computed<Preparation>(() => {
     const own = run.preparation();
-    return own === "idle" && run.phase() === "idle" && !servers.loading() && app.blocker() ? "blocked" : own;
+    return own === "idle" && run.phase() === "idle" && !servers.loading() && app.blocker()
+      ? "blocked"
+      : own;
   });
-  /** Lists the servers the run indicates, its own selection, else the selected ones in catalog order, as discovery
-      names them. */
+  /** The servers the run indicates: its own selection, else the selected ones in catalog order, as discovery names them. */
   const indicated = computed<readonly ServerIdentity[]>(() => {
     const details = run.details();
     if (details) return details.selection;
@@ -348,7 +383,6 @@ function createLive(app: App) {
     /** Holds the shown segment's length once its progress arrives; 0 before. */
     budget: budget as Read<number>,
     runClock,
-    /** Bumped whenever a live value is set. */
     moved: moved as Read<number>,
     /** Painting may stop once no run is live and the last change has landed. */
     active: (now: number) => run.running.peek() || now - movedAt < SETTLE_MS,

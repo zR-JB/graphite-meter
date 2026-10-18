@@ -9,7 +9,6 @@ export const SCORE_BUCKETS = SCORE_WINDOW_MS / BUCKET_MS;
 interface Moments {
   count: number;
   mean: number;
-  /** Sums the squared deviations from the mean. */
   squares: number;
 }
 
@@ -21,10 +20,8 @@ export interface Mark {
 
 const fresh = (): Moments => ({ count: 0, mean: 0, squares: 0 });
 
-/** Cuts byte and time evidence into fixed 250 ms rates. It keeps their spread as running moments over every rate and
-    over a window opened at a point (a steady stretch), and the latest `keep` rates themselves. */
+/** Fixed 250 ms rates from byte and time evidence, with running moments over all and over an open window, and the latest `keep`. */
 export class RateSeries {
-  /** Holds the latest rates, at most `keep`. */
   readonly recent: number[] = [];
   #bytes = 0;
   #ms = 0;
@@ -36,7 +33,6 @@ export class RateSeries {
     return { all: { ...this.#all }, window: this.#window && { ...this.#window } };
   }
 
-  /** Takes the moments back to an earlier mark. */
   restore(mark: Mark): void {
     this.#all = { ...mark.all };
     this.#window = mark.window && { ...mark.window };
@@ -93,18 +89,24 @@ export interface Confidence {
   variation?: number;
 }
 
-const mean = (values: readonly number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0);
+const mean = (values: readonly number[]) =>
+  values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
 /** 1 − 2.2 × CV − 1.4 × |last third − first third| / mean over the trailing buckets. */
 export function transferConfidence(rates: readonly number[], buckets = SCORE_BUCKETS): Confidence {
   const values = rates.slice(-buckets);
   const average = mean(values);
-  if (values.length < 2 || average <= 0) return { score: 0, variation: 1, sampleCount: values.length };
+  if (values.length < 2 || average <= 0)
+    return { score: 0, variation: 1, sampleCount: values.length };
   const variation = Math.sqrt(mean(values.map((value) => (value - average) ** 2))) / average;
   const third = Math.max(2, Math.ceil(values.length / 3));
   const slope = Math.abs(mean(values.slice(-third)) - mean(values.slice(0, third))) / average;
-  return { score: clamp01(1 - variation * 2.2 - slope * 1.4), variation, sampleCount: values.length };
+  return {
+    score: clamp01(1 - variation * 2.2 - slope * 1.4),
+    variation,
+    sampleCount: values.length,
+  };
 }
 
 /** Returns 100 × (1 − CV) of every bucket, holes included, floored at 0, and 0 below two buckets. */
@@ -130,11 +132,17 @@ export const minCoverage = (early: boolean) => (early ? EARLY_FINISH.minCoverage
 export const stillStable = (wasStable: boolean, score: number) =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
-/** Returns the evidence a stage can reach within its time, never below the statistical minimum. `intervalMs` is
-    the fixed probe spacing of a latency stage, or null when reply-driven. */
-function sampleFloor(kind: "latency" | "transfer", durationMs: number, intervalMs: number | null): number {
+/** The evidence a stage can reach within its time, never below the statistical minimum; `intervalMs` null is reply-driven. */
+function sampleFloor(
+  kind: "latency" | "transfer",
+  durationMs: number,
+  intervalMs: number | null,
+): number {
   const requested = kind === "latency" ? EARLY_FINISH.latencySamples : EARLY_FINISH.transferSamples;
-  const budgetMs = Math.max(0, (Number.isFinite(durationMs) ? durationMs : 0) - EARLY_FINISH.confirmationMs);
+  const budgetMs = Math.max(
+    0,
+    (Number.isFinite(durationMs) ? durationMs : 0) - EARLY_FINISH.confirmationMs,
+  );
   const spacing = kind === "latency" ? intervalMs : BUCKET_MS;
   if (!spacing) return requested;
   const capacity =

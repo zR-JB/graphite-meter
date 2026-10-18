@@ -6,7 +6,6 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 /// The largest counter both clients represent exactly.
 pub const MAX_COUNTER: u64 = (1 << 53) - 1;
 
-/// Readers bound each record to this many bytes.
 pub const MAX_RECORD_BYTES: usize = 64 << 10;
 
 /// A blank line: the feed is alive, with no observation.
@@ -42,7 +41,10 @@ pub struct Counters {
 impl Counters {
     /// Counters past the exact JSON range stay at its maximum.
     pub fn new(bytes: u64, nanos: u64) -> Self {
-        Self { bytes: bytes.min(MAX_COUNTER), nanos: nanos.min(MAX_COUNTER) }
+        Self {
+            bytes: bytes.min(MAX_COUNTER),
+            nanos: nanos.min(MAX_COUNTER),
+        }
     }
 
     pub fn bytes(self) -> u64 {
@@ -68,13 +70,11 @@ fn counter<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> 
     Ok(number as u64)
 }
 
-/// One record of a progress feed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Record {
     /// The feed is attached; this proves no delivery.
     Ready,
-    /// One cumulative receiver observation.
     Progress(Counters),
     /// The final observation, after finalization and lane drain.
     Complete(Counters),
@@ -88,7 +88,6 @@ pub enum Record {
 }
 
 impl Record {
-    /// The record and its newline.
     pub fn line(&self) -> String {
         let mut line = serde_json::to_string(self).expect("records serialize");
         line.push('\n');
@@ -109,7 +108,13 @@ impl Record {
             #[serde(default)]
             message: String,
         }
-        let Sent { r#type, bytes, nanos, code, message } = json::decode(line)?;
+        let Sent {
+            r#type,
+            bytes,
+            nanos,
+            code,
+            message,
+        } = json::decode(line)?;
         let counters = || match (bytes, nanos) {
             (Some(bytes), Some(nanos)) => Ok(Counters { bytes, nanos }),
             _ => Err(serde_json::Error::custom("missing upload progress counter")),
