@@ -156,10 +156,10 @@ signal after the test finished does not change the status.
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `HTTPS_PROXY`, `HTTP_PROXY`     | The proxy for `https://` and `http://` servers, given as an `http://`, `https://`, `socks5://` or `socks5h://` URL with optional credentials. Lowercase names work too, and `ALL_PROXY` is not read. |
 | `NO_PROXY`                      | A comma-separated list of names (`example.com` with its subdomains, `.example.com` the subdomains only), IP addresses, CIDRs and `host:port` entries. `*` bypasses every proxy. Loopback and `localhost` never use a proxy. |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR` | Trust only the certificates in this file or these directories instead of the system's.                                 |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | On Linux, `SSL_CERT_FILE` replaces the system CA bundle and `SSL_CERT_DIR`, a list separated like `PATH`, the system certificate directories; each one unset keeps the system's. On Windows, either one replaces the system's certificates. |
 | `NO_COLOR`                      | No color, though a terminal still gets bold text.                                                                      |
 | `CLICOLOR_FORCE`, `FORCE_COLOR` | Color even when stdout is not a terminal or `TERM=dumb`.                                                               |
-| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit` (or a `TERM` ending in `direct`) gives 24-bit color, a `TERM` with `256color` gives 256 colors, and anything else gives 16, with at most 256 under `screen` or `tmux`. A Windows console without `TERM` gets 24-bit color. |
+| `COLORTERM`, `TERM`             | The color depth. `COLORTERM=truecolor` or `24bit`, a `TERM` ending in `direct` or naming a 24-bit terminal such as `kitty`, `foot` or `wezterm`, and Windows Terminal give 24-bit color. `screen`, `tmux` and a `TERM` with `256color` give 256 colors, and anything else gives 16. A Windows console without `TERM` gets 24-bit color. |
 
 If the client cannot use a proxy variable, every request that would go through that proxy fails and names the
 variable. HTTP/3 and WebTransport connect directly over UDP, without the proxy.

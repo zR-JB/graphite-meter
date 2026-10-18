@@ -18,8 +18,9 @@ source build. Besides serving, it takes these commands:
 ## Settings
 
 The environment loads first, and a flag overrides it. Rows marked _env only_ have no flag, so secrets stay out of
-process arguments. Durations take units such as `90s`, `5m` or `2h`, and booleans take `true`, `false`, `1` or
-`0`. A configuration error stops the server with exit status 1 and names the setting.
+process arguments. Listen addresses take `:port` or `host:port`, durations take units such as `90s`, `5m` or `2h`,
+and booleans take `true`, `false`, `1` or `0`. A configuration error stops the server with exit status 1 and names
+the setting.
 
 | Environment                             | Flag                                   | Default          | Meaning                                                                                |
 | --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
@@ -27,28 +28,28 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_H1_TLS_ADDR`                        | `--h1-tls-addr`                        | empty            | HTTPS HTTP/1.1 address; empty disables.                                                |
 | `GM_H2_ADDR`                            | `--h2-addr`                            | empty            | HTTP/2 TLS address; empty disables.                                                    |
 | `GM_H3_ADDR`                            | `--h3-addr`                            | empty            | HTTP/3 UDP and bootstrap TCP address; empty disables.                                  |
-| `GM_TLS_CERT` / `GM_TLS_KEY`            | `--tls-cert` / `--tls-key`             | empty            | PEM paths; required when any TLS listener is enabled.                                  |
+| `GM_TLS_CERT` / `GM_TLS_KEY`            | `--tls-cert` / `--tls-key`             | empty            | PEM paths; required when any TLS listener is enabled. The certificate must be current and name the host of every HTTPS public origin. |
 | `GM_H1_PUBLIC_ORIGIN`                   | `--h1-public-origin`                   | empty            | Public `http://` origin of the clear listener.                                         |
 | `GM_H1_TLS_PUBLIC_ORIGIN`               | `--h1-tls-public-origin`               | empty            | Public `https://` origin of the HTTPS HTTP/1.1 listener.                               |
 | `GM_H2_PUBLIC_ORIGIN`                   | `--h2-public-origin`                   | empty            | Public `https://` origin of the HTTP/2 listener.                                       |
 | `GM_H3_PUBLIC_ORIGIN`                   | `--h3-public-origin`                   | empty            | Public `https://` origin of the HTTP/3 listener.                                       |
 | `GM_ADVERTISED_NATIVE_ENDPOINTS`        | `--advertised-native-endpoints`        | `all`            | `all`, `none` or a subset of `http1-clear,http1-tls,http2,http3`.                      |
 | `GM_PUBLIC_ORIGINS`                     | `--public-origins`                     | empty            | Negotiated origins (or `self`) for throughput and latency.                             |
-| `GM_PUBLIC_THROUGHPUT_ORIGINS`          | `--public-throughput-origins`          | empty            | Negotiated throughput-only origins.                                                    |
-| `GM_PUBLIC_LATENCY_ORIGINS`             | `--public-latency-origins`             | empty            | WebSocket latency-only origins.                                                        |
+| `GM_PUBLIC_THROUGHPUT_ORIGINS`          | `--public-throughput-origins`          | empty            | Negotiated throughput-only origins (or `self`).                                        |
+| `GM_PUBLIC_LATENCY_ORIGINS`             | `--public-latency-origins`             | empty            | WebSocket latency-only origins (or `self`).                                            |
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters.            |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Location label, with the same limits.                                                  |
 | `GM_RESULT_HISTORY_DEFAULT`             | `--result-history-default`             | `false`          | Default for saving completed browser results on the device.                            |
 | `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log throughput every second, admission counters every 30 s and sign-in debug lines.    |
-| `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Concurrent measurement handlers.                                                       |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Handlers per client identity.                                                          |
-| `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, a share of the handler pool.                                    |
+| `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Measurements running at once: downloads, uploads, latency connections and WebTransport sessions. |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Measurements per client identity.                                                      |
+| `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, which also count as measurements.                               |
 | `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
 | `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources)).                 |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client; a trusted proxy counts only toward `GM_MAX_CONNECTIONS`. |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Lifetime of a request-shaped measurement.                                              |
-| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Lifetime of a WebTransport session.                                                    |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `6m`             | Longest HTTP download or upload and longest latency connection; unset, at least `GM_MAX_STAGE_DURATION` plus 1 minute. |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Longest WebTransport download or upload session; unset, at least the operation lifetime. |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s` to `24h`; sent in `/preflight`.                   |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
@@ -59,21 +60,23 @@ process arguments. Durations take units such as `90s`, `5m` or `2h`, and boolean
 | `GM_AUTH_OIDC_CLIENT_ID`                | `--auth-oidc-client-id`                | empty            | Confidential client ID.                                                                |
 | `GM_AUTH_OIDC_CLIENT_SECRET`            | _env only_                             | empty            | Inline client secret; prefer the file.                                                 |
 | `GM_AUTH_OIDC_CLIENT_SECRET_FILE`       | `--auth-oidc-client-secret-file`       | empty            | File with the client secret.                                                           |
-| `GM_AUTH_OIDC_ALLOWED_GROUPS`           | `--auth-oidc-allowed-groups`           | empty            | Required comma-separated, case-sensitive groups.                                       |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS`           | `--auth-oidc-allowed-groups`           | empty            | Groups allowed to sign in, comma-separated and case-sensitive; required for OIDC.      |
 | `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, at most 64 bytes.                                                  |
 | `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalog](#server-catalog) JSON.                                                |
 | `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalog file path without `..`; exclusive with the inline form.               |
 | `TZ`                                    | _env only_                             | UTC              | IANA zone name for [log times](#logs), from zone data built into the release.          |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | _env only_                             | empty            | Proxy for OIDC requests, read as the [terminal client](TERMINAL.md#environment) reads them. |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR`         | _env only_                             | the system's     | CA roots for OIDC requests instead of the system bundle.                               |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`         | _env only_                             | the system's     | CA roots for OIDC requests. `SSL_CERT_FILE` replaces the system bundle and `SSL_CERT_DIR`, a `:`-separated list, the system directories; each one unset keeps the system's. |
 
 - Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
-  limit, sessions may not exceed handlers, and the session duration must be at least the operation duration.
-  Lifetimes left unset grow to cover the stage limit plus a minute, so the operation lifetime is 6 min by default
-  and a server that allows multi-hour stages never cuts their lanes on a short default. The session lifetime grows to
-  at least the operation lifetime. Set them to keep lanes shorter, and clients reconnect across each cut. Something
+  limit, sessions may not exceed measurements, and the session duration must be at least the operation duration.
+  An unset operation lifetime is at least the stage limit plus a minute, so a server that allows multi-hour stages
+  never cuts their transfers short, and an unset session lifetime is at least the operation lifetime. Set them to
+  cut transfers sooner, and clients reconnect across each cut. Something
   must carry throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or
   `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration advertises no throughput endpoint".
+- A native listener is advertised on the host the client asked for, at the listener's own port. Set its
+  `GM_H*_PUBLIC_ORIGIN` when clients reach it on another host or port, such as a remapped container port.
 - A client identity is a login or measurement grant, and its subject shares twice its limit. Every password login
   is the one operator subject. Without a login, the identity is an IPv4 address or an IPv6 /64, and its /56 and
   /48 share two and four times its limit. Upload receivers are counted the same way, and connections are counted

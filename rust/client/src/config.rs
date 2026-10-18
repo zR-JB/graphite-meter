@@ -508,9 +508,9 @@ const FLAGS: [Flag<Flags>; 22] = [
     row!("ping", "cadence", "Idle probe interval: reply-driven, fast, medium, slow or a duration from 80ms to \
         15s", |f, v| f.config.ping = cadence(v)?, |f| cadence_name(f.config.ping)),
     row!("report", "",
-        "Run once without the interface and print the final report (automatic when stdout is not a terminal)",
+        "Run once without the console and print the final report (automatic when stdout is not a terminal)",
         |f, v| f.config.report = flag::parse_bool(v)?, |f| f.config.report.to_string()),
-    row!("server", "id", "Test server ID from the server catalog; repeat for several (default: its default selection)",
+    row!("server", "id", "Test server ID from the server catalog; repeat for up to 4 (default: its default selection)",
         |f, v| server(&mut f.config.servers, v)?, |_f| String::new()),
     row!("stages", "list", "Comma-separated stages: latency (ping), download (down), upload (up) or bidirectional \
         (bidi)", |f, v| f.config.stages = stages(v)?,

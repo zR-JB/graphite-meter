@@ -74,14 +74,15 @@ fn unset_lifetimes_cover_the_stage_limit() {
         [lifetimes.operation, lifetimes.session].map(|lifetime| lifetime.as_secs())
     };
     assert_eq!(lifetimes(&[("GM_MAX_STAGE_DURATION", "3h")]), [3 * 3600 + 60, 3 * 3600 + 60]);
-    assert_eq!(lifetimes(&[("GM_MAX_STAGE_DURATION", "1m")]), [300, 7200]);
+    assert_eq!(lifetimes(&[]), [360, 7200], "the defaults --help prints");
+    assert_eq!(lifetimes(&[("GM_MAX_STAGE_DURATION", "1m")]), [360, 7200]);
     assert_eq!(
         lifetimes(&[("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_OPERATION_DURATION", "10m")]),
         [600, 7200]
     );
     assert_eq!(
         lifetimes(&[("GM_MAX_OPERATION_DURATION", "")]),
-        [300, 7200],
+        [360, 7200],
         "an empty value is set to its default"
     );
     let explicit = [("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_SESSION_DURATION", "1h")];

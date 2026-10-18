@@ -170,6 +170,9 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// How much longer than the stage limit an unset operation lifetime runs.
+const STAGE_MARGIN: Duration = Duration::from_mins(1);
+
 /// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
 macro_rules! settings {
     ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $placeholder:expr, $usage:literal;)+) => {
@@ -219,7 +222,7 @@ settings! {
     h3_public_origin: String = String::new(), "GM_H3_PUBLIC_ORIGIN", "h3-public-origin", "origin",
         "Public origin of the native HTTP/3 listener";
     advertised: Advertised = Advertised::All, "GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints", "names",
-        "All, none, or comma-separated native endpoint names";
+        "all, none, or comma-separated http1-clear, http1-tls, http2, http3";
     public_origins: Vec<String> = Vec::new(), "GM_PUBLIC_ORIGINS", "public-origins", "origins",
         "Comma-separated negotiated origins providing throughput and latency";
     public_throughput_origins: Vec<String> = Vec::new(), "GM_PUBLIC_THROUGHPUT_ORIGINS", "public-throughput-origins",
@@ -230,27 +233,30 @@ settings! {
     location: String = String::new(), "GM_SERVER_LOCATION", "location", "location", "Server location label";
     result_history_default: bool = false, "GM_RESULT_HISTORY_DEFAULT", "result-history-default", "",
         "Save completed browser results on this device by default";
-    verbose: bool = false, "GM_VERBOSE", "verbose", "", "Log per-second download/upload throughput";
+    verbose: bool = false, "GM_VERBOSE", "verbose", "",
+        "Log throughput every second, admission counters every 30s and sign-in debug lines";
     max_active_measurements: usize = 256, "GM_MAX_ACTIVE_MEASUREMENTS", "max-active-measurements", "number",
-        "Maximum number of concurrent measurement handlers";
+        "Measurements running at once: downloads, uploads, latency connections and WebTransport sessions";
     max_active_measurements_per_client: usize = 32, "GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT",
-        "max-active-measurements-per-client", "number", "Maximum number of concurrent measurement handlers per client";
+        "max-active-measurements-per-client", "number", "Measurements running at once per client";
     max_active_sessions: usize = 64, "GM_MAX_ACTIVE_SESSIONS", "max-active-sessions", "number",
-        "Maximum number of concurrent WebTransport sessions, a share of the measurement pool";
+        "WebTransport sessions running at once, which also count as measurements";
     max_sessions_per_client: usize = 8, "GM_MAX_SESSIONS_PER_CLIENT", "max-sessions-per-client", "number",
-        "Maximum number of concurrent WebTransport sessions per client";
+        "WebTransport sessions running at once per client";
     max_buffer_bytes: usize = 8 << 30, "GM_MAX_BUFFER_BYTES", "max-buffer-bytes", "bytes",
         "Bytes of connection buffers shared by QUIC and HTTP/2";
     max_connections: usize = 4096, "GM_MAX_CONNECTIONS", "max-connections", "number",
-        "Maximum number of concurrent TCP and QUIC connections";
+        "TCP and QUIC connections open at once";
     max_connections_per_client: usize = 64, "GM_MAX_CONNECTIONS_PER_CLIENT", "max-connections-per-client", "number",
-        "Maximum number of concurrent connections per direct client";
-    max_operation_duration: Duration = Duration::from_mins(5), "GM_MAX_OPERATION_DURATION",
-        "max-operation-duration", "duration", "Maximum measurement operation duration";
+        "Connections open at once per direct client";
+    max_operation_duration: Duration = DEFAULT_STAGE_LIMIT.saturating_add(STAGE_MARGIN), "GM_MAX_OPERATION_DURATION",
+        "max-operation-duration", "duration",
+        "Longest HTTP download or upload and longest latency connection; unset, at least the stage limit plus 1m";
     max_session_duration: Duration = Duration::from_hours(2), "GM_MAX_SESSION_DURATION",
-        "max-session-duration", "duration", "Maximum WebTransport session duration";
+        "max-session-duration", "duration",
+        "Longest WebTransport download or upload session; unset, at least the operation lifetime";
     max_stage_duration: Duration = DEFAULT_STAGE_LIMIT, "GM_MAX_STAGE_DURATION", "max-stage-duration", "duration",
-        "Longest stage duration clients may plan, 1 s to 24 h";
+        "Longest stage clients may plan, 1s to 24h";
     trusted_proxies: TrustedProxies = TrustedProxies::default(), "GM_TRUSTED_PROXIES", "", "", "";
     auth_mode: String = "off".into(), "GM_AUTH_MODE", "auth-mode", "mode",
         "Authentication mode: off, password, oidc, or hybrid";
@@ -318,7 +324,7 @@ impl Settings {
     /// Lifetimes left unset grow to cover the stage limit plus a minute, and a session at least an operation.
     fn cover_stage_limit(&mut self) {
         if !self.given.contains("GM_MAX_OPERATION_DURATION") {
-            let covering = self.max_stage_duration.saturating_add(Duration::from_mins(1));
+            let covering = self.max_stage_duration.saturating_add(STAGE_MARGIN);
             self.max_operation_duration = self.max_operation_duration.max(covering);
         }
         if !self.given.contains("GM_MAX_SESSION_DURATION") {
