@@ -1,5 +1,4 @@
-// Tooltips by delegation, one bubble at a time: `ref={tip(() => text)}`. A hand at rest opens a tip, a sweep never
-// does; jargon and facts answer a tap or click; a long press asks a control.
+// Tooltips by delegation, one at a time: `ref={tip(() => text)}`; a resting hand opens one, a sweep never does.
 import { nextFrame, pageMs } from "../../lib/frame";
 import { computed, effect, onCleanup, scope, signal, type Read } from "../../lib/signal";
 
@@ -265,7 +264,7 @@ function settle(event: PointerEvent): void {
 
 function pointerover(event: PointerEvent): void {
   if (!hovers(event)) return;
-  if (open && open.node.contains(event.target as Node)) clearTimeout(closing);
+  if (open?.node.contains(event.target as Node)) clearTimeout(closing);
   settle(event);
 }
 
@@ -363,7 +362,7 @@ function focusout(event: FocusEvent): void {
   if (open && (event.target as Node).contains(open.node)) hide();
 }
 
-const escape = (event: KeyboardEvent) => {
+const closeOnEscape = (event: KeyboardEvent) => {
   if (event.key !== "Escape") return;
   // An open tip takes Escape, so it never reaches page shortcuts such as stopping a run.
   hide();
@@ -388,7 +387,7 @@ function listen(on: boolean): void {
   window[method]("blur", hide);
   document[method]("visibilitychange", visibility);
   document[method]("toggle", toggle, true);
-  document[method]("keydown", escape as EventListener, true);
+  document[method]("keydown", closeOnEscape as EventListener, true);
   document[method]("scroll", scroll, true);
 }
 

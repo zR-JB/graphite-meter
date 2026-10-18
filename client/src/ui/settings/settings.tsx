@@ -1,5 +1,4 @@
-// The Settings sheet's body: the connection, the test's timeline, display, saving, probes and transfers, and a reset.
-// A test setting goes through the run, which refuses what can no longer apply; display settings never lock.
+// The Settings sheet's body; test settings go through the run, which refuses what no longer applies.
 import "./settings.css";
 import type { App } from "../../app/app";
 import { DEFAULT_CONFIG, readPreferences } from "../../app/preferences";

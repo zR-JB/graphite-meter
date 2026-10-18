@@ -4,7 +4,7 @@ resolver = "3"
 
 # Shipped platforms, their Rust targets and the platform record, read through scripts/ci/workspace.py.
 [workspace.metadata.graphite-meter]
-tui = ["linux/amd64", "linux/arm64", "windows/amd64"]
+tui = ["linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64"]
 server = ["linux/amd64", "linux/arm64"]
 platform-record = "legal/rust-platform-debian-trixie.json"
 
@@ -12,6 +12,7 @@ platform-record = "legal/rust-platform-debian-trixie.json"
 "linux/amd64" = "x86_64-unknown-linux-musl"
 "linux/arm64" = "aarch64-unknown-linux-musl"
 "windows/amd64" = "x86_64-pc-windows-gnu"
+"windows/arm64" = "aarch64-pc-windows-gnullvm"
 
 [workspace.package]
 version = "0.0.0"
@@ -75,6 +76,14 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+cloned_instead_of_copied = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+redundant_clone = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
 
 # Unoptimized, one Argon2id hash at the server's cost takes most of a second, and the tests hash many.
 [profile.dev.package.argon2]

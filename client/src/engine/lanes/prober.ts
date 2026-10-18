@@ -1,6 +1,4 @@
-// One latency bus's probing, whatever carries it (docs/MEASUREMENTS.md#latency-probing): fixed or reply-driven pacing
-// within an in-flight window, RFC 6298 deadlines fixed at send, outcomes batched for the owner, reconnects with
-// backoff, and a drain to the probes' own deadlines at each window's end. One timer serves it all.
+// One latency bus's probing, whatever carries it (docs/MEASUREMENTS.md#latency-probing), all on one timer.
 import type { ProbeReport } from "../../protocol/messages";
 import { ping, pong } from "../../protocol/wire";
 import { RttEstimator } from "../measure/latency";
@@ -209,9 +207,7 @@ export class Prober {
     this.#settle(now);
   }
 
-  /** Sends when it is the next probe's turn and the window has room: a fixed cadence keeps start-to-start spacing
-      from the actual sends, never catching up; a reply-driven chain steps when its latest probe resolves or its
-      backup fires, and sleeps while the window is full. */
+  /** Sends when it is the next probe's turn and the window has room; a fixed cadence never catches up on late sends. */
   #step(now: number, chained: boolean): void {
     const { intervalMs, maxInFlight } = this.#pace;
     if (intervalMs === null) {
@@ -345,9 +341,7 @@ export class Prober {
     this.io.post({ type: "drained" });
   }
 
-  /** Ends a drain at its window's last deadline, or once nothing of it is pending; otherwise arms the timer for the
-      earliest of the next send, a deadline, the batch flush, the drain's end and a reconnect. An armed timer that
-      fires earlier just re-arms. */
+  /** Ends a finished drain, or arms the timer for the earliest thing due; an early firing just re-arms. */
   #settle(now: number): void {
     if (this.#state === "stopped") return;
     let drainAt = Infinity;

@@ -1,5 +1,4 @@
-// Which advertised target a saved path choice names on one server: the origins a catalog entry may use, selections,
-// classification against this page's browser policy, Automatic's ranking and resolution, and portable choices.
+// Which advertised target a saved path choice names on one server, and Automatic's ranking.
 import type { CatalogEntry, Preflight } from "../../protocol/documents";
 import type {
   Discovery,

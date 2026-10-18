@@ -1,5 +1,4 @@
-// Turns every number into text, from rates in the page's unit, latency, bytes, durations, typed times, counts, shares
-// and ranges to progress and dial ticks. Missing or non-finite values read MISSING with no unit, never NaN or Infinity.
+// Turns every number into text; missing or non-finite values read MISSING with no unit, never NaN or Infinity.
 import type { Preferences } from "../app/preferences";
 
 export const MISSING = "–";

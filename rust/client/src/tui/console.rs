@@ -424,7 +424,7 @@ impl App {
             match canvas.profile() >= Profile::Ansi256 {
                 true => canvas.fill(Rect::new(box_from, y, span, 1), boxed),
                 false => {
-                    _ = canvas.line(box_from, y, span, &Line::styled("━".repeat(usize::from(span)), Style::fg(trace)))
+                    _ = canvas.line(box_from, y, span, &Line::styled("━".repeat(usize::from(span)), Style::fg(trace)));
                 }
             }
             if let Some(median) = summary.p50 {
@@ -598,7 +598,7 @@ impl App {
             }
             let median = summary.and_then(|summary| summary.p50);
             let shown = median.or_else(|| self.latest().filter(|_| state == State::Measuring));
-            shown.map_or(missing.clone(), |rtt| figure(format::latency(rtt.as_secs_f64() * 1e3), "ms"))
+            shown.map_or(missing, |rtt| figure(format::latency(rtt.as_secs_f64() * 1e3), "ms"))
         } else {
             let rate = |direction| match result.and_then(|result: &StageResult| result.throughput[direction]?.rate) {
                 Some(rate) => Some(rate.mean),
@@ -610,9 +610,9 @@ impl App {
             };
             let hue = palette.stage(stage);
             match stage.directions() {
-                [direction] => rate(*direction).map_or(missing.clone(), |rate| figure(unit.figure(rate), unit.name)),
+                [direction] => rate(*direction).map_or(missing, |rate| figure(unit.figure(rate), unit.name)),
                 [down, up] => match (rate(*down), rate(*up)) {
-                    (None, None) => missing.clone(),
+                    (None, None) => missing,
                     (down, up) => {
                         let side = |arrow: &str, rate: Option<f64>| {
                             let shown =
@@ -623,7 +623,7 @@ impl App {
                         pair.and(format!(" {}", unit.name), palette.muted)
                     }
                 },
-                _ => missing.clone(),
+                _ => missing,
             }
         };
         if let Some(result) = result.filter(|_| state == State::Ended(StageStatus::Complete)) {
@@ -778,7 +778,7 @@ impl App {
             };
             let stage = running.plan().stage;
             let track = palette.wash(stage, 0.22, border);
-            let ticks = if stage == Stage::Latency { ms_ticks.clone() } else { rate_ticks.clone() };
+            let ticks = if stage == Stage::Latency { ms_ticks } else { rate_ticks };
             let needle = |to| {
                 vec![Arc {
                     to: self.live.needle(to, self.now),

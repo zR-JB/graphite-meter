@@ -1,5 +1,4 @@
-//! The HTTP/3 listener: transfers and their endings, exchange bounds beside admitted work, the connection lifecycle and
-//! the TCP companion's bootstrap probe.
+//! The HTTP/3 listener: transfers, endings, exchange bounds, connection lifecycle and the TCP bootstrap probe.
 
 use super::*;
 use bytes::Bytes;

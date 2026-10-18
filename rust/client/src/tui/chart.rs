@@ -1,5 +1,4 @@
-//! Draws a stage's traces in braille over its window, the rate as a line and the replies as one bar a cell from the
-//! fastest to the slowest, ending in an arrowhead where a reply passes the top.
+//! Draws a stage's traces in braille: the rate as a line, the replies as one bar a cell, fastest to slowest.
 use super::paint::{Canvas, Dots};
 use crate::{
     events::Point,

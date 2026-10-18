@@ -1,5 +1,4 @@
-// Every chart and dial axis: the throughput ceilings and the page's rate tier, and the latency ladder with its live
-// window. Every ceiling is a step of a ladder that repeats each decade.
+// Every chart and dial axis, each ceiling a step of a ladder that repeats each decade.
 import type { LatencyBucket } from "../engine/measure/buckets";
 import { nearestRank } from "../engine/measure/latency";
 import type { StageResults } from "../engine/run/result";
@@ -56,9 +55,7 @@ interface ThroughputScales {
   tier: number;
 }
 
-/** A manual maximum fixes both axes exactly. Otherwise each axis holds everything it draws, with headroom: the chart
-    each lane, the dial the lanes together. Peaks only grow during a run, so neither axis nor the tier steps back as a
-    stage settles; a finished run reads in the tier its results set, as History reads it. */
+/** Axes from a manual maximum, or with headroom over all drawn; peaks only grow, so no axis steps back mid-run. */
 export function throughputScales(
   results: Pick<StageResults, TransferStage>,
   live: LivePeaks | null,

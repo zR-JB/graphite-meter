@@ -1,5 +1,4 @@
-// Reads the page's own facts once from its document, and holds its sign-in, which puts cookies and CSRF on its
-// requests, checks the lifetime a planned test needs, and marks the one end the app navigates on.
+// The page's own facts and its sign-in, which adds cookies and CSRF to its requests.
 import { signal, type Read } from "../../lib/signal";
 import { readJSON, release, session as sessionDocument, signInMarker } from "../../protocol/documents";
 import { AUTH_ROUTES } from "../../protocol/routes";

@@ -2,6 +2,29 @@
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "files": { "includes": ["**", "!dist", "!test-results"] },
   "formatter": { "indentStyle": "space", "lineWidth": 120 },
-  "linter": { "enabled": false },
+  "linter": {
+    "rules": {
+      "a11y": {
+        "noAriaHiddenOnFocusable": "off",
+        "noStaticElementInteractions": "off",
+        "noSvgWithoutTitle": "off",
+        "useAriaPropsForRole": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "useFocusableInteractive": "off",
+        "useSemanticElements": "off",
+        "useValidAriaRole": "off"
+      },
+      "complexity": { "noCommaOperator": "off", "noImportantStyles": "off" },
+      "correctness": { "noVoidTypeReturn": "off" },
+      "style": { "noDescendingSpecificity": "off", "noNonNullAssertion": "off" },
+      "suspicious": { "noAssignInExpressions": "off" }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["e2e/**", "bench/**", "**/*.test.ts", "**/*.testutil.ts"],
+      "linter": { "rules": { "suspicious": { "noConfusingVoidType": "off", "noExplicitAny": "off" } } }
+    }
+  ],
   "assist": { "enabled": false }
 }

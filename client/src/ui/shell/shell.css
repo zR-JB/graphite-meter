@@ -335,11 +335,8 @@
     }
   }
 
-  /* A side sheet is one element in every layout: a column beside the stage while docked, a flyout over it below
-     1,200 px, a bottom sheet on an upright phone. Closed, it is inert and stays displayed past its edge, so every
-     engine slides it the same way; once the slide is over its content rests skipped (data-rest), so nothing in it
-     restyles, transitions or answers a role query, while the style and layout it had are kept for its next opening.
-     Its width is its own --sheet-w, which nothing inside inherits. */
+  /* One element in every layout: docked column, flyout below 1,200 px, bottom sheet on a phone. Closed, it stays
+     displayed past its edge so every engine slides it alike, then rests skipped (data-rest) keeping its layout. */
   .sheet-layer {
     display: contents;
   }

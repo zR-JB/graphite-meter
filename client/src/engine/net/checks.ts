@@ -1,6 +1,5 @@
-// Connection checks for one server: its discovery, and the proof that a chosen throughput or latency path carries
-// data from this page, each within its budget. A failure carries the words its row shows, chosen where it happens,
-// and whether time alone can clear it.
+// Connection checks for one server: discovery and proof that a chosen path carries data from this page. A failure
+// carries its row's words and whether time alone can clear it.
 import {
   preflight,
   probe as probeDocument,

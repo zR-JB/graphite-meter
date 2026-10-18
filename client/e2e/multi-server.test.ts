@@ -23,8 +23,7 @@ export const combined = {
   duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: browser === "firefox" ? 2000 : 1000 },
 };
 
-// Four loopback servers at GB/s saturate Firefox's one network thread, which then feeds one connection and starves the
-// rest for a second; on a link of 200 Mbit/s each way, as across the internet, every browser shares evenly.
+// At GB/s Firefox's one network thread starves all but one loopback server; a 200 Mbit/s link shares evenly.
 const LINK_BYTES_PER_SEC = 25e6;
 
 test("four servers share one run and keep separate receiver windows", async (page) => {

@@ -35,9 +35,7 @@ use tokio_rustls::TlsAcceptor;
 
 pub(super) const CLIENT_ID: &str = "meter";
 pub(super) const SECRET: &str = "s3cret~*";
-/// What the provider changes in its answers: members merged into its metadata, its RSA key, the ID token's header
-/// and claims and the user information, where `null` removes one; `=` padding on its keys' members, the key set as
-/// `key_set` rewrites it, and user information signed with its P-256 key.
+/// What the provider changes in its answers: each `Value` merges in, where `null` removes a member.
 #[derive(Default)]
 pub(super) struct Twist {
     pub padded_keys: bool,

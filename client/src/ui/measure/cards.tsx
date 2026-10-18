@@ -229,9 +229,7 @@ function Summary(props: { stages: Read<readonly Stage[]>; card: (stage: Stage) =
   return summary;
 }
 
-/** A saved result's cards, as History shows them: settled stages only, no strips, and the issues no card carries.
-    `lens` "" shows every server together; `units` carry the result's own tier, so its figures read as they did
-    live. */
+/** A saved result's cards as History shows them; `lens` "" shows every server together. */
 export function ResultSummary(props: {
   result: () => RunResult;
   lens: Read<string>;

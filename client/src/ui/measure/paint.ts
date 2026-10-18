@@ -1,5 +1,4 @@
-// The instrument's drawing helpers: a view's painter on the shared frame clock, whether an element is on screen in a
-// visible page, a box's measured size, a plot's scrubbing, fixed-size figures and SVG elements.
+// The instrument's drawing helpers on the shared frame clock.
 import { animate, pageMs } from "../../lib/frame";
 import { SVG_NS } from "../../lib/jsx-runtime";
 import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
@@ -7,11 +6,8 @@ import { batch, effect, onCleanup, signal, untrack, type Read } from "../../lib/
 /** A live view redraws at most this often: past 100 frames a second a needle, a plot or a digit looks no smoother. */
 const LIVE_FRAME_MS = 10;
 
-/** A view's painter: `wake()` draws on the next frame, and on every frame after while `draw` returns true, skipping
-    frames closer than LIVE_FRAME_MS to the last it drew. `wake(true)`, for a change of size, draws instead before the
-    frame's next layout, so a view keeps step with its box at any display rate. A change is drawn once however many
-    wakes ask for it. While `away` holds it draws nothing, and it draws again as its view returns. Released with its
-    owner. */
+/** A view's painter: `wake()` draws next frame and on while `draw` returns true, at most every LIVE_FRAME_MS;
+    `wake(true)` draws before the next layout so a resized view keeps step with its box. Nothing draws while `away`. */
 export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
@@ -97,9 +93,8 @@ type Size = { width: number; height: number };
 const measured = new Map<Element, { size: Size; follow: Set<(size: Size) => void> }>();
 let sizer: ResizeObserver | null = null;
 
-/** Each element's border-box size in whole CSS px, as `clientWidth` reads it, so the sub-pixel steps at a slide's end
-    draw nothing until they add up to a pixel. One observer serves every view, so a frame's resizes arrive in one
-    callback and one batch; read there, never by forcing layout. */
+/** Each element's size in whole CSS px, so sub-pixel slide steps draw nothing; one shared observer batches a frame's
+    resizes without forcing layout. */
 export function measure<K extends string>(elements: Record<K, Element>): Record<K, Read<Size>> {
   sizer ??= new ResizeObserver((records) =>
     batch(() => {
@@ -172,9 +167,8 @@ export function scrub(read: (event: PointerEvent) => void, clear: (event: Pointe
   };
 }
 
-/** A figure that changes every frame or every sample: a box of fixed size (`.figure`), as wide in ch as its longest
-    text so far, whose text lays out alone in an absolutely placed, contained box inside it, so writing a new value
-    lays out nothing around it. Mono figures only. */
+/** A mono figure that changes every frame, in a contained box as wide as its longest text, so a write lays out
+    nothing around it. */
 export class Figure {
   readonly box: HTMLElement;
   readonly #text: Text;

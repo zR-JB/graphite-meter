@@ -77,18 +77,27 @@ FROM pgo-amd64-${PROFILE} AS pgo-amd64
 FROM pgo-arm64-${PROFILE} AS pgo-arm64
 FROM pgo-${TARGETARCH} AS pgo-server
 
-# A TUI build reads its TUI_PLATFORM's architecture's profile, the Windows TUI amd64's, or with none every one (pgo).
+# A TUI build reads its TUI_PLATFORM's profile, Windows amd64 amd64's and Windows arm64 none, or with none every one (pgo).
 FROM scratch AS pgo
 COPY --from=pgo-amd64 /pgo/ /pgo/
 COPY --from=pgo-arm64 /pgo/ /pgo/
-FROM pgo${TUI_PLATFORM:+-}${TUI_PLATFORM##*/} AS pgo-tui
+FROM pgo-amd64 AS pgo-linux-amd64
+FROM pgo-arm64 AS pgo-linux-arm64
+FROM pgo-amd64 AS pgo-windows-amd64
+FROM pgo-ci AS pgo-windows-arm64
+FROM pgo${TUI_PLATFORM:+-}${TUI_PLATFORM%%/*}${TUI_PLATFORM:+-}${TUI_PLATFORM##*/} AS pgo-tui
 
 # The TUI archives for every TUI platform of the workspace metadata, or the TUI_PLATFORM's, each with its source offer.
 FROM rust-arm64 AS tui-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=14.2.0-19+27+b1 mingw-w64-x86-64-dev=12.0.0-5 \
     && rm -rf /var/lib/apt/lists/*
-ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+# Windows arm64 links with llvm-mingw, appended to PATH so Debian's cross tools keep their names.
+ADD --checksum=sha256:5f9c6ed95b2d4bdb2869a488c5fd5857fbdabcf288a0aa3eb1da43f6a08d8ab4 https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-ubuntu-22.04-x86_64.tar.xz /tmp/llvm-mingw.tar.xz
+RUN mkdir /opt/llvm-mingw && tar -xJf /tmp/llvm-mingw.tar.xz --strip-components=1 -C /opt/llvm-mingw \
+    && rm /tmp/llvm-mingw.tar.xz
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+    PATH=$PATH:/opt/llvm-mingw/bin
 COPY --from=source / /src/
 COPY --from=pgo-tui /pgo/ /src/rust/target/pgo/
 ARG VERSION

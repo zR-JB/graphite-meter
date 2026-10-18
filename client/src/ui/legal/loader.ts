@@ -1,5 +1,4 @@
-// Loads the server's legal notices (legal/about.json beside the page), the project's license and the third-party
-// software it ships. A load that succeeded is kept for the page's life. A failed one is tried again when asked.
+// Loads the server's legal notices once per page life; a failed load is retried when asked.
 import { array, boolean, DecodeError, object, string, type Decoded, type Decoder } from "../../lib/decode";
 import { displayText, readJSON } from "../../protocol/documents";
 

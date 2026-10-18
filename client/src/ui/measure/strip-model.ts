@@ -1,5 +1,4 @@
-// A strip's pure rules: rate lanes binned to the plot's width, the monotone curve through the bins, and reply bars
-// that join whole buckets to a bar's pitch.
+// A strip's pure rules: binned rate lanes, their monotone curve, and reply bars at a bar's pitch.
 import type { Direction } from "../../engine/types";
 import type { LatencyBucket } from "../../engine/measure/buckets";
 import type { TransferStage } from "../../engine/run/schedule";

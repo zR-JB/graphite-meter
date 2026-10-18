@@ -1,5 +1,4 @@
-// Values that move on the frame clock: glides that correct a value toward each sample, clocks that run at a rate,
-// hand-offs between keyed views, and the damped spring every layout move uses. Reduced motion snaps them all.
+// Values that move on the frame clock: glides, rate clocks, keyed hand-offs and the layout spring.
 import { animate, pageMs } from "./frame";
 import { batch, effect, onCleanup, signal, untrack, type Read, type Signal } from "./signal";
 
@@ -88,9 +87,7 @@ export const HANDOFF_OUT_MS = 70;
 if (typeof document !== "undefined")
   document.documentElement.style.setProperty("--dur-handoff-out", `${HANDOFF_OUT_MS}ms`);
 
-/** A keyed view: a new key fades the shown view out (`out`) and swaps it in once the fade-out ran; a key held
-    shorter than that never shows; the same key updates in place; a view with nothing to fade out (`outMs` 0) swaps
-    in the same frame. The fades themselves are CSS (.handoff). */
+/** A keyed view: a new key swaps in after the shown one fades out (CSS .handoff), a briefer key never shows. */
 class Handoff<T> {
   readonly #shown: Signal<T>;
   readonly #out = signal(false);

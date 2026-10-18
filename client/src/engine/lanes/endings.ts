@@ -1,5 +1,4 @@
-// How lanes, feeds and buses end, classified into the seven failure reasons, and how soon one may reopen. Pure: the
-// workers classify the answers they see, the owners decide what an ending means.
+// How lanes, feeds and buses end, in the seven failure reasons; workers classify, owners decide.
 import { signInMarker } from "../../protocol/documents";
 import type { Ending } from "../types";
 
@@ -14,8 +13,7 @@ const LOST: Disposition = { reason: "connection-lost", retry: true };
 const BUSY: Disposition = { reason: "server-busy", retry: true };
 const SIGN_IN: Disposition = { reason: "sign-in-required", retry: false };
 const UNEXPECTED: Disposition = { reason: "protocol-error", retry: false };
-/** The upload refusals (api/uploadrefusals.txt) with their reasons (api/uploadrefusalreasons.txt); `invalid` means
-    the server no longer knows the id, which the run may replace once. */
+/** Upload refusals (api/uploadrefusals.txt); `invalid` means the server forgot the id, which may be replaced once. */
 const REFUSALS: Record<string, Disposition> = {
   invalid: { ...UNEXPECTED, rotate: true },
   ownerMismatch: UNEXPECTED,
@@ -27,9 +25,7 @@ const REFUSALS: Record<string, Disposition> = {
 
 export const lost = (detail: string): Ending => ({ ...LOST, detail });
 
-/** An upload refusal: its code decides; without one its status does, where a network-level or generic server failure
-    reconnects the same id. A bare 401 is a proxy's challenge, an unexpected answer, never an ended sign-in. A feed's
-    error record has no status. */
+/** An upload refusal, by its code or else its status; a bare 401 is a proxy's challenge, never an ended sign-in. */
 export function refusal(
   status: number | null,
   code: string | null | undefined,
@@ -66,12 +62,10 @@ export const downloadRefused = (response: Response): Ending => ({
   retryAfterMs: retryAfterMs(response),
 });
 
-/** The endings a server names when it closes a bus or session (api/laneendings.txt). The browser acts on revocation
-    and reconnects after the idle and lifetime bounds; any other close is a break. */
+/** Close codes of api/laneendings.txt: revocation ends, idle and lifetime bounds reconnect, others are breaks. */
 export const REVOKED = { socket: 1008, session: 3, reason: "authentication required" } as const;
 const SESSION_BOUNDS = [1, 2];
-/** A server resets a session's streams just before it closes it, and closing first would replace its code with ours:
-    a broken stream waits this long for the code that names the ending. */
+/** A server resets a session's streams just before closing it; a broken stream waits this long for the code. */
 export const CLOSE_GRACE_MS = 250;
 
 /** A WebTransport session's close code as an ending, or null for a break. */

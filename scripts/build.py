@@ -2,10 +2,7 @@
 
     python3 -m scripts.build --package NAME --profile {ci,release} [--browser {dev,prod}] [--version V]
 
-The server embeds a browser build kept in rust/target/browser/PROFILE, apart from client/dist,
-together with its module scan. It is rebuilt only when a browser input, the Bun release or a client build variable
-changes, or when its outputs no longer match their stamp. Cargo owns the binary's freshness: the notices keep unchanged
-files untouched.
+The server embeds a browser build kept in rust/target/browser/PROFILE, rebuilt only when its inputs or stamp change.
 """
 
 import argparse

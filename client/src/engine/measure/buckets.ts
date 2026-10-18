@@ -1,5 +1,4 @@
-// Presents latency by grouping one server's probe outcomes into time buckets on the run's timeline. Results never
-// read them. A late outcome may still revise the buckets of the last ten seconds.
+// Groups a server's probe outcomes into time buckets for display; late outcomes revise the last ten seconds.
 import type { Stage } from "../run/schedule";
 import { midpointMedian, nearestRank } from "./latency";
 

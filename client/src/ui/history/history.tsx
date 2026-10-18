@@ -1,5 +1,4 @@
-// The History workspace: saved results in a sortable list beside the one opened, the archive's notices, and the
-// actions that change it. It lies over the console, which keeps measuring beneath.
+// The History workspace, over the console that keeps measuring beneath.
 import { HISTORY_SPLIT } from "../../app/preferences";
 import "./history.css";
 import type { App } from "../../app/app";

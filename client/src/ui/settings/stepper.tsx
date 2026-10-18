@@ -1,5 +1,4 @@
-// The stepper reads − value +. The value rolls as it changes and takes typed text like a spin button. The owner
-// decides whether a value applies. A held key repeats its step.
+// A − value + stepper that rolls, takes typed text like a spin button and repeats on a held key.
 import { computed, onCleanup } from "../../lib/signal";
 import { Roll } from "../kit/roll";
 import { stepOnGrid, typedValue, type Direction } from "./model";

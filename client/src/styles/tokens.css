@@ -1,5 +1,4 @@
-/* The design tokens. Every color is one light-dark() pair, so a theme switch changes only color-scheme. The one copy
-   outside this file is the canvas in index.html's theme-color metas. */
+/* Design tokens: each color is one light-dark() pair; only index.html's theme-color metas copy the canvas. */
 @layer reset, tokens, base, primitives, components, utilities, overrides;
 
 /* Unmodified upstream IBM Plex subsets, self-hosted so the meter renders offline. */

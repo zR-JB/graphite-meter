@@ -57,8 +57,7 @@ pub struct Palette {
     pub border: Style,
     /// The editor's block cursor.
     pub cursor: Style,
-    /// The run key: ink with the canvas on it, its faint note, and the quiet plate of Stop and of a key that cannot
-    /// be pressed.
+    /// The run key's plate: Stop's, and that of a key that cannot be pressed.
     pub plate: Style,
     pub plate_note: Style,
     pub plate_off: Style,

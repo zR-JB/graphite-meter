@@ -128,9 +128,8 @@ export function StageGraph(props: StripProps): HTMLElement {
     const start = props.start();
     const span = props.span();
     const columns = columnsFor(plotWidth());
-    lanes.forEach((lane, index) =>
-      lane.fill(props.samples(), props.stage as TransferStage, dirs[index]!, start, span, columns),
-    );
+    for (const [index, lane] of lanes.entries())
+      lane.fill(props.samples(), props.stage as TransferStage, dirs[index]!, start, span, columns);
     binned.set(binned.peek() + 1);
   });
   const bars = computed<ReplyBar[]>(() => {

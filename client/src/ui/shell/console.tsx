@@ -1,5 +1,4 @@
-// The console: the page frame every view lives in. Top bar; Settings, then the workspaces, the status strip and
-// Details, in Tab order; the phase toast, the live region and the shell's dialogs. Views come from their owners.
+// The console, the page frame every view lives in; Settings, workspaces, status and Details in Tab order.
 import "./shell.css";
 import type { App } from "../../app/app";
 import { markDocument } from "./document";

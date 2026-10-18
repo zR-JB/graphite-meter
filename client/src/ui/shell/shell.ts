@@ -1,5 +1,4 @@
-// The shell's state and moves: the route and the URL behind it, which panels show and how wide, where focus returns
-// when a surface closes, what each key does, the theme, and starting over. The console's markup only renders it.
+// The shell's state and moves: route, panels, focus, keys, theme and starting over; the console only renders it.
 import type { App } from "../../app/app";
 import type { Theme } from "../../app/preferences";
 import { reducedMotion } from "../../lib/motion";
@@ -58,16 +57,13 @@ export function moves(current: Route, next: Route, docked: boolean, multiple: bo
 
 type FocusMove = { to: "title" | "invoker"; panel: Panel } | { to: "wanted" | "workspace" } | null;
 
-/** Where focus goes once a route has rendered: an opened panel's title; nowhere new while the legal dialog opens (it
-    focuses its own) or when asked to keep it; where it was asked to go; for a closed panel that held focus, or let it
-    fall to the page, the panel's invoker; after Back or Forward to another workspace, that workspace. */
+/** Where focus goes once a route has rendered, or null to leave it. */
 export function focusMove(facts: {
   before: Route;
   after: Route;
   /** The panels visible now; the route before names those that were open, whatever the layout showed. */
   shown: readonly Panel[];
-  /** The panel that held focus as the route changed, and whether anything still holds it: asked only when a panel
-      closed, since asking lays out the page. */
+  /** The panel that held focus; asked only when a panel closed, as asking lays out the page. */
   holder: Panel | null;
   focused(): boolean;
   wanted: "element" | "workspace" | "keep" | null;

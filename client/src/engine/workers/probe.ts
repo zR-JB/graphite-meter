@@ -1,6 +1,4 @@
-// Carries one latency bus to one server (api/wire.md) over WebSocket text frames or WebTransport datagrams carrying
-// PING and PONG. The prober paces and resolves the probes. This worker owns the connections, each with its own
-// controller so a replaced one cannot act, and each dial's ticket and 3 s budget.
+// One latency bus (api/wire.md); each connection has its own controller, so a replaced one cannot act.
 import type { ProbeCommand, ProbeReport } from "../../protocol/messages";
 import { Tickets, withToken } from "../lanes/dial";
 import { abortable } from "../run/clock";
@@ -20,7 +18,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let connection: AbortController | null = null;
 let send: Send | null = null;
 
-onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
+self.onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
   else if (data.type === "measure") prober.measure();
   else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);
@@ -93,9 +91,8 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
   }
 }
 
-/** A refused upgrade is invisible to script and closes as 1006, so the owner asks whether the sign-in ended. The
-    browser bounds the handshake itself and may queue it behind another to the same host, where closing it would only
-    delay the next dial. So a dial past its budget stays, reported as an outage. */
+/** A refused upgrade closes as 1006, invisible to script. A dial past its budget stays open, reported as an outage:
+    the browser may queue it behind another to the host, and closing it would only delay the next. */
 function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End, opened: (write: Send) => void): void {
   const ws = new WebSocket(url);
   closed.addEventListener("abort", () => ws.close());
