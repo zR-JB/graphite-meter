@@ -1,5 +1,4 @@
-// Latency statistics (docs/MEASUREMENTS.md#latency-probing): one population per server and stage, exact nearest-rank
-// percentiles with a midpoint median, jitter over adjacent replies, and the RFC 6298 probe deadline.
+// Latency statistics per server and stage (docs/MEASUREMENTS.md#latency-probing) and the RFC 6298 deadline.
 import type { ProbeOutcome } from "../../protocol/messages";
 import type { Stage, TransferStage } from "../run/schedule";
 import { SCORE_WINDOW_MS, type Confidence } from "./stability";
@@ -34,8 +33,7 @@ export const nearestRank = (p: number, n: number) => Math.min(n - 1, Math.max(0,
 export const midpointMedian = (n: number, at: (rank: number) => number) =>
   n % 2 ? at(n >> 1) : (at((n >> 1) - 1) + at(n >> 1)) / 2;
 
-/** Distinct RTTs kept to the nanosecond; past them new ones keep four significant digits (0.01 %), so a day-long
-    stage holds tens of thousands of values at most. */
+/** Distinct RTTs kept exactly; later ones keep four significant digits, bounding even a day-long stage. */
 const EXACT_VALUES = 65_536;
 const significant = (ns: number) => {
   if (ns < 10_000) return ns;

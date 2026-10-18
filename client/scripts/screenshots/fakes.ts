@@ -1,5 +1,4 @@
-// What the screenshot build puts in place of the network and the run's clock: lanes and probes that report a fixed
-// scenario, and run time that jumps from timer to timer, so a whole run passes in moments and always alike.
+// The screenshot build's network and clock: fixed scenarios and timer-to-timer time, so runs pass alike at once.
 import type { ProbeOutcome } from "../../src/protocol/messages";
 import type { Clock } from "../../src/engine/run/clock";
 import type { LatencyBus, OpenProbeChannel, OpenStage, StageResources } from "../../src/engine/types";

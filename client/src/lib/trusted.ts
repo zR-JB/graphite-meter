@@ -1,5 +1,4 @@
-// The page's one Trusted Types policy. The shell's marker names it, and the servers then require Trusted Types for
-// every script sink, so a worker starts only from a URL this policy made, one of the build's own worker bundles.
+// The page's one Trusted Types policy; workers start only from the build's own bundles through it.
 
 /** The policy name the shell's marker carries. build.ts checks the two agree. */
 export const TRUSTED_TYPES_POLICY = "graphite-meter";

@@ -1,5 +1,4 @@
-// One WebTransport session per direction (api/wire.md#webtransport-routes): download streams or datagrams counted,
-// or upload streams or datagrams sent with the server's progress feed relayed; it finalizes an upload when it stops.
+// One WebTransport session per direction (api/wire.md#webtransport-routes); it finalizes an upload when it stops.
 import { release } from "../../protocol/documents";
 import type { EndReport, FeedRecord, SessionCommand, SessionReport } from "../../protocol/messages";
 import { ByteReports, countBytes, randomBlock } from "../lanes/bytes";

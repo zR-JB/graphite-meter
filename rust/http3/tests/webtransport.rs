@@ -1,5 +1,4 @@
-//! WebTransport sessions over loopback QUIC: the close codes, reliable reset, datagrams, early streams and head
-//! gating.
+//! WebTransport sessions over loopback QUIC.
 mod support;
 
 use bytes::Bytes;

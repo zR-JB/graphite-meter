@@ -1,6 +1,4 @@
-// Types what the engine's owners and its workers tell each other. A lane worker moves one HTTP fetch lane, a session
-// worker one WebTransport session, a probe worker one latency bus. Both sides are this code, so messages are typed,
-// not validated.
+// What the engine and its workers tell each other; both sides are this code, so messages are typed, not validated.
 import type { ProgressRecord } from "./progress";
 import type { FailureReason } from "./reasons";
 
@@ -55,9 +53,7 @@ export interface Flushed {
   at: number;
 }
 
-/** A lane worker (re)opens with `download` or `upload` after its previous ending. It stops by termination. `flush`
-    reports the bytes counted so far, then answers `flushed` with the epoch's total as counted by its cutoff and the
-    time that total stands at, both on epoch ms. */
+/** A lane worker reopens with `download` or `upload` after each ending and stops by termination. */
 export type LaneCommand =
   | { type: "download"; url: string; request: RequestRecipe; epoch: number; streams: number }
   | {

@@ -1,5 +1,4 @@
-//! Tests the running server over real sockets, with HTTP/1, HTTP/2 and HTTP/3 transfers and their endings, connection
-//! bounds, delayed links, WebSocket buses, WebTransport sessions and TLS.
+//! The running server over real sockets.
 
 mod auth;
 mod connection;

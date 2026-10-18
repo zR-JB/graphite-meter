@@ -1,5 +1,4 @@
-// The diagnostic report carries the state the page really holds, so a field added later is reported without being
-// listed here. It takes out what identifies a person or a deployment.
+// The diagnostic report of the state the page holds, without what identifies a person or a deployment.
 
 /** These keys are never reported at any depth. They hold secrets and the address the server saw for this browser. */
 const WITHHELD = new Set(["credentials", "token", "authorization", "cookie", "clientIp"]);

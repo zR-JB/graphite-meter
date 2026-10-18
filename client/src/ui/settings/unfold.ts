@@ -1,5 +1,4 @@
-// Rows that unfold from their own height as they arrive and fold away before they leave. Content shown when the
-// panel is built, or while it is out of sight, lands at once.
+// Rows that unfold as they arrive and fold before they leave; out of sight they land at once.
 import { clear, insert, type Child } from "../../lib/jsx-runtime";
 import { reducedMotion } from "../../lib/motion";
 import { computed, effect, onCleanup, scope, untrack } from "../../lib/signal";

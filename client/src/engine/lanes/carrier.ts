@@ -112,9 +112,8 @@ export class Carrier {
     }
   }
 
-  /** Resolves once every lane answered the download bytes it had counted by `cutoff` (page time), within 250 ms,
-      with the latest page time those counts stand at. That is the cutoff, unless a lane no longer kept it, or now for
-      a lane that did not answer and counts on. Null without lanes. The rate a boundary there reads never overstates. */
+  /** Collects every lane's download count at `cutoff` (page time, 250 ms at most) and resolves with the latest time
+      those counts stand at, so a rate read there never overstates; null without lanes. */
   async flush(cutoff: number): Promise<number | null> {
     const answered = new AbortController();
     let latest: number | null = null;

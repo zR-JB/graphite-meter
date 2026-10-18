@@ -1,7 +1,4 @@
-// Renders the README screenshots from the working tree into docs/assets. The browser app is bundled from its sources
-// with the network and the run's clock swapped for fixed scenarios (fakes.ts) and served in place of the server's own
-// bundle; the terminal client's console arrives as cells from its screenshot example. Both are composed in Chrome.
-// `mise run screenshots` runs it under scripts/e2e.ts, which starts the servers.
+// Renders the README screenshots into docs/assets in Chrome; `mise run screenshots` runs it.
 import type { BunPlugin } from "bun";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

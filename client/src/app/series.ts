@@ -1,5 +1,4 @@
-// Holds the series a run's charts draw, latency buckets per server and the live throughput samples, bounded in size.
-// Compaction merges by time bins per line, so it never hides a peak, a dip or a line's ends.
+// A run's chart series, bounded by time-bin compaction that never hides a peak, a dip or a line's ends.
 import type { Direction } from "../engine/types";
 import { REVISION_MS, SERIES_LIMIT, type LatencyBucket } from "../engine/measure/buckets";
 import type { TransferStage } from "../engine/run/schedule";

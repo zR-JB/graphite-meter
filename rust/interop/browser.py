@@ -2,10 +2,8 @@
 
     python3 rust/interop/browser.py [--server build|image]
 
-Chromium must fetch over HTTP/3, use WebTransport datagrams and streams, and see the close code and reason of
-a session the server ends at its lifetime and when it stops. The server shards HTTP/3 over this host's runtime
-threads. It runs the first of BROWSERS on PATH against the static musl server it builds with the ci profile, or
-against the server the CI image job exports, which the job downloads to TMPDIR/image/graphite-meter-server.
+Runs the first of BROWSERS on PATH against a static musl server built with the ci profile, or against the one the CI
+image job exports to TMPDIR/image/graphite-meter-server.
 """
 
 import argparse

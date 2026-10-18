@@ -1,5 +1,4 @@
-// The servers a test runs on, for the app layer: the operator's catalog, the selection and its saved choice, each
-// server's credentials and connection, the approval that grants a peer, and what Start runs on.
+// The servers a test runs on: catalog, selection, credentials, connections and peer approvals.
 import { object, string } from "../../lib/decode";
 import { batch, computed, effect, signal, untrack, type Read } from "../../lib/signal";
 import {

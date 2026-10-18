@@ -1,5 +1,4 @@
-// Without scroll-driven animations (Firefox), a scroller marks itself scrolled from its top, and the stylesheet
-// draws the rule under its head that a scroll timeline draws elsewhere. It alone names the scrollers that matter.
+// Without scroll-driven animations (Firefox), a scroller marks itself scrolled so the stylesheet draws its rule.
 
 export function markScrolled(): () => void {
   if (CSS.supports("animation-timeline: scroll()")) return () => {};

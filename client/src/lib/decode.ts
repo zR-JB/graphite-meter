@@ -1,5 +1,4 @@
-// Decoders check untrusted JSON and type it in one definition. Unknown object members are ignored, so newer
-// servers stay readable; anything else that does not match throws a DecodeError naming the path.
+// Decoders type untrusted JSON; unknown members are ignored so newer servers stay readable, a mismatch throws.
 
 export class DecodeError extends Error {}
 

@@ -1,5 +1,4 @@
-// The sign-in and approval pages' script: the host line, the show-password keys, and forms that stay on the page
-// while the server checks them. Without it every form still posts natively.
+// The auth pages' script: the host line, show-password keys and in-page forms; without it forms post natively.
 
 import { AUTH_ROUTES } from "../src/protocol/routes";
 
@@ -8,8 +7,7 @@ type Page = Pick<
   "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
 >;
 
-// A native POST would freeze the busy animation for the whole deliberately slow password check; other forms, such as a
-// provider's sign-in, submit natively.
+// A native POST would freeze the busy animation through the slow password check; other forms submit natively.
 const IN_PLACE = new Set<string>([AUTH_ROUTES.password, AUTH_ROUTES.cliApprove, AUTH_ROUTES.browserApprove]);
 /** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
 const SUBMIT_MS = 20_000;

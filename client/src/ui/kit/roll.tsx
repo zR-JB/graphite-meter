@@ -1,5 +1,4 @@
-// A changed figure rolls like a counter, upward while its rank grows. Only the changed figures roll when the words
-// between them stay, else the whole text. A change during a roll ends it and swaps at once.
+// A changed figure rolls like a counter, only its changed digits when the words around them stay.
 import { pageMs } from "../../lib/frame";
 import { reducedMotion } from "../../lib/motion";
 import { effect, untrack } from "../../lib/signal";

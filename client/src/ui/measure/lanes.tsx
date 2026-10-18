@@ -431,9 +431,8 @@ function Lane(props: {
   );
 }
 
-/** The plate reading the row: the figure of the mark nearest the pointer, over it and inside the plot, and a guide on
-    the mark. The plate stands as far along its own width as the mark lies along the plot, so it never leaves the
-    plot and is never measured; both are placed before they show, then glide from mark to mark. */
+/** The plate reading the mark nearest the pointer, as far along its own width as the mark lies along the plot, so it
+    stays inside unmeasured. */
 function Reading(props: {
   metric: Read<Metric>;
   values: Read<Values>;

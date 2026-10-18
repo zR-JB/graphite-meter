@@ -1,5 +1,4 @@
-// A side sheet: one non-modal dialog docked beside the stage, flying over it, or rising from the bottom (shell.css).
-// Closed, it is inert and rests once its slide is over, its content kept.
+// A side sheet: one non-modal dialog, docked, flying over the stage or rising from the bottom (shell.css).
 import { Show } from "../../lib/dom";
 import type { Child } from "../../lib/jsx-runtime";
 import { computed, effect, onCleanup, untrack, type Read } from "../../lib/signal";

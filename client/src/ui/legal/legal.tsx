@@ -1,5 +1,4 @@
-// About & legal shows the project's license and warranty, and every third-party component the server ships with
-// where it comes from. The notices load on first open and their rows are kept across closes.
+// About & legal: the project's license and every third-party component the server ships.
 import "./legal.css";
 import { Show } from "../../lib/dom";
 import { effect, signal, untrack, type Read } from "../../lib/signal";

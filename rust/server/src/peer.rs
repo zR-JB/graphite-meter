@@ -56,9 +56,8 @@ impl Address {
     }
 }
 
-/// Reads a trusted proxy's single `X-Real-IP`. `X-Forwarded-For`, when sent, must end in that address, as a proxy
-/// appends the peer it saw. A different last hop means the `X-Real-IP` came from further out, such as a client whose
-/// own header the proxy passed on. `Forwarded` is ignored, as no common proxy writes it and some pass a client's on.
+/// Reads a trusted proxy's single `X-Real-IP`, which any `X-Forwarded-For` must end in, as the proxy appends its peer.
+/// `Forwarded` is ignored: no common proxy writes it and some pass a client's on.
 fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
     let mut real = headers.get_all(crate::headers::X_REAL_IP).iter();
     let (Some(value), None) = (real.next(), real.next()) else {

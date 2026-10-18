@@ -1,5 +1,4 @@
-// Tooltips by delegation, one bubble at a time: `ref={tip(() => text)}`. A hand at rest opens a tip, a sweep never
-// does; jargon and facts answer a tap or click; a long press asks a control.
+// Tooltips by delegation, one at a time: `ref={tip(() => text)}`; a resting hand opens one, a sweep never does.
 import { nextFrame, pageMs } from "../../lib/frame";
 import { computed, effect, onCleanup, scope, signal, type Read } from "../../lib/signal";
 

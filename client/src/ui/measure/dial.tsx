@@ -1,5 +1,4 @@
-// The dial: the ring, the needle that follows the running stage, the result that takes the ring over, the readout and
-// the note. Per frame the painter writes three transforms, a text node and a class.
+// The dial; per frame its painter writes three transforms, a text node and a class.
 import type { App } from "../../app/app";
 import { CHECK_FAILED } from "../../engine/net/checks";
 import { STAGES, type Stage } from "../../engine/run/schedule";
@@ -614,9 +613,7 @@ function sizeArt(art: SVGSVGElement, width: number, height: number): void {
 
 const angle = (fraction: number) => ARC_START + ARC_SWEEP * fraction;
 
-/** Every result's arc on the ring, the longest underneath, so each shows from where the next shorter one ends; its
-    head is a bead in its hue at the arc's end, a one-direction result's a ring. Arcs are kept by stage, so a scale or
-    unit change glides them and never replays the sweep. */
+/** Every result's arc, longest underneath, kept by stage so a scale change glides them without replaying the sweep. */
 function ResultLayer(props: {
   arcs: Read<ResultArc[]>;
   out: Read<boolean>;

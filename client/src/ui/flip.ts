@@ -1,6 +1,4 @@
-// Layout moves: a change applies at once, then every `data-flip` element that stayed springs to its new place.
-// `data-flip-resize` also springs its width; it and `data-flip-layout` move by offsets in layout, since Firefox draws a
-// compositor translate a frame apart from a width that moves with it.
+// Layout moves that spring to place; resizing ones use layout offsets, as Firefox desyncs translate and width.
 import { reducedMotion, spring, SPRING_MS } from "../lib/motion";
 
 type Axis = [offset: number, velocity: number];

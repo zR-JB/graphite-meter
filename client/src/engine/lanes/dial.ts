@@ -1,6 +1,5 @@
-// Dialing a socket from a worker: its single-use ticket (api/wire.md#socket-credentials), minted right before a dial.
-// The server spends one on any answer, a refusal too; one whose dial lapsed unanswered may never have reached it, so
-// close dials share it, keeping a worker's retries inside the server's outstanding tickets per sign-in.
+// A worker's socket dial and its single-use ticket (api/wire.md#socket-credentials). A ticket whose dial lapsed
+// unanswered may be unspent, so close dials share it and retries stay inside the server's ticket limit.
 import { DecodeError } from "../../lib/decode";
 import { readJSON, release, socketTicket } from "../../protocol/documents";
 import type { EndReport } from "../../protocol/messages";

@@ -1,5 +1,4 @@
-// Reads Chrome's 8-bit PNGs and writes 256-color ones: median cut over the image's colors, Floyd-Steinberg
-// dithering of alpha, maximum deflate. Every step is deterministic, so the same pixels always give the same bytes.
+// Writes deterministic 256-color PNGs from Chrome's: median cut, dithered alpha, maximum deflate.
 import { deflateSync, inflateSync } from "node:zlib";
 
 export interface Image {

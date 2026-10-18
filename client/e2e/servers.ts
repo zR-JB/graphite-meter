@@ -21,8 +21,7 @@ export interface Launch {
   key: string;
 }
 
-// Below the Linux ephemeral range, so no outgoing connection takes a port before its server binds it. The suite's
-// processes share one TMPDIR, where an exclusive reservation file gives each port to one of them.
+// Below the Linux ephemeral range, so no outgoing connection takes one first; reservation files split the ports.
 const FIRST_PORT = 20_000;
 const PORTS = 12_000;
 export async function freePort(): Promise<number> {
@@ -79,8 +78,7 @@ export async function launch({ bin, cert, key }: Launch, server: Server, env: Re
       GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT: "32",
       GM_MAX_ACTIVE_SESSIONS: "12",
       GM_MAX_SESSIONS_PER_CLIENT: "12",
-      // Every worker's browser connects from one address, and three Firefox workers came near the default 64, past
-      // which a server drops new connections and a navigation fails with NS_ERROR_NET_RESET.
+      // All workers' browsers share one address; Firefox neared the default 64 and hit NS_ERROR_NET_RESET.
       GM_MAX_CONNECTIONS_PER_CLIENT: "192",
       ...env,
     },

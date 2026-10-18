@@ -1,6 +1,4 @@
-// Reads a receiver's feed (api/upload.md) over HTTP or a WebTransport stream, one JSON record per line, bounded to
-// 64 Ki UTF-16 units. Blank lines are heartbeats. A malformed or unknown line is no observation. The receiver guards
-// the counters, not the reader.
+// Reads a receiver's feed (api/upload.md): JSON lines of at most 64 Ki UTF-16 units, blank lines as heartbeats.
 import type { FeedRecord } from "../../protocol/messages";
 import { progressRecord, type ProgressRecord } from "../../protocol/progress";
 
@@ -22,9 +20,8 @@ function parse(line: string): ProgressRecord | null {
   }
 }
 
-/** Emits each observation of `body` and resolves with the terminal record that ended it (a `complete` is emitted
-    first), or null at its end. It throws on an oversized record. `heard` runs for every chunk, heartbeats too. The
-    stream is always released. */
+/** Emits each observation of `body` and resolves with the terminal record that ended it, or null; always releases
+    the stream. */
 export async function readRecords(
   body: ReadableStream<Uint8Array>,
   emit: (record: FeedRecord) => void,

@@ -1,5 +1,4 @@
-// Makes the sign-in and approval pages' embedded assets and public/favicon.svg; `--check` fails when the committed
-// files differ instead of writing them.
+// Makes the auth pages' embedded assets and public/favicon.svg; `--check` fails when committed files differ.
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { BRAND_LINE, favicon } from "./brand";

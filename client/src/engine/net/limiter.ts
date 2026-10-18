@@ -1,5 +1,4 @@
-// Bounds the connection checks running at once, overall and per origin for selected servers. Background work runs
-// only on an idle origin and never fills the pool.
+// Bounds concurrent connection checks overall and per origin; background work runs only on an idle origin.
 const TOTAL = 8;
 const PER_ORIGIN = 2;
 const BACKGROUND = 4;

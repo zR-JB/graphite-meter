@@ -1,5 +1,4 @@
-// An overflow menu: a native auto popover gives light dismiss, Escape and the top layer; arrows rove focus, and Tab
-// or Escape return to the trigger.
+// An overflow menu on a native auto popover; arrows rove focus, Tab or Escape return to the trigger.
 import { signal, type Read } from "../../lib/signal";
 import { Icon, type IconName } from "./icon";
 import { roveTo } from "./rove";
