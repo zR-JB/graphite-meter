@@ -58,7 +58,7 @@ const record = (value: unknown, path: string): Record<string, unknown> =>
 
 /** An object with `required` members and `optional` ones, which may be absent but never null. */
 export const object =
-  <R extends Shape, O extends Shape = {}>(required: R, optional?: O): Decoder<Fields<R, O>> =>
+  <R extends Shape, O extends Shape = Record<never, never>>(required: R, optional?: O): Decoder<Fields<R, O>> =>
   (value, path = "") => {
     const fields = record(value, path);
     const out: Record<string, unknown> = {};

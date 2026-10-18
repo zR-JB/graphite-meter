@@ -168,7 +168,9 @@ export const openStage: OpenStage = ({ activity, events, now: runMs }) => {
           }),
         );
       }
-      stop = () => stops.forEach((each) => each());
+      stop = () => {
+        for (const each of stops) each();
+      };
     },
     checkpoint: async () => receiver(),
     flush: async () => null,

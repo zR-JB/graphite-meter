@@ -74,7 +74,9 @@ function windowEvents() {
     addEventListener: (type: string, listener: () => void) =>
       listeners.set(type, (listeners.get(type) ?? new Set()).add(listener)),
     removeEventListener: (type: string, listener: () => void) => listeners.get(type)?.delete(listener),
-    dispatch: (type: string) => listeners.get(type)?.forEach((listener) => listener()),
+    dispatch: (type: string) => {
+      for (const listener of listeners.get(type) ?? []) listener();
+    },
     count: () => [...listeners.values()].reduce((count, set) => count + set.size, 0),
   };
   return target as typeof target & Pick<Window, "addEventListener" | "removeEventListener">;

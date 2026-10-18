@@ -341,7 +341,7 @@ export class Aggregate {
   /** Follows the early-finish score; while it holds, the headline window starts where it began to hold. */
   trackStable(score: number): boolean {
     const open = this.#open;
-    if (!open || !open.record.complete) return false;
+    if (!open?.record.complete) return false;
     const stable = stillStable(open.wasStable, score);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     if (stable && !open.wasStable) {

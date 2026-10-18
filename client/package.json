@@ -18,7 +18,7 @@
     "build": "bun run check && bun run build:bundle",
     "check": "bun check && bun test ./auth",
     "format": "biome format --write .",
-    "format:check": "biome format . && bun auth/build.ts --check",
+    "lint": "biome ci --error-on-warnings . && bun auth/build.ts --check",
     "test:e2e": "bun test ./e2e --no-orphans --timeout=60000",
     "e2e": "bun run scripts/e2e.ts"
   }

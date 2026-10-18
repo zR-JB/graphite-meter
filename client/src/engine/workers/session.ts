@@ -28,7 +28,7 @@ const tickets = new Tickets();
 const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
 let session: Session | null = null;
 
-onmessage = ({ data }: MessageEvent<SessionCommand>) => {
+self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch);
   else if (data.type === "flush") post(reports.flushed(data.at));
   else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));

@@ -20,7 +20,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let connection: AbortController | null = null;
 let send: Send | null = null;
 
-onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
+self.onmessage = ({ data }: MessageEvent<ProbeCommand>) => {
   if (data.type === "start") start(data);
   else if (data.type === "measure") prober.measure();
   else if (data.type === "pace") prober.pace(data.intervalMs, data.maxInFlight);

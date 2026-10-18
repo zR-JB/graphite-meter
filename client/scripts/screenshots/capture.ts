@@ -331,7 +331,7 @@ async function paintTerminal({
   );
   const thickness = (weight: number) => (weight === 2 ? 5 : 2);
   const DOTS = [0, 1, 2, 4, 5, 6, 3, 7].map((cell) => [cell >> 2, cell & 3]);
-  rows.forEach((row, y) =>
+  for (const [y, row] of rows.entries())
     row.forEach(([symbol, fg, bg, bold], x) => {
       const [left, top] = [x * cw, y * ch];
       if (bg !== canvas) {
@@ -379,8 +379,7 @@ async function paintTerminal({
         g.font = `${bold ? 600 : 500} 30px "Plex Mono", "Plex Pi"`;
         g.fillText(symbol, left + (cw - g.measureText(symbol).width) / 2, top + 31);
       }
-    }),
-  );
+    });
 }
 
 /** Renders `html` at `width` px wide from its `size` in CSS px, and writes it as a 256-color PNG. */

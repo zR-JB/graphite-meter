@@ -82,7 +82,7 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
           return;
         }
         const list = items();
-        const at = list.findIndex((item) => item === document.activeElement);
+        const at = list.indexOf(document.activeElement as HTMLButtonElement);
         const to = roveTo(event.key, at, list.length, VERTICAL);
         if (to < 0 || !list.length) return;
         event.preventDefault();

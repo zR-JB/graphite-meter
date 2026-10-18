@@ -23,7 +23,7 @@ const ignore = () => {};
 const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
 let body: Blob | undefined;
 
-onmessage = ({ data }: MessageEvent<LaneCommand>) => {
+self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch);
   if (data.type === "flush") return post(reports.flushed(data.at));
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.

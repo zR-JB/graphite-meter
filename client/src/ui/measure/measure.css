@@ -1544,6 +1544,7 @@
   .phase-toast {
     position: fixed;
     right: var(--space-4);
+    /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback without anchor positioning */
     right: calc(anchor(--stage right) + var(--space-4));
     bottom: 40px;
     z-index: var(--z-toast);
