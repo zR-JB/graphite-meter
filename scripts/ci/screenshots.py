@@ -20,7 +20,7 @@ from workspace import ROOT, VERSION
 RECORD = Path("docs/assets/screenshots.json")
 README = Path("README.md")
 RENDER = "screenshots"  # the mise task that renders the images; CI only checks them
-CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\S+) ")
+CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?=[ .<])")
 # What draws the images: the browser app and its build, the terminal client, the pipeline and its harness.
 SOURCES = ("client/src", "client/public", "client/index.html", "client/build.ts", "client/bundle.ts", "client/auth",
            "client/e2e/fleet.ts", "client/e2e/webview.ts", "client/e2e/servers.ts", "client/scripts", "rust/client/src",
@@ -49,7 +49,7 @@ def stamp(tag: str, root: Path = ROOT) -> None:
     record = {"version": version_of(tag), "ui_hash": ui_hash(root)}
     (root / RECORD).write_text(json.dumps(record, indent=2) + "\n")
     readme = root / README
-    readme.write_text(CAPTION.sub(rf"\g<1>{record['version']} ", readme.read_text()))
+    readme.write_text(CAPTION.sub(rf"\g<1>{record['version']}", readme.read_text()))
 
 
 def stale(tag: str, root: Path = ROOT) -> str | None:
