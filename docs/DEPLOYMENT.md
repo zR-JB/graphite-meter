@@ -30,7 +30,7 @@ WebTransport needs HTTPS and the native HTTP/3 listener.
 
 ## Without Docker
 
-From the next stable release on, each release also attaches the server alone for Linux as
+Every release since 0.13.1 also attaches the server alone for Linux as
 `graphite-meter-server_X.Y.Z_linux_amd64.tar.gz` and `graphite-meter-server_X.Y.Z_linux_arm64.tar.gz`. Each holds the
 same static executable as the image, with its license notices, and needs nothing else installed. Download one with
 `checksums.txt`, check it and start it:
