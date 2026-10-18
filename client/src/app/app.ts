@@ -1,4 +1,4 @@
-// The application, wired once at boot; views read its signals and call its methods.
+// Note: The application, wired once at boot; views read its signals and call its methods.
 import { planStreams } from "../engine/net/streams";
 import { readPageConfig, createPageSession } from "../engine/net/page";
 import { createServers, stageLimit } from "../engine/net/servers";
