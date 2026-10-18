@@ -1,10 +1,11 @@
 // Builds the browser app into dist/ for the server to embed: content-hashed bundles under assets/, the shell, the
-// shared public files, version.json and precompressed copies. Workers are bundled first so the app can name them.
+// shared public files, version.json and precompressed copies.
 import { cp, readdir, rm } from "node:fs/promises";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { minified, themeScript, withoutPrefixedIs } from "./auth/build";
+import { bundles } from "./bundle";
 import { TRUSTED_TYPES_POLICY } from "./src/lib/trusted";
 
 const env = process.env;
@@ -28,32 +29,10 @@ const gitRevision = () => {
 const revision = env.GM_CLIENT_REVISION || gitRevision() || "source";
 const clientVersion = version ? `v${version}` : revision;
 
-const naming = "assets/[name]-[hash].[ext]";
-const options = { outdir, minify: true, target: "browser", naming, metafile: true } as const;
 const asset = (path: string) => `/${relative(outdir, path).split(sep).join("/")}`;
 
 await rm(outdir, { recursive: true, force: true });
-
-const workerSources = (await readdir(join(root, "src/engine/workers")))
-  .filter((name) => name.endsWith(".ts") && !/\.test\.ts$|\.testutil\.ts$/.test(name))
-  .map((name) => join(root, "src/engine/workers", name));
-const workers = await Bun.build({ ...options, entrypoints: workerSources });
-const define: Record<string, string> = {
-  "BUILD.profile": JSON.stringify(profile),
-  "BUILD.version": JSON.stringify(version),
-  "BUILD.revision": JSON.stringify(revision),
-  "BUILD.clientVersion": JSON.stringify(clientVersion),
-};
-for (const output of workers.outputs.filter((each) => each.kind === "entry-point"))
-  define[`WORKERS.${basename(output.path).replace(/-[^-]+\.js$/, "")}`] = JSON.stringify(asset(output.path));
-
-// Fonts keep their names under fonts/: the sign-in pages load two of them before the app exists.
-const app = await Bun.build({
-  ...options,
-  entrypoints: [join(root, "src/main.tsx")],
-  define,
-  external: ["/fonts/*"],
-});
+const { workers, app } = await bundles(outdir, { profile, version, revision });
 const entry = app.outputs.find((output) => output.kind === "entry-point")!;
 const styles = app.outputs.filter((output) => output.path.endsWith(".css"));
 for (const output of styles) await Bun.write(output.path, withoutPrefixedIs(await Bun.file(output.path).text()));

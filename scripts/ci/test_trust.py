@@ -431,6 +431,8 @@ class RequestTests(unittest.TestCase):
             (prerelease | {"PULL": "closed"}, "not open against main"),
             (prerelease | {"PULL": "fork"}, "fork PRs"),
             (prerelease | {"PULL": "moved"}, "head SHA changed"),
+            ({"SCREENSHOTS": "stale"}, "Screenshots are stale"),
+            (prerelease | {"SCREENSHOTS": "stale"}, None),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 output = Path(directory) / "output"
@@ -441,7 +443,9 @@ class RequestTests(unittest.TestCase):
                 pull = {"": {}, "closed": {"state": "closed"},
                         "fork": {"head": head | {"repo": {"full_name": "fork/graphite-meter"}}},
                         "moved": {"head": head | {"sha": OLD}}}[env.pop("PULL", "")]
-                with patch.dict(os.environ, env), github({PULL: PR | pull}):
+                stale = "Screenshots are stale" if env.pop("SCREENSHOTS", "") else None
+                with (patch.dict(os.environ, env), github({PULL: PR | pull}),
+                      patch("screenshots.stale", return_value=stale)):
                     outcome(self, error, command_prepare)
                 if error is not None:
                     continue

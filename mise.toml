@@ -272,6 +272,23 @@ cd client
 bun run e2e "$@"
 '''
 
+[tasks.screenshots]
+shell = "bash -e -o pipefail -c"
+depends = ["e2e-server"]
+description = "Render the README screenshots from the working tree, stamped with a release (the latest tag by default)"
+usage = 'arg "[version]" help="The release the images show, such as v0.13.0"'
+run = '''
+tag=${usage_version:-$(git describe --tags --abbrev=0)}
+version=$(VERSION=${tag#v} scripts/build-version.sh)
+mkdir -p rust/target/screenshots
+cells=$PWD/rust/target/screenshots/terminal.json
+(cd rust && GM_ENGINE_VERSION=$version cargo run -q --locked --profile ci -p graphite-meter-client --example screenshot >"$cells")
+export GM_E2E_SERVER_BIN=$PWD/rust/target/ci/graphite-meter-server GM_SCREENSHOT_VERSION=$version GM_SCREENSHOT_TERMINAL=$cells
+export BUN_CHROME_ARGS="${BUN_CHROME_ARGS:-} --force-color-profile=srgb"
+(cd client && bun run e2e bun scripts/screenshots/capture.ts)
+python3 scripts/ci/screenshots.py stamp "$tag"
+'''
+
 [tasks.bench-ui]
 shell = "bash -e -o pipefail -c"
 depends = ["e2e-server"]
