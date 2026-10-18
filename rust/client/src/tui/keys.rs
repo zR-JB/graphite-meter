@@ -34,7 +34,7 @@ pub enum Action {
     Settings,
     Details,
     Help,
-    /// 1–4 switch a stage on or off.
+    /// 1 to 4 switch a stage on or off.
     Stage,
     Latency,
     Recheck,
@@ -107,7 +107,7 @@ pub const SETTINGS: Binding = Binding::new(&[char('s')], Action::Settings, "s", 
 pub const DETAILS: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
 pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
 const STAGES: Binding =
-    Binding::new(&[char('1'), char('2'), char('3'), char('4')], Action::Stage, "1–4", "stages on/off");
+    Binding::new(&[char('1'), char('2'), char('3'), char('4')], Action::Stage, "1 to 4", "stages on/off");
 const LATENCY: Binding = Binding::new(&[char('l')], Action::Latency, "l", "latency server");
 const RECHECK: Binding = Binding::new(&[char('v')], Action::Recheck, "v", "check the server again");
 const MOVE: Binding = Binding::new(

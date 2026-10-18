@@ -173,7 +173,7 @@ pub fn added(loaded: Option<Duration>, idle: Option<Duration>) -> Option<f64> {
     Some(ms(loaded?) - ms(idle?))
 }
 
-/// A probe's deadline is SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms–10 s (RFC 6298), learnt from every reply.
+/// A probe's deadline is SRTT + 4 × max(RTTVAR, 1 ms) within 250 ms to 10 s (RFC 6298), learnt from every reply.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Deadline {
     /// Holds SRTT and RTTVAR once a reply arrived.

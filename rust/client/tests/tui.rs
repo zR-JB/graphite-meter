@@ -421,7 +421,7 @@ fn idle_latency_fills_its_lane_live_from_the_replies() {
         .find(|row| row.contains("≈ Idle"))
         .unwrap();
     assert!(lane.contains("19.5 ms") && lane.contains("4.8%"), "{lane:?}");
-    assert!(shows(&mut app, later, "Range 10.0–29.0 ms") && shows(&mut app, later, "Replies 20"));
+    assert!(shows(&mut app, later, "Range 10.0 to 29.0 ms") && shows(&mut app, later, "Replies 20"));
     assert!(shows(&mut app, later, "1 timeout in a row"), "the dial notes the streak");
 }
 
