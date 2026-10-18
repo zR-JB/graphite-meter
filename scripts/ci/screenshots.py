@@ -4,6 +4,7 @@ and keep the README captions naming that release.
 
     python3 scripts/ci/screenshots.py stamp TAG
     python3 scripts/ci/screenshots.py check TAG
+    python3 scripts/ci/screenshots.py warn
 """
 
 import argparse
@@ -18,7 +19,8 @@ from workspace import ROOT, VERSION
 
 RECORD = Path("docs/assets/screenshots.json")
 README = Path("README.md")
-CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\S+) ")
+RENDER = "screenshots"  # the mise task that renders the images; CI only checks them
+CAPTION = re.compile(r"(?m)^(<sub>(?:Browser app|Terminal client) )(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)(?=[ .<])")
 # What draws the images: the browser app and its build, the terminal client, the pipeline and its harness.
 SOURCES = ("client/src", "client/public", "client/index.html", "client/build.ts", "client/bundle.ts", "client/auth",
            "client/e2e/fleet.ts", "client/e2e/webview.ts", "client/e2e/servers.ts", "client/scripts", "rust/client/src",
@@ -47,7 +49,7 @@ def stamp(tag: str, root: Path = ROOT) -> None:
     record = {"version": version_of(tag), "ui_hash": ui_hash(root)}
     (root / RECORD).write_text(json.dumps(record, indent=2) + "\n")
     readme = root / README
-    readme.write_text(CAPTION.sub(rf"\g<1>{record['version']} ", readme.read_text()))
+    readme.write_text(CAPTION.sub(rf"\g<1>{record['version']}", readme.read_text()))
 
 
 def stale(tag: str, root: Path = ROOT) -> str | None:
@@ -57,17 +59,35 @@ def stale(tag: str, root: Path = ROOT) -> str | None:
     except (OSError, ValueError):
         record = {}
     if record != {"version": version_of(tag), "ui_hash": ui_hash(root)}:
-        return f"Screenshots are stale: run mise run screenshots {tag} and merge it before releasing"
+        return f"Screenshots are stale: run mise run {RENDER} {tag} and merge it before releasing"
     if captions := {match[2] for match in CAPTION.finditer((root / README).read_text())} - {record["version"]}:
-        return f"README captions name {', '.join(sorted(captions))}: run mise run screenshots {tag}"
+        return f"README captions name {', '.join(sorted(captions))}: run mise run {RENDER} {tag}"
     return None
+
+
+def drifted(root: Path = ROOT) -> str | None:
+    """A CI warning annotation when the UI changed since the screenshots were rendered, else None."""
+    try:
+        record = json.loads((root / RECORD).read_text())
+    except (OSError, ValueError):
+        record = {}
+    if record.get("ui_hash") == ui_hash(root):
+        return None
+    return ("::warning title=Screenshots are out of date::The UI changed since the README screenshots were rendered; "
+            f"run mise run {RENDER} before the next release")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("stamp", "check"))
-    parser.add_argument("tag")
+    parser.add_argument("command", choices=("stamp", "check", "warn"))
+    parser.add_argument("tag", nargs="?")
     args = parser.parse_args()
+    if args.command == "warn":
+        if annotation := drifted():
+            print(annotation)
+        return
+    if args.tag is None:
+        parser.error(f"{args.command} needs a TAG")
     try:
         if args.command == "stamp":
             stamp(args.tag)
