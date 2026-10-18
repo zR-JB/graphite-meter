@@ -40,7 +40,13 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-gh() { printf '%s\\n' $RELEASES; }
+# The release list shows nothing for the first $LIST_LAG reads, as GitHub's can right after a publish.
+gh() {
+  reads=$(( $(cat "$TAGS.reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" >"$TAGS.reads"
+  [ "$reads" -gt "${LIST_LAG:-0}" ] && printf '%s\\n' $RELEASES
+  return 0
+}
+sleep() { :; }
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
@@ -202,6 +208,10 @@ class RegistryTests(unittest.TestCase):
                     self.assertNotEqual(status, 0)
                     self.assertIn(error, output)
                     self.assertEqual(tags, {})
+
+    def test_promotion_waits_for_a_release_the_list_does_not_show_yet(self) -> None:
+        status, output, tags = self.run_script("aliases", {"1.2.3": VERIFIED}, "v1.2.3", LIST_LAG="2")
+        self.assertEqual((status, tags.get("latest")), (0, VERIFIED), output)
 
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
