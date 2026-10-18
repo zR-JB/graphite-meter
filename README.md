@@ -68,8 +68,8 @@ from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse p
 
 </div>
 
-Every [release](https://github.com/zR-JB/graphite-meter/releases) attaches the client for Linux amd64, Linux arm64
-and Windows amd64. Point it at your server, or add `--report` to run one test without the console:
+Every [release](https://github.com/zR-JB/graphite-meter/releases) attaches the client for Linux and Windows, each on
+amd64 and arm64. Point it at your server, or add `--report` to run one test without the console:
 
 ```sh
 graphite-meter-client --url http://192.168.1.20:7246

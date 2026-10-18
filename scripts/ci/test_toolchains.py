@@ -76,6 +76,16 @@ class ToolchainBoundaryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, name):
                     check(root)
 
+    def test_the_builder_downloads_the_pinned_llvm_mingw(self) -> None:
+        root = self.copy_pins()
+        mise = root / "mise.toml"
+        mise.write_text(re.sub(r'(?m)^llvm_mingw_sha256 = ".*"$', f'llvm_mingw_sha256 = "{"0" * 64}"', mise.read_text()))
+        with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
+            check(root)
+        for path, content in literal_updates(root).items():
+            path.write_text(content)
+        check(root)
+
     def test_the_lock_pins_only_the_tools_mise_uses(self) -> None:
         root = self.copy_pins()
         lock = root / "mise.lock"

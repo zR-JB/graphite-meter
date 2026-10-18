@@ -1,5 +1,4 @@
-// The list's view options: which value columns show (Date always does) and what the rows are sorted by, in a popover
-// under the "Columns" key.
+// The list's view options, columns and sort order, in a popover under the "Columns" key.
 import { naturalDescending, type HistorySort } from "../../app/history/records";
 import { HISTORY_COLUMNS, type HistoryColumn } from "../../app/preferences";
 import { For } from "../../lib/dom";

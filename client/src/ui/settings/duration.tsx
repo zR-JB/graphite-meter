@@ -1,5 +1,4 @@
-// The Duration group: the planned length in total, presets over a strip of the stage times, each stage's and the
-// warmup's stepper in Custom, and the switches that shape the timeline.
+// The Duration group: the planned length, presets, per-stage steppers and the timeline switches.
 import { DURATION_LIMITS, DURATION_PRESETS } from "../../app/preferences";
 import type { App } from "../../app/app";
 import type { Stage } from "../../engine/run/schedule";

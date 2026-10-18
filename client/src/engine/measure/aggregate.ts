@@ -1,6 +1,4 @@
-// Coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers): intervals of fixed membership over common
-// boundaries, where downloads count client-consumed bytes on the client clock and uploads each receiver's bytes on
-// its own clock. The terminal client shares its vectors (api/aggregation.testvectors.json).
+// Coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers, api/aggregation.testvectors.json).
 import type { TransferStage } from "../run/schedule";
 import type { Checkpoint, Direction } from "../types";
 import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transferConfidence } from "./stability";
@@ -341,7 +339,7 @@ export class Aggregate {
   /** Follows the early-finish score; while it holds, the headline window starts where it began to hold. */
   trackStable(score: number): boolean {
     const open = this.#open;
-    if (!open || !open.record.complete) return false;
+    if (!open?.record.complete) return false;
     const stable = stillStable(open.wasStable, score);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     if (stable && !open.wasStable) {
@@ -352,10 +350,8 @@ export class Aggregate {
     return stable;
   }
 
-  /** Each direction's headline: the latest complete interval with enough evidence, and the window it came from,
-      which becomes that interval's headline. `stable` prefers the steady window an early finish chose when it
-      suffices for every direction, so the rate, stability, quiet time and wire estimate of a stage describe one
-      window; the peak spans the whole interval, never below the rate. */
+  /** Each direction's headline from the latest complete interval with enough evidence; `stable` prefers the early
+      finish's steady window when it suffices for both, so a stage's figures describe one window. */
   settle(stage: TransferStage, stable: boolean): Record<Direction, Headline | null> {
     const intervals = this.intervals.filter((interval) => interval.stage === stage);
     const dirs = directions(stage);

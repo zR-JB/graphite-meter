@@ -66,7 +66,7 @@ class StagingTests(Scratch):
         self.assertEqual(staged_files("1.2.3"), {OCI, f"{OCI}.sha256", offer_name("1.2.3"), *(
             f"graphite-meter-{package}_1.2.3_{platform}.tar.gz"
             for package in ("server", "client") for platform in ("linux_amd64", "linux_arm64")),
-            "graphite-meter-client_1.2.3_windows_amd64.zip"})
+            "graphite-meter-client_1.2.3_windows_amd64.zip", "graphite-meter-client_1.2.3_windows_arm64.zip"})
         offers, servers = [], []
         for out in (self.fresh(), self.fresh()):
             (out / "request.json").write_text("{}")
@@ -224,6 +224,8 @@ class ClientTests(Scratch):
         for data, target, expected in (
             (executable(AMD64), AMD64, True), (executable("aarch64-unknown-linux-musl"), AMD64, False),
             (executable(WINDOWS), WINDOWS, True), (executable(AMD64), WINDOWS, False),
+            (executable("aarch64-pc-windows-gnullvm"), "aarch64-pc-windows-gnullvm", True),
+            (executable(WINDOWS), "aarch64-pc-windows-gnullvm", False),
             (b"#!/bin/sh\n", AMD64, False), (b"MZ", WINDOWS, False),
         ):
             with self.subTest(target=target, data=data[:20]):

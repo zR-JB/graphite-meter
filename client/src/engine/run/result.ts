@@ -1,5 +1,4 @@
-// What a finished run reports and the rules that judge it: stage statuses, the outcome, and the coherence a saved
-// result must hold. History keeps these shapes as its schema 6.
+// What a finished run reports and the rules that judge it; History keeps these shapes as schema 6.
 import { FAILURE_REASONS, type FailureReason } from "../../protocol/reasons";
 import {
   coveredMs,

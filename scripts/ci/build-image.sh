@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The server image of CI and release requests. The ci profile's two cargo builds take longer at once than in a row, so
-# CI builds and loads each architecture alone and the OCI archive reuses those layers. A release's fat LTO links and
-# arm64 PGO training under QEMU leave cores idle, so its archive is the fresh builder's first build, of both at once.
+# The server image of CI and release requests. CI builds each architecture alone, which is faster for the ci profile;
+# a release builds both at once, as its LTO links and arm64 PGO under QEMU leave cores idle.
 set -euo pipefail
 
 build() {

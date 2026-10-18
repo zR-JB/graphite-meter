@@ -1,5 +1,4 @@
-// The run as the page sees it: Start, Stop and Cancel, the settings that may change while a test runs, and the facts
-// of the current or last run that views read. Only the current run writes them.
+// The run as the page sees it; only the current run writes the facts views read.
 import type { LatencyBucket } from "../engine/measure/buckets";
 import type { LatencySummary } from "../engine/measure/latency";
 import type { Clock } from "../engine/run/clock";
@@ -31,9 +30,8 @@ interface RunEnvironment {
   refusal: Read<string>;
   /** The page's sign-in and every grant must cover `plannedMs`; throws with the words to show. */
   authorize(plannedMs: number, signal: AbortSignal): Promise<void>;
-  /** Checks the selected servers again: what Start runs on, the servers left out, and whose latency leads. Throws
-      with the words to show when a server, as just read, refuses `config`; an AbortError means newer intent
-      superseded the start. */
+  /** Checks the selected servers again; throws the words to show when one refuses `config`, an AbortError when newer
+      intent superseded the start. */
   prepare(
     signal: AbortSignal,
     config: TestConfig,

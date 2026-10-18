@@ -1,5 +1,4 @@
-// Adds lists and conditional content to the JSX runtime. Rows and branches are built once and kept or moved, never
-// rebuilt for changes that do not concern them.
+// Lists and conditional content for the JSX runtime; rows and branches are kept or moved, never rebuilt.
 import { clear, insert, type Child } from "./jsx-runtime";
 import { computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "./signal";
 

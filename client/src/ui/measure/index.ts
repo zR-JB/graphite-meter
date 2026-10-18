@@ -1,5 +1,4 @@
-// Exports the instrument, the console body, the status strip's facts, the phase toast and the connection dot for the
-// shell, and the result cards and latency lanes History shows a saved result with.
+// The instrument's exports for the shell and for History's saved results.
 import "./measure.css";
 
 export { ResultSummary } from "./cards";

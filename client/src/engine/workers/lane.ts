@@ -1,5 +1,4 @@
-// One HTTP fetch lane (api/upload.md): a download loop counting what it reads, or an upload loop of sized POSTs that
-// the server counts. Its owner reopens it after an ending and stops it by termination.
+// One HTTP fetch lane (api/upload.md): a counted download loop or an upload loop of sized POSTs.
 import { release } from "../../protocol/documents";
 import type { LaneCommand, LaneReport } from "../../protocol/messages";
 import { ByteReports, countBytes, largestPost, MAX_POST_BYTES, randomBlock } from "../lanes/bytes";
@@ -8,8 +7,7 @@ import { downloadRefused, lost, refused } from "../lanes/endings";
 const MIB = 1024 * 1024;
 /** A POST sends for at least this long, so per-request overhead stays small. */
 const TARGET_POST_MS = 500;
-/** Each POST's answer leaves its lane idle for about one round trip, which the receiver times as no bytes moving: a
-    POST sends for at least this many round trips, so its lane stays at least 90 % busy. */
+/** Round trips a POST sends for, as each answer idles its lane for about one: the lane stays 90 % busy. */
 const TURNAROUNDS = 9;
 /** The first and smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
@@ -23,7 +21,7 @@ const ignore = () => {};
 const reports = new ByteReports((bytes, epoch) => post({ type: "bytes", bytes, epoch }));
 let body: Blob | undefined;
 
-onmessage = ({ data }: MessageEvent<LaneCommand>) => {
+self.onmessage = ({ data }: MessageEvent<LaneCommand>) => {
   if (data.type === "measure") return reports.measure(data.epoch);
   if (data.type === "flush") return post(reports.flushed(data.at));
   // A rejection in a worker never reaches the owner's error handler, so it ends the lane as a break.

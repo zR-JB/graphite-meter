@@ -36,6 +36,7 @@ PIN_PATTERNS = {
         "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-trixie@sha256:[0-9a-f]{64}",
         "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-trixie@sha256:[0-9a-f]{64}",
     },
+    "llvm": {"mingw": r"\d{8}", "mingw_sha256": r"[0-9a-f]{64}"},
 }
 
 
@@ -68,7 +69,7 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
         raise ValueError("mise.toml vars.buildx_version must select an exact release")
     pins["tools"]["buildx"] = buildx
     for section, patterns in PIN_PATTERNS.items():
-        prefix = "browser" if section == "browser" else "image"
+        prefix = "image" if section == "images" else section
         values = {name: metadata.get(f"{prefix}_{name}") for name in patterns}
         pins[section] = {}
         for name, pattern in patterns.items():
@@ -96,6 +97,12 @@ def image_version(image: str) -> str:
 def pin(name: str, root: Path = ROOT) -> str:
     section, key = name.split(".", 1)
     return load_pins(root)[section][key]
+
+
+def llvm_mingw_url(release: str) -> str:
+    """The llvm-mingw `release` for x86_64 Linux hosts, whose SHA-256 mise.toml pins as llvm_mingw_sha256."""
+    return (f"https://github.com/mstorsjo/llvm-mingw/releases/download/{release}/"
+            f"llvm-mingw-{release}-ucrt-ubuntu-22.04-x86_64.tar.xz")
 
 
 def rust_downloads(manifest: bytes) -> dict[tuple[str, str], dict[str, object]]:
@@ -174,6 +181,8 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
              rf"\g<1>{pins['images']['rust']}\g<2>"),
             (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/oven/bun:\S+( AS browser)$",
              rf"\g<1>{pins['images']['bun']}\g<2>"),
+            (r"(?m)^(ADD --checksum=sha256:)\S+ https://github\.com/mstorsjo/llvm-mingw/\S+( /tmp/llvm-mingw\.tar\.xz)$",
+             rf"\g<1>{pins['llvm']['mingw_sha256']} {llvm_mingw_url(pins['llvm']['mingw'])}\g<2>"),
         ],
         # setup-qemu registers arm64 emulation with this image, privileged.
         ".github/workflows/ci.yml": [
@@ -245,7 +254,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command",
                         choices=("get", "browsers", "latest-browsers", "check", "sync", "doctor", "python-target",
-                                 "verify-rust"))
+                                 "verify-rust", "llvm-mingw"))
     parser.add_argument("name", nargs="?")
     parser.add_argument("--write", action="store_true", help="pin the latest browsers in mise.toml")
     args = parser.parse_args()
@@ -274,6 +283,9 @@ def main() -> None:
                 doctor()
             case "verify-rust":
                 verify_rust_toolchain()
+            case "llvm-mingw":
+                llvm = load_pins()["llvm"]
+                print(llvm_mingw_url(llvm["mingw"]), llvm["mingw_sha256"])
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"toolchains: {exc}\n")
 

@@ -80,6 +80,9 @@ jobs:
           - name: Check the browser client
             if: needs.plan.outputs.code == 'true'
             run: mise run client-ci
+          # A warning only: the stable release request is what refuses stale screenshots.
+          - name: Note stale README screenshots
+            run: python3 scripts/ci/screenshots.py warn
 
   rust:
     name: Rust checks
@@ -138,6 +141,12 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev \
             musl-tools gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          read -r url sha256 < <(python3 scripts/ci/toolchains.py llvm-mingw)
+          archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" "$url"
+          printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/llvm-mingw"
+          tar -xJf "$archive" --strip-components=1 -C "$RUNNER_TEMP/llvm-mingw"
       - name: Set up Rust
         uses: ./.github/actions/setup-project
         with: {rust: 'true'}
@@ -145,7 +154,7 @@ jobs:
         run: python3 -m scripts.legal.check_git_sources --verify
       - wait: cross-compilers
       - name: Check the shipped client and server targets
-        run: mise run rust-check-targets
+        run: PATH="$PATH:$RUNNER_TEMP/llvm-mingw/bin" mise run rust-check-targets
 
   rust-windows:
     name: Rust checks on Windows
@@ -262,7 +271,7 @@ jobs:
     # One runner per TUI platform of rust/Cargo.toml; staging refuses a missing or extra archive.
     strategy:
       matrix:
-        platform: [linux/amd64, linux/arm64, windows/amd64]
+        platform: [linux/amd64, linux/arm64, windows/amd64, windows/arm64]
     env:
       VERSION: 0.0.0-ci
     steps:
@@ -296,6 +305,34 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  tui-windows-arm64:
+    name: Run client on Windows arm64
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    needs: [plan, tui]
+    if: needs.plan.outputs.code == 'true'
+    defaults:
+      run: {shell: bash}
+    env:
+      VERSION: 0.0.0-ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - parallel:
+          - name: Set up Python
+            uses: ./.github/actions/setup-project
+          - name: Download the client archives from this run
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+            with:
+              pattern: tui-*
+              merge-multiple: true
+              path: ${{ runner.temp }}/tui
+      - name: Run Windows arm64 client from its archive
+        env:
+          RELEASE_DIST: ${{ runner.temp }}/tui
+        run: python3 -m scripts.package "$VERSION" --output "$RELEASE_DIST" --check
 
   # Stages and verifies this run's builds as a release request stages and the release verifies them.
   release-staging:
@@ -433,7 +470,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     if: always()
-    needs: [plan, checks, rust, rust-delayed, rust-targets, rust-windows, server, image, tui, release-staging, e2e]
+    needs: [plan, checks, rust, rust-delayed, rust-targets, rust-windows, server, image, tui, tui-windows-arm64, release-staging, e2e]
     steps:
       - name: Require every selected job
         env:

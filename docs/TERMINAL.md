@@ -23,6 +23,7 @@ executable and its license notices (`--legal` prints them too). The Linux builds
 | Linux, amd64   | `graphite-meter-client_X.Y.Z_linux_amd64.tar.gz` |
 | Linux, arm64   | `graphite-meter-client_X.Y.Z_linux_arm64.tar.gz` |
 | Windows, amd64 | `graphite-meter-client_X.Y.Z_windows_amd64.zip`  |
+| Windows, arm64 | `graphite-meter-client_X.Y.Z_windows_arm64.zip`  |
 
 ```sh
 tar -xzf graphite-meter-client_X.Y.Z_linux_amd64.tar.gz

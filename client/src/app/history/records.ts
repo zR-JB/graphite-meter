@@ -1,5 +1,4 @@
-// Saved results: the schema 6 record each finished run becomes, how History reads and orders stored rows, and the one
-// upgrade that brings rows earlier releases saved to this build's form.
+// Saved results: the schema 6 record, how History reads and orders rows, and the upgrade of older rows.
 import type { ThroughputResult } from "../../engine/measure/aggregate";
 import type { AddedLatency, LatencyResult, LatencySummary } from "../../engine/measure/latency";
 import type { WireModel } from "../../engine/measure/overhead";

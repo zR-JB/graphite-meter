@@ -1,5 +1,4 @@
-//! Tests password sign-in over the app, with the page, cookies, refusals and their notices, the attempt budgets,
-//! renewal and the security log's counts.
+//! Password sign-in over the app: the page, cookies, refusals, attempt budgets, renewal and the security log.
 
 use super::{
     auth::{PUBLIC, assert_headers, auth_app, login, public, store, tls},

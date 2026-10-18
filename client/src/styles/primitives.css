@@ -603,9 +603,7 @@
     font: var(--role-label);
   }
 
-  /* Segments share the control's width equally, each as wide as the widest word, so two controls with the same
-     words line up. The chosen segment's plate is one thumb under the words that slides to the choice on the
-     control spring; its place comes from the chosen segment's index, so it needs no measuring and no script. */
+  /* Equal segments, so controls with the same words line up; the thumb slides by the chosen index, unmeasured. */
   .segmented {
     --n: 1;
     --i: 0;

@@ -1,6 +1,4 @@
-// Holds one server's resources for one stage, its download and upload carriers, the upload receiver and the probe
-// channel, with the readiness, stalls and failure latch that stand between them and the run. A failure or a sign-in
-// that ends the stage reaches the run once, as prepare()'s rejection while that runs and as an event after.
+// One server's resources for one stage; a failure or ended sign-in reaches the run once.
 import { readJSON, release, uploadSession } from "../../protocol/documents";
 import type { LaneCommand, SessionCommand } from "../../protocol/messages";
 import { ROUTES } from "../../protocol/routes";
@@ -335,9 +333,7 @@ class Stage implements StageResources {
     signIn: () => this.#signIn("throughput"),
   };
 
-  /** Settles a lane's or the feed's ending as a sign-in, a rotation the run decides, a failure, or a stall and a
-      reopen after `delayMs`. A broken one also checks the sign-in or grant meanwhile, which can take longer than the
-      run's silence rule. */
+  /** Settles a lane's or the feed's ending; checking the sign-in after a break may outlast the silence rule. */
   async #reopen(
     direction: Direction,
     label: string,

@@ -1,5 +1,4 @@
-// Paths in words: how a target reads in Settings and Details, the choices each picker offers on the selected servers
-// and why one cannot be chosen, and the line that states a role's check.
+// Paths in words for Settings and Details, the choices each picker offers and why one cannot be chosen.
 import type { ServerView } from "../../engine/net/connection";
 import type { PageConfig } from "../../engine/net/page";
 import { blockedReason, parseSelection, PROTOCOL_LABEL, resolve, unresolvedReason } from "../../engine/net/paths";
@@ -101,10 +100,8 @@ const GROUPS: Record<Role, readonly (readonly [string, string])[]> = {
 const groupOf = (target: Target) =>
   target.transport === "fetch-stream" ? `protocol:${target.protocol}` : `transport:${target.transport}`;
 
-/** Every choice a picker offers. One server offers Automatic, the chosen group, and each mechanism it advertises,
-    a negotiated one named by the protocol its verified path saw; several servers offer the groups, each available
-    only when every server that answers (all of them when none does) can run it. Datagram throughput shows only
-    when its switch is on or it is chosen. */
+/** Every choice a picker offers: one server's advertised mechanisms, or for several the groups every answering server
+    can run. */
 export function choices(
   role: Role,
   servers: readonly ServerIdentity[],

@@ -1,5 +1,4 @@
-// Hash routes and the browser history behind them: a surface the app opened closes by stepping back, one reached by
-// a link by replacing. The Details panel's route is `endpoint`, which saved links use.
+// Hash routes: a surface the app opened closes by stepping back, one reached by a link by replacing.
 
 export type Panel = "settings" | "details";
 export type Workspace = { kind: "measurement" } | { kind: "history"; id: string | null };

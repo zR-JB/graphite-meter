@@ -496,7 +496,7 @@ impl PeerStream {
                     }
                 }
                 Kind::Control(reader) => {
-                    reader.read(shared.role.peer(), &mut self.input, |event| shared.control(event))?
+                    reader.read(shared.role.peer(), &mut self.input, |event| shared.control(event))?;
                 }
                 Kind::Encoder => qpack::encoder_stream(&std::mem::take(&mut self.input))?,
                 Kind::Decoder(decoder) => decoder.read(&std::mem::take(&mut self.input))?,

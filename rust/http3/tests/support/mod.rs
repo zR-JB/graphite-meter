@@ -1,5 +1,4 @@
-//! Builds loopback peers for the layer tests, our client against our server, and raw peers that send what a
-//! conforming peer never would. Deadlines run on tokio's paused clock.
+//! Loopback peers for the layer tests, conforming and raw, on tokio's paused clock.
 #![allow(dead_code)]
 
 use graphite_meter_http3::{

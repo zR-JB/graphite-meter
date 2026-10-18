@@ -1,5 +1,4 @@
-//! Prints the console after a fixed, simulated run as JSON cells in both themes, for the README screenshots
-//! (client/scripts/screenshots/capture.ts rasterizes them).
+//! Prints the console after a fixed simulated run as JSON cells in both themes, for the README screenshots.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use graphite_meter_client::{
     config::Config,

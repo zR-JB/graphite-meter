@@ -89,10 +89,8 @@ def write_oci(path: Path, repository: str, revision: str, version: str = "1.2.3"
               extra_layer: Mapping[str, bytes] | None = None,
               stage: tuple[str, str | None] = STAGE, arch_labels: Mapping[str, Mapping[str, str]] | None = None,
               edit: Callable[[bytes], bytes] = lambda data: data) -> str:
-    """Write the OCI layout BuildKit exports for two labelled images of `files`, a str naming a symlink's target,
-    each with its `arch_files` and `arch_labels` and then an `extra_layer` without directories, and provenance of
-    building `stage`, a Dockerfile and target, with `edit` applied to each JSON blob; return the digest of its
-    image index."""
+    """Write the OCI layout BuildKit exports for two labelled images of `files` (a str value is a symlink target), with
+    `edit` applied to each JSON blob; return its image index digest."""
     blobs: dict[str, bytes] = {}
 
     def add(data: bytes, media: str, **extra: JsonValue) -> JsonObject:
@@ -169,16 +167,16 @@ def write_tar(path: Path, members: Mapping[str, bytes], compressed: bool = True)
             archive.addfile(info, io.BytesIO(payload))
 
 
-# 64-bit little-endian executable headers for each Rust target's architecture.
-ELF = {"x86_64": 62, "aarch64": 183}
+# 64-bit little-endian ELF and PE machines for each Rust target's architecture.
+MACHINES = {"x86_64": (62, 0x8664), "aarch64": (183, 0xAA64)}
 
 
 def executable(target: str, payload: bytes = b"") -> bytes:
     """The start of an executable for `target`, followed by `payload`."""
+    elf, pe = MACHINES[target.split("-", 1)[0]]
     if "-windows-" in target:
-        return b"MZ" + bytes(0x3A) + (0x40).to_bytes(4, "little") + b"PE\0\0" + (0x8664).to_bytes(2, "little") + payload
-    machine = ELF[target.split("-", 1)[0]]
-    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + machine.to_bytes(2, "little") + payload
+        return b"MZ" + bytes(0x3A) + (0x40).to_bytes(4, "little") + b"PE\0\0" + pe.to_bytes(2, "little") + payload
+    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + elf.to_bytes(2, "little") + payload
 
 
 def reviewed(notices: bytes) -> bytes:
@@ -229,9 +227,7 @@ def write_client(directory: Path, version: str, platform: str, changes: Mapping[
 
 
 def write_exports(root: Path, version: str, revision: str, repository: str, profile: str = "release") -> str:
-    """Write what the builds export into `root`: the OCI archive, server-export with each platform's source offer
-    part and tui-export with the client archives and their parts; return the image index digest. A prerelease's
-    image, which BuildKit fetched from GitHub, names the repository."""
+    """Write what the builds export into `root` and return the image index digest."""
     workspace = load()
     server, client = root / "server-export", root / "tui-export"
     client.mkdir(parents=True)

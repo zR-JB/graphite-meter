@@ -180,9 +180,7 @@ export const arcLabel = (arc: ResultArc) =>
 
 type Bead = "bead" | "stacked" | "split";
 
-/** How each head sits on the ring, judged against the heads painted before it (the higher results): one nearly
-    level with a neighbor shows only its trailing half, so the pair reads as one bead in both hues; one that
-    overlaps is cut out of the neighbor by a halo in the ground. Heads never leave the ring. */
+/** How each head sits against the higher ones: nearly level shows its trailing half, overlapping gets a halo. */
 export function beadKinds(fractions: readonly number[], radius: number, headRadius: number): Bead[] {
   const along = (fraction: number) => (Number.isFinite(fraction) ? fraction : 0) * ARC_SWEEP * radius;
   return fractions.map((fraction, index) => {
@@ -221,10 +219,8 @@ interface NeedleInput {
   course: string;
 }
 
-/** The needle's course. A stage's first value rises from zero, or turns the needle round from where the last stage's
-    drain has taken it, at the speed it drains; within a stage the needle follows the live value, and a scale change
-    glides it across; when the value ends it drains to zero, so one stage hands the ring to the next through zero. A
-    result takes over the ring where the needle stands. Angles are degrees along the ring. */
+/** The needle's course in degrees: it follows the live value and drains to zero between stages, so each hands the ring
+    to the next through zero. */
 export class Needle {
   #from = 0;
   #at = 0;

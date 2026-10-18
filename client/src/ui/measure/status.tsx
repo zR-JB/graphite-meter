@@ -21,9 +21,7 @@ import { Figure, painter, setText } from "./paint";
 /** The word cell is as wide as the widest word it can say, so the figures stay where they are. */
 const WORDS = [...new Set([...Object.values(PHASE), ...Object.values(OUTCOME).map((outcome) => outcome.label)])];
 
-/** The strip's facts, left to right: the run's word, the time since it started, the bytes it moved, the time its
-    stage has left, and the build. Each figure sits in a cell as wide as its longest value, so a counting figure never
-    moves its neighbors. */
+/** The status strip; each figure's cell is as wide as its longest value, so counting never moves its neighbors. */
 export function StatusBar(props: { app: App; shell: Shell }): Node {
   const { app } = props;
   const { run } = app;

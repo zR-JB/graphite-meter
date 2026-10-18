@@ -1,5 +1,4 @@
-// An overflow menu: a native auto popover gives light dismiss, Escape and the top layer; arrows rove focus, and Tab
-// or Escape return to the trigger.
+// An overflow menu on a native auto popover; arrows rove focus, Tab or Escape return to the trigger.
 import { signal, type Read } from "../../lib/signal";
 import { Icon, type IconName } from "./icon";
 import { roveTo } from "./rove";
@@ -82,7 +81,7 @@ export function MoreMenu(props: { label: string; items: MenuItem[]; danger?: boo
           return;
         }
         const list = items();
-        const at = list.findIndex((item) => item === document.activeElement);
+        const at = list.indexOf(document.activeElement as HTMLButtonElement);
         const to = roveTo(event.key, at, list.length, VERTICAL);
         if (to < 0 || !list.length) return;
         event.preventDefault();

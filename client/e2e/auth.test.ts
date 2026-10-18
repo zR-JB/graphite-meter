@@ -17,7 +17,7 @@ import {
   savedResult,
   spawnPeer,
 } from "./fleet";
-import { Locator, Page, expect, test } from "./webview";
+import { type Locator, Page, expect, test } from "./webview";
 
 async function signIn(page: Page) {
   await page.getByRole("textbox", { name: "Operator password" }).fill(password);

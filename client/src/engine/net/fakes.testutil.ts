@@ -1,5 +1,4 @@
-// Fakes for the net tests: page time that moves only when a test says so, a network whose answers carry the next hop
-// Resource Timing reports, and latency buses.
+// Net test fakes: page time that moves on demand, a network reporting Resource Timing hops, and latency buses.
 import { jest, spyOn } from "bun:test";
 import type { CatalogEntry } from "../../protocol/documents";
 import { delay } from "../run/clock";

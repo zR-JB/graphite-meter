@@ -1,5 +1,4 @@
-// The engine's shared vocabulary: servers and their verified paths, credentials, evidence, and the contract between
-// the run and the resources each server opens for a stage.
+// The engine's shared vocabulary and the contract between the run and each server's stage resources.
 import type { Probe } from "../protocol/documents";
 import type { Ending, ProbeOutcome, RequestRecipe, TicketRecipe } from "../protocol/messages";
 import type { FailureReason } from "../protocol/reasons";

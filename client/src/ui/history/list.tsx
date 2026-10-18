@@ -1,5 +1,4 @@
-// The results list: heads that sort, rows grouped by day or under their order, pages of 50 added as they are asked for.
-// A row is built once per result from words worked out once per change; the fold, from sizes the layout already has.
+// The results list: sortable heads, rows grouped by day, pages of 50 added on demand, each row built once.
 import type { App } from "../../app/app";
 import {
   naturalDescending,

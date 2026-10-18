@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { fakeNet, MARKER, page as publicPage, type Answer } from "./fakes.testutil";
-import { CoverageError, createPageSession } from "./page";
+import { type CoverageError, createPageSession } from "./page";
 
 const page = { ...publicPage, auth: true };
 let net: ReturnType<typeof fakeNet> | undefined;

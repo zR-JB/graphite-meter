@@ -6,9 +6,7 @@ release does.
     python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, STAGED_DIR, PROFILE
     python3 scripts/ci/assets.py upload {request,image,client,bundle}   # SOURCE, OUT_DIR, VERSION, TUI_PLATFORM
 
-Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, an archive of each
-image's server, the client archives out of TUI_EXPORT and the source offer merged from every build's part in both
-BuildKit exports. Verification reads the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
+Verification reads the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
 """
 
 import argparse
@@ -244,9 +242,7 @@ def offer_files(path: Path, top: str) -> tuple[list[str], dict[str, bytes]]:
 
 
 def verify_offer(path: Path, version: str, profile: str, root: Path = ROOT) -> dict[str, str]:
-    """Check the source offer and return each build's notices. Under its own directory it holds, for exactly the
-    release's builds, reviewed notices and an inventory against this checkout's Cargo.lock, the source of every
-    inventoried crate and browser package, and otherwise only files equal to this checkout's."""
+    """Check the source offer covers exactly the release's builds and return each build's notices."""
     top = path.name.removesuffix(".tar.gz")
     names = archive_names(path)
     if outside := sorted(name for name in names if name != top and not name.startswith(top + "/")):

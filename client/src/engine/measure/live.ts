@@ -1,5 +1,4 @@
-// Computes the live rate a stage shows while it runs. Results never read it. The terminal client shares its vectors
-// (api/liverate.testvectors.json), so its arithmetic stays exactly as it is.
+// The live rate a running stage shows; the terminal client shares its vectors (api/liverate.testvectors.json).
 import type { Checkpoint, Direction } from "../types";
 
 const MIN_WINDOW_MS = 800;
@@ -26,9 +25,8 @@ const windowMs = (regimeAgeMs: number) => {
   return Math.min(age, Math.max(MIN_WINDOW_MS, age * 0.85));
 };
 
-/** Grows an average and restarts it on a confirmed 25% drop or 20% rise. The first delivery only anchors it, because
-    its bytes arrived over a span no window bounds (a socket buffer drained at once, a receiver's 64 KiB read), and on
-    a slow link they alone would lift the first readings well above the rate. */
+/** Grows an average and restarts it on a confirmed 25% drop or 20% rise. The first delivery only anchors it: a
+    drained socket buffer arrives at once and would lift the first readings on a slow link. */
 export class RateEstimator {
   /** Holds the bytes per second to show, 0 until there is evidence. */
   presented = 0;

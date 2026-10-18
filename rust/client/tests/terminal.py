@@ -2,12 +2,8 @@
 
     python3 terminal.py quit|interrupt|signals|query PORT
 
-It runs ./graphite-meter-client against http://127.0.0.1:PORT in a 100x24 terminal, answers its background query,
-presses the mode's keys once their cues appear in the output, and prints the exit status, everything the client wrote
-and whether the terminal echoes again as JSON. The interrupt mode names a terminal that draws progress bars. In the
-signals mode the client runs with --report and its query goes unanswered; once the query appears it gets SIGINT, then
-SIGTERM once no thread holds the SIGINT pending, and the JSON adds the seconds from SIGTERM to its exit. In the query
-mode the client runs with --report and gets Ctrl+C while its query waits.
+Prints the exit status, the client's output and whether the terminal echoes again as JSON; signals adds the seconds
+from SIGTERM to the exit.
 """
 
 import fcntl
