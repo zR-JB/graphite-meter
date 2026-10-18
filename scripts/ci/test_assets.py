@@ -10,8 +10,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from unittest.mock import patch
 
-from assets import CLIENT, OCI, SERVER, command_upload, find, main, merge, native_executable, staged_files, verify, verify_client, \
-    verify_offer
+from assets import (
+    CLIENT, OCI, SERVER, command_upload, find, main, merge, native_executable, staged_files, verify, verify_archive,
+    verify_offer,
+)
 from fixtures import (
     REPOSITORY_URL, executable, notices, outcome, reviewed, server_binary, write_client, write_exports, write_oci,
     write_staged, write_tar,
@@ -61,13 +63,22 @@ class StagingTests(Scratch):
     def test_staging_adds_the_image_archives_and_one_deterministic_offer_of_every_build(self) -> None:
         exports = self.fresh()
         write_exports(exports, "1.2.3", SHA, REPO)
-        offers = []
+        self.assertEqual(staged_files("1.2.3"), {OCI, f"{OCI}.sha256", offer_name("1.2.3"), *(
+            f"graphite-meter-{package}_1.2.3_{platform}.tar.gz"
+            for package in ("server", "client") for platform in ("linux_amd64", "linux_arm64")),
+            "graphite-meter-client_1.2.3_windows_amd64.zip"})
+        offers, servers = [], []
         for out in (self.fresh(), self.fresh()):
             (out / "request.json").write_text("{}")
             self.stage("1.2.3", out, exports)
             self.assertEqual({path.name for path in out.iterdir()}, staged_files("1.2.3") | {"request.json"})
             offers.append((out / offer_name("1.2.3")).read_bytes())
+            servers.append((out / "graphite-meter-server_1.2.3_linux_arm64.tar.gz").read_bytes())
         self.assertEqual(offers[0], offers[1])
+        self.assertEqual(servers[0], servers[1])
+        base = "graphite-meter-server_1.2.3_linux_arm64"
+        self.assertEqual(members(out / f"{base}.tar.gz")[f"{base}/graphite-meter-server"],
+                         server_binary("linux/arm64"))
         # The gzip header's MTIME field.
         self.assertEqual(offers[0][4:8], bytes(4))
         with tarfile.open(fileobj=io.BytesIO(gzip.decompress(offers[0]))) as archive:
@@ -243,8 +254,8 @@ class ClientTests(Scratch):
             directory = self.fresh()
             write_client(directory, "1.2.3", "windows/amd64", changes)
             with self.subTest(changes=sorted(changes)):
-                outcome(self, error, lambda: verify_client(directory, "1.2.3", "windows/amd64", WINDOWS,
-                                                           notices(build).decode()))
+                outcome(self, error, lambda: verify_archive(directory, CLIENT, "1.2.3", "windows/amd64", WINDOWS,
+                                                            notices(build).decode()))
         self.assertEqual(source.decode().splitlines(), [
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter/tree/v1.2.3", "Matching release: v1.2.3",
             "Dependency source archive: graphite-meter_1.2.3_third-party-source.tar.gz",
@@ -263,7 +274,7 @@ class VerifyTests(Scratch):
             edit(staged)
         return verify(version, SHA, staged, profile)
 
-    def test_the_image_the_client_archives_and_the_offer_bind_to_each_other(self) -> None:
+    def test_the_image_the_archives_and_the_offer_bind_to_each_other(self) -> None:
         def checksum(staged: Path) -> None:
             (staged / f"{OCI}.sha256").write_text(f"{'0' * 64}  {OCI}\n")
 
@@ -289,6 +300,8 @@ class VerifyTests(Scratch):
             (image(source | {"arm64": source["amd64"]}, server), "release", "linux/arm64 SOURCE.txt does not name"),
             (image(source, server | {"amd64": b"server"}), "release", "linux/amd64 server is not the reviewed build"),
             (image(source, server | {"arm64": server["amd64"]}), "release", "linux/arm64 server is not the reviewed"),
+            (image(source, server | {"amd64": server["amd64"] + b"\0"}), "release",
+             "linux/amd64 server is not the one graphite-meter-server_1.2.3_linux_amd64.tar.gz holds"),
             (image(source, server, ("container/Dockerfile.rust", "server")), "release",
              "built target 'server' of 'Dockerfile.rust', not 'server' of 'container/Dockerfile'"),
             (image(source, server, ("container/Dockerfile", "server-build")), "release", "built target 'server-build'"),

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Stage the image, the client archives and the one source offer of a release, and verify them as the release does.
+"""Stage the image, the server and client archives and the one source offer of a release, and verify them as the
+release does.
 
     python3 scripts/ci/assets.py stage   # VERSION, OCI_ARCHIVE, OUT_DIR, SERVER_EXPORT, TUI_EXPORT
     python3 scripts/ci/assets.py check   # VERSION, REVISION, REPOSITORY, STAGED_DIR, PROFILE
     python3 scripts/ci/assets.py upload {request,image,client,bundle}   # SOURCE, OUT_DIR, VERSION, TUI_PLATFORM
 
-Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, the client archives
-out of TUI_EXPORT and the source offer merged from every build's part in both BuildKit exports. Verification reads
-the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
+Staging adds the OCI archive and its checksum to OUT_DIR and, unless VERSION is a prerelease, an archive of each
+image's server, the client archives out of TUI_EXPORT and the source offer merged from every build's part in both
+BuildKit exports. Verification reads the staged files as data and never runs them. Every path lies inside RUNNER_TEMP.
 """
 
 import argparse
@@ -27,11 +28,11 @@ from github_api import (
     fail, file_sha256, int_field, object_field, runner_path, str_field, table,
 )
 from trust import env, env_sha, exact_files
-from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, source_txt, tui_archive
+from workspace import PRERELEASE, ROOT, VERSION, build_name, build_offer, load, offer_name, release_archive, source_txt
 
 # The source offer's members are written as the collector writes its parts.
 sys.path.append(str(ROOT))
-from scripts.legal.artifacts import add_bytes
+from scripts.legal.artifacts import add_bytes, write_archive
 
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
@@ -42,7 +43,7 @@ MEMBER_LIMIT = 256 * 1024 * 1024
 OFFER_LIMIT = 2 * 1024 * 1024 * 1024
 SERVER, CLIENT = "graphite-meter-server", "graphite-meter-client"
 PROFILES = ("ci", "release")
-TUI_FILES = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
+ARCHIVE_FILES = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
 # A reviewed build's executable carries its notices' SHA-256 after this (rust/legal/src/build.rs).
 REVIEWED = "graphite-meter reviewed notices sha256:"
 # ELF e_machine and PE machine of each target's architecture.
@@ -73,7 +74,8 @@ def release_assets(version: str) -> set[str]:
     """What a GitHub Release carries besides checksums.txt; a prerelease has no Release."""
     if prerelease(version):
         return set()
-    return {tui_archive(version, platform)[0] for platform in load().tui} | {offer_name(version)}
+    return {release_archive(package, version, platform)[0] for package, platform, _ in builds(version).values()} \
+        | {offer_name(version)}
 
 
 def staged_files(version: str) -> set[str]:
@@ -165,14 +167,22 @@ def merge(parts: list[Path], out: Path) -> None:
 
 
 def stage_assets(version: str, server_export: Path, tui_export: Path, out: Path) -> None:
-    """Copy the client archives out of the exports and merge every build's source offer part into one offer."""
+    """Package each server of the staged image, copy the client archives out of the exports and merge every build's
+    source offer part into one offer."""
     workspace = load()
     parts = find(server_export, {build_offer(SERVER, platform) for platform in workspace.server})
-    archives = {tui_archive(version, platform)[0] for platform in workspace.tui}
+    archives = {release_archive(CLIENT, version, platform)[0] for platform in workspace.tui}
     found = find(tui_export, archives | {build_offer(CLIENT, platform) for platform in workspace.tui})
     for name in sorted(archives):
         shutil.copyfile(found.pop(name), confined_path(out / name, out))
     merge([path for _, path in sorted((parts | found).items())], confined_path(out / offer_name(version), out))
+    images = verify_oci.servers(out / OCI)
+    for platform in workspace.server:
+        archive, base, binary = release_archive(SERVER, version, platform)
+        source, server = images[platform.removeprefix("linux/")]
+        notices = read(parts[build_offer(SERVER, platform)],
+                       f"{offer_name(version).removesuffix('.tar.gz')}/builds/{build_name(SERVER, platform)}/LEGAL.txt")
+        write_archive(confined_path(out / archive, out), base, binary, server, notices, source.encode(), ROOT)
 
 
 def read(path: Path, name: str, limit: int = FILE_LIMIT) -> bytes:
@@ -312,13 +322,13 @@ def native_executable(data: bytes, target: str) -> bool:
     return data[:6] == b"\x7fELF\x02\x01" and field(16, 2) in (2, 3) and field(18, 2) == elf
 
 
-def verify_client(directory: Path, version: str, platform: str, target: str, notices: str,
-                  root: Path = ROOT) -> None:
-    """A client archive holds a reviewed executable for `target` of its build's `notices`, this checkout's license
-    files, those notices and the SOURCE.txt that names the offer and the build."""
-    archive, base, binary = tui_archive(version, platform)
+def verify_archive(directory: Path, package: str, version: str, platform: str, target: str, notices: str,
+                   root: Path = ROOT) -> str:
+    """A release archive holds a reviewed executable for `target` of its build's `notices`, this checkout's license
+    files, those notices and the SOURCE.txt that names the offer and the build; return the executable's SHA-256."""
+    archive, base, binary = release_archive(package, version, platform)
     path = directory / archive
-    require_same(archive, {f"{base}/{name}" for name in (binary, *TUI_FILES)}, archive_names(path) - {base})
+    require_same(archive, {f"{base}/{name}" for name in (binary, *ARCHIVE_FILES)}, archive_names(path) - {base})
     executable = read(path, f"{base}/{binary}", EXECUTABLE_LIMIT)
     if not native_executable(executable, target):
         fail(f"{archive} does not hold a {target} executable")
@@ -331,12 +341,14 @@ def verify_client(directory: Path, version: str, platform: str, target: str, not
         fail(f"{archive}'s notices differ from its build's in the source offer")
     if reviewed_digests(executable) != {hashlib.sha256(notices.encode()).hexdigest()}:
         fail(f"{archive} does not hold the reviewed build of its notices")
-    check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, build_name(CLIENT, platform), target, root)
+    check_source_txt(text(path, f"{base}/SOURCE.txt"), archive, version, build_name(package, platform), target, root)
+    return hashlib.sha256(executable).hexdigest()
 
 
-def verify_image(directory: Path, version: str, revision: str, notices: dict[str, str],
+def verify_image(directory: Path, version: str, revision: str, notices: dict[str, str], executables: dict[str, str],
                  root: Path = ROOT) -> tuple[str, str]:
-    """Verify the staged image against its builds' `notices`; return the archive's SHA-256 and manifest digest."""
+    """Verify the staged image against its builds' `notices` and archived `executables`' SHA-256; return the
+    archive's SHA-256 and manifest digest."""
     path = directory / OCI
     if path.stat().st_size > OCI_LIMIT:
         fail(f"{OCI} exceeds {OCI_LIMIT} bytes")
@@ -358,6 +370,8 @@ def verify_image(directory: Path, version: str, revision: str, notices: dict[str
             fail(f"the image's {platform} server is not the reviewed build of its notices in the source offer")
         if not native_executable(binary, server[platform]):
             fail(f"the image's {platform} server is not a {server[platform]} executable")
+        if not prerelease(version) and hashlib.sha256(binary).hexdigest() != executables[build]:
+            fail(f"the image's {platform} server is not the one {release_archive(SERVER, version, platform)[0]} holds")
 
     return digest, verify_oci.verify(version, revision, path, check_files)
 
@@ -366,11 +380,12 @@ def verify(version: str, revision: str, staged: Path, profile: str = "release",
            root: Path = ROOT) -> tuple[str, str]:
     """Verify the staged release files; return the image archive's SHA-256 and manifest digest."""
     notices: dict[str, str] = {}
+    executables: dict[str, str] = {}
     if not prerelease(version):
         notices = verify_offer(staged / offer_name(version), version, profile, root)
-        for platform, target in load().tui.items():
-            verify_client(staged, version, platform, target, notices[build_name(CLIENT, platform)], root)
-    return verify_image(staged, version, revision, notices, root)
+        executables = {build: verify_archive(staged, package, version, platform, target, notices[build], root)
+                       for build, (package, platform, target) in builds(version).items()}
+    return verify_image(staged, version, revision, notices, executables, root)
 
 
 def size(path: Path) -> str:
@@ -394,7 +409,7 @@ def upload_names(kind: str) -> set[str]:
         platform = env("TUI_PLATFORM")
         if platform not in load().tui:
             fail(f"{platform} is not a TUI platform")
-        return {tui_archive(version, platform)[0], build_offer(CLIENT, platform)}
+        return {release_archive(CLIENT, version, platform)[0], build_offer(CLIENT, platform)}
     offers = {build_offer(SERVER, platform) for platform in load().server}
     return {OCI, *(set() if prerelease(version) else offers)}
 

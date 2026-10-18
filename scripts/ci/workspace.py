@@ -60,12 +60,12 @@ def build_name(package: str, platform: str) -> str:
     return f"{package}_{platform.replace('/', '_')}"
 
 
-def tui_archive(version: str, platform: str) -> tuple[str, str, str]:
-    """The client archive for `platform`, its root directory and its executable."""
-    base = f"graphite-meter-client_{version}_{platform.replace('/', '_')}"
+def release_archive(package: str, version: str, platform: str) -> tuple[str, str, str]:
+    """The release archive of `package` for `platform`, its root directory and its executable."""
+    base = f"{package}_{version}_{platform.replace('/', '_')}"
     if platform.startswith("windows/"):
-        return f"{base}.zip", base, "graphite-meter-client.exe"
-    return f"{base}.tar.gz", base, "graphite-meter-client"
+        return f"{base}.zip", base, f"{package}.exe"
+    return f"{base}.tar.gz", base, package
 
 
 def offer_name(version: str) -> str:
@@ -84,7 +84,7 @@ def source_url(repository: str, version: str) -> str:
 
 
 def source_txt(repository: str, version: str, build: str, target: str) -> str:
-    """SOURCE.txt of a reviewed build, in its client archive or image."""
+    """SOURCE.txt of a reviewed build, in its archive and, for the server, its image."""
     if PRERELEASE.fullmatch(version):
         return f"{repository}\n"
     return (f"Graphite Meter source: {source_url(repository, version)}\nMatching release: v{version}\n"

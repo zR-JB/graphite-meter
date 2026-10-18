@@ -330,7 +330,7 @@ jobs:
           TUI_EXPORT: ${{ runner.temp }}/tui
           OUT_DIR: ${{ runner.temp }}/staged
         run: python3 scripts/ci/assets.py stage
-      - name: Verify the image, the client archives and the source offer as the release does
+      - name: Verify the image, the server and client archives and the source offer as the release does
         env:
           REPOSITORY: ${{ github.repository }}
           REVISION: ${{ github.sha }}

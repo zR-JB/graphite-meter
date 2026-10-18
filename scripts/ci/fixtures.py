@@ -16,7 +16,7 @@ from unittest.mock import patch
 from assets import CLIENT, OCI, SERVER, prerelease, stage_assets
 from github_api import ControlPlaneError, JsonObject, JsonValue
 from verify_oci import STAGE
-from workspace import ROOT, build_name, build_offer, load, offer_name, source_txt, tui_archive
+from workspace import ROOT, build_name, build_offer, load, offer_name, release_archive, source_txt
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -214,7 +214,7 @@ def write_part(path: Path, version: str, package: str, platform: str, profile: s
 
 def write_client(directory: Path, version: str, platform: str, changes: Mapping[str, bytes] | None = None) -> None:
     """A client archive as the packager writes it; `changes` replaces archive members."""
-    archive, base, binary = tui_archive(version, platform)
+    archive, base, binary = release_archive(CLIENT, version, platform)
     target, build = load().tui[platform], build_name(CLIENT, platform)
     members = {binary: executable(target, reviewed(notices(build))), "LICENSE": (ROOT / "LICENSE").read_bytes(),
                "COPYRIGHT": (ROOT / "COPYRIGHT").read_bytes(), "THIRD_PARTY_NOTICES.txt": notices(build),
