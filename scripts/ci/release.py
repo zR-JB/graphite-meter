@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 import assets
 import github_api as gh
+import screenshots
 from trust import (
     SHA_RE,
     env,
@@ -171,6 +172,8 @@ def command_prepare() -> None:
         gh.fail("prereleases name the exact commit they build in sha")
     if not pr and sha and sha != main:
         gh.fail(f"a prerelease without a PR builds main, which is {main}; sha must match")
+    if release.stable and (stale := screenshots.stale(release.tag)):
+        gh.fail(stale)
     if pr:
         require_pr(repository, pr, sha)
     out = gh.runner_path("OUT_DIR")
