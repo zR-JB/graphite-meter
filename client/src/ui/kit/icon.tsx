@@ -45,7 +45,10 @@ const GLYPHS = {
     <circle cx="12" cy="12" r="1" fill="currentColor" />,
     <circle cx="19" cy="12" r="1" fill="currentColor" />,
   ],
-  person: () => [<circle cx="12" cy="8.4" r="3.6" />, <path d="M5.4 19.2c.6-3.6 2.8-5.4 6.6-5.4s6 1.8 6.6 5.4" />],
+  person: () => [
+    <circle cx="12" cy="8.4" r="3.6" />,
+    <path d="M5.4 19.2c.6-3.6 2.8-5.4 6.6-5.4s6 1.8 6.6 5.4" />,
+  ],
   power: () => [<path d="M12 3.6v8.4" />, <path d="M7.2 6.6a7.2 7.2 0 1 0 9.6 0" />],
   exit: () => [<path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 7l5 5-5 5M9 12h12" />],
   trash: () => [<path d="M4 7h16M9 4h6l1 3H8zM6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5" />],

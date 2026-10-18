@@ -34,7 +34,10 @@ export function ServerScope(props: {
       {props.aggregate && <option value="">{props.aggregate}</option>}
       <For each={props.servers} by={(server) => server.id}>
         {(server) => (
-          <option value={server().id} disabled={() => props.unavailable?.().includes(server().id) ?? false}>
+          <option
+            value={server().id}
+            disabled={() => props.unavailable?.().includes(server().id) ?? false}
+          >
             {() => serverLabel(server())}
           </option>
         )}

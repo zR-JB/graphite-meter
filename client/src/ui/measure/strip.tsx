@@ -9,7 +9,14 @@ import { STAGE } from "../../view/words";
 import { warmTips } from "../kit/tip";
 import { CARDS } from "./copy";
 import { inView, measure, painter, scrub, setAttr, svg } from "./paint";
-import { columnsFor, Lane, monotoneTangents, nearestIndex, replyBars, type ReplyBar } from "./strip-model";
+import {
+  columnsFor,
+  Lane,
+  monotoneTangents,
+  nearestIndex,
+  replyBars,
+  type ReplyBar,
+} from "./strip-model";
 
 const TOP_PAD = 3;
 /** A readout keeps this gap from the cursor beside it. */
@@ -56,9 +63,15 @@ interface Row {
 }
 
 let strips = 0;
-const STEP: Partial<Record<string, number>> = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+const STEP: Partial<Record<string, number>> = {
+  ArrowLeft: -1,
+  ArrowDown: -1,
+  ArrowRight: 1,
+  ArrowUp: 1,
+};
 
-const shown = (mark: SVGElement, visible: boolean) => setAttr(mark, "visibility", visible ? "visible" : "hidden");
+const shown = (mark: SVGElement, visible: boolean) =>
+  setAttr(mark, "visibility", visible ? "visible" : "hidden");
 const fixed = (value: number) => (Math.round(value * 100) / 100).toString();
 
 export function StageGraph(props: StripProps): HTMLElement {
@@ -136,12 +149,15 @@ export function StageGraph(props: StripProps): HTMLElement {
     props.ownBuckets();
     return replyBars(props.buckets(), phase, props.start(), props.span(), width() || 1);
   });
-  const hasData = computed(() => (trackOnly ? bars().length > 0 : (binned(), lanes.some((lane) => lane.n > 0))));
+  const hasData = computed(() =>
+    trackOnly ? bars().length > 0 : (binned(), lanes.some((lane) => lane.n > 0)),
+  );
 
   // The reading is a time on the timeline, from a pointer or the keyboard.
   const at = signal<number | null>(null);
   let keyboard = false;
-  const x = (t: number) => Math.min(width(), Math.max(0, ((t - props.start()) / (props.span() || 1)) * width()));
+  const x = (t: number) =>
+    Math.min(width(), Math.max(0, ((t - props.start()) / (props.span() || 1)) * width()));
   /** Gives a reply's height on a track `h` px tall, inside a 1.5 px margin. */
   const trackY = (ms: number, h: number) =>
     h - 1.5 - Math.min(1, Math.max(0, ms / (props.latencyTop() || 1))) * (h - 3);
@@ -156,12 +172,17 @@ export function StageGraph(props: StripProps): HTMLElement {
     });
     if (trackOnly) {
       const found = bars()[nearestIndex(bars().length, (i) => bars()[i]!.t, t)];
-      return found ? { x: x(found.t), time: time(found.t), rows: [reply(found)], values: [], bar: found } : null;
+      return found
+        ? { x: x(found.t), time: time(found.t), rows: [reply(found)], values: [], bar: found }
+        : null;
     }
     const nearest = dirs.map((dir) => {
       const samples = props
         .samples()
-        .filter((sample) => sample.stage === props.stage && sample.dir === dir && sample.t >= props.start());
+        .filter(
+          (sample) =>
+            sample.stage === props.stage && sample.dir === dir && sample.t >= props.start(),
+        );
       return samples[nearestIndex(samples.length, (i) => samples[i]!.t, t)] ?? null;
     });
     const first = nearest.find(Boolean);
@@ -192,7 +213,9 @@ export function StageGraph(props: StripProps): HTMLElement {
       aria-label={props.label}
       aria-valuemin="0"
       aria-valuemax={() => Math.round(props.span())}
-      aria-valuenow={() => (at() === null ? Math.round(props.span()) : Math.round(at()! - props.start()))}
+      aria-valuenow={() =>
+        at() === null ? Math.round(props.span()) : Math.round(at()! - props.start())
+      }
       aria-valuetext={() => {
         const now = reading();
         return now
@@ -239,12 +262,23 @@ export function StageGraph(props: StripProps): HTMLElement {
   // Arrow keys walk the drawn bins, or the bars of a reply track, from the newest.
   function step(key: string): boolean {
     const lane = lanes.find((each) => each.n > 0);
-    const times = trackOnly ? bars().map((bar) => bar.t) : lane ? Array.from(lane.t.subarray(0, lane.n)) : [];
+    const times = trackOnly
+      ? bars().map((bar) => bar.t)
+      : lane
+        ? Array.from(lane.t.subarray(0, lane.n))
+        : [];
     if (!times.length) return false;
     const now = at.peek();
     const index = now === null ? times.length : nearestIndex(times.length, (i) => times[i]!, now);
     const delta = STEP[key];
-    const next = key === "Home" ? 0 : key === "End" ? times.length - 1 : delta === undefined ? null : index + delta;
+    const next =
+      key === "Home"
+        ? 0
+        : key === "End"
+          ? times.length - 1
+          : delta === undefined
+            ? null
+            : index + delta;
     if (next === null) return false;
     at.set(times[Math.min(times.length - 1, Math.max(0, next))]!);
     return true;
@@ -316,7 +350,10 @@ export function StageGraph(props: StripProps): HTMLElement {
   });
 
   // The readout is a plate beside the cursor on a side it fits, in the half of the plot the curve leaves free.
-  const keys: Row["key"][] = [...dirs.map((_, index): Row["key"] => (index ? "second" : "line")), "reply"];
+  const keys: Row["key"][] = [
+    ...dirs.map((_, index): Row["key"] => (index ? "second" : "line")),
+    "reply",
+  ];
   const readout = (
     <span class="inspect-card readout" aria-hidden="true">
       <small>{() => reading()?.time ?? ""}</small>
@@ -424,7 +461,8 @@ export function StageGraph(props: StripProps): HTMLElement {
   const head: Head = { t: 0, values: dirs.map(() => 0) };
   const prefixes = dirs.map(() => ({ key: "", path: "", area: "" }));
   let written = 0;
-  const closeArea = (i: number, h: number) => `L${fixed(xs[i]!)} ${h}L${fixed(xs[starts[i]!]!)} ${h}Z`;
+  const closeArea = (i: number, h: number) =>
+    `L${fixed(xs[i]!)} ${h}L${fixed(xs[starts[i]!]!)} ${h}Z`;
   const segment = (i: number) => {
     if (starts[i] !== starts[i + 1]) return `M${fixed(xs[i + 1]!)} ${fixed(ys[i + 1]!)}`;
     const third = (xs[i + 1]! - xs[i]!) / 3;
@@ -497,7 +535,8 @@ export function StageGraph(props: StripProps): HTMLElement {
         for (let i = 0; i < n - 1 - tail; i++) {
           const part = segment(i);
           prefix.path += part;
-          if (index === 0) prefix.area += (starts[i] !== starts[i + 1] ? closeArea(i, h) : "") + part;
+          if (index === 0)
+            prefix.area += (starts[i] !== starts[i + 1] ? closeArea(i, h) : "") + part;
         }
       }
       let path = prefix.path;

@@ -20,7 +20,11 @@ import { browser, expect, test, type Page } from "./webview";
 export const combined = {
   ...baseConfig,
   // Firefox can starve both servers' loopback upload POSTs for a few hundred ms, which 1 s cannot spare.
-  duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: browser === "firefox" ? 2000 : 1000 },
+  duration: {
+    ...baseConfig.duration,
+    downloadMs: 1000,
+    uploadMs: browser === "firefox" ? 2000 : 1000,
+  },
 };
 
 // At GB/s Firefox's one network thread starves all but one loopback server; a 200 Mbit/s link shares evenly.
@@ -30,7 +34,11 @@ test("four servers share one run and keep separate receiver windows", async (pag
   const peers = await Promise.all(
     ["Frankfurt", "Amsterdam", "Helsinki"].map((name) => spawnPeer(name, {}, LINK_BYTES_PER_SEC)),
   );
-  const self = await spawnPeer("Home", catalog(...peers.map(({ server }) => server)), LINK_BYTES_PER_SEC);
+  const self = await spawnPeer(
+    "Home",
+    catalog(...peers.map(({ server }) => server)),
+    LINK_BYTES_PER_SEC,
+  );
   try {
     await shareOneRun(page, [{ ...self.server, id: "self" }, ...peers.map(({ server }) => server)]);
   } finally {
@@ -56,7 +64,9 @@ async function shareOneRun(page: Page, four: Server[]) {
   expect(saved.result.multiServer.failures).toEqual([]);
   expect(saved.result.multiServer.participants).toEqual(four.map((s) => s.id));
   for (const stage of ["download", "upload", "bidirectional"] as const) {
-    const interval = saved.result.multiServer.intervals.find((candidate) => candidate.stage === stage)!;
+    const interval = saved.result.multiServer.intervals.find(
+      (candidate) => candidate.stage === stage,
+    )!;
     expect(interval.complete).toBe(true);
     expect(interval.participants).toHaveLength(4);
     const dirs = stage === "download" ? ["down"] : ["up"];
@@ -88,7 +98,9 @@ async function shareOneRun(page: Page, four: Server[]) {
 }
 
 test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
-  await page.addInitScript(() => Object.defineProperty(window, "WebTransport", { value: undefined }));
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "WebTransport", { value: undefined }),
+  );
   await open(page, home.http, {
     servers: [{ id: "self", url: home.http }, frankfurt],
     config: {
@@ -99,7 +111,10 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await ready(page);
   const saved = await run(page);
   expect(saved.result.multiServer.failures).toEqual([]);
-  const [self, peer] = saved.result.multiServer.servers as [ServerMeasurementSummary, ServerMeasurementSummary];
+  const [self, peer] = saved.result.multiServer.servers as [
+    ServerMeasurementSummary,
+    ServerMeasurementSummary,
+  ];
   expect(self.throughput?.origin).toBe(home.http);
   // Automatic falls back past a slow HTTP/1.1 probe, so Frankfurt may be measured through any of its origins.
   const origins = [frankfurt.url, frankfurt.http, frankfurt.h2, frankfurt.h3];
@@ -166,7 +181,9 @@ test("a missed final upload checkpoint is retried, and the lens and the dial rea
   expect(await page.evaluate(() => (window as any).checkpoints)).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
-  const upload = saved.result.multiServer.intervals.filter((interval) => interval.stage === "upload");
+  const upload = saved.result.multiServer.intervals.filter(
+    (interval) => interval.stage === "upload",
+  );
   expect(upload).toHaveLength(1);
   expect(upload[0]).toMatchObject({
     reason: "stage-start",
@@ -187,7 +204,8 @@ test("a missed final upload checkpoint is retried, and the lens and the dial rea
   });
   const figure = (selector: string) =>
     page.evaluate(
-      (selector: string) => Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),
+      (selector: string) =>
+        Number(document.querySelector(selector)?.textContent?.match(/[\d.]+/)?.[0] ?? Number.NaN),
       selector,
     );
   const dial = () => figure(".hero .terminal-readout");

@@ -1,5 +1,14 @@
 // Decodes the servers' control documents (api/discovery.md), bounded to 64 KiB and strict before anything acts.
-import { array, DecodeError, integer, object, oneOf, string, type Decoded, type Decoder } from "../lib/decode";
+import {
+  array,
+  DecodeError,
+  integer,
+  object,
+  oneOf,
+  string,
+  type Decoded,
+  type Decoder,
+} from "../lib/decode";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TARGETS = 32;
@@ -55,7 +64,8 @@ export const displayText =
   };
 
 /** A server's detail made safe for a saved result, empty when it carries controls, else at most `max` characters. */
-export const safeDetail = (text: string, max = 256) => (UNSAFE_TEXT.test(text) ? "" : text.slice(0, max));
+export const safeDetail = (text: string, max = 256) =>
+  UNSAFE_TEXT.test(text) ? "" : text.slice(0, max);
 
 const ORIGIN = /^https?:\/\/[^@/?#\\\s]+$/;
 
@@ -90,12 +100,15 @@ function targets<T extends Record<string, Decoder<string | null>>>(
 ): Decoder<({ baseUrl: string } & { [K in keyof T]: NonNullable<Decoded<T[K]>> })[]> {
   return (value, path = "") => {
     if (!Array.isArray(value)) throw new DecodeError(`${path} must be an array`);
-    if (value.length > MAX_TARGETS) throw new DecodeError(`${path} must hold at most ${MAX_TARGETS} targets`);
+    if (value.length > MAX_TARGETS)
+      throw new DecodeError(`${path} must hold at most ${MAX_TARGETS} targets`);
     return value.flatMap((entry, index) => {
       const at = `${path}[${index}]`;
       const known = object(mechanisms)(entry, at);
       if (Object.values(known).some((each) => each === null)) return [];
-      return [{ ...known, baseUrl: baseUrl((entry as Record<string, unknown>).baseUrl, `${at}.baseUrl`) }] as never;
+      return [
+        { ...known, baseUrl: baseUrl((entry as Record<string, unknown>).baseUrl, `${at}.baseUrl`) },
+      ] as never;
     });
   };
 }
@@ -134,22 +147,28 @@ export const socketTicket = object({ token: string(0, 8192), expires: integer() 
 
 /** How long a sign-in or grant has left, within its maximum lifetime. */
 const lifetime =
-  <T extends object>(fields: Decoder<T>): Decoder<T & { remainingMs: number; maximumLifetimeMs: number }> =>
+  <T extends object>(
+    fields: Decoder<T>,
+  ): Decoder<T & { remainingMs: number; maximumLifetimeMs: number }> =>
   (value, path = "") => {
     const decoded = object({ remainingMs: integer(), maximumLifetimeMs: integer(1) })(value, path);
-    if (decoded.remainingMs > decoded.maximumLifetimeMs) throw new DecodeError(`${path} outlives its maximum lifetime`);
+    if (decoded.remainingMs > decoded.maximumLifetimeMs)
+      throw new DecodeError(`${path} outlives its maximum lifetime`);
     return { ...fields(value, path), ...decoded };
   };
 
 /** The page's own sign-in (GET /auth/session). */
-export const session = lifetime(object({ name: string(0, 8192), provider: string(1, 8192), csrf: string(1, 8192) }));
+export const session = lifetime(
+  object({ name: string(0, 8192), provider: string(1, 8192), csrf: string(1, 8192) }),
+);
 
 /** A peer's measurement grant (POST /auth/browser/token). */
 export const grant = lifetime(
   object({
     token: (value: unknown, path = "") => {
       const token = string(43, 43)(value, path);
-      if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new DecodeError(`${path} must be a measurement grant`);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(token))
+        throw new DecodeError(`${path} must be a measurement grant`);
       return token;
     },
   }),
@@ -203,7 +222,10 @@ export function catalog(value: unknown, pageOrigin: string): Catalog {
   const servers = document.servers.map((entry, index): CatalogEntry => {
     if ((index === 0) !== (entry.id === "self") || ids.has(entry.id))
       throw new DecodeError("server IDs must be unique, with self first");
-    const url = entry.url === "." && index === 0 ? canonicalOrigin(pageOrigin) : catalogOrigin(entry.url, "url");
+    const url =
+      entry.url === "." && index === 0
+        ? canonicalOrigin(pageOrigin)
+        : catalogOrigin(entry.url, "url");
     if (origins.has(url)) throw new DecodeError("server origins must be unique");
     ids.add(entry.id);
     origins.add(url);

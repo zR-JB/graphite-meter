@@ -6,7 +6,16 @@ import type { HistorySort } from "../../app/history/records";
 import type { HistoryRepository } from "../../app/history/repository";
 import { epochMs } from "../../engine/run/clock";
 import { Show } from "../../lib/dom";
-import { batch, computed, effect, onCleanup, scope, signal, untrack, type Read } from "../../lib/signal";
+import {
+  batch,
+  computed,
+  effect,
+  onCleanup,
+  scope,
+  signal,
+  untrack,
+  type Read,
+} from "../../lib/signal";
 import { announce, announceChanges } from "../kit/announce";
 import { ConfirmDialog } from "../kit/dialog";
 import { activeModal, canFocus, hasFocus, isEditable } from "../kit/focus";
@@ -35,7 +44,8 @@ const dismissals = new WeakMap<HistoryRepository, number>();
 const CONFIRM = {
   delete: {
     title: "Delete this result?",
-    description: (when: number) => `The result from ${TITLE.format(when)} is permanently removed from this browser.`,
+    description: (when: number) =>
+      `The result from ${TITLE.format(when)} is permanently removed from this browser.`,
     cancel: "Keep result",
     confirm: "Delete result",
   },
@@ -49,7 +59,11 @@ const CONFIRM = {
 type Action = { kind: "delete"; id: string; when: number } | { kind: "clear" };
 
 /** Built as History opens and disposed as it closes, which stops an archive read still under way. */
-export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Read<string | null> }): Node {
+export function HistoryWorkspace(props: {
+  app: App;
+  shell: Shell;
+  selectedId: Read<string | null>;
+}): Node {
   const { app, shell } = props;
   const archive = createArchive(app.history, props.selectedId);
   const hasRecords = computed(() => archive.records().length > 0);
@@ -73,7 +87,8 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   // A hidden column cannot order the list; Date takes over.
   effect(() => {
     const { by } = sort();
-    if (by !== "date" && !app.preferences.historyColumns().includes(by)) untrack(() => setSort("date", true));
+    if (by !== "date" && !app.preferences.historyColumns().includes(by))
+      untrack(() => setSort("date", true));
   });
   // How long ago a result finished reads in minutes while the page shows, and afresh as it shows again.
   const now = signal(epochMs());
@@ -89,10 +104,14 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
 
   const actionError = archive.error;
   const dismissed = signal(dismissals.get(app.history) ?? 0);
-  const unreadable = computed(() => (archive.malformed() !== dismissed() ? archive.malformed() : 0));
+  const unreadable = computed(() =>
+    archive.malformed() !== dismissed() ? archive.malformed() : 0,
+  );
   const unreadableText = computed(() => {
     const count = unreadable();
-    return count ? `${count} unreadable ${count === 1 ? "result was" : "results were"} skipped.` : "";
+    return count
+      ? `${count} unreadable ${count === 1 ? "result was" : "results were"} skipped.`
+      : "";
   });
   announceChanges(actionError);
   announceChanges(unreadableText);
@@ -160,7 +179,9 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         <span class="empty-icon">!</span>
         <h2>{title}</h2>
         <p>
-          {malformed ? "This saved result is in a format this version cannot read." : "This result is not in History."}
+          {malformed
+            ? "This saved result is in a format this version cannot read."
+            : "This result is not in History."}
         </p>
         <button class="btn" type="button" onclick={() => shell.history(null)}>
           Back to results
@@ -206,7 +227,15 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
   const step = (event: KeyboardEvent) => {
     const by = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
     const id = props.selectedId.peek();
-    if (!by || id === null || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (
+      !by ||
+      id === null ||
+      event.defaultPrevented ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    )
+      return;
     const target = event.target as Element;
     if (target !== document.body && !workspace.contains(target)) return;
     if (target.closest(".detail-body")) return;
@@ -249,13 +278,19 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     if (focused !== record.id) {
       focused = record.id;
       queueMicrotask(() => {
-        const owed = intent?.id === record.id && [intent.from, document.body, null].includes(document.activeElement);
+        const owed =
+          intent?.id === record.id &&
+          [intent.from, document.body, null].includes(document.activeElement);
         if (owed && !activeModal() && canFocus(article)) article.focus({ preventScroll: true });
       });
     }
     // Kept on show while another result is read, it takes no input: its actions belong to the result it shows.
     return (
-      <div class="detail-pane enter" data-flip="history-detail" inert={() => props.selectedId() !== record.id}>
+      <div
+        class="detail-pane enter"
+        data-flip="history-detail"
+        inert={() => props.selectedId() !== record.id}
+      >
         {article}
       </div>
     );
@@ -286,7 +321,12 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
     const width = signal(0);
     const beside = computed(() => width() >= BESIDE_PX);
     const listPx = computed(() =>
-      Math.round(Math.max(MIN_LIST_PX, Math.min(width() - MIN_DETAIL_PX, app.preferences.historySplit() * width()))),
+      Math.round(
+        Math.max(
+          MIN_LIST_PX,
+          Math.min(width() - MIN_DETAIL_PX, app.preferences.historySplit() * width()),
+        ),
+      ),
     );
     const results = ResultsList({
       app,
@@ -430,7 +470,13 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
               <MoreMenu
                 label="History actions"
                 danger
-                items={[{ title: "Clear History", icon: "trash", run: (trigger) => ask({ kind: "clear" }, trigger) }]}
+                items={[
+                  {
+                    title: "Clear History",
+                    icon: "trash",
+                    run: (trigger) => ask({ kind: "clear" }, trigger),
+                  },
+                ]}
               />
             )}
           </Show>
@@ -501,7 +547,9 @@ export function HistoryWorkspace(props: { app: App; shell: Shell; selectedId: Re
         title={() => CONFIRM[asked().kind].title}
         description={() => {
           const action = asked();
-          return action.kind === "delete" ? CONFIRM.delete.description(action.when) : CONFIRM.clear.description;
+          return action.kind === "delete"
+            ? CONFIRM.delete.description(action.when)
+            : CONFIRM.clear.description;
         }}
         cancel={() => CONFIRM[asked().kind].cancel}
         confirm={() => CONFIRM[asked().kind].confirm}

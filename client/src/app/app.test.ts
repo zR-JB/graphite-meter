@@ -1,8 +1,18 @@
 import { afterEach, expect, jest, test } from "bun:test";
 import type { HistoryRecord } from "./history/records";
 
-const GLOBALS = ["window", "document", "location", "navigator", "indexedDB", "isSecureContext", "BUILD"];
-const saved = new Map(GLOBALS.flatMap((name) => (name in globalThis ? [[name, Reflect.get(globalThis, name)]] : [])));
+const GLOBALS = [
+  "window",
+  "document",
+  "location",
+  "navigator",
+  "indexedDB",
+  "isSecureContext",
+  "BUILD",
+];
+const saved = new Map(
+  GLOBALS.flatMap((name) => (name in globalThis ? [[name, Reflect.get(globalThis, name)]] : [])),
+);
 afterEach(() => {
   jest.useRealTimers();
   for (const name of GLOBALS)
@@ -31,7 +41,11 @@ function signedInPage(): string[] {
       addEventListener() {},
       removeEventListener() {},
     },
-    location: { origin: "https://meter.example", protocol: "https:", replace: (url: string) => navigated.push(url) },
+    location: {
+      origin: "https://meter.example",
+      protocol: "https:",
+      replace: (url: string) => navigated.push(url),
+    },
     navigator: { onLine: true },
     indexedDB: { open: () => ({}) },
     isSecureContext: true,

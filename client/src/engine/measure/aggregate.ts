@@ -1,7 +1,13 @@
 // Coordinated throughput (docs/MEASUREMENTS.md#coordinated-servers, api/aggregation.testvectors.json).
 import type { TransferStage } from "../run/schedule";
 import type { Checkpoint, Direction } from "../types";
-import { type Mark as SeriesMark, RateSeries, SCORE_BUCKETS, stillStable, transferConfidence } from "./stability";
+import {
+  type Mark as SeriesMark,
+  RateSeries,
+  SCORE_BUCKETS,
+  stillStable,
+  transferConfidence,
+} from "./stability";
 
 /** Evidence must span this long on the client clock and on every receiver clock. */
 export const MIN_EVIDENCE_MS = 800;
@@ -145,7 +151,12 @@ export class Aggregate {
     return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
 
-  begin(stage: TransferStage, participants: string[], atMs: number, reason: Interval["reason"] = "stage-start"): void {
+  begin(
+    stage: TransferStage,
+    participants: string[],
+    atMs: number,
+    reason: Interval["reason"] = "stage-start",
+  ): void {
     this.close();
     if (reason === "stage-start") {
       this.#ledgers.clear();
@@ -155,7 +166,8 @@ export class Aggregate {
       const evicted = this.intervals.shift()!;
       this.#keep(evicted);
       this.#closed.delete(evicted.id);
-      if (!this.#evictedStart.has(evicted.stage)) this.#evictedStart.set(evicted.stage, evicted.startMs);
+      if (!this.#evictedStart.has(evicted.stage))
+        this.#evictedStart.set(evicted.stage, evicted.startMs);
       this.omittedIntervals++;
     }
     const record: Interval = {
@@ -196,19 +208,25 @@ export class Aggregate {
     let end: Mark | undefined;
     for (const [id, moved] of open.moved)
       if (!survivors.includes(id))
-        for (const mark of Object.values(moved)) if (!end || mark.boundary.atMs < end.boundary.atMs) end = mark;
+        for (const mark of Object.values(moved))
+          if (!end || mark.boundary.atMs < end.boundary.atMs) end = mark;
     if (!end) {
       if (survivors.length) this.begin(stage, survivors, atMs, "dropout");
       return;
     }
-    Object.assign(open.record, { endMs: end.boundary.atMs, full: end.full, headline: end.headline });
+    Object.assign(open.record, {
+      endMs: end.boundary.atMs,
+      full: end.full,
+      headline: end.headline,
+    });
     open.peaks = end.peaks;
     for (const [rates, mark] of end.series) rates.restore(mark);
     if (!survivors.length) return;
     const latest = this.#latest;
     this.begin(stage, survivors, end.boundary.atMs, "dropout");
     this.#start(this.#open!, end.boundary);
-    if (latest && latest.boundary.atMs > end.boundary.atMs) this.observe(latest.boundary, latest.final);
+    if (latest && latest.boundary.atMs > end.boundary.atMs)
+      this.observe(latest.boundary, latest.final);
   }
 
   close(): void {
@@ -256,7 +274,9 @@ export class Aggregate {
     const valid =
       record.participants.length > 0 &&
       record.participants.every((id) =>
-        dirs.every((dir) => (dir === "down" ? Number.isFinite(boundary.down[id]) : !!boundary.up[id])),
+        dirs.every((dir) =>
+          dir === "down" ? Number.isFinite(boundary.down[id]) : !!boundary.up[id],
+        ),
       );
     if (!valid) return null;
     if (!open.first || !open.last) {
@@ -280,7 +300,8 @@ export class Aggregate {
     // The same tick again, or an unchanged receiver clock, is stale: the receiver clock is authoritative.
     const unchanged =
       boundary.atMs <= last.atMs ||
-      (dirs.includes("up") && record.participants.some((id) => boundary.up[id]!.nanos === last.up[id]!.nanos));
+      (dirs.includes("up") &&
+        record.participants.some((id) => boundary.up[id]!.nanos === last.up[id]!.nanos));
     if (continuous && unchanged) return null;
     const sample = window(last, boundary, record);
     const full = window(open.first, boundary, record);
@@ -300,7 +321,10 @@ export class Aggregate {
       for (const component of sample[dir]!)
         open.servers.get(component.serverId)![dir].observe(component.bytes, component.durationMs);
     }
-    open.combined.observe((((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) / 1000, ms);
+    open.combined.observe(
+      (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) / 1000,
+      ms,
+    );
     open.last = boundary;
     const span = window(open.peakFrom!, boundary, record);
     if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
@@ -315,11 +339,15 @@ export class Aggregate {
     record.endMs = boundary.atMs;
     const headline = open.stable && window(open.stable, boundary, record);
     if (headline)
-      headline.quietMs = { down: open.quiet.down - open.stableQuiet.down, up: open.quiet.up - open.stableQuiet.up };
+      headline.quietMs = {
+        down: open.quiet.down - open.stableQuiet.down,
+        up: open.quiet.up - open.stableQuiet.up,
+      };
     record.headline = open.stable ? headline : full;
     const mark = this.#mark(open, boundary);
     for (const dir of dirs)
-      for (const component of sample[dir]!) if (component.bytes > 0) open.moved.get(component.serverId)![dir] = mark;
+      for (const component of sample[dir]!)
+        if (component.bytes > 0) open.moved.get(component.serverId)![dir] = mark;
     return sample;
   }
 
@@ -444,7 +472,10 @@ export class Aggregate {
           this.#kept.set(`${record.stage}:${dir}:${component.serverId}`, {
             window: null,
             bytesPerSec: component.bytesPerSec,
-            peakBytesPerSec: Math.max(open.peaks.get(component.serverId)?.[dir] ?? 0, component.bytesPerSec),
+            peakBytesPerSec: Math.max(
+              open.peaks.get(component.serverId)?.[dir] ?? 0,
+              component.bytesPerSec,
+            ),
             stabilityPct: open.servers.get(component.serverId)![dir].stability(),
           });
     }
@@ -454,7 +485,8 @@ export class Aggregate {
     open.first = open.last = open.peakFrom = boundary;
     open.record.startMs = open.record.endMs = boundary.atMs;
     const start = this.#mark(open, boundary);
-    for (const moved of open.moved.values()) for (const dir of directions(open.record.stage)) moved[dir] = start;
+    for (const moved of open.moved.values())
+      for (const dir of directions(open.record.stage)) moved[dir] = start;
   }
 
   #mark(open: Open, boundary: Boundary): Mark {
@@ -465,7 +497,10 @@ export class Aggregate {
       headline: record.headline,
       peaks: new Map([...open.peaks].map(([id, peak]) => [id, { ...peak }])),
       series: [open.total, ...open.servers.values()].flatMap((each) =>
-        directions(record.stage).map((dir): [RateSeries, SeriesMark] => [each[dir], each[dir].mark]),
+        directions(record.stage).map((dir): [RateSeries, SeriesMark] => [
+          each[dir],
+          each[dir].mark,
+        ]),
       ),
     };
   }
@@ -485,13 +520,18 @@ export class Aggregate {
 
   #stageTotal(stage: TransferStage, dir: Direction, id?: string): number {
     let sum = 0;
-    for (const [server, totals] of this.#stageTotals.get(stage) ?? []) if (!id || server === id) sum += totals[dir];
+    for (const [server, totals] of this.#stageTotals.get(stage) ?? [])
+      if (!id || server === id) sum += totals[dir];
     return sum;
   }
 }
 
 /** From a stage's first interval, or the start of the first one the log let go, to its last; gaps included. */
-export function coveredMs(intervals: readonly Interval[], stage: TransferStage, firstStart?: number): number {
+export function coveredMs(
+  intervals: readonly Interval[],
+  stage: TransferStage,
+  firstStart?: number,
+): number {
   const spans = intervals.filter((interval) => interval.stage === stage);
   return spans.length ? spans.at(-1)!.endMs - (firstStart ?? spans[0]!.startMs) : 0;
 }
@@ -510,9 +550,10 @@ export function sufficient(window: AggregateWindow | null, dir?: Direction): boo
   return (
     !!window &&
     window.endMs - window.startMs >= MIN_EVIDENCE_MS &&
-    [...(dir === "up" ? [] : (window.down ?? [])), ...(dir === "down" ? [] : (window.up ?? []))].every(
-      (c) => c.durationMs >= MIN_EVIDENCE_MS,
-    )
+    [
+      ...(dir === "up" ? [] : (window.down ?? [])),
+      ...(dir === "down" ? [] : (window.up ?? [])),
+    ].every((c) => c.durationMs >= MIN_EVIDENCE_MS)
   );
 }
 

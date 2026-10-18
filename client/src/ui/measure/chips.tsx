@@ -7,7 +7,15 @@ import type { Child } from "../../lib/jsx-runtime";
 import { handoff } from "../../lib/motion";
 import { computed, effect, untrack, type Read } from "../../lib/signal";
 import { fmtDuration, fmtLatency, fmtProgress, fmtRate, fmtStageTime } from "../../view/format";
-import { NEXT_RUN, PHASE, reasonLabel, STAGE, STAGE_STATE, type StageState, type Tone } from "../../view/words";
+import {
+  NEXT_RUN,
+  PHASE,
+  reasonLabel,
+  STAGE,
+  STAGE_STATE,
+  type StageState,
+  type Tone,
+} from "../../view/words";
 import { flip } from "../flip";
 import { announceChanges } from "../kit/announce";
 import { Icon } from "../kit/icon";
@@ -18,7 +26,15 @@ import type { Live } from "./live";
 import { Figure, painter } from "./paint";
 
 /** How a chip looks: off, waiting, or the stage's state in the shown run. */
-type Look = "off" | "pending" | "warmup" | "active" | "recovering" | "complete" | "partial" | "failed";
+type Look =
+  | "off"
+  | "pending"
+  | "warmup"
+  | "active"
+  | "recovering"
+  | "complete"
+  | "partial"
+  | "failed";
 const LOOK: Record<StageState, Look> = {
   skipped: "pending",
   upcoming: "pending",
@@ -38,7 +54,12 @@ const SETTLED_WORD: Partial<Record<Look, string>> = {
   failed: STAGE_STATE.failed.label,
 };
 
-export function StageTrack(props: { app: App; live: Live; away: Read<boolean>; children: Child }): Node {
+export function StageTrack(props: {
+  app: App;
+  live: Live;
+  away: Read<boolean>;
+  children: Child;
+}): Node {
   const { app, live } = props;
   const shown = computed(() => STAGES.filter((stage) => live.visibility(stage).chip));
   const track = (
@@ -80,7 +101,9 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   const tag = computed(() => {
     if (!selected()) return STAGE_STATE.skipped.label;
     if (nextRun()) return NEXT_RUN.label;
-    return look() === "partial" || look() === "failed" ? STAGE_STATE[look() as "partial" | "failed"].label : null;
+    return look() === "partial" || look() === "failed"
+      ? STAGE_STATE[look() as "partial" | "failed"].label
+      : null;
   });
   // Why a locked chip cannot change; a settled one says nothing more than its check or tag.
   const reason = computed(() => {
@@ -93,17 +116,28 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   const timed = computed(() => look() === "active" && live.budget() > 0);
   // A waiting chip shows its stage's length: the shown run's plan, or the next run's for a stage queued for it.
   const waiting = computed(() => selected() && look() === "pending");
-  const lengthMs = computed(() => (nextRun() ? config() : (run.plan() ?? config())).duration[`${stage}Ms`]);
+  const lengthMs = computed(
+    () => (nextRun() ? config() : (run.plan() ?? config())).duration[`${stage}Ms`],
+  );
   const length = computed(() => fmtStageTime(lengthMs()));
   const end = handoff(
     () => {
       const now = look();
-      if (now === "complete") return { key: `${now}:check`, check: true, text: "", time: false, tone: null };
+      if (now === "complete")
+        return { key: `${now}:check`, check: true, text: "", time: false, tone: null };
       if (timed()) return { key: `${now}:live`, check: false, text: "", time: true, tone: null };
       // A new length rolls in place; only another kind of tag hands off.
-      if (waiting()) return { key: `${now}:length`, check: false, text: length(), time: true, tone: null };
-      const tone: Tone | null = now === "partial" || now === "recovering" ? "warn" : now === "failed" ? "err" : null;
-      return { key: `${now}:${reason() ?? ""}`, check: false, text: reason() ?? "", time: false, tone };
+      if (waiting())
+        return { key: `${now}:length`, check: false, text: length(), time: true, tone: null };
+      const tone: Tone | null =
+        now === "partial" || now === "recovering" ? "warn" : now === "failed" ? "err" : null;
+      return {
+        key: `${now}:${reason() ?? ""}`,
+        check: false,
+        text: reason() ?? "",
+        time: false,
+        tone,
+      };
     },
     (view) => view.key,
   );
@@ -118,13 +152,19 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
     const down = results.bidirectional?.down?.reportedBytesPerSec;
     const up = results.bidirectional?.up?.reportedBytesPerSec;
     const bytes =
-      stage === "bidirectional" ? (down != null && up != null ? down + up : null) : results[stage]?.reportedBytesPerSec;
+      stage === "bidirectional"
+        ? down != null && up != null
+          ? down + up
+          : null
+        : results[stage]?.reportedBytesPerSec;
     return bytes == null ? "" : fmtRate(bytes, live.rateUnits());
   });
   const failure = computed(() => {
     const found = run
       .details()
-      ?.failures.find((each) => each.stage === stage && (each.scope === "latency") === (stage === "latency"));
+      ?.failures.find(
+        (each) => each.stage === stage && (each.scope === "latency") === (stage === "latency"),
+      );
     return found ? reasonLabel(found.reason) : "";
   });
   // One line the chip does not already show: its result, or why it is locked.
@@ -158,7 +198,11 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
   // chip whose bar follows the clock draws every frame; the rest draw once per change.
   const clocked = computed(() => {
     const now = look();
-    return now === "active" || now === "recovering" || (state() === "stopped" && live.endedIn() === stage);
+    return (
+      now === "active" ||
+      now === "recovering" ||
+      (state() === "stopped" && live.endedIn() === stage)
+    );
   });
   let progress = Number.NaN;
   let tenths = Number.NaN;
@@ -241,7 +285,9 @@ function Chip(props: { app: App; live: Live; away: Read<boolean>; stage: Stage }
           )}
         >
           {() => (
-            <span class={() => (end.out() ? "chip-check handoff handoff-out" : "chip-check handoff")}>
+            <span
+              class={() => (end.out() ? "chip-check handoff handoff-out" : "chip-check handoff")}
+            >
               <Icon name="check" />
             </span>
           )}

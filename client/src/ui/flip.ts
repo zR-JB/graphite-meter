@@ -21,7 +21,11 @@ const velocity = (el: Element): Axes => {
 };
 
 /** Springs `el` from the given offsets to rest, drawn as keyframes over SPRING_MS. */
-function settle(el: Element, axes: Axes, frame: (x: number, y: number, w: number) => Keyframe): void {
+function settle(
+  el: Element,
+  axes: Axes,
+  frame: (x: number, y: number, w: number) => Keyframe,
+): void {
   const frames = Array.from({ length: STEPS + 1 }, (_, i) => {
     const t = (i / STEPS) * SPRING_MS;
     const at = (axis: Axis) => (i === STEPS ? 0 : spring(axis, t)[0]);

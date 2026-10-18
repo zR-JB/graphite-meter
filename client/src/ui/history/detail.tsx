@@ -7,7 +7,14 @@ import { STAGES } from "../../engine/run/schedule";
 import type { Role, ServerIdentity } from "../../engine/types";
 import { For, Show } from "../../lib/dom";
 import { computed, effect, signal, untrack } from "../../lib/signal";
-import { fmtBytes, fmtCount, fmtCounted, fmtDuration, fmtLatency, fmtRate } from "../../view/format";
+import {
+  fmtBytes,
+  fmtCount,
+  fmtCounted,
+  fmtDuration,
+  fmtLatency,
+  fmtRate,
+} from "../../view/format";
 import { throughputScales } from "../../view/scales";
 import {
   allServersLabel,
@@ -60,7 +67,9 @@ function probeCounts(summary: LatencySummary): { shown: string; spoken: string }
   const { probeCount, timeoutCount, unresolvedCount, sendFailureCount } = summary;
   const known = timeoutCount != null;
   const shown = [
-    known ? fmtCounted(probeCount - timeoutCount, "reply", "replies") : `${fmtCount(probeCount)} resolved`,
+    known
+      ? fmtCounted(probeCount - timeoutCount, "reply", "replies")
+      : `${fmtCount(probeCount)} resolved`,
     timeoutCount > 0 && fmtCounted(timeoutCount, "timeout"),
     unresolvedCount > 0 && `${fmtCount(unresolvedCount)} unresolved`,
     sendFailureCount > 0 && fmtCounted(sendFailureCount, "send failure"),
@@ -75,7 +84,10 @@ function probeCounts(summary: LatencySummary): { shown: string; spoken: string }
     .join(" · ");
   return {
     shown: shown.join(", "),
-    spoken: summary.accountingComplete === false ? `Known: ${counts}. Additional outcomes unknown.` : counts,
+    spoken:
+      summary.accountingComplete === false
+        ? `Known: ${counts}. Additional outcomes unknown.`
+        : counts,
   };
 }
 
@@ -111,7 +123,8 @@ export function ResultDetail(props: {
     STAGES.flatMap((stage): LaneInput[] => {
       const summary = summaries()[stage];
       return summary &&
-        (accountingNotice(summary) || [summary.minMs, summary.maxMs, summary.p50Ms].some((ms) => ms != null))
+        (accountingNotice(summary) ||
+          [summary.minMs, summary.maxMs, summary.p50Ms].some((ms) => ms != null))
         ? [{ stage, summary }]
         : [];
     }),
@@ -204,17 +217,35 @@ export function ResultDetail(props: {
       pathFact(
         "throughput",
         entry
-          ? path("throughput", entry.throughput.transport, entry.throughput.protocol, entry.throughput.browserProtocol)
+          ? path(
+              "throughput",
+              entry.throughput.transport,
+              entry.throughput.protocol,
+              entry.throughput.browserProtocol,
+            )
           : UNMEASURED,
       ),
-      pathFact("latency", entry?.latencyTarget ? path("latency", entry.latencyTarget.transport) : UNMEASURED),
+      pathFact(
+        "latency",
+        entry?.latencyTarget ? path("latency", entry.latencyTarget.transport) : UNMEASURED,
+      ),
     ];
   };
 
   return (
-    <article class="result-detail" aria-labelledby={title} aria-keyshortcuts="ArrowUp ArrowDown" tabindex="-1">
+    <article
+      class="result-detail"
+      aria-labelledby={title}
+      aria-keyshortcuts="ArrowUp ArrowDown"
+      tabindex="-1"
+    >
       <header class="sheet-head detail-head page-fill">
-        <button class="btn btn-quiet back" type="button" ref={tip(() => "Back to results")} onclick={props.onClose}>
+        <button
+          class="btn btn-quiet back"
+          type="button"
+          ref={tip(() => "Back to results")}
+          onclick={props.onClose}
+        >
           <span aria-hidden="true">←</span>
           Results
         </button>
@@ -230,7 +261,9 @@ export function ResultDetail(props: {
         </button>
         <div class="title">
           <h2 id={title}>
-            <time datetime={new Date(record.completedAt).toISOString()}>{TITLE.format(record.completedAt)}</time>
+            <time datetime={new Date(record.completedAt).toISOString()}>
+              {TITLE.format(record.completedAt)}
+            </time>
           </h2>
           {result.outcome !== "complete" && (
             <span class="outcome">
@@ -257,7 +290,9 @@ export function ResultDetail(props: {
               servers={() => run.selection}
               value={lens}
               onChange={(id) => guard(() => lens.set(id))}
-              aggregate={() => allServersLabel(run.selection.length, run.participants.length, run.servers.length)}
+              aggregate={() =>
+                allServersLabel(run.selection.length, run.participants.length, run.servers.length)
+              }
               unavailable={() =>
                 run.selection
                   .filter(({ id }) => !run.servers.some(({ server }) => server.id === id))
@@ -277,7 +312,12 @@ export function ResultDetail(props: {
         </div>
       </header>
       <div class="detail-body">
-        <ResultSummary result={() => result} lens={lens} units={units} showWire={app.preferences.showWireEstimates} />
+        <ResultSummary
+          result={() => result}
+          lens={lens}
+          units={units}
+          showWire={app.preferences.showWireEstimates}
+        />
         <div class="facts">
           <Show when={() => lanes().length > 0}>
             {() => (
@@ -343,7 +383,11 @@ export function ResultDetail(props: {
                           <dd>
                             <span aria-hidden="true">
                               {() => counts().shown}
-                              {() => row().summary.accountingComplete === false && <span class="aside">Partial</span>}
+                              {() =>
+                                row().summary.accountingComplete === false && (
+                                  <span class="aside">Partial</span>
+                                )
+                              }
                             </span>
                             <span class="sr-only">{() => counts().spoken}</span>
                           </dd>

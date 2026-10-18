@@ -93,7 +93,13 @@ async function dial({ url, transport, ticket }: Start): Promise<void> {
 
 /** A refused upgrade closes as 1006, invisible to script. A dial past its budget stays open, reported as an outage:
     the browser may queue it behind another to the host, and closing it would only delay the next. */
-function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End, opened: (write: Send) => void): void {
+function socket(
+  url: string,
+  closed: AbortSignal,
+  expired: AbortSignal,
+  end: End,
+  opened: (write: Send) => void,
+): void {
   const ws = new WebSocket(url);
   closed.addEventListener("abort", () => ws.close());
   const lapse = () => prober.lapsed("websocket did not establish");
@@ -112,7 +118,13 @@ function socket(url: string, closed: AbortSignal, expired: AbortSignal, end: End
 }
 
 /** One wire message per datagram, so reading needs no framing. */
-function session(url: string, closed: AbortSignal, budget: AbortSignal, end: End, opened: (write: Send) => void): void {
+function session(
+  url: string,
+  closed: AbortSignal,
+  budget: AbortSignal,
+  end: End,
+  opened: (write: Send) => void,
+): void {
   const wt = new WebTransport(url, { congestionControl: "low-latency" });
   let grace: ReturnType<typeof setTimeout> | undefined;
   closed.addEventListener("abort", () => {
@@ -143,5 +155,7 @@ function session(url: string, closed: AbortSignal, budget: AbortSignal, end: End
       const at = performance.now();
       prober.frame(decoder.decode(value), at);
     }
-  })().catch((error) => (established ? broke(String(error)) : end("webtransport did not establish")));
+  })().catch((error) =>
+    established ? broke(String(error)) : end("webtransport did not establish"),
+  );
 }

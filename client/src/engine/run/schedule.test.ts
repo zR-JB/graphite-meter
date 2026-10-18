@@ -13,7 +13,8 @@ const plan = (stages: Partial<Plan["stages"]>, duration: Partial<Plan["duration"
   },
   skipLoadedLatencyWhenStageOff: false,
 });
-const spans = (segments: ReturnType<typeof timeline>) => segments.map(({ phase, start, end }) => [phase, start, end]);
+const spans = (segments: ReturnType<typeof timeline>) =>
+  segments.map(({ phase, start, end }) => [phase, start, end]);
 
 test("a live change keeps what ran, gives the running segment its new length but never less than now, then follows", () => {
   const before = plan({ download: true, upload: true });
@@ -35,7 +36,9 @@ test("a live change keeps what ran, gives the running segment its new length but
     ["download", 500, 4_500],
     ["warmup", 4_500, 5_000],
   ]);
-  expect(spans(replan(running, 4_700, plan({ download: true, upload: true }, { warmupMs: 100 })))).toEqual([
+  expect(
+    spans(replan(running, 4_700, plan({ download: true, upload: true }, { warmupMs: 100 }))),
+  ).toEqual([
     ["warmup", 0, 500],
     ["download", 500, 4_500],
     ["warmup", 4_500, 4_700],

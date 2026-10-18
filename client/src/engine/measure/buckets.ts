@@ -28,7 +28,10 @@ export interface LatencyBucket {
 /** Returns a width at which a stage of `spanMs` fits the series. With a fixed probe spacing it holds a whole number
     of probes, so no bucket is empty by construction. */
 export function bucketWidth(spanMs: number, intervalMs: number | null): number {
-  const base = Math.max(MIN_WIDTH_MS, Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS);
+  const base = Math.max(
+    MIN_WIDTH_MS,
+    Math.ceil(Math.max(0, spanMs) / SERIES_LIMIT / MIN_WIDTH_MS) * MIN_WIDTH_MS,
+  );
   return intervalMs ? Math.ceil(base / intervalMs) * intervalMs : base;
 }
 
@@ -55,7 +58,13 @@ export class LatencyBuckets {
       `closeThrough` or `flush`. */
   constructor(readonly emit: (bucket: LatencyBucket) => void) {}
 
-  reset(t: number, phase: Stage, continuity: number, spanMs: number, intervalMs: number | null): void {
+  reset(
+    t: number,
+    phase: Stage,
+    continuity: number,
+    spanMs: number,
+    intervalMs: number | null,
+  ): void {
     this.#phase = phase;
     this.#intervalMs = intervalMs;
     this.#width = bucketWidth(spanMs, intervalMs);
@@ -80,7 +89,10 @@ export class LatencyBuckets {
     this.#pending ??= this.#open(t);
     this.#close(t);
     const pending = this.#pending!;
-    const target = t >= pending.startT ? pending : this.#closed.findLast((each) => t >= each.startT && t < each.endT);
+    const target =
+      t >= pending.startT
+        ? pending
+        : this.#closed.findLast((each) => t >= each.startT && t < each.endT);
     if (!target) return;
     target.pings++;
     if (timedOut) target.timeouts++;
@@ -103,7 +115,9 @@ export class LatencyBuckets {
     while (this.#pending && t >= this.#pending.endT) {
       const pending = this.#pending;
       // A page suspended for hours skips the empty time, since only the revision horizon can still take late outcomes.
-      const skipped = pending.pings ? 0 : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
+      const skipped = pending.pings
+        ? 0
+        : Math.floor((t - pending.startT - REVISION_MS) / this.#width);
       if (skipped > 0) {
         // Everything closed before the pause ends outside the horizon.
         this.#closed = [];
@@ -128,7 +142,8 @@ export class LatencyBuckets {
     const pending = this.#pending;
     this.#pending = null;
     this.#closed = [];
-    if (pending?.pings) this.emit(this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))));
+    if (pending?.pings)
+      this.emit(this.#summary(pending, Math.max(pending.startT, Math.min(pending.endT, atT))));
   }
 
   #open(startT: number): Open {

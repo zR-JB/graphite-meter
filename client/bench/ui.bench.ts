@@ -12,7 +12,9 @@ interface Recording {
 const counts = process.env.GM_PERF_SERVERS?.split(",").map(Number) ?? [1, 4];
 const bidirectional = process.env.GM_PERF_BIDIRECTIONAL === "1";
 const cpu = Number(process.env.GM_PERF_CPU ?? 1);
-const viewport = process.env.GM_PERF_VIEWPORT?.split("x").map(Number) as [number, number] | undefined;
+const viewport = process.env.GM_PERF_VIEWPORT?.split("x").map(Number) as
+  | [number, number]
+  | undefined;
 // A 60 Hz cadence, with 1 ms tolerance for timestamp rounding and scheduling noise.
 const target = Number(process.env.GM_PERF_TARGET_MS ?? 16.7);
 const tail = Number(process.env.GM_PERF_P99_MS ?? (cpu > 1 ? 33.4 : 16.7));
@@ -31,7 +33,11 @@ for (const count of counts)
       // Phases are timed as they change, not read when an observer reports, so a task or a frame lands in the
       // phase it ran in.
       await page.addInitScript(() => {
-        const recording: Recording = ((window as any).recording = { timeline: [], frames: [], tasks: [] });
+        const recording: Recording = ((window as any).recording = {
+          timeline: [],
+          frames: [],
+          tasks: [],
+        });
         let phase = "";
         const note = () => {
           const now = document.querySelector("#console")?.getAttribute("data-phase") ?? "startup";
@@ -40,7 +46,10 @@ for (const count of counts)
           recording.timeline.push([performance.now(), now]);
         };
         note();
-        new MutationObserver(note).observe(document, { subtree: true, attributeFilter: ["data-phase"] });
+        new MutationObserver(note).observe(document, {
+          subtree: true,
+          attributeFilter: ["data-phase"],
+        });
         // The console arrives with its phase set; watching insertions stops once it is in.
         const arrival = new MutationObserver(() => {
           if (!document.getElementById("console")) return;
@@ -55,7 +64,9 @@ for (const count of counts)
         requestAnimationFrame(frame);
         new PerformanceObserver((list) =>
           recording.tasks.push(
-            ...list.getEntries().map((entry): [number, number] => [entry.startTime, entry.duration]),
+            ...list
+              .getEntries()
+              .map((entry): [number, number] => [entry.startTime, entry.duration]),
           ),
         ).observe({ type: "longtask", buffered: true });
       });
@@ -86,11 +97,16 @@ for (const count of counts)
       const after = await page.cdp("Performance.getMetrics");
       const rendering = after.metrics
         .filter(({ name }: { name: string }) =>
-          ["LayoutDuration", "RecalcStyleDuration", "ScriptDuration", "TaskDuration"].includes(name),
+          ["LayoutDuration", "RecalcStyleDuration", "ScriptDuration", "TaskDuration"].includes(
+            name,
+          ),
         )
         .map(({ name, value }: { name: string; value: number }) => ({
           name,
-          ms: (value - before.metrics.find((metric: { name: string }) => metric.name === name).value) * 1000,
+          ms:
+            (value -
+              before.metrics.find((metric: { name: string }) => metric.name === name).value) *
+            1000,
         }));
       console.table(rendering);
       if (bidirectional) {
@@ -111,20 +127,25 @@ for (const count of counts)
       for (const stage of stages) {
         expect(saved.result.stages[stage]).toBe("complete");
         for (const server of saved.result.multiServer.servers)
-          if (stage === "bidirectional") expect(server.bidirectional?.down?.reportedBytesPerSec).toBeGreaterThan(0);
+          if (stage === "bidirectional")
+            expect(server.bidirectional?.down?.reportedBytesPerSec).toBeGreaterThan(0);
           else expect(server[stage]?.reportedBytesPerSec).toBeGreaterThan(0);
       }
       const measuredMs = Object.fromEntries(
         stages.map((stage) => {
-          const spans = saved.result.multiServer.intervals.filter((interval) => interval.stage === stage);
+          const spans = saved.result.multiServer.intervals.filter(
+            (interval) => interval.stage === stage,
+          );
           return [stage, spans.length ? Math.round(spans.at(-1)!.endMs - spans[0]!.startMs) : 0];
         }),
       );
       const metrics = await page.evaluate(() => {
         const { timeline, frames, tasks } = (window as any).recording as Recording;
-        const phaseAt = (at: number) => timeline.findLast(([since]) => since <= at)?.[1] ?? "startup";
+        const phaseAt = (at: number) =>
+          timeline.findLast(([since]) => since <= at)?.[1] ?? "startup";
         const by = new Map<string, { frames: number[]; tasks: number[] }>();
-        const slot = (phase: string) => by.get(phase) ?? by.set(phase, { frames: [], tasks: [] }).get(phase)!;
+        const slot = (phase: string) =>
+          by.get(phase) ?? by.set(phase, { frames: [], tasks: [] }).get(phase)!;
         // A frame counts in the phase it began in, and also in the one it ended in when it spans a change.
         for (let i = 1; i < frames.length; i++) {
           const [from, to] = [phaseAt(frames[i - 1]!), phaseAt(frames[i]!)];
@@ -135,7 +156,10 @@ for (const count of counts)
         for (const [start, duration] of tasks)
           for (const phase of new Set(
             timeline
-              .filter(([since], i) => since < start + duration && (timeline[i + 1]?.[0] ?? Infinity) > start)
+              .filter(
+                ([since], i) =>
+                  since < start + duration && (timeline[i + 1]?.[0] ?? Infinity) > start,
+              )
               .map(([, p]) => p),
           ))
             slot(phase).tasks.push(duration);

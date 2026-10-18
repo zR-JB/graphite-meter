@@ -6,7 +6,16 @@ import { For, Show } from "../../lib/dom";
 import { pageMs } from "../../lib/frame";
 import { HANDOFF_OUT_MS, handoff, reducedMotion } from "../../lib/motion";
 import { computed, effect, type Read } from "../../lib/signal";
-import { fmtDuration, fmtMs, fmtSpeed, fmtTick, MISSING, rateUnit, toRateUnit, withUnit } from "../../view/format";
+import {
+  fmtDuration,
+  fmtMs,
+  fmtSpeed,
+  fmtTick,
+  MISSING,
+  rateUnit,
+  toRateUnit,
+  withUnit,
+} from "../../view/format";
 import { latencyCeilingMs } from "../../view/scales";
 import { OUTCOME, PHASE, POPULATION, reasonLabel, STAGE, statusLabel, TIP } from "../../view/words";
 import { announceChanges } from "../kit/announce";
@@ -55,7 +64,8 @@ export function Dial(props: {
   const phase = run.phase;
   const units = live.rateUnits;
   const unit = computed(() => rateUnit(units(), units().tier ?? 0));
-  const rate = (bytesPerSec: number) => fmtSpeed(toRateUnit(bytesPerSec, units(), units().tier ?? 0));
+  const rate = (bytesPerSec: number) =>
+    fmtSpeed(toRateUnit(bytesPerSec, units(), units().tier ?? 0));
   const gaugeScale = computed(() => live.scales().gaugeBytesPerSec);
 
   // A finished run's arcs read what the lens shows: every server together, or the one chosen under the dial.
@@ -102,7 +112,9 @@ export function Dial(props: {
     () => {
       if (unusable() || !LABELED.includes(phase())) return [] as string[];
       if (live.msScale()) return DIAL_LABELS.map((f) => fmtTick(scaleMs() * f));
-      return DIAL_LABELS.map((f) => fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)));
+      return DIAL_LABELS.map((f) =>
+        fmtTick(toRateUnit(gaugeValue(f, gaugeScale()), units(), units().tier ?? 0)),
+      );
     },
     (labels) => (labels.length ? live.msScale.peek() : null),
     (leaving) => (leaving.length ? HANDOFF_OUT_MS : 0),
@@ -167,7 +179,8 @@ export function Dial(props: {
     const buckets = live.buckets();
     const newest = buckets.at(-1)?.endT ?? 0;
     const answered =
-      buckets.findLast((bucket) => bucket.phase === "latency" && bucket.medianRttMs !== null)?.endT ?? run.shownAt();
+      buckets.findLast((bucket) => bucket.phase === "latency" && bucket.medianRttMs !== null)
+        ?.endT ?? run.shownAt();
     return newest - answered >= 1_000 ? newest - answered : null;
   });
   // A failed check names the path that failed, as the first selected server's check found it; anything else says
@@ -188,12 +201,16 @@ export function Dial(props: {
     const result = run.result();
     if (phase() === "complete" && result && result.outcome !== "complete") {
       const named = (status: string) =>
-        STAGES.filter((stage) => result.stages[stage] === status).map((stage) => STAGE[stage].label);
+        STAGES.filter((stage) => result.stages[stage] === status).map(
+          (stage) => STAGE[stage].label,
+        );
       // Loaded latency that failed leaves its transfer stage complete but the run partial.
       const loaded = STAGES.filter(
         (stage) =>
           stage !== "latency" &&
-          result.multiServer.failures.some((each) => each.scope === "latency" && each.stage === stage),
+          result.multiServer.failures.some(
+            (each) => each.scope === "latency" && each.stage === stage,
+          ),
       ).map((stage) => POPULATION[stage]);
       return {
         status: OUTCOME[result.outcome].label,
@@ -203,19 +220,25 @@ export function Dial(props: {
     }
     if (phase() !== "error") return null;
     const error = run.error();
-    return { status: error ? reasonLabel(error.reason) : DIAL.unknownError, tone: "error", hint: DIAL.retry };
+    return {
+      status: error ? reasonLabel(error.reason) : DIAL.unknownError,
+      tone: "error",
+      hint: DIAL.retry,
+    };
   });
   const note = handoff(
     (): { status?: string; tone?: string; hint?: string; tip?: string } => {
       const refused = refusal();
       const ended = ending();
-      if (run.preparing()) return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
+      if (run.preparing())
+        return { status: statusLabel(live.preparation(), phase(), undefined), tone: "preparation" };
       if (refused) return { status: refused.status, tone: "error", hint: refused.detail };
       if (ended) return { status: ended.status, tone: ended.tone, hint: ended.hint };
       const quiet = run.live()?.quietMs;
       if (quiet != null) return { hint: DIAL.noData(fmtDuration(quiet, 0)), tip: TIP.noData };
       const silent = unanswered();
-      if (silent !== null) return { hint: DIAL.noReplies(fmtDuration(silent, 0)), tip: TIP.noReplies };
+      if (silent !== null)
+        return { hint: DIAL.noReplies(fmtDuration(silent, 0)), tip: TIP.noReplies };
       const known = PHASE_HINT[phase()];
       return known ? { hint: known.text, tip: known.tip } : {};
     },
@@ -244,7 +267,10 @@ export function Dial(props: {
     const { height, noteTop, noteWidth } = layout();
     const hung = props.hung();
     footer.style.top = hung ? `calc(100% - ${height - noteTop}px)` : "";
-    footer.style.setProperty("--note-width", hung && ticks.shown().length > 1 ? `${noteWidth}px` : "");
+    footer.style.setProperty(
+      "--note-width",
+      hung && ticks.shown().length > 1 ? `${noteWidth}px` : "",
+    );
   });
   effect(() => footer.classList.toggle("handoff-out", note.out()));
 
@@ -429,7 +455,9 @@ export function Dial(props: {
   // One ring per idle reply, never two at once: a steady link is seen to answer, a stalled one holds still.
   let beating = false;
   const reply = computed(() =>
-    phase() === "latency" ? (live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null) : null,
+    phase() === "latency"
+      ? (live.buckets().findLast((bucket) => bucket.medianRttMs !== null)?.startT ?? null)
+      : null,
   );
   effect(() => {
     if (reply() === null || beating || !motion.peek()) return;
@@ -493,9 +521,14 @@ export function Dial(props: {
   const labels = (
     <Show when={() => ticks.shown().length > 1}>
       {() => (
-        <div class={() => (ticks.out() ? "gauge-ticks handoff handoff-out" : "gauge-ticks handoff")} aria-hidden="true">
+        <div
+          class={() => (ticks.out() ? "gauge-ticks handoff handoff-out" : "gauge-ticks handoff")}
+          aria-hidden="true"
+        >
           {DIAL_LABELS.map((_, index) => {
-            const label = (<span class="gauge-tick">{() => ticks.shown()[index] ?? ""}</span>) as HTMLElement;
+            const label = (
+              <span class="gauge-tick">{() => ticks.shown()[index] ?? ""}</span>
+            ) as HTMLElement;
             effect(() => {
               const point = layout().labels[index]!;
               label.dataset.anchorX = point.anchorX;
@@ -513,7 +546,11 @@ export function Dial(props: {
   const terminal = computed(() => hero.shown().terminal);
   const readout = (
     <div class={() => (hero.out() ? "metric-wrap handoff handoff-out" : "metric-wrap handoff")}>
-      <div class={() => `hero${terminal() ? " terminal" : ""}${sizes.face().height < 180 ? " short" : ""}`}>
+      <div
+        class={() =>
+          `hero${terminal() ? " terminal" : ""}${sizes.face().height < 180 ? " short" : ""}`
+        }
+      >
         <Show
           when={terminal}
           fallback={() => (
@@ -522,7 +559,9 @@ export function Dial(props: {
                 {(stage) => (
                   <span
                     class={() =>
-                      stageName.out() ? "terminal-direction handoff handoff-out" : "terminal-direction handoff"
+                      stageName.out()
+                        ? "terminal-direction handoff handoff-out"
+                        : "terminal-direction handoff"
                     }
                     data-tone={stage}
                   >
@@ -534,7 +573,11 @@ export function Dial(props: {
                 )}
               </Show>
               {value}
-              <span class={() => (figure.out() ? "gauge-unit handoff handoff-out" : "gauge-unit handoff")}>
+              <span
+                class={() =>
+                  figure.out() ? "gauge-unit handoff handoff-out" : "gauge-unit handoff"
+                }
+              >
                 {() => figure.shown().unit}
               </span>
             </div>
@@ -582,7 +625,11 @@ export function Dial(props: {
       {() => (
         <div class="gauge-notes">
           <Show when={() => note.shown().status}>
-            {(status) => <span class={() => `gauge-status ${note.shown().tone ?? ""}`.trimEnd()}>{status}</span>}
+            {(status) => (
+              <span class={() => `gauge-status ${note.shown().tone ?? ""}`.trimEnd()}>
+                {status}
+              </span>
+            )}
           </Show>
           <Show when={() => note.shown().hint}>
             {(hint) => (
@@ -625,7 +672,9 @@ function ResultLayer(props: {
 }): Node {
   const { arcs, layout } = props;
   const fractions = computed(() =>
-    arcs().map((arc) => Math.min(1, Math.max(0, gaugeFraction(arc.bytesPerSec, props.gaugeScale())))),
+    arcs().map((arc) =>
+      Math.min(1, Math.max(0, gaugeFraction(arc.bytesPerSec, props.gaugeScale()))),
+    ),
   );
   const kinds = computed(() => beadKinds(fractions(), layout().radius, layout().headRadius));
   const fractionOf = (arc: ResultArc) => fractions()[arcs().indexOf(arc)] ?? 0;
@@ -697,7 +746,9 @@ function ResultLayer(props: {
           // Each bead pops on the spring as the sweep's front reaches it.
           bead.style.setProperty("--at", `${reachMs(fractionOf(arc()), props.from, sweepMs)}ms`);
           group.append(bead);
-          return <g transform={() => `translate(${layout().center.x} ${layout().center.y})`}>{group}</g>;
+          return (
+            <g transform={() => `translate(${layout().center.x} ${layout().center.y})`}>{group}</g>
+          );
         }}
       </For>
     </svg>
@@ -710,7 +761,12 @@ function ResultLayer(props: {
         {(arc) => {
           // Pointer-only: the cards and the announcement carry these values.
           const target = (
-            <span class="head-target" aria-hidden="true" tabindex="-1" ref={tip(() => props.label(arc()))} />
+            <span
+              class="head-target"
+              aria-hidden="true"
+              tabindex="-1"
+              ref={tip(() => props.label(arc()))}
+            />
           ) as HTMLElement;
           effect(() => {
             const { center, radius } = layout();

@@ -85,7 +85,9 @@ function Lens(props: { app: App; live: Live }): Node {
   });
   const stayed = computed(() => {
     const details = app.run.details();
-    return details ? servers().filter(({ id }) => details.participants.includes(id)).length : servers().length;
+    return details
+      ? servers().filter(({ id }) => details.participants.includes(id)).length
+      : servers().length;
   });
   return (
     <Show when={() => servers().length > 1}>
@@ -97,7 +99,9 @@ function Lens(props: { app: App; live: Live }): Node {
             servers={servers}
             value={live.lens}
             onChange={live.showServer}
-            aggregate={() => allServersLabel(servers().length, stayed(), servers().length - unmeasured().length)}
+            aggregate={() =>
+              allServersLabel(servers().length, stayed(), servers().length - unmeasured().length)
+            }
             unavailable={unmeasured}
             disabled={app.run.running}
           />

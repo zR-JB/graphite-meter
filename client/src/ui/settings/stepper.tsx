@@ -47,7 +47,8 @@ export function Stepper(props: {
   /** Steps `times` times from `from`. A limit holds the value in place. */
   const stepped = (from: number, direction: Direction, times = 1) => {
     let next = from;
-    for (let i = 0; i < times; i++) next = clamp(stepOnGrid(next, props.step(next, direction), direction));
+    for (let i = 0; i < times; i++)
+      next = clamp(stepOnGrid(next, props.step(next, direction), direction));
     return next;
   };
   let field!: HTMLInputElement;
@@ -68,7 +69,8 @@ export function Stepper(props: {
   };
   /** Applies the value `times` steps from a typed draft or the value, and tells whether it applied. */
   const nudge = (direction: Direction, times = 1) => apply(stepped(origin(), direction, times));
-  const atLimit = (direction: Direction) => (direction > 0 ? props.value() >= props.max() : props.value() <= props.min);
+  const atLimit = (direction: Direction) =>
+    direction > 0 ? props.value() >= props.max() : props.value() <= props.min;
 
   const key = (direction: Direction) => (
     <button
@@ -76,7 +78,9 @@ export function Stepper(props: {
       class="btn btn-icon btn-quiet"
       tabindex="-1"
       aria-label={() => `${props.label()}, ${direction > 0 ? "increase" : "decrease"}`}
-      aria-disabled={() => String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)}
+      aria-disabled={() =>
+        String(direction > 0 ? props.value() >= props.max() : props.value() <= props.min)
+      }
       disabled={props.disabled}
       onpointerdown={(event) => {
         if (event.button !== 0) return;
@@ -146,7 +150,8 @@ export function Stepper(props: {
             }
             const step = KEYS[event.key];
             // Home and End reach the limits, as a spin button's do.
-            const limit = event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
+            const limit =
+              event.key === "Home" ? props.min : event.key === "End" ? props.max() : null;
             if (!step && limit === null) return;
             event.preventDefault();
             apply(step ? stepped(origin(), ...step) : limit!);

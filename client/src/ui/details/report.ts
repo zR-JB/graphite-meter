@@ -63,7 +63,10 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   // The pattern matches whole words, longest first, so an ID never rewrites part of another word or name.
   const known = [...words.keys()].sort((a, b) => b.length - a.length);
   const pattern = known.length
-    ? new RegExp(`(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`, "g")
+    ? new RegExp(
+        `(?<![\\w.-])(?:${known.map((word) => RegExp.escape(word)).join("|")})(?![\\w-])`,
+        "g",
+      )
     : null;
   const scrub = (text: string) => {
     const out = text.replace(URLISH, (url) => {
@@ -90,7 +93,8 @@ export function diagnosticReport({ page, servers, clientIps, state }: ReportSour
   return JSON.stringify(
     {
       report: "Graphite Meter diagnostics",
-      anonymized: "Servers, names and locations are numbered; this browser's address and credentials are left out.",
+      anonymized:
+        "Servers, names and locations are numbered; this browser's address and credentials are left out.",
       hosts: Object.fromEntries([...hosts].map(([hostname, label]) => [label, hostKind(hostname)])),
       ...body,
     },

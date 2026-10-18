@@ -14,7 +14,10 @@ function channel(ended: boolean) {
     left: () => Infinity,
     request: () => ({ headers: {}, credentials: "omit", redirect: "error" }),
     fetch: async () => new Response(null),
-    ticket: (origin, route) => ({ url: `${origin}/ws/session?target=${route}`, request: auth.request("", "POST") }),
+    ticket: (origin, route) => ({
+      url: `${origin}/ws/session?target=${route}`,
+      request: auth.request("", "POST"),
+    }),
     ended: async () => ended,
   };
   const bus = openProbeChannel(
@@ -57,7 +60,10 @@ test("outcomes cross onto page time, and a stalled bus that the sign-in check fi
   ]);
   worker.report({ type: "ready" });
   const outcome = { rttMs: 12, timedOut: false, handlingMs: null, inWindow: true };
-  worker.report({ type: "outcomes", outcomes: [{ ...outcome, observedAt: performance.timeOrigin + 1_234 }] });
+  worker.report({
+    type: "outcomes",
+    outcomes: [{ ...outcome, observedAt: performance.timeOrigin + 1_234 }],
+  });
   worker.report({ type: "stalled", detail: "websocket closed" });
   await elapse(0);
   expect(events).toEqual([

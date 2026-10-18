@@ -6,7 +6,10 @@
     position: relative;
     isolation: isolate;
     display: grid;
-    grid-template-rows: var(--topbar-h) minmax(0, 1fr) calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
+    grid-template-rows: var(--topbar-h) minmax(0, 1fr) calc(
+        var(--statusbar-h) +
+        env(safe-area-inset-bottom, 0px)
+      );
     grid-template-areas:
       "topbar   topbar  topbar"
       "leftdock stage   rightdock"

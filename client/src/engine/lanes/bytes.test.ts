@@ -65,7 +65,8 @@ test("a lane's largest POST is its device-memory share of its server's lanes, Fi
     [1, 3, undefined, 42 * MiB + Math.floor((2 * MiB) / 3)],
     [128, 128, undefined, 2 * MiB],
   ] as const)
-    expect(largestPost(lanes, sharing, deviceMemory), `${lanes} of ${sharing} lanes, ${deviceMemory} GB`).toBe(
-      expected,
-    );
+    expect(
+      largestPost(lanes, sharing, deviceMemory),
+      `${lanes} of ${sharing} lanes, ${deviceMemory} GB`,
+    ).toBe(expected);
 });

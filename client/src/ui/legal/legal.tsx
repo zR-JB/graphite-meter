@@ -17,7 +17,10 @@ const ECOSYSTEM: Record<string, string> = {
 function place(url: string): string {
   const { host, pathname } = new URL(url, document.baseURI);
   const parts = pathname.split("/").filter(Boolean);
-  return [host, ...(host === "github.com" || host === "crates.io" ? parts.slice(0, 2) : parts)].join("/");
+  return [
+    host,
+    ...(host === "github.com" || host === "crates.io" ? parts.slice(0, 2) : parts),
+  ].join("/");
 }
 
 const Out = (props: { href: string; text: string; name: string }) => (
@@ -42,11 +45,19 @@ function Component({ component }: { component: LegalComponent }): Node {
         <span class="version">{component.version}</span>
         <span>{component.selectedLicenseExpression}</span>
         <span class="where">
-          {origin && <Out href={origin} text={place(origin)} name={`, source of ${component.name}`} />}
+          {origin && (
+            <Out href={origin} text={place(origin)} name={`, source of ${component.name}`} />
+          )}
           {component.modified && (
             <span class="modified">
               <span class="aside">Modified</span>
-              {fork && <Out href={fork} text={place(fork)} name={`, shipped source of ${component.name}`} />}
+              {fork && (
+                <Out
+                  href={fork}
+                  text={place(fork)}
+                  name={`, shipped source of ${component.name}`}
+                />
+              )}
               {changes && <Out href={changes} text="changes" name={` to ${component.name}`} />}
             </span>
           )}
@@ -76,8 +87,8 @@ function Notices({ about }: { about: About }): Node {
           <div>
             <dt>Warranty</dt>
             <dd>
-              Graphite Meter is free software. It comes with absolutely no warranty, to the extent permitted by
-              applicable law.
+              Graphite Meter is free software. It comes with absolutely no warranty, to the extent
+              permitted by applicable law.
             </dd>
           </div>
         </dl>
@@ -100,22 +111,28 @@ function Notices({ about }: { about: About }): Node {
         <div class="group-head">
           <h3 id="third-party-title">Third-party software</h3>
         </div>
-        {[...Map.groupBy(about.components, (component) => component.ecosystem)].map(([ecosystem, components]) => (
-          <section class="group" aria-label={ECOSYSTEM[ecosystem] ?? ecosystem}>
-            <h4 class="list-label">{ECOSYSTEM[ecosystem] ?? ecosystem}</h4>
-            <dl class="kv components">
-              {components.map((component) => (
-                <Component component={component} />
-              ))}
-            </dl>
-          </section>
-        ))}
+        {[...Map.groupBy(about.components, (component) => component.ecosystem)].map(
+          ([ecosystem, components]) => (
+            <section class="group" aria-label={ECOSYSTEM[ecosystem] ?? ecosystem}>
+              <h4 class="list-label">{ECOSYSTEM[ecosystem] ?? ecosystem}</h4>
+              <dl class="kv components">
+                {components.map((component) => (
+                  <Component component={component} />
+                ))}
+              </dl>
+            </section>
+          ),
+        )}
       </section>
     </>
   );
 }
 
-export function LegalDialog(props: { open: Read<boolean>; invoker: () => HTMLElement | null; onClose(): void }): Node {
+export function LegalDialog(props: {
+  open: Read<boolean>;
+  invoker: () => HTMLElement | null;
+  onClose(): void;
+}): Node {
   const about = signal<About | null>(null);
   const failed = signal(false);
   let loading = false;
@@ -157,7 +174,12 @@ export function LegalDialog(props: { open: Read<boolean>; invoker: () => HTMLEle
       <header class="sheet-head">
         {title}
         <div class="head-actions">
-          <button class="btn btn-icon btn-quiet" type="button" aria-label="Close About & legal" onclick={props.onClose}>
+          <button
+            class="btn btn-icon btn-quiet"
+            type="button"
+            aria-label="Close About & legal"
+            onclick={props.onClose}
+          >
             <Icon name="close" />
           </button>
         </div>

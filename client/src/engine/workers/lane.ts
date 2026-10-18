@@ -89,7 +89,11 @@ async function upload({
   sharing,
   rttMs,
 }: Extract<LaneCommand, { type: "upload" }>): Promise<LaneReport> {
-  const largest = largestPost(streams, sharing, (navigator as { deviceMemory?: number }).deviceMemory);
+  const largest = largestPost(
+    streams,
+    sharing,
+    (navigator as { deviceMemory?: number }).deviceMemory,
+  );
   if (!body) {
     const block = new Blob([randomBlock()]);
     body = new Blob(Array.from({ length: MAX_POST_BYTES / block.size }, () => block));
@@ -101,9 +105,15 @@ async function upload({
   for (;;) {
     const startedAt = performance.now();
     try {
-      const response = await fetch(url, { ...request, method: "POST", cache: "no-store", body: body.slice(0, bytes) });
+      const response = await fetch(url, {
+        ...request,
+        method: "POST",
+        cache: "no-store",
+        body: body.slice(0, bytes),
+      });
       // An unread echo pins the keep-alive connection the next POST needs; it is counted, never kept.
-      if (!(await drained(response))) return { type: "broken", detail: "the upload answer was too large" };
+      if (!(await drained(response)))
+        return { type: "broken", detail: "the upload answer was too large" };
       if (!response.ok) return { type: "ended", ending: refused(response) };
       const elapsedMs = performance.now() - startedAt;
       post({ type: "posted", bytes, elapsedMs });
@@ -114,7 +124,9 @@ async function upload({
       rate = rate ? 0.3 * ((bytes * 1000) / elapsedMs) + 0.7 * rate : (bytes * 1000) / elapsedMs;
       const sendMs = Math.max(TARGET_POST_MS, TURNAROUNDS * turnaround);
       const want = (rate * (sendMs + turnaround)) / 1000;
-      bytes = Math.floor(Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))));
+      bytes = Math.floor(
+        Math.min(largest, Math.max(MIN_POST_BYTES, bytes / 2, Math.min(bytes * 2, want))),
+      );
     } catch (error) {
       return { type: "broken", detail: String(error) };
     }

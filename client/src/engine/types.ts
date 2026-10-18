@@ -237,14 +237,17 @@ export class ServerBusyError extends Error {}
 
 /** An error and its causes, outermost first. */
 export function* causes(error: unknown): Generator<Error> {
-  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++) yield error;
+  for (let depth = 0; error instanceof Error && depth < 16; error = error.cause, depth++)
+    yield error;
 }
 
 const NETWORK_FAILURE =
   /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
 /** Engines word one network failure differently. */
 export const isNetworkFailure = (error: unknown) =>
-  [...causes(error)].some(({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message));
+  [...causes(error)].some(
+    ({ name, message }) => name === "NetworkError" || NETWORK_FAILURE.test(message),
+  );
 
 /** A failure that ended a stage's preparation, with the reason it would have reported as an event. */
 export class StageFailure extends Error {
@@ -289,7 +292,10 @@ export interface ProbeChannel {
   /** Immediate release; `incomplete` first reports the probes it cuts off. */
   dispose(incomplete?: boolean): void;
 }
-export type OpenProbeChannel = (options: ProbeChannelOptions, events: ProbeChannelEvents) => ProbeChannel;
+export type OpenProbeChannel = (
+  options: ProbeChannelOptions,
+  events: ProbeChannelEvents,
+) => ProbeChannel;
 /** A probe channel that outlives its stage. */
 export interface LatencyBus extends ProbeChannel {
   /** Its events go to `events` from now on, told at once whether the bus answers or stalled; false once it ended. */
@@ -301,7 +307,13 @@ export interface TestConfig {
   stages: Record<Stage, boolean>;
   /** Transfer stages probe no loaded latency while the latency stage is off. */
   skipLoadedLatencyWhenStageOff: boolean;
-  duration: { warmupMs: number; latencyMs: number; downloadMs: number; uploadMs: number; bidirectionalMs: number };
+  duration: {
+    warmupMs: number;
+    latencyMs: number;
+    downloadMs: number;
+    uploadMs: number;
+    bidirectionalMs: number;
+  };
   pingCadence: PingCadence;
   loadedPingCadence: PingCadence;
   /** Automatic: HTTP/1.1 lanes per direction at most; forced: exactly this many on every protocol. */

@@ -46,9 +46,14 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
       await servers.retry(id);
     } finally {
       // The key leaves with the problem; focus stays on the server it fixed.
-      if (servers.views.peek().get(id)?.readiness === "verified" && document.activeElement === button) {
+      if (
+        servers.views.peek().get(id)?.readiness === "verified" &&
+        document.activeElement === button
+      ) {
         const row = rows.get(id);
-        (row?.querySelector<HTMLInputElement>("input:not(:disabled)") ?? row)?.focus({ preventScroll: true });
+        (row?.querySelector<HTMLInputElement>("input:not(:disabled)") ?? row)?.focus({
+          preventScroll: true,
+        });
       }
       retrying.set(new Set([...retrying.peek()].filter((each) => each !== id)));
     }
@@ -68,7 +73,9 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
     const preflight = computed(() => {
       const ms = preflightMs();
       const state = readiness();
-      return ms === undefined || state === "failed" || state === "sign-in" || state === "checking" ? "" : fmtMs(ms);
+      return ms === undefined || state === "failed" || state === "sign-in" || state === "checking"
+        ? ""
+        : fmtMs(ms);
     });
     return (
       <label
@@ -80,7 +87,12 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
           tip(() => {
             const { name, url, location } = server();
             const ms = preflightMs();
-            return [name, new URL(url).host, location, ms === undefined ? "" : preflightNote(fmtMs(ms))]
+            return [
+              name,
+              new URL(url).host,
+              location,
+              ms === undefined ? "" : preflightNote(fmtMs(ms)),
+            ]
               .filter(Boolean)
               .join("\n");
           })(row);
@@ -99,12 +111,16 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
             // The row shows what the selection keeps.
             event.currentTarget.checked = checked.peek();
             const selected = servers.selected.peek();
-            servers.apply(checked.peek() ? selected.filter((each) => each !== id) : [...selected, id]);
+            servers.apply(
+              checked.peek() ? selected.filter((each) => each !== id) : [...selected, id],
+            );
           }}
         />
         <span class="server-name" ref={clip()}>
           {() => server().name}
-          {() => (serverLabel(server()) === server().name ? null : <small>{server().location}</small>)}
+          {() =>
+            serverLabel(server()) === server().name ? null : <small>{server().location}</small>
+          }
         </span>
         <Show when={status}>
           {(state) => (
@@ -176,7 +192,9 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               type="button"
               disabled={() => locked() || waiting()}
               aria-label={() =>
-                waiting() ? `Waiting for approval from ${name()}` : `Sign in${failed() ? " again" : ""} to ${name()}`
+                waiting()
+                  ? `Waiting for approval from ${name()}`
+                  : `Sign in${failed() ? " again" : ""} to ${name()}`
               }
               // The sign-in window must open within this click.
               onclick={() => servers.signIn(id)}
@@ -207,15 +225,19 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
                     <a href={current.renewUrl} target="_blank" rel="noopener noreferrer">
                       Renew your sign-in at {name}
                     </a>
-                    .{current.state === "renew" ? " A sign-in here lasts only as long as that one." : ""} Renewing signs
-                    out the other clients that sign-in approved. Then choose Sign in again here.
+                    .
+                    {current.state === "renew"
+                      ? " A sign-in here lasts only as long as that one."
+                      : ""}{" "}
+                    Renewing signs out the other clients that sign-in approved. Then choose Sign in
+                    again here.
                   </p>
                 );
               return (
                 current.state === "waiting" && (
                   <p class="approval-code">
-                    Compare this code with the sign-in page: <strong>{current.code}</strong> Approve only if both codes
-                    match.
+                    Compare this code with the sign-in page: <strong>{current.code}</strong> Approve
+                    only if both codes match.
                   </p>
                 )
               );
@@ -272,7 +294,8 @@ export function ServerSelection(props: { app: App; locked: Read<boolean> }): Nod
               </div>
             </div>
             <span class="sr-only" id="settings-preflight-note">
-              Preflight request times include connection setup and the response. They are not latency measurements.
+              Preflight request times include connection setup and the response. They are not
+              latency measurements.
             </span>
           </div>
         )}

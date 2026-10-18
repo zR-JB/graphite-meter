@@ -35,7 +35,9 @@ export function createApp() {
   const preferences = createPreferences(local(), window);
   const page = readPageConfig();
   const session = createPageSession(page, pageMs);
-  const saving = computed(() => savingResults(preferences.resultHistoryPreference(), page.historyDefault));
+  const saving = computed(() =>
+    savingResults(preferences.resultHistoryPreference(), page.historyDefault),
+  );
   const history = new HistoryRepository();
   const saver = createHistorySaving(history, saving, window);
 
@@ -45,7 +47,11 @@ export function createApp() {
   const visible = signal(document.visibilityState === "visible");
   const online = signal(navigator.onLine);
   const latencyPin = signal<string | null>(null);
-  const idle = { server: null as string | null, buckets: [] as LatencyBucket[], version: signal(0) };
+  const idle = {
+    server: null as string | null,
+    buckets: [] as LatencyBucket[],
+    version: signal(0),
+  };
   const clearIdle = () => {
     idle.buckets.length = 0;
     idle.version.set(idle.version.peek() + 1);
@@ -57,7 +63,8 @@ export function createApp() {
     page,
     session,
     config: preferences.config,
-    setTransports: (transports) => preferences.set({ config: { ...preferences.config.peek(), transports } }),
+    setTransports: (transports) =>
+      preferences.set({ config: { ...preferences.config.peek(), transports } }),
     active: computed(() => booted() && visible() && !leaving() && !busy()()),
     online,
     latencyPin,
@@ -91,7 +98,9 @@ export function createApp() {
     async prepare(signal, config) {
       const ready = await servers.prepare(signal);
       // The blocker judged each limit as last read; Start holds the run to the discovery it just read.
-      const limit = stageLimit(ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })));
+      const limit = stageLimit(
+        ready.servers.map(({ server, discovery }) => ({ name: server.name, discovery })),
+      );
       const refused = stageLimitError(config, limit);
       if (refused) throw new Error(refused);
       return ready;
@@ -102,10 +111,15 @@ export function createApp() {
     open: openStage,
     streams: (prepared, activity) =>
       new Map(
-        [...planStreams(prepared, activity, preferences.config.peek().transferStreams)].map(([id, { down, up }]) => [
-          id,
-          { streams: { down: down.planned, up: up.planned }, gating: { down: down.gating, up: up.gating } },
-        ]),
+        [...planStreams(prepared, activity, preferences.config.peek().transferStreams)].map(
+          ([id, { down, up }]) => [
+            id,
+            {
+              streams: { down: down.planned, up: up.planned },
+              gating: { down: down.gating, up: up.gating },
+            },
+          ],
+        ),
       ),
   });
   busy.set(computed(() => run.running() || run.preparing()));
@@ -192,7 +206,10 @@ export function createApp() {
     plannedMs,
     latencyPin,
     /** The latency server's idle probes between runs; `version` bumps when `buckets` changes in place. */
-    idle: idle as { readonly buckets: readonly LatencyBucket[]; readonly version: typeof idle.version },
+    idle: idle as {
+      readonly buckets: readonly LatencyBucket[];
+      readonly version: typeof idle.version;
+    },
     boot() {
       if (booted.peek()) return;
       booted.set(true);

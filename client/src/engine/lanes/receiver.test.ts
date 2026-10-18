@@ -43,7 +43,9 @@ function follow(
       now: () => 0,
       observed: ({ bytes, nanos }: Checkpoint, grew) => observed.push([bytes, nanos, grew]),
       // The stage reopens what may retry. The test skips the pause.
-      ended: async (ending, broken, delayMs) => (endings.push([ending, broken, delayMs]), ending.retry),
+      ended: async (ending, broken, delayMs) => (
+        endings.push([ending, broken, delayMs]), ending.retry
+      ),
       signIn: () => (signedIn = true),
     },
     auth,
@@ -55,7 +57,8 @@ function follow(
 }
 
 const settled = async (done: () => boolean) => {
-  for (let turns = 0; !done() && turns < 100; turns++) await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let turns = 0; !done() && turns < 100; turns++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
 test("only advancing receiver observations pass, across split records, a replacement feed and checkpoints", async () => {
@@ -98,7 +101,10 @@ test("only advancing receiver observations pass, across split records, a replace
     requestedAtMs: 0,
     receivedAtMs: 0,
   });
-  expect(await feed.receiver.checkpoint(AbortSignal.timeout(100))).toMatchObject({ bytes: 500, nanos: 5_000 });
+  expect(await feed.receiver.checkpoint(AbortSignal.timeout(100))).toMatchObject({
+    bytes: 500,
+    nanos: 5_000,
+  });
   expect(feed.observed.at(-1)).toEqual([500, 5_000, true]);
   feed.receiver.close();
 });
@@ -107,7 +113,10 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
   const refusal = (status: number, code: string, retryAfter?: string) => () =>
     new Response("refused", {
       status,
-      headers: { "X-Graphite-Upload-Refusal": code, ...(retryAfter && { "Retry-After": retryAfter }) },
+      headers: {
+        "X-Graphite-Upload-Refusal": code,
+        ...(retryAfter && { "Retry-After": retryAfter }),
+      },
     });
   const feed = follow([
     () => {
@@ -115,12 +124,20 @@ test("feed refusals back off as busy until the feed opens, an unknown id rotates
     },
     refusal(503, "globalFull", "1"),
     refusal(429, "clientFull"),
-    () => ndjson('{"type":"ready"}\n{"type":"error","code":"globalFull","message":"server full"}\n'),
-    () => ndjson('{"type":"ready"}\n{"type":"error","code":"invalid","message":"unknown upload id"}\n'),
+    () =>
+      ndjson('{"type":"ready"}\n{"type":"error","code":"globalFull","message":"server full"}\n'),
+    () =>
+      ndjson('{"type":"ready"}\n{"type":"error","code":"invalid","message":"unknown upload id"}\n'),
   ]);
   await settled(() => feed.endings.length === 5);
   expect(
-    feed.endings.map(([{ reason, rotate, detail }, broken, delayMs]) => [reason, rotate, detail, broken, delayMs]),
+    feed.endings.map(([{ reason, rotate, detail }, broken, delayMs]) => [
+      reason,
+      rotate,
+      detail,
+      broken,
+      delayMs,
+    ]),
   ).toEqual([
     ["connection-lost", undefined, "TypeError: Failed to fetch", true, 300],
     ["server-busy", undefined, "progress returned HTTP 503", false, 1_000],
@@ -164,7 +181,11 @@ test("an HTTP feed silent for 1.5 s reconnects, while heartbeats keep a quiet on
     expect(feed.endings).toEqual([]);
     await elapse(300);
     expect(feed.endings).toEqual([
-      [{ reason: "connection-lost", retry: true, detail: "progress stream went silent" }, false, 300],
+      [
+        { reason: "connection-lost", retry: true, detail: "progress stream went silent" },
+        false,
+        300,
+      ],
     ]);
     expect(streams).toHaveLength(2);
     feed.receiver.close();

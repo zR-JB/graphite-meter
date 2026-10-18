@@ -24,7 +24,12 @@ const record = (id: string) =>
         failures: [],
       },
       outcome: "complete",
-      stages: { latency: "not-run", download: "not-run", upload: "not-run", bidirectional: "not-run" },
+      stages: {
+        latency: "not-run",
+        download: "not-run",
+        upload: "not-run",
+        bidirectional: "not-run",
+      },
       startedAt: 0,
       durationMs: 0,
     },
@@ -40,7 +45,10 @@ async function storage(version?: number, rows: unknown[] = []) {
       const opening = factory.open("graphite-meter", version);
       opening.onupgradeneeded = () => {
         const db = opening.result;
-        db.createObjectStore("results", { keyPath: "id" }).createIndex("completedAt", "completedAt");
+        db.createObjectStore("results", { keyPath: "id" }).createIndex(
+          "completedAt",
+          "completedAt",
+        );
         db.createObjectStore("meta", { keyPath: "key" });
         for (const row of rows) opening.transaction!.objectStore("results").put(row);
       };
@@ -107,7 +115,10 @@ test("version 2 and 3 rows are upgraded once, in place; unreadable ones stay as 
     const listed = await history.list(new AbortController().signal, (each) => each);
     expect(listed).toEqual({
       records: [
-        { ...record("older"), result: { ...result, latency: { reportedMs: 9, jitterMs: null, stabilityPct: null } } },
+        {
+          ...record("older"),
+          result: { ...result, latency: { reportedMs: 9, jitterMs: null, stabilityPct: null } },
+        },
       ],
       malformedCount: 1,
     });
@@ -214,7 +225,9 @@ test("a late answer is let go, other versions are refused, and without storage n
   openings[1]!.onupgradeneeded!({ oldVersion: 1 });
   openings[1]!.onerror!();
   expect(aborted).toHaveBeenCalledTimes(1);
-  await expect(refused).rejects.toThrow("Unsupported History database version. Saved data has not been changed.");
+  await expect(refused).rejects.toThrow(
+    "Unsupported History database version. Saved data has not been changed.",
+  );
 
   delete (globalThis as { indexedDB?: unknown }).indexedDB;
   await expect(history.put(record("a"), 0)).rejects.toBeInstanceOf(HistoryRefusal);

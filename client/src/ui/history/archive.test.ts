@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { HistoryRecord } from "../../app/history/records";
-import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
+import {
+  HistoryRefusal,
+  type HistoryChange,
+  type HistoryRepository,
+} from "../../app/history/repository";
 import { scope, signal } from "../../lib/signal";
 import { createArchive } from "./archive";
 
@@ -24,7 +28,12 @@ const record = (id: string, completedAt: number): HistoryRecord => ({
       failures: [],
     },
     outcome: "complete",
-    stages: { latency: "not-run", download: "not-run", upload: "not-run", bidirectional: "not-run" },
+    stages: {
+      latency: "not-run",
+      download: "not-run",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
     startedAt: 0,
     durationMs: 0,
   },
@@ -42,7 +51,10 @@ function repository() {
   const inspected: string[] = [];
   const fake = {
     list: async (_: AbortSignal, keep: (record: HistoryRecord) => unknown) => {
-      const { records, malformedCount } = (await read()) as { records: HistoryRecord[]; malformedCount: number };
+      const { records, malformedCount } = (await read()) as {
+        records: HistoryRecord[];
+        malformedCount: number;
+      };
       return { records: records.map(keep), malformedCount };
     },
     inspect: (id: string) => {
@@ -95,7 +107,9 @@ test("a reload History refuses for good, such as a newer version's database, lea
   reads[0]!.resolve({ records: [record("a", 2)], malformedCount: 0 });
   await settle();
   change({ type: "elsewhere" });
-  reads[1]!.reject(new HistoryRefusal("Unsupported History database version. Saved data has not been changed."));
+  reads[1]!.reject(
+    new HistoryRefusal("Unsupported History database version. Saved data has not been changed."),
+  );
   await settle();
   expect(archive.state()).toBe("error");
   dispose();

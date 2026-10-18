@@ -1,6 +1,10 @@
 // The saved results one History visit lists, as small entries kept current across tabs.
 import { historyEntry, type HistoryRecord } from "../../app/history/records";
-import { HistoryRefusal, type HistoryChange, type HistoryRepository } from "../../app/history/repository";
+import {
+  HistoryRefusal,
+  type HistoryChange,
+  type HistoryRepository,
+} from "../../app/history/repository";
 import { batch, computed, effect, onCleanup, signal, untrack, type Read } from "../../lib/signal";
 import { applyChange, withEntry, type Listed } from "./model";
 
@@ -86,7 +90,10 @@ export function createArchive(repository: HistoryRepository, selectedId: Read<st
           answer.set({ id, selected: result });
           // One past the newest 2,000 joins the list while it is open.
           if (result.status === "ready" && !listedOpen.peek())
-            listed.set({ ...listed.peek(), records: withEntry(records.peek(), historyEntry(result.record)) });
+            listed.set({
+              ...listed.peek(),
+              records: withEntry(records.peek(), historyEntry(result.record)),
+            });
         });
       },
       () => {

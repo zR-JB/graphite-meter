@@ -59,7 +59,8 @@ export class RateEstimator {
       Math.max(this.#regimeStart, this.#evidence - FAST_WINDOW_MS),
       this.#candidate?.start ?? Infinity,
     );
-    while (this.#head < this.#spans.length - 1 && this.#spans[this.#head]!.end <= keep) this.#head++;
+    while (this.#head < this.#spans.length - 1 && this.#spans[this.#head]!.end <= keep)
+      this.#head++;
     if (this.#head >= 1024 && this.#head * 2 >= this.#spans.length) {
       this.#spans = this.#spans.slice(this.#head);
       this.#head = 0;
@@ -114,7 +115,8 @@ export class RateEstimator {
     if (!candidate) {
       if (this.#evidence - this.#regimeStart < REGIME_READY_MS || this.presented <= 0) return false;
       const ratio = this.#fast / this.presented;
-      if (ratio < 0.75 || ratio > 1.2) this.#candidate = { up: ratio > 1.2, start, reference: this.presented };
+      if (ratio < 0.75 || ratio > 1.2)
+        this.#candidate = { up: ratio > 1.2, start, reference: this.presented };
       return false;
     }
     const ratio = candidate.reference > 0 ? this.#fast / candidate.reference : 1;
@@ -122,7 +124,11 @@ export class RateEstimator {
       this.#candidate = null;
       return false;
     }
-    if (this.#evidence - candidate.start < (candidate.up ? UPSHIFT_CONFIRM_MS : DOWNSHIFT_CONFIRM_MS)) return false;
+    if (
+      this.#evidence - candidate.start <
+      (candidate.up ? UPSHIFT_CONFIRM_MS : DOWNSHIFT_CONFIRM_MS)
+    )
+      return false;
     this.#regimeStart = candidate.start;
     this.#candidate = null;
     return true;
@@ -187,7 +193,8 @@ export class LiveRates {
     if (!server) return;
     const last = server.frame;
     server.frame = frame;
-    if (!last || last.id !== frame.id || frame.nanos <= last.nanos || frame.bytes < last.bytes) return;
+    if (!last || last.id !== frame.id || frame.nanos <= last.nanos || frame.bytes < last.bytes)
+      return;
     server.up.observe(frame.bytes - last.bytes, (frame.nanos - last.nanos) / 1e6);
     if (frame.bytes === last.bytes) return;
     if (server.arrivals.push(now) > 5) server.arrivals.shift();

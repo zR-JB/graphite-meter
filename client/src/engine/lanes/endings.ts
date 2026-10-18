@@ -53,11 +53,20 @@ const retryAfterMs = ({ headers }: Response) => {
 export const refused = (response: Response, detail = `HTTP ${response.status}`): Ending =>
   signInMarker(response)
     ? { ...SIGN_IN, detail }
-    : refusal(response.status, response.headers.get("X-Graphite-Upload-Refusal"), detail, retryAfterMs(response));
+    : refusal(
+        response.status,
+        response.headers.get("X-Graphite-Upload-Refusal"),
+        detail,
+        retryAfterMs(response),
+      );
 
 /** Only an admission refusal reconnects a download; any other status is an unexpected answer. */
 export const downloadRefused = (response: Response): Ending => ({
-  ...(signInMarker(response) ? SIGN_IN : response.status === 429 || response.status === 503 ? BUSY : UNEXPECTED),
+  ...(signInMarker(response)
+    ? SIGN_IN
+    : response.status === 429 || response.status === 503
+      ? BUSY
+      : UNEXPECTED),
   detail: `HTTP ${response.status}`,
   retryAfterMs: retryAfterMs(response),
 });
@@ -84,7 +93,10 @@ export class Backoff {
   after(ending: Ending): number {
     const streak = ending.reason === "server-busy" ? this.#busy : 0;
     this.#busy = ending.reason === "server-busy" ? streak + 1 : 0;
-    return Math.min(BUSY_RESTART_CAP_MS, Math.max(RESTART_MS * 2 ** streak, ending.retryAfterMs ?? 0));
+    return Math.min(
+      BUSY_RESTART_CAP_MS,
+      Math.max(RESTART_MS * 2 ** streak, ending.retryAfterMs ?? 0),
+    );
   }
 
   /** Delivery ends a busy streak. */

@@ -121,7 +121,10 @@
      columns never shrink below their content: the rows fold first. */
   .history-table {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto repeat(var(--metric-columns), minmax(max-content, 1fr));
+    grid-template-columns: minmax(0, 1fr) auto repeat(
+        var(--metric-columns),
+        minmax(max-content, 1fr)
+      );
     row-gap: var(--space-5);
     padding: 0 var(--panel-pad) var(--space-6);
 

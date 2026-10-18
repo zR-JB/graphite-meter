@@ -30,7 +30,11 @@ export function createLimiter(): Limiter {
       queue.splice(index, 1)[0]!.start();
     }
   }
-  function acquire(origin: string, priority: () => number, signal: AbortSignal): Promise<() => void> {
+  function acquire(
+    origin: string,
+    priority: () => number,
+    signal: AbortSignal,
+  ): Promise<() => void> {
     const { promise, resolve, reject } = Promise.withResolvers<() => void>();
     if (signal.aborted) {
       reject(signal.reason);

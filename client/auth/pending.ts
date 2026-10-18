@@ -4,15 +4,27 @@ import { AUTH_ROUTES } from "../src/protocol/routes";
 
 type Page = Pick<
   Window & typeof globalThis,
-  "document" | "location" | "fetch" | "DOMParser" | "FormData" | "addEventListener" | "setTimeout" | "clearTimeout"
+  | "document"
+  | "location"
+  | "fetch"
+  | "DOMParser"
+  | "FormData"
+  | "addEventListener"
+  | "setTimeout"
+  | "clearTimeout"
 >;
 
 // A native POST would freeze the busy animation through the slow password check; other forms submit natively.
-const IN_PLACE = new Set<string>([AUTH_ROUTES.password, AUTH_ROUTES.cliApprove, AUTH_ROUTES.browserApprove]);
+const IN_PLACE = new Set<string>([
+  AUTH_ROUTES.password,
+  AUTH_ROUTES.cliApprove,
+  AUTH_ROUTES.browserApprove,
+]);
 /** A post and its answer get this long; past it the form is usable again and says the outcome is unknown. */
 const SUBMIT_MS = 20_000;
 const UNREACHABLE = "Could not reach the server. Try again.";
-const UNANSWERED = "The server did not answer in time. Reload to see whether it went through, or try again.";
+const UNANSWERED =
+  "The server did not answer in time. Reload to see whether it went through, or try again.";
 
 export function install({
   document,
@@ -29,7 +41,8 @@ export function install({
     for (const line of root.querySelectorAll("[data-host]")) line.textContent = location.host;
     for (const key of root.querySelectorAll<HTMLElement>("[data-reveal]")) key.hidden = false;
   };
-  const fieldOf = (key: Element) => document.getElementById(key.getAttribute("data-reveal")!) as HTMLInputElement;
+  const fieldOf = (key: Element) =>
+    document.getElementById(key.getAttribute("data-reveal")!) as HTMLInputElement;
   const show = (key: Element, shown: boolean) => {
     fieldOf(key).type = shown ? "text" : "password";
     key.setAttribute("aria-pressed", String(shown));
@@ -92,11 +105,18 @@ export function install({
     event.preventDefault();
     // URL-encoded, not multipart: the server reads only that.
     const body = new URLSearchParams();
-    for (const [name, value] of new FormData(form)) if (typeof value === "string") body.append(name, value);
+    for (const [name, value] of new FormData(form))
+      if (typeof value === "string") body.append(name, value);
     // The answer's body counts against the same bound; nothing is posted again on its own.
     const answer = new AbortController();
     const bound = setTimeout(() => answer.abort(), SUBMIT_MS);
-    fetch(action, { method: "POST", body, credentials: "same-origin", redirect: "follow", signal: answer.signal })
+    fetch(action, {
+      method: "POST",
+      body,
+      credentials: "same-origin",
+      redirect: "follow",
+      signal: answer.signal,
+    })
       .then(async (response) => {
         // A success leaves this path and goes unparsed: parsing the app would report CSP violations for its styles.
         if (response.redirected && new URL(response.url).pathname !== location.pathname) {

@@ -30,7 +30,8 @@ let session: Session | null = null;
 self.onmessage = ({ data }: MessageEvent<SessionCommand>) => {
   if (data.type === "measure") reports.measure(data.epoch);
   else if (data.type === "flush") post(reports.flushed(data.at));
-  else if (data.type === "stop") void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
+  else if (data.type === "stop")
+    void (session?.stop() ?? Promise.resolve()).then(() => post({ type: "stopped" }));
   else session = new Session(data);
 };
 
@@ -103,7 +104,9 @@ class Session {
     }
     let transport: WebTransport;
     try {
-      transport = new WebTransport(withToken(command.url, token), { congestionControl: "throughput" });
+      transport = new WebTransport(withToken(command.url, token), {
+        congestionControl: "throughput",
+      });
     } catch (error) {
       return this.#broken(error);
     }
@@ -172,7 +175,8 @@ class Session {
   async #relay(transport: WebTransport): Promise<void> {
     try {
       const incoming = transport.incomingUnidirectionalStreams.getReader();
-      for (let next = await incoming.read(); !next.done; next = await incoming.read()) void this.#follow(next.value);
+      for (let next = await incoming.read(); !next.done; next = await incoming.read())
+        void this.#follow(next.value);
     } catch (error) {
       this.#broken(error);
     }
@@ -244,7 +248,11 @@ class Session {
         // read again after each yield.
         if (!payload) {
           const size = Math.min(block.length, datagrams.maxDatagramSize);
-          if (!size) return this.#end({ type: "ended", ending: lost("webtransport datagram size collapsed") });
+          if (!size)
+            return this.#end({
+              type: "ended",
+              ending: lost("webtransport datagram size collapsed"),
+            });
           payload = block.subarray(0, size);
         }
         await writer.ready;
@@ -265,7 +273,12 @@ class Session {
   async #finalize({ url, request }: Upload["finalize"], feeding: boolean): Promise<void> {
     try {
       const signal = AbortSignal.timeout(FINAL_GRACE_MS);
-      const response = await fetch(url, { ...request, method: "DELETE", cache: "no-store", signal });
+      const response = await fetch(url, {
+        ...request,
+        method: "DELETE",
+        cache: "no-store",
+        signal,
+      });
       release(response);
       if (!response.ok || !feeding) return;
     } catch {
@@ -280,5 +293,7 @@ class Session {
 /** A close the server named, or a break. */
 function endOf(code: number | undefined): EndReport {
   const ending = sessionClosed(code);
-  return ending ? { type: "ended", ending } : { type: "broken", detail: "webtransport session closed" };
+  return ending
+    ? { type: "ended", ending }
+    : { type: "broken", detail: "webtransport session closed" };
 }

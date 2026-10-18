@@ -70,7 +70,14 @@ export const BINDINGS = {
     command: { kind: "history" },
     hint: true,
   },
-  theme: { key: "t", cap: "T", label: "Theme", when: always, command: { kind: "theme" }, hint: false },
+  theme: {
+    key: "t",
+    cap: "T",
+    label: "Theme",
+    when: always,
+    command: { kind: "theme" },
+    hint: false,
+  },
 } as const satisfies Record<string, Binding>;
 
 /** Space runs the test where no focused control takes it. R does wherever text entry does not. */
@@ -93,7 +100,8 @@ function dismiss(facts: KeyFacts): Command | null {
   if (facts.focused) return { kind: "close", panel: facts.focused };
   if (facts.flyout && last) return { kind: "close", panel: last };
   if (facts.editable) return null;
-  if (facts.workspace === "history") return facts.detail ? { kind: "close-detail" } : { kind: "close-history" };
+  if (facts.workspace === "history")
+    return facts.detail ? { kind: "close-detail" } : { kind: "close-history" };
   if (facts.workspace !== "measurement") return null;
   if (last) return { kind: "close", panel: last };
   return facts.pending ? { kind: "cancel-start" } : null;

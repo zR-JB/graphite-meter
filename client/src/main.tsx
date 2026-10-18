@@ -18,7 +18,9 @@ mountConsole(document.getElementById("app")!, app, {
   measurement: (shell) => <GaugePanel app={app} shell={shell} />,
   settings: (shell) => <SettingsPanel app={app} shell={shell} />,
   details: (shell) => <DetailsPanel app={app} shell={shell} />,
-  history: (shell, selectedId) => <HistoryWorkspace app={app} shell={shell} selectedId={selectedId} />,
+  history: (shell, selectedId) => (
+    <HistoryWorkspace app={app} shell={shell} selectedId={selectedId} />
+  ),
   status: (shell) => <StatusBar app={app} shell={shell} />,
   toast: (shell) => <PhaseToast app={app} shell={shell} />,
   connectivity: (shell) => <ConnectivityIndicator app={app} shell={shell} />,

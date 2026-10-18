@@ -27,7 +27,8 @@ export interface LatencySummary {
 type Outcome = Pick<ProbeOutcome, "rttMs" | "timedOut" | "handlingMs" | "inWindow">;
 
 /** The 0-based nearest rank of percentile `p` among `n` sorted values. */
-export const nearestRank = (p: number, n: number) => Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
+export const nearestRank = (p: number, n: number) =>
+  Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1));
 
 /** The median of `n` sorted values read through `at`, the mean of the middle two for an even count. */
 export const midpointMedian = (n: number, at: (rank: number) => number) =>
@@ -124,7 +125,8 @@ export class Population {
   summary(): LatencySummary | null {
     if (this.#final !== undefined) return this.#final;
     if (this.#cached !== undefined) return this.#cached;
-    if (!this.count && !this.#unresolved && !this.#sendFailures && this.#complete) return (this.#cached = null);
+    if (!this.count && !this.#unresolved && !this.#sendFailures && this.#complete)
+      return (this.#cached = null);
     const keys = this.#merge();
     const cumulative = new Float64Array(keys.length);
     let total = 0;
@@ -144,7 +146,11 @@ export class Population {
     const { count, raw, handling } = this.#timing;
     return (this.#cached = {
       ...(count && {
-        reflectorTiming: { sampleCount: count, meanRawRttMs: raw / count, meanHandlingMs: handling / count },
+        reflectorTiming: {
+          sampleCount: count,
+          meanRawRttMs: raw / count,
+          meanHandlingMs: handling / count,
+        },
       }),
       accountingComplete: this.#complete,
       probeCount: this.count,
@@ -210,7 +216,8 @@ class IdleWindow {
   /** 1 − 1.2 × (median deviation / max(median, 20 ms)) − 3.6 × timeout ratio. */
   confidence(): Confidence {
     const latest = this.#times.at(-1) ?? 0;
-    if (this.#scratch.length < this.#times.length) this.#scratch = new Float64Array(this.#times.length * 2);
+    if (this.#scratch.length < this.#times.length)
+      this.#scratch = new Float64Array(this.#times.length * 2);
     const values = this.#scratch;
     let outcomes = 0;
     let replies = 0;
@@ -224,7 +231,10 @@ class IdleWindow {
     for (let i = 0; i < replies; i++) values[i] = Math.abs(values[i]! - center);
     const deviation = selectMedian(values, replies) / Math.max(center, 20);
     const timeoutRatio = (outcomes - replies) / outcomes;
-    return { score: Math.min(1, Math.max(0, 1 - deviation * 1.2 - timeoutRatio * 3.6)), sampleCount: outcomes };
+    return {
+      score: Math.min(1, Math.max(0, 1 - deviation * 1.2 - timeoutRatio * 3.6)),
+      sampleCount: outcomes,
+    };
   }
 }
 
@@ -347,7 +357,8 @@ export class ServerLatency {
     return {
       reportedMs: p50Ms,
       jitterMs,
-      stabilityPct: jitterMs === null ? null : Math.max(0, 100 * (1 - jitterMs / Math.max(p50Ms, 1))),
+      stabilityPct:
+        jitterMs === null ? null : Math.max(0, 100 * (1 - jitterMs / Math.max(p50Ms, 1))),
     };
   }
 
@@ -355,7 +366,11 @@ export class ServerLatency {
   addedLatency(): AddedLatency | null {
     const idle = this.summary("latency")?.p50Ms;
     const loaded = (stage: TransferStage) => this.summary(stage)?.p50Ms ?? null;
-    const added = { download: loaded("download"), upload: loaded("upload"), bidirectional: loaded("bidirectional") };
+    const added = {
+      download: loaded("download"),
+      upload: loaded("upload"),
+      bidirectional: loaded("bidirectional"),
+    };
     if (idle == null || Object.values(added).every((p50) => p50 === null)) return null;
     for (const stage of ["download", "upload", "bidirectional"] as const)
       if (added[stage] !== null) added[stage] -= idle;

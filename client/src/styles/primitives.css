@@ -18,7 +18,11 @@
   .stage-area {
     --wash: 0%;
     border-top: 2px solid color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
-    background: linear-gradient(180deg, color-mix(in oklab, var(--tone) var(--wash), transparent), transparent 180px);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 180px
+    );
     transition:
       --wash calc(0.54 * var(--dur-graph)) var(--ease-out-head),
       border-color calc(0.54 * var(--dur-graph)) var(--ease-out-head);
@@ -169,10 +173,11 @@
     }
   }
   /* A press, or a toggle whose surface is open, takes the selected wash; after hover, so it wins there. */
-  :is(.btn-quiet, .head-actions .btn):is(:active, [aria-expanded="true"], [aria-pressed="true"]):not(
-    :disabled,
-    [aria-disabled="true"]
-  ) {
+  :is(.btn-quiet, .head-actions .btn):is(
+    :active,
+    [aria-expanded="true"],
+    [aria-pressed="true"]
+  ):not(:disabled, [aria-disabled="true"]) {
     background: var(--selected-wash) padding-box;
   }
   @media (pointer: coarse) {
@@ -278,7 +283,8 @@
     gap: var(--space-1) var(--space-4);
     min-width: 0;
     min-height: 48px;
-    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2) calc(var(--panel-pad) + var(--row-inset));
+    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
+      calc(var(--panel-pad) + var(--row-inset));
     overflow: hidden;
     scrollbar-gutter: stable;
     border-bottom: var(--hairline) solid transparent;

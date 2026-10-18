@@ -1,4 +1,14 @@
-import { baseConfig, catalog, frankfurt, open, phase, ready, runButton, savedResult, spawnPeer } from "./fleet";
+import {
+  baseConfig,
+  catalog,
+  frankfurt,
+  open,
+  phase,
+  ready,
+  runButton,
+  savedResult,
+  spawnPeer,
+} from "./fleet";
 import type { Subprocess } from "bun";
 import { expect, test, type Page } from "./webview";
 
@@ -32,8 +42,14 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
     const saved = await savedResult(page, startedAt, 30_000);
     expect(saved.result.outcome).toBe("partial");
     expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
-    const failure = saved.result.multiServer.failures.find((candidate) => candidate.scope === "throughput");
-    expect(failure).toMatchObject({ serverId: "oslo", stage: "download", reason: "connection-lost" });
+    const failure = saved.result.multiServer.failures.find(
+      (candidate) => candidate.scope === "throughput",
+    );
+    expect(failure).toMatchObject({
+      serverId: "oslo",
+      stage: "download",
+      reason: "connection-lost",
+    });
     await expect(page.locator(".gauge-hint")).toContainText("Download");
     const later = saved.result.multiServer.intervals.filter(
       (interval) => interval.reason === "dropout" || interval.stage !== "download",
@@ -44,7 +60,9 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
 
     await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
     await page.reload();
-    await expect(page.getByRole("combobox", { name: "Servers shown in this result" })).toContainText("2 of 3 servers");
+    await expect(
+      page.getByRole("combobox", { name: "Servers shown in this result" }),
+    ).toContainText("2 of 3 servers");
     expect((await savedResult(page)).result.multiServer).toEqual(saved.result.multiServer);
   } finally {
     oslo.kill();
@@ -64,10 +82,14 @@ test("losing every server ends Incomplete without an Aborted flash", async (page
     await page.evaluate(() => {
       const main = document.querySelector<HTMLElement>("#console")!;
       const phases: string[] = ((window as any).phases = []);
-      new MutationObserver(() => phases.push(main.dataset.phase!)).observe(main, { attributeFilter: ["data-phase"] });
+      new MutationObserver(() => phases.push(main.dataset.phase!)).observe(main, {
+        attributeFilter: ["data-phase"],
+      });
     });
     await killDuringDownload(page, porto, lisbon);
-    await expect(page.locator("footer.status .label")).toHaveText("Incomplete", { timeout: 20_000 });
+    await expect(page.locator("footer.status .label")).toHaveText("Incomplete", {
+      timeout: 20_000,
+    });
     expect(await page.evaluate(() => (window as any).phases)).not.toContain("aborted");
   } finally {
     porto.kill();

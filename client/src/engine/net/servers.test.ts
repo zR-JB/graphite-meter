@@ -2,7 +2,18 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { signal } from "../../lib/signal";
 import { catalog } from "../../protocol/documents";
 import type { TestConfig } from "../types";
-import { CONFIG, FakeBuses, fakeNet, h, MARKER, page, preflight, PROBE, ws, type Answer } from "./fakes.testutil";
+import {
+  CONFIG,
+  FakeBuses,
+  fakeNet,
+  h,
+  MARKER,
+  page,
+  preflight,
+  PROBE,
+  ws,
+  type Answer,
+} from "./fakes.testutil";
 import { createPageSession } from "./page";
 import { createServers, reconcile } from "./servers";
 
@@ -21,7 +32,10 @@ async function load(
   transports: Partial<TestConfig["transports"]> = {},
 ) {
   net = fakeNet(route);
-  const config = signal<TestConfig>({ ...CONFIG, transports: { ...CONFIG.transports, ...transports } });
+  const config = signal<TestConfig>({
+    ...CONFIG,
+    transports: { ...CONFIG.transports, ...transports },
+  });
   const active = signal(true);
   const online = signal(true);
   const servers = createServers({
@@ -62,7 +76,8 @@ const withPeer = (token: Answer) =>
         },
       };
     if (url.pathname === "/auth/browser/token") return token;
-    if (url.origin === PEER && !new Headers(init.headers).has("Authorization")) return { status: 403, headers: MARKER };
+    if (url.origin === PEER && !new Headers(init.headers).has("Authorization"))
+      return { status: 403, headers: MARKER };
     return url.pathname === "/preflight"
       ? { body: preflight([h(".", "http1")], [ws(".")]) }
       : { body: PROBE, hop: "http/1.1" };
@@ -82,7 +97,12 @@ test("Start runs on what its checks verified however long they take, and never f
   // A run holds the checks; at 119 s it fails on latency, and Start follows while that path is checked for 1.5 s.
   active.set(false);
   await net!.advance(118_000);
-  servers.recheck({ serverId: "self", scope: "latency", reason: "timeout", message: "Latency probes timed out" });
+  servers.recheck({
+    serverId: "self",
+    scope: "latency",
+    reason: "timeout",
+    message: "Latency probes timed out",
+  });
   await net!.advance(900);
   probeMs = 1_500;
   const late = prepare();
@@ -90,7 +110,12 @@ test("Start runs on what its checks verified however long they take, and never f
   expect(await late).toEqual({ servers: ["self"], dropped: [] });
   // Evidence a network change takes while Start checks drops the server with words, never silently.
   probeMs = 0;
-  servers.recheck({ serverId: "self", scope: "latency", reason: "timeout", message: "Latency probes timed out" });
+  servers.recheck({
+    serverId: "self",
+    scope: "latency",
+    reason: "timeout",
+    message: "Latency probes timed out",
+  });
   const blip = prepare();
   await net!.advance(200);
   online.set(false);
@@ -140,11 +165,16 @@ test("a reloaded catalog that no longer allows the chosen origin keeps the proto
   expect(servers.views.peek().get("self")?.throughput.path?.target.id).toBe("https://fast.example");
   additionalOrigins = [];
   await servers.load();
-  expect(config.peek().transports).toEqual({ throughputTarget: "protocol:http2", latencyTarget: "auto" });
+  expect(config.peek().transports).toEqual({
+    throughputTarget: "protocol:http2",
+    latencyTarget: "auto",
+  });
 });
 
 test("an approved peer checks its grant at once, even while the approving window hides this page", async () => {
-  const { servers, active, readiness } = await withPeer({ body: { ...GRANT, maximumLifetimeMs: 3_600_000 } });
+  const { servers, active, readiness } = await withPeer({
+    body: { ...GRANT, maximumLifetimeMs: 3_600_000 },
+  });
   expect(readiness("peer")).toBe("sign-in");
   servers.signIn("peer");
   active.set(false);
@@ -196,7 +226,10 @@ test("a failed approval keeps no link to its spent challenge, only the words of 
   const { servers } = await withPeer({ status: 410 });
   servers.signIn("peer");
   await net!.advance(1_000);
-  expect({ approval: servers.approval.peek(), message: servers.views.peek().get("peer")?.message }).toEqual({
+  expect({
+    approval: servers.approval.peek(),
+    message: servers.views.peek().get("peer")?.message,
+  }).toEqual({
     approval: { state: "failed", id: "peer" },
     message: "The approval's answer was lost on the way. Sign in again.",
   });
@@ -229,12 +262,18 @@ test("a saved choice binds IDs to origins, prototype-named IDs included", () => 
       [row("toString", "https://c.example"), row("constructor", "https://a.example")],
       { ids: ["constructor", "toString"], unresolved: [] },
     ],
-    [JSON.parse('[{"id":"__proto__","url":"https://b.example"}]'), { ids: ["__proto__"], unresolved: [] }],
+    [
+      JSON.parse('[{"id":"__proto__","url":"https://b.example"}]'),
+      { ids: ["__proto__"], unresolved: [] },
+    ],
     [
       [row("constructor", "https://moved.example")],
       { ids: [], unresolved: [row("constructor", "https://moved.example")] },
     ],
-    [[row("valueOf", "https://a.example")], { ids: [], unresolved: [row("valueOf", "https://a.example")] }],
+    [
+      [row("valueOf", "https://a.example")],
+      { ids: [], unresolved: [row("valueOf", "https://a.example")] },
+    ],
     [[row("self", "https://meter.example"), row("self", "https://meter.example")], defaults],
     [[row("self", "https://meter.example"), "self"], defaults],
     [[row("self", "https://meter.example/")], defaults],

@@ -15,7 +15,8 @@ let watching = false;
 const visible = () => typeof document === "undefined" || !document.hidden;
 
 function request(): void {
-  if (!pending && painters.size && visible()) pending = globalThis.requestAnimationFrame?.(frame) ?? 0;
+  if (!pending && painters.size && visible())
+    pending = globalThis.requestAnimationFrame?.(frame) ?? 0;
 }
 
 function frame(now: number): void {

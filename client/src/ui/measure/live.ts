@@ -6,7 +6,13 @@ import type { ServerIdentity } from "../../engine/types";
 import type { LatencySummary } from "../../engine/measure/latency";
 import { needsPings } from "../../engine/net/streams";
 import type { Phase } from "../../engine/run/run";
-import { activities, planned, STAGES, type Stage, type TransferStage } from "../../engine/run/schedule";
+import {
+  activities,
+  planned,
+  STAGES,
+  type Stage,
+  type TransferStage,
+} from "../../engine/run/schedule";
 import { nextFrame, pageMs } from "../../lib/frame";
 import { Glide } from "../../lib/motion";
 import { batch, computed, effect, scope, signal, untrack, type Read } from "../../lib/signal";
@@ -38,7 +44,10 @@ export function liveOf(app: App): Live {
 
 function createLive(app: App) {
   const { run, preferences, servers } = app;
-  const units = computed<Units>(() => ({ base: preferences.unitBase(), kind: preferences.unitKind() }));
+  const units = computed<Units>(() => ({
+    base: preferences.unitBase(),
+    kind: preferences.unitKind(),
+  }));
   let movedAt = Number.NEGATIVE_INFINITY;
   const moved = signal(0);
   const bump = () => {
@@ -61,7 +70,10 @@ function createLive(app: App) {
       const down = sample?.down ?? 0;
       const up = sample?.up ?? 0;
       if (Math.max(down, up) > current.lane || down + up > current.combined)
-        peaks.set({ lane: Math.max(current.lane, down, up), combined: Math.max(current.combined, down + up) });
+        peaks.set({
+          lane: Math.max(current.lane, down, up),
+          combined: Math.max(current.combined, down + up),
+        });
     });
   });
   const scales = computed(() =>
@@ -87,8 +99,12 @@ function createLive(app: App) {
         rateStage.set(null);
         stalled = false;
       }
-      if (!sample || (sample.down === null && sample.up === null) || (sample.stalled && stalled)) return;
-      const correction = { snap: rateStage.peek() === null, over: sample.stalled ? STALL_FADE_MS : undefined };
+      if (!sample || (sample.down === null && sample.up === null) || (sample.stalled && stalled))
+        return;
+      const correction = {
+        snap: rateStage.peek() === null,
+        over: sample.stalled ? STALL_FADE_MS : undefined,
+      };
       stalled = sample.stalled;
       down.set(sample.down ?? 0, correction);
       up.set(sample.bridgedUp ?? sample.up ?? 0, correction);
@@ -102,12 +118,20 @@ function createLive(app: App) {
   const lens = signal("");
   const chosen = signal<string | null>(null);
   const measuredLatency = (id: string | null) =>
-    !!id && (run.details.peek()?.servers.some((entry) => entry.server.id === id && entry.latencyTarget) ?? true);
+    !!id &&
+    (run.details.peek()?.servers.some((entry) => entry.server.id === id && entry.latencyTarget) ??
+      true);
   function showServer(id: string): void {
     const pin = app.latencyPin.peek();
     batch(() => {
       lens.set(id);
-      chosen.set(measuredLatency(id) ? id : measuredLatency(pin) ? pin : (run.details.peek()?.latencyFocus ?? null));
+      chosen.set(
+        measuredLatency(id)
+          ? id
+          : measuredLatency(pin)
+            ? pin
+            : (run.details.peek()?.latencyFocus ?? null),
+      );
     });
   }
   /** Shows one server's latency, mid-run included; every server is probed alike, only the view changes. */
@@ -176,7 +200,11 @@ function createLive(app: App) {
   /** The dial reads milliseconds through the latency stage, its warmup included, and after a latency-only run. */
   const msScale = computed(() => {
     const phase = run.phase();
-    return phase === "latency" || (phase === "warmup" && run.stage() === "latency") || completedRtt() !== null;
+    return (
+      phase === "latency" ||
+      (phase === "warmup" && run.stage() === "latency") ||
+      completedRtt() !== null
+    );
   });
   const latencyAxis = computed(() => latencyAxisMs(buckets(), !run.running()));
   // The round trip shows only on the millisecond scale; between runs the idle probes move it unseen and wake nothing.
@@ -244,7 +272,11 @@ function createLive(app: App) {
         budget.set(0);
       } else if (progress !== stale) {
         const running = step === "running" && progress.budgetMs > 0;
-        phaseClock.set(progress.elapsedMs, { rate: running ? 1 : 0, max: progress.budgetMs, snap: fresh });
+        phaseClock.set(progress.elapsedMs, {
+          rate: running ? 1 : 0,
+          max: progress.budgetMs,
+          snap: fresh,
+        });
         budget.set(progress.budgetMs);
         fresh = false;
       }
@@ -284,7 +316,13 @@ function createLive(app: App) {
     const statuses = run.statuses();
     const stall = run.stall() !== null;
     const ended =
-      phase === "complete" ? "complete" : phase === "aborted" ? "stopped" : phase === "error" ? "error" : null;
+      phase === "complete"
+        ? "complete"
+        : phase === "aborted"
+          ? "stopped"
+          : phase === "error"
+            ? "error"
+            : null;
     const plan = shownPlan();
     const entries = STAGES.map((stage) => {
       const mine = current === stage;
@@ -296,7 +334,10 @@ function createLive(app: App) {
         ended,
       });
       // A run that failed leaves the stage it was in waiting, as its result never says otherwise.
-      return [stage, ended === "error" && state === "failed" && !statuses[stage] ? "upcoming" : state] as const;
+      return [
+        stage,
+        ended === "error" && state === "failed" && !statuses[stage] ? "upcoming" : state,
+      ] as const;
     });
     return Object.fromEntries(entries) as Record<Stage, StageState>;
   });
@@ -314,7 +355,9 @@ function createLive(app: App) {
   /** A start the servers already refuse reads as blocked before anyone presses Start. */
   const preparation = computed<Preparation>(() => {
     const own = run.preparation();
-    return own === "idle" && run.phase() === "idle" && !servers.loading() && app.blocker() ? "blocked" : own;
+    return own === "idle" && run.phase() === "idle" && !servers.loading() && app.blocker()
+      ? "blocked"
+      : own;
   });
   /** Lists the servers the run indicates, its own selection, else the selected ones in catalog order, as discovery
       names them. */

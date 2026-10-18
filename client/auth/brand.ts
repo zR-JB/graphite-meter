@@ -25,7 +25,8 @@ function schemes(token: string): [string, string] {
   const pair = [...token.matchAll(/oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)].map((lch) =>
     hex(Number(lch[1]), Number(lch[2]), Number(lch[3])),
   );
-  if (!token.startsWith("light-dark(") || pair.length !== 2) throw new Error(`not a light-dark() oklch pair: ${token}`);
+  if (!token.startsWith("light-dark(") || pair.length !== 2)
+    throw new Error(`not a light-dark() oklch pair: ${token}`);
   return pair as [string, string];
 }
 

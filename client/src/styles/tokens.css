@@ -146,7 +146,9 @@
     --dur-graph: 220ms;
     --dur-pulse: 1100ms;
     --transition-control:
-      background-color var(--dur-hover) var(--ease-out), border-color var(--dur-hover) var(--ease-out),
+      background-color var(--dur-hover) var(--ease-out), border-color var(--dur-hover) var(
+        --ease-out
+      ),
       color var(--dur-hover) var(--ease-out), box-shadow var(--dur-hover) var(--ease-out),
       opacity var(--dur-hover) var(--ease-out);
 
@@ -259,7 +261,8 @@
     /* A thumb or knob raised a step off its track. */
     --elev-thumb: 0 1px 2px light-dark(oklch(0.25 0.02 255 / 0.1), oklch(0.08 0.01 255 / 0.35));
     --elev-tooltip:
-      var(--elev-thumb), 0 8px 20px -6px light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
+      var(--elev-thumb),
+      0 8px 20px -6px light-dark(oklch(0.25 0.02 255 / 0.2), oklch(0.08 0.01 255 / 0.5));
     --elev-float:
       0 2px 6px light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.35)),
       0 20px 48px -16px light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.6));

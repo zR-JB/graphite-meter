@@ -5,7 +5,12 @@ import { workerScript } from "../../lib/trusted";
 import { ROUTES } from "../../protocol/routes";
 import { DEADLINE_CEILING_MS } from "../measure/latency";
 import { delay, fromEpoch } from "../run/clock";
-import { SignInRequired, type LatencyBus, type ProbeChannelEvents, type ProbeChannelOptions } from "../types";
+import {
+  SignInRequired,
+  type LatencyBus,
+  type ProbeChannelEvents,
+  type ProbeChannelOptions,
+} from "../types";
 
 /** A draining worker gets its probes' longest deadline and this to acknowledge. */
 const STOP_MARGIN_MS = 250;

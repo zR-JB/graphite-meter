@@ -113,7 +113,9 @@ export class Receiver {
     if (!this.#backoff) return;
     const check = () => {
       if (!this.#advanced)
-        this.checkpoint(this.#closed.signal).catch((error) => error instanceof SignInRequired && this.#host.signIn());
+        this.checkpoint(this.#closed.signal).catch(
+          (error) => error instanceof SignInRequired && this.#host.signIn(),
+        );
       this.#advanced = false;
       void delay(QUIET_MS, this.#closed.signal).then(() => this.#closed.signal.aborted || check());
     };
@@ -134,16 +136,29 @@ export class Receiver {
     if (!this.#closed.signal.aborted && !this.#complete.signal.aborted) {
       if (!this.#backoff)
         // The browser bounds a keepalive request; a deadline here could end it before a slow path even connects.
-        void this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true }).then(
-          (response) => release(response),
-          () => {},
-        );
+        void this.#auth
+          .fetch(this.#feed, { method: "DELETE", cache: "no-store", keepalive: true })
+          .then(
+            (response) => release(response),
+            () => {},
+          );
       else
         try {
-          const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(FINAL_GRACE_MS)]);
-          const response = await this.#auth.fetch(this.#feed, { method: "DELETE", cache: "no-store", signal });
+          const signal = AbortSignal.any([
+            this.#closed.signal,
+            AbortSignal.timeout(FINAL_GRACE_MS),
+          ]);
+          const response = await this.#auth.fetch(this.#feed, {
+            method: "DELETE",
+            cache: "no-store",
+            signal,
+          });
           release(response);
-          if (response.ok) await delay(FINAL_GRACE_MS, AbortSignal.any([this.#closed.signal, this.#complete.signal]));
+          if (response.ok)
+            await delay(
+              FINAL_GRACE_MS,
+              AbortSignal.any([this.#closed.signal, this.#complete.signal]),
+            );
         } catch {
           // Finalization is cleanup: the measured window already closed.
         }
@@ -235,7 +250,11 @@ export class Receiver {
     if (this.#closed.signal.aborted) return null;
     const requestedAtMs = this.#host.now();
     const signal = AbortSignal.any([this.#closed.signal, AbortSignal.timeout(CHECKPOINT_MS)]);
-    const response = await this.#auth.fetch(this.#checkpoint, { method: "POST", cache: "no-store", signal });
+    const response = await this.#auth.fetch(this.#checkpoint, {
+      method: "POST",
+      cache: "no-store",
+      signal,
+    });
     if (!response.ok) {
       release(response);
       return null;

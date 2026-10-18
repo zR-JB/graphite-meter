@@ -1,6 +1,15 @@
 // Lists and conditional content for the JSX runtime; rows and branches are kept or moved, never rebuilt.
 import { clear, insert, type Child } from "./jsx-runtime";
-import { computed, effect, onCleanup, scope, signal, untrack, type Read, type Signal } from "./signal";
+import {
+  computed,
+  effect,
+  onCleanup,
+  scope,
+  signal,
+  untrack,
+  type Read,
+  type Signal,
+} from "./signal";
 
 /** Content that rebuilds only when `when` turns truthy or falsy. The branch reads the current value. */
 export function Show<T>(props: {
@@ -12,7 +21,9 @@ export function Show<T>(props: {
   const shown = computed(() => !!value());
   const fragment = document.createDocumentFragment();
   insert(fragment, () =>
-    shown() ? untrack(() => props.children(value as Read<NonNullable<T>>)) : untrack(() => props.fallback?.()),
+    shown()
+      ? untrack(() => props.children(value as Read<NonNullable<T>>))
+      : untrack(() => props.fallback?.()),
   );
   return fragment;
 }

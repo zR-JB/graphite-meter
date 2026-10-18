@@ -1,6 +1,13 @@
 // One stage's lanes per server and direction, from a model of each HTTP/1.1 origin's browser connection pool.
 import { activities, type Activity } from "../run/schedule";
-import type { Direction, FetchTarget, HttpProtocol, LatencyTarget, TestConfig, ThroughputTarget } from "../types";
+import type {
+  Direction,
+  FetchTarget,
+  HttpProtocol,
+  LatencyTarget,
+  TestConfig,
+  ThroughputTarget,
+} from "../types";
 
 /** Concurrent HTTP/1.1 requests a browser runs per origin; more wait for a free connection. */
 export const BROWSER_POOL = 6;
@@ -18,7 +25,10 @@ type StreamPolicy = TestConfig["transferStreams"];
 /** What planning reads of a server's verified paths. */
 export interface PlanServer {
   server: { id: string; name: string };
-  throughput: { target: Pick<ThroughputTarget, "transport">; fetch: Pick<FetchTarget, "origin" | "protocol"> };
+  throughput: {
+    target: Pick<ThroughputTarget, "transport">;
+    fetch: Pick<FetchTarget, "origin" | "protocol">;
+  };
   latency: { target: Pick<LatencyTarget, "transport" | "origin"> } | null;
 }
 
@@ -60,7 +70,11 @@ function deal(available: number, ceilings: readonly number[]): number[] {
 
 /** Deals each HTTP/1.1 origin's pool (unproven HTTP counts) among its lanes, refusing a stage that leaves a lane none;
     only lanes the pool can run gate readiness. */
-export function planStreams(servers: readonly PlanServer[], activity: Activity, policy: StreamPolicy): StreamPlan {
+export function planStreams(
+  servers: readonly PlanServer[],
+  activity: Activity,
+  policy: StreamPolicy,
+): StreamPlan {
   const count = normalizeStreamCount(policy.count);
   const forced = policy.mode === "forced";
   const plan: StreamPlan = new Map();
@@ -71,7 +85,10 @@ export function planStreams(servers: readonly PlanServer[], activity: Activity, 
     return budget;
   };
   for (const { server, throughput, latency } of servers) {
-    const lanes: Record<Direction, Lanes> = { down: { planned: 0, gating: 0 }, up: { planned: 0, gating: 0 } };
+    const lanes: Record<Direction, Lanes> = {
+      down: { planned: 0, gating: 0 },
+      up: { planned: 0, gating: 0 },
+    };
     plan.set(server.id, lanes);
     const session = throughput.target.transport !== "fetch-stream";
     const multiplexed = session ? undefined : MULTIPLEXED[throughput.fetch.protocol];
@@ -128,7 +145,10 @@ export function planError(config: TestConfig, servers: readonly PlanServer[]): s
 // Before any path is verified, a description assumes HTTP/1.1 with the WebSocket latency bus on the same origin.
 const ASSUMED: PlanServer = {
   server: { id: "", name: "" },
-  throughput: { target: { transport: "fetch-stream" }, fetch: { origin: "", protocol: "negotiated" } },
+  throughput: {
+    target: { transport: "fetch-stream" },
+    fetch: { origin: "", protocol: "negotiated" },
+  },
   latency: { target: { transport: "websocket", origin: "" } },
 };
 
@@ -141,7 +161,8 @@ export function describeStreams(
 ): { value: string; aside: string } {
   const count = normalizeStreamCount(policy.count);
   const transport = server?.throughput.target.transport;
-  if (transport === "webtransport-datagram") return { value: "Datagram flood", aside: "no streams" };
+  if (transport === "webtransport-datagram")
+    return { value: "Datagram flood", aside: "no streams" };
   if (policy.mode === "forced")
     return {
       value: "Exact",
@@ -150,9 +171,11 @@ export function describeStreams(
           ? `${SESSION_MAX_LANES} per direction (capped from ${count} by the session)`
           : `${count} per direction`,
     };
-  if (transport === "webtransport") return { value: "Automatic", aside: "1 continuous stream per direction" };
+  if (transport === "webtransport")
+    return { value: "Automatic", aside: "1 continuous stream per direction" };
   const multiplexed = server && MULTIPLEXED[server.throughput.fetch.protocol];
-  if (multiplexed) return { value: "Automatic", aside: `${multiplexed.down} download / ${multiplexed.up} upload` };
+  if (multiplexed)
+    return { value: "Automatic", aside: `${multiplexed.down} download / ${multiplexed.up} upload` };
   const alone = server ?? ASSUMED;
   let most = 0;
   for (const activity of activities) {

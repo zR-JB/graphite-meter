@@ -105,7 +105,8 @@ test.chrome("one page stays responsive through repeated runs and History visits"
     console.log(samples.at(-1));
   }
   console.table(samples);
-  if (process.env.GM_PERF_METRICS) await Bun.write(process.env.GM_PERF_METRICS, JSON.stringify(samples));
+  if (process.env.GM_PERF_METRICS)
+    await Bun.write(process.env.GM_PERF_METRICS, JSON.stringify(samples));
   if (process.env.GM_PERF_HEAP) {
     const chunks: string[] = [];
     page.onCdp("HeapProfiler.addHeapSnapshotChunk", (event: any) => chunks.push(event.data.chunk));

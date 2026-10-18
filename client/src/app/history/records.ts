@@ -115,10 +115,16 @@ function recordShape(upgraded: boolean): Check {
     }),
   );
   const measured = {
-    latency: nullable(shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) })),
+    latency: nullable(
+      shape({ reportedMs: finite, ...(upgraded ? { stabilityPct: orNull(finite) } : {}) }),
+    ),
     latencyByStage: perStage(nullable(shape({ p50Ms: nullable(finite), probeCount: finite }))),
     addedLatency: nullable(
-      shape({ download: nullable(finite), upload: nullable(finite), bidirectional: nullable(finite) }),
+      shape({
+        download: nullable(finite),
+        upload: nullable(finite),
+        bidirectional: nullable(finite),
+      }),
     ),
     download: rate,
     upload: rate,
@@ -145,13 +151,22 @@ function recordShape(upgraded: boolean): Check {
             ...measured,
             server: shape({ id: text }),
             ...(upgraded ? { engineVersion: nullable(text) } : {}),
-            throughput: shape({ transport: text, ...(upgraded ? { protocol: among(PROTOCOLS) } : {}) }),
+            throughput: shape({
+              transport: text,
+              ...(upgraded ? { protocol: among(PROTOCOLS) } : {}),
+            }),
             latencyTarget: nullable(shape({ transport: text })),
             totalBytes: shape({ down: finite, up: finite }),
             stages,
           }),
         ),
-        failures: list(shape({ serverId: text, stage: (value) => STAGES.includes(value as Stage), reason: text })),
+        failures: list(
+          shape({
+            serverId: text,
+            stage: (value) => STAGES.includes(value as Stage),
+            reason: text,
+          }),
+        ),
       }),
     }),
   });
@@ -161,7 +176,9 @@ const stored = recordShape(false);
 
 /** A stored row as this build's types declare it, or null when History cannot read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  return isRecord(value) && plain(value) && readable(value) ? (value as unknown as HistoryRecord) : null;
+  return isRecord(value) && plain(value) && readable(value)
+    ? (value as unknown as HistoryRecord)
+    : null;
 }
 
 /** A row an earlier release saved, schema 4 or 5, in this build's form; null when that release could not read it
@@ -190,7 +207,9 @@ const NAMED: Record<string, HttpProtocol> = {
 const lane = <T extends Omit<ThroughputResult, "quietMs"> | null>(saved: T): T =>
   saved && {
     ...saved,
-    peakBytesPerSec: Number.isFinite(saved.peakBytesPerSec) ? saved.peakBytesPerSec : saved.reportedBytesPerSec,
+    peakBytesPerSec: Number.isFinite(saved.peakBytesPerSec)
+      ? saved.peakBytesPerSec
+      : saved.reportedBytesPerSec,
   };
 const latency = (saved: LatencyResult | null): LatencyResult | null =>
   saved && { ...saved, stabilityPct: saved.stabilityPct ?? null };
@@ -206,7 +225,8 @@ type Schema5 = Omit<HistoryRecord, "schemaVersion"> & { schemaVersion: 5; engine
 function current({ result, engine, ...record }: Schema5): HistoryRecord {
   const { download, upload, bidirectional, multiServer } = result;
   const owner =
-    multiServer.servers.find(({ server }) => server.id === multiServer.latencyFocus) ?? multiServer.servers[0];
+    multiServer.servers.find(({ server }) => server.id === multiServer.latencyFocus) ??
+    multiServer.servers[0];
   return {
     ...record,
     schemaVersion: 6,
@@ -257,10 +277,18 @@ interface Schema4 {
   outcome?: Outcome | null;
   multiServer?: MultiServerResult | null;
   stages: {
-    latency: { status: StageStatus; result: LatencyResult | null; lanes: Record<Stage, Lane4 | null> };
+    latency: {
+      status: StageStatus;
+      result: LatencyResult | null;
+      lanes: Record<Stage, Lane4 | null>;
+    };
     download: { status: StageStatus; result: ThroughputResult | null };
     upload: { status: StageStatus; result: ThroughputResult | null };
-    bidirectional: { status: StageStatus; down: ThroughputResult | null; up: ThroughputResult | null };
+    bidirectional: {
+      status: StageStatus;
+      down: ThroughputResult | null;
+      up: ThroughputResult | null;
+    };
   };
   bufferbloat: { addedMs?: Partial<AddedLatency> } | null;
   totalBytes: number;
@@ -331,7 +359,9 @@ function lift(saved: Schema4): Schema5 {
   const wire = (stage: TransferStage, measuredRate: number): WireModel | null => {
     const breakdown = wireEstimates?.breakdown[stage];
     const estimated = wireEstimates?.[`${stage}BytesPerSec`];
-    return breakdown && estimated && measuredRate ? { ...breakdown, totalMultiplier: estimated / measuredRate } : null;
+    return breakdown && estimated && measuredRate
+      ? { ...breakdown, totalMultiplier: estimated / measuredRate }
+      : null;
   };
   const transfer = (stage: "download" | "upload") => {
     const result = stages[stage].result;
@@ -340,10 +370,9 @@ function lift(saved: Schema4): Schema5 {
   const { down, up, status } = stages.bidirectional;
   const results = {
     latency: stages.latency.result,
-    latencyByStage: Object.fromEntries(STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])])) as Record<
-      Stage,
-      LatencySummary | null
-    >,
+    latencyByStage: Object.fromEntries(
+      STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])]),
+    ) as Record<Stage, LatencySummary | null>,
     addedLatency: saved.bufferbloat?.addedMs
       ? { download: null, upload: null, bidirectional: null, ...saved.bufferbloat.addedMs }
       : null,
@@ -355,13 +384,15 @@ function lift(saved: Schema4): Schema5 {
         : {
             down,
             up,
-            wire: down && up ? wire("bidirectional", down.reportedBytesPerSec + up.reportedBytesPerSec) : null,
+            wire:
+              down && up
+                ? wire("bidirectional", down.reportedBytesPerSec + up.reportedBytesPerSec)
+                : null,
           },
   };
-  const statuses = Object.fromEntries(STAGES.map((stage) => [stage, stages[stage].status])) as Record<
-    Stage,
-    StageStatus
-  >;
+  const statuses = Object.fromEntries(
+    STAGES.map((stage) => [stage, stages[stage].status]),
+  ) as Record<Stage, StageStatus>;
   const settled = Object.values(statuses);
   const server = {
     id: "self",
@@ -379,7 +410,10 @@ function lift(saved: Schema4): Schema5 {
     result: {
       ...results,
       multiServer: saved.multiServer
-        ? { ...saved.multiServer, servers: saved.multiServer.servers.map((entry) => ({ ...entry, stages: statuses })) }
+        ? {
+            ...saved.multiServer,
+            servers: saved.multiServer.servers.map((entry) => ({ ...entry, stages: statuses })),
+          }
         : {
             selection: [server],
             participants: [server.id],
@@ -406,7 +440,11 @@ function lift(saved: Schema4): Schema5 {
           },
       outcome:
         saved.outcome ??
-        (settled.includes("failed") ? "incomplete" : settled.includes("partial") ? "partial" : "complete"),
+        (settled.includes("failed")
+          ? "incomplete"
+          : settled.includes("partial")
+            ? "partial"
+            : "complete"),
       stages: statuses,
       startedAt: saved.startedAt,
       durationMs: saved.durationMs,
@@ -449,7 +487,10 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
   let loadedStage: TransferStage | null = null;
   for (const stage of LOADED) {
     const median = result.latencyByStage[stage]?.p50Ms;
-    if (median != null && (loadedStage === null || median > result.latencyByStage[loadedStage]!.p50Ms!))
+    if (
+      median != null &&
+      (loadedStage === null || median > result.latencyByStage[loadedStage]!.p50Ms!)
+    )
       loadedStage = stage;
   }
   const selection = result.multiServer.selection;
@@ -477,7 +518,11 @@ export function historyEntry(record: HistoryRecord): HistoryEntry {
 }
 
 /** Missing values last in either direction; equal ones newest first, then by id. */
-export function sortHistory(entries: readonly HistoryEntry[], sort: HistorySort, descending: boolean): HistoryEntry[] {
+export function sortHistory(
+  entries: readonly HistoryEntry[],
+  sort: HistorySort,
+  descending: boolean,
+): HistoryEntry[] {
   return entries.toSorted((a, b) => {
     const [x, y] = [a.keys[sort], b.keys[sort]];
     if (x === y) return b.completedAt - a.completedAt || b.id.localeCompare(a.id);

@@ -42,7 +42,8 @@ const CADENCE_ROWS = [
   ["loadedPingCadence", "Loaded probe interval", TIP.loadedCadence],
 ] as const;
 const DATAGRAM_NOTE = "Datagram delivery, not packet loss.";
-const DATAGRAM_DETAIL = "Datagrams are never resent; expect lower rates than streams, mostly for uploads.";
+const DATAGRAM_DETAIL =
+  "Datagrams are never resent; expect lower rates than streams, mostly for uploads.";
 const DISPLAY_DEFAULTS = readPreferences(null);
 
 export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node {
@@ -80,12 +81,17 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
       </Show>
     ),
   };
-  const configure = (group: Group, patch: Partial<TestConfig>) => edits.edit(group, () => run.configure(patch));
+  const configure = (group: Group, patch: Partial<TestConfig>) =>
+    edits.edit(group, () => run.configure(patch));
 
   // Unselected servers are discovered only while the sheet shows and nothing runs.
   effect(() => {
     const wanted =
-      shell.shown("settings") && !!servers.catalog() && !servers.loading() && !run.running() && !run.preparing();
+      shell.shown("settings") &&
+      !!servers.catalog() &&
+      !servers.loading() &&
+      !run.running() &&
+      !run.preparing();
     untrack(() => servers.showMetadata(wanted));
   });
   // A confirmation belongs to the visible sheet.
@@ -111,7 +117,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
     configure("display", { visualization: { throughputMaxBytesPerSec } });
 
   const forced = computed(() => config().transferStreams.mode === "forced");
-  const streamLabel = computed(() => (forced() ? "Streams per direction" : "HTTP/1.1 stream limit"));
+  const streamLabel = computed(() =>
+    forced() ? "Streams per direction" : "HTTP/1.1 stream limit",
+  );
   const streams = (patch: Partial<TestConfig["transferStreams"]>) =>
     configure("transfers", { transferStreams: { ...config.peek().transferStreams, ...patch } });
   const queued = computed(
@@ -163,7 +171,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               data-tone={() => badge().tone}
               ref={tip(() => {
                 const state = readiness();
-                return state === "blocked" ? `${READINESS.blocked.label}\n${app.blocker()}` : READINESS_TIP[state];
+                return state === "blocked"
+                  ? `${READINESS.blocked.label}\n${app.blocker()}`
+                  : READINESS_TIP[state];
               })}
             >
               {() => badge().label}
@@ -230,7 +240,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               tip={() => TIP.gaugeAuto}
               checked={() => maximum() === "auto"}
               // Fixing the scale keeps the chart's ceiling as it stands.
-              onToggle={(auto) => scale(auto ? "auto" : Math.max(1, Math.round(scales.peek().chartBytesPerSec)))}
+              onToggle={(auto) =>
+                scale(auto ? "auto" : Math.max(1, Math.round(scales.peek().chartBytesPerSec)))
+              }
             />
             <Unfold when={() => maximum() !== "auto"}>
               {() => (
@@ -246,13 +258,17 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                         const shown = shownMaximum.peek();
                         const typed = input.valueAsNumber;
                         const value = Number.isFinite(typed) && typed > 0 ? typed : shown;
-                        const bytes = Math.max(1, Math.round(fromRateUnit(value, units.peek(), MAXIMUM_TIER)));
+                        const bytes = Math.max(
+                          1,
+                          Math.round(fromRateUnit(value, units.peek(), MAXIMUM_TIER)),
+                        );
                         input.value = String(value === shown || scale(bytes) ? value : shown);
                       }}
                       onkeydown={(event) => {
                         // Escape drops a typed number first and keeps the sheet open; the next one closes it.
                         const input = event.currentTarget;
-                        if (event.key !== "Escape" || input.value === String(shownMaximum.peek())) return;
+                        if (event.key !== "Escape" || input.value === String(shownMaximum.peek()))
+                          return;
                         input.value = String(shownMaximum.peek());
                         event.preventDefault();
                       }}
@@ -273,7 +289,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               label="Save results in this browser"
               tip={() => TIP.saveResults}
               checked={app.saving}
-              onToggle={(on) => app.preferences.set({ resultHistoryPreference: on ? "enabled" : "disabled" })}
+              onToggle={(on) =>
+                app.preferences.set({ resultHistoryPreference: on ? "enabled" : "disabled" })
+              }
             />
             <a
               class="link-row"
@@ -305,7 +323,10 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
                   value={() => config()[key]}
                   disabled={locked}
                   choose={(value) =>
-                    configure("probes", key === "pingCadence" ? { pingCadence: value } : { loadedPingCadence: value })
+                    configure(
+                      "probes",
+                      key === "pingCadence" ? { pingCadence: value } : { loadedPingCadence: value },
+                    )
                   }
                 />
               </div>
@@ -315,7 +336,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               tip={() => TIP.skipLoadedLatency}
               checked={() => config().skipLoadedLatencyWhenStageOff}
               disabled={locked}
-              onToggle={(skipLoadedLatencyWhenStageOff) => configure("probes", { skipLoadedLatencyWhenStageOff })}
+              onToggle={(skipLoadedLatencyWhenStageOff) =>
+                configure("probes", { skipLoadedLatencyWhenStageOff })
+              }
             />
           </div>
           {edits.notice("probes")}
@@ -332,7 +355,9 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               onToggle={(on) => streams({ mode: on ? "forced" : "auto" })}
             />
             <div class="units">
-              <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>{streamLabel}</span>
+              <span ref={tip(() => (forced() ? TIP.forcedStreamCount : TIP.autoStreamCount))}>
+                {streamLabel}
+              </span>
               <Stepper
                 label={streamLabel}
                 value={() => config().transferStreams.count}
@@ -351,15 +376,17 @@ export function SettingsPanel({ app, shell }: { app: App; shell: Shell }): Node 
               tip={() => TIP.datagramThroughput}
               checked={() => config().experimentalDatagramThroughput}
               disabled={locked}
-              onToggle={(experimentalDatagramThroughput) => configure("transfers", { experimentalDatagramThroughput })}
+              onToggle={(experimentalDatagramThroughput) =>
+                configure("transfers", { experimentalDatagramThroughput })
+              }
             />
           </div>
           {edits.notice("transfers")}
           <Show when={queued}>
             {() => (
               <p class="hint">
-                Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past that wait for one to
-                finish.
+                Browsers run {BROWSER_POOL} HTTP/1.1 requests per server at once. Streams past that
+                wait for one to finish.
               </p>
             )}
           </Show>

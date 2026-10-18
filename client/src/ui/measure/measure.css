@@ -439,7 +439,8 @@
   .gauge-unit {
     color: var(--text-muted);
     font:
-      var(--w-normal) clamp(var(--type-sm), var(--face-min) * 0.04, var(--type-lg)) / var(--type-md) var(--font-sans);
+      var(--w-normal) clamp(var(--type-sm), var(--face-min) * 0.04, var(--type-lg)) / var(--type-md)
+      var(--font-sans);
   }
   /* Empty, it keeps its line, so the missing-value dash sits where the value arrives. */
   .gauge-unit {
@@ -546,7 +547,10 @@
     display: grid;
     align-self: center;
     max-height: 100%;
-    grid-template-columns: repeat(4, max-content) [track] minmax(120px, 1fr) minmax(64px, max-content);
+    grid-template-columns: repeat(4, max-content) [track] minmax(120px, 1fr) minmax(
+        64px,
+        max-content
+      );
     grid-template-rows: auto repeat(var(--lanes), minmax(36px, 52px)) auto;
     column-gap: var(--space-3);
     min-width: 0;

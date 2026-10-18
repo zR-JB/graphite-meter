@@ -8,7 +8,13 @@ const UNFOLD_MS = 180;
 /** A row from nothing to its own height, padding and edge; it shows by halfway. */
 function frames(row: HTMLElement): Keyframe[] {
   const style = getComputedStyle(row);
-  const folded = { height: "0px", minHeight: "0px", paddingTop: "0px", paddingBottom: "0px", borderTopWidth: "0px" };
+  const folded = {
+    height: "0px",
+    minHeight: "0px",
+    paddingTop: "0px",
+    paddingBottom: "0px",
+    borderTopWidth: "0px",
+  };
   return [
     { ...folded, opacity: 0, overflow: "hidden" },
     { opacity: 1, offset: 0.5 },
@@ -57,7 +63,8 @@ export function Unfold(props: { when: () => boolean; children: () => Child }): N
     if (!open) remove();
   };
   const play = (direction: PlaybackDirection) => {
-    const easing = getComputedStyle(start.parentElement!).getPropertyValue("--ease-out").trim() || "ease-out";
+    const easing =
+      getComputedStyle(start.parentElement!).getPropertyValue("--ease-out").trim() || "ease-out";
     content!.motion = rows().map((row) =>
       row.animate(frames(row), { duration: UNFOLD_MS, easing, fill: "both", direction }),
     );
@@ -69,7 +76,8 @@ export function Unfold(props: { when: () => boolean; children: () => Child }): N
   effect(() => {
     open = wanted();
     untrack(() => {
-      const moving = mounted && !reducedMotion.peek() && start.parentElement?.checkVisibility() === true;
+      const moving =
+        mounted && !reducedMotion.peek() && start.parentElement?.checkVisibility() === true;
       mounted = true;
       if (content?.motion.length) {
         for (const animation of content.motion) animation.reverse();

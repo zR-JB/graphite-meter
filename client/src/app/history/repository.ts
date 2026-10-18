@@ -87,7 +87,9 @@ function openRequest(answered: () => void): OpenRequest {
       return upgrade.abort();
     }
     const db = opening.result;
-    db.createObjectStore(RESULTS, { keyPath: "id" }).createIndex(COMPLETED_AT, COMPLETED_AT, { unique: false });
+    db.createObjectStore(RESULTS, { keyPath: "id" }).createIndex(COMPLETED_AT, COMPLETED_AT, {
+      unique: false,
+    });
     db.createObjectStore(META, { keyPath: "key" });
   };
   opening.onsuccess = () => {
@@ -98,7 +100,8 @@ function openRequest(answered: () => void): OpenRequest {
   opening.onerror = () => {
     answered();
     // A database at a newer version stays so for the page's life.
-    const error = opening.error?.name === "VersionError" ? new HistoryRefusal(UNSUPPORTED) : opening.error;
+    const error =
+      opening.error?.name === "VersionError" ? new HistoryRefusal(UNSUPPORTED) : opening.error;
     pending.waiter?.failed(refusal ?? error ?? new Error("IndexedDB open failed"));
   };
   opening.onblocked = () => {
@@ -213,7 +216,9 @@ export class HistoryRepository {
     return { records, malformedCount: count - readable };
   }
 
-  async inspect(id: string): Promise<{ status: "ready"; record: HistoryRecord } | { status: "missing" | "malformed" }> {
+  async inspect(
+    id: string,
+  ): Promise<{ status: "ready"; record: HistoryRecord } | { status: "missing" | "malformed" }> {
     const tx = await this.#transaction("readonly");
     const value = await request(tx.objectStore(RESULTS).get(id));
     if (value === undefined) return { status: "missing" };

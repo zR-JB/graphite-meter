@@ -27,9 +27,22 @@ import {
   type ServerAuth,
   type TestConfig,
 } from "../types";
-import { ApprovalLimitError, beginApproval, exchangeGrant, grantAuth, initialAuth, type Grant } from "./auth";
+import {
+  ApprovalLimitError,
+  beginApproval,
+  exchangeGrant,
+  grantAuth,
+  initialAuth,
+  type Grant,
+} from "./auth";
 import { CHECK_FAILED } from "./checks";
-import { createConnection, FRESH_MS, type Connection, type ConnectionEnv, type ServerView } from "./connection";
+import {
+  createConnection,
+  FRESH_MS,
+  type Connection,
+  type ConnectionEnv,
+  type ServerView,
+} from "./connection";
 import { createLimiter } from "./limiter";
 import { CoverageError, type PageConfig, type PageSession } from "./page";
 import { allowsOrigin, parseSelection, portable, selectionText } from "./paths";
@@ -108,12 +121,16 @@ export interface Servers {
   authorize(requiredMs: number, signal: AbortSignal): Promise<void>;
   /** Re-reads every selected server's discovery and re-checks stale paths: what Start runs on, the servers left out
       with their reason, and whose latency leads. An AbortError means a reload or an approval replaced a connection. */
-  prepare(signal: AbortSignal): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
+  prepare(
+    signal: AbortSignal,
+  ): Promise<{ servers: PreparedServer[]; dropped: DroppedServer[]; focus: string }>;
   /** Whether a run lasting `totalMs` from now ends before every sign-in `authorize` checked. */
   fits(totalMs: number): boolean;
   /** A run failed on one server, or with null as a whole: a refused sign-in is required again, other failures send
       the failed paths back to be checked. */
-  recheck(failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null): void;
+  recheck(
+    failure: { serverId: string; scope: Role; reason: FailureReason; message: string } | null,
+  ): void;
   resume(): void;
   dispose(): void;
 }
@@ -131,7 +148,10 @@ const inCatalogOrder = (catalog: Catalog, ids: readonly string[]) =>
 
 /** The saved choice against the current catalog. A row counts only while its ID keeps its origin, else it waits
     for the user; no choice, or anything malformed, means the operator's defaults. */
-export function reconcile(catalog: Catalog, saved: unknown): { ids: string[]; unresolved: SavedServer[] } {
+export function reconcile(
+  catalog: Catalog,
+  saved: unknown,
+): { ids: string[]; unresolved: SavedServer[] } {
   const defaults = { ids: inCatalogOrder(catalog, catalog.defaultSelection), unresolved: [] };
   if (!Array.isArray(saved) || saved.length < 1 || saved.length > MAX_SELECTED) return defaults;
   const origins = new Map(catalog.servers.map((entry) => [entry.id, entry.url]));
@@ -208,7 +228,8 @@ function reserveWindow(signal: AbortSignal): { navigate(url: string): void; clos
 export function stageLimit(servers: readonly { name: string; discovery: Discovery | null }[]) {
   let limit = { ms: MAX_STAGE_LIMIT_MS, server: null as string | null };
   for (const { name, discovery } of servers)
-    if (discovery && discovery.maxStageMs < limit.ms) limit = { ms: discovery.maxStageMs, server: name };
+    if (discovery && discovery.maxStageMs < limit.ms)
+      limit = { ms: discovery.maxStageMs, server: name };
   return limit;
 }
 
@@ -284,8 +305,13 @@ export function createServers(env: ServersEnv): Servers {
     const { transports } = config.peek();
     const next = { ...transports };
     for (const role of roles)
-      next[TRANSPORT_KEY[role]] = selectionText(portable(role, selections[role].peek(), discovery, page));
-    if (next.throughputTarget !== transports.throughputTarget || next.latencyTarget !== transports.latencyTarget)
+      next[TRANSPORT_KEY[role]] = selectionText(
+        portable(role, selections[role].peek(), discovery, page),
+      );
+    if (
+      next.throughputTarget !== transports.throughputTarget ||
+      next.latencyTarget !== transports.latencyTarget
+    )
       env.setTransports(next);
   }
 
@@ -296,7 +322,10 @@ export function createServers(env: ServersEnv): Servers {
     const traveling = ROLES.filter((role) => {
       const selection = selections[role].peek();
       const origin = selection.kind === "origin" ? selection.origin : null;
-      return chosen.length > 1 || (origin !== null && chosen.some((entry) => !allowsOrigin(entry, origin)));
+      return (
+        chosen.length > 1 ||
+        (origin !== null && chosen.some((entry) => !allowsOrigin(entry, origin)))
+      );
     });
     batch(() => {
       travel(traveling);
@@ -322,7 +351,11 @@ export function createServers(env: ServersEnv): Servers {
       loading.set(true);
     });
     try {
-      const signal = AbortSignal.any([request.signal, lifetime.signal, AbortSignal.timeout(CATALOG_TIMEOUT_MS)]);
+      const signal = AbortSignal.any([
+        request.signal,
+        lifetime.signal,
+        AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+      ]);
       const response = await env.session.fetch(ROUTES.servers, { cache: "no-store", signal });
       if (!response.ok) {
         release(response);
@@ -332,7 +365,8 @@ export function createServers(env: ServersEnv): Servers {
       signal.throwIfAborted();
       install(next);
     } catch {
-      if (loadRequest === request && !lifetime.signal.aborted) loadError.set("Could not load test servers.");
+      if (loadRequest === request && !lifetime.signal.aborted)
+        loadError.set("Could not load test servers.");
     } finally {
       if (loadRequest === request) {
         loadRequest = null;
@@ -355,7 +389,9 @@ export function createServers(env: ServersEnv): Servers {
   async function retry(id?: string, role?: Role): Promise<void> {
     if (!env.active.peek()) return;
     const chosen = selected.peek().filter((each) => !id || each === id);
-    await Promise.all(chosen.map((each) => connections.peek().get(each)?.check({ force: true, role })));
+    await Promise.all(
+      chosen.map((each) => connections.peek().get(each)?.check({ force: true, role })),
+    );
   }
 
   function apply(ids: readonly string[]): boolean {
@@ -371,14 +407,17 @@ export function createServers(env: ServersEnv): Servers {
     const next = inCatalogOrder(known, ids);
     const previous = selected.peek();
     batch(() => {
-      if (next.length !== previous.length || next.some((id, i) => id !== previous[i])) travel(ROLES);
+      if (next.length !== previous.length || next.some((id, i) => id !== previous[i]))
+        travel(ROLES);
       const current = approval.peek();
       if (current.state !== "idle" && !next.includes(current.id)) cancelSignIn();
       selected.set(next);
       unresolved.set([]);
     });
     limiter.drain();
-    writeSaved(known.servers.filter((entry) => next.includes(entry.id)).map(({ id, url }) => ({ id, url })));
+    writeSaved(
+      known.servers.filter((entry) => next.includes(entry.id)).map(({ id, url }) => ({ id, url })),
+    );
     return true;
   }
 
@@ -399,7 +438,11 @@ export function createServers(env: ServersEnv): Servers {
     void approve(entry, abort, popup);
   }
 
-  async function approve(entry: CatalogEntry, abort: AbortController, popup: ReturnType<typeof reserveWindow>) {
+  async function approve(
+    entry: CatalogEntry,
+    abort: AbortController,
+    popup: ReturnType<typeof reserveWindow>,
+  ) {
     const { signal } = abort;
     let shown = false;
     try {
@@ -409,7 +452,11 @@ export function createServers(env: ServersEnv): Servers {
       approval.set({ state: "waiting", id: entry.id, url, code });
       popup.navigate(url);
       const grant = await exchangeGrant(entry, verifier, signal, now);
-      if (flow !== abort || catalog.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url) return;
+      if (
+        flow !== abort ||
+        catalog.peek()?.servers.find((each) => each.id === entry.id)?.url !== entry.url
+      )
+        return;
       grants.set(entry.id, { url: entry.url, grant, auth: grantAuth(entry, grant, now) });
       // Approval owns the grant exchange; the new connection owns every later path error.
       const granted = connect(entry);
@@ -428,7 +475,11 @@ export function createServers(env: ServersEnv): Servers {
         .get(entry.id)
         ?.requireSignIn(cause instanceof Error ? cause.message : "Could not finish the sign-in.");
       if (cause instanceof ApprovalLimitError)
-        approval.set({ state: "limit", id: entry.id, renewUrl: `${entry.url}${AUTH_ROUTES.login}` });
+        approval.set({
+          state: "limit",
+          id: entry.id,
+          renewUrl: `${entry.url}${AUTH_ROUTES.login}`,
+        });
       else approval.set(shown ? { state: "failed", id: entry.id } : IDLE);
     } finally {
       popup.close();
@@ -448,7 +499,9 @@ export function createServers(env: ServersEnv): Servers {
       if (!held || connection.auth !== held.auth) continue;
       const { name } = connection.view.peek().server;
       if (requiredMs > held.grant.maximumLifetimeMs)
-        throw new CoverageError(`${name}: this test is longer than its sign-in can last. Shorten it before starting.`);
+        throw new CoverageError(
+          `${name}: this test is longer than its sign-in can last. Shorten it before starting.`,
+        );
       const left = held.auth.left();
       // A grant that ended while the page slept is the sign-in its own timer would have asked for.
       if (left <= 0) {
@@ -457,7 +510,11 @@ export function createServers(env: ServersEnv): Servers {
       }
       if (left < requiredMs) {
         if (!flow)
-          approval.set({ state: "renew", id: entry.id, renewUrl: `${entry.url}${AUTH_ROUTES.login}?reason=renew` });
+          approval.set({
+            state: "renew",
+            id: entry.id,
+            renewUrl: `${entry.url}${AUTH_ROUTES.login}?reason=renew`,
+          });
         throw new CoverageError(
           `${name}: its sign-in ends before this test would. Sign in there again, or shorten the test.`,
         );
@@ -517,7 +574,9 @@ export function createServers(env: ServersEnv): Servers {
       return selected().length > 1 ? `${blocked.server.name}: ${blocked.blocked}` : blocked.blocked;
     }),
     stageLimit: computed(() =>
-      stageLimit(selectedViews().map(({ server, discovery }) => ({ name: server.name, discovery }))),
+      stageLimit(
+        selectedViews().map(({ server, discovery }) => ({ name: server.name, discovery })),
+      ),
     ),
     streamPlanError: computed(() => {
       const servers = selectedViews().map((view) => (view.ready ? planServer(view) : null));
@@ -526,7 +585,11 @@ export function createServers(env: ServersEnv): Servers {
     streams: computed(() => {
       const id = representative();
       const view = id === null ? undefined : views().get(id);
-      return describeStreams(config().transferStreams, activities(), view ? planServer(view) : null);
+      return describeStreams(
+        config().transferStreams,
+        activities(),
+        view ? planServer(view) : null,
+      );
     }),
     latencyServer,
     metadataLoading: computed(() => [...views().values()].some((view) => view.metadataChecking)),
@@ -552,7 +615,8 @@ export function createServers(env: ServersEnv): Servers {
         return;
       }
       const connection = connections.peek().get(failure.serverId);
-      if (failure.reason === "sign-in-required") connection?.requireSignIn(failure.message || undefined);
+      if (failure.reason === "sign-in-required")
+        connection?.requireSignIn(failure.message || undefined);
       else connection?.invalidate([failure.scope]);
     },
     resume() {

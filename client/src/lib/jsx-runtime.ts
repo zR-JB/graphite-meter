@@ -55,7 +55,9 @@ type Component<P> = (props: P) => Node;
 
 export function jsx(type: string | Component<never>, props: Record<string, unknown>): Node {
   if (typeof type === "function") return untrack(() => type(props as never));
-  const element = SVG_TAGS.has(type) ? document.createElementNS(SVG_NS, type) : document.createElement(type);
+  const element = SVG_TAGS.has(type)
+    ? document.createElementNS(SVG_NS, type)
+    : document.createElement(type);
   // Children first, so a select's value finds its option; the ref last, so it sees the finished element.
   insert(element, props.children as Child);
   for (const name in props) {
@@ -115,7 +117,11 @@ function region(parent: Node, fn: () => Child): void {
   effect(() => {
     const value = fn();
     const only = start.nextSibling;
-    if ((typeof value === "string" || typeof value === "number") && only instanceof Text && only.nextSibling === end) {
+    if (
+      (typeof value === "string" || typeof value === "number") &&
+      only instanceof Text &&
+      only.nextSibling === end
+    ) {
       only.data = String(value);
       return;
     }

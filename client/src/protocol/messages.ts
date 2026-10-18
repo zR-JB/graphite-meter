@@ -70,12 +70,22 @@ export type LaneCommand =
   | { type: "flush"; at: number };
 
 /** `posted` is one completed upload POST timed on the worker clock, as presentation evidence, never a measurement. */
-export type LaneReport = BytesReport | { type: "posted"; bytes: number; elapsedMs: number } | EndReport | Flushed;
+export type LaneReport =
+  | BytesReport
+  | { type: "posted"; bytes: number; elapsedMs: number }
+  | EndReport
+  | Flushed;
 
 /** A session worker (re)dials with `download` or `upload` after its previous ending. `stop` finalizes an upload and
     is acknowledged by `stopped` whatever ended the session. `flush` is a lane's. */
 export type SessionCommand =
-  | { type: "download"; url: string; ticket: TicketRecipe | null; datagrams: boolean; epoch: number }
+  | {
+      type: "download";
+      url: string;
+      ticket: TicketRecipe | null;
+      datagrams: boolean;
+      epoch: number;
+    }
   | {
       type: "upload";
       url: string;

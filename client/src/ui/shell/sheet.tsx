@@ -44,7 +44,12 @@ export function Sheet(props: {
       <header class="sheet-head">
         <h2 tabindex="-1">{title}</h2>
         <div class="head-actions">
-          <button class="btn btn-icon btn-quiet" type="button" aria-label={`Close ${title}`} onclick={props.onClose}>
+          <button
+            class="btn btn-icon btn-quiet"
+            type="button"
+            aria-label={`Close ${title}`}
+            onclick={props.onClose}
+          >
             <Icon name="close" />
           </button>
         </div>
@@ -88,7 +93,8 @@ export function Sheet(props: {
     const rest = (): void => {
       if (!live) return;
       const moving = sheet.getAnimations();
-      if (moving.length) return void Promise.allSettled(moving.map((animation) => animation.finished)).then(rest);
+      if (moving.length)
+        return void Promise.allSettled(moving.map((animation) => animation.finished)).then(rest);
       land(sheet);
       sheet.setAttribute("data-rest", "");
     };

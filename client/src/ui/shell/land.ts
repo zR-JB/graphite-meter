@@ -3,6 +3,7 @@
 export function land(root: Element): void {
   for (const animation of root.getAnimations({ subtree: true })) {
     const end = animation.effect?.getComputedTiming().endTime;
-    if (animation.timeline === document.timeline && typeof end === "number" && Number.isFinite(end)) animation.finish();
+    if (animation.timeline === document.timeline && typeof end === "number" && Number.isFinite(end))
+      animation.finish();
   }
 }

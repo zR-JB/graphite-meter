@@ -36,7 +36,8 @@ export function Splitter(props: {
   onChange(px: number): void;
   onReset(): void;
 }): Node {
-  const clamp = (px: number) => Math.min(props.max.peek(), Math.max(props.min.peek(), Math.round(px)));
+  const clamp = (px: number) =>
+    Math.min(props.max.peek(), Math.max(props.min.peek(), Math.round(px)));
   const grows = props.edge === "right" ? 1 : -1;
   // A move that lands where the panel already is writes nothing, so a limit never rewrites a preference.
   const change = (px: number) => {

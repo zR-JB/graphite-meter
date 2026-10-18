@@ -21,8 +21,17 @@ const SHARED = [
 ];
 
 /** `code` built minified as the file `path` would be, with what it imports. */
-export async function minified(path: string, code: string, options: Partial<Bun.BuildConfig> = {}): Promise<string> {
-  const result = await Bun.build({ entrypoints: [path], files: { [path]: code }, minify: true, ...options });
+export async function minified(
+  path: string,
+  code: string,
+  options: Partial<Bun.BuildConfig> = {},
+): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: [path],
+    files: { [path]: code },
+    minify: true,
+    ...options,
+  });
   return (await result.outputs[0]!.text()).trim();
 }
 
@@ -31,9 +40,11 @@ export const withoutPrefixedIs = (css: string) =>
   css.replace(/(?<=^|[{}])[^{}@]*:-(?:webkit|moz)-any\([^{}]*\{[^{}]*\}/g, "");
 
 /** `source`'s module graph as one dependency-free classic script, for a server or the shell to inline and pin. */
-const classicScript = (source: string) => minified(join(here, "entry.ts"), source, { format: "iife" });
+const classicScript = (source: string) =>
+  minified(join(here, "entry.ts"), source, { format: "iife" });
 
-export const themeScript = () => classicScript(`import { prePaintTheme } from "./theme"; prePaintTheme();`);
+export const themeScript = () =>
+  classicScript(`import { prePaintTheme } from "./theme"; prePaintTheme();`);
 
 type Item = string | { prelude: string; body: Item[] };
 
@@ -88,7 +99,8 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
         }),
       });
       if (item.prelude === "@font-face") {
-        if (tokens && FACES.some((face) => lines.some((line) => line.includes(`url("${face}")`)))) faces.push(lines);
+        if (tokens && FACES.some((face) => lines.some((line) => line.includes(`url("${face}")`))))
+          faces.push(lines);
       } else if (item.prelude.startsWith("@layer")) walk(item.body, media, tokens);
       else if (item.prelude.startsWith("@media")) walk(item.body, item.prelude, tokens);
       else if (tokens && item.prelude.startsWith(":root")) roots.push(rule());
@@ -99,7 +111,9 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
     walk(parse(await Bun.file(join(STYLES, name)).text()), null, name === "tokens.css");
   if (faces.length !== FACES.length)
     throw new Error(`tokens.css must declare one face for each of ${FACES.join(", ")}`);
-  const missing = SHARED.filter((selector) => shared.filter((rule) => rule.selector === selector).length !== 1);
+  const missing = SHARED.filter(
+    (selector) => shared.filter((rule) => rule.selector === selector).length !== 1,
+  );
   if (missing.length) throw new Error(`src/styles must declare each of ${missing.join(", ")} once`);
 
   const block = (head: string, lines: string[]) => `${head}{${lines.join("")}}`;
@@ -125,7 +139,8 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
   const use = (text: string) => {
     for (const [, name] of text.matchAll(/var\(\s*(--[\w-]+)/g)) {
       if (used.has(name!) || (!declared.has(name!) && local.has(name!))) continue;
-      if (!declared.has(name!)) throw new Error(`auth.css uses ${name}, which src/styles/tokens.css does not declare`);
+      if (!declared.has(name!))
+        throw new Error(`auth.css uses ${name}, which src/styles/tokens.css does not declare`);
       used.add(name!);
       for (const [, value] of declared.get(name!)!) use(value);
     }
@@ -146,7 +161,9 @@ async function stylesheet(): Promise<{ css: string; tokens: Map<string, string> 
     rules,
   ];
   const tokens = new Map(roots.filter((rule) => !rule.media).flatMap((rule) => rule.declarations));
-  const minifiedCss = await minified(join(here, "entry.css"), css.join("\n"), { external: ["/fonts/*"] });
+  const minifiedCss = await minified(join(here, "entry.css"), css.join("\n"), {
+    external: ["/fonts/*"],
+  });
   return { css: withoutPrefixedIs(minifiedCss), tokens };
 }
 
@@ -169,7 +186,9 @@ async function generated(): Promise<Map<string, string>> {
 
 if (import.meta.main) {
   const files = await generated();
-  const stale = Array.from(await readdir(output), (name) => join(output, name)).filter((path) => !files.has(path));
+  const stale = Array.from(await readdir(output), (name) => join(output, name)).filter(
+    (path) => !files.has(path),
+  );
   for (const [path, wanted] of files) {
     const file = Bun.file(path);
     // Bytes, not text: a decoder would hide a byte-order mark the server embeds.

@@ -17,7 +17,8 @@ export const string =
   (value, path = "") => {
     if (typeof value !== "string") return fail(path, "a string");
     // UTF-16 length bounds the UTF-8 length from below and three times it from above.
-    const bytes = value.length >= min && value.length * 3 <= max ? value.length : encoder.encode(value).length;
+    const bytes =
+      value.length >= min && value.length * 3 <= max ? value.length : encoder.encode(value).length;
     return bytes >= min && bytes <= max ? value : fail(path, `${min} to ${max} UTF-8 bytes`);
   };
 
@@ -34,7 +35,9 @@ export const boolean: Decoder<boolean> = (value, path = "") =>
 export const oneOf =
   <const T extends readonly (string | number | boolean)[]>(...values: T): Decoder<T[number]> =>
   (value, path = "") =>
-    values.includes(value as T[number]) ? (value as T[number]) : fail(path, `one of ${values.join(", ")}`);
+    values.includes(value as T[number])
+      ? (value as T[number])
+      : fail(path, `one of ${values.join(", ")}`);
 
 export const array =
   <T>(item: Decoder<T>, max: number, min = 0): Decoder<T[]> =>
@@ -57,12 +60,16 @@ const record = (value: unknown, path: string): Record<string, unknown> =>
 
 /** An object with `required` members and `optional` ones, which may be absent but never null. */
 export const object =
-  <R extends Shape, O extends Shape = Record<never, never>>(required: R, optional?: O): Decoder<Fields<R, O>> =>
+  <R extends Shape, O extends Shape = Record<never, never>>(
+    required: R,
+    optional?: O,
+  ): Decoder<Fields<R, O>> =>
   (value, path = "") => {
     const fields = record(value, path);
     const out: Record<string, unknown> = {};
     for (const key in required) out[key] = required[key]!(fields[key], `${path}.${key}`);
-    for (const key in optional) if (fields[key] !== undefined) out[key] = optional[key]!(fields[key], `${path}.${key}`);
+    for (const key in optional)
+      if (fields[key] !== undefined) out[key] = optional[key]!(fields[key], `${path}.${key}`);
     return out as Fields<R, O>;
   };
 
@@ -73,7 +80,8 @@ export const variant =
   ): Decoder<{ [K in keyof V]: { type: K } & Decoded<V[K]> }[keyof V]> =>
   (value, path = "") => {
     const type = record(value, path).type;
-    const decode = typeof type === "string" && Object.hasOwn(variants, type) ? variants[type] : undefined;
+    const decode =
+      typeof type === "string" && Object.hasOwn(variants, type) ? variants[type] : undefined;
     if (!decode) return fail(`${path}.type`, `one of ${Object.keys(variants).join(", ")}`);
     return { ...decode(value, path), type } as never;
   };

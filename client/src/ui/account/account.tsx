@@ -60,7 +60,8 @@ export function AccountControl(props: { app: App }): Node {
               scope.disabled = event.submitter !== everywhere;
               void props.app.signOut().then(() => {
                 const { saver, run } = props.app;
-                if (saver.pending.peek() || (saver.failed.peek() && run.result.peek())) unsaved.set(true);
+                if (saver.pending.peek() || (saver.failed.peek() && run.result.peek()))
+                  unsaved.set(true);
                 else leave();
               });
             }}
@@ -119,7 +120,9 @@ export function AccountControl(props: { app: App }): Node {
             id="sign-out-everywhere"
             invoker={() => everywhere}
             title="Sign out everywhere?"
-            description={() => `End every session of ${label()} on all devices, including this one.`}
+            description={() =>
+              `End every session of ${label()} on all devices, including this one.`
+            }
             cancel="Stay signed in"
             confirm="Sign out everywhere"
             onCancel={() => confirming.set(false)}

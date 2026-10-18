@@ -24,11 +24,15 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
     await ready(page);
     oslo.kill("SIGKILL");
     const settings = await openSettings(page);
-    await expect(settings.locator(`.server-status[data-state="failed"]`)).toHaveCount(1, { timeout: 10_000 });
+    await expect(settings.locator(`.server-status[data-state="failed"]`)).toHaveCount(1, {
+      timeout: 10_000,
+    });
     await closeSettings(page);
     const { multiServer } = (await run(page)).result;
     expect(multiServer.participants).toEqual(["self"]);
-    expect(multiServer.failures).toMatchObject([{ serverId: "oslo", reason: "preparation-failed" }]);
+    expect(multiServer.failures).toMatchObject([
+      { serverId: "oslo", reason: "preparation-failed" },
+    ]);
   } finally {
     oslo.kill();
     bergen.kill();

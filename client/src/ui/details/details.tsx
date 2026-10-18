@@ -24,11 +24,15 @@ import { diagnosticReport } from "./report";
 const ROLES = ["throughput", "latency"] as const;
 const COPIED_MS = 1_500;
 // A release stamps the full commit; the row shows git's short form, its tip and the report the whole one.
-const REVISION = /^[0-9a-f]{12,}$/.test(BUILD.revision) ? BUILD.revision.slice(0, 8) : BUILD.revision;
+const REVISION = /^[0-9a-f]{12,}$/.test(BUILD.revision)
+  ? BUILD.revision.slice(0, 8)
+  : BUILD.revision;
 
 /** An address that breaks after each colon, so IPv6 wraps there. */
 const breakable = (address: string) =>
-  address.split(":").flatMap((part, index) => (index ? [":", document.createElement("wbr"), part] : [part]));
+  address
+    .split(":")
+    .flatMap((part, index) => (index ? [":", document.createElement("wbr"), part] : [part]));
 
 export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const { servers, run } = app;
@@ -68,12 +72,19 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     const id = shownId();
     return id === null ? undefined : servers.views().get(id);
   });
-  const prepared = computed(() => run.prepared().find(({ server }) => server.id === shownId()) ?? null);
+  const prepared = computed(
+    () => run.prepared().find(({ server }) => server.id === shownId()) ?? null,
+  );
   const mode = computed(() => (run.running() ? "running" : prepared() ? "result" : "live"));
   // What Start prepared while its run is shown, so nothing a later check learns moves it; else the live checks.
   const facts = computed(() => {
     const frozen = prepared();
-    if (frozen) return { discovery: frozen.discovery, throughput: frozen.throughput, latency: frozen.latency };
+    if (frozen)
+      return {
+        discovery: frozen.discovery,
+        throughput: frozen.throughput,
+        latency: frozen.latency,
+      };
     const current = view();
     return {
       discovery: current?.discovery ?? null,
@@ -83,7 +94,8 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   });
   const discovery = () => facts().discovery;
   /** The role's target: the prepared one, else what the server's checks resolve now. */
-  const target = (role: Role) => (prepared() ? (facts()[role]?.target ?? null) : shownTarget(view(), role, app.page));
+  const target = (role: Role) =>
+    prepared() ? (facts()[role]?.target ?? null) : shownTarget(view(), role, app.page);
   const runConfig = computed(() => ({ ...app.preferences.config(), ...run.plan() }));
   const issues = computed(() => {
     const measured = run.details();
@@ -131,7 +143,9 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   });
   // A failed server's last load reading no longer describes it.
   const load = computed(() =>
-    issues().length || view()?.readiness === "failed" ? null : loadSummary(facts().throughput?.probe.load),
+    issues().length || view()?.readiness === "failed"
+      ? null
+      : loadSummary(facts().throughput?.probe.load),
   );
   const supports = (items: string[] | null) =>
     items === null ? ["Checking server"] : items.length ? items : ["None advertised"];
@@ -144,7 +158,10 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
   const report = () => {
     const views = servers.views.peek();
     const measured = run.details.peek();
-    const probes = [...views.values()].flatMap((each) => [each.throughput.path?.probe, each.latency.path?.probe]);
+    const probes = [...views.values()].flatMap((each) => [
+      each.throughput.path?.probe,
+      each.latency.path?.probe,
+    ]);
     const latencyServer = servers.latencyServer.peek();
     const { unitKind, unitBase, showWireEstimates, resultHistoryPreference } = app.preferences;
     return diagnosticReport({
@@ -212,7 +229,12 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
     announce(done ? "Diagnostic report copied." : "Could not copy the diagnostic report.");
   }
 
-  const fact = (label: string, value: () => string, explain?: () => string, aside?: () => string) => (
+  const fact = (
+    label: string,
+    value: () => string,
+    explain?: () => string,
+    aside?: () => string,
+  ) => (
     <div>
       <dt ref={explain && tip(explain)}>{label}</dt>
       <dd>
@@ -267,7 +289,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             </p>
           )}
         </For>
-        <Show when={() => (unreachable() ? (view()?.throughput.message ?? "Could not reach this test server") : "")}>
+        <Show
+          when={() =>
+            unreachable() ? (view()?.throughput.message ?? "Could not reach this test server") : ""
+          }
+        >
           {(text) => (
             <p class="notice" data-tone="err">
               {text}
@@ -296,7 +322,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
                       <span class="path-status">
                         {() =>
                           status(role) !== READINESS.used && (
-                            <span class="status-dot inline" data-tone={status(role).tone} aria-hidden="true" />
+                            <span
+                              class="status-dot inline"
+                              data-tone={status(role).tone}
+                              aria-hidden="true"
+                            />
                           )
                         }
                         {() => status(role).label}
@@ -312,7 +342,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
             <dd>
               {() => {
                 const path = facts().throughput;
-                return evidence(path?.browserProtocol ?? null, path?.probe.protocolNegotiated ?? null, unknown());
+                return evidence(
+                  path?.browserProtocol ?? null,
+                  path?.probe.protocolNegotiated ?? null,
+                  unknown(),
+                );
               }}
             </dd>
           </div>
@@ -385,7 +419,8 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           {fact(
             "Client",
             () => (BUILD.version ? `v${BUILD.version}` : REVISION),
-            () => (REVISION === BUILD.revision ? TIP.client : `${TIP.client}\nCommit ${BUILD.revision}`),
+            () =>
+              REVISION === BUILD.revision ? TIP.client : `${TIP.client}\nCommit ${BUILD.revision}`,
             () => [BUILD.profile, BUILD.version && REVISION].filter(Boolean).join(", "),
           )}
           {fact(
@@ -400,7 +435,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
       </div>
 
       <div class="kv">
-        <button class="link-row copy" type="button" onclick={(event) => void copyReport(event.currentTarget)}>
+        <button
+          class="link-row copy"
+          type="button"
+          onclick={(event) => void copyReport(event.currentTarget)}
+        >
           <span class={() => (copied() ? "hidden" : false)}>Copy diagnostic report</span>
           <span
             class={() => (copied() === "copied" ? false : "hidden")}
@@ -416,7 +455,11 @@ export function DetailsPanel({ app, shell }: { app: App; shell: Shell }): Node {
           </span>
           {() => <Icon name={copied() === "copied" ? "check" : "copy"} />}
         </button>
-        <button class="link-row" type="button" onclick={(event) => shell.legal(event.currentTarget)}>
+        <button
+          class="link-row"
+          type="button"
+          onclick={(event) => shell.legal(event.currentTarget)}
+        >
           {"About & legal"}
           <Icon name="chevron" />
         </button>
@@ -431,7 +474,13 @@ function copyBySelection(text: string, at: HTMLElement): boolean {
   field.value = text;
   field.readOnly = true;
   field.setAttribute("aria-hidden", "true");
-  Object.assign(field.style, { position: "fixed", top: "0", left: "0", opacity: "0", pointerEvents: "none" });
+  Object.assign(field.style, {
+    position: "fixed",
+    top: "0",
+    left: "0",
+    opacity: "0",
+    pointerEvents: "none",
+  });
   at.after(field);
   field.select();
   let done = false;

@@ -66,9 +66,11 @@ export function pathModel(path: WirePath): WireModel {
     factors.push({ key, label, contributionPct: application * ratio * 100 });
     application *= 1 + ratio;
   };
-  if (transport === "http2") wrap("application-framing", "HTTP/2 DATA frames", HTTP2_FRAME / RECORD);
+  if (transport === "http2")
+    wrap("application-framing", "HTTP/2 DATA frames", HTTP2_FRAME / RECORD);
   if (framing) wrap("application-framing", FRAMING_LABEL[framing], HTTP3_FRAME / RECORD);
-  if (transport === "https-tls" || transport === "http2") wrap("tls-records", "TLS 1.3 records", TLS_RECORD / RECORD);
+  if (transport === "https-tls" || transport === "http2")
+    wrap("tls-records", "TLS 1.3 records", TLS_RECORD / RECORD);
   const ip = path.ipVersion === 6 ? 40 : 20;
   const header = framing ? UDP + QUIC_SHORT_HEADER : TCP + TCP_TIMESTAMPS;
   const payload = MTU - ip - header;
@@ -80,7 +82,8 @@ export function pathModel(path: WirePath): WireModel {
   return {
     factors,
     transport,
-    transportSource: framing || (path.protocol && path.protocol !== "negotiated") ? "detected" : "fallback",
+    transportSource:
+      framing || (path.protocol && path.protocol !== "negotiated") ? "detected" : "fallback",
     framing,
     mtuBytes: MTU,
     ipVersion: path.ipVersion,
@@ -90,7 +93,9 @@ export function pathModel(path: WirePath): WireModel {
 }
 
 /** Combines several components (servers, or both directions) into one model, each weighted by its measured bytes. */
-export function combinedModel(components: readonly { bytesPerSec: number; path: WirePath }[]): WireModel | null {
+export function combinedModel(
+  components: readonly { bytesPerSec: number; path: WirePath }[],
+): WireModel | null {
   const measured = components.reduce((sum, { bytesPerSec }) => sum + bytesPerSec, 0);
   if (!components.length) return null;
   const models = components.map(({ path }) => pathModel(path));

@@ -1,4 +1,13 @@
-import { closeSettings, fleet, frankfurt, helsinki, home, locked, open, openSettings } from "./fleet";
+import {
+  closeSettings,
+  fleet,
+  frankfurt,
+  helsinki,
+  home,
+  locked,
+  open,
+  openSettings,
+} from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 interface Activity {
@@ -149,9 +158,12 @@ test("metadata timeouts back off without starving later servers", async (page) =
   await open(page);
   const settings = await openSettings(page);
   const choices = settings.getByRole("group", { name: "Test servers" });
-  const status = (name: string) => choices.locator("label", { hasText: name }).locator(".server-status");
+  const status = (name: string) =>
+    choices.locator("label", { hasText: name }).locator(".server-status");
   await expect(choices).toHaveAttribute("aria-busy", "true");
-  await expect(choices.locator("label", { hasText: "Helsinki" }).locator(".server-preflight")).toHaveCount(1, {
+  await expect(
+    choices.locator("label", { hasText: "Helsinki" }).locator(".server-preflight"),
+  ).toHaveCount(1, {
     timeout: 15_000,
   });
   await expect(status("Private")).toHaveText("Sign in", { timeout: 15_000 });

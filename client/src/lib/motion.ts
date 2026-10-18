@@ -2,7 +2,8 @@
 import { animate, pageMs } from "./frame";
 import { batch, effect, onCleanup, signal, untrack, type Read, type Signal } from "./signal";
 
-const query = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+const query =
+  typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 const still = signal(query?.matches ?? false);
 query?.addEventListener("change", () => still.set(query.matches));
 /** Every value still updates, in one frame rather than an animation. */
@@ -66,7 +67,8 @@ export class Glide {
     let fixed = false;
     if (sample.over !== undefined) [glide, fixed] = [sample.over, true];
     else if (remaining > 0 && !snap) [glide, fixed] = [remaining, true];
-    else if (now - this.#at < SAMPLE_GAP_MS) glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, now - this.#at));
+    else if (now - this.#at < SAMPLE_GAP_MS)
+      glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, now - this.#at));
     this.#from = snap || !(glide > 0) ? value : seen;
     this.#to = value;
     this.#at = now;
@@ -116,7 +118,8 @@ class Handoff<T> {
   set(value: T): void {
     this.#latest = value;
     const hidden = typeof document !== "undefined" && document.hidden;
-    if (this.keyOf(value) === this.#key || still.peek() || hidden || this.#fadeMs() <= 0) return this.#swap();
+    if (this.keyOf(value) === this.#key || still.peek() || hidden || this.#fadeMs() <= 0)
+      return this.#swap();
     this.#out.set(true);
     let start: number | null = null;
     this.#stop ??= animate((now) => {
@@ -149,7 +152,11 @@ class Handoff<T> {
 }
 
 /** A hand-off that follows `get`, released with its owner. */
-export function handoff<T>(get: () => T, keyOf: (value: T) => unknown, outMs?: Handoff<T>["outMs"]): Handoff<T> {
+export function handoff<T>(
+  get: () => T,
+  keyOf: (value: T) => unknown,
+  outMs?: Handoff<T>["outMs"],
+): Handoff<T> {
   const view = new Handoff(untrack(get), keyOf, outMs);
   effect(() => {
     const value = get();

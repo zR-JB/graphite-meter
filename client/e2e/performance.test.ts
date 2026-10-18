@@ -16,7 +16,8 @@ import { expect, settled, test } from "./webview";
 // reversal should interrupt the preceding animation, just like rapid input.
 async function churnSurfaces(cycles: number) {
   const frames = async () => {
-    for (let i = 0; i < 2; i++) await new Promise<void>((done) => requestAnimationFrame(() => done()));
+    for (let i = 0; i < 2; i++)
+      await new Promise<void>((done) => requestAnimationFrame(() => done()));
   };
   const click = async (selector: string) => {
     const button = document.querySelector<HTMLButtonElement>(selector);
@@ -36,7 +37,8 @@ async function churnSurfaces(cycles: number) {
     }
   };
   const assertClosed = async () => {
-    const open = () => document.querySelector("dialog[open], :popover-open:not(.tooltip), .scrim.open");
+    const open = () =>
+      document.querySelector("dialog[open], :popover-open:not(.tooltip), .scrim.open");
     for (let wait = 0; open() && wait < 60; wait++) await frames();
     if (open()) throw new Error(`Surface stuck open at ${location.hash}`);
   };
@@ -47,8 +49,11 @@ async function churnSurfaces(cycles: number) {
       // Reset is deliberately unavailable while a measurement is running.
       if (!document.querySelector<HTMLButtonElement>(reset)?.disabled) {
         await click(reset);
-        const confirm = document.querySelector<HTMLDialogElement>('dialog[role="alertdialog"][open]');
-        if (!confirm?.matches(":modal")) throw new Error("Settings confirmation did not open modally");
+        const confirm = document.querySelector<HTMLDialogElement>(
+          'dialog[role="alertdialog"][open]',
+        );
+        if (!confirm?.matches(":modal"))
+          throw new Error("Settings confirmation did not open modally");
         await click('dialog[role="alertdialog"][open] .confirm-actions button');
       }
       await click('button[aria-label="Close Settings"]');
@@ -57,7 +62,8 @@ async function churnSurfaces(cycles: number) {
     for (let reversal = 0; reversal < 2; reversal++) {
       await topbar("Details", "details");
       await click('dialog[aria-label="Details"] button.link-row:not(.copy)');
-      if (!document.querySelector(".legal-dialog:modal")) throw new Error("Legal dialog did not open modally");
+      if (!document.querySelector(".legal-dialog:modal"))
+        throw new Error("Legal dialog did not open modally");
       await click('button[aria-label="Close About & legal"]');
       await click('button[aria-label="Close Details"]');
       await assertClosed();
@@ -127,8 +133,10 @@ for (const width of [1600, 1000, 390]) {
       await runButton(page, "Run again").click();
       await expect(phase(page, "download")).toHaveCount(1);
       // One cycle per evaluate stays within the harness deadline on a throttled CI runner.
-      const complete = () => page.evaluate(() => !!document.querySelector('#console[data-phase="complete"]'));
-      for (let cycle = 0; cycle < 10 && !(await complete()); cycle++) await page.evaluate(churnSurfaces, 1);
+      const complete = () =>
+        page.evaluate(() => !!document.querySelector('#console[data-phase="complete"]'));
+      for (let cycle = 0; cycle < 10 && !(await complete()); cycle++)
+        await page.evaluate(churnSurfaces, 1);
       const saved = await savedResult(page, started, 30_000);
       expect(saved.result.outcome).toBe("complete");
       const counted = async () => {
@@ -146,10 +154,14 @@ for (const width of [1600, 1000, 390]) {
       expect(after.jsEventListeners - finished.jsEventListeners).toBeLessThan(CYCLES);
       expect(await page.evaluate(() => (window as any).surfaceFrames.size)).toBe(0);
       expect(
-        await page.evaluate(() => document.querySelectorAll("dialog[open], :popover-open:not(.tooltip)").length),
+        await page.evaluate(
+          () => document.querySelectorAll("dialog[open], :popover-open:not(.tooltip)").length,
+        ),
       ).toBe(0);
       expect(
-        await page.evaluate(() => !!document.activeElement?.isConnected && !document.activeElement.closest("[inert]")),
+        await page.evaluate(
+          () => !!document.activeElement?.isConnected && !document.activeElement.closest("[inert]"),
+        ),
       ).toBe(true);
     },
     // Surface cycles under CPU throttling can exceed the ordinary test timeout beside other browser files.
@@ -164,7 +176,9 @@ for (const width of [1000, 390]) {
     await ready(page);
     const settings = await openSettings(page);
     await settings.getByRole("button", { name: "Close Settings" }).click();
-    await expect.poll(() => settings.all((nodes: HTMLElement[]) => nodes.every((node) => node.inert))).toBe(true);
+    await expect
+      .poll(() => settings.all((nodes: HTMLElement[]) => nodes.every((node) => node.inert)))
+      .toBe(true);
     const button = runButton(page, "Start test");
     const target = await button.evaluate((node: HTMLElement) => {
       const box = node.getBoundingClientRect();
@@ -178,7 +192,9 @@ for (const width of [1000, 390]) {
     // the closed sheet and scrim are still fading.
     await page.click(target.x, target.y);
     // A stop before the run is under way cancels the start; one after it aborts the run.
-    await expect(page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])')).toHaveCount(1);
+    await expect(
+      page.locator('#console:is([data-phase="warmup"], [data-phase="latency"])'),
+    ).toHaveCount(1);
     await runButton(page, "Stop test").click();
     await expect(phase(page, "aborted")).toHaveCount(1);
   });
@@ -210,7 +226,8 @@ test("the measurement workspace's painters rest while History covers it mid-run 
         attributes: true,
         characterData: true,
       });
-      for (let frame = 0; frame < 30; frame++) await new Promise((done) => requestAnimationFrame(done));
+      for (let frame = 0; frame < 30; frame++)
+        await new Promise((done) => requestAnimationFrame(done));
       observer.disconnect();
       return writes;
     });
@@ -251,55 +268,60 @@ test("panels build as the pointer reaches their key and retain their state after
   await expect(page.locator(".infra")).toHaveCount(1);
 });
 
-test.chrome("rapid settings disclosures finish without duplicated rows or retained listeners", async (page) => {
-  await open(page, home.http);
-  await ready(page);
-  await openSettings(page);
-  const cycle = async (repetitions: number) => {
-    const frame = () => new Promise<void>((done) => requestAnimationFrame(() => done()));
-    const presets = document.querySelector('[aria-label="Duration preset"]')!;
-    const medium = Array.from(presets.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Medium",
-    )!;
-    const custom = Array.from(presets.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Custom",
-    )!;
-    for (let i = 0; i < repetitions; i++) {
-      custom.click();
-      await frame();
-      medium.click();
-      await frame();
-      for (const fold of document.querySelectorAll<HTMLButtonElement>(".picker button.fold")) {
-        fold.click();
-        await frame();
-        fold.click();
-        await frame();
-      }
-    }
-  };
-  await page.evaluate(cycle, 1);
-  await page.evaluate(settled);
-  await page.cdp("HeapProfiler.collectGarbage");
-  const before = await page.cdp("Memory.getDOMCounters");
-  await page.cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await page.evaluate(cycle, 30);
-  await page.evaluate(settled);
-  await page.cdp("HeapProfiler.collectGarbage");
-  const after = await page.cdp("Memory.getDOMCounters");
-  expect(after.nodes - before.nodes).toBeLessThan(50);
-  expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(5);
-  expect(
-    await page.evaluate(() => {
+test.chrome(
+  "rapid settings disclosures finish without duplicated rows or retained listeners",
+  async (page) => {
+    await open(page, home.http);
+    await ready(page);
+    await openSettings(page);
+    const cycle = async (repetitions: number) => {
+      const frame = () => new Promise<void>((done) => requestAnimationFrame(() => done()));
       const presets = document.querySelector('[aria-label="Duration preset"]')!;
-      return presets.closest("section")!.querySelectorAll(".stage-row").length;
-    }),
-  ).toBe(1);
-  expect(
-    await page.evaluate(() =>
-      Array.from(document.querySelectorAll(".picker button.fold"), (button) => button.getAttribute("aria-expanded")),
-    ),
-  ).not.toContain("true");
-});
+      const medium = Array.from(presets.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Medium",
+      )!;
+      const custom = Array.from(presets.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Custom",
+      )!;
+      for (let i = 0; i < repetitions; i++) {
+        custom.click();
+        await frame();
+        medium.click();
+        await frame();
+        for (const fold of document.querySelectorAll<HTMLButtonElement>(".picker button.fold")) {
+          fold.click();
+          await frame();
+          fold.click();
+          await frame();
+        }
+      }
+    };
+    await page.evaluate(cycle, 1);
+    await page.evaluate(settled);
+    await page.cdp("HeapProfiler.collectGarbage");
+    const before = await page.cdp("Memory.getDOMCounters");
+    await page.cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await page.evaluate(cycle, 30);
+    await page.evaluate(settled);
+    await page.cdp("HeapProfiler.collectGarbage");
+    const after = await page.cdp("Memory.getDOMCounters");
+    expect(after.nodes - before.nodes).toBeLessThan(50);
+    expect(after.jsEventListeners - before.jsEventListeners).toBeLessThan(5);
+    expect(
+      await page.evaluate(() => {
+        const presets = document.querySelector('[aria-label="Duration preset"]')!;
+        return presets.closest("section")!.querySelectorAll(".stage-row").length;
+      }),
+    ).toBe(1);
+    expect(
+      await page.evaluate(() =>
+        Array.from(document.querySelectorAll(".picker button.fold"), (button) =>
+          button.getAttribute("aria-expanded"),
+        ),
+      ),
+    ).not.toContain("true");
+  },
+);
 
 test("reopening legal notices retains the loaded rows", async (page) => {
   await open(page, home.http);
@@ -333,31 +355,34 @@ test("reopening legal notices retains the loaded rows", async (page) => {
   expect(retained).toEqual({ same: true, removed: 0 });
 });
 
-test.chrome("a live stage keeps its open tooltip through progress and phase changes", async (page) => {
-  await open(page, home.http, {
-    config: { duration: { ...baseConfig.duration, downloadMs: 2_500 } },
-  });
-  await ready(page);
-  await runButton(page, "Start test").click();
-  await expect(phase(page, "download")).toHaveCount(1);
-  const chip = page.locator('.stage-track [data-tone="download"][role="switch"]');
-  const point = await chip.evaluate((node: Element) => {
-    const box = node.getBoundingClientRect();
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  });
-  await page.cdp("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    ...point,
-  });
-  const tip = page.locator('[role="tooltip"]');
-  await expect(tip).toHaveCount(1);
-  const id = await tip.getAttribute("id");
-  await expect(phase(page, "upload")).toHaveCount(1, { timeout: 10_000 });
-  expect(await tip.getAttribute("id")).toBe(id);
-  await page.cdp("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: 0,
-    y: 0,
-  });
-  await expect(tip).toHaveCount(0);
-});
+test.chrome(
+  "a live stage keeps its open tooltip through progress and phase changes",
+  async (page) => {
+    await open(page, home.http, {
+      config: { duration: { ...baseConfig.duration, downloadMs: 2_500 } },
+    });
+    await ready(page);
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "download")).toHaveCount(1);
+    const chip = page.locator('.stage-track [data-tone="download"][role="switch"]');
+    const point = await chip.evaluate((node: Element) => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    });
+    await page.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...point,
+    });
+    const tip = page.locator('[role="tooltip"]');
+    await expect(tip).toHaveCount(1);
+    const id = await tip.getAttribute("id");
+    await expect(phase(page, "upload")).toHaveCount(1, { timeout: 10_000 });
+    expect(await tip.getAttribute("id")).toBe(id);
+    await page.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: 0,
+      y: 0,
+    });
+    await expect(tip).toHaveCount(0);
+  },
+);

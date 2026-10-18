@@ -1,9 +1,22 @@
 import { expect, test } from "bun:test";
-import { HISTORY_LIMIT, historyEntry, type HistoryEntry, type HistoryRecord } from "../../app/history/records";
+import {
+  HISTORY_LIMIT,
+  historyEntry,
+  type HistoryEntry,
+  type HistoryRecord,
+} from "../../app/history/records";
 import type { HistoryChange } from "../../app/history/repository";
 import type { RunResult } from "../../engine/run/result";
 import { MISSING } from "../../view/format";
-import { applyChange, columnScales, daysAt, groupRows, rowPresenter, type Listed, type RowContext } from "./model";
+import {
+  applyChange,
+  columnScales,
+  daysAt,
+  groupRows,
+  rowPresenter,
+  type Listed,
+  type RowContext,
+} from "./model";
 
 const at = (day: number, hour = 12) => new Date(2026, 7, day, hour).getTime();
 const NOW = at(28, 18);
@@ -12,7 +25,11 @@ const rate = (reportedBytesPerSec: number) => ({ reportedBytesPerSec });
 const latency = (p50Ms: number) => ({ p50Ms, probeCount: 20 });
 
 // Only what History's list reads; the rest of a record never reaches it.
-function stored(id: string, completedAt: number, result: Partial<Record<keyof RunResult, unknown>> = {}) {
+function stored(
+  id: string,
+  completedAt: number,
+  result: Partial<Record<keyof RunResult, unknown>> = {},
+) {
   return {
     schemaVersion: 6,
     id,
@@ -20,14 +37,28 @@ function stored(id: string, completedAt: number, result: Partial<Record<keyof Ru
     build: "",
     result: {
       latency: { reportedMs: 12.4, jitterMs: 2.2 },
-      latencyByStage: { latency: latency(12.4), download: latency(23.9), upload: latency(30.25), bidirectional: null },
+      latencyByStage: {
+        latency: latency(12.4),
+        download: latency(23.9),
+        upload: latency(30.25),
+        bidirectional: null,
+      },
       addedLatency: { download: 11.5, upload: -0.34, bidirectional: null },
       download: rate(25_000_000),
       upload: rate(5_000_000),
       bidirectional: null,
-      stages: { latency: "complete", download: "complete", upload: "complete", bidirectional: "not-run" },
+      stages: {
+        latency: "complete",
+        download: "complete",
+        upload: "complete",
+        bidirectional: "not-run",
+      },
       outcome: "complete",
-      multiServer: { selection: [{ id: "a", name: "Frankfurt", url: "" }], servers: [], failures: [] },
+      multiServer: {
+        selection: [{ id: "a", name: "Frankfurt", url: "" }],
+        servers: [],
+        failures: [],
+      },
       ...result,
     },
   } as unknown as HistoryRecord;
@@ -55,7 +86,9 @@ test("a rate column reads in the tier of its upper median, latency in ms, a colu
   const none = columnScales([saved("a", NOW, { bidirectional: null })], bits);
   expect(none.bidirectional).toEqual({ tier: null, peak: 0, unit: "" });
   expect(none.idle).toEqual({ tier: null, peak: 12.4, unit: "ms" });
-  expect(columnScales([saved("a", NOW)], { base: "base2", kind: "bytes" }).download.unit).toBe("MiB/s");
+  expect(columnScales([saved("a", NOW)], { base: "base2", kind: "bytes" }).download.unit).toBe(
+    "MiB/s",
+  );
 });
 
 const context = (records: HistoryEntry[], overrides: Partial<RowContext> = {}): RowContext => ({
@@ -65,16 +98,26 @@ const context = (records: HistoryEntry[], overrides: Partial<RowContext> = {}): 
   byDay: true,
   ...overrides,
 });
-const present = (record: HistoryEntry, rowContext: RowContext) => rowPresenter(rowContext)(record, daysAt(NOW));
+const present = (record: HistoryEntry, rowContext: RowContext) =>
+  rowPresenter(rowContext)(record, daysAt(NOW));
 
 test("a row's cells read value, note and the word for a missing value", () => {
   const cases: [string, Partial<Record<keyof RunResult, unknown>>, string[]][] = [
-    ["complete", {}, ["200.0/+11.5 ms", "40.00/−0.3 ms", "Skipped/", "12.4/jitter 2.2", "30.3/upload"]],
+    [
+      "complete",
+      {},
+      ["200.0/+11.5 ms", "40.00/−0.3 ms", "Skipped/", "12.4/jitter 2.2", "30.3/upload"],
+    ],
     [
       "one direction survived",
       {
         bidirectional: { down: rate(1_000_000), up: null },
-        stages: { latency: "partial", download: "failed", upload: "not-run", bidirectional: "failed" },
+        stages: {
+          latency: "partial",
+          download: "failed",
+          upload: "not-run",
+          bidirectional: "failed",
+        },
         download: null,
         upload: null,
         latency: null,
@@ -110,7 +153,9 @@ test("a row's accessible name reads each shown value with its unit, in column or
   );
   expect(at.every((index) => index > 0)).toBe(true);
   expect(at).toEqual(at.toSorted((a, b) => a - b));
-  const many = saved("b", NOW, { multiServer: { selection: [{}, {}, {}], servers: [], failures: [] } });
+  const many = saved("b", NOW, {
+    multiServer: { selection: [{}, {}, {}], servers: [], failures: [] },
+  });
   expect(present(many, context([many]))).toMatchObject({ where: "3 servers" });
 });
 
@@ -119,10 +164,9 @@ test("in date order rows group under Today, Yesterday, then their month; any oth
     saved(String(i), time),
   );
   const headings = (byDay: boolean) =>
-    groupRows(records.map((record) => present(record, context(records, { byDay })))).map(({ heading, rows }) => [
-      heading,
-      rows.length,
-    ]);
+    groupRows(records.map((record) => present(record, context(records, { byDay })))).map(
+      ({ heading, rows }) => [heading, rows.length],
+    );
   const [today, yesterday, august, july] = headings(true);
   expect([today, yesterday]).toEqual([
     ["Today", 2],
@@ -135,13 +179,21 @@ test("in date order rows group under Today, Yesterday, then their month; any oth
 });
 
 test("out of date order a row's day leads its time, and only another year's date leaves the time out", () => {
-  const records = [at(28, 9), at(27, 23), at(3, 7), new Date(2025, 11, 31, 9).getTime()].map((time, i) =>
-    saved(String(i), time),
+  const records = [at(28, 9), at(27, 23), at(3, 7), new Date(2025, 11, 31, 9).getTime()].map(
+    (time, i) => saved(String(i), time),
   );
-  const time = (at: number) => new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
-  const day = (at: number) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(at);
-  const date = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
-  expect(records.map((record) => present(record, context(records, { byDay: false })))).toMatchObject([
+  const time = (at: number) =>
+    new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
+  const day = (at: number) =>
+    new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(at);
+  const date = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  expect(
+    records.map((record) => present(record, context(records, { byDay: false }))),
+  ).toMatchObject([
     { heading: "", primary: `Today, ${time(at(28, 9))}` },
     { heading: "", primary: `Yesterday, ${time(at(27, 23))}` },
     { heading: "", primary: `${day(at(3, 7))}, ${time(at(3, 7))}` },
@@ -215,7 +267,11 @@ test("Yesterday is the calendar day before, even after a 23-hour day", () => {
   try {
     // 00:30 on the day after the spring-forward change, which lasted 23 hours.
     const now = new Date(2026, 2, 9, 0, 30).getTime();
-    expect(daysAt(now)).toEqual({ today: "Mon Mar 09 2026", yesterday: "Sun Mar 08 2026", year: 2026 });
+    expect(daysAt(now)).toEqual({
+      today: "Mon Mar 09 2026",
+      yesterday: "Sun Mar 08 2026",
+      year: 2026,
+    });
   } finally {
     process.env.TZ = zone;
   }

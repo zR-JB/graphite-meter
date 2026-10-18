@@ -34,7 +34,10 @@ function connect(
     online: signal(true),
     metadata: signal(false),
     latencyServer: signal(shown ? entry.id : null),
-    selections: { throughput: signal(parseSelection("auto")), latency: signal(parseSelection("auto")) },
+    selections: {
+      throughput: signal(parseSelection("auto")),
+      latency: signal(parseSelection("auto")),
+    },
     latencyNeeded: signal(latency),
     idleLatency: (_: string, outcomes: readonly ProbeOutcome[]) => idle.push(...outcomes),
     now,
@@ -66,8 +69,18 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
         ? { body: preflight([h(".", "http1")]) }
         : { body: PROBE, hop: "http/1.1" },
   );
-  const peer: CatalogEntry = { id: "peer", url: "https://peer.example", name: "Peer", additionalOrigins: [] };
-  const grant = { token: "t".repeat(43), deadline: 60_000, expires: Infinity, maximumLifetimeMs: 28_800_000 };
+  const peer: CatalogEntry = {
+    id: "peer",
+    url: "https://peer.example",
+    name: "Peer",
+    additionalOrigins: [],
+  };
+  const grant = {
+    token: "t".repeat(43),
+    deadline: 60_000,
+    expires: Infinity,
+    maximumLifetimeMs: 28_800_000,
+  };
   const { connection } = connect(peer, { auth: grantAuth(peer, grant, net.now) });
   await net.advance(20_000);
   expect(net.sent("/preflight")).toEqual([0, 5_000, 15_000]);
@@ -80,7 +93,10 @@ test("failed checks back off 5 s then 10 s, resume makes them due, and a grant's
   await net.advance(0);
   expect(connection.view.peek().readiness).toBe("verified");
   await net.advance(45_000);
-  expect(connection.view.peek()).toMatchObject({ readiness: "sign-in", blocked: "Sign in to Meter" });
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "sign-in",
+    blocked: "Sign in to Meter",
+  });
   // Sign-in is never retried on its own, and an ended grant is refused before any request.
   const sent = net.requests.length;
   connection.resume();
@@ -99,11 +115,20 @@ test("a device that says it is offline still checks its servers, and says offlin
         : { body: PROBE, hop: "http/1.1" },
   );
   // A lab link without a gateway: the browser reports offline, the server answers.
-  const peer: CatalogEntry = { id: "peer", url: "https://peer.example", name: "Peer", additionalOrigins: [] };
+  const peer: CatalogEntry = {
+    id: "peer",
+    url: "https://peer.example",
+    name: "Peer",
+    additionalOrigins: [],
+  };
   const { connection, env } = connect(peer);
   env.online.set(false);
   await net.advance(1_000);
-  expect(connection.view.peek()).toMatchObject({ readiness: "verified", message: null, blocked: null });
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "verified",
+    message: null,
+    blocked: null,
+  });
   expect(connection.prepared(0)).not.toBeNull();
   reachable = false;
   await net.advance(5_000);
@@ -125,14 +150,21 @@ test("a selected server re-reads discovery every 5 s without a checking flash or
     if (!alive) return "unreachable";
     if (url.pathname !== "/preflight") return { body: PROBE, afterMs: 100 };
     const offer = preflight([h(".", "negotiated"), h("https://meter.example:8443", "http3")]);
-    return { body: offer, afterMs: 100, hop: hops[Math.min(net.sent("/preflight").length - 1, hops.length - 1)] };
+    return {
+      body: offer,
+      afterMs: 100,
+      hop: hops[Math.min(net.sent("/preflight").length - 1, hops.length - 1)],
+    };
   });
   const { connection, readiness } = connect(self);
   await net.advance(14_000);
   expect(net.sent("/preflight")).toEqual([0, 5_100, 10_200]);
   // The negotiated head, seen over HTTP/2 first, stays verified through a re-read without a hop and one over HTTP/3.
   expect(net.sent("/probe")).toEqual([100]);
-  expect(connection.view.peek().throughput.path?.fetch).toMatchObject({ origin: page.origin, protocol: "http2" });
+  expect(connection.view.peek().throughput.path?.fetch).toMatchObject({
+    origin: page.origin,
+    protocol: "http2",
+  });
   alive = false;
   await net.advance(5_000);
   expect(connection.view.peek().message).toBe("Could not reach this test server");
@@ -161,7 +193,9 @@ test("a timer that fires before a coarse page clock reaches its time still re-re
 
 test("a server selected again keeps evidence up to 2 min old and proves older evidence again", async () => {
   net = fakeNet((url) =>
-    url.pathname === "/preflight" ? { body: preflight([h(".", "http1")]) } : { body: PROBE, hop: "http/1.1" },
+    url.pathname === "/preflight"
+      ? { body: preflight([h(".", "http1")]) }
+      : { body: PROBE, hop: "http/1.1" },
   );
   const { connection, selected } = connect(self);
   await net.advance(1_000);
@@ -173,7 +207,10 @@ test("a server selected again keeps evidence up to 2 min old and proves older ev
     await net.advance(awayMs);
     selected.set(true);
     await net.advance(0);
-    expect<unknown>({ preflights: net.sent("/preflight"), probes: net.sent("/probe") }).toEqual({ preflights, probes });
+    expect<unknown>({ preflights: net.sent("/preflight"), probes: net.sent("/probe") }).toEqual({
+      preflights,
+      probes,
+    });
     expect(connection.view.peek().readiness).toBe("verified");
   }
 });
@@ -189,12 +226,20 @@ test("the bus that proved the shown server's latency becomes its idle monitor, a
   // One bus served the check at its 120 ms cadence, then the idle console at 1 s, in place of liveness reads.
   const monitor = buses.opened[0]!;
   expect(buses.opened).toEqual([monitor]);
-  expect({ opened: monitor.options.intervalMs, paced: monitor.intervalMs, disposed: monitor.disposed }).toEqual({
+  expect({
+    opened: monitor.options.intervalMs,
+    paced: monitor.intervalMs,
+    disposed: monitor.disposed,
+  }).toEqual({
     opened: 120,
     paced: 1_000,
     disposed: false,
   });
-  expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, connectivity: "connected" });
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "verified",
+    idle: true,
+    connectivity: "connected",
+  });
   expect(idle.length).toBe(30);
   expect(net.sent("/preflight")).toEqual([0]);
   // A bus that went quiet leaves its path to be proven again, and the new check's bus monitors next.
@@ -206,7 +251,11 @@ test("the bus that proved the shown server's latency becomes its idle monitor, a
     [false, 1_000],
   ]);
   expect(net.sent("/probe")).toEqual([0, 0, 30_000]);
-  expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, connectivity: "connected" });
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "verified",
+    idle: true,
+    connectivity: "connected",
+  });
   // A server no longer shown is no longer monitored, and its discovery is re-read again.
   env.latencyServer.set(null);
   expect(buses.opened[1]!.disposed).toBe(true);
@@ -233,7 +282,11 @@ test("a monitored server re-reads its discovery each minute, quietly, and a new 
   expect(net.sent("/preflight")).toEqual([0, 60_000, 120_000]);
   expect(net.sent("/probe")).toEqual([0, 0, 120_000, 120_000]);
   expect(buses.opened.map(({ disposed }) => disposed)).toEqual([true, false]);
-  expect(connection.view.peek()).toMatchObject({ readiness: "verified", idle: true, discovery: { generation: "g2" } });
+  expect(connection.view.peek()).toMatchObject({
+    readiness: "verified",
+    idle: true,
+    discovery: { generation: "g2" },
+  });
 });
 
 test("a latency check's bus closes with the check when it is cut short or no monitor wants it", async () => {

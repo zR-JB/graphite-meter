@@ -26,7 +26,9 @@ class El {
   matches(selector: string): boolean {
     if (selector.startsWith("[")) {
       const [name, value] = selector.slice(1, -1).split("=");
-      return this.attributes.has(name!) && (value === undefined || this.attributes.get(name!) === value);
+      return (
+        this.attributes.has(name!) && (value === undefined || this.attributes.get(name!) === value)
+      );
     }
     if (selector.startsWith("#")) return this.attributes.get("id") === selector.slice(1);
     const [tag, name] = selector.split(".");
@@ -113,7 +115,8 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     get activeElement() {
       return focused;
     },
-    addEventListener: (type: string, listener: (event: object) => void) => listeners.set(type, listener),
+    addEventListener: (type: string, listener: (event: object) => void) =>
+      listeners.set(type, listener),
     querySelector: (selector: string) => root.querySelector(selector),
     querySelectorAll: (selector: string) => root.querySelectorAll(selector),
     getElementById: (id: string) => root.querySelector(`#${id}`),
@@ -146,7 +149,9 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     fetch: async (url: URL, init: RequestInit) => {
       posts.push([url.href, init]);
       const aborted = new Promise<never>((_, reject) =>
-        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+        init.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        ),
       );
       answer = await Promise.race([reply(), aborted]);
       return { redirected: false, ok: true, status: 200, text: async () => "", ...answer };
@@ -157,10 +162,12 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
     FormData: class extends FormData {
       constructor(form: El) {
         super();
-        for (const input of form.querySelectorAll("input")) this.append(input.getAttribute("name")!, input.value);
+        for (const input of form.querySelectorAll("input"))
+          this.append(input.getAttribute("name")!, input.value);
       }
     },
-    addEventListener: (type: string, listener: (event: object) => void) => shown.set(type, listener),
+    addEventListener: (type: string, listener: (event: object) => void) =>
+      shown.set(type, listener),
     setTimeout: (fn: () => void, ms: number) => {
       timers.set(++ids, { at: now + ms, fn });
       return ids;
@@ -188,10 +195,19 @@ function load(card: El, reply: () => Promise<Reply> = () => new Promise(() => {}
 // e2e/auth.test.ts covers a wrong password's swap, the host line and the show key in a real browser.
 test("a sign-in posts in place, then swaps in the answer's card or follows it off the page", async () => {
   const cases: { reply: Reply; effects: string[] }[] = [
-    { reply: { redirected: true, url: "https://meter.example/" }, effects: ["assign https://meter.example/"] },
+    {
+      reply: { redirected: true, url: "https://meter.example/" },
+      effects: ["assign https://meter.example/"],
+    },
     { reply: { url: "https://meter.example/auth/cli/approve", card: done() }, effects: [] },
-    { reply: { url: "https://meter.example/auth/password" }, effects: ["assign https://meter.example/auth/password"] },
-    { reply: { url: "https://meter.example/auth/password", ok: false, status: 403 }, effects: ["reload"] },
+    {
+      reply: { url: "https://meter.example/auth/password" },
+      effects: ["assign https://meter.example/auth/password"],
+    },
+    {
+      reply: { url: "https://meter.example/auth/password", ok: false, status: 403 },
+      effects: ["reload"],
+    },
   ];
   for (const { reply, effects } of cases) {
     const card = signIn();
@@ -237,9 +253,13 @@ test("a post that cannot reach the server says so once and leaves the form usabl
     await page.settled();
     expect(busy(form)).toEqual([null, null]);
     const notices = card.querySelectorAll("[data-unreachable]");
-    expect(notices.map((each) => [each.textContent, each.getAttribute("role"), each.getAttribute("class")])).toEqual([
-      ["Could not reach the server. Try again.", "alert", "notice"],
-    ]);
+    expect(
+      notices.map((each) => [
+        each.textContent,
+        each.getAttribute("role"),
+        each.getAttribute("class"),
+      ]),
+    ).toEqual([["Could not reach the server. Try again.", "alert", "notice"]]);
     expect([form.previousElementSibling, page.effects]).toEqual([notices[0]!, []]);
   }
 });

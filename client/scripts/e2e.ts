@@ -7,11 +7,20 @@ import { describe, host, launch, logs } from "../e2e/servers";
 
 // Paths resolve from the client folder, which the suite runs in.
 const bin = process.env.GM_E2E_SERVER_BIN ?? resolve("../rust/target/ci/graphite-meter-server");
-if (!(await Bun.file(bin).exists())) throw new Error(`${bin} is missing; mise run e2e-server builds it`);
+if (!(await Bun.file(bin).exists()))
+  throw new Error(`${bin} is missing; mise run e2e-server builds it`);
 // CI runs the browsers its Plan job selects; a local run takes whichever is installed.
 for (const [path, expected, name] of [
-  [process.env.BUN_CHROME_PATH ?? "chrome", process.env.GM_EXPECTED_CHROME_VERSION, "Google Chrome for Testing"],
-  [process.env.GM_FIREFOX_PATH ?? "firefox", process.env.GM_EXPECTED_FIREFOX_VERSION, "Mozilla Firefox"],
+  [
+    process.env.BUN_CHROME_PATH ?? "chrome",
+    process.env.GM_EXPECTED_CHROME_VERSION,
+    "Google Chrome for Testing",
+  ],
+  [
+    process.env.GM_FIREFOX_PATH ?? "firefox",
+    process.env.GM_EXPECTED_FIREFOX_VERSION,
+    "Mozilla Firefox",
+  ],
 ] as const) {
   if (!expected) continue;
   const actual = Bun.spawnSync([path, "--version"]).stdout.toString().trim();
@@ -24,11 +33,16 @@ process.env.TMPDIR = dir;
 
 // A worker can exit without its cleanup hooks, so whatever still runs with this directory is stopped (Linux /proc).
 async function ours() {
-  const pids = (await readdir("/proc").catch(() => [])).filter((pid) => /^\d+$/.test(pid) && +pid !== process.pid);
+  const pids = (await readdir("/proc").catch(() => [])).filter(
+    (pid) => /^\d+$/.test(pid) && +pid !== process.pid,
+  );
   return pids.map(Number).filter((pid) => {
     try {
       const environ = `\0${readFileSync(`/proc/${pid}/environ`, "latin1")}`;
-      return environ.includes(`\0TMPDIR=${dir}\0`) || readFileSync(`/proc/${pid}/cmdline`, "latin1").includes(dir);
+      return (
+        environ.includes(`\0TMPDIR=${dir}\0`) ||
+        readFileSync(`/proc/${pid}/cmdline`, "latin1").includes(dir)
+      );
     } catch {
       return false;
     }
@@ -70,10 +84,17 @@ try {
   );
   if (openssl.exitCode !== 0) throw new Error("openssl could not create a cert");
   const spki = createHash("sha256")
-    .update(new X509Certificate(await Bun.file(cert).text()).publicKey.export({ type: "spki", format: "der" }))
+    .update(
+      new X509Certificate(await Bun.file(cert).text()).publicKey.export({
+        type: "spki",
+        format: "der",
+      }),
+    )
     .digest("base64");
   const password = "local-e2e-fixture";
-  const hash = Bun.spawnSync([bin, "hash-password"], { stdin: Buffer.from(`${password}\n${password}\n`) });
+  const hash = Bun.spawnSync([bin, "hash-password"], {
+    stdin: Buffer.from(`${password}\n${password}\n`),
+  });
   if (hash.exitCode !== 0) throw new Error("could not hash the fixture password");
   const passwordHash = hash.stdout.toString().trim();
 
@@ -108,20 +129,23 @@ try {
   const command = process.argv.slice(2);
   // A Firefox worker weighs more than Chrome's; three of them starve a CI runner's measurements.
   const workers = process.env.GM_E2E_BROWSER === "firefox" ? 2 : 3;
-  const suite = Bun.spawn(command.length ? command : [process.execPath, "run", "test:e2e", `--parallel=${workers}`], {
-    stdio: ["inherit", "inherit", "inherit"],
-    env: {
-      ...process.env,
-      GM_E2E: JSON.stringify({ fleet, password, passwordHash }),
-      GM_E2E_LAUNCH: JSON.stringify(launched),
-      BUN_CHROME_ARGS: [
-        process.env.BUN_CHROME_ARGS ?? "",
-        `--ignore-certificate-errors-spki-list=${spki}`,
-        `--origin-to-force-quic-on=${fleet.map((s) => new URL(s.h3).host)}`,
-        "--test-third-party-cookie-phaseout",
-      ].join(" "),
+  const suite = Bun.spawn(
+    command.length ? command : [process.execPath, "run", "test:e2e", `--parallel=${workers}`],
+    {
+      stdio: ["inherit", "inherit", "inherit"],
+      env: {
+        ...process.env,
+        GM_E2E: JSON.stringify({ fleet, password, passwordHash }),
+        GM_E2E_LAUNCH: JSON.stringify(launched),
+        BUN_CHROME_ARGS: [
+          process.env.BUN_CHROME_ARGS ?? "",
+          `--ignore-certificate-errors-spki-list=${spki}`,
+          `--origin-to-force-quic-on=${fleet.map((s) => new URL(s.h3).host)}`,
+          "--test-third-party-cookie-phaseout",
+        ].join(" "),
+      },
     },
-  });
+  );
   status = await suite.exited;
   console.log(`e2e suite: ${((performance.now() - started) / 1000).toFixed(1)} s`);
 } finally {

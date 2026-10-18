@@ -12,14 +12,18 @@ const TOTALS = 512;
 
 /** Counts `body` through one reused 1 MiB buffer: a default reader allocates per chunk, which halves what a worker
     reads at multi-Gbit/s. A stream without byte support is read chunk by chunk. */
-export async function countBytes(body: ReadableStream<Uint8Array>, count: (bytes: number) => void): Promise<void> {
+export async function countBytes(
+  body: ReadableStream<Uint8Array>,
+  count: (bytes: number) => void,
+): Promise<void> {
   let byob: ReadableStreamBYOBReader;
   try {
     byob = body.getReader({ mode: "byob" });
   } catch {
     const reader = body.getReader();
     try {
-      for (let read = await reader.read(); !read.done; read = await reader.read()) count(read.value.byteLength);
+      for (let read = await reader.read(); !read.done; read = await reader.read())
+        count(read.value.byteLength);
     } finally {
       reader.releaseLock();
     }
@@ -105,7 +109,11 @@ export class ByteReports {
   flushed(at: number) {
     this.flush();
     const counted = this.totalAt(at - performance.timeOrigin);
-    return { type: "flushed" as const, total: counted.total, at: performance.timeOrigin + counted.at };
+    return {
+      type: "flushed" as const,
+      total: counted.total,
+      at: performance.timeOrigin + counted.at,
+    };
   }
 
   /** A reading at most every millisecond, and at every report. */
@@ -120,7 +128,8 @@ export class ByteReports {
 /** 4 MiB of CSPRNG bytes, so a compressing hop cannot flatter an upload; kept only by whoever is sending them. */
 export function randomBlock(): Uint8Array<ArrayBuffer> {
   const block = new Uint8Array(BLOCK_BYTES);
-  for (let at = 0; at < BLOCK_BYTES; at += RANDOM_QUOTA) crypto.getRandomValues(block.subarray(at, at + RANDOM_QUOTA));
+  for (let at = 0; at < BLOCK_BYTES; at += RANDOM_QUOTA)
+    crypto.getRandomValues(block.subarray(at, at + RANDOM_QUOTA));
   return block;
 }
 
@@ -129,7 +138,11 @@ export const MAX_POST_BYTES = 256 * MIB;
 
 /** A lane's share of a server's posting budget, by device memory; Firefox reports none and silently stalls larger
     POSTs, so there the pool spans all `sharing` lanes of the run. */
-export function largestPost(streams: number, sharing: number, deviceMemory: number | undefined): number {
+export function largestPost(
+  streams: number,
+  sharing: number,
+  deviceMemory: number | undefined,
+): number {
   const [pool, lanes] =
     deviceMemory === undefined
       ? [128 * MIB, sharing]

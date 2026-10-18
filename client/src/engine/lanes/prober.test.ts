@@ -35,7 +35,8 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
           replies.push({ id, at: clock.now + kind.reply });
           return {
             // biome-ignore lint/suspicious/noThenProperty: the clock settles this thenable in step with replies and timers
-            then: (confirm: () => void) => void confirms.push({ at: clock.now + kind.confirmed, confirm }),
+            then: (confirm: () => void) =>
+              void confirms.push({ at: clock.now + kind.confirmed, confirm }),
           } as unknown as Promise<void>;
         }
         if (kind !== "lost") replies.push({ id, at: clock.now + kind });
@@ -50,8 +51,14 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
   );
   const run = (until: number) => {
     for (;;) {
-      const reply = replies.reduce<(typeof replies)[number] | null>((a, b) => (a && a.at <= b.at ? a : b), null);
-      const confirm = confirms.reduce<(typeof confirms)[number] | null>((a, b) => (a && a.at <= b.at ? a : b), null);
+      const reply = replies.reduce<(typeof replies)[number] | null>(
+        (a, b) => (a && a.at <= b.at ? a : b),
+        null,
+      );
+      const confirm = confirms.reduce<(typeof confirms)[number] | null>(
+        (a, b) => (a && a.at <= b.at ? a : b),
+        null,
+      );
       const at = Math.min(confirm?.at ?? Infinity, reply?.at ?? Infinity, clock.due ?? Infinity);
       if (at > until) break;
       clock.now = at;
@@ -75,7 +82,12 @@ function bus(intervalMs: number | null, maxInFlight: number, fate: (id: number) 
   return { prober, clock, sent, replies, reports, stamps, run, of, outcomes };
 }
 
-const pick = ({ rttMs, timedOut, observedAt, inWindow }: ProbeOutcome) => ({ rttMs, timedOut, observedAt, inWindow });
+const pick = ({ rttMs, timedOut, observedAt, inWindow }: ProbeOutcome) => ({
+  rttMs,
+  timedOut,
+  observedAt,
+  inWindow,
+});
 
 function opened(b: ReturnType<typeof bus>) {
   b.prober.start();
@@ -122,7 +134,17 @@ test("a reply-driven chain steps on its latest probe, its backup covers a late r
   // Probe 1 is late, so its backup sends probe 2 at 40. Its own reply at 110 steps nothing.
   expect(late.sent).toEqual([0, 10, 40, 50, 60, 70, 80, 90, 100, 110]);
   late.run(180);
-  expect(late.outcomes().map(({ rttMs }) => rttMs)).toEqual([10, 10, 10, 10, 10, 10, 10, 100, ...Array(8).fill(10)]);
+  expect(late.outcomes().map(({ rttMs }) => rttMs)).toEqual([
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    10,
+    100,
+    ...Array(8).fill(10),
+  ]);
   // With both slots unanswered the chain waits for its head, which only its own deadline resolves.
   const full = opened(bus(null, 2, (id) => (id ? "lost" : 10)));
   full.run(300);
@@ -139,7 +161,8 @@ test("deadlines are fixed at send; a late reply stays a timeout yet teaches the 
   const b = opened(bus(1_000, 16, (id) => (id === 2 ? "lost" : 300)));
   b.run(2_010);
   // The 250 ms deadline times probe 0 out. Its late reply lifts the next deadline to 300 + 4 × 150 ms.
-  for (const reply of ["PONG,2", "PONG,2,1,2", "PONG,2,20000000", "PONG,2,0"]) b.prober.frame(reply, 2_010);
+  for (const reply of ["PONG,2", "PONG,2,1,2", "PONG,2,20000000", "PONG,2,0"])
+    b.prober.frame(reply, 2_010);
   b.run(2_100);
   expect(b.outcomes()).toEqual([
     { rttMs: 250, timedOut: true, observedAt: 250, inWindow: true },
@@ -147,11 +170,9 @@ test("deadlines are fixed at send; a late reply stays a timeout yet teaches the 
     { rttMs: 10, timedOut: false, observedAt: 2_010, inWindow: true },
   ]);
   // 20 ms of handling cannot fit a 10 ms reply, so the reply stays and the pair is dropped, never clamped.
-  expect(b.of("outcomes").flatMap((report) => report.outcomes.map(({ handlingMs }) => handlingMs))).toEqual([
-    null,
-    0,
-    null,
-  ]);
+  expect(
+    b.of("outcomes").flatMap((report) => report.outcomes.map(({ handlingMs }) => handlingMs)),
+  ).toEqual([null, 0, null]);
   expect(b.of("ready")).toHaveLength(1);
 });
 
@@ -178,7 +199,12 @@ test("a window's end drains its probes to their own deadlines outside it while t
   b.prober.measure();
   b.run(460);
   expect(b.outcomes().slice(3)).toEqual(
-    [405, 425, 445].map((observedAt) => ({ rttMs: 5, timedOut: false, observedAt, inWindow: true })),
+    [405, 425, 445].map((observedAt) => ({
+      rttMs: 5,
+      timedOut: false,
+      observedAt,
+      inWindow: true,
+    })),
   );
   b.prober.stop();
   b.run(470);
@@ -284,7 +310,9 @@ test("outcomes cross in batches of at most 128 within 50 ms, and an idle bus wak
   /** Measures how long after its observation each outcome crossed. */
   const lags = ({ reports, stamps }: ReturnType<typeof bus>) =>
     reports.flatMap((report, i) =>
-      report.type === "outcomes" ? report.outcomes.map(({ observedAt }) => stamps[i]![0] - observedAt) : [],
+      report.type === "outcomes"
+        ? report.outcomes.map(({ observedAt }) => stamps[i]![0] - observedAt)
+        : [],
     );
   const dense = opened(bus(null, 4, () => 0.01));
   dense.run(10);

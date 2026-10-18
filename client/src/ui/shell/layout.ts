@@ -26,7 +26,10 @@ export function resolveDocks(
   open: Record<Side, boolean>,
   priority: Side | null = null,
 ): Record<Side, DockWidths> {
-  const want = { left: open.left ? clampDock(preferred.left) : 0, right: open.right ? clampDock(preferred.right) : 0 };
+  const want = {
+    left: open.left ? clampDock(preferred.left) : 0,
+    right: open.right ? clampDock(preferred.right) : 0,
+  };
   const count = +open.left + +open.right;
   const budget = Math.max(count * DOCK.min, width - STAGE_MIN);
   let { left, right } = want;

@@ -1,7 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "files": { "includes": ["**", "!dist", "!test-results"] },
-  "formatter": { "indentStyle": "space", "lineWidth": 120 },
+  "formatter": { "indentStyle": "space", "lineWidth": 100 },
   "linter": {
     "rules": {
       "a11y": {
@@ -23,7 +23,9 @@
   "overrides": [
     {
       "includes": ["e2e/**", "bench/**", "**/*.test.ts", "**/*.testutil.ts"],
-      "linter": { "rules": { "suspicious": { "noConfusingVoidType": "off", "noExplicitAny": "off" } } }
+      "linter": {
+        "rules": { "suspicious": { "noConfusingVoidType": "off", "noExplicitAny": "off" } }
+      }
     }
   ],
   "assist": { "enabled": false }

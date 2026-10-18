@@ -71,10 +71,12 @@ class Stage implements StageResources {
         failed,
         Promise.all([
           this.#down && this.#until(() => this.#down!.ready, budget),
-          transfer.includes("up") && this.#prepareUpload(budget).then((receiver) => receiver.accepted(budget)),
+          transfer.includes("up") &&
+            this.#prepareUpload(budget).then((receiver) => receiver.accepted(budget)),
         ]),
       ]);
-      const probing = this.#probes && this.#until(() => this.#probesReady || this.#latencyEnded, budget);
+      const probing =
+        this.#probes && this.#until(() => this.#probesReady || this.#latencyEnded, budget);
       // Loaded latency never holds throughput back. Its channel reports its own stall.
       if (probing)
         await Promise.race([
@@ -115,7 +117,9 @@ class Stage implements StageResources {
     this.#up?.release();
     this.#receiver = this.#up = null;
     try {
-      await this.#prepareUpload(AbortSignal.any([signal, this.#released.signal, AbortSignal.timeout(READY_MS)]));
+      await this.#prepareUpload(
+        AbortSignal.any([signal, this.#released.signal, AbortSignal.timeout(READY_MS)]),
+      );
     } catch (error) {
       if (signal.aborted || this.#released.signal.aborted) return;
       if (error instanceof SignInRequired) this.#signIn("throughput");
@@ -169,7 +173,11 @@ class Stage implements StageResources {
     if (!server.latency || !needsPings(activity)) return;
     const intervalMs = CADENCE_MS[cadence];
     const maxInFlight =
-      activity.stage !== "latency" ? IN_FLIGHT.loaded : intervalMs === null ? IN_FLIGHT.replyDriven : IN_FLIGHT.fixed;
+      activity.stage !== "latency"
+        ? IN_FLIGHT.loaded
+        : intervalMs === null
+          ? IN_FLIGHT.replyDriven
+          : IN_FLIGHT.fixed;
     const own: ProbeChannelEvents = {
       ready: () => {
         this.#probesReady = true;
@@ -228,7 +236,8 @@ class Stage implements StageResources {
     }
     if (!response.ok) {
       release(response);
-      if (refused(response).reason === "server-busy") throw new ServerBusyError("Server refused the upload as busy");
+      if (refused(response).reason === "server-busy")
+        throw new ServerBusyError("Server refused the upload as busy");
       throw new Error(`upload session returned HTTP ${response.status}`);
     }
     const { uploadId } = uploadSession(await readJSON(response));
@@ -260,14 +269,22 @@ class Stage implements StageResources {
               return { type: "upload", url, request, streams: count, sharing: uploadLanes, rttMs };
             }
             const url = `${fetch.origin}${ROUTES.download}?bytes=${DOWNLOAD_BYTES}&cb=${seed}-${lane}`;
-            return { type: "download", url, request: auth.request(url, "GET"), epoch, streams: count };
+            return {
+              type: "download",
+              url,
+              request: auth.request(url, "GET"),
+              epoch,
+              streams: count,
+            };
           }),
       };
     } else {
       const datagrams = target.transport === "webtransport-datagram";
       const route = direction === "down" ? ROUTES.wtDownload : ROUTES.wtUpload;
       const query =
-        direction === "down" ? `bytes=${DOWNLOAD_BYTES}&${datagrams ? "datagrams=1" : `streams=${count}`}` : upload;
+        direction === "down"
+          ? `bytes=${DOWNLOAD_BYTES}&${datagrams ? "datagrams=1" : `streams=${count}`}`
+          : upload;
       const url = `${target.origin}${route}?${query}${direction === "up" && datagrams ? "&datagrams=1" : ""}`;
       plan = {
         worker: WORKERS.session,
@@ -278,7 +295,10 @@ class Stage implements StageResources {
           this.#signedIn((): SessionCommand => {
             const ticket = auth.ticket(target.origin, route);
             if (direction === "down") return { type: "download", url, ticket, datagrams, epoch };
-            const finalize = { url: receiver!.feed, request: auth.request(receiver!.feed, "DELETE") };
+            const finalize = {
+              url: receiver!.feed,
+              request: auth.request(receiver!.feed, "DELETE"),
+            };
             return { type: "upload", url, ticket, datagrams, streams: count, finalize };
           }),
       };
@@ -329,7 +349,8 @@ class Stage implements StageResources {
       else this.#setup.events.warmupReceiver(checkpoint);
       if (grew) this.#progress("up");
     },
-    ended: (ending, broken, delayMs, signal) => this.#reopen("up", "upload progress", ending, broken, delayMs, signal),
+    ended: (ending, broken, delayMs, signal) =>
+      this.#reopen("up", "upload progress", ending, broken, delayMs, signal),
     signIn: () => this.#signIn("throughput"),
   };
 
@@ -366,7 +387,8 @@ class Stage implements StageResources {
   /** Asks whether the sign-in or grant ended. A revocation mid-outage still shows within one more check. */
   #signedOut(): Promise<boolean> {
     const at = this.#setup.now();
-    if (this.#signInCheck && at - this.#signInCheck.at < SIGN_IN_CHECK_MS) return this.#signInCheck.ended;
+    if (this.#signInCheck && at - this.#signInCheck.at < SIGN_IN_CHECK_MS)
+      return this.#signInCheck.ended;
     const ended = this.#setup.server.auth.ended(this.#released.signal).catch(() => false);
     this.#signInCheck = { at, ended };
     return ended;
@@ -388,7 +410,11 @@ class Stage implements StageResources {
   }
 
   #signIn(role: Role): void {
-    if (this.#released.signal.aborted || (role === "throughput" ? this.#throughputEnded : this.#latencyEnded)) return;
+    if (
+      this.#released.signal.aborted ||
+      (role === "throughput" ? this.#throughputEnded : this.#latencyEnded)
+    )
+      return;
     if (role === "throughput") {
       this.#throughputEnded = true;
       this.#releaseThroughput();

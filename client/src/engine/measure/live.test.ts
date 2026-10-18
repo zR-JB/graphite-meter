@@ -30,7 +30,12 @@ test("servers present independently, and only an irregular receiver is bridged b
   live.download("b", 4_500, 1_500);
   expect(live.rate("down")).toBe(4_000);
 
-  const frame = (at: number, bytes: number) => ({ id: "u", bytes, nanos: at * 1e6, receivedAtMs: at });
+  const frame = (at: number, bytes: number) => ({
+    id: "u",
+    bytes,
+    nanos: at * 1e6,
+    receivedAtMs: at,
+  });
   for (let at = 0; at <= 700; at += 100) live.receiver("a", frame(at, at * 10), at);
   expect(live.rate("up")).toBeCloseTo(10_000, 6);
   const lanes = () => 2;

@@ -16,7 +16,9 @@ class FakeNode {
     return siblings?.[siblings.indexOf(this) + 1] ?? null;
   }
   get textContent(): string {
-    return this.kind === "text" ? this.data : this.childNodes.map((node) => node.textContent).join("");
+    return this.kind === "text"
+      ? this.data
+      : this.childNodes.map((node) => node.textContent).join("");
   }
   appendChild(child: FakeNode): FakeNode {
     return this.insertBefore(child, null);

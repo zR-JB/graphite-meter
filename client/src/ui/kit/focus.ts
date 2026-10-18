@@ -23,4 +23,5 @@ export const activeModal = (): HTMLElement | null =>
 /** Text entry keeps its own keys. */
 export const isEditable = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
-  (target.isContentEditable || target.matches("textarea, select, input:not([type='checkbox'], [type='radio'])"));
+  (target.isContentEditable ||
+    target.matches("textarea, select, input:not([type='checkbox'], [type='radio'])"));

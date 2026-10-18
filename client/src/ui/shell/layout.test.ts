@@ -16,12 +16,17 @@ test("docks keep their preference within 360 to 720 px while the stage keeps 800
     left: { column: 360, max: 720 },
     right: { column: 720, max: 720 },
   });
-  expect(resolveDocks(1_000, { left: 420, right: 420 }, { left: false, right: false }).left.column).toBe(0);
+  expect(
+    resolveDocks(1_000, { left: 420, right: 420 }, { left: false, right: false }).left.column,
+  ).toBe(0);
 });
 
 test("past the budget both shrink in proportion, unless one was resized last and keeps its width", () => {
   const shared = resolveDocks(1_700, { left: 600, right: 420 }, both);
-  expect([shared.left.column, shared.right.column]).toEqual([360 + Math.floor((180 * 240) / 300), 900 - 504]);
+  expect([shared.left.column, shared.right.column]).toEqual([
+    360 + Math.floor((180 * 240) / 300),
+    900 - 504,
+  ]);
   const dragged = resolveDocks(1_700, { left: 600, right: 420 }, both, "left");
   expect([dragged.left.column, dragged.right.column]).toEqual([540, 360]);
   // Widening the window brings the other side back to its own preference, which the drag never rewrote.

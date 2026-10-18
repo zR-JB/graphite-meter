@@ -23,7 +23,12 @@ const intent = (build: () => void) => (node: HTMLElement) => {
   onCleanup(() => listening.abort());
 };
 
-export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connectivity: Node }): Node {
+export function TopBar(props: {
+  app: App;
+  shell: Shell;
+  ctl: Controller;
+  connectivity: Node;
+}): Node {
   const { app, shell, ctl } = props;
   const theme = app.preferences.theme;
   const measuring = computed(() => ctl.workspace() === "measurement");
@@ -39,12 +44,17 @@ export function TopBar(props: { app: App; shell: Shell; ctl: Controller; connect
   const live = computed(() => {
     if (measuring()) return null;
     const phase = app.run.phase();
-    if (app.run.preparing()) return { icon: "bolt", label: PHASE.connecting, tone: "warmup" } as const;
+    if (app.run.preparing())
+      return { icon: "bolt", label: PHASE.connecting, tone: "warmup" } as const;
     if (phase === "connecting" || phase === "warmup")
       return { icon: "bolt", label: PHASE[phase], tone: "warmup" } as const;
     if (!(phase in STAGE)) return null;
     const stage = STAGE[phase as keyof typeof STAGE];
-    return { icon: stage.icon, label: `${stage.label}${app.run.stall() ? ", recovering" : ""}`, tone: stage.tone };
+    return {
+      icon: stage.icon,
+      label: `${stage.label}${app.run.stall() ? ", recovering" : ""}`,
+      tone: stage.tone,
+    };
   });
 
   return (

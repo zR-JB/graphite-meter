@@ -78,7 +78,13 @@ test("one server's lanes: HTTP/1.1 shares its pool with the bus, the feed and ch
       auto(6),
       { down: [1, 1], up: [4, 4] },
     ],
-    ["HTTP/3 keeps one each way", [server("A", "http3")], stage(["down", "up"]), auto(6), { down: [1, 1], up: [1, 1] }],
+    [
+      "HTTP/3 keeps one each way",
+      [server("A", "http3")],
+      stage(["down", "up"]),
+      auto(6),
+      { down: [1, 1], up: [1, 1] },
+    ],
     [
       "a WebTransport session runs one stream",
       [server("A", "http3", { transport: "webtransport" })],

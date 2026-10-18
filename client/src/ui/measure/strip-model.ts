@@ -126,7 +126,8 @@ export function replyBars(
   const replies = buckets.filter((bucket) => bucket.phase === phase && bucket.medianRttMs !== null);
   const origin = replies[0]?.startT ?? start;
   let bucketMs = 0;
-  for (const bucket of replies.slice(0, 3)) bucketMs = Math.max(bucketMs, bucket.endT - bucket.startT);
+  for (const bucket of replies.slice(0, 3))
+    bucketMs = Math.max(bucketMs, bucket.endT - bucket.startT);
   const pitchMs = (REPLY_PX / Math.max(1, width)) * (span || 1);
   const groupMs = bucketMs ? Math.max(1, Math.ceil(pitchMs / bucketMs)) * bucketMs : pitchMs;
   const bars: ReplyBar[] = [];
@@ -156,6 +157,7 @@ export function replyBars(
 /** The point nearest `t` among points in time order; the earlier wins a tie. */
 export function nearestIndex(count: number, time: (i: number) => number, t: number): number {
   let best = -1;
-  for (let i = 0; i < count; i++) if (best < 0 || Math.abs(time(i) - t) < Math.abs(time(best) - t)) best = i;
+  for (let i = 0; i < count; i++)
+    if (best < 0 || Math.abs(time(i) - t) < Math.abs(time(best) - t)) best = i;
   return best;
 }

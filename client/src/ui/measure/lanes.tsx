@@ -79,12 +79,17 @@ export function LatencyProfileView(props: {
   const rows = computed(() =>
     props.lanes().map((lane) => {
       let row = made.get(lane);
-      if (!row) made.set(lane, (row = { lane, values: values(lane.summary, lane.current ?? null) }));
+      if (!row)
+        made.set(lane, (row = { lane, values: values(lane.summary, lane.current ?? null) }));
       return row;
     }),
   );
-  const idleCenter = computed(() => rows().find((row) => row.lane.stage === "latency")?.values.center ?? null);
-  const idleActive = computed(() => !!rows().find((row) => row.lane.stage === "latency")?.lane.active);
+  const idleCenter = computed(
+    () => rows().find((row) => row.lane.stage === "latency")?.values.center ?? null,
+  );
+  const idleActive = computed(
+    () => !!rows().find((row) => row.lane.stage === "latency")?.lane.active,
+  );
   const measured = computed(() => rows().some((row) => row.values.center !== null));
   const several = computed(() => rows().length > 1);
   const axis = computed(() => lanesAxisMs(rows().map((row) => row.values)));
@@ -96,7 +101,13 @@ export function LatencyProfileView(props: {
   );
   const head = computed(() => props.head?.() ?? NONE);
   const lanes = (
-    <div class="lanes" data-variant={live ? "bare" : "compact"} role="group" aria-label={LANES.group} ref={tipGroup} />
+    <div
+      class="lanes"
+      data-variant={live ? "bare" : "compact"}
+      role="group"
+      aria-label={LANES.group}
+      ref={tipGroup}
+    />
   ) as HTMLElement;
   const seen = live ? inView(lanes, false) : () => false;
   const motion = computed(() => seen() && !reducedMotion());
@@ -139,9 +150,14 @@ export function LatencyProfileView(props: {
         />
       )}
     </For>,
-    <div class={() => (ticks.out() ? "ticks handoff handoff-out" : "ticks handoff")} aria-hidden="true">
+    <div
+      class={() => (ticks.out() ? "ticks handoff handoff-out" : "ticks handoff")}
+      aria-hidden="true"
+    >
       {[0, 1, 2].map((index) => {
-        const tick = (<span>{() => `${ticks.shown()[index] ?? ""}${index === 2 ? " ms" : ""}`}</span>) as HTMLElement;
+        const tick = (
+          <span>{() => `${ticks.shown()[index] ?? ""}${index === 2 ? " ms" : ""}`}</span>
+        ) as HTMLElement;
         tick.style.left = `${index * 50}%`;
         return tick;
       })}
@@ -207,7 +223,9 @@ function Lane(props: {
     return now?.stage === stage && shown()[now.metric] !== null ? now.metric : null;
   });
   // Focus reads the median first; the slider rests there between readings.
-  const resting = computed(() => selected() ?? (shown().center !== null ? "center" : (metrics()[0] ?? null)));
+  const resting = computed(
+    () => selected() ?? (shown().center !== null ? "center" : (metrics()[0] ?? null)),
+  );
   const pct = (ms: number) => Math.min(100, Math.max(0, (ms / props.axis()) * 100));
   const overflow = computed(() => (shown().max ?? 0) > props.axis());
 
@@ -228,12 +246,17 @@ function Lane(props: {
       }}
       aria-valuetext={() => {
         const metric = resting();
-        return metric ? `${metricLabel(metric)} ${fmtMs(shown()[metric])} ms, ${metricMeaning(metric)}` : undefined;
+        return metric
+          ? `${metricLabel(metric)} ${fmtMs(shown()[metric])} ms, ${metricMeaning(metric)}`
+          : undefined;
       }}
       {...scrub(
         (event) => {
           const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-          const ratio = Math.min(1, Math.max(0, (event.clientX - box.left - EDGE) / (box.width - 2 * EDGE)));
+          const ratio = Math.min(
+            1,
+            Math.max(0, (event.clientX - box.left - EDGE) / (box.width - 2 * EDGE)),
+          );
           const metric = nearestMetric(shown(), ratio * props.axis());
           if (metric) reading.set({ stage, metric });
           else if (props.keyboard.get() !== stage) reading.set(null);
@@ -371,7 +394,9 @@ function Lane(props: {
   const ratio = computed(() => timeoutShare(summary()));
   const timeouts = computed(() => fmtTimeouts(ratio()));
   const timeoutsHelp = computed(() => timeoutsTip(label, summary()));
-  const addedText = computed(() => (stage === "latency" ? "" : plus() === null ? MISSING : `${fmtAddedMs(plus())} ms`));
+  const addedText = computed(() =>
+    stage === "latency" ? "" : plus() === null ? MISSING : `${fmtAddedMs(plus())} ms`,
+  );
   return (
     <div
       class="lane"
@@ -399,21 +424,29 @@ function Lane(props: {
       >
         {median}
       </strong>
-      <em class={() => (summary()?.jitterMs == null ? "lane-jitter quiet" : "lane-jitter")} ref={tip(() => TIP.jitter)}>
+      <em
+        class={() => (summary()?.jitterMs == null ? "lane-jitter quiet" : "lane-jitter")}
+        ref={tip(() => TIP.jitter)}
+      >
         {jitter}
       </em>
       {/* Missing replies brighten the figure and mark it as a term that explains them; only many of them warn. */}
       <Show
         when={noted}
         fallback={() => (
-          <em class={() => (ratio() === null ? "lane-timeouts quiet" : "lane-timeouts")} ref={tip(timeoutsHelp)}>
+          <em
+            class={() => (ratio() === null ? "lane-timeouts quiet" : "lane-timeouts")}
+            ref={tip(timeoutsHelp)}
+          >
             {timeouts}
           </em>
         )}
       >
         {() => (
           <em
-            class={() => ((ratio() ?? 0) >= TIMEOUTS_WARN ? "lane-timeouts noted many" : "lane-timeouts noted")}
+            class={() =>
+              (ratio() ?? 0) >= TIMEOUTS_WARN ? "lane-timeouts noted many" : "lane-timeouts noted"
+            }
             ref={term(timeoutsHelp)}
           >
             {timeouts}
@@ -474,11 +507,14 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
     const focus = live.focus();
     for (const failure of run.details()?.failures ?? [])
       if (failure.scope === "latency" && failure.serverId === focus)
-        notes[failure.stage] = [notes[failure.stage], reasonLabel(failure.reason)].filter(Boolean).join("\n");
+        notes[failure.stage] = [notes[failure.stage], reasonLabel(failure.reason)]
+          .filter(Boolean)
+          .join("\n");
     return notes;
   });
   const newest = (stage: Stage) =>
-    live.buckets().findLast((bucket) => bucket.phase === stage && bucket.medianRttMs !== null)?.medianRttMs ?? null;
+    live.buckets().findLast((bucket) => bucket.phase === stage && bucket.medianRttMs !== null)
+      ?.medianRttMs ?? null;
   const kept = new Map<Stage, LaneInput>();
   // The same lanes are the same array, so a reply that changes no lane redraws nothing downstream.
   let shown: LaneInput[] = [];
@@ -506,11 +542,15 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
       kept.set(stage, next);
       return next;
     });
-    return next.length === shown.length && next.every((lane, i) => lane === shown[i]) ? shown : (shown = next);
+    return next.length === shown.length && next.every((lane, i) => lane === shown[i])
+      ? shown
+      : (shown = next);
   });
   const failure = computed(() => {
     if (live.states().latency !== "failed") return null;
-    const found = run.details()?.failures.find((each) => each.stage === "latency" && each.scope === "latency");
+    const found = run
+      .details()
+      ?.failures.find((each) => each.stage === "latency" && each.scope === "latency");
     return found ? reasonLabel(found.reason) : STAGE_STATE.failed.label;
   });
   announceChanges(() => {
@@ -528,7 +568,9 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
         servers={servers}
         value={() => {
           const focus = live.focus();
-          return servers().some(({ id }) => id === focus) ? (focus ?? "") : (app.servers.latencyServer() ?? "");
+          return servers().some(({ id }) => id === focus)
+            ? (focus ?? "")
+            : (app.servers.latencyServer() ?? "");
         }}
         onChange={live.showLatency}
       />
@@ -542,11 +584,19 @@ export function LatencyProfile(props: { app: App; live: Live; away?: Read<boolea
   const head = computed<LanesHead>(() => failed() ?? (several() ? picker : NONE));
   const added = computed(() => {
     if (!run.result()) return null;
-    return run.details()?.servers.find((entry) => entry.server.id === live.focus())?.addedLatency ?? null;
+    return (
+      run.details()?.servers.find((entry) => entry.server.id === live.focus())?.addedLatency ?? null
+    );
   });
   return (
     <div class="live-profile">
-      <LatencyProfileView lanes={lanes} variant="bare" added={added} head={head} away={props.away} />
+      <LatencyProfileView
+        lanes={lanes}
+        variant="bare"
+        added={added}
+        head={head}
+        away={props.away}
+      />
     </div>
   );
 }

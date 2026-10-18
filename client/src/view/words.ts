@@ -8,7 +8,13 @@ import { PROTOCOL_LABEL, protocolFromNextHop } from "../engine/net/paths";
 import { SESSION_MAX_LANES } from "../engine/net/streams";
 import type { Outcome, StageStatus } from "../engine/run/result";
 import type { Phase } from "../engine/run/run";
-import { planned, SLOW_START_RTTS, STAGES, WARMUP_CEILING_MS, type Stage } from "../engine/run/schedule";
+import {
+  planned,
+  SLOW_START_RTTS,
+  STAGES,
+  WARMUP_CEILING_MS,
+  type Stage,
+} from "../engine/run/schedule";
 import {
   CADENCE_MS,
   MAX_SELECTED,
@@ -35,7 +41,12 @@ export const STAGE = {
   latency: { label: "Latency", short: "Latency", icon: "ping", tone: "latency" },
   download: { label: "Download", short: "Download", icon: "download", tone: "download" },
   upload: { label: "Upload", short: "Upload", icon: "upload", tone: "upload" },
-  bidirectional: { label: "Bidirectional", short: "Bi-dir", icon: "bidirectional", tone: "bidirectional" },
+  bidirectional: {
+    label: "Bidirectional",
+    short: "Bi-dir",
+    icon: "bidirectional",
+    tone: "bidirectional",
+  },
 } as const satisfies Record<Stage, { label: string; short: string; icon: string; tone: Tone }>;
 
 /** What the run is doing, as the status bar and the dial say it; a finished run reads its outcome. */
@@ -61,17 +72,28 @@ export const OUTCOME = {
 } as const satisfies Record<Outcome, Word>;
 
 /** What the run key does now; the Space hint holds every one. */
-export const RUN_ACTION = { start: "Start test", stop: "Stop test", again: "Run again", cancel: "Cancel" } as const;
+export const RUN_ACTION = {
+  start: "Start test",
+  stop: "Stop test",
+  again: "Run again",
+  cancel: "Cancel",
+} as const;
 
 export function runAction(preparing: boolean, running: boolean, phase: ShownPhase): string {
   if (preparing) return RUN_ACTION.cancel;
   if (running) return RUN_ACTION.stop;
-  return phase === "complete" || phase === "aborted" || phase === "error" ? RUN_ACTION.again : RUN_ACTION.start;
+  return phase === "complete" || phase === "aborted" || phase === "error"
+    ? RUN_ACTION.again
+    : RUN_ACTION.start;
 }
 
 /** The run in one word, as the status strip says it: a refused start, a check under way, else the phase or the
     finished run's outcome. */
-export function statusLabel(preparation: Preparation, phase: ShownPhase, outcome: Outcome | undefined): string {
+export function statusLabel(
+  preparation: Preparation,
+  phase: ShownPhase,
+  outcome: Outcome | undefined,
+): string {
   if (preparation === "blocked") return PHASE.blocked;
   if (preparation === "failed") return PHASE["start-failed"];
   if (preparation === "authenticating") return PHASE.authenticating;
@@ -130,14 +152,21 @@ export function stageState({ planned, settled, phase, stalled, ended }: StageFac
   if (!planned || settled === "not-run") return "skipped";
   if (settled) return settled;
   const began = phase !== null && phase !== "connecting";
-  if (ended) return !began || ended === "complete" ? "unreached" : ended === "stopped" ? "stopped" : "failed";
+  if (ended)
+    return !began || ended === "complete"
+      ? "unreached"
+      : ended === "stopped"
+        ? "stopped"
+        : "failed";
   if (!began) return "upcoming";
   return stalled ? "recovering" : phase === "warmup" ? "warmup" : "running";
 }
 
 /** A reason this build does not know, as a newer build may save, reads as a measurement issue. */
 export const reasonLabel = (reason: string): string =>
-  Object.hasOwn(FAILURE_REASONS, reason) ? FAILURE_REASONS[reason as FailureReason] : "Measurement issue";
+  Object.hasOwn(FAILURE_REASONS, reason)
+    ? FAILURE_REASONS[reason as FailureReason]
+    : "Measurement issue";
 
 /** Idle latency is probed in the latency stage, loaded latency during the transfers. */
 export const LATENCY = {
@@ -154,7 +183,10 @@ export const POPULATION = {
 } as const satisfies Record<Stage, string>;
 
 /** Each role's connection to a server, as Settings, Details and History name it. */
-export const PATH = { throughput: "Throughput path", latency: "Latency path" } as const satisfies Record<Role, string>;
+export const PATH = {
+  throughput: "Throughput path",
+  latency: "Latency path",
+} as const satisfies Record<Role, string>;
 
 export const PATH_TIP: Record<Role, string> = {
   throughput: `${PATH.throughput}\nTransport and HTTP version of the test bytes`,
@@ -189,7 +221,8 @@ export const TRANSPORT: Record<Transport, string> = {
 /** A transport in its role, or null for one this build does not know. Bare WebTransport names the session, whose
     streams carry throughput and whose datagrams carry latency. */
 export function transportLabel(transport: string, role: Role): string | null {
-  const kind = transport === "webtransport" && role === "latency" ? "webtransport-datagram" : transport;
+  const kind =
+    transport === "webtransport" && role === "latency" ? "webtransport-datagram" : transport;
   return Object.hasOwn(TRANSPORT, kind) ? TRANSPORT[kind as Transport] : null;
 }
 
@@ -254,8 +287,13 @@ export const listed = (words: readonly string[]) =>
 
 /** Why Start is refused when planned stages outlast the shortest stage limit of the selected servers; "" when none
     does. */
-export function stageLimitError(config: TestConfig, limit: { ms: number; server: string | null }): string {
-  const over = STAGES.filter((stage) => planned(config, stage) && config.duration[`${stage}Ms`] > limit.ms);
+export function stageLimitError(
+  config: TestConfig,
+  limit: { ms: number; server: string | null },
+): string {
+  const over = STAGES.filter(
+    (stage) => planned(config, stage) && config.duration[`${stage}Ms`] > limit.ms,
+  );
   if (!limit.server || !over.length) return "";
   const stages = listed(over.map((stage) => STAGE[stage].label));
   return `${limit.server} allows stages up to ${fmtDuration(limit.ms, 0)}; shorten the ${stages} stage${over.length > 1 ? "s" : ""}.`;
@@ -303,11 +341,13 @@ export const TIP = {
   latency: "Idle latency\nMedian round trip on an idle connection\nThe base for added latency",
   transferred: "Transferred\nPayload bytes measured in this stage",
   peak: `Peak\nHighest mean over windows of ${PEAK_WINDOW_MS / 1000} s or more\nNever below the headline`,
-  rateStability: "Stability\n100% minus the spread of the 250 ms rates\nSpread: standard deviation over the mean",
+  rateStability:
+    "Stability\n100% minus the spread of the 250 ms rates\nSpread: standard deviation over the mean",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   latencyRange: "Range\nFastest to slowest reply",
   replies: "Replies\nIdle probes answered in this stage",
-  timeouts: "Timeouts\nIdle probes with no reply before their deadline\nA timeout is a missing reply, not packet loss",
+  timeouts:
+    "Timeouts\nIdle probes with no reply before their deadline\nA timeout is a missing reply, not packet loss",
   jitter: "Jitter\nMean change between consecutive replies\nTimeouts are left out",
   noData: "No data\nNo bytes arrived; it counts in the average",
   noReplies: "No replies\nThese probes timed out; not packet loss",
@@ -317,13 +357,15 @@ export const TIP = {
   testServers: `Test servers\nUp to ${MAX_SELECTED}; their speeds add up\nAll are probed; the lanes show one at a time`,
   stageTime: "Duration\nEach stage's planned length\nUp to the servers' limit, 5 min by default",
   bidirectionalStage: "Bidirectional stage\nDownload and upload at once, after the others",
-  earlyFinish: "Early finish\nEnds a steady stage after about half its time\nNever after a stall, gap or lost server",
+  earlyFinish:
+    "Early finish\nEnds a steady stage after about half its time\nNever after a stall, gap or lost server",
   units:
     "Units\nBits: Mbit/s, as internet plans\nBytes: MB/s, 8× lower, as downloads\n" +
     "Decimal: steps of 1,000 (k, M, G)\nBinary: steps of 1,024 (Ki, Mi, Gi)",
   explanations:
     "Explanations\nOn hover: as the pointer rests on a word or figure\nOn click: only when it is clicked or tapped",
-  wireRate: "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
+  wireRate:
+    "Wire rate\nPayload plus the protocol headers carried with it\nAn estimate; hover a result for its parts",
   keyShortcuts:
     "Keyboard shortcuts\nS, D, H, R and T act when no field has focus\nTurn off if speech input triggers them",
   gaugeAuto: "Automatic scale\nThe chart follows the peak\nThe gauge steps 1, 2, 5, 10 of its unit",
@@ -341,11 +383,14 @@ export const TIP = {
     "Datagram throughput\nAdds WebTransport datagrams as a path\nNever resent; expect lower rates than streams",
   pathEvidence: "Evidence\nThe HTTP version each side observed",
   uploadFeed: "Upload feed\nHow the server reports upload bytes back",
-  clientAddress: "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
-  serverLoad: "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
+  clientAddress:
+    "Your address\nAs the server saw it: proxy header or socket\nHidden until you press the eye beside it",
+  serverLoad:
+    "Load\nTests on the server when the path was checked\nPast half its slots, they share the bandwidth",
   client: "Client\nThis page's build of the browser client",
   serverInstance: "Server\nEngine version; the instance changes on restart",
-  pathCheckRoundTrip: "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
+  pathCheckRoundTrip:
+    "Path check round trip\nMedian round trip of the path check\nThe shown server's sizes the warmup",
 } as const;
 
 export const preflightNote = (ms: string) =>

@@ -9,9 +9,27 @@ import { MAX_STAGE_LIMIT_MS } from "../protocol/documents";
 const SAVE_DELAY_MS = 250;
 
 export const DURATION_PRESETS: Record<"short" | "medium" | "long", TestConfig["duration"]> = {
-  short: { warmupMs: 600, latencyMs: 2_500, downloadMs: 5_000, uploadMs: 5_000, bidirectionalMs: 5_000 },
-  medium: { warmupMs: 800, latencyMs: 4_000, downloadMs: 10_000, uploadMs: 10_000, bidirectionalMs: 10_000 },
-  long: { warmupMs: 1_200, latencyMs: 6_000, downloadMs: 20_000, uploadMs: 20_000, bidirectionalMs: 20_000 },
+  short: {
+    warmupMs: 600,
+    latencyMs: 2_500,
+    downloadMs: 5_000,
+    uploadMs: 5_000,
+    bidirectionalMs: 5_000,
+  },
+  medium: {
+    warmupMs: 800,
+    latencyMs: 4_000,
+    downloadMs: 10_000,
+    uploadMs: 10_000,
+    bidirectionalMs: 10_000,
+  },
+  long: {
+    warmupMs: 1_200,
+    latencyMs: 6_000,
+    downloadMs: 20_000,
+    uploadMs: 20_000,
+    bidirectionalMs: 20_000,
+  },
 };
 
 export const DEFAULT_CONFIG: TestConfig = {
@@ -87,7 +105,8 @@ export function readPreferences(stored: unknown): Preferences {
   const stages = record(config.stages);
   const duration = record(config.duration);
   // Earlier versions skipped a stage by giving it 0 ms; only its switch skips now.
-  const skipped = (key: DurationKey) => key !== "warmupMs" && typeof duration[key] === "number" && duration[key] <= 0;
+  const skipped = (key: DurationKey) =>
+    key !== "warmupMs" && typeof duration[key] === "number" && duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
   const dock = record(saved.dockWidth);
@@ -95,7 +114,8 @@ export function readPreferences(stored: unknown): Preferences {
     ? [...new Set(saved.historyColumns.filter((column) => HISTORY_COLUMNS.includes(column)))]
     : [];
   const base = DEFAULT_CONFIG;
-  const stage = (name: keyof TestConfig["stages"]) => flag(stages[name], base.stages[name]) && !skipped(`${name}Ms`);
+  const stage = (name: keyof TestConfig["stages"]) =>
+    flag(stages[name], base.stages[name]) && !skipped(`${name}Ms`);
   return {
     config: {
       stages: {
@@ -104,7 +124,10 @@ export function readPreferences(stored: unknown): Preferences {
         upload: stage("upload"),
         bidirectional: stage("bidirectional"),
       },
-      skipLoadedLatencyWhenStageOff: flag(config.skipLoadedLatencyWhenStageOff, base.skipLoadedLatencyWhenStageOff),
+      skipLoadedLatencyWhenStageOff: flag(
+        config.skipLoadedLatencyWhenStageOff,
+        base.skipLoadedLatencyWhenStageOff,
+      ),
       duration: Object.fromEntries(
         (Object.keys(DURATION_LIMITS) as DurationKey[]).map((key) => [
           key,
@@ -115,9 +138,15 @@ export function readPreferences(stored: unknown): Preferences {
       loadedPingCadence: choice(config.loadedPingCadence, CADENCES, base.loadedPingCadence),
       transferStreams: {
         mode: choice(streams.mode, ["auto", "forced"], "auto"),
-        count: typeof streams.count === "number" ? normalizeStreamCount(streams.count) : base.transferStreams.count,
+        count:
+          typeof streams.count === "number"
+            ? normalizeStreamCount(streams.count)
+            : base.transferStreams.count,
       },
-      experimentalDatagramThroughput: flag(config.experimentalDatagramThroughput, base.experimentalDatagramThroughput),
+      experimentalDatagramThroughput: flag(
+        config.experimentalDatagramThroughput,
+        base.experimentalDatagramThroughput,
+      ),
       transports: {
         throughputTarget: text(transports.throughputTarget, "auto"),
         latencyTarget: text(transports.latencyTarget, "auto"),
@@ -125,7 +154,10 @@ export function readPreferences(stored: unknown): Preferences {
       // Earlier versions saved { enabled }.
       adaptive: flag(record(config.adaptive).enabled ?? config.adaptive, base.adaptive),
       visualization: {
-        throughputMaxBytesPerSec: positive(record(config.visualization).throughputMaxBytesPerSec, "auto" as const),
+        throughputMaxBytesPerSec: positive(
+          record(config.visualization).throughputMaxBytesPerSec,
+          "auto" as const,
+        ),
       },
     },
     unitBase: choice(saved.unitBase, ["base10", "base2"], "base10"),
@@ -134,7 +166,11 @@ export function readPreferences(stored: unknown): Preferences {
     showWireEstimates: flag(saved.showWireEstimates, true),
     keyShortcuts: flag(saved.keyShortcuts, true),
     explanations: choice(saved.explanations, ["hover", "click"], "hover"),
-    resultHistoryPreference: choice(saved.resultHistoryPreference, ["default", "enabled", "disabled"], "default"),
+    resultHistoryPreference: choice(
+      saved.resultHistoryPreference,
+      ["default", "enabled", "disabled"],
+      "default",
+    ),
     historyColumns: columns.length ? columns : ["download", "upload", "idle", "loaded"],
     dockWidth: { left: positive(dock.left, 420), right: positive(dock.right, 420) },
     historySplit:
@@ -203,7 +239,10 @@ export function createPreferences(
         next.resultHistoryPreference !== signals.resultHistoryPreference.peek()
       )
         signals.resultHistoryPreference.set(next.resultHistoryPreference);
-      if (!dirty.has("historyColumns") && String(next.historyColumns) !== String(signals.historyColumns.peek()))
+      if (
+        !dirty.has("historyColumns") &&
+        String(next.historyColumns) !== String(signals.historyColumns.peek())
+      )
         signals.historyColumns.set(next.historyColumns);
     });
   };

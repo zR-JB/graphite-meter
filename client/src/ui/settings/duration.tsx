@@ -28,23 +28,30 @@ const NAME = { short: "Short", medium: "Medium", long: "Long", custom: "Custom" 
 export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<boolean> }) {
   const { app, edits, custom } = props;
   const config = app.preferences.config;
-  const mode = computed((): Preset | "custom" => (custom() ? "custom" : (presetOf(config().duration) ?? "custom")));
+  const mode = computed((): Preset | "custom" =>
+    custom() ? "custom" : (presetOf(config().duration) ?? "custom"),
+  );
   const ms = (key: DurationKey) => () => config().duration[key];
 
   const setDuration = (key: DurationKey, value: number) =>
     value === config.peek().duration[key] ||
-    edits.edit("duration", () => app.run.configure({ duration: { ...config.peek().duration, [key]: value } }));
+    edits.edit("duration", () =>
+      app.run.configure({ duration: { ...config.peek().duration, [key]: value } }),
+    );
   const choose = (preset: Preset | "custom") => {
     custom.set(preset === "custom");
     if (preset !== "custom")
-      edits.edit("duration", () => app.run.configure({ duration: { ...DURATION_PRESETS[preset] } }));
+      edits.edit("duration", () =>
+        app.run.configure({ duration: { ...DURATION_PRESETS[preset] } }),
+      );
   };
   const presetTip = (preset: Preset | "custom") => {
     if (preset === "custom") return `${NAME.custom}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
     const stages = config().stages.bidirectional ? STRIP_BIDIRECTIONAL : STRIP;
     const parts = [`${PHASE.warmup} ${fmtStageTime(times.warmupMs)}`];
-    for (const stage of stages) parts.push(`${STAGE[stage].label} ${fmtStageTime(times[`${stage}Ms`])}`);
+    for (const stage of stages)
+      parts.push(`${STAGE[stage].label} ${fmtStageTime(times[`${stage}Ms`])}`);
     return `${NAME[preset]}\n${parts.join(" · ")}`;
   };
 
@@ -112,7 +119,9 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
                     class="strip-segment"
                     role="listitem"
                     data-tone={stage.peek()}
-                    ref={(segment) => effect(() => segment.style.setProperty("--ms", String(time())))}
+                    ref={(segment) =>
+                      effect(() => segment.style.setProperty("--ms", String(time())))
+                    }
                   >
                     <span class="strip-bar" aria-hidden="true" />
                     <span class="strip-time">
@@ -128,7 +137,9 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
         <Unfold when={() => mode() === "custom"}>
           {() => [
             CUSTOM_STAGES.map(stageRow),
-            <Unfold when={() => config().stages.bidirectional}>{() => stageRow("bidirectional")}</Unfold>,
+            <Unfold when={() => config().stages.bidirectional}>
+              {() => stageRow("bidirectional")}
+            </Unfold>,
           ]}
         </Unfold>
         <div class="stage-row">
@@ -168,7 +179,9 @@ export function DurationGroup(props: { app: App; edits: Edits; custom: Signal<bo
         )}
       </Show>
       {edits.notice("duration")}
-      <Show when={app.run.running}>{() => <p class="hint">Changes apply to the current and upcoming stages.</p>}</Show>
+      <Show when={app.run.running}>
+        {() => <p class="hint">Changes apply to the current and upcoming stages.</p>}
+      </Show>
     </section>
   );
 }

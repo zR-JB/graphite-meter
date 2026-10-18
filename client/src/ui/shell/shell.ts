@@ -38,14 +38,20 @@ const KEYS = new Set(["escape", " ", "r", "s", "d", "h", "t"]);
 // Keys that only arm or modify a chord; any other key shows where focus is.
 const MODIFIER = /^(Shift|Control|Alt|AltGraph|Meta|OS|CapsLock|Fn|PrintScreen)$/;
 
-const workspaceOf = (route: Route): Workspace => (route.kind === "app" ? route.workspace.kind : "not-found");
+const workspaceOf = (route: Route): Workspace =>
+  route.kind === "app" ? route.workspace.kind : "not-found";
 const legalOf = (route: Route) => route.kind === "app" && route.legal;
 const resultOf = (route: Route) =>
   route.kind === "app" && route.workspace.kind === "history" ? (route.workspace.id ?? "") : null;
 
 /** What a route change moves on the spring: the stage and the sheets as one surface when the docked panels change,
     the History panes when a result opens, closes or changes; null when it applies in place. */
-export function moves(current: Route, next: Route, docked: boolean, multiple: boolean): readonly string[] | null {
+export function moves(
+  current: Route,
+  next: Route,
+  docked: boolean,
+  multiple: boolean,
+): readonly string[] | null {
   const docks = (route: Route) => {
     const fit = fitPanels(route, multiple);
     return docked && fit.kind === "app" ? fit.panels.toSorted().join() : "";
@@ -96,7 +102,10 @@ export function createShell(app: App, layout: Layout) {
   const route = signal<Route>(fitPanels(parseRoute(location.hash), multiple()));
   const initial = route.peek();
   const visited = Object.fromEntries(
-    PANELS.map((panel) => [panel, signal(initial.kind === "app" && initial.panels.includes(panel))]),
+    PANELS.map((panel) => [
+      panel,
+      signal(initial.kind === "app" && initial.panels.includes(panel)),
+    ]),
   ) as Record<Panel, Signal<boolean>>;
 
   const workspace = computed(() => workspaceOf(route()));
@@ -143,7 +152,9 @@ export function createShell(app: App, layout: Layout) {
   let intent: Focus | undefined;
 
   const holding = (target: EventTarget | null): Panel | null =>
-    target instanceof Node ? (PANELS.find((panel) => elements.sheets[panel]?.contains(target)) ?? null) : null;
+    target instanceof Node
+      ? (PANELS.find((panel) => elements.sheets[panel]?.contains(target)) ?? null)
+      : null;
   const workspaceTarget = (): HTMLElement | null =>
     workspace.peek() === "history"
       ? (elements.history?.querySelector<HTMLElement>(".history-workspace") ?? null)
@@ -155,7 +166,8 @@ export function createShell(app: App, layout: Layout) {
     to?.focus({ preventScroll: true });
   };
 
-  const title = (panel: Panel) => elements.sheets[panel]?.querySelector<HTMLElement>(".sheet-head h2");
+  const title = (panel: Panel) =>
+    elements.sheets[panel]?.querySelector<HTMLElement>(".sheet-head h2");
 
   function apply(next: Route, fromHistory: boolean, wanted: Focus | undefined): void {
     const before = route.peek();
@@ -176,9 +188,13 @@ export function createShell(app: App, layout: Layout) {
       flyout: flyout.peek(),
     });
     const invoker = move?.to === "invoker" ? invokers.get(move.panel) : undefined;
-    if (before.kind === "app") for (const panel of before.panels) if (!shown.includes(panel)) invokers.delete(panel);
+    if (before.kind === "app")
+      for (const panel of before.panels) if (!shown.includes(panel)) invokers.delete(panel);
     if (move?.to === "title") title(move.panel)?.focus({ preventScroll: true });
-    else if (move) focus(move.to === "invoker" ? invoker : move.to === "wanted" ? (wanted as HTMLElement) : null);
+    else if (move)
+      focus(
+        move.to === "invoker" ? invoker : move.to === "wanted" ? (wanted as HTMLElement) : null,
+      );
   }
 
   function commit(next: Route, fromHistory: boolean): void {
@@ -233,7 +249,8 @@ export function createShell(app: App, layout: Layout) {
   function showHistory(id: string | null, invoker?: HTMLElement | null, focusAfter?: Focus): void {
     const current = route.peek();
     // Back from a result to the list is a close: it steps back to where the result opened.
-    if (id === null && resultOf(current)) return navigate(withWorkspace(current, { kind: "history", id }), "close");
+    if (id === null && resultOf(current))
+      return navigate(withWorkspace(current, { kind: "history", id }), "close");
     if (id === null && !historyOpen.peek()) {
       if (invoker) invokers.set("history", invoker);
       else invokers.delete("history");
@@ -242,7 +259,8 @@ export function createShell(app: App, layout: Layout) {
   }
   /** Stepping through results rewrites the entry, so Back and closing still return to where the first opened. */
   function swapResult(id: string): void {
-    if (resultOf(route.peek())) navigate(withWorkspace(route.peek(), { kind: "history", id }), "replace");
+    if (resultOf(route.peek()))
+      navigate(withWorkspace(route.peek(), { kind: "history", id }), "replace");
   }
   function closeHistory(focusAfter?: Focus): void {
     const invoker = invokers.get("history");
@@ -254,7 +272,8 @@ export function createShell(app: App, layout: Layout) {
     );
   }
   /** A key or menu item keeps focus on itself through both ways. */
-  const toggleHistory = (key: HTMLElement) => (historyOpen.peek() ? closeHistory(key) : showHistory(null, key, key));
+  const toggleHistory = (key: HTMLElement) =>
+    historyOpen.peek() ? closeHistory(key) : showHistory(null, key, key);
   /** The shortcut moves focus to the workspace it shows, unless a flyout holds it. */
   function historyShortcut(): void {
     const where: Focus = flyout.peek() ? "keep" : "workspace";
@@ -267,9 +286,11 @@ export function createShell(app: App, layout: Layout) {
   const reset = { open: signal(false), reason: signal<"running" | "unsaved" | "rerun">("running") };
   const unsavable = () => !!app.run.result.peek() && app.saver.failed.peek();
   function startOver(): void {
-    if (workspace.peek() !== "measurement") return navigate(withWorkspace(route.peek(), MEASUREMENT), "push");
+    if (workspace.peek() !== "measurement")
+      return navigate(withWorkspace(route.peek(), MEASUREMENT), "push");
     const running = app.run.running.peek();
-    if (!running && !(app.run.result.peek() && app.saver.unsaved.peek())) return app.run.returnToStart();
+    if (!running && !(app.run.result.peek() && app.saver.unsaved.peek()))
+      return app.run.returnToStart();
     batch(() => {
       reset.reason.set(running ? "running" : "unsaved");
       reset.open.set(true);
@@ -302,7 +323,8 @@ export function createShell(app: App, layout: Layout) {
     }
   }
 
-  const returnToLive = () => navigate(withWorkspace(route.peek(), MEASUREMENT), "push", "workspace");
+  const returnToLive = () =>
+    navigate(withWorkspace(route.peek(), MEASUREMENT), "push", "workspace");
 
   const legal = (invoker?: HTMLElement | null) => {
     legalInvoker = invoker ?? null;
@@ -335,7 +357,11 @@ export function createShell(app: App, layout: Layout) {
   function keydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
     // Escape dismisses whatever is held with it; every other key acts only on its own.
-    if (event.key !== "Escape" && (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)) return;
+    if (
+      event.key !== "Escape" &&
+      (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)
+    )
+      return;
     if (!KEYS.has(event.key.toLowerCase())) return;
     if (document.querySelector(":popover-open:not(.tooltip)") || activeModal()) return;
     const target = event.target;
@@ -373,7 +399,8 @@ export function createShell(app: App, layout: Layout) {
     root.dataset.pointer = "";
   };
   const typed = (event: KeyboardEvent) => {
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && !MODIFIER.test(event.key)) delete root.dataset.pointer;
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !MODIFIER.test(event.key))
+      delete root.dataset.pointer;
   };
   window.addEventListener("keydown", keydown);
   window.addEventListener("beforeunload", beforeunload);
@@ -407,7 +434,9 @@ export function createShell(app: App, layout: Layout) {
     legal: (invoker) => untrack(() => legal(invoker)),
     startOver: () => untrack(startOver),
     toggleRun: () => untrack(toggleRun),
-    runWord: computed(() => runAction(lingering(), app.run.running() || app.run.preparing(), app.run.phase())),
+    runWord: computed(() =>
+      runAction(lingering(), app.run.running() || app.run.preparing(), app.run.phase()),
+    ),
   };
 
   return {

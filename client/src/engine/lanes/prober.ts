@@ -148,8 +148,10 @@ export class Prober {
     this.#rtt.observe(rttMs);
     // A reply at or after its deadline cannot erase the timeout.
     const late = at >= probe.deadline;
-    const handlingMs = reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
-    if (probe.measured) this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
+    const handlingMs =
+      reply.handlingNs !== null && reply.handlingNs / 1e6 <= rttMs ? reply.handlingNs / 1e6 : null;
+    if (probe.measured)
+      this.#record(probe, late ? probe.deadline : at, late, late ? null : handlingMs);
     if (!late && this.#stalled) {
       this.#stalled = false;
       this.io.post({ type: "resumed" });
@@ -184,7 +186,8 @@ export class Prober {
     const now = this.clock.now();
     this.#measuring = false;
     this.#draining = true;
-    for (const probe of this.#pending.values()) if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
+    for (const probe of this.#pending.values())
+      if (probe.measured) probe.cutoff = Math.min(probe.cutoff, now);
     this.#settle(now);
   }
 
@@ -279,7 +282,8 @@ export class Prober {
         continue;
       }
       this.#graveyard.set(id, probe.sentAt);
-      if (this.#graveyard.size > GRAVEYARD_MAX) this.#graveyard.delete(this.#graveyard.keys().next().value!);
+      if (this.#graveyard.size > GRAVEYARD_MAX)
+        this.#graveyard.delete(this.#graveyard.keys().next().value!);
       if (probe.measured) this.#record(probe, probe.deadline, true, null);
       evicted = true;
       head ||= id === this.#head;
@@ -361,7 +365,11 @@ export class Prober {
     if (this.#state === "open")
       at = Math.min(
         at,
-        intervalMs === null ? this.#backupAt : this.#pending.size < maxInFlight ? this.#sentAt + intervalMs : Infinity,
+        intervalMs === null
+          ? this.#backupAt
+          : this.#pending.size < maxInFlight
+            ? this.#sentAt + intervalMs
+            : Infinity,
       );
     if (at >= this.#timerAt) return;
     this.#timerAt = at;

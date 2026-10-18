@@ -29,7 +29,13 @@ export interface CarrierHost {
   /** A lane delivered for the first time since it opened. */
   delivered(): void;
   /** Settles a lane's ending. Returns true when the lane should reopen, after `delayMs`. */
-  ended(lane: number, ending: Ending, broken: boolean, delayMs: number, signal: AbortSignal): Promise<boolean>;
+  ended(
+    lane: number,
+    ending: Ending,
+    broken: boolean,
+    delayMs: number,
+    signal: AbortSignal,
+  ): Promise<boolean>;
 }
 
 export interface CarrierPlan {
@@ -70,7 +76,8 @@ export class Carrier {
   constructor(plan: CarrierPlan, host: CarrierHost) {
     this.#plan = plan;
     this.#host = host;
-    const stagger = plan.lanes > 1 ? Math.min(STAGGER_MS, Math.floor(SPREAD_MS / (plan.lanes - 1))) : 0;
+    const stagger =
+      plan.lanes > 1 ? Math.min(STAGGER_MS, Math.floor(SPREAD_MS / (plan.lanes - 1))) : 0;
     for (let index = 0; index < plan.lanes; index++) {
       const lane: Lane = {
         index,
@@ -82,10 +89,15 @@ export class Carrier {
         flushed: null,
         cut: false,
       };
-      lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) => this.#report(lane, data);
+      lane.worker.onmessage = ({ data }: MessageEvent<LaneReport | SessionReport>) =>
+        this.#report(lane, data);
       // Our workers report every ending they can, so an error event means one cannot run at all.
       lane.worker.onerror = ({ message }) =>
-        void this.#ended(lane, { reason: "connection-lost", retry: false, detail: `worker failed: ${message}` });
+        void this.#ended(lane, {
+          reason: "connection-lost",
+          retry: false,
+          detail: `worker failed: ${message}`,
+        });
       this.#lanes.push(lane);
       if (index) void delay(index * stagger, this.#done.signal).then(() => this.#open(lane));
       else this.#open(lane);
@@ -132,7 +144,10 @@ export class Carrier {
           lane.worker.postMessage({ type: "flush", at: performance.timeOrigin + cutoff });
         }),
     );
-    await Promise.race([Promise.all(answers), delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal]))]);
+    await Promise.race([
+      Promise.all(answers),
+      delay(FLUSH_MS, AbortSignal.any([this.#done.signal, answered.signal])),
+    ]);
     answered.abort();
     for (const lane of this.#lanes) {
       if (lane.flushed) {
@@ -211,7 +226,15 @@ export class Carrier {
 
   async #ended(lane: Lane, ending: Ending, broken = false): Promise<void> {
     lane.delivered = false;
-    if (await this.#host.ended(lane.index, ending, broken, lane.backoff.after(ending), this.#done.signal))
+    if (
+      await this.#host.ended(
+        lane.index,
+        ending,
+        broken,
+        lane.backoff.after(ending),
+        this.#done.signal,
+      )
+    )
       this.#open(lane);
   }
 }

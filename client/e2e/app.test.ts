@@ -58,7 +58,9 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   await page.goto(`${home.http}/#/history/${saved.id}`);
   await expect(page.locator(".detail-pane .card")).toHaveCount(live.length);
   expect(await readouts(".detail-pane")).toEqual(live);
-  await expect(page.locator(".detail-pane .head-facts")).toContainText(new RegExp(`Transferred\\s*${transferred}`));
+  await expect(page.locator(".detail-pane .head-facts")).toContainText(
+    new RegExp(`Transferred\\s*${transferred}`),
+  );
   await page.goto(`${home.http}/#/`);
 
   const row = page.locator(`a.result-row[data-history-id="${saved.id}"]`);
@@ -81,7 +83,9 @@ test("the idle track draws one bar per reply bucket and grows as each closes", a
     const live = new Set<number>();
     const sample = () => {
       const phase = document.getElementById("console")!.dataset.phase;
-      const bars = document.querySelectorAll('.results .card[data-tone="latency"] .track line.reply').length;
+      const bars = document.querySelectorAll(
+        '.results .card[data-tone="latency"] .track line.reply',
+      ).length;
       if (phase === "latency") live.add(bars);
       Object.assign(window, { live: live.size, bars });
       if (phase !== "complete") requestAnimationFrame(sample);
@@ -106,18 +110,21 @@ test("the page requires Trusted Types and refuses script it did not make", async
   await open(page);
   await ready(page);
   const refusals = await page.evaluate(() =>
-    [() => new Worker("/assets/elsewhere.js"), () => (document.body.innerHTML = "<b></b>")].map((sink) => {
-      try {
-        sink();
-        return "admitted";
-      } catch (error) {
-        return (error as Error).name;
-      }
-    }),
+    [() => new Worker("/assets/elsewhere.js"), () => (document.body.innerHTML = "<b></b>")].map(
+      (sink) => {
+        try {
+          sink();
+          return "admitted";
+        } catch (error) {
+          return (error as Error).name;
+        }
+      },
+    ),
   );
   expect(refusals).toEqual(["TypeError", "TypeError"]);
   // The guard reports each refusal; Firefox's console reports them too.
-  const reports = () => page.errors.filter((error) => error.includes("CSP violation: require-trusted-types-for"));
+  const reports = () =>
+    page.errors.filter((error) => error.includes("CSP violation: require-trusted-types-for"));
   await expect.poll(() => reports().length).toBe(2);
   expect(page.errors.every((error) => error.includes("require-trusted-types-for"))).toBe(true);
   page.errors.length = 0;
@@ -139,7 +146,8 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   const frozen = await elapsed.textContent();
   // A running clock would redraw its 0.1 s readout within eight frames.
   await page.evaluate(async () => {
-    for (let frame = 0; frame < 8; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+    for (let frame = 0; frame < 8; frame++)
+      await new Promise((resolve) => requestAnimationFrame(resolve));
   });
   expect(await elapsed.textContent()).toBe(frozen);
   const saved = await run(page);
@@ -183,7 +191,8 @@ test.chrome("a run in a hidden tab completes and saves", async (page) => {
   // Closing Settings leaves its toggle's wash fading on the compositor; Chrome freezes a page minimized mid-fade.
   await page.evaluate(settled);
   const { windowId } = await page.cdp("Browser.getWindowForTarget");
-  const bounds = (windowState: string) => page.cdp("Browser.setWindowBounds", { windowId, bounds: { windowState } });
+  const bounds = (windowState: string) =>
+    page.cdp("Browser.setWindowBounds", { windowId, bounds: { windowState } });
   const startedAt = Date.now();
   await runButton(page, "Start test").click();
   await bounds("minimized");
@@ -210,7 +219,8 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
     await page.cdp("Log.enable");
     await page.onCdp("Log.entryAdded", (event: any) => {
       const entry = event.data?.entry;
-      if (entry?.level === "error" || entry?.level === "warning") logged.push(`${entry.source}: ${entry.text}`);
+      if (entry?.level === "error" || entry?.level === "warning")
+        logged.push(`${entry.source}: ${entry.text}`);
     });
   }
   await run(page);
@@ -221,7 +231,10 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
     for (const scheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });
       // The theme as the app stamps it; contrast waits for fades to settle (seriousViolations).
-      await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), scheme);
+      await page.evaluate(
+        (theme) => document.documentElement.setAttribute("data-theme", theme),
+        scheme,
+      );
       await openSettings(page);
       const layout = () =>
         page.evaluate(() => {
@@ -253,7 +266,9 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
   await expect(dialog).toContainText("AGPL-3.0-or-later");
   // The server lists the crates it ships, under the version it reports.
   const identity = await (await fetch(`${home.http}/preflight`)).json();
-  const legal: LegalAbout & { sourceVersion: string } = await (await fetch(`${home.http}/legal/about.json`)).json();
+  const legal: LegalAbout & { sourceVersion: string } = await (
+    await fetch(`${home.http}/legal/about.json`)
+  ).json();
   expect(new Set(legal.components.map((c) => c.ecosystem)).has("cargo")).toBe(true);
   expect(identity.engineVersion).toBe(legal.sourceVersion);
   await expect(dialog).toContainText("Rust crates");
@@ -267,8 +282,12 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
     // A link's name leads with its visible text, then says whose it is.
     return [
       { name: `, source of ${component.name}`, href: upstream ?? source },
-      ...(component.modified && upstream ? [{ name: `, shipped source of ${component.name}`, href: source }] : []),
-      ...(component.modified && changes ? [{ name: `changes to ${component.name}`, href: changes }] : []),
+      ...(component.modified && upstream
+        ? [{ name: `, shipped source of ${component.name}`, href: source }]
+        : []),
+      ...(component.modified && changes
+        ? [{ name: `changes to ${component.name}`, href: changes }]
+        : []),
     ];
   });
   const shown = await dialog.evaluate((el: HTMLElement) =>
@@ -286,7 +305,9 @@ test("a completed run logs nothing, draws its arcs and fits every layout and the
   const fork = legal.components.find((c) => c.name === "noq")!;
   expect(fork.links.map((l) => l.label)).toEqual(["Source", "Upstream", "Changes"]);
   expect(fork.links[0]!.url).toMatch(/^https:\/\/github\.com\/zR-JB\/noq\/tree\/[0-9a-f]{40}$/);
-  expect(fork.links[1]!.url).toMatch(/^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/);
+  expect(fork.links[1]!.url).toMatch(
+    /^https:\/\/github\.com\/n0-computer\/noq\/tree\/[0-9a-f]{40}$/,
+  );
   expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.press("Escape");
   await expect(dialog).toHaveCount(0);

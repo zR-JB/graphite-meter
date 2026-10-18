@@ -8,7 +8,10 @@ const LIVE_FRAME_MS = 10;
 
 /** A view's painter: `wake()` draws next frame and on while `draw` returns true, at most every LIVE_FRAME_MS;
     `wake(true)` draws before the next layout so a resized view keeps step with its box. Nothing draws while `away`. */
-export function painter(draw: (now: number) => boolean, away?: Read<boolean>): (resized?: boolean) => void {
+export function painter(
+  draw: (now: number) => boolean,
+  away?: Read<boolean>,
+): (resized?: boolean) => void {
   let stop: (() => void) | null = null;
   let drawn = Number.NEGATIVE_INFINITY;
   // A change waits to be drawn; the last draw is still moving; a draw is queued before the next layout.
@@ -177,7 +180,9 @@ export class Figure {
   constructor(className: string, chars = 1) {
     this.box = document.createElement("span");
     this.box.className = `figure ${className}`;
-    this.#text = this.box.appendChild(document.createElement("span")).appendChild(document.createTextNode(""));
+    this.#text = this.box
+      .appendChild(document.createElement("span"))
+      .appendChild(document.createTextNode(""));
     this.#chars = chars;
     this.box.style.inlineSize = `${chars}ch`;
   }
@@ -198,7 +203,10 @@ export function setText(node: Text, text: string): void {
   if (node.data !== text) node.data = text;
 }
 
-export const svg = <K extends keyof SVGElementTagNameMap>(tag: K, className?: string): SVGElementTagNameMap[K] => {
+export const svg = <K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  className?: string,
+): SVGElementTagNameMap[K] => {
   const element = document.createElementNS(SVG_NS, tag);
   if (className) element.setAttribute("class", className);
   return element;

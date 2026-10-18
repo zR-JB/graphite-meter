@@ -24,7 +24,13 @@ test("stored preferences are read field by field, older shapes migrate and unkno
   expect(read.config).toEqual({
     ...DEFAULT_CONFIG,
     stages: { latency: false, download: true, upload: true, bidirectional: false },
-    duration: { warmupMs: 4_000, latencyMs: 4_000, downloadMs: 2_500, uploadMs: 10_000, bidirectionalMs: 10_000 },
+    duration: {
+      warmupMs: 4_000,
+      latencyMs: 4_000,
+      downloadMs: 2_500,
+      uploadMs: 10_000,
+      bidirectionalMs: 10_000,
+    },
     transferStreams: { mode: "forced", count: 128 },
     transports: { throughputTarget: "auto", latencyTarget: "transport:websocket" },
     adaptive: false,

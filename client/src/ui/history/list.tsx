@@ -11,7 +11,16 @@ import { For, Show } from "../../lib/dom";
 import { animate, nextFrame } from "../../lib/frame";
 import { insert } from "../../lib/jsx-runtime";
 import { reducedMotion } from "../../lib/motion";
-import { batch, computed, effect, onCleanup, signal, untrack, type Read, type Signal } from "../../lib/signal";
+import {
+  batch,
+  computed,
+  effect,
+  onCleanup,
+  signal,
+  untrack,
+  type Read,
+  type Signal,
+} from "../../lib/signal";
 import { OUTCOME } from "../../view/words";
 import { activeModal, canFocus } from "../kit/focus";
 import { Icon } from "../kit/icon";
@@ -55,10 +64,17 @@ export function ResultsList(props: {
   selectedId: Read<string | null>;
   /** Epoch ms, a minute apart. */
   now: Read<number>;
-}): { element: HTMLElement; fitTo(width: number): void; neighbor(id: string, by: 1 | -1): string | null } {
+}): {
+  element: HTMLElement;
+  fitTo(width: number): void;
+  neighbor(id: string, by: 1 | -1): string | null;
+} {
   const { app } = props;
   const columns = app.preferences.historyColumns;
-  const units = computed(() => ({ base: app.preferences.unitBase(), kind: app.preferences.unitKind() }));
+  const units = computed(() => ({
+    base: app.preferences.unitBase(),
+    kind: app.preferences.unitKind(),
+  }));
   const scales = computed(() => columnScales(props.records(), units()));
   // The same object all day, so rows are dated again only when it turns.
   let day: Days | undefined;
@@ -69,13 +85,23 @@ export function ResultsList(props: {
   const byDay = computed(() => props.sort().by === "date");
   // Rows are worded again only when something they show changes; a peak only rescales the bars.
   const wording = computed(() =>
-    [columns().join(), units().base, units().kind, byDay(), ...columns().map((column) => scales()[column].tier)].join(),
+    [
+      columns().join(),
+      units().base,
+      units().kind,
+      byDay(),
+      ...columns().map((column) => scales()[column].tier),
+    ].join(),
   );
   const present = computed(() => {
     wording();
-    return untrack(() => rowPresenter({ columns: columns(), scales: scales(), units: units(), byDay: byDay() }));
+    return untrack(() =>
+      rowPresenter({ columns: columns(), scales: scales(), units: units(), byDay: byDay() }),
+    );
   });
-  const ordered = computed(() => sortHistory(props.records(), props.sort().by, props.sort().descending));
+  const ordered = computed(() =>
+    sortHistory(props.records(), props.sort().by, props.sort().descending),
+  );
   // Only the pages asked for: a link to a result far down opens it without building every row above it.
   const shown = computed(() => Math.min(ordered().length, props.pages() * PAGE_ROWS));
   // A screenful first, or every row down to the open result's when it lies further; the rest of the pages a screenful
@@ -91,7 +117,9 @@ export function ResultsList(props: {
     const id = returned();
     return id === null ? -1 : ordered().findIndex((entry) => entry.id === id);
   });
-  const limit = computed(() => Math.min(shown(), Math.max(built(), selectedAt() + 1, returnedAt() + 1)));
+  const limit = computed(() =>
+    Math.min(shown(), Math.max(built(), selectedAt() + 1, returnedAt() + 1)),
+  );
   effect(() => {
     shown();
     untrack(() => {
@@ -129,7 +157,8 @@ export function ResultsList(props: {
     const view = list.getBoundingClientRect();
     const row = current.getBoundingClientRect();
     const top = view.top + (table.querySelector<HTMLElement>(".column-head")?.offsetHeight ?? 0);
-    const by = row.top < top ? row.top - top : row.bottom > view.bottom ? row.bottom - view.bottom : 0;
+    const by =
+      row.top < top ? row.top - top : row.bottom > view.bottom ? row.bottom - view.bottom : 0;
     if (by) list.scrollBy({ top: by, behavior: reducedMotion.peek() ? "instant" : "smooth" });
   };
   effect(() => {
@@ -156,7 +185,8 @@ export function ResultsList(props: {
     queueMicrotask(() => {
       if (activeModal() || props.selectedId.peek() !== null) return;
       const target =
-        links.get(closed) ?? list.closest(".history-workspace")?.querySelector<HTMLElement>(".close-history");
+        links.get(closed) ??
+        list.closest(".history-workspace")?.querySelector<HTMLElement>(".close-history");
       if (canFocus(target)) target.focus();
     });
   });
@@ -170,7 +200,9 @@ export function ResultsList(props: {
 
   const Metric = (cell: Cell) => (
     <span class={cell.value === null ? "metric missing" : "metric"} data-tone={cell.column}>
-      {cell.value !== null && <span class="bar" ref={(bar) => bar.style.setProperty("--value", String(cell.value))} />}
+      {cell.value !== null && (
+        <span class="bar" ref={(bar) => bar.style.setProperty("--value", String(cell.value))} />
+      )}
       <span class="value">{cell.text}</span>
       {cell.note && <small class="note">{cell.note}</small>}
     </span>
@@ -193,7 +225,9 @@ export function ResultsList(props: {
       // Only a result from the last hour says how long ago; the rest never follow the clock.
       const fresh = props.now.peek() - row.completedAt < HOUR_MS;
       const line = fresh
-        ? computed(() => [row.where, recentCompletion(row.completedAt, props.now())].filter(Boolean).join(", "))
+        ? computed(() =>
+            [row.where, recentCompletion(row.completedAt, props.now())].filter(Boolean).join(", "),
+          )
         : () => row.where;
       const clipped = signal(false);
       const server = (fresh || row.where) && (
@@ -208,7 +242,10 @@ export function ResultsList(props: {
             {server}
           </time>
           <span class="outcome">
-            {row.outcome !== "complete" && [<span class="status-dot inline" data-tone={outcome.tone} />, outcome.label]}
+            {row.outcome !== "complete" && [
+              <span class="status-dot inline" data-tone={outcome.tone} />,
+              outcome.label,
+            ]}
           </span>
           {row.cells.map(Metric)}
         </a>
@@ -227,14 +264,20 @@ export function ResultsList(props: {
     const sorted = computed(() => props.sort().by === column);
     const order = () => (props.sort().descending ? "descending" : "ascending");
     const unit = () => (column === "date" ? "" : scales()[column].unit);
-    const name = () => (column === "date" ? SORT_LABEL.date : `${COLUMN[column].short} ${unit()}`.trim());
+    const name = () =>
+      column === "date" ? SORT_LABEL.date : `${COLUMN[column].short} ${unit()}`.trim();
     return (
       <button
         type="button"
         aria-pressed={() => String(sorted())}
         data-order={() => (sorted() ? order() : undefined)}
         aria-label={() => (sorted() ? `${name()}, ${order()}` : undefined)}
-        onclick={() => props.setSort(column, sorted.peek() ? !props.sort.peek().descending : naturalDescending(column))}
+        onclick={() =>
+          props.setSort(
+            column,
+            sorted.peek() ? !props.sort.peek().descending : naturalDescending(column),
+          )
+        }
       >
         {column === "date" ? (
           <span>{SORT_LABEL.date}</span>
@@ -262,7 +305,15 @@ export function ResultsList(props: {
       onclick={(event) => {
         const row = (event.target as Element).closest<HTMLAnchorElement>("a.result-row");
         // A modified or secondary click follows the link: a new tab or window.
-        if (!row || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (
+          !row ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
         event.preventDefault();
         const id = row.dataset.historyId!;
         props.shell.history(props.selectedId.peek() === id ? null : id);
@@ -288,7 +339,11 @@ export function ResultsList(props: {
               ) : (
                 <div class="group-head">
                   <h3 id={id}>{ordering}</h3>
-                  <button class="btn btn-quiet by-date" type="button" onclick={() => props.setSort("date", true)}>
+                  <button
+                    class="btn btn-quiet by-date"
+                    type="button"
+                    onclick={() => props.setSort("date", true)}
+                  >
                     Sort by date
                   </button>
                 </div>
