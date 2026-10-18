@@ -145,7 +145,7 @@ impl App {
             }
             _ if matches!(self.view.check, Check::Failed(_))
                 || !self.view.servers.is_empty()
-                    && self.view.servers.iter().all(|s| s.path.is_err()) =>
+                    && self.view.servers.iter().all(|server| server.path.is_err()) =>
             {
                 let unreached = if self.view.servers.is_empty() {
                     "Failed".into()
@@ -224,13 +224,10 @@ impl App {
             ));
         }
         let room = area.width.saturating_sub(status.width() as u16 + 6);
-        while caps.len() > 1
-            && caps
-                .iter()
-                .map(|(cap, _)| cap.width() as u16 + 2)
-                .sum::<u16>()
-                > room
-        {
+        let caps_width = |caps: &[(Line, Action)]| -> u16 {
+            caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum()
+        };
+        while caps.len() > 1 && caps_width(&caps) > room {
             caps.remove(caps.len() - 2);
         }
         let total: u16 = caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum();

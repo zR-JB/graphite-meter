@@ -505,35 +505,29 @@ impl App {
                 .summary
                 .filter(|summary| summary.replies + summary.timeouts > 0);
             let missing = || Line::styled(MISSING, palette.muted);
-            let mut cells = vec![
-                summary
-                    .and_then(|s| s.p50)
-                    .map_or_else(missing, |m| Line::styled(round_trip(m), palette.value)),
-            ];
+            let median = summary.and_then(|summary| summary.p50);
+            let mut cells = vec![median.map_or_else(missing, |median| {
+                Line::styled(round_trip(median), palette.value)
+            })];
             if jitter {
-                let value = summary.and_then(|s| s.jitter);
+                let value = summary.and_then(|summary| summary.jitter);
                 cells.push(value.map_or_else(missing, |jitter| {
                     Line::styled(round_trip(jitter), palette.text)
                 }));
             }
-            cells.push(
-                summary
-                    .and_then(|s| s.timeout_ratio())
-                    .map_or_else(missing, |ratio| {
-                        Line::styled(
-                            format::percent(ratio),
-                            if ratio >= 0.05 {
-                                palette.warn
-                            } else {
-                                palette.text
-                            },
-                        )
-                    }),
-            );
+            let timeouts = summary.and_then(|summary| summary.timeout_ratio());
+            cells.push(timeouts.map_or_else(missing, |ratio| {
+                let tone = if ratio >= 0.05 {
+                    palette.warn
+                } else {
+                    palette.text
+                };
+                Line::styled(format::percent(ratio), tone)
+            }));
             for (column, cell) in cells.iter().enumerate() {
                 canvas.right(area.x + LABEL + column as u16 * FIGURE, y, FIGURE, cell);
             }
-            let added = match (lane.stage, summary.and_then(|s| s.p50), idle) {
+            let added = match (lane.stage, median, idle) {
                 (Stage::Latency, ..) => Line::default(),
                 (stage, Some(median), Some(idle)) => Line::styled(
                     format!("{} ms", format::added(ms(median) - ms(idle))),
@@ -910,10 +904,10 @@ impl App {
                 .and_then(|summary| summary.p95)
                 .map_or_else(missing, round_trip);
             let replies = summary
-                .filter(|s| s.replies > 0)
-                .map_or_else(missing, |s| format::count(s.replies));
+                .filter(|summary| summary.replies > 0)
+                .map_or_else(missing, |summary| format::count(summary.replies));
             let timeouts = summary
-                .and_then(|s| s.timeout_ratio())
+                .and_then(|summary| summary.timeout_ratio())
                 .map_or_else(missing, format::percent);
             return vec![
                 ("Range", range),
