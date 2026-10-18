@@ -75,13 +75,13 @@ FROM pgo-ci AS pgo-arm64-ci
 
 FROM pgo-amd64-${PROFILE} AS pgo-amd64
 FROM pgo-arm64-${PROFILE} AS pgo-arm64
-FROM pgo-${TARGETARCH} AS pgo
+FROM pgo-${TARGETARCH} AS pgo-server
 
-# The profiles of the TUI_PLATFORM's architecture, the Windows TUI's being amd64's; empty selects pgo-, every one.
-FROM scratch AS pgo-
+# A TUI build reads its TUI_PLATFORM's architecture's profile, the Windows TUI amd64's, or with none every one (pgo).
+FROM scratch AS pgo
 COPY --from=pgo-amd64 /pgo/ /pgo/
 COPY --from=pgo-arm64 /pgo/ /pgo/
-FROM pgo-${TUI_PLATFORM##*/} AS pgo-tui
+FROM pgo${TUI_PLATFORM:+-}${TUI_PLATFORM##*/} AS pgo-tui
 
 # The TUI archives for every TUI platform of the workspace metadata, or the TUI_PLATFORM's, each with its source offer.
 FROM rust-arm64 AS tui-build
@@ -119,7 +119,7 @@ FROM rust-${TARGETARCH} AS server-build
 ARG TARGETARCH
 ARG PROFILE
 COPY --from=source / /src/
-COPY --from=pgo /pgo/ /src/rust/target/pgo/
+COPY --from=pgo-server /pgo/ /src/rust/target/pgo/
 COPY --from=browser /src/client/ /src/client/
 # The legal scan names the bundled packages at their paths in Bun's installation cache.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
