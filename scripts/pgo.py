@@ -27,19 +27,21 @@ ATTEMPTS = 3
 TRAINING = [(listener, direction) for listener in ("http3", "http2", "http1-tls") for direction in ("download", "upload")]
 
 
-def instrumented(target: str, profile: str, raw: Path) -> Path:
+def instrumented(target: str, profile: str, raw: Path) -> dict[str, Path]:
     """The target's instrumented binaries, built apart from every reviewed build's target directory."""
-    built = PGO / "build"
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith("GM_") and key not in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS")}
     flags = [*remap_flags(), f"-Cprofile-generate={raw}"]
-    environment |= {"CARGO_TARGET_DIR": str(built), "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags)}
-    # A profile names a local function by its codegen unit, whose hash follows the crate's features and those of its
-    # dependencies: each package builds alone, as its reviewed build does, so the names match.
-    for package in ("graphite-meter-server", "graphite-meter-client"):
-        subprocess.run(["cargo", "build", "--locked", "--profile", profile, "--target", target, "-p", package],
-                       cwd=RUST, env=environment, check=True)
-    return built / target / profile
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
+    # Profile names follow each crate's features, so each package builds alone as its reviewed build does; their own
+    # target directories let both builds, each ending in a single-threaded LTO link, run at once.
+    builds = {package: subprocess.Popen(["cargo", "build", "--locked", "--profile", profile, "--target", target,
+                                         "-p", package], cwd=RUST,
+                                        env=environment | {"CARGO_TARGET_DIR": str(PGO / package)})
+              for package in ("graphite-meter-server", "graphite-meter-client")}
+    if any([build.wait() for build in builds.values()]):
+        sys.exit("an instrumented build failed")
+    return {package: PGO / package / target / profile / package for package in builds}
 
 
 def wrapped(binary: Path, runner: list[str], directory: Path) -> Path:
@@ -77,8 +79,8 @@ def train(target: str, profile: str, runner: list[str]) -> Path:
     raw.mkdir(parents=True)
     binaries = instrumented(target, profile, raw)
     fixture = Fixture("pgo-")
-    server_binary = wrapped(binaries / "graphite-meter-server", runner, fixture.directory)
-    client = wrapped(binaries / "graphite-meter-client", runner, fixture.directory)
+    server_binary = wrapped(binaries["graphite-meter-server"], runner, fixture.directory)
+    client = wrapped(binaries["graphite-meter-client"], runner, fixture.directory)
     with fixture.server(server_binary, "train") as server:
         for listener, direction in TRAINING:
             transfer(client, server, listener, direction, "--loaded-latency=true")
