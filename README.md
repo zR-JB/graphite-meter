@@ -65,7 +65,7 @@ from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse p
   <img src="docs/assets/terminal-light.png" width="100%" alt="The terminal client after a completed test: 2.35 Gbit/s each way, 0.4 ms idle latency, 2.7 ms added under load">
 </picture>
 
-<sub>Terminal client 0.13.0 at 120 by 40 cells.</sub>
+<sub>Terminal client 0.13.0.</sub>
 
 </div>
 
