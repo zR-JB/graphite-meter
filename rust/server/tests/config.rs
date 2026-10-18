@@ -80,11 +80,12 @@ fn unset_lifetimes_cover_the_stage_limit() {
         lifetimes(&[("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_OPERATION_DURATION", "10m")]),
         [600, 7200]
     );
-    assert_eq!(
-        lifetimes(&[("GM_MAX_OPERATION_DURATION", "")]),
-        [360, 7200],
-        "an empty value is set to its default"
-    );
+    let empty = [
+        ("GM_MAX_STAGE_DURATION", "3h"),
+        ("GM_MAX_OPERATION_DURATION", ""),
+        ("GM_MAX_SESSION_DURATION", ""),
+    ];
+    assert_eq!(lifetimes(&empty), [3 * 3600 + 60, 3 * 3600 + 60], "an empty value is unset");
     let explicit = [("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_SESSION_DURATION", "1h")];
     let message = "GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION";
     assert_eq!(error(&explicit, &[]), message);
@@ -231,9 +232,10 @@ fn authentication_refusals_name_the_setting() {
         error(&dedupe(env), &[])
     };
     assert_eq!(
-        error(&[("GM_AUTH_PUBLIC_URL", "")], &[]),
+        error(&[("GM_AUTH_PUBLIC_URL", "https://meter.example")], &[]),
         "authentication settings require GM_AUTH_MODE to be enabled"
     );
+    assert!(config(&[("GM_AUTH_PUBLIC_URL", "")], &[]).auth.is_none(), "an empty value is unset");
     assert_eq!(with(&[("GM_AUTH_MODE", "ldap")]), "GM_AUTH_MODE must be off, password, oidc, or hybrid");
     for (changes, message) in [
         (

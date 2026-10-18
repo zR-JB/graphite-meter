@@ -48,8 +48,8 @@ the setting.
 | `GM_MAX_BUFFER_BYTES`                   | `--max-buffer-bytes`                   | `8589934592`     | Bytes of HTTP/2 and QUIC connection buffers ([resources](#resources)).                 |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client; a trusted proxy counts only toward `GM_MAX_CONNECTIONS`. |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `6m`             | Longest HTTP download or upload and longest latency connection; unset, at least `GM_MAX_STAGE_DURATION` plus 1 minute. |
-| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Longest WebTransport download or upload session; unset, at least the operation lifetime. |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `6m`             | Longest HTTP download or upload and longest latency connection; unset or empty, at least `GM_MAX_STAGE_DURATION` plus 1 minute. |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Longest WebTransport download or upload session; unset or empty, at least the operation lifetime. |
 | `GM_MAX_STAGE_DURATION`                 | `--max-stage-duration`                 | `5m`             | Longest stage clients may plan, `1s` to `24h`; sent in `/preflight`.                   |
 | `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
@@ -70,11 +70,11 @@ the setting.
 
 - Listener addresses must differ. Numeric limits must be positive, per-client limits may not exceed their global
   limit, sessions may not exceed measurements, and the session duration must be at least the operation duration.
-  An unset operation lifetime is at least the stage limit plus a minute, so a server that allows multi-hour stages
-  never cuts their transfers short, and an unset session lifetime is at least the operation lifetime. Set them to
-  cut transfers sooner, and clients reconnect across each cut. Something
-  must carry throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or
-  `GM_PUBLIC_THROUGHPUT_ORIGINS`, or startup fails with "configuration advertises no throughput endpoint".
+  An unset or empty operation lifetime is at least the stage limit plus a minute, so a server that allows
+  multi-hour stages never cuts their transfers short, and an unset or empty session lifetime is at least the
+  operation lifetime. Set them to cut transfers sooner, and clients reconnect across each cut. Something must carry
+  throughput, so with no native endpoint advertised, set `GM_PUBLIC_ORIGINS` or `GM_PUBLIC_THROUGHPUT_ORIGINS`, or
+  startup fails with "configuration advertises no throughput endpoint".
 - A native listener is advertised on the host the client asked for, at the listener's own port. Set its
   `GM_H*_PUBLIC_ORIGIN` when clients reach it on another host or port, such as a remapped container port.
 - A client identity is a login or measurement grant, and its subject shares twice its limit. Every password login

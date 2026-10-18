@@ -180,7 +180,7 @@ macro_rules! settings {
         pub(super) struct Settings {
             $(pub $field: $type,)+
             pub catalog: ServerCatalog,
-            /// The variables set by the environment or a flag, also to their defaults.
+            /// The variables set to a value by the environment or a flag; an empty value leaves the default.
             pub given: BTreeSet<&'static str>,
         }
 
@@ -196,7 +196,9 @@ macro_rules! settings {
             usage: $usage,
             env: Some($env),
             set: |settings, text| {
-                settings.given.insert($env);
+                if !text.trim().is_empty() {
+                    settings.given.insert($env);
+                }
                 Value::set(&mut settings.$field, text.trim())
             },
             show: |settings| Value::show(&settings.$field),
