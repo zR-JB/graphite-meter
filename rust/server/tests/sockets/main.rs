@@ -1,5 +1,3 @@
-//! The running server over real sockets.
-
 mod auth;
 mod connection;
 mod delayed;
@@ -60,14 +58,12 @@ fn pool() -> Pool {
     Pool::beside(&Handle::current()).unwrap_or_else(|_| Pool::inline())
 }
 
-/// A server serves on local ports until stopped.
 struct Running {
     address: SocketAddr,
     tls: Option<SocketAddr>,
     h2: Option<SocketAddr>,
     quic: Option<SocketAddr>,
     companion: Option<SocketAddr>,
-    /// This many endpoints share the HTTP/3 port.
     endpoints: usize,
     budget: Budget,
     app: Arc<App>,
@@ -120,7 +116,6 @@ async fn start(env: &[(&str, &str)]) -> Running {
 }
 
 impl Running {
-    /// Starts the shutdown. The task ends once connections drained.
     fn stop(self) -> JoinHandle<Result<(), String>> {
         self.stop.send(()).unwrap();
         self.task
@@ -141,14 +136,12 @@ impl Running {
         client.answer().await.unwrap()
     }
 
-    /// Reads the handlers in use, as `/probe` reports them.
     async fn active(&self) -> u64 {
         let probe: serde_json::Value =
             serde_json::from_slice(&self.get("/probe").await.body).unwrap();
         probe["load"]["active"].as_u64().unwrap()
     }
 
-    /// Waits until `/probe` reports `active` handlers.
     async fn until_active(&self, active: u64) {
         let reached = async {
             while self.active().await != active {
@@ -168,7 +161,6 @@ impl Running {
     }
 }
 
-/// An answer holds its status line, header fields with lower-case names, and body.
 #[derive(Debug)]
 struct Answer {
     status: u16,
@@ -185,7 +177,6 @@ impl Answer {
     }
 }
 
-/// A client speaks HTTP/1.1 over a raw stream.
 struct Client<S> {
     stream: BufReader<S>,
     /// The next answer has no body, as the answer to HEAD.
@@ -209,7 +200,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             .unwrap();
     }
 
-    /// Sends `line` (method and target) with `body` on this connection.
     async fn request(&mut self, line: &str, body: &str) -> Answer {
         let length = body.len();
         self.send(&format!(
@@ -219,7 +209,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         self.answer().await.unwrap()
     }
 
-    /// Reads the next answer head, or `None` when the connection ends first.
     async fn head(&mut self) -> Option<Answer> {
         let mut line = String::new();
         if self.stream.read_line(&mut line).await.ok()? == 0 {
@@ -242,7 +231,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         })
     }
 
-    /// Reads the next whole answer, or `None` when the connection ends first.
     async fn answer(&mut self) -> Option<Answer> {
         let mut answer = self.head().await?;
         if self.bodiless || matches!(answer.status, 101 | 204) {
@@ -261,7 +249,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         Some(answer)
     }
 
-    /// Reads the next chunk of a chunked body, or `None` at its end.
     async fn chunk(&mut self) -> Option<Vec<u8>> {
         let mut line = String::new();
         self.stream.read_line(&mut line).await.ok()?;
@@ -272,7 +259,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         (length > 0).then_some(chunk)
     }
 
-    /// Reads until the connection ends, returning how many bytes came.
     async fn drain(&mut self) -> usize {
         let mut buffer = vec![0; 64 << 10];
         let mut total = 0;

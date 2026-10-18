@@ -41,7 +41,6 @@ use std::{
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-/// The state every request shares; transports hold it in an `Arc`.
 pub struct App {
     config: Config,
     budget: Budget,
@@ -75,12 +74,9 @@ impl Connection {
     }
 }
 
-/// A request's outcome, or the answer refusing it.
 type Admitted = Result<Outcome, Response<Body>>;
 
-/// What a transport does for a request.
 pub enum Outcome {
-    /// Writes the reply within the bound its body carries.
     Response(Response<Body>),
     /// Writes the `101`, then carries the WebSocket bus that the lane bounds.
     WebSocket(Response<Body>, Lane),
@@ -124,7 +120,6 @@ impl App {
         })
     }
 
-    /// Serves `files` and `notices` as the browser app instead of the embedded ones.
     pub fn with_assets(self, files: &'static [Asset], notices: &'static Notices) -> Self {
         let assets = Assets::new(
             files,
@@ -187,7 +182,6 @@ impl App {
         self.quotas.credit(keys, bytes)
     }
 
-    /// Answers a request that `exchange` bounds until it is admitted.
     pub async fn handle<B: http_body::Body>(
         &self,
         request: Request<B>,
@@ -412,7 +406,6 @@ impl App {
     }
 }
 
-/// The routes a WebTransport session serves.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WtRoute {
     Ping,
@@ -423,7 +416,6 @@ enum WtRoute {
 /// Upload frames taken in one read and recorded at once; an HTTP/3 frame carries one QUIC packet's data.
 const FRAMES_PER_READ: usize = 32;
 
-/// The data bytes of the frames one read took, and how the upload ended after them, if it did.
 struct Batch {
     bytes: usize,
     end: Option<End>,
@@ -532,7 +524,6 @@ impl Endpoint {
         }
     }
 
-    /// What its startup line says it serves.
     pub const fn roles(self, auth: bool) -> &'static str {
         const ALL: &str = "UI, discovery, probe, transfers, WebSockets";
         match self {

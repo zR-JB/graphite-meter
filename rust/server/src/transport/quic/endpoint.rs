@@ -31,11 +31,9 @@ use tokio::runtime::Handle;
 const MAX_SHARDS: usize = 16;
 pub(crate) const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
 
-/// HTTP/3's endpoints on one port and what their connections share.
 pub struct Endpoints {
     pub listeners: Vec<Listener>,
     pub http3: Http3,
-    /// What their buffers hold of the budget.
     pub bytes: usize,
 }
 
@@ -70,7 +68,6 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
         self.single(address, pool.next())
     }
 
-    /// One endpoint on `runtime`.
     fn single(&self, address: SocketAddr, runtime: Handle) -> Result<Endpoints, String> {
         let udp = Udp::bind(address, 1, &runtime)?;
         let config = noq::EndpointConfig::default();
@@ -216,8 +213,7 @@ impl<F: Fn(usize) -> Result<(), String>> Binding<'_, F> {
     }
 }
 
-/// One of `sockets` UDP sockets on an address, wrapped for noq on its binding runtime, with its kernel bytes and, in a
-/// set, whether the kernel took the routing program.
+/// One of `sockets` UDP sockets wrapped for noq, with its kernel bytes and whether the kernel took the routing program.
 struct Udp {
     socket: Box<dyn AsyncUdpSocket>,
     quic: Arc<dyn noq::Runtime>,
@@ -262,7 +258,6 @@ impl Udp {
         })
     }
 
-    /// What one of `shards` endpoints on this socket holds of the budget.
     fn bytes(
         &self,
         config: &noq::EndpointConfig,

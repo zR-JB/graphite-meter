@@ -19,7 +19,6 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep_until};
 
-/// A reply's body and what bounds writing it.
 pub struct Body {
     content: Content,
     bound: Option<Bound>,
@@ -53,7 +52,6 @@ impl From<Aborted> for io::Error {
 }
 
 enum Content {
-    /// A document in one frame; empty once sent.
     Full(Bytes),
     Download(DownloadSource),
     Feed(Pin<Box<dyn Stream<Item = Bytes> + Send>>),
@@ -78,7 +76,6 @@ impl Body {
         }
     }
 
-    /// A progress feed's lines until it ends.
     pub fn feed(feed: ProgressFeed) -> Self {
         let lines = stream::unfold(feed, |mut feed| async move {
             feed.next().await.map(|line| (line, feed))
@@ -89,7 +86,6 @@ impl Body {
         }
     }
 
-    /// The body as `lane`'s work, which ends with it.
     pub fn with_lane(self, lane: Lane) -> Self {
         Self {
             bound: Some(Bound::Lane(lane)),
@@ -104,7 +100,6 @@ impl Body {
         }
     }
 
-    /// Bounds the reply by `deadline` unless it is bound already.
     pub(crate) fn bound_by_default(&mut self, deadline: Instant) {
         self.bound.get_or_insert(Bound::Until(deadline));
     }
@@ -169,7 +164,6 @@ enum Rule {
 type Ended = Pin<Box<dyn Future<Output = LaneEnding> + Send>>;
 
 impl ReplyBound {
-    /// The bound of `body`, which the app bounded.
     pub fn of(body: &Body) -> Self {
         match body.bound.as_ref().expect("the app bounds every reply") {
             Bound::Lane(lane) => {
@@ -203,7 +197,6 @@ impl ReplyBound {
         }
     }
 
-    /// Bytes of the reply were written.
     pub fn progressed(&self) {
         if let Rule::Lane(lane, _) = &self.0 {
             lane.moved();
@@ -219,7 +212,6 @@ impl ReplyBound {
     }
 }
 
-/// An HTTP/2 or HTTP/3 stream a reply is pumped into.
 pub(crate) trait Sink {
     /// Writes the head; `end` when nothing follows it.
     async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound)
@@ -236,7 +228,6 @@ pub(crate) trait Sink {
     /// Ends the stream after a body whose last data did not.
     async fn end(&mut self, bound: &mut ReplyBound) -> Result<(), Aborted>;
 
-    /// Ready once the peer abandoned the reply.
     fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<()>;
 }
 
@@ -288,7 +279,6 @@ fn next_data(
     }
 }
 
-/// Completes `write` unless the reply's bound ends it first.
 pub(crate) async fn within<T, E>(
     bound: &mut ReplyBound,
     write: impl Future<Output = Result<T, E>>,

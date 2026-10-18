@@ -22,7 +22,6 @@ use std::{
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
 
-/// An OIDC app of `issuer`, trusting what `trust` names.
 pub(super) fn oidc_app(issuer: &str, trust: &[(&str, &str)], hybrid: bool) -> App {
     let mut env = [ALL_LISTENERS.as_slice(), trust].concat();
     env.extend([
@@ -70,7 +69,6 @@ fn location(response: &Response<Body>) -> &str {
     header(response, "location").unwrap()
 }
 
-/// The `Set-Cookie` line of `name`.
 fn set_cookie<'a>(response: &'a Response<Body>, name: &str) -> &'a str {
     let lines = response.headers().get_all("set-cookie").iter();
     let mut lines = lines.map(|line| line.to_str().unwrap());

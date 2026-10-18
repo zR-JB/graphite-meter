@@ -106,7 +106,6 @@ async fn quic_downloads_outgrow_a_fixed_window() {
         .unwrap();
 }
 
-/// A download's body or WebTransport stream.
 enum Lane {
     Http(Box<RecvHalf>),
     Stream(RecvStream),
@@ -121,8 +120,7 @@ impl Lane {
     }
 }
 
-/// The median rate in Mbit/s of one download's half-second samples after its first two seconds, over a link
-/// delaying each direction by `one_way`.
+/// Median Mbit/s of one download's half-second samples after two seconds, each direction delayed by `one_way`.
 async fn download_rate(webtransport: bool, one_way: Duration) -> f64 {
     let h3 = H3::start(&[]).await;
     let link = Link::udp(h3.server.quic.unwrap(), one_way, None)

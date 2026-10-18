@@ -44,12 +44,10 @@ use tokio_rustls::TlsAcceptor;
 /// hyper's buffer: 128 KiB reads cost less CPU per uploaded byte than 64 KiB; it also bounds a head before parsing.
 const BUFFER_BYTES: usize = 128 << 10;
 
-/// What an HTTP/1 listener's connections share.
 #[derive(Clone)]
 pub struct Http1 {
     pub app: Arc<App>,
     pub endpoint: Endpoint,
-    /// Present on a TLS listener.
     pub tls: Option<TlsAcceptor>,
     /// The runtime WebSocket buses move to, which runs no bulk transfer.
     pub buses: Handle,
@@ -172,10 +170,8 @@ async fn respond(
     }
 }
 
-/// What the service and the IO wrapper of one connection share.
 #[derive(Default)]
 struct Shared {
-    /// The state the service posts for the IO wrapper to adopt.
     posted: Mutex<Option<State>>,
     changed: AtomicBool,
     /// The deadline of the exchange a request's first byte started.
@@ -210,7 +206,6 @@ impl Shared {
     }
 }
 
-/// A reply as hyper writes it, whose end completes it.
 struct H1Reply {
     body: Body,
     shared: Arc<Shared>,
@@ -241,11 +236,9 @@ impl http_body::Body for H1Reply {
     }
 }
 
-/// The socket as hyper sees it.
 struct Io<S> {
     inner: S,
     state: State,
-    /// The keep-alive or exchange deadline.
     deadline: Pin<Box<Sleep>>,
     shared: Arc<Shared>,
     burst: Burst,
@@ -262,7 +255,6 @@ enum State {
 }
 
 impl<S> Io<S> {
-    /// The first request's exchange runs until `deadline`.
     fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
         *lock(&shared.started) = Some(deadline);
         let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
@@ -307,7 +299,6 @@ impl<S> Io<S> {
         self.state = state;
     }
 
-    /// Waits for the reply's lane too while the socket blocks.
     fn blocked(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
         if let State::Reply(bound) = &mut self.state {
             bound.blocked(cx)?;

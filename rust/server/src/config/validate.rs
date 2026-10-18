@@ -111,7 +111,6 @@ fn limits(settings: &Settings) -> Result<(Limits, Lifetimes), String> {
     Ok((limits, lifetimes))
 }
 
-/// Each listener's address and public origin settings as given.
 fn natives(settings: &Settings) -> [(ListenerKind, &str, &str); 4] {
     [
         (

@@ -25,7 +25,6 @@ const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
 const DEVICE_LIFETIME: Duration = Duration::from_hours(30 * 24);
-/// The longest password.
 pub const MAX_BYTES: usize = 1024;
 
 /// Unpadded standard base64 that tolerates nonzero trailing bits.
@@ -69,7 +68,6 @@ fn derive(password: &[u8], salt: &[u8]) -> Result<[u8; KEY_BYTES], &'static str>
     Ok(key)
 }
 
-/// A configured hash's salt and key.
 #[derive(Clone, Copy)]
 struct Hash {
     salt: [u8; SALT_BYTES],
@@ -77,7 +75,6 @@ struct Hash {
 }
 
 impl Hash {
-    /// Checks a PHC string, with the messages operators see.
     fn parse(encoded: &str) -> Result<Self, String> {
         let fields: Vec<_> = encoded.trim().split('$').collect();
         let [_, "argon2id", "v=19", params, salt, key] = fields[..] else {
@@ -115,7 +112,6 @@ impl Hash {
     }
 }
 
-/// What a password check found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
     Match,
@@ -124,7 +120,6 @@ pub(super) enum Verdict {
     Busy,
 }
 
-/// Password sign-in: the hash, the key of device cookies, two verifier slots and the attempt budgets.
 pub(super) struct Password {
     hash: Hash,
     /// Derived from the configured hash: devices survive restarts, and a new password forgets them.
@@ -144,7 +139,6 @@ fn device_key(encoded: &str) -> hmac::Key {
 }
 
 impl Password {
-    /// The sign-in `encoded`, the configured hash, allows.
     pub fn new(encoded: &str) -> Result<Self, String> {
         Ok(Self {
             hash: Hash::parse(encoded)?,
@@ -164,7 +158,6 @@ impl Password {
         })
     }
 
-    /// Checks `password` on a blocking thread that holds its slot.
     pub async fn verify(&self, password: Zeroizing<String>) -> Verdict {
         let Ok(permit) = self.slots.clone().try_acquire_owned() else {
             return Verdict::Busy;
@@ -234,7 +227,6 @@ mod tests {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
-    /// A case's bytes: `hex`, repeated `repeat` times.
     fn bytes(case: &serde_json::Value) -> Vec<u8> {
         let hex = case["hex"].as_str().unwrap();
         let once: Vec<u8> = (0..hex.len())

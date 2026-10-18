@@ -38,9 +38,7 @@ use tokio::{
     time::{MissedTickBehavior, interval, timeout},
 };
 
-/// A whole handshake has this long.
 const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
-/// How often a connection's send window follows its demand.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
 /// Connections closed once the shutdown drain ended have this long to send their close.
 const CLOSE_FLUSH: Duration = Duration::from_secs(1);
@@ -53,13 +51,11 @@ pub struct Listener {
     shard: Option<Shard>,
 }
 
-/// An accepted handshake and its share of its endpoint's connections.
 pub struct Arrival {
     incoming: noq::Incoming,
     occupant: Option<Occupant>,
 }
 
-/// What the endpoints' connections share.
 #[derive(Clone)]
 pub struct Http3 {
     app: Arc<App>,
@@ -73,7 +69,6 @@ impl Listener {
         self.endpoint.local_addr()
     }
 
-    /// The runtime the endpoint and its connections run on.
     pub fn runtime(&self) -> Handle {
         self.runtime.clone()
     }

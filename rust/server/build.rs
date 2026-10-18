@@ -22,7 +22,6 @@ fn embed() -> Result<(), String> {
         if configured.is_empty() {
             return Err("GM_ASSET_DIR must name a directory".into());
         }
-        // A relative directory resolves against this package.
         let root = graphite_meter_legal::inside(
             &graphite_meter_legal::checkout()?,
             Path::new(&configured),

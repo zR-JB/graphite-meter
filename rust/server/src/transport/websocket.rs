@@ -92,8 +92,7 @@ fn refusal(status: StatusCode, headers: &[(header::HeaderName, &'static str)]) -
     response
 }
 
-/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head, until `lane` ends or
-/// the peer leaves.
+/// Runs the bus over an upgraded `stream`, after the bytes the handshake `read` past its head.
 pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: S, read: Bytes, lane: Lane) {
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
@@ -131,7 +130,6 @@ fn close(ending: LaneEnding) -> (CloseCode, &'static str) {
     (CloseCode::from(ending.websocket_code()), ending.reason())
 }
 
-/// Answers each PING, text or binary, until the peer closes.
 async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     socket: &mut WebSocketStream<S>,
     lane: &Lane,

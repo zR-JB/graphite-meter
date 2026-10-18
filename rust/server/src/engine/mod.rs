@@ -35,12 +35,10 @@ struct Counts {
     transfers: AtomicUsize,
 }
 
-/// A running transfer, counted until dropped.
 #[derive(Debug)]
 pub struct Transfer(Arc<Counts>);
 
 impl Meter {
-    /// A meter that counts only when `enabled`.
     pub fn new(enabled: bool) -> Self {
         Self(enabled.then(Arc::default))
     }
@@ -149,7 +147,6 @@ impl Drop for UploadSink {
 
 /// After the first accepted chunk a `progress` record follows this often.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-/// A blank line follows this long after the feed's last line.
 const HEARTBEAT_AFTER: Duration = Duration::from_secs(1);
 
 /// One reader's lines (`api/upload.md#progress-records`), from `ready` to `complete` or an `error`, on any transport.
@@ -163,7 +160,6 @@ pub struct ProgressFeed {
     last_line: Instant,
 }
 
-/// What the aggregate's state calls for.
 enum Step {
     Wait,
     Line(Record),

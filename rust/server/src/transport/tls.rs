@@ -30,9 +30,7 @@ use tokio::{
 };
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
-/// Renewed files are read this often.
 const RENEWAL_CHECK: Duration = Duration::from_mins(1);
-/// A certificate expiring sooner is logged with a warning.
 const EXPIRY_WARNING: Duration = Duration::from_hours(30 * 24);
 
 /// Whether the buffer budget covers every QUIC connection's floor with a handshake of this many bytes.
@@ -45,7 +43,6 @@ pub struct Certificates {
     hosts: Vec<Host>,
     fits: Fits,
     current: RwLock<Arc<CertifiedKey>>,
-    /// The current chain's `handshake_bytes`.
     handshake: AtomicUsize,
 }
 
@@ -70,7 +67,6 @@ impl fmt::Debug for Certificates {
     }
 }
 
-/// The hosts of the public origins configured for TLS listeners.
 pub fn covered_hosts(config: &Config) -> Vec<Host> {
     let listeners = config.listeners.iter();
     let tls = listeners.filter(|listener| listener.kind.scheme() == Scheme::Https);
@@ -117,12 +113,10 @@ impl Certificates {
         Ok(changed)
     }
 
-    /// The bytes a QUIC handshake with the current chain holds.
     pub fn handshake_bytes(&self) -> usize {
         self.handshake.load(Ordering::Relaxed)
     }
 
-    /// Re-reads the pair every minute on a blocking thread.
     pub async fn watch(self: Arc<Self>) {
         let mut ticks = interval_at(Instant::now() + RENEWAL_CHECK, RENEWAL_CHECK);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -228,7 +222,6 @@ fn read(
     Ok((pair, not_after))
 }
 
-/// Both files read and paired before the leaf is checked.
 fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
     let read = |path: &Path| {
         std::fs::read(path).map_err(|error| could_not(&format!("read {}", path.display()), &error))
@@ -287,7 +280,6 @@ fn warn_readable(key: &Path) {
     }
 }
 
-/// A certificate's notBefore and notAfter, read from its DER.
 fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {
     let (0x30, certificate, _) = der(certificate)? else {
         return None;

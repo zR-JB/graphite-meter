@@ -24,7 +24,6 @@ async fn ping(socket: &mut WebSocketStream<TcpStream>, message: Message) -> u32 
     Pong::decode(pong.to_text().unwrap().as_bytes()).unwrap().id
 }
 
-/// Reads the close code and reason the server ends the bus with.
 async fn closed(socket: &mut WebSocketStream<TcpStream>) -> (u16, String) {
     match socket.next().await {
         Some(Ok(Message::Close(Some(frame)))) => (frame.code.into(), frame.reason.to_string()),

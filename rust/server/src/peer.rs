@@ -15,7 +15,6 @@ static REFUSALS: RateLimited = RateLimited::new(
     module_path!(),
 );
 
-/// Pairs a client's address with where it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Address {
     /// The socket peer is no trusted proxy.
@@ -51,7 +50,6 @@ impl Address {
         }
     }
 
-    /// Tells where a usable address was read, or `None` when it is ambiguous.
     pub fn source(self) -> Option<ClientIpSource> {
         match self {
             Self::Socket(_) => Some(ClientIpSource::Socket),
@@ -61,8 +59,7 @@ impl Address {
     }
 }
 
-/// Reads a trusted proxy's single `X-Real-IP`, which any `X-Forwarded-For` must end in, as the proxy appends its peer.
-/// `Forwarded` is ignored: no common proxy writes it and some pass a client's on.
+/// `X-Real-IP` must end any `X-Forwarded-For`; `Forwarded` is ignored, as some proxies pass a client's on.
 fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
     let mut real = headers.get_all(crate::headers::X_REAL_IP).iter();
     let (Some(value), None) = (real.next(), real.next()) else {
@@ -113,7 +110,6 @@ fn is_trusted(ip: IpAddr, trusted: &[IpNet]) -> bool {
     trusted.iter().any(|prefix| prefix.contains(&ip))
 }
 
-/// A peer is one request's client, with its address and, when signed in, its lease.
 #[derive(Debug, Clone)]
 pub struct Peer {
     address: Address,
@@ -156,7 +152,6 @@ impl Peer {
     }
 }
 
-/// A client's share is counted under one key of this kind.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ClientKey {
     V4(Ipv4Addr),
@@ -185,7 +180,6 @@ impl ClientKeys {
         }
     }
 
-    /// Keys a connection by its socket address, or by nothing for a trusted proxy.
     pub fn connection(socket: IpAddr, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
         if is_trusted(socket, trusted) {
@@ -271,8 +265,7 @@ mod tests {
         ] {
             assert_eq!(resolve("10.1.2.3", pairs), proxy, "{pairs:?}");
         }
-        // Traefik, Caddy and nginx's $proxy_add_x_forwarded_for append the peer they saw, which is the same address. A
-        // client's own Forwarded passes some proxies untouched, so it never counts.
+        // Traefik, Caddy and nginx append the peer they saw; a client's own Forwarded passes some proxies untouched.
         for pairs in [
             &[real, ("x-forwarded-for", "")][..],
             &[real, ("x-forwarded-for", "192.0.2.1, 2001:db8::1")],

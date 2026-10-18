@@ -10,14 +10,12 @@ use graphite_meter_http3::webtransport::{RecvStream, SendStream, Session};
 use graphite_meter_proto::upload::Record;
 use graphite_meter_server::limits::CONNECTION_CREDIT;
 
-/// A progress feed's records as they arrive.
 pub(super) struct Feed {
     stream: RecvStream,
     buffered: Vec<u8>,
 }
 
 impl Feed {
-    /// Accepts the next stream the server opens in `session`.
     pub(super) async fn of(session: &Session) -> Self {
         Self {
             stream: session.accept_uni().await.unwrap(),
@@ -44,7 +42,6 @@ impl Feed {
         }
     }
 
-    /// Reads the next record past `progress` ones.
     async fn after_progress(&mut self) -> Option<Record> {
         loop {
             match self.next().await {
@@ -62,14 +59,12 @@ pub(super) fn refused(record: Option<Record>) -> String {
     }
 }
 
-/// Opens a client stream that has sent `bytes` bytes.
 async fn lane(session: &Session, bytes: usize) -> SendStream {
     let mut stream = session.open_uni().await.unwrap();
     stream.write_all(&vec![1; bytes]).await.unwrap();
     stream
 }
 
-/// Waits until the upload's checkpoint counts `bytes`.
 async fn until_bytes(control: &Connection, id: &str, bytes: u64) {
     let reached = async {
         while control

@@ -18,7 +18,6 @@ use subtle::ConstantTimeEq;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-/// A login lasts this long from sign-in.
 pub const LOGIN_LIFETIME: Duration = Duration::from_hours(8);
 const MAX_LOGINS: usize = 1024;
 const MAX_PRINCIPAL_LOGINS: usize = 8;
@@ -60,22 +59,17 @@ macro_rules! secret {
 }
 
 secret! {
-    /// A login's session cookie.
     SessionToken,
-    /// A login's CSRF token, which the app sends back in a header.
     CsrfToken,
-    /// A grant's bearer token.
     GrantToken,
 }
 
-/// Who signs in, and how the login presents itself.
 pub struct Identity<'a> {
     pub principal: Principal,
     pub name: &'a str,
     pub provider: &'a str,
 }
 
-/// A new login's credentials, for its cookies.
 pub struct NewLogin {
     pub key: LoginKey,
     pub token: SessionToken,
@@ -83,24 +77,19 @@ pub struct NewLogin {
     pub expires: SystemTime,
 }
 
-/// Why a grant was not issued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrantRefusal {
-    /// The login ended.
     NoLogin,
     /// The login holds all its grants and none may be replaced.
     Full,
 }
 
-/// Why a ticket was not minted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MintRefusal {
     Ended,
-    /// The login holds all its outstanding tickets.
     Full,
 }
 
-/// What `/auth/session` reports of a login.
 pub(super) struct LoginView {
     pub name: String,
     pub provider: String,
@@ -141,7 +130,6 @@ pub(super) struct State {
     logins: HashMap<Digest, Login>,
     grants: HashMap<Digest, Grant>,
     tickets: HashMap<Digest, Ticket>,
-    /// Approvals by their challenge.
     pub(super) approvals: HashMap<Challenge, Approval>,
     sequence: u64,
 }
@@ -208,7 +196,6 @@ impl Store {
         true
     }
 
-    /// The lease of the login whose session cookie is `token`.
     pub fn cookie(&self, token: &str) -> Option<AuthLease> {
         let key = digest(token);
         let mut state = lock(&self.0);
@@ -244,7 +231,6 @@ impl Store {
         Some(login.lease(grant.login, holder, via, grant.revoked.clone()))
     }
 
-    /// Issues a grant as an approved challenge does.
     pub fn grant(
         &self,
         login: LoginKey,
@@ -386,7 +372,6 @@ impl State {
         Ok(token)
     }
 
-    /// How many grants `login` holds.
     pub(super) fn grants_of(&self, login: LoginKey) -> usize {
         self.grants
             .values()
@@ -394,7 +379,6 @@ impl State {
             .count()
     }
 
-    /// The logins of `principal`, oldest first.
     fn held(&self, principal: &Principal) -> Vec<Digest> {
         let held = self
             .logins
@@ -405,7 +389,6 @@ impl State {
         held.into_iter().map(|(_, key)| key).collect()
     }
 
-    /// The login keyed `key` while it lasts.
     pub(super) fn login(&self, key: &Digest) -> Option<&Login> {
         self.logins
             .get(key)
@@ -469,12 +452,10 @@ pub(super) fn digest(token: &str) -> Digest {
         .expect("SHA-256 digests are 32 bytes")
 }
 
-/// `N` random bytes in unpadded base64url.
 pub(super) fn random<const N: usize>() -> String {
     URL_SAFE_NO_PAD.encode(crate::random::<N>())
 }
 
-/// A new grant's bearer token and id.
 pub(super) struct Credentials {
     token: GrantToken,
     id: Arc<str>,

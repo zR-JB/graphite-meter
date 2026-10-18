@@ -35,7 +35,6 @@ pub enum Transport {
     Quic,
 }
 
-/// The quotas every listener shares.
 pub struct Quotas {
     limits: Limits,
     connections: Quota,
@@ -115,7 +114,6 @@ impl Quotas {
         self.connections.usage().active >= self.limits.connections.get() / 4
     }
 
-    /// A measurement handler.
     pub fn operation(&self, keys: &ClientKeys) -> Result<Hold, Refusal> {
         self.operations.acquire(keys, 1)
     }
@@ -136,7 +134,6 @@ impl Quotas {
         (self.operations.usage().active, self.limits.operations.get())
     }
 
-    /// The open connections.
     pub fn connections(&self) -> usize {
         self.connections.usage().active
     }

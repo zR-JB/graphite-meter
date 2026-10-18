@@ -13,7 +13,6 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{client_async, tungstenite::Message};
 
-/// Reads the reason a stream's reset carried, after the bytes before it.
 async fn reset(mut body: h2::RecvStream) -> Option<h2::Reason> {
     while let Some(chunk) = body.data().await {
         match chunk {

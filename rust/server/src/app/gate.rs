@@ -12,7 +12,6 @@ use crate::{
 use graphite_meter_proto::route::{Kind, Route};
 use http::{Method, Request, Response, StatusCode, Version, header};
 
-/// A request head, as parsed, holds at most this many bytes.
 pub(crate) const MAX_HEAD_BYTES: usize = 32 << 10;
 
 /// Dispatch a request to the route this endpoint mounts at its path, if any, as `peer`'s; or the gate's answer.
@@ -77,7 +76,6 @@ fn validate<B: http_body::Body>(request: &Request<B>) -> Option<Response<Body>> 
     Some(response)
 }
 
-/// The method, URI and header fields, each field with its separators.
 fn head_bytes<B>(request: &Request<B>) -> usize {
     let uri = request.uri();
     let uri_bytes = uri.scheme_str().map_or(0, |scheme| scheme.len() + 3)
@@ -106,7 +104,6 @@ fn host_refusal<B>(request: &Request<B>) -> Option<&'static str> {
     }
 }
 
-/// A byte a host name, an IP literal with its zone, or a port may hold.
 fn host_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!$%&'()*+,-.:;=[]_~".contains(&byte)
 }

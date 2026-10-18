@@ -17,29 +17,25 @@ use tokio::time::sleep;
 
 /// An establish-only download session closes after this long; its answer is the handshake.
 const VERIFY_LINGER: Duration = Duration::from_secs(5);
-/// A download datagram carries this much.
 const DATAGRAM_BYTES: usize = 1000;
 /// A datagram flood yields after this many sends, so sibling sessions run without a handoff per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
-/// A download stream writes at most this much at a time.
 const LANE_WRITE_BYTES: usize = 16 << 10;
 
-/// What an admitted session serves.
 pub enum Plan {
     /// The latency bus, one message per datagram.
     Ping,
-    /// `source`'s bytes in `form`.
-    Download { source: DownloadSource, form: Form },
+    Download {
+        source: DownloadSource,
+        form: Form,
+    },
     /// Client streams, and datagrams when asked, into an upload, with its progress feed on a server stream.
     Upload(Upload),
 }
 
-/// How a download sends its bytes.
 #[derive(Clone, Copy)]
 pub enum Form {
-    /// On this many server streams at once.
     Streams(usize),
-    /// Repeated in datagrams.
     Datagrams,
 }
 

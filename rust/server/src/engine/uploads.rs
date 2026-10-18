@@ -25,12 +25,10 @@ use tokio::{sync::Notify, time::Instant};
 const MAX_LIVE: usize = 1000;
 /// Aggregates one client's narrowest key holds; each wider key holds twice the one before it.
 const MAX_PER_CLIENT: usize = 32;
-/// An ID creates state for this long after it was minted.
 const ID_LIFETIME: Duration = Duration::from_mins(2);
 const ID_LIFETIME_NANOS: u64 = ID_LIFETIME.as_nanos() as u64;
 /// An aggregate without lanes is kept this long after its last lane joined or left, so it outlives its ID.
 const RETENTION: Duration = ID_LIFETIME;
-/// Retention is swept at most this often.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SWEEP_NANOS: u64 = SWEEP_INTERVAL.as_nanos() as u64;
 
@@ -39,7 +37,6 @@ const ID_PREFIX: &str = "gmu_";
 const SIGNED_BYTES: usize = 24;
 const ID_BYTES: usize = SIGNED_BYTES + 32;
 
-/// The upload store; clones share it.
 #[derive(Clone)]
 pub struct Uploads(Arc<Store>);
 
@@ -84,7 +81,6 @@ struct Entry {
     _capacity: Hold,
 }
 
-/// The store's monotonic clock in nanoseconds.
 #[derive(Clone, Copy)]
 struct Clock(Instant);
 
@@ -99,7 +95,6 @@ pub(super) struct Aggregate {
     owner: ClientKey,
     clock: Clock,
     bytes: AtomicU64,
-    /// The clock at the first accepted chunk.
     first: OnceLock<u64>,
     life: Mutex<Life>,
     /// Woken when a lane leaves, the upload finishes or expires, or a reader replaces another.
@@ -110,7 +105,6 @@ pub(super) struct Life {
     pub(super) lanes: usize,
     touched: Instant,
     pub(super) phase: Phase,
-    /// The number of the reader whose feed is current.
     pub(super) reader: u64,
 }
 
@@ -141,7 +135,6 @@ impl Aggregate {
         Counters::new(bytes, nanos)
     }
 
-    /// Finalized or expired: no lane joins any more.
     pub(super) fn ended(&self) -> bool {
         self.life().phase != Phase::Open
     }
@@ -211,7 +204,6 @@ impl Entries {
     }
 }
 
-/// How a request reaches an aggregate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reach {
     /// A data lane, which may create the aggregate.
@@ -265,7 +257,6 @@ impl Uploads {
         &self.0.meter
     }
 
-    /// Attaches the progress feed, replacing the previous reader's.
     pub fn subscribe(
         &self,
         id: &str,
@@ -401,7 +392,6 @@ impl Uploads {
         entries
     }
 
-    /// Whether this store minted `id` within its lifetime.
     fn valid(&self, UploadId(raw): &UploadId) -> bool {
         let (signed, tag) = raw.split_at(SIGNED_BYTES);
         if hmac::verify(&self.0.key, signed, tag).is_err() {

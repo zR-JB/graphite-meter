@@ -7,7 +7,6 @@ use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use std::{path::PathBuf, sync::Arc, time::SystemTime};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-/// A certificate and key in `scratch` from `identity`.
 fn files(scratch: &Scratch, identity: &Identity) -> (PathBuf, PathBuf) {
     let (cert, key) = (
         scratch.path().join("cert.pem"),
@@ -99,7 +98,6 @@ async fn startup_refuses_a_mismatched_pair_and_an_uncovered_public_host() {
     );
 }
 
-/// Whether a client trusting only `trusted`'s CA completes a handshake with `acceptor`.
 async fn handshake(acceptor: &TlsAcceptor, trusted: &Identity) -> bool {
     let (client, server) = tokio::io::duplex(64 << 10);
     let connector = TlsConnector::from(Arc::new(trusted.client(&[b"http/1.1"])));

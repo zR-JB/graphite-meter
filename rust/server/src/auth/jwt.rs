@@ -13,15 +13,12 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
-/// The longest token read.
 const MAX_TOKEN: usize = 16 * 1024;
-/// A key set keeps at most this many usable keys.
 const MAX_KEYS: usize = 64;
 /// A token may name a start this many seconds in the future.
 const SKEW: f64 = 300.0;
 
 graphite_meter_proto::table! {
-    /// The signature algorithms tokens may use, by their JOSE names.
     pub(super) enum Alg {
         name.0: &'static str,
     } {
@@ -103,7 +100,6 @@ impl Key {
     }
 }
 
-/// A provider's signing keys.
 #[derive(Default, Clone)]
 pub(super) struct Jwks(Vec<Key>);
 
@@ -161,14 +157,12 @@ impl Jwks {
     }
 }
 
-/// A big-endian integer without leading zeros.
 fn unsigned(mut bytes: Vec<u8>) -> Vec<u8> {
     let zeros = bytes.iter().take_while(|&&byte| byte == 0).count();
     bytes.drain(..zeros);
     bytes
 }
 
-/// A token whose signature verified, and the algorithm that signed it.
 pub(super) struct Verified {
     alg: Alg,
     pub payload: Vec<u8>,
@@ -211,7 +205,6 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Option<Verifi
     })
 }
 
-/// Whether claims name `issuer` and include `client` in their audience.
 pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
     #[derive(Deserialize)]
     struct Addressed {

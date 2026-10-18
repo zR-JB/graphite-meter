@@ -11,7 +11,6 @@ use graphite_meter_http3::{
 use http::{Request, Response};
 
 impl Connection {
-    /// The session `path` opens, or the answer refusing it.
     pub(super) async fn open_session(&self, path: &str) -> Result<Session, Response<()>> {
         let request = Request::get(format!("https://localhost{path}"))
             .body(())

@@ -32,7 +32,6 @@ use zeroize::Zeroizing;
 
 const MAX_TRANSACTIONS: usize = 16384;
 const MAX_CLIENT_TRANSACTIONS: usize = 8;
-/// A sign-in at the provider must return within this.
 const TRANSACTION_LIFETIME: Duration = Duration::from_mins(10);
 /// A callback's provider requests leave this long of its exchange's bound to answer.
 const ANSWER_MARGIN: Duration = Duration::from_secs(3);
@@ -42,13 +41,11 @@ const RETRY_MAX: Duration = Duration::from_mins(1);
 /// A sign-in sent to the provider, keyed by its state's digest.
 struct Transaction {
     provider: Arc<Provider>,
-    /// The digest of the browser's transaction cookie.
     browser: Digest,
     nonce: Zeroizing<String>,
     verifier: Zeroizing<String>,
     deadline: Instant,
     clients: Vec<ClientKey>,
-    /// The approval to show after sign-in.
     challenge: Option<Challenge>,
     /// The login the browser presented at the start, which the new one replaces.
     prior: Option<LoginKey>,
@@ -60,7 +57,6 @@ pub(super) struct Oidc {
     secret: Zeroizing<String>,
     client: Client,
     provider: OnceLock<Arc<Provider>>,
-    /// The transactions, and when their ceiling was last logged.
     transactions: Mutex<(HashMap<Digest, Transaction>, Option<Instant>)>,
     starts: Attempts,
     exchanges: Attempts,
@@ -85,12 +81,10 @@ impl Oidc {
         })
     }
 
-    /// The provider once discovered.
     pub fn provider(&self) -> Option<&Arc<Provider>> {
         self.provider.get()
     }
 
-    /// Discovers the provider unless it is known.
     pub async fn discover(&self) -> Result<(), String> {
         if self.provider.get().is_some() {
             return Ok(());
@@ -102,7 +96,6 @@ impl Oidc {
         Ok(())
     }
 
-    /// Discovers the provider, retrying with backoff until it answers.
     pub async fn retry(&self) {
         let mut delay = Duration::from_secs(1);
         while let Err(error) = self.discover().await {
@@ -426,7 +419,6 @@ async fn sign_in(
     Ok(answer)
 }
 
-/// An OIDC refusal, which the security log also counts as an OIDC failure.
 fn refused(auth: &Enabled, reason: Reason, challenge: Option<&Challenge>) -> Response<Body> {
     auth.security.count(Counter::OidcFailure);
     rejected(auth, reason, challenge)

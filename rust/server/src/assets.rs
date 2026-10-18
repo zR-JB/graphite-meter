@@ -13,7 +13,6 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use ring::digest::{SHA256, digest};
 use std::collections::HashMap;
 
-/// One embedded file.
 pub struct Asset {
     pub path: &'static str,
     pub content_type: &'static str,
@@ -23,14 +22,12 @@ pub struct Asset {
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
-/// A file as served.
 pub struct Served {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub bytes: Bytes,
 }
 
-/// An embedded file with its content tag.
 struct Tagged {
     asset: &'static Asset,
     tag: HeaderValue,
@@ -42,12 +39,10 @@ struct File {
     encoded: Vec<(&'static str, Tagged)>,
 }
 
-/// The browser app as one configuration serves it.
 pub struct Assets {
     files: HashMap<&'static str, File>,
     notices: &'static Notices,
     notice_tag: Option<HeaderValue>,
-    /// The index with the server's meta tags.
     index: Option<Bytes>,
     /// The policy's script and style sources, which admit the index's inline elements.
     inline: [String; 2],
@@ -130,8 +125,7 @@ impl Assets {
         }
     }
 
-    /// The file at `path`, a request path without its query, as `request` asks for it: `/` is the index, only exact
-    /// names match, and a client gets the precompressed copy it accepts or a 304 for the tag it holds.
+    /// `/` is the index and only exact names match; a client gets the precompressed copy it accepts, or a 304.
     pub fn get(&self, path: &str, request: &HeaderMap) -> Option<Served> {
         let text = |name: header::HeaderName| {
             request
@@ -158,8 +152,7 @@ impl Assets {
         } else {
             let name = path.strip_prefix('/')?;
             let file = self.files.get(name)?;
-            // The bundler names every file under assets/ by its content hash; the fonts are unmodified upstream
-            // faces, reused for a week before a reload checks their tag.
+            // Bundle names carry their content hash; the unmodified upstream fonts revalidate weekly.
             let cache = match name {
                 _ if name.starts_with("assets/") => "public, max-age=31536000, immutable",
                 _ if name.starts_with("fonts/") => "public, max-age=604800",
@@ -244,12 +237,10 @@ fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     Some(sha256(content))
 }
 
-/// `text`'s base64 SHA-256, as a CSP hash source names it.
 pub(crate) fn sha256(text: &str) -> String {
     STANDARD.encode(digest(&SHA256, text.as_bytes()))
 }
 
-/// The policy name the index's Trusted Types marker carries.
 fn trusted_types_policy(html: &[u8]) -> Option<&str> {
     let html = std::str::from_utf8(html).ok()?;
     let (_, marker) = html.split_once("<meta name=\"graphite-meter-trusted-types\" content=\"")?;

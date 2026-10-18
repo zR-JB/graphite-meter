@@ -19,17 +19,13 @@ use graphite_meter_proto::{lane::IDLE_BOUND, refusal::UploadRefusal, upload::Rec
 use std::{mem, pin::pin, time::Duration};
 use tokio::time::{sleep, timeout};
 
-/// A client stream's chunks taken in one read, recorded at once.
 const CHUNKS_PER_READ: usize = 32;
-/// A session refused at connect closes this long after its `error` record.
 const REFUSAL_LINGER: Duration = Duration::from_secs(2);
 
-/// An upload session's aggregate and how it is reached.
 pub struct Upload {
     pub uploads: Uploads,
     pub id: String,
     pub owner: Option<ClientKeys>,
-    /// Whether received datagrams count as upload bytes.
     pub datagrams: bool,
 }
 
@@ -117,7 +113,6 @@ async fn receive(mut stream: RecvStream, mut sink: UploadSink) {
     }
 }
 
-/// The feed's lines on a server stream, which finishes with the feed.
 async fn progress(session: &Session, mut feed: ProgressFeed) {
     let Ok(mut stream) = session.open_uni().await else {
         return;
@@ -130,7 +125,6 @@ async fn progress(session: &Session, mut feed: ProgressFeed) {
     let _ = stream.finish();
 }
 
-/// `refusal`'s `error` record on a server stream of its own.
 async fn refuse(session: &Session, refusal: UploadRefusal) {
     let Ok(mut stream) = session.open_uni().await else {
         return;

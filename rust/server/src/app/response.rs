@@ -1,5 +1,3 @@
-//! The one set of response constructors.
-
 use crate::{limits::Refusal, transport::body::Body};
 use bytes::Bytes;
 use graphite_meter_proto::refusal::{SIGN_IN_HEADER, UPLOAD_REFUSAL_HEADER, UploadRefusal};
@@ -22,7 +20,6 @@ pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     response
 }
 
-/// `status` with its reason phrase.
 pub fn status(status: StatusCode) -> Response<Body> {
     text(status, status.canonical_reason().unwrap_or_default())
 }
@@ -33,7 +30,6 @@ pub fn empty(status: StatusCode) -> Response<Body> {
     response
 }
 
-/// An HTML page.
 pub fn html(page: String) -> Response<Body> {
     let mut response = Response::new(Body::full(page));
     let html = HeaderValue::from_static("text/html; charset=utf-8");
@@ -98,7 +94,6 @@ pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> 
     response
 }
 
-/// A 405 naming the methods the route answers.
 pub fn method_not_allowed(allow: &str) -> Response<Body> {
     let mut response = status(StatusCode::METHOD_NOT_ALLOWED);
     let allow = HeaderValue::from_str(allow).expect("method names are header values");

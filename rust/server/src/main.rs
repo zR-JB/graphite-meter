@@ -70,7 +70,6 @@ fn legal() -> Result<u8, String> {
         .map_err(|error| format!("could not print the notices: {error}"))
 }
 
-/// Runs the server until SIGINT or SIGTERM.
 fn serve(config: Config) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -140,7 +139,6 @@ fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
 
 const LINE_BYTES: usize = password::MAX_BYTES + 2;
 
-/// Turns terminal echo off until dropped.
 #[cfg(unix)]
 struct Hidden {
     terminal: io::Stdin,

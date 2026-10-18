@@ -39,7 +39,6 @@ impl Exchange {
         self.0.deadline
     }
 
-    /// The transport keeps this of the exchange it hands to the app.
     pub fn watch(&self) -> Watch {
         self.0.clone()
     }
@@ -59,7 +58,7 @@ impl Exchange {
     }
 }
 
-/// A watch is a transport's view of an exchange. It shows the deadline and whether, and for whom, it was admitted.
+/// A transport's view of an exchange: its deadline and whom it admitted.
 #[derive(Debug, Clone)]
 pub struct Watch {
     deadline: Instant,

@@ -10,12 +10,9 @@ use std::{
 };
 use tokio::time::{Instant, Sleep, sleep, sleep_until};
 
-/// What a connection's driver does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    /// Send GOAWAY: no new requests.
     GoAway,
-    /// Close the connection.
     Close,
 }
 
@@ -28,16 +25,13 @@ pub enum Grace {
     Once,
 }
 
-/// What a connection's driver observes for its lifecycle at each poll.
 #[derive(Debug, Clone, Copy)]
 pub struct Activity {
     /// The receive window is raised for admitted uploads.
     pub credited: bool,
-    /// Request streams are live.
     pub streams: bool,
 }
 
-/// One connection's lifecycle, which its driver polls with what it observes.
 #[derive(Debug)]
 pub struct Lifecycle {
     work: Work,
@@ -47,9 +41,7 @@ pub struct Lifecycle {
     idle_since: Option<Instant>,
     /// When a credited connection without admitted work goes away.
     stale: Option<Pin<Box<Sleep>>>,
-    /// When a connection without streams goes away.
     quiet: Option<Pin<Box<Sleep>>>,
-    /// When a connection that went away closes.
     closing: Option<Pin<Box<Sleep>>>,
 }
 
@@ -88,8 +80,7 @@ impl Lifecycle {
         }
     }
 
-    /// Restarts the stale bound when the admitted work's idle period changes or the connection gets credit while
-    /// idle, and the grace when work that outlived it ends on a connection with fresh graces.
+    /// Restarts the stale bound on a new idle period or on credit while idle, and the grace when outliving work ends.
     fn observe(&mut self, credited: bool) {
         let since = self.work.idle_since();
         if since != self.idle_since {
@@ -106,7 +97,6 @@ impl Lifecycle {
         }
     }
 
-    /// Whether the connection has gone `CONNECTION_IDLE` without a stream.
     fn quiet(&mut self, cx: &mut Context<'_>, streams: bool) -> bool {
         if streams {
             self.quiet = None;

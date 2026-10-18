@@ -6,7 +6,6 @@ use std::sync::{
     atomic::{self, AtomicUsize, Ordering},
 };
 
-/// One shared byte limit; clones share it.
 #[derive(Debug, Clone)]
 pub struct Budget(Arc<Shared>);
 
@@ -20,7 +19,6 @@ struct Shared {
     held_back: Latch,
 }
 
-/// How full the budget is, past its reservations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pressure {
     Normal,
@@ -30,7 +28,6 @@ pub enum Pressure {
     HoldBack,
 }
 
-/// A snapshot for tests and logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
     pub limit: usize,
@@ -48,7 +45,6 @@ impl Budget {
         }))
     }
 
-    /// Charges `bytes` until the lease drops, if they fit.
     pub fn lease(&self, bytes: usize) -> Option<Lease> {
         let charged = self.0.charge(bytes);
         charged.then(|| Lease {
@@ -115,12 +111,10 @@ impl Budget {
         }
     }
 
-    /// The budget as noq charges it.
     pub fn noq(&self) -> Arc<dyn noq::SharedBudget> {
         self.0.clone()
     }
 
-    /// The budget as the h2 fork charges it.
     pub fn h2(&self) -> Arc<dyn h2::SharedBudget> {
         self.0.clone()
     }
@@ -168,13 +162,11 @@ macro_rules! shared_budget {
 
 shared_budget!(noq, h2);
 
-/// Bytes charged until dropped.
 #[derive(Debug)]
 #[must_use]
 pub struct Lease {
     budget: Budget,
     bytes: usize,
-    /// Endpoint buffers from `reserve`.
     reserved: bool,
 }
 

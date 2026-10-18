@@ -1,5 +1,4 @@
-//! Log lines with a time, level, topic and source, and limits for lines peers or load can repeat.
-//! Messages read `what happened: detail; what next`, lowercase, no full stop, and keep one word per meaning.
+//! Log lines read `what happened: detail; what next`: lowercase, no full stop, one word per meaning.
 
 use jiff::{Timestamp, tz::TimeZone};
 use std::{
@@ -39,7 +38,6 @@ impl Level {
         }
     }
 
-    /// The label's and the message's terminal colors.
     fn colors(self) -> (&'static str, &'static str) {
         match self {
             Self::Debug => ("34", "2"),
@@ -73,7 +71,6 @@ static STYLE: LazyLock<Style> = LazyLock::new(|| {
 
 /// Lines waiting for the writer thread; past this many a line is dropped and counted, so a stalled pipe never blocks.
 const QUEUE: usize = 1024;
-/// How long `flush` waits for the queue to drain.
 const FLUSH_WAIT: Duration = Duration::from_secs(2);
 
 enum Entry {
@@ -272,7 +269,6 @@ const INTERVAL: Duration = Duration::from_mins(1);
 pub struct RateLimited {
     level: Level,
     topic: &'static str,
-    /// What the held-back lines report, such as `peer connection failures`.
     what: &'static str,
     module: &'static str,
     state: Mutex<Pace>,

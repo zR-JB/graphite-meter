@@ -30,10 +30,8 @@ pub const ENGINE_VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
     None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
 };
 
-/// What the command line asked for.
 #[derive(Debug)]
 pub enum Loaded {
-    /// `-h` or `-help`: the usage went to the usage writer.
     Help,
     Config(Box<Config>),
 }
@@ -54,7 +52,6 @@ pub fn load(
     }
 }
 
-/// A validated configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// The enabled listeners, in `ListenerKind` order.
@@ -72,7 +69,6 @@ pub struct Config {
     /// The published catalog: `self` first, carrying the server's name and location.
     pub catalog: ServerCatalog,
     pub outbound: Outbound,
-    /// The zone log lines show, from `TZ`; `None` is UTC.
     pub log_zone: Option<TimeZone>,
 }
 
@@ -120,7 +116,6 @@ impl Config {
 }
 
 graphite_meter_proto::table! {
-    /// A native listener, in discovery's order.
     #[derive(PartialOrd, Ord)]
     pub enum ListenerKind {
         /// Its name in `GM_ADVERTISED_NATIVE_ENDPOINTS`.
@@ -137,14 +132,12 @@ graphite_meter_proto::table! {
     }
 }
 
-/// An enabled listener.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listener {
     pub kind: ListenerKind,
     /// With its bound port once bound; HTTP/3 binds it for UDP and bootstrap TCP.
     pub address: ListenAddress,
     pub public_origin: Option<Origin>,
-    /// Discovery offers it as a native target.
     pub advertised: bool,
 }
 
@@ -212,16 +205,12 @@ pub struct Limits {
 pub struct Lifetimes {
     /// A request, WebSocket bus or `/wt/ping` session.
     pub operation: Duration,
-    /// A WebTransport transfer session.
     pub session: Duration,
-    /// The longest stage clients may plan.
     pub stage: Duration,
 }
 
-/// Authentication settings, present when a mode is enabled.
 #[derive(Debug, Clone)]
 pub struct Auth {
-    /// The canonical HTTPS origin of the UI.
     pub public_origin: Origin,
     pub methods: Methods,
     /// The OIDC provider's name, which the sign-in page names in every mode.
@@ -261,7 +250,6 @@ impl Groups {
     }
 }
 
-/// A secret given inline in the environment or as a file to read.
 #[derive(Clone)]
 pub enum Secret {
     Inline(Zeroizing<String>),

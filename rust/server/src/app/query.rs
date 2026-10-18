@@ -13,7 +13,6 @@ pub fn get(query: Option<&str>, name: &str) -> Option<String> {
     values(query, name).next()
 }
 
-/// Every value of `name` in order; pairs holding `;` or a bad escape are left out.
 pub fn values<'a>(query: Option<&'a str>, name: &'a str) -> impl Iterator<Item = String> + 'a {
     let pairs = query
         .into_iter()
@@ -37,7 +36,6 @@ pub fn form(body: &str) -> Option<Vec<(String, String)>> {
     Some(fields)
 }
 
-/// `pairs` URL-encoded in their order.
 pub fn encode(pairs: &[(&str, &str)]) -> String {
     let pair = |(name, value): &(&str, &str)| format!("{}={}", escape(name), escape(value));
     pairs.iter().map(pair).collect::<Vec<_>>().join("&")

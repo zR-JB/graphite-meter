@@ -9,9 +9,7 @@ use http::{HeaderMap, HeaderValue, Response, Version, header};
 pub enum Access {
     /// Anyone, without credentials: authentication is off.
     Public,
-    /// The UI origin, with its session cookie.
     Cookie(HeaderValue),
-    /// An approved browser origin, with a bearer grant.
     Bearer(HeaderValue),
 }
 
@@ -56,7 +54,6 @@ impl Access {
         self.apply_preflight(headers, "GET, POST, DELETE, OPTIONS", allowed);
     }
 
-    /// The headers of a preflight's answer granting `methods` with `allowed` request headers.
     pub fn apply_preflight(
         &self,
         headers: &mut HeaderMap,

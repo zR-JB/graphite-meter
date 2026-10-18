@@ -5,7 +5,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Holds a file to embed.
 pub struct File {
     pub name: String,
     pub content_type: &'static str,

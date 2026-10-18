@@ -266,7 +266,6 @@ fn origins_follow_their_listener_schemes_and_roles() {
     );
 }
 
-/// A password deployment behind TLS on `meter.example`.
 fn password_auth() -> Vec<(&'static str, &'static str)> {
     with_tls(&[
         ("GM_AUTH_MODE", "password"),
@@ -304,7 +303,6 @@ fn authentication_settings_are_complete_and_canonical() {
     );
 }
 
-/// The environment with later entries replacing earlier ones of the same name.
 fn dedupe<'a>(env: Vec<(&'a str, &'a str)>) -> Vec<(&'a str, &'a str)> {
     let mut kept: Vec<(&str, &str)> = Vec::new();
     for (name, value) in env {

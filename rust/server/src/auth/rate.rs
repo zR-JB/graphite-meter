@@ -13,7 +13,6 @@ use std::{
 use tokio::time::Instant;
 
 const WINDOW: Duration = Duration::from_mins(1);
-/// An address table tracks at most this many keys.
 const MAX_KEYS: usize = 2048;
 
 /// Counts attempts per client, `limit` for its narrowest key and twice that for each wider one.
@@ -136,7 +135,6 @@ fn expire(times: &mut VecDeque<Instant>, now: Instant) {
     {}
 }
 
-/// Logs that the ceiling `name` engaged, at most once a minute.
 pub(super) fn engage(logged: &mut Option<Instant>, now: Instant, name: fmt::Arguments<'_>) {
     if logged.is_some_and(|at| now.duration_since(at) < WINDOW) {
         return;

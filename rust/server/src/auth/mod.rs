@@ -49,15 +49,12 @@ pub(crate) type Decision = Result<Option<AuthLease>, Response<Body>>;
 /// The configured authentication; without it every request is allowed, anonymously.
 pub struct Auth(Option<Box<Enabled>>);
 
-/// Sign-in at the public origin: policy, login store, password and OIDC sign-in, approval budget, security log.
 pub(crate) struct Enabled {
     policy: Policy,
     store: Store,
     sign_in: SignIn,
-    /// Approval pages opened per client address.
     browser_approvals: Attempts,
     security: Security,
-    /// The OIDC provider's name, which the sign-in page shows.
     provider: String,
 }
 
@@ -160,12 +157,10 @@ impl Auth {
         self.0.is_some()
     }
 
-    /// The store of logins, grants and tickets, when enabled.
     pub fn store(&self) -> Option<&Store> {
         self.0.as_ref().map(|auth| &auth.store)
     }
 
-    /// The security log's counts, when enabled.
     pub fn security(&self) -> Option<&Security> {
         self.0.as_ref().map(|auth| &auth.security)
     }
@@ -197,7 +192,6 @@ impl Auth {
         Outcome::Response(response)
     }
 
-    /// Who may read the answer to a request for `route` from another origin.
     pub(crate) fn access(
         &self,
         route: Option<Route>,
@@ -211,7 +205,6 @@ impl Auth {
         }
     }
 
-    /// The answer to a socket-ticket mint for routes of `kind`.
     pub(crate) fn ticket<B>(
         &self,
         request: &Request<B>,
@@ -225,7 +218,6 @@ impl Auth {
     }
 }
 
-/// How people sign in, as configured: the password, OIDC or both.
 struct SignIn {
     password: Option<Password>,
     oidc: Option<Box<Oidc>>,
@@ -236,12 +228,10 @@ struct SignIn {
 pub struct Principal(Arc<str>);
 
 impl Principal {
-    /// The principal every password login shares.
     pub fn operator() -> Self {
         Self("local-operator".into())
     }
 
-    /// The principal of an OIDC subject.
     pub fn oidc(subject: &str) -> Self {
         Self(format!("oidc:{subject}").into())
     }
@@ -254,10 +244,8 @@ pub enum Holder {
     Grant(Arc<str>),
 }
 
-/// How a lease's credential was presented.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Via {
-    /// The login's session cookie.
     Cookie,
     /// A grant's bearer token or a socket ticket, with the browser origin a browser grant serves.
     Bearer(Option<BrowserOrigin>),
@@ -279,7 +267,6 @@ impl AuthLease {
         &self.via
     }
 
-    /// The browser origin a browser grant serves.
     pub fn browser(&self) -> Option<&BrowserOrigin> {
         match &self.via {
             Via::Bearer(browser) => browser.as_ref(),
@@ -296,7 +283,6 @@ impl AuthLease {
         ClientKeys::Auth(self.holder.clone(), self.principal.clone())
     }
 
-    /// Whether it was revoked, or expired by `now`.
     pub fn is_ended(&self, now: Instant) -> bool {
         self.revoked.is_cancelled() || now >= self.expires
     }
@@ -311,7 +297,6 @@ impl AuthLease {
 }
 
 graphite_meter_proto::table! {
-    /// A counted outcome, at its place in the minute line.
     enum Counter {
         name.0: &'static str,
     } {
@@ -328,7 +313,6 @@ graphite_meter_proto::table! {
     }
 }
 
-/// How many counters the minute line reports.
 pub const COUNTERS: usize = Counter::ALL.len();
 
 graphite_meter_proto::table! {
@@ -394,7 +378,6 @@ impl Security {
         }
     }
 
-    /// Logs a refused sign-in and counts the refusals the minute line reports.
     fn refused(&self, reason: Reason) {
         self.debug(format_args!("sign-in refused: reason={}", reason.code()));
         if let Some(counter) = reason.counter() {

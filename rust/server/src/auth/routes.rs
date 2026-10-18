@@ -33,12 +33,9 @@ use subtle::ConstantTimeEq;
 use tokio::time::Instant;
 use zeroize::Zeroizing;
 
-/// A controller route reads at most this many body bytes.
 const FORM_BYTES: usize = 4096;
-/// A sign-in form's token lasts this long.
 const FORM_LIFETIME: Duration = Duration::from_mins(10);
 
-/// A form's fields in order, zeroized when dropped.
 pub(super) type Form = Zeroizing<Vec<(String, String)>>;
 
 /// Answers a controller route the policy let through; a path no route claims is not found.
@@ -258,7 +255,6 @@ pub(super) fn rejected(
     })
 }
 
-/// The signed-in login's name, provider, expiry and CSRF token.
 fn session(auth: &Enabled, lease: Option<&AuthLease>) -> Response<Body> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -304,13 +300,11 @@ fn sign_out(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>) -> Re
     answer
 }
 
-/// A 303 answering a form post.
 pub(super) fn redirect(target: &str) -> Response<Body> {
     let target = HeaderValue::from_str(target).expect("targets are ASCII");
     response::redirect(&Method::POST, StatusCode::SEE_OTHER, &target)
 }
 
-/// Sets `cookie` to `value` until `expires`.
 pub(super) fn set_cookie(
     answer: &mut Response<Body>,
     cookie: Cookie,

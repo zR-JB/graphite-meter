@@ -25,7 +25,6 @@ use serde_json::Value;
 use std::{convert::Infallible, ffi::OsString};
 use tokio_util::sync::CancellationToken;
 
-/// Enables TLS listeners on every native address, so each endpoint exists.
 const ALL_LISTENERS: [(&str, &str); 5] = [
     ("GM_TLS_CERT", "/cert.pem"),
     ("GM_TLS_KEY", "/key.pem"),
@@ -118,7 +117,6 @@ async fn json(response: Response<Body>) -> Value {
     serde_json::from_str(&text(response).await).unwrap()
 }
 
-/// Reads the handlers `/probe` reports in use.
 async fn active(app: &App) -> u64 {
     let probe = json(send(app, Endpoint::H1, empty(request("GET", "/probe"))).await).await;
     probe["load"]["active"].as_u64().unwrap()

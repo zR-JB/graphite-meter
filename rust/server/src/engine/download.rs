@@ -55,7 +55,6 @@ pub struct DownloadSource {
 }
 
 impl DownloadSource {
-    /// Takes the next chunk of at most `max` bytes, or `None` once the payload is sent.
     pub fn next(&mut self, max: usize) -> Option<Bytes> {
         let chunk = self.peek(max)?;
         self.remaining -= chunk.len() as u64;
@@ -63,7 +62,6 @@ impl DownloadSource {
         Some(chunk)
     }
 
-    /// Shows the next chunk of at most `max` bytes without taking it.
     pub fn peek(&self, max: usize) -> Option<Bytes> {
         let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
         let length = remaining.min(max).min(self.block.len());

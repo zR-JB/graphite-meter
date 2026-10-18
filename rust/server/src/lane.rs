@@ -22,7 +22,6 @@ pub struct Lane(Arc<State>);
 struct State {
     start: Instant,
     deadline: Instant,
-    /// Nanoseconds from `start` to the peer's last movement.
     moved: AtomicU64,
     ending: OnceLock<LaneEnding>,
     decided: CancellationToken,
@@ -165,7 +164,6 @@ impl Work {
     }
 }
 
-/// One piece of admitted work, ended when dropped.
 #[derive(Debug)]
 #[must_use = "dropping it ends the work"]
 pub struct WorkGuard(Work);
@@ -236,7 +234,6 @@ mod tests {
 
     const LONG: Duration = Duration::from_secs(3600);
 
-    /// The lane's ending and how long after admission it came.
     async fn ending(lane: &Lane) -> (LaneEnding, Duration) {
         let start = Instant::now();
         let ending = lane.ended().await;

@@ -49,7 +49,6 @@ pub fn floor_bytes(handshake: usize) -> usize {
     handshake.saturating_add(http3::CONNECTION_BYTES)
 }
 
-/// The floor noq itself charges each connection with these limits.
 pub fn noq_floor(limits: &Limits) -> Result<usize, String> {
     transport(limits).map(|transport| transport.connection_floor_bytes())
 }
@@ -92,7 +91,6 @@ pub(super) struct ConnectionBudget {
 
 #[derive(Debug, Default)]
 struct Held {
-    /// The credit and the share of the client whose upload reserved it.
     credit: Option<(Lease, Hold)>,
     undrawn: usize,
     overdraft: usize,
@@ -151,9 +149,7 @@ impl noq::SharedBudget for ConnectionBudget {
     }
 }
 
-/// The least growth of a send window worth a change.
 const SEND_WINDOW_STEP: u64 = 256 << 10;
-/// A send window shrinks after its demand stayed low this long.
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 
 /// The receive window: 64 KiB, then once an upload reads autotuned 768 KiB to 48 MiB on its client's credit.
@@ -204,7 +200,6 @@ impl ReceiveWindow for QuicWindow {
 /// The send window: 2 MiB, toward two BDPs up to 16 MiB with headroom, back to 2 MiB after 1 s of low demand.
 pub(super) struct SendWindow {
     limit: u64,
-    /// When the path's sent bytes were last read, and their count.
     last: Option<(Instant, u64)>,
     low_since: Option<Instant>,
 }
@@ -220,7 +215,6 @@ impl Default for SendWindow {
 }
 
 impl SendWindow {
-    /// Follows the connection's demand while requests run.
     pub(super) fn tune(&mut self, quic: &noq::Connection, busy: bool, budget: &Budget) {
         if !busy {
             return self.release(quic);

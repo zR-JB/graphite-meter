@@ -25,7 +25,6 @@ pub(super) struct TrustedProxies(pub Vec<IpNet>);
 trait Value {
     fn set(&mut self, text: &str) -> Result<(), String>;
 
-    /// The value as a usage default, empty for none.
     fn show(&self) -> String;
 }
 
@@ -171,7 +170,6 @@ fn prefix(cidr: &str) -> Result<IpNet, String> {
         .map_err(|_| format!("prefix length {bits} is too long for the address"))
 }
 
-/// Comma-separated entries, trimmed, empty ones dropped.
 fn split_list(text: &str) -> Vec<String> {
     text.split(',')
         .map(str::trim)
@@ -180,13 +178,11 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// How much longer than the stage limit an unset operation lifetime runs.
 const STAGE_MARGIN: Duration = Duration::from_mins(1);
 
 /// Declares `Settings`, its defaults and `SETTINGS` from one row per setting; an environment-only secret has no flag.
 macro_rules! settings {
     ($($field:ident: $type:ty = $default:expr, $env:literal, $flag:literal, $placeholder:expr, $usage:literal;)+) => {
-        /// Settings as given, before validation.
         pub(super) struct Settings {
             $(pub $field: $type,)+
             pub catalog: ServerCatalog,
@@ -344,7 +340,6 @@ impl Settings {
         }
     }
 
-    /// Whether any authentication setting but the mode was given.
     pub fn auth_given(&self) -> bool {
         self.given
             .iter()

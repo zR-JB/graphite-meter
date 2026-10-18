@@ -17,7 +17,6 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const RETRY_FIRST: Duration = Duration::from_millis(5);
 const RETRY_LAST: Duration = Duration::from_secs(1);
 
-/// Accepts connections from one socket.
 pub trait Listen {
     type Connection: Send + 'static;
 
@@ -139,8 +138,7 @@ mod tests {
         task::JoinHandle,
     };
 
-    /// Starts a loop on a fresh local listener. Its connections run `serve` under shares of `quota` on pinned runtimes
-    /// beside a multi-thread test runtime.
+    /// A loop on a fresh local listener, its connections running `serve` under `quota` on pinned runtimes.
     async fn start<F>(
         quota: Quota,
         serve: impl Fn(TcpStream) -> F + Send + Sync + 'static,
@@ -252,7 +250,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    /// Fails `failures` accepts and records when each was tried.
     struct Failing {
         failures: usize,
         tried: Arc<std::sync::Mutex<Vec<tokio::time::Instant>>>,
@@ -275,7 +272,6 @@ mod tests {
         }
     }
 
-    /// Answers a flood of attempts itself, each ready at once.
     struct Flooded;
 
     impl Listen for Flooded {

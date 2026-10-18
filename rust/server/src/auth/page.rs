@@ -12,7 +12,6 @@ const PENDING: &str = include_str!("assets/pending.js");
 const ICON: &str = include_str!("assets/icon.html");
 const BRAND: &str = include_str!("assets/brand.html");
 
-/// The sign-in page.
 pub(super) struct Login<'a> {
     pub csrf: &'a str,
     pub provider: &'a str,
@@ -116,7 +115,6 @@ impl Login<'_> {
     }
 }
 
-/// The locked meter above the sign-in form.
 const FACE: &str = concat!(
     r#"<div class="face" aria-hidden="true"><svg viewBox="0 0 120 104"><path class="ticks" d="M23.94 96.06L21.11 98.89M9.98 69.95L6.06 70.73M12.88 40.48L9.19 38.95M31.67 17.60L29.44 14.27M60 9L60 5M88.33 17.60L90.56 14.27M107.12 40.48L110.81 38.95M110.02 69.95L113.94 70.73M96.06 96.06L98.89 98.89"/><path class="track" d="M28.89 91.11A44 44 0 1 1 91.11 91.11"/><path class="sweep" d="M28.89 91.11A44 44 0 1 1 91.11 91.11" pathLength="1"/><g class="needle"><circle cx="28.89" cy="91.11" r="5"/></g><path class="lock" d="M54 55v-5a6 6 0 0 1 12 0v5M51.5 55h17v12h-17z"/></svg></div>"#,
     r#"<h1>Sign in</h1><p>This measurement server is private.</p><p class="host" data-host></p>"#,
@@ -128,7 +126,6 @@ pub(super) enum Cli<'a> {
         code: &'a str,
         challenge: &'a str,
         csrf: &'a str,
-        /// The browser origin asking, or none for a terminal.
         browser_origin: Option<&'a str>,
     },
     Refused(Refused),
@@ -206,7 +203,6 @@ impl Cli<'_> {
     }
 }
 
-/// An approval's confirmation, for a browser or a terminal.
 pub(super) fn cli_done(browser: bool) -> String {
     let (title, text) = match browser {
         true => (
@@ -256,8 +252,7 @@ fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String
     )
 }
 
-/// The headers of every authentication page and refusal, with HSTS once the request is known to be secure; forms
-/// may also post to `forms`, the OIDC provider's origin.
+/// Every authentication page and refusal; HSTS once secure, and forms may post to the provider's `forms` origin.
 pub(super) fn protect(headers: &mut HeaderMap, secure: bool, forms: Option<&str>) {
     static HASHES: LazyLock<[String; 3]> = LazyLock::new(|| [STYLES, THEME, PENDING].map(sha256));
     let [styles, theme, pending] = &*HASHES;

@@ -11,7 +11,6 @@ use http_body_util::Full;
 use std::time::Duration;
 
 const NONCE: &str = "a-long-unpredictable-sign-in-nonce";
-/// The operator's password as a form encodes it, and another one.
 fn right() -> String {
     super::auth::VECTORS["password"]
         .as_str()
@@ -23,7 +22,6 @@ fn wrong() -> String {
     right().chars().rev().collect()
 }
 
-/// Posts a password sign-in from `peer` with the form token `csrf`, the cookies `cookies` and further form `fields`.
 async fn post(app: &App, peer: &str, csrf: &str, cookies: &str, fields: &str) -> Response<Body> {
     let request = public("POST", "/auth/password")
         .header("origin", PUBLIC)

@@ -58,7 +58,6 @@ fn listening(env: &[(&str, &str)]) -> (std::process::Child, String, impl Fn() ->
     (child, place.strip_suffix("/tcp").unwrap().to_owned(), next)
 }
 
-/// Stops `child` with SIGTERM and expects exit 0.
 #[cfg(unix)]
 fn terminate(mut child: std::process::Child) {
     let killed = Command::new("kill")

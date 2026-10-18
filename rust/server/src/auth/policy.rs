@@ -19,7 +19,6 @@ use http::{
     HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header, uri::Authority,
 };
 
-/// Fields a request may carry at most once.
 const SINGLE: [HeaderName; 6] = [
     header::AUTHORIZATION,
     header::ORIGIN,
@@ -29,7 +28,6 @@ const SINGLE: [HeaderName; 6] = [
     header::ACCESS_CONTROL_REQUEST_HEADERS,
 ];
 
-/// The sign-in route `method` and `path` name exactly.
 pub(super) fn auth_route(method: &str, path: &str) -> Option<AuthRoute> {
     AuthRoute::find_by(AuthRoute::path, path).filter(|route| route.method() == method)
 }
@@ -40,42 +38,34 @@ pub(super) fn controls(path: &str) -> bool {
 }
 
 graphite_meter_proto::table! {
-    /// A cookie the controller sets: host-only and secure, HttpOnly unless scripts read it, strictly same-site unless
-    /// a cross-site redirect must carry it.
+    /// Host-only and secure; HttpOnly unless scripts read it, Strict unless a cross-site redirect must carry it.
     pub(super) enum Cookie {
         name.0: &'static str,
         script.1: bool,
         same_site.2: &'static str,
     } {
         Session => ("__Host-gm_session", false, "Strict"),
-        /// A sign-in form's token.
         Login => ("__Host-gm_login", false, "Strict"),
         /// The login's CSRF token, which the app sends back in a header.
         Csrf => ("__Host-gm_csrf", true, "Strict"),
-        /// A browser's password attempt budget.
         Device => ("__Host-gm_device", false, "Strict"),
         /// The OIDC transaction, carried on the provider's cross-site redirect back.
         Transaction => ("__Host-gm_oidc", false, "Lax"),
     }
 }
 
-/// How far a request's connection is trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Trust {
     /// TLS naming another hostname than the public origin's.
     Foreign,
     Insecure,
-    /// HTTPS on the public hostname.
     Secure,
-    /// HTTPS at the public origin itself.
     Canonical,
 }
 
-/// The rules of an enabled authentication.
 #[derive(Debug)]
 pub struct Policy {
     pub(super) public: Origin,
-    /// The public origin as browsers send it in `Origin`.
     pub(super) origin: HeaderValue,
     login: HeaderValue,
     password: bool,
@@ -426,7 +416,6 @@ fn requested(headers: &HeaderMap, allowed: &[&str]) -> Option<Vec<String>> {
     names.map(|name| known(&name).then_some(name)).collect()
 }
 
-/// The lease of the login whose session cookie `headers` carry.
 pub(super) fn cookie_lease(store: &Store, headers: &HeaderMap) -> Option<AuthLease> {
     store.cookie(cookie(headers, Cookie::Session)?)
 }

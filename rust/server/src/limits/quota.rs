@@ -12,7 +12,6 @@ use std::{
 };
 use tokio::sync::Notify;
 
-/// A quota is a limit clones share.
 #[derive(Clone)]
 pub struct Quota(Arc<Inner>);
 
@@ -23,7 +22,6 @@ struct Inner {
     /// Many clients share this key, which bounds nothing.
     exempt: Option<ClientKey>,
     state: Mutex<State>,
-    /// The last released hold notifies this.
     idle: Notify,
 }
 
@@ -43,18 +41,15 @@ struct State {
 }
 
 graphite_meter_proto::table! {
-    /// A quota refused for one of these reasons.
     pub enum Refusal {
         /// `429` for a full client share, `503` for a full total; either answer carries `Retry-After: 1`.
         status.0: http::StatusCode,
     } {
-        /// A client's share is full.
         Client => (http::StatusCode::TOO_MANY_REQUESTS,),
         Total => (http::StatusCode::SERVICE_UNAVAILABLE,),
     }
 }
 
-/// The admission log reads these counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QuotaUsage {
     pub active: usize,
@@ -126,7 +121,6 @@ impl Quota {
         })
     }
 
-    /// Tells whether any of the keys holds part of this quota.
     pub fn holds_any(&self, keys: &ClientKeys) -> bool {
         let state = lock(&self.0.state);
         self.0.keys(keys).any(|key| state.held.contains_key(&key))
@@ -175,7 +169,6 @@ pub struct Hold {
     quota: Quota,
     keys: ClientKeys,
     weight: usize,
-    /// This hold releases the linked one with it.
     linked: Option<Box<Hold>>,
 }
 
@@ -197,7 +190,6 @@ impl fmt::Debug for Hold {
 }
 
 impl Hold {
-    /// Joins into one hold releasing both.
     pub fn join(mut self, other: Hold) -> Hold {
         self.linked = Some(Box::new(match self.linked.take() {
             Some(linked) => linked.join(other),

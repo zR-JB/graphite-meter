@@ -36,7 +36,6 @@ async fn approve(app: &App, path: &str, login: &NewLogin, challenge: &str) -> Re
     tls(app, request).await
 }
 
-/// Posts a token exchange at `path` for `verifier`, from `origin` when given.
 async fn exchange(app: &App, path: &str, origin: Option<&str>, document: &str) -> Response<Body> {
     let mut request = public("POST", path).header("content-type", "application/json");
     if let Some(origin) = origin {
@@ -165,8 +164,7 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     );
 }
 
-/// An exchange whose answer was lost is asked again. The same verifier and origin get the same grant for 30 s, which
-/// spends one of the login's eight once, and a clear refusal after.
+/// A lost answer asked again gets the same grant for 30 s, spending one of the login's eight once.
 #[tokio::test]
 async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     let app = auth_app(&[]);

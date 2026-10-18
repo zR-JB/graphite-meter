@@ -10,7 +10,6 @@ use http::{HeaderValue, StatusCode};
 
 pub(super) const PUBLIC: &str = "https://meter.example";
 pub(super) const BROWSER: &str = "https://app.example";
-/// `api/password.testvectors.json` holds the operator's password and its pinned hash.
 pub(super) static VECTORS: std::sync::LazyLock<serde_json::Value> =
     std::sync::LazyLock::new(|| {
         let path = concat!(
@@ -47,7 +46,6 @@ pub(super) fn login(app: &App, principal: Principal) -> NewLogin {
         .unwrap()
 }
 
-/// Builds a request naming the public host.
 pub(super) fn public(method: &str, uri: &str) -> Builder {
     Request::builder()
         .method(method)

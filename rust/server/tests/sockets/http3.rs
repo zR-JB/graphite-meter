@@ -15,14 +15,12 @@ pub(super) const ADDRESS: &str = "127.0.0.7:0";
 const KEEP_ALIVE: Duration = Duration::from_secs(2);
 const STEP: Duration = Duration::from_secs(5);
 
-/// A server with an HTTP/3 listener on a local port and a client identity trusting its certificate.
 pub(super) struct H3 {
     pub(super) server: Running,
     pub(super) identity: Identity,
     _scratch: Scratch,
 }
 
-/// A client connection, its request sender and the task driving it, which ends when the connection closes.
 pub(super) struct Connection {
     pub(super) quic: noq::Connection,
     pub(super) requests: client::SendRequest,
@@ -49,7 +47,6 @@ impl H3 {
         }
     }
 
-    /// A client configuration trusting the server, with `transport`.
     pub(super) fn client(&self, transport: noq::TransportConfig) -> noq::ClientConfig {
         let mut config = self.identity.quic_client();
         config.transport_config(Arc::new(transport));
@@ -60,7 +57,6 @@ impl H3 {
         self.connect_from("127.0.0.1", transport).await.unwrap()
     }
 
-    /// A connection from the local address `source`.
     pub(super) async fn connect_from(
         &self,
         source: &str,
@@ -99,7 +95,6 @@ impl H3 {
     }
 }
 
-/// A transport with keep-alives, and with a stream receive window of `window` bytes when given.
 pub(super) fn transport(window: Option<u32>) -> noq::TransportConfig {
     let mut transport = noq::TransportConfig::default();
     transport.keep_alive_interval(Some(KEEP_ALIVE));
@@ -110,7 +105,6 @@ pub(super) fn transport(window: Option<u32>) -> noq::TransportConfig {
 }
 
 impl Connection {
-    /// Opens a request whose body the caller sends.
     pub(super) async fn open(&self, method: &str, path: &str) -> (SendHalf, RecvHalf) {
         let request = Request::builder()
             .method(method)
@@ -120,7 +114,6 @@ impl Connection {
         self.requests.send_request(request).await.unwrap().split()
     }
 
-    /// Sends a request with `body` and reads its answer's head.
     pub(super) async fn send(
         &self,
         method: &str,
@@ -161,7 +154,6 @@ impl Connection {
     }
 }
 
-/// A whole body; a reset ends it with its error.
 pub(super) async fn read(body: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
     while let Some(chunk) = body.data().await? {
@@ -170,7 +162,6 @@ pub(super) async fn read(body: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-/// A whole reply's body; a reset ends it with its error.
 async fn reply(recv: &mut RecvHalf) -> Result<Vec<u8>, Error> {
     recv.response().await?;
     read(recv).await
@@ -284,8 +275,7 @@ async fn connection_credit_reaches_the_reply_that_waited_longest() {
         send.finish().await.unwrap();
         (send, recv)
     };
-    // The first reply fills the window, then two more wait for credit in that order; reading the first frees credit
-    // a little at a time, and the second's head must not lose every grant to the third.
+    // The first reply fills the window and two more wait for credit; the second's head must not lose every grant to the third.
     let (_bulk, mut bulk) = open().await;
     bulk.response().await.unwrap();
     let ((_other, mut other), _later) = (open().await, open().await);

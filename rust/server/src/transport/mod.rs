@@ -1,5 +1,3 @@
-//! What carries requests and replies over the network.
-
 pub mod accept;
 pub mod body;
 pub mod http1;
@@ -36,8 +34,7 @@ const BURST_BYTES: usize = 256 << 10;
 pub(crate) struct Burst(usize);
 
 impl Burst {
-    /// Ready below `BURST_BYTES`; past it, pending once, woken after every other ready task and the I/O driver ran,
-    /// and the thread offers its CPU to threads waiting for it.
+    /// Past `BURST_BYTES`, pending once, woken after every other ready task and the I/O driver ran.
     pub fn poll_turn(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.0 < BURST_BYTES {
             return Poll::Ready(());

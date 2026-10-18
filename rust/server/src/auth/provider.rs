@@ -14,9 +14,7 @@ use serde::Deserialize;
 use std::{fmt::Display, future::poll_fn, pin::Pin, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, time::timeout};
 
-/// Each request finishes within this.
 const TIMEOUT: Duration = Duration::from_secs(10);
-/// An answer's body holds at most this many bytes.
 const MAX_BODY: usize = 1 << 20;
 
 /// A 200 answer's media type, in lower case without parameters, and body.
@@ -31,7 +29,6 @@ pub(super) struct Client {
 }
 
 impl Client {
-    /// A client sending from the runtime it is created on, as `outbound` says.
     pub fn new(outbound: &config::Outbound) -> Result<Self, String> {
         let runtime = Handle::try_current().map_err(|error| error.to_string())?;
         let connector = Connector::new(outbound.proxy.clone(), outbound.verify.clone());
@@ -122,7 +119,6 @@ async fn fetch(connector: Arc<Connector>, mut request: Request<String>) -> Resul
     tokio::join!(exchange, driver).0
 }
 
-/// The Content-Type's media type, lowercase and without parameters.
 pub(super) fn media(headers: &HeaderMap) -> String {
     let value = headers
         .get(header::CONTENT_TYPE)
@@ -135,7 +131,6 @@ pub(super) fn media(headers: &HeaderMap) -> String {
     media.trim().to_ascii_lowercase()
 }
 
-/// The provider as discovery found it.
 pub(super) struct Provider {
     authorization: String,
     /// The authorization endpoint's origin, which sign-in forms reach through the start route.
@@ -207,7 +202,6 @@ impl Provider {
         })
     }
 
-    /// The provider's sign-in page for the URL-encoded `query`.
     pub fn sign_in(&self, query: &str) -> String {
         let separator = if self.authorization.contains('?') {
             '&'

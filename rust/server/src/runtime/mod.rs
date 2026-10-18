@@ -36,7 +36,6 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-/// A server with its listeners bound.
 pub struct Server {
     app: Arc<App>,
     pool: Pool,
@@ -144,7 +143,6 @@ impl Server {
         })
     }
 
-    /// Where the listener of `endpoint` accepts.
     pub fn local_addr(&self, endpoint: Endpoint) -> Option<SocketAddr> {
         let listening = self
             .listeners
@@ -153,7 +151,6 @@ impl Server {
         listening.socket.local_addr().ok()
     }
 
-    /// How many endpoints share the HTTP/3 port.
     pub fn quic_endpoints(&self) -> usize {
         let quic = self
             .listeners
@@ -339,7 +336,6 @@ const IDLE_RELEASE: Duration = Duration::from_secs(2);
 /// Verbose logs report transfer rates every second and the admission counters every thirty.
 const TRANSFER_LOG: Duration = Duration::from_secs(1);
 const ADMISSION_LOG: Duration = Duration::from_secs(30);
-/// The security log reports sign-in outcomes every minute.
 const SECURITY_LOG: Duration = Duration::from_mins(1);
 
 /// Calls `release` once per idle period, `IDLE_RELEASE` after the last connection closed.
@@ -362,13 +358,11 @@ fn release_memory(pool: &Pool) {
     }
 }
 
-/// Collects the calling thread's heap and purges every arena.
 fn collect() {
     #[cfg(target_env = "musl")]
     rustfs_mimalloc::heap::Heap::main().collect(true);
 }
 
-/// Logs the minute's sign-in outcomes whenever one changed.
 async fn log_security(security: &Security) {
     let (mut ticks, mut last) = (interval(SECURITY_LOG), [0; COUNTERS]);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -381,7 +375,6 @@ async fn log_security(security: &Security) {
     }
 }
 
-/// Logs transfer rates every second and the admission counters every thirty seconds.
 async fn log_verbose(app: &App) {
     let (mut transfers, mut admission) = (interval(TRANSFER_LOG), interval(ADMISSION_LOG));
     transfers.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -549,7 +542,6 @@ impl Terms {
     }
 }
 
-/// Bytes in binary units with at most one decimal, such as `1.5 MiB` or `256 KiB`.
 fn binary(bytes: u128) -> String {
     let (mut value, mut unit) = (bytes as f64, "B");
     for next in ["KiB", "MiB", "GiB", "TiB"] {

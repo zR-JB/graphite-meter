@@ -12,14 +12,12 @@ use rustls::pki_types::ServerName;
 use std::{future::poll_fn, sync::Arc};
 use tokio_rustls::TlsConnector;
 
-/// A server with an HTTP/2 listener on a local port and a client trusting its certificate.
 struct H2 {
     server: Running,
     connector: TlsConnector,
     _scratch: Scratch,
 }
 
-/// A client connection and the task driving it, which ends when the connection closes.
 struct Connection {
     client: SendRequest<Bytes>,
     _driver: JoinHandle<Result<(), h2::Error>>,
@@ -46,7 +44,6 @@ impl H2 {
         }
     }
 
-    /// A connection whose streams open with `window` bytes of receive window.
     async fn connect(&self, window: u32) -> Connection {
         let socket = TcpStream::connect(self.server.h2.unwrap()).await.unwrap();
         let name = ServerName::try_from("localhost").unwrap();
@@ -66,7 +63,6 @@ impl H2 {
 }
 
 impl Connection {
-    /// Opens a request whose body the caller sends.
     async fn open(
         &mut self,
         method: &str,
@@ -122,7 +118,6 @@ async fn read(mut body: RecvStream) -> Result<Vec<u8>, Option<Reason>> {
     Ok(bytes)
 }
 
-/// Sends `bytes` as flow control admits them.
 async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     while !bytes.is_empty() {
         stream.reserve_capacity(bytes.len());
@@ -137,8 +132,7 @@ async fn send(stream: &mut SendStream<Bytes>, mut bytes: Bytes, end: bool) {
     }
 }
 
-/// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it
-/// below a mebibyte.
+/// Whether an upload that sent one byte may send twice the default window within `bound`; h2's send buffer caps it below 1 MiB.
 async fn window_opens(upload: &mut SendStream<Bytes>, bound: Duration) -> bool {
     upload.send_data(Bytes::from_static(b"x"), false).unwrap();
     upload.reserve_capacity(4 << 20);
@@ -203,7 +197,6 @@ async fn only_an_admitted_upload_opens_the_connection_window() {
     );
 }
 
-/// Waits until the upload `id` counted `bytes`.
 async fn counted(connection: &mut Connection, id: &str, bytes: u64) {
     let reached = async {
         while connection

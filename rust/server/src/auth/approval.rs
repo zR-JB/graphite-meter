@@ -48,7 +48,6 @@ impl Challenge {
         })
     }
 
-    /// The challenge `verifier` answers.
     fn of(verifier: &str) -> Option<Self> {
         Self::parse(&challenge(verifier))
     }
@@ -57,12 +56,10 @@ impl Challenge {
         &self.text
     }
 
-    /// The approval page's path and query.
     pub(super) fn page(&self) -> String {
         format!("{}?challenge={}", AuthRoute::Cli.path(), self.text)
     }
 
-    /// The sign-in page's path and query that lead on to the approval page.
     pub(super) fn sign_in(&self) -> String {
         format!("{}?challenge={}", AuthRoute::Login.path(), self.text)
     }
@@ -86,7 +83,6 @@ enum Stage {
     Issued(Issued),
 }
 
-/// The grant an approval issued, and its token while the verifier may ask again.
 #[derive(Clone)]
 struct Issued {
     login: LoginKey,
@@ -96,7 +92,6 @@ struct Issued {
 }
 
 impl Approval {
-    /// The login that claimed it.
     pub(super) fn login(&self) -> Option<LoginKey> {
         match &self.stage {
             Stage::Open => None,
@@ -109,12 +104,10 @@ impl Approval {
         matches!(self.stage, Stage::Issued(_))
     }
 
-    /// Whether it issued the grant keyed `grant`.
     pub(super) fn became(&self, grant: &Digest) -> bool {
         matches!(&self.stage, Stage::Issued(issued) if issued.grant == *grant)
     }
 
-    /// Drops an issued token whose replay window passed by `now`.
     pub(super) fn forget_token(&mut self, now: Instant) {
         if let Stage::Issued(issued) = &mut self.stage
             && now >= issued.replay_until
@@ -151,7 +144,6 @@ impl State {
         }
     }
 
-    /// The approval of `challenge` while it lasts.
     fn pending(&self, challenge: &Challenge) -> Option<&Approval> {
         self.approvals
             .get(challenge)
@@ -442,7 +434,6 @@ fn cross_site_navigation(headers: &HeaderMap) -> bool {
         && sent(SEC_FETCH_DEST, "document")
 }
 
-/// The cookie login of a request that carries no `Authorization`.
 fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
     if headers.contains_key(header::AUTHORIZATION) {
         return None;
@@ -450,7 +441,6 @@ fn signed_in(auth: &Enabled, headers: &HeaderMap) -> Option<AuthLease> {
     cookie_lease(&auth.store, headers)
 }
 
-/// The page approving `challenge` for a terminal, or for the browser `origin`.
 fn approval_page(
     auth: &Enabled,
     lease: &AuthLease,
@@ -471,7 +461,6 @@ fn approval_page(
     response::html(page.render())
 }
 
-/// Why the approval page refuses: a link it cannot approve, or bounds spent for now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Refused {
     Link,
@@ -483,7 +472,6 @@ fn refused(refused: Refused) -> Response<Body> {
     with_status(StatusCode::FORBIDDEN, response::html(page))
 }
 
-/// The page of a login holding all its grants.
 fn capacity() -> Response<Body> {
     let page = page::Cli::Capacity {
         limit: MAX_LOGIN_GRANTS,

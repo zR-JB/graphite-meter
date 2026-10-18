@@ -16,7 +16,6 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 
-/// Password authentication at `https://localhost`, with the local address a trusted proxy.
 const AUTH: [(&str, &str); 5] = [
     ("GM_AUTH_MODE", "password"),
     ("GM_AUTH_PUBLIC_URL", "https://localhost"),

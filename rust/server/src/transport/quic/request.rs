@@ -31,10 +31,8 @@ const FRAME_BYTES: usize = 16 << 10;
 const FAIRNESS_REPLIES: usize = 16;
 /// Replies larger than this count toward a connection's fairness bound.
 const LARGE_REPLY_BYTES: u64 = 1 << 20;
-/// The shortest wait of a large reply for its path.
 const PACE: Duration = Duration::from_millis(1);
 
-/// What a connection's requests share.
 #[derive(Clone)]
 pub(super) struct Requests {
     app: Arc<App>,
@@ -139,11 +137,9 @@ impl Requests {
 
 type Stopped = Pin<Box<dyn Future<Output = Result<Option<Code>, http3::Error>> + Send>>;
 
-/// An HTTP/3 stream's reply.
 struct H3Reply {
     send: SendHalf,
     large: Option<Large>,
-    /// The peer's STOP_SENDING, watched while the body waits.
     stopped: Option<Stopped>,
 }
 
@@ -199,7 +195,6 @@ impl Sink for H3Reply {
     }
 }
 
-/// A large reply on its connection.
 struct Large {
     count: Arc<AtomicUsize>,
     quic: noq::Connection,

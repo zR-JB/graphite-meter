@@ -31,7 +31,6 @@ static FILES: &[Asset] = &[
 
 const REPORT: &str = "project\nrust crates\nbrowser notice\n";
 
-/// Builds the report with the browser's notice as its suffix.
 fn notices() -> &'static Notices {
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(REPORT.as_bytes(), 9).leak();
     let browser = REPORT.len() - "browser notice\n".len();

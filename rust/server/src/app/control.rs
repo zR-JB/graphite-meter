@@ -18,7 +18,6 @@ use graphite_meter_proto::{
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 
-/// A published catalog holds at most this many bytes.
 const MAX_CATALOG_BYTES: usize = 64 << 10;
 
 static CATALOG_REFUSED: RateLimited = RateLimited::new(

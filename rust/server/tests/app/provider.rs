@@ -51,7 +51,6 @@ pub(super) struct Twist {
 struct Shared {
     issuer: String,
     keys: Signers,
-    /// Each code's PKCE challenge and nonce.
     codes: Mutex<HashMap<String, (String, String)>>,
     twist: Mutex<Twist>,
     key_sets: AtomicUsize,
@@ -60,7 +59,6 @@ struct Shared {
     held: Mutex<Option<Held>>,
 }
 
-/// A held request's path, and the sender that lets its answer go.
 type Held = mpsc::UnboundedSender<(String, oneshot::Sender<()>)>;
 
 /// A provider, and the CA file and empty root directory a server trusts it through.
@@ -92,7 +90,6 @@ impl Provider {
         )
     }
 
-    /// The settings that make a server trust this provider alone.
     pub fn trust(&self) -> [(&'static str, &str); 2] {
         [
             ("SSL_CERT_FILE", &self.1.paths[0]),
@@ -100,7 +97,6 @@ impl Provider {
         ]
     }
 
-    /// Serves on `listener` as `issuer` with `identity`.
     fn serve(listener: TcpListener, issuer: String, identity: &Identity) -> Arc<Shared> {
         let acceptor = TlsAcceptor::from(Arc::new(identity.server(&[])));
         let shared = Arc::new(Shared {
@@ -146,12 +142,10 @@ impl Provider {
         held
     }
 
-    /// How many times the server fetched the provider's metadata.
     pub fn discoveries(&self) -> usize {
         self.0.discoveries.load(Ordering::Relaxed)
     }
 
-    /// How many times the server fetched the key set.
     pub fn key_sets(&self) -> usize {
         self.0.key_sets.load(Ordering::Relaxed)
     }

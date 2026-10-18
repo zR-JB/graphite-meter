@@ -52,13 +52,11 @@ const STREAM_WINDOW: u32 = 8 << 20;
 const MAX_CONCURRENT_STREAMS: u32 = 250;
 /// 64 KiB frames cut the CPU cost per byte of bulk transfers by about a quarter.
 const FRAME_BYTES: usize = 64 << 10;
-/// The client preface and first SETTINGS arrive within this.
 const PREFACE_BOUND: Duration = Duration::from_secs(10);
 /// Unsent downloads wait in h2's scheduler, where control replies interleave.
 #[cfg(target_os = "linux")]
 const NOTSENT_LOWAT: u32 = 64 << 10;
 
-/// What an HTTP/2 listener's connections share.
 #[derive(Clone)]
 pub struct Http2 {
     pub app: Arc<App>,
@@ -97,7 +95,6 @@ impl Http2 {
         }
     }
 
-    /// Serves streams until the connection ends or its lifecycle closes it.
     async fn serve<S>(&self, stream: S, connection: Connection)
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -282,7 +279,6 @@ async fn capacity(
 /// A connection's socket, ended by a write blocked for the idle bound: a blocked socket stalls every stream.
 struct Stalled<S> {
     inner: S,
-    /// When the blocked write began.
     since: Option<Instant>,
     /// Due no later than the current stall's end, and re-armed only when it fires, so a stall costs no timer.
     timer: Pin<Box<Sleep>>,
@@ -397,9 +393,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Stalled<S> {
     }
 }
 
-/// The connection window until an admitted upload reads.
 const DEFAULT_WINDOW: u32 = 65_535;
-/// The connection window while admitted uploads read.
 const WINDOW: u32 = 24 << 20;
 
 /// The receive window: 64 KiB, 24 MiB while admitted uploads read, held to the end in the first raiser's share.
@@ -457,7 +451,6 @@ impl ReceiveWindow for Http2Window {
         false
     }
 
-    /// The last admitted upload to stop reading lowers the window again.
     fn reading(&self, stream: &mut RecvStream, reading: bool) {
         if reading {
             self.readers.fetch_add(1, Ordering::Relaxed);

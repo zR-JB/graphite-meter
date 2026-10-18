@@ -26,7 +26,6 @@ async fn initial(h3: &H3) -> Vec<u8> {
     packet
 }
 
-/// Whether the server answers an Initial from the local address `source` with a Retry rather than its own Initial.
 pub(super) async fn retried(h3: &H3, source: &str) -> bool {
     let socket = UdpSocket::bind(format!("{source}:0")).await.unwrap();
     socket
@@ -182,7 +181,6 @@ async fn under_pressure_an_admitted_upload_reserves_no_receive_credit() {
     drop(pressure);
 }
 
-/// Leases what the budget has left past `spare` bytes.
 fn exhaust(budget: &Budget, spare: usize) -> graphite_meter_server::limits::Lease {
     for _ in 0..1000 {
         let left = budget.usage().limit - budget.usage().used;
@@ -216,8 +214,7 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
     let noq::ConnectionError::ConnectionClosed(close) = closed else {
         panic!("{closed:?}")
     };
-    // The first charge refused decides the code: the handshake's CRYPTO data, which shares the spare with the
-    // endpoint's receive buffers, or the connection's floor.
+    // The first refused charge decides the code: the handshake's CRYPTO data or the connection's floor.
     let codes = [
         noq::TransportErrorCode::INTERNAL_ERROR,
         noq::TransportErrorCode::CRYPTO_BUFFER_EXCEEDED,

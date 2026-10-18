@@ -13,7 +13,6 @@ use std::{
 };
 
 impl App {
-    /// The answer to a request that no route claims on a listener serving the app.
     pub(super) fn page<B>(
         &self,
         request: &Request<B>,
@@ -55,8 +54,7 @@ impl App {
         response
     }
 
-    /// What the page may connect to beyond itself: catalog servers and this host's targets, less IPv6 literals and,
-    /// on an HTTPS page, the clear-text sources it cannot use.
+    /// Catalog servers and this host's targets, less IPv6 literals and, on an HTTPS page, mixed content.
     fn connect_sources(&self, preflight: &Preflight, secure: bool) -> Vec<String> {
         let mut sources = Vec::new();
         for server in &self.config.catalog.servers {
@@ -108,7 +106,6 @@ fn mixed(source: &str) -> bool {
     matches!(scheme, "http" | "ws") && !loopback
 }
 
-/// An origin and its WebSocket form.
 fn with_socket(origin: &Origin) -> [String; 2] {
     let origin = origin.to_string();
     let socket = origin.replacen("http", "ws", 1);
