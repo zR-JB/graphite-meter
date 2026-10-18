@@ -69,8 +69,12 @@ impl LiveRate {
         self.evidence += ms;
         let bytes = if bytes > 0.0 { bytes } else { 0.0 };
         self.bytes += bytes;
-        self.spans
-            .push(Span { start, end: self.evidence, bytes, total: self.bytes });
+        self.spans.push(Span {
+            start,
+            end: self.evidence,
+            bytes,
+            total: self.bytes,
+        });
         self.recalculate();
         let changed = self.regime(start);
         if changed {
@@ -96,7 +100,9 @@ impl LiveRate {
 
     /// Merges the older spans in pairs, all but the fast window and a pending regime change, as the browser does.
     fn coarsen(&mut self) {
-        let candidate = self.candidate.map_or(f64::INFINITY, |candidate| candidate.start);
+        let candidate = self
+            .candidate
+            .map_or(f64::INFINITY, |candidate| candidate.start);
         let fine = (self.evidence - 2.0 * FAST_WINDOW_MS).min(candidate);
         let older = self.spans[self.head..]
             .iter()
@@ -129,7 +135,9 @@ impl LiveRate {
     /// Prorates the span the window starts in, so a window edge never rescans a long stage.
     fn rate_since(&self, start: f64) -> f64 {
         let spans = &self.spans[self.head..];
-        let first = spans[spans.partition_point(|span| span.end <= start).min(spans.len() - 1)];
+        let first = spans[spans
+            .partition_point(|span| span.end <= start)
+            .min(spans.len() - 1)];
         let from = start.max(first.start);
         let ms = self.evidence - from;
         if ms.is_nan() || ms <= 0.0 {
@@ -146,16 +154,28 @@ impl LiveRate {
             }
             let ratio = self.fast / self.presented;
             if !(0.75..=1.2).contains(&ratio) {
-                self.candidate = Some(Candidate { up: ratio > 1.2, start, reference: self.presented });
+                self.candidate = Some(Candidate {
+                    up: ratio > 1.2,
+                    start,
+                    reference: self.presented,
+                });
             }
             return false;
         };
-        let ratio = if candidate.reference > 0.0 { self.fast / candidate.reference } else { 1.0 };
+        let ratio = if candidate.reference > 0.0 {
+            self.fast / candidate.reference
+        } else {
+            1.0
+        };
         if candidate.up && ratio < 1.1 || !candidate.up && ratio > 0.85 {
             self.candidate = None;
             return false;
         }
-        let confirm = if candidate.up { UPSHIFT_MS } else { DOWNSHIFT_MS };
+        let confirm = if candidate.up {
+            UPSHIFT_MS
+        } else {
+            DOWNSHIFT_MS
+        };
         if self.evidence - candidate.start < confirm {
             return false;
         }
@@ -186,7 +206,10 @@ mod tests {
         let ((bounded, kept), (whole, _)) = (stepped(MAX_SPANS), stepped(usize::MAX));
         assert!(kept <= MAX_SPANS, "{kept}");
         for (step, (bounded, whole)) in bounded.iter().zip(&whole).enumerate() {
-            assert!((bounded - whole).abs() <= 1e-3 * whole.max(1.0), "step {step}: {bounded} != {whole}");
+            assert!(
+                (bounded - whole).abs() <= 1e-3 * whole.max(1.0),
+                "step {step}: {bounded} != {whole}"
+            );
         }
     }
 }

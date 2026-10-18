@@ -12,10 +12,14 @@ pub fn challenge(verifier: &str) -> String {
 pub fn verification_code(challenge: &str) -> Option<String> {
     const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let mut digest = [0; 32];
-    if challenge.len() > 64 || URL_SAFE_NO_PAD.decode_slice(challenge, &mut digest).ok()? != digest.len() {
+    if challenge.len() > 64
+        || URL_SAFE_NO_PAD.decode_slice(challenge, &mut digest).ok()? != digest.len()
+    {
         return None;
     }
-    let bits = digest[..5].iter().fold(0, |bits, &byte| bits << 8 | u64::from(byte));
+    let bits = digest[..5]
+        .iter()
+        .fold(0, |bits, &byte| bits << 8 | u64::from(byte));
     let code = (0..8)
         .rev()
         .map(|group| char::from(ALPHABET[(bits >> (5 * group) & 31) as usize]));

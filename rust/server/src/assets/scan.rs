@@ -19,7 +19,8 @@ pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
     paths.sort();
     let mut files = Vec::new();
     for (name, path) in paths {
-        if name == graphite_meter_legal::BROWSER_NOTICE || (name.starts_with("legal/") && !reviewed) {
+        if name == graphite_meter_legal::BROWSER_NOTICE || (name.starts_with("legal/") && !reviewed)
+        {
             continue;
         }
         // The build's brotli and gzip copies take their original's type.
@@ -27,12 +28,17 @@ pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
             .strip_suffix(".br")
             .or_else(|| name.strip_suffix(".gz"))
             .unwrap_or(&name);
-        let content_type = content_type(original).ok_or_else(|| format!("unsupported browser asset type: {name}"))?;
+        let content_type = content_type(original)
+            .ok_or_else(|| format!("unsupported browser asset type: {name}"))?;
         let bytes = fs::read(&path).map_err(failed(&path))?;
         if name == "index.html" {
             check_index(&bytes)?;
         }
-        files.push(File { name, content_type, bytes });
+        files.push(File {
+            name,
+            content_type,
+            bytes,
+        });
     }
     if !files.iter().any(|file| file.name == "index.html") {
         return Err("the browser asset directory has no index.html".into());
@@ -41,13 +47,21 @@ pub fn scan(root: &Path, reviewed: bool) -> Result<Vec<File>, String> {
 }
 
 /// Gathers the regular files below `directory` as names relative to the root. A symlink or special file is refused.
-fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+fn collect(
+    directory: &Path,
+    prefix: &str,
+    paths: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
     for entry in fs::read_dir(directory).map_err(failed(directory))? {
         let entry = entry.map_err(failed(directory))?;
         let name = entry.file_name();
         let safe_byte = |byte: &u8| byte.is_ascii_alphanumeric() || b"-_.".contains(byte);
         let name = match name.to_str() {
-            Some(name) if !name.starts_with('.') && !name.contains("..") && name.as_bytes().iter().all(safe_byte) => {
+            Some(name)
+                if !name.starts_with('.')
+                    && !name.contains("..")
+                    && name.as_bytes().iter().all(safe_byte) =>
+            {
                 name
             }
             _ => return Err(format!("unsafe browser asset name: {prefix}{name:?}")),
@@ -59,7 +73,9 @@ fn collect(directory: &Path, prefix: &str, paths: &mut Vec<(String, PathBuf)>) -
         } else if kind.is_file() {
             paths.push((relative, path));
         } else {
-            return Err(format!("browser asset is a symlink or special file: {relative}"));
+            return Err(format!(
+                "browser asset is a symlink or special file: {relative}"
+            ));
         }
     }
     Ok(())
@@ -83,9 +99,17 @@ fn check_index(bytes: &[u8]) -> Result<(), String> {
             return Err(format!("index.html has an unterminated inline {tag}"));
         }
     }
-    let owned = ["graphite-meter-auth", "graphite-meter-result-history-default"];
-    if owned.iter().any(|name| html.contains(&format!("name=\"{name}\""))) {
-        return Err("index.html must not carry the server's auth or result-history meta tags".into());
+    let owned = [
+        "graphite-meter-auth",
+        "graphite-meter-result-history-default",
+    ];
+    if owned
+        .iter()
+        .any(|name| html.contains(&format!("name=\"{name}\"")))
+    {
+        return Err(
+            "index.html must not carry the server's auth or result-history meta tags".into(),
+        );
     }
     Ok(())
 }
@@ -120,7 +144,8 @@ mod tests {
     use super::*;
     use graphite_meter_testkit::Scratch;
 
-    const INDEX: &str = "<html><head><style>a{}</style><script>let a;</script></head><body></body></html>";
+    const INDEX: &str =
+        "<html><head><style>a{}</style><script>let a;</script></head><body></body></html>";
 
     fn fixture() -> Scratch {
         let scratch = Scratch::new().unwrap();
@@ -169,13 +194,26 @@ mod tests {
     fn unsafe_names_links_and_unknown_types_are_refused() {
         for (name, refusal) in [
             (".env", "unsafe browser asset name: \".env\""),
-            ("assets/a b.js", "unsafe browser asset name: assets/\"a b.js\""),
-            ("assets/app.exe", "unsupported browser asset type: assets/app.exe"),
-            ("assets/app.exe.br", "unsupported browser asset type: assets/app.exe.br"),
+            (
+                "assets/a b.js",
+                "unsafe browser asset name: assets/\"a b.js\"",
+            ),
+            (
+                "assets/app.exe",
+                "unsupported browser asset type: assets/app.exe",
+            ),
+            (
+                "assets/app.exe.br",
+                "unsupported browser asset type: assets/app.exe.br",
+            ),
         ] {
             let scratch = fixture();
             scratch.file(name, "").unwrap();
-            assert_eq!(scan(scratch.path(), false).err().as_deref(), Some(refusal), "{name}");
+            assert_eq!(
+                scan(scratch.path(), false).err().as_deref(),
+                Some(refusal),
+                "{name}"
+            );
         }
         #[cfg(unix)]
         {

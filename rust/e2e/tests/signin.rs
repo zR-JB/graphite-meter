@@ -60,17 +60,32 @@ async fn protected(identity: &Identity) -> (Server, SocketAddr) {
 /// A check of a download run at `address` over verified TLS.
 fn config(address: SocketAddr) -> Config {
     let url = format!("https://{address}");
-    e2e::config(&["-url", &url, "-stages", "download", "-download-duration", "2s"])
+    e2e::config(&[
+        "-url",
+        &url,
+        "-stages",
+        "download",
+        "-download-duration",
+        "2s",
+    ])
 }
 
 /// The prompt an interactive check of `config` shows.
-async fn prompted(config: &Config, verify: Verify) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
+async fn prompted(
+    config: &Config,
+    verify: Verify,
+) -> (Controller, UnboundedReceiver<Event>, SignInPrompt) {
     let (events, mut received) = Events::channel();
-    let mut controller =
-        Controller::new(true, Arc::new(Pool::inline()), events).with_outbound(verify, Proxy::default());
+    let mut controller = Controller::new(true, Arc::new(Pool::inline()), events)
+        .with_outbound(verify, Proxy::default());
     controller.command(Command::Check(config.clone()));
-    let events = until(&mut received, LIMIT, |event| matches!(event, Event::SignIn(_))).await;
-    let Some(Event::SignIn(prompt)) = events.last() else { unreachable!() };
+    let events = until(&mut received, LIMIT, |event| {
+        matches!(event, Event::SignIn(_))
+    })
+    .await;
+    let Some(Event::SignIn(prompt)) = events.last() else {
+        unreachable!()
+    };
     (controller, received, prompt.clone())
 }
 
@@ -101,11 +116,22 @@ async fn approve(server: &Server, identity: &Identity, address: SocketAddr, prom
             provider: "local",
         })
         .unwrap();
-    let page = prompt.url.strip_prefix(&format!("https://{address}")).unwrap();
+    let page = prompt
+        .url
+        .strip_prefix(&format!("https://{address}"))
+        .unwrap();
     let cookie = format!("__Host-gm_session={}", login.token.as_str());
     let head = format!("host: {address}\r\ncookie: {cookie}\r\nconnection: close\r\n");
-    let shown = exchange(identity, address, &format!("GET {page} HTTP/1.1\r\n{head}\r\n")).await;
-    assert!(shown.starts_with("HTTP/1.1 200") && shown.contains(&prompt.code), "{shown}");
+    let shown = exchange(
+        identity,
+        address,
+        &format!("GET {page} HTTP/1.1\r\n{head}\r\n"),
+    )
+    .await;
+    assert!(
+        shown.starts_with("HTTP/1.1 200") && shown.contains(&prompt.code),
+        "{shown}"
+    );
     let challenge = page.split_once("challenge=").unwrap().1;
     let form = format!("csrf={}&challenge={challenge}", login.csrf.as_str());
     let post = format!(
@@ -120,7 +146,10 @@ async fn approve(server: &Server, identity: &Identity, address: SocketAddr, prom
 #[tokio::test]
 async fn a_sign_in_approved_over_http_lets_the_run_complete() {
     let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
-    let verify = trusting(&scratch.file("ca.pem", &identity.ca).unwrap(), &scratch.dir("none").unwrap());
+    let verify = trusting(
+        &scratch.file("ca.pem", &identity.ca).unwrap(),
+        &scratch.dir("none").unwrap(),
+    );
     let (server, address) = protected(&identity).await;
     let config = config(address);
     let (mut controller, mut received, prompt) = prompted(&config, verify).await;
@@ -140,11 +169,23 @@ async fn a_sign_in_approved_over_http_lets_the_run_complete() {
     let Some(Event::Prepared { servers, .. }) = checked.last() else {
         panic!("{checked:#?}")
     };
-    assert!(servers.iter().all(|server| server.path.is_ok()), "{servers:#?}");
-    controller.command(Command::Run(config));
-    let ran = until(&mut received, LIMIT, |event| matches!(event, Event::RunFinished { .. })).await;
     assert!(
-        matches!(ran.last(), Some(Event::RunFinished { outcome: Outcome::Complete, .. })),
+        servers.iter().all(|server| server.path.is_ok()),
+        "{servers:#?}"
+    );
+    controller.command(Command::Run(config));
+    let ran = until(&mut received, LIMIT, |event| {
+        matches!(event, Event::RunFinished { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            ran.last(),
+            Some(Event::RunFinished {
+                outcome: Outcome::Complete,
+                ..
+            })
+        ),
         "{ran:#?}"
     );
     assert!(!ran.iter().any(|event| matches!(event, Event::SignIn(_))));

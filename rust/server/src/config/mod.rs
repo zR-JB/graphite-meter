@@ -165,13 +165,21 @@ impl ListenAddress {
             host if host.contains(':') && !bracketed => return None,
             host => Some(host.to_owned()),
         };
-        Some(Self { host, port: port.parse().ok()? })
+        Some(Self {
+            host,
+            port: port.parse().ok()?,
+        })
     }
 }
 
 impl fmt::Display for ListenAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}", self.host.as_deref().unwrap_or_default(), self.port)
+        write!(
+            formatter,
+            "{}:{}",
+            self.host.as_deref().unwrap_or_default(),
+            self.port
+        )
     }
 }
 

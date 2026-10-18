@@ -8,7 +8,10 @@ use crate::{
 };
 use graphite_meter_proto::{
     catalog::ServerId,
-    discovery::{Capabilities, LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport},
+    discovery::{
+        Capabilities, LatencyTarget, LatencyTransport, Protocol, ThroughputTarget,
+        ThroughputTransport,
+    },
     origin::Origin,
     reason::FailureReason,
 };
@@ -57,8 +60,8 @@ impl App {
 
     /// Whether the last check left no server to run with.
     pub(super) fn could_not_start(&self) -> bool {
-        let failed =
-            matches!(self.view.check, Check::Failed(_)) || self.view.check == Check::Ready && self.ready().is_empty();
+        let failed = matches!(self.view.check, Check::Failed(_))
+            || self.view.check == Check::Ready && self.ready().is_empty();
         failed && !self.checking()
     }
 
@@ -79,7 +82,9 @@ impl App {
                 let offers = |server: &ServerPath| {
                     let offered = server.offered.as_ref();
                     let paths = |offered| (kind.offered)(offered, &server.origin);
-                    offered.is_some_and(|offered| paths(offered).iter().any(|path| path.1 == transport))
+                    offered.is_some_and(|offered| {
+                        paths(offered).iter().any(|path| path.1 == transport)
+                    })
                 };
                 let lacking = self.view.servers.iter().filter(|server| !offers(server));
                 let names: Vec<_> = lacking.map(|server| server.name.as_str()).collect();
@@ -87,7 +92,12 @@ impl App {
                     true => "every server".into(),
                     false => format!("unavailable on {}", names.join(", ")),
                 };
-                choices.push(Choice::new(None, Some(transport), (kind.label)(transport).into(), note));
+                choices.push(Choice::new(
+                    None,
+                    Some(transport),
+                    (kind.label)(transport).into(),
+                    note,
+                ));
             }
             return choices;
         };
@@ -112,8 +122,13 @@ impl App {
             Some(choice) if choice.note.is_empty() => choice.label.clone(),
             Some(choice) => format!("{} · {}", choice.label, choice.note),
             None => {
-                let origin = chosen.0.map_or_else(|| "automatic origin".into(), Origin::to_string);
-                format!("{} · {origin} (not offered)", chosen.1.map_or("Automatic", kind.label))
+                let origin = chosen
+                    .0
+                    .map_or_else(|| "automatic origin".into(), Origin::to_string);
+                format!(
+                    "{} · {origin} (not offered)",
+                    chosen.1.map_or("Automatic", kind.label)
+                )
             }
         }
     }
@@ -123,9 +138,15 @@ impl App {
         let choices = self.choices(kind);
         let chosen = (kind.chosen)(&self.config.paths);
         let at = choices.iter().position(|choice| choice.selects(chosen));
-        let next = at.map_or(0, |at| (at as isize + step).rem_euclid(choices.len() as isize) as usize);
+        let next = at.map_or(0, |at| {
+            (at as isize + step).rem_euclid(choices.len() as isize) as usize
+        });
         let choice = &choices[next];
-        (kind.choose)(&mut self.config.paths, choice.origin.clone(), choice.transport);
+        (kind.choose)(
+            &mut self.config.paths,
+            choice.origin.clone(),
+            choice.transport,
+        );
     }
 
     /// The HTTP version of the chosen throughput path when it does not negotiate one.
@@ -141,7 +162,11 @@ impl App {
 
     /// An origin by its authority, or by its port alone on the server's host.
     fn short(&self, origin: &Origin) -> String {
-        if self.config.url.as_ref().is_some_and(|url| url.host == origin.host)
+        if self
+            .config
+            .url
+            .as_ref()
+            .is_some_and(|url| url.host == origin.host)
             && origin.port != origin.scheme.default_port()
         {
             return format!(":{}", origin.port);
@@ -167,12 +192,20 @@ pub(super) const THROUGHPUT: Kind<ThroughputTransport> = Kind {
     shared: THROUGHPUT_TRANSPORTS,
     label: format::throughput_transport,
     chosen: |paths| (paths.throughput_origin.as_ref(), paths.throughput_transport),
-    choose: |paths, origin, transport| (paths.throughput_origin, paths.throughput_transport) = (origin, transport),
+    choose: |paths, origin, transport| {
+        (paths.throughput_origin, paths.throughput_transport) = (origin, transport)
+    },
     offered: |offered, served| {
         let streams = offered.throughput.iter();
-        let streams = streams.filter(|target| target.transport != ThroughputTransport::WebTransportDatagram);
-        let offer =
-            |target: &ThroughputTarget| (target.base_url.resolve(served).clone(), target.transport, target.protocol);
+        let streams =
+            streams.filter(|target| target.transport != ThroughputTransport::WebTransportDatagram);
+        let offer = |target: &ThroughputTarget| {
+            (
+                target.base_url.resolve(served).clone(),
+                target.transport,
+                target.protocol,
+            )
+        };
         streams.map(offer).collect()
     },
     checked: |paths| Some(&paths.throughput.origin),
@@ -182,11 +215,17 @@ pub(super) const LATENCY: Kind<LatencyTransport> = Kind {
     shared: LATENCY_TRANSPORTS,
     label: format::latency_transport,
     chosen: |paths| (paths.latency_origin.as_ref(), paths.latency_transport),
-    choose: |paths, origin, transport| (paths.latency_origin, paths.latency_transport) = (origin, transport),
+    choose: |paths, origin, transport| {
+        (paths.latency_origin, paths.latency_transport) = (origin, transport)
+    },
     offered: |offered, served| {
         let offer = |target: &LatencyTarget| {
             let origin = target.base_url.resolve(served).clone();
-            (origin, target.transport, format::latency_protocol(target.transport))
+            (
+                origin,
+                target.transport,
+                format::latency_protocol(target.transport),
+            )
         };
         offered.latency.iter().map(offer).collect()
     },
@@ -203,7 +242,12 @@ pub(super) struct Choice<T> {
 
 impl<T: PartialEq> Choice<T> {
     fn new(origin: Option<Origin>, transport: Option<T>, label: String, note: String) -> Self {
-        Self { origin, transport, label, note }
+        Self {
+            origin,
+            transport,
+            label,
+            note,
+        }
     }
 
     fn selects(&self, (origin, transport): (Option<&Origin>, Option<T>)) -> bool {

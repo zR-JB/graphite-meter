@@ -51,7 +51,13 @@ pub struct Certificates {
 
 /// A QUIC handshake's hold for a C-byte, N-certificate chain: five flights of C + 5N + 609 bytes, a copy of C + 48N.
 fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
-    let (bytes, count) = (chain.iter().map(|certificate| certificate.len()).sum::<usize>(), chain.len());
+    let (bytes, count) = (
+        chain
+            .iter()
+            .map(|certificate| certificate.len())
+            .sum::<usize>(),
+        chain.len(),
+    );
     5 * (bytes + 5 * count + 609) + bytes + 48 * count
 }
 
@@ -123,9 +129,14 @@ impl Certificates {
         loop {
             ticks.tick().await;
             let certificates = self.clone();
-            let reloaded = tokio::task::spawn_blocking(move || certificates.reload(SystemTime::now())).await;
+            let reloaded =
+                tokio::task::spawn_blocking(move || certificates.reload(SystemTime::now())).await;
             if let Ok(Err(error)) = reloaded {
-                log!(Warn, "tls", "certificate renewal rejected: {error}; keeping the current certificate");
+                log!(
+                    Warn,
+                    "tls",
+                    "certificate renewal rejected: {error}; keeping the current certificate"
+                );
             }
         }
     }
@@ -149,12 +160,21 @@ impl Certificates {
 
 impl ResolvesServerCert for Certificates {
     fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.current.read().unwrap_or_else(PoisonError::into_inner).clone())
+        Some(
+            self.current
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        )
     }
 }
 
 /// Completes a handshake within the exchange bound; a failure is the peer's, logged at most once a minute.
-pub async fn accept<S>(acceptor: &TlsAcceptor, socket: S, peer: SocketAddr) -> Option<TlsStream<BufReader<S>>>
+pub async fn accept<S>(
+    acceptor: &TlsAcceptor,
+    socket: S,
+    peer: SocketAddr,
+) -> Option<TlsStream<BufReader<S>>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -169,18 +189,29 @@ where
 }
 
 /// The pair, its leaf current and covering `hosts`, and when that leaf expires.
-fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedKey, SystemTime), String> {
+fn read(
+    files: &TlsFiles,
+    hosts: &[Host],
+    now: SystemTime,
+) -> Result<(CertifiedKey, SystemTime), String> {
     let pair = pair(files).map_err(|error| format!("TLS certificate and key unusable: {error}"))?;
     let leaf = &pair.cert[0];
     let (not_before, not_after) =
         validity(leaf).ok_or("TLS certificate unreadable: its validity dates are malformed")?;
     if now < not_before {
-        return Err(format!("TLS certificate is not valid before {}", clock::rfc3339(not_before)));
+        return Err(format!(
+            "TLS certificate is not valid before {}",
+            clock::rfc3339(not_before)
+        ));
     }
     if now >= not_after {
-        return Err(format!("TLS certificate expired at {}", clock::rfc3339(not_after)));
+        return Err(format!(
+            "TLS certificate expired at {}",
+            clock::rfc3339(not_after)
+        ));
     }
-    let parsed = ParsedCertificate::try_from(leaf).map_err(|error| format!("TLS certificate unreadable: {error}"))?;
+    let parsed = ParsedCertificate::try_from(leaf)
+        .map_err(|error| format!("TLS certificate unreadable: {error}"))?;
     for host in hosts {
         let (text, name) = match host {
             Host::Name(name) => (name.clone(), ServerName::try_from(name.clone()).ok()),
@@ -188,7 +219,10 @@ fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedK
         };
         let covered = name
             .ok_or_else(|| "invalid DNS name".to_string())
-            .and_then(|name| rustls::client::verify_server_name(&parsed, &name).map_err(|error| error.to_string()));
+            .and_then(|name| {
+                rustls::client::verify_server_name(&parsed, &name)
+                    .map_err(|error| error.to_string())
+            });
         covered.map_err(|error| format!("TLS certificate incompatible with {text}: {error}"))?;
     }
     Ok((pair, not_after))
@@ -196,8 +230,9 @@ fn read(files: &TlsFiles, hosts: &[Host], now: SystemTime) -> Result<(CertifiedK
 
 /// Both files read and paired before the leaf is checked.
 fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
-    let read =
-        |path: &Path| std::fs::read(path).map_err(|error| could_not(&format!("read {}", path.display()), &error));
+    let read = |path: &Path| {
+        std::fs::read(path).map_err(|error| could_not(&format!("read {}", path.display()), &error))
+    };
     let (certificate, key) = (read(&files.cert)?, read(&files.key)?);
     let chain: Vec<_> = CertificateDer::pem_slice_iter(&certificate)
         .collect::<Result<_, _>>()
@@ -206,14 +241,22 @@ fn pair(files: &TlsFiles) -> Result<CertifiedKey, String> {
         return Err("certificate file has no PEM certificate".into());
     }
     let key = PrivateKeyDer::from_pem_slice(&key).map_err(|_| "key file has no PEM private key")?;
-    CertifiedKey::from_der(chain, key, &graphite_meter_net::provider()).map_err(|error| match error {
-        rustls::Error::InconsistentKeys(_) => "the private key does not match the certificate".into(),
+    CertifiedKey::from_der(chain, key, &graphite_meter_net::provider()).map_err(|error| match error
+    {
+        rustls::Error::InconsistentKeys(_) => {
+            "the private key does not match the certificate".into()
+        }
         error => error.to_string(),
     })
 }
 
 fn log_loaded(expires: SystemTime, now: SystemTime) {
-    log!(Info, "tls", "certificate loaded: expires {}", clock::rfc3339(expires));
+    log!(
+        Info,
+        "tls",
+        "certificate loaded: expires {}",
+        clock::rfc3339(expires)
+    );
     let remaining = expires.duration_since(now).unwrap_or_default();
     if remaining < EXPIRY_WARNING {
         // Whole days from two days on, else whole hours.
@@ -236,7 +279,11 @@ fn warn_readable(key: &Path) {
     let mode = metadata.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         let key = key.display();
-        log!(Warn, "tls", "private key {key} has permissions {mode:04o}; remove group and other access");
+        log!(
+            Warn,
+            "tls",
+            "private key {key} has permissions {mode:04o}; remove group and other access"
+        );
     }
 }
 
@@ -289,14 +336,19 @@ fn der(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
 /// A UTCTime (`YYMMDDHHMMSSZ`) or GeneralizedTime (`YYYYMMDDHHMMSSZ`).
 fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
     let number = |digits: &[u8]| {
-        digits
-            .iter()
-            .try_fold(0_u64, |total, digit| digit.is_ascii_digit().then(|| total * 10 + u64::from(digit - b'0')))
+        digits.iter().try_fold(0_u64, |total, digit| {
+            digit
+                .is_ascii_digit()
+                .then(|| total * 10 + u64::from(digit - b'0'))
+        })
     };
     let (year, rest) = match (tag, value.len()) {
         (0x17, 13) => {
             let year = number(&value[..2])?;
-            (if year >= 50 { 1900 + year } else { 2000 + year }, &value[2..])
+            (
+                if year >= 50 { 1900 + year } else { 2000 + year },
+                &value[2..],
+            )
         }
         (0x18, 15) => (number(&value[..4])?, &value[4..]),
         _ => return None,
@@ -313,9 +365,19 @@ mod tests {
     #[test]
     fn der_times_read_both_forms_and_refuse_impossible_dates() {
         let at = |tag, text: &str| der_time(tag, text.as_bytes()).map(clock::rfc3339);
-        assert_eq!(at(0x17, "491231235959Z").as_deref(), Some("2049-12-31T23:59:59Z"));
-        assert_eq!(at(0x18, "20000229120000Z").as_deref(), Some("2000-02-29T12:00:00Z"));
-        for (tag, text) in [(0x18, "21000229000000Z"), (0x17, "2610042359590"), (0x18, "261004235959Z")] {
+        assert_eq!(
+            at(0x17, "491231235959Z").as_deref(),
+            Some("2049-12-31T23:59:59Z")
+        );
+        assert_eq!(
+            at(0x18, "20000229120000Z").as_deref(),
+            Some("2000-02-29T12:00:00Z")
+        );
+        for (tag, text) in [
+            (0x18, "21000229000000Z"),
+            (0x17, "2610042359590"),
+            (0x18, "261004235959Z"),
+        ] {
             assert_eq!(at(tag, text), None, "{text}");
         }
     }

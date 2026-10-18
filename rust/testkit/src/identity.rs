@@ -1,8 +1,8 @@
 //! Generates disposable TLS identities in memory, so no key lives in source.
 use crate::Error;
 use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    KeyUsagePurpose,
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{sync::Arc, time::SystemTime};
@@ -16,12 +16,21 @@ pub struct Identity {
 
 /// The certificate is valid from the start of last year to the end of next year.
 fn params(names: &[&str], common_name: &str, ca: bool) -> Result<CertificateParams, Error> {
-    let mut params = CertificateParams::new(names.iter().map(ToString::to_string).collect::<Vec<_>>())?;
-    params.distinguished_name.push(DnType::CommonName, common_name);
-    let year = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs() / 31_556_952 + 1970;
+    let mut params =
+        CertificateParams::new(names.iter().map(ToString::to_string).collect::<Vec<_>>())?;
+    params
+        .distinguished_name
+        .push(DnType::CommonName, common_name);
+    let year = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_secs()
+        / 31_556_952
+        + 1970;
     let year = i32::try_from(year)?;
-    (params.not_before, params.not_after) =
-        (rcgen::date_time_ymd(year - 1, 1, 1), rcgen::date_time_ymd(year + 1, 12, 31));
+    (params.not_before, params.not_after) = (
+        rcgen::date_time_ymd(year - 1, 1, 1),
+        rcgen::date_time_ymd(year + 1, 12, 31),
+    );
     if ca {
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
@@ -46,7 +55,10 @@ impl Identity {
     }
 
     fn signed(leaf: CertificateParams) -> Result<Self, Error> {
-        let ca = CertifiedIssuer::self_signed(params(&[], "graphite-meter-test-ca", true)?, KeyPair::generate()?)?;
+        let ca = CertifiedIssuer::self_signed(
+            params(&[], "graphite-meter-test-ca", true)?,
+            KeyPair::generate()?,
+        )?;
         let key = KeyPair::generate()?;
         let certificate = leaf.signed_by(&key, &ca)?;
         Ok(Self {
@@ -70,7 +82,8 @@ impl Identity {
     }
     /// Builds a TLS 1.3 server config presenting the leaf.
     pub fn server(&self, alpn: &[&[u8]]) -> rustls::ServerConfig {
-        let chain = CertificateDer::pem_slice_iter(self.certificate.as_bytes()).collect::<Result<_, _>>();
+        let chain =
+            CertificateDer::pem_slice_iter(self.certificate.as_bytes()).collect::<Result<_, _>>();
         let key = PrivateKeyDer::from_pem_slice(self.key.as_bytes()).expect("generated key");
         let mut config = rustls::ServerConfig::builder_with_provider(provider())
             .with_protocol_versions(&[&rustls::version::TLS13])

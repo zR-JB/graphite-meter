@@ -47,7 +47,10 @@ pub struct Dir<T> {
 
 impl<T> Dir<T> {
     pub fn from_fn(mut value: impl FnMut(Direction) -> T) -> Self {
-        Self { down: value(Direction::Down), up: value(Direction::Up) }
+        Self {
+            down: value(Direction::Down),
+            up: value(Direction::Up),
+        }
     }
 }
 
@@ -106,7 +109,10 @@ pub struct Failure {
 
 impl Failure {
     pub fn new(reason: FailureReason, text: impl Into<String>) -> Self {
-        Self { reason, text: text.into() }
+        Self {
+            reason,
+            text: text.into(),
+        }
     }
 }
 
@@ -178,9 +184,13 @@ pub enum StageStatus {
 
 impl StageResult {
     pub fn status(&self, focus: Option<&ServerId>) -> StageStatus {
-        let missing =
-            |direction: &Direction| self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none());
-        let focused = self.servers.iter().find(|server| Some(&server.server) == focus);
+        let missing = |direction: &Direction| {
+            self.throughput[*direction].is_none_or(|throughput| throughput.rate.is_none())
+        };
+        let focused = self
+            .servers
+            .iter()
+            .find(|server| Some(&server.server) == focus);
         let median = focused.and_then(|server| server.latency?.median());
         match () {
             _ if self.stopped => StageStatus::Stopped,
@@ -199,10 +209,20 @@ pub fn focus(results: &[StageResult]) -> Option<ServerId> {
     if survivors.clone().any(|server| server.server == *first) {
         return Some(first.clone());
     }
-    let idle = results.iter().find(|result| result.stage == Stage::Latency)?;
+    let idle = results
+        .iter()
+        .find(|result| result.stage == Stage::Latency)?;
     let measured = |survivor: &&ServerResult| {
-        let mut servers = idle.servers.iter().filter(|server| server.server == survivor.server);
-        servers.any(|server| server.latency.and_then(|latency| latency.median()).is_some())
+        let mut servers = idle
+            .servers
+            .iter()
+            .filter(|server| server.server == survivor.server);
+        servers.any(|server| {
+            server
+                .latency
+                .and_then(|latency| latency.median())
+                .is_some()
+        })
     };
     survivors.find(measured).map(|server| server.server.clone())
 }
@@ -225,7 +245,10 @@ impl Outcome {
     /// From the stage results; the first carries the failures of selected servers that never began a stage.
     pub fn of(results: &[StageResult], plan: &[Stage]) -> Self {
         let focus = focus(results);
-        let statuses: Vec<_> = results.iter().map(|result| result.status(focus.as_ref())).collect();
+        let statuses: Vec<_> = results
+            .iter()
+            .map(|result| result.status(focus.as_ref()))
+            .collect();
         let ran = |stage: &Stage| results.iter().any(|result| result.stage == *stage);
         let planned = plan.iter().all(ran);
         match () {

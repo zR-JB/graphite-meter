@@ -23,7 +23,12 @@ pub fn embed(browser: bool) -> Result<Option<PathBuf>, String> {
     for name in ["GM_ENGINE_VERSION", "GM_LEGAL_DIR"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
-    embed_with(&|name| env::var_os(name), &checkout()?, &out_dir()?, browser)
+    embed_with(
+        &|name| env::var_os(name),
+        &checkout()?,
+        &out_dir()?,
+        browser,
+    )
 }
 
 pub fn out_dir() -> Result<PathBuf, String> {
@@ -43,7 +48,11 @@ pub fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let resolved = canonical(path)?;
     match resolved.starts_with(root) {
         true => Ok(resolved),
-        false => Err(format!("{} is outside {}", resolved.display(), root.display())),
+        false => Err(format!(
+            "{} is outside {}",
+            resolved.display(),
+            root.display()
+        )),
     }
 }
 
@@ -67,21 +76,28 @@ fn embed_with(
         return Err("GM_LEGAL_DIR must be an absolute directory".into());
     }
     let directory = inside(checkout, Path::new(&configured))?;
-    for (name, variable) in [("package.txt", "CARGO_PKG_NAME"), ("target.txt", "TARGET"), ("rustc-path.txt", "RUSTC")] {
+    for (name, variable) in [
+        ("package.txt", "CARGO_PKG_NAME"),
+        ("target.txt", "TARGET"),
+        ("rustc-path.txt", "RUSTC"),
+    ] {
         if var(variable).map(OsString::into_encoded_bytes) != Some(read(&directory.join(name))?) {
             return Err(format!("notice {name} does not match this build"));
         }
     }
     check_inputs(checkout, &directory)?;
     let report = read(&directory.join("LEGAL.txt"))?;
-    if report.is_empty() || report.len() > MAX_REPORT_BYTES || std::str::from_utf8(&report).is_err() {
+    if report.is_empty() || report.len() > MAX_REPORT_BYTES || std::str::from_utf8(&report).is_err()
+    {
         return Err("LEGAL.txt must be UTF-8 text of 1 byte to 16 MiB".into());
     }
     let assets = directory.join(BROWSER_ASSETS);
     let start = match browser {
         true => {
             let notice = read(&assets.join(BROWSER_NOTICE))?;
-            let start = report.ends_with(&notice).then(|| report.len() - notice.len());
+            let start = report
+                .ends_with(&notice)
+                .then(|| report.len() - notice.len());
             Some(start.ok_or("LEGAL.txt does not end with the browser's notice")?)
         }
         false => None,
@@ -92,14 +108,18 @@ fn embed_with(
     };
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&report, 9);
     write(&output.join("legal.zlib"), &compressed)?;
-    let payload = format!("Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/legal.zlib\")), {}))", report.len());
+    let payload = format!(
+        "Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/legal.zlib\")), {}))",
+        report.len()
+    );
     generate(output, &payload, start, &marker)?;
     browser.then(|| canonical(&assets)).transpose()
 }
 
 /// Checks that every input the notices were prepared from still matches its snapshot.
 fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
-    let inputs = String::from_utf8(read(&directory.join("inputs.txt"))?).map_err(|_| "inputs.txt is not UTF-8")?;
+    let inputs = String::from_utf8(read(&directory.join("inputs.txt"))?)
+        .map_err(|_| "inputs.txt is not UTF-8")?;
     if !inputs.lines().any(|line| line == "rust/Cargo.lock") {
         return Err("inputs.txt does not name rust/Cargo.lock".into());
     }
@@ -117,13 +137,22 @@ fn check_inputs(checkout: &Path, directory: &Path) -> Result<(), String> {
 /// Reads a reviewed `LEGAL.txt`'s SHA-256, which the collector writes to `LEGAL.sha256` and checks the executable for.
 fn digest(directory: &Path) -> Result<String, String> {
     let digest = String::from_utf8(read(&directory.join("LEGAL.sha256"))?).unwrap_or_default();
-    match digest.len() == 64 && digest.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
+    match digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
         true => Ok(digest),
         false => Err("LEGAL.sha256 must hold 64 lowercase hexadecimal digits".into()),
     }
 }
 
-fn generate(output: &Path, payload: &str, browser: Option<usize>, marker: &str) -> Result<(), String> {
+fn generate(
+    output: &Path,
+    payload: &str,
+    browser: Option<usize>,
+    marker: &str,
+) -> Result<(), String> {
     let source = format!(
         "pub static NOTICES: graphite_meter_legal::Notices = \
          graphite_meter_legal::Notices::new({payload}, {browser:?}, {marker:?});\n"
@@ -166,7 +195,10 @@ mod tests {
             ("legal/inputs/rust/Cargo.lock", "lock"),
             ("legal/LEGAL.txt", REPORT),
             ("legal/LEGAL.sha256", DIGEST),
-            ("legal/browser-assets/legal/THIRD_PARTY_NOTICES.txt", "browser notice\n"),
+            (
+                "legal/browser-assets/legal/THIRD_PARTY_NOTICES.txt",
+                "browser notice\n",
+            ),
         ] {
             scratch.file(name, contents).unwrap();
         }
@@ -175,7 +207,11 @@ mod tests {
         (scratch, root)
     }
 
-    fn run(root: &Path, overrides: &[(&str, &str)], browser: bool) -> Result<Option<PathBuf>, String> {
+    fn run(
+        root: &Path,
+        overrides: &[(&str, &str)],
+        browser: bool,
+    ) -> Result<Option<PathBuf>, String> {
         let legal = root.join("legal").display().to_string();
         let defaults = [
             ("GM_LEGAL_DIR", legal.as_str()),
@@ -203,23 +239,38 @@ mod tests {
     #[test]
     fn a_build_without_notices_embeds_none() {
         let (_scratch, root) = checkout();
-        assert_eq!(embed_with(&|_| None, &root, &root.join("out"), true), Ok(None));
+        assert_eq!(
+            embed_with(&|_| None, &root, &root.join("out"), true),
+            Ok(None)
+        );
         assert!(generated(&root).ends_with("Notices::new(None, None, \"\");\n"));
     }
 
     #[test]
     fn reviewed_notices_embed_the_compressed_report_and_the_browser_offset() {
         let (_scratch, root) = checkout();
-        assert_eq!(run(&root, &[], true), Ok(Some(root.join("legal/browser-assets"))));
+        assert_eq!(
+            run(&root, &[], true),
+            Ok(Some(root.join("legal/browser-assets")))
+        );
         let start = REPORT.len() - "browser notice\n".len();
-        let expected =
-            format!("/legal.zlib\")), {})), Some({start}), \"UNREVIEWED DEVELOPMENT BUILD\");\n", REPORT.len());
-        assert!(generated(&root).ends_with(&expected), "{}", generated(&root));
+        let expected = format!(
+            "/legal.zlib\")), {})), Some({start}), \"UNREVIEWED DEVELOPMENT BUILD\");\n",
+            REPORT.len()
+        );
+        assert!(
+            generated(&root).ends_with(&expected),
+            "{}",
+            generated(&root)
+        );
         let compressed = fs::read(root.join("out/legal.zlib")).unwrap();
         let report = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
         assert_eq!(report, REPORT.as_bytes());
         assert_eq!(run(&root, &[], false), Ok(None));
-        assert!(generated(&root).ends_with(&format!("{})), None, \"UNREVIEWED DEVELOPMENT BUILD\");\n", REPORT.len())));
+        assert!(generated(&root).ends_with(&format!(
+            "{})), None, \"UNREVIEWED DEVELOPMENT BUILD\");\n",
+            REPORT.len()
+        )));
     }
 
     #[test]
@@ -248,21 +299,44 @@ mod tests {
             refusal(&[("TARGET", "aarch64-unknown-linux-musl")]),
             "notice target.txt does not match this build"
         );
-        assert_eq!(refusal(&[("RUSTC", "rustc")]), "notice rustc-path.txt does not match this build");
-        assert_eq!(refusal(&[("GM_LEGAL_DIR", "legal")]), "GM_LEGAL_DIR must be an absolute directory");
+        assert_eq!(
+            refusal(&[("RUSTC", "rustc")]),
+            "notice rustc-path.txt does not match this build"
+        );
+        assert_eq!(
+            refusal(&[("GM_LEGAL_DIR", "legal")]),
+            "GM_LEGAL_DIR must be an absolute directory"
+        );
         let outside = root.parent().unwrap().display().to_string();
-        assert_eq!(refusal(&[("GM_LEGAL_DIR", &outside)]), format!("{outside} is outside {}", root.display()));
+        assert_eq!(
+            refusal(&[("GM_LEGAL_DIR", &outside)]),
+            format!("{outside} is outside {}", root.display())
+        );
         let version = "GM_ENGINE_VERSION must be a nonempty release identifier";
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "")]), version);
         assert_eq!(refusal(&[("GM_ENGINE_VERSION", "1.0 beta")]), version);
-        assert_eq!(run(&root, &[("GM_ENGINE_VERSION", "1.2.0-rc.1+rust")], false), Ok(None));
+        assert_eq!(
+            run(&root, &[("GM_ENGINE_VERSION", "1.2.0-rc.1+rust")], false),
+            Ok(None)
+        );
         scratch
-            .file("legal/browser-assets/legal/THIRD_PARTY_NOTICES.txt", "other\n")
+            .file(
+                "legal/browser-assets/legal/THIRD_PARTY_NOTICES.txt",
+                "other\n",
+            )
             .unwrap();
-        assert_eq!(refusal(&[]), "LEGAL.txt does not end with the browser's notice");
+        assert_eq!(
+            refusal(&[]),
+            "LEGAL.txt does not end with the browser's notice"
+        );
         scratch.file("rust/Cargo.lock", "changed").unwrap();
-        assert_eq!(refusal(&[]), "Rust legal notices are stale: rust/Cargo.lock");
-        scratch.file("legal/inputs.txt", "rust/Cargo.toml\n").unwrap();
+        assert_eq!(
+            refusal(&[]),
+            "Rust legal notices are stale: rust/Cargo.lock"
+        );
+        scratch
+            .file("legal/inputs.txt", "rust/Cargo.toml\n")
+            .unwrap();
         assert_eq!(refusal(&[]), "inputs.txt does not name rust/Cargo.lock");
     }
 }

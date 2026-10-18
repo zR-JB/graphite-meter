@@ -37,29 +37,48 @@ impl Ping {
     /// Reads a probe; `None` for a malformed message, which receivers ignore without replying or closing.
     pub fn decode(message: &[u8]) -> Option<Self> {
         let id = from_utf8(message).ok()?.strip_prefix("PING,")?;
-        Some(Self { id: decimal(id, 10)? })
+        Some(Self {
+            id: decimal(id, 10)?,
+        })
     }
 
     /// The bus's next probe; ids wrap at 2^32.
     pub fn next(self) -> Self {
-        Self { id: self.id.wrapping_add(1) }
+        Self {
+            id: self.id.wrapping_add(1),
+        }
     }
 
     /// The reply echoing this probe's id.
     pub fn reply(self, handling_nanos: u64) -> Pong {
-        Pong { id: self.id, handling_nanos }
+        Pong {
+            id: self.id,
+            handling_nanos,
+        }
     }
 }
 
 impl Pong {
     pub fn encode(self) -> String {
         let (mut id, mut nanos) = (NumBuffer::new(), NumBuffer::new());
-        ["PONG,", self.id.format_into(&mut id), ",", self.handling_nanos.format_into(&mut nanos)].concat()
+        [
+            "PONG,",
+            self.id.format_into(&mut id),
+            ",",
+            self.handling_nanos.format_into(&mut nanos),
+        ]
+        .concat()
     }
 
     /// Reads a reply; `None` for a malformed message, never a reply with an invented duration.
     pub fn decode(message: &[u8]) -> Option<Self> {
-        let (id, nanos) = from_utf8(message).ok()?.strip_prefix("PONG,")?.split_once(',')?;
-        Some(Self { id: decimal(id, 10)?, handling_nanos: decimal(nanos, 20)? })
+        let (id, nanos) = from_utf8(message)
+            .ok()?
+            .strip_prefix("PONG,")?
+            .split_once(',')?;
+        Some(Self {
+            id: decimal(id, 10)?,
+            handling_nanos: decimal(nanos, 20)?,
+        })
     }
 }

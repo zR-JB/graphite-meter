@@ -35,10 +35,17 @@ fn drive(mode: &str) -> Option<Session> {
         }
         output => output.unwrap(),
     };
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let number = |name: &str| result[name].as_i64().unwrap();
-    let (text, exited) = (result["text"].as_str().unwrap().to_owned(), result["exited"].as_f64());
+    let (text, exited) = (
+        result["text"].as_str().unwrap().to_owned(),
+        result["exited"].as_f64(),
+    );
     let restored = result["restored"].as_bool().unwrap();
     Some(Session {
         status: number("code"),
@@ -62,31 +69,68 @@ fn after_restore(session: &Session) -> &str {
 fn q_at_setup_exits_0() {
     let Some(session) = drive("quit") else { return };
     assert_eq!((session.keys, session.status), (1, 0), "{:?}", session.text);
-    assert!(session.text.contains("Start"), "the setup frame: {:?}", session.text);
-    assert!(!session.text.contains("\x1b]9;4"), "no progress bar where the terminal draws none");
+    assert!(
+        session.text.contains("Start"),
+        "the setup frame: {:?}",
+        session.text
+    );
+    assert!(
+        !session.text.contains("\x1b]9;4"),
+        "no progress bar where the terminal draws none"
+    );
     assert!(
         session.text.contains("\x1b[22;0t\x1b[?1003h\x1b[?1006h"),
         "title pushed, every move reported"
     );
-    assert!(session.text.contains("\x1b[?1006l\x1b[?1003l\x1b[23;0t"), "title put back");
+    assert!(
+        session.text.contains("\x1b[?1006l\x1b[?1003l\x1b[23;0t"),
+        "title put back"
+    );
     assert_eq!(after_restore(&session), "");
     assert!(session.restored);
 }
 
 #[test]
 fn ctrl_c_during_a_run_exits_130() {
-    let Some(session) = drive("interrupt") else { return };
-    assert_eq!((session.keys, session.status), (2, 130), "{:?}", session.text);
-    assert!(session.text.contains("\x1b]9;4;0\x07"), "the progress bar is cleared");
-    assert_eq!(after_restore(&session), "", "a test stopped before it started has no report");
+    let Some(session) = drive("interrupt") else {
+        return;
+    };
+    assert_eq!(
+        (session.keys, session.status),
+        (2, 130),
+        "{:?}",
+        session.text
+    );
+    assert!(
+        session.text.contains("\x1b]9;4;0\x07"),
+        "the progress bar is cleared"
+    );
+    assert_eq!(
+        after_restore(&session),
+        "",
+        "a test stopped before it started has no report"
+    );
     assert!(session.restored);
 }
 
 #[test]
 fn ctrl_c_while_the_report_asks_the_terminal_stops_with_130() {
-    let Some(session) = drive("query") else { return };
-    assert_eq!((session.keys, session.status), (1, 130), "{:?}", session.text);
-    assert!(session.text.ends_with("Test stopped before it started.\r\n"), "{:?}", session.text);
+    let Some(session) = drive("query") else {
+        return;
+    };
+    assert_eq!(
+        (session.keys, session.status),
+        (1, 130),
+        "{:?}",
+        session.text
+    );
+    assert!(
+        session
+            .text
+            .ends_with("Test stopped before it started.\r\n"),
+        "{:?}",
+        session.text
+    );
     assert!(session.restored);
 }
 
@@ -94,9 +138,14 @@ fn ctrl_c_while_the_report_asks_the_terminal_stops_with_130() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_termination_after_an_interrupt_exits_143_at_once_and_restores_the_terminal() {
-    let Some(session) = drive("signals") else { return };
+    let Some(session) = drive("signals") else {
+        return;
+    };
     assert_eq!(session.status, 143, "{:?}", session.text);
     assert!(session.exited.unwrap() < 2.0, "{:?}", session.exited);
-    assert_eq!(session.text, "\x1b]11;?\x1b\\\x1b[c", "nothing but the background query");
+    assert_eq!(
+        session.text, "\x1b]11;?\x1b\\\x1b[c",
+        "nothing but the background query"
+    );
     assert!(session.restored, "the terminal echoes again");
 }

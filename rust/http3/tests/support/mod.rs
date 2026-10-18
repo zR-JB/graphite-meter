@@ -36,7 +36,9 @@ impl noq::SharedBudget for Budget {
             used.checked_add(bytes)
                 .filter(|&used| used <= self.limit.load(Ordering::Relaxed))
         };
-        self.used.try_update(Ordering::Relaxed, Ordering::Relaxed, fits).is_ok()
+        self.used
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, fits)
+            .is_ok()
     }
 
     fn refund(&self, bytes: usize) {
@@ -66,7 +68,10 @@ pub const PLAIN: Setup = Setup {
 };
 
 pub const fn raw(settings: &'static [(u64, u64)]) -> Setup {
-    Setup { settings: Some(settings), ..PLAIN }
+    Setup {
+        settings: Some(settings),
+        ..PLAIN
+    }
 }
 
 pub struct Peers {
@@ -84,7 +89,9 @@ fn identity() -> &'static Identity {
 fn transport(setup: &Setup) -> Arc<noq::TransportConfig> {
     let mut transport = noq::TransportConfig::default();
     // Clock jumps stay inside the idle timeout.
-    transport.max_idle_timeout(Some(Duration::from_secs(120).try_into().expect("idle timeout")));
+    transport.max_idle_timeout(Some(
+        Duration::from_secs(120).try_into().expect("idle timeout"),
+    ));
     if let Some(window) = setup.window {
         transport.stream_receive_window(window.into());
     }
@@ -106,9 +113,16 @@ pub async fn pair(setup: Setup) -> Result<Peers, TestError> {
     let mut endpoint = noq::EndpointConfig::default();
     endpoint.reliable_stream_reset(setup.reliable_reset);
     let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
-    let client_endpoint = noq::Endpoint::new(endpoint, None, socket, noq::default_runtime().ok_or("runtime")?)?;
+    let client_endpoint = noq::Endpoint::new(
+        endpoint,
+        None,
+        socket,
+        noq::default_runtime().ok_or("runtime")?,
+    )?;
     let connecting = client_endpoint.connect_with(client, server.local_addr()?, "localhost")?;
-    let (client, accepted) = tokio::join!(connecting, async { server.accept().await.expect("incoming").await });
+    let (client, accepted) = tokio::join!(connecting, async {
+        server.accept().await.expect("incoming").await
+    });
     let client = client?;
     let control = match setup.settings {
         Some(pairs) => Some(uni(&client, &control(pairs)).await?),
@@ -159,7 +173,12 @@ impl Peers {
         F: Future<Output: Send> + Send + 'static,
     {
         let (scenario, (outcomes, outcome)) = (Arc::new(scenario), mpsc::unbounded_channel());
-        let Served { peers, serving, stop, .. } = self.serve(move |request, stream| {
+        let Served {
+            peers,
+            serving,
+            stop,
+            ..
+        } = self.serve(move |request, stream| {
             let (scenario, outcomes) = (scenario.clone(), outcomes.clone());
             async move {
                 if request.method() != http::Method::CONNECT {
@@ -169,13 +188,23 @@ impl Peers {
                 }
             }
         });
-        Served { peers, serving, stop, outcomes: outcome }
+        Served {
+            peers,
+            serving,
+            stop,
+            outcomes: outcome,
+        }
     }
 
     /// Sends a raw CONNECT. A task reads its response stream so stream credit keeps flowing.
-    pub async fn connect(&self) -> Result<(noq::SendStream, JoinHandle<(Vec<u8>, Result<(), Code>)>), TestError> {
+    pub async fn connect(
+        &self,
+    ) -> Result<(noq::SendStream, JoinHandle<(Vec<u8>, Result<(), Code>)>), TestError> {
         let (send, mut recv) = self.bi(&connect_head()).await?;
-        Ok((send, tokio::spawn(async move { raw_stream(&mut recv).await })))
+        Ok((
+            send,
+            tokio::spawn(async move { raw_stream(&mut recv).await }),
+        ))
     }
 
     /// Opens a raw client request stream that has sent `bytes`.
@@ -194,7 +223,11 @@ impl Peers {
     }
 }
 
-async fn serve<F, H>(mut connection: server::Connection, handler: Arc<H>, stop: Arc<Notify>) -> Result<(), Error>
+async fn serve<F, H>(
+    mut connection: server::Connection,
+    handler: Arc<H>,
+    stop: Arc<Notify>,
+) -> Result<(), Error>
 where
     H: Fn(http::Request<()>, RequestStream) -> F + Send + Sync + 'static,
     F: Future<Output = ()> + Send + 'static,
@@ -207,7 +240,9 @@ where
                 continue;
             }
         };
-        let Some(request) = request else { return Ok(()) };
+        let Some(request) = request else {
+            return Ok(());
+        };
         let handler = handler.clone();
         tokio::spawn(async move {
             if let Ok((request, stream)) = request.resolve().await {
@@ -231,7 +266,10 @@ pub fn client(peers: &Peers) -> (Task, client::SendRequest) {
 
 /// Opens our client's session at /wt, which the server accepts.
 pub async fn accepted(requests: &client::SendRequest) -> Result<Session, TestError> {
-    Ok(Session::connect(requests, get("/wt")).await?.expect("accepted").0)
+    Ok(Session::connect(requests, get("/wt"))
+        .await?
+        .expect("accepted")
+        .0)
 }
 
 pub async fn until_closed(session: Session) -> Result<SessionClose, Error> {
@@ -239,7 +277,9 @@ pub async fn until_closed(session: Session) -> Result<SessionClose, Error> {
 }
 
 pub fn get(path: &str) -> http::Request<()> {
-    http::Request::get(format!("https://localhost{path}")).body(()).unwrap()
+    http::Request::get(format!("https://localhost{path}"))
+        .body(())
+        .unwrap()
 }
 
 pub async fn body(stream: &mut graphite_meter_http3::RecvHalf) -> Result<Vec<u8>, Error> {
@@ -332,7 +372,12 @@ pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
 
 /// Builds a GET of / with `fields` in place of or after its own.
 pub fn request_head(fields: &[(&str, &str)]) -> Vec<u8> {
-    let head = [(":method", "GET"), (":scheme", "https"), (":authority", "localhost"), (":path", "/")];
+    let head = [
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "localhost"),
+        (":path", "/"),
+    ];
     let mut all: Vec<_> = head
         .into_iter()
         .filter(|(name, _)| !fields.iter().any(|(field, _)| field == name))
@@ -342,12 +387,22 @@ pub fn request_head(fields: &[(&str, &str)]) -> Vec<u8> {
 }
 
 pub fn connect_head() -> Vec<u8> {
-    request_head(&[(":method", "CONNECT"), (":protocol", "webtransport"), (":path", "/wt")])
+    request_head(&[
+        (":method", "CONNECT"),
+        (":protocol", "webtransport"),
+        (":path", "/wt"),
+    ])
 }
 
 /// Builds a CLOSE_WEBTRANSPORT_SESSION capsule in a DATA frame. Capsules are framed as frames are.
 pub fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
-    frame(0x00, &frame(0x2843, &[&code.to_be_bytes()[..], reason.as_bytes()].concat()))
+    frame(
+        0x00,
+        &frame(
+            0x2843,
+            &[&code.to_be_bytes()[..], reason.as_bytes()].concat(),
+        ),
+    )
 }
 
 /// Builds a control stream's type, then SETTINGS of `pairs`.
@@ -388,7 +443,10 @@ pub async fn first_frame(recv: &mut noq::RecvStream) -> Result<Vec<u8>, TestErro
 }
 
 pub async fn stopped(send: &noq::SendStream) -> Option<Code> {
-    send.stopped().await.expect("stream outcome").map(Code::from)
+    send.stopped()
+        .await
+        .expect("stream outcome")
+        .map(Code::from)
 }
 
 /// Reports whether STOP_SENDING has already arrived for a raw stream.
@@ -399,7 +457,11 @@ pub async fn stopped_yet(send: &noq::SendStream) -> bool {
 
 /// This side reports this error for a connection it closed with `code`.
 pub fn closed(code: Code) -> Error {
-    Error::Connection { local: true, code, reason: bytes::Bytes::new() }
+    Error::Connection {
+        local: true,
+        code,
+        reason: bytes::Bytes::new(),
+    }
 }
 
 /// Waits up to 5 s for the code a connection closed with.

@@ -41,12 +41,19 @@ fn listening(env: &[(&str, &str)]) -> (std::process::Child, String, impl Fn() ->
             .take_while(Result::is_ok)
             .count()
     });
-    let next = move || received.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    let next = move || {
+        received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+    };
     assert_eq!(next(), format!("graphite-meter {ENGINE_VERSION} starting"));
     assert!(next().starts_with("serving as "));
     let listen = next();
     let (place, roles) = listen.split_once(' ').unwrap();
-    assert_eq!(roles.trim_start(), "HTTP/1.1  UI, discovery, probe, transfers, WebSockets");
+    assert_eq!(
+        roles.trim_start(),
+        "HTTP/1.1  UI, discovery, probe, transfers, WebSockets"
+    );
     assert_eq!(next(), "ready");
     (child, place.strip_suffix("/tcp").unwrap().to_owned(), next)
 }
@@ -54,7 +61,9 @@ fn listening(env: &[(&str, &str)]) -> (std::process::Child, String, impl Fn() ->
 /// Stops `child` with SIGTERM and expects exit 0.
 #[cfg(unix)]
 fn terminate(mut child: std::process::Child) {
-    let killed = Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
     assert!(killed.unwrap().success());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let status = loop {
@@ -98,24 +107,45 @@ fn hash_password_prints_the_hash_of_a_confirmed_password() {
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(text(&output.stderr), "Password: Confirm password: ");
     let hash = text(&output.stdout).strip_suffix('\n').unwrap();
-    let ["", "argon2id", "v=19", "m=19456,t=2,p=1", salt, key] = hash.split('$').collect::<Vec<_>>()[..] else {
+    let ["", "argon2id", "v=19", "m=19456,t=2,p=1", salt, key] =
+        hash.split('$').collect::<Vec<_>>()[..]
+    else {
         panic!("{hash}")
     };
-    let (salt, key) = (STANDARD_NO_PAD.decode(salt).unwrap(), STANDARD_NO_PAD.decode(key).unwrap());
+    let (salt, key) = (
+        STANDARD_NO_PAD.decode(salt).unwrap(),
+        STANDARD_NO_PAD.decode(key).unwrap(),
+    );
     let mut derived = [0; 32];
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::new(19456, 2, 1, Some(32)).unwrap());
+    let argon2 = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(19456, 2, 1, Some(32)).unwrap(),
+    );
     argon2
         .hash_password_into(b"correct horse", &salt, &mut derived)
         .unwrap();
     assert_eq!(derived[..], key[..]);
 
     for (stdin, prompts, message) in [
-        (&b"one\ntwo\n"[..], "Password: Confirm password: ", "passwords do not match"),
+        (
+            &b"one\ntwo\n"[..],
+            "Password: Confirm password: ",
+            "passwords do not match",
+        ),
         (b"\n", "Password: ", "password must contain 1 to 1024 bytes"),
-        (&[b'x'; 1100], "Password: ", "password must contain 1 to 1024 bytes"),
+        (
+            &[b'x'; 1100],
+            "Password: ",
+            "password must contain 1 to 1024 bytes",
+        ),
     ] {
         let output = server(&["hash-password"], &[], stdin);
-        assert_eq!((output.status.code(), text(&output.stdout)), (Some(1), ""), "{message}");
+        assert_eq!(
+            (output.status.code(), text(&output.stdout)),
+            (Some(1), ""),
+            "{message}"
+        );
         let line = text(&output.stderr)
             .strip_prefix(prompts)
             .unwrap()
@@ -163,9 +193,14 @@ fn transfers(message: &str) -> usize {
     let fields: Vec<_> = message.split(" · ").collect();
     let decimal = |field: &str| {
         let (whole, fraction) = field.split_once('.').unwrap();
-        assert!(whole.bytes().all(|byte| byte.is_ascii_digit()) && fraction.len() == 2, "{message}");
+        assert!(
+            whole.bytes().all(|byte| byte.is_ascii_digit()) && fraction.len() == 2,
+            "{message}"
+        );
     };
-    let [rate, count, bytes] = fields[..] else { panic!("{message}") };
+    let [rate, count, bytes] = fields[..] else {
+        panic!("{message}")
+    };
     decimal(rate.strip_suffix(" Gbit/s").unwrap());
     decimal(bytes.split_once(" MB in ").unwrap().0);
     count.strip_suffix(" transfers").unwrap().parse().unwrap()
@@ -187,7 +222,10 @@ fn a_verbose_server_reports_throughput_and_sigterm_ends_its_running_download() {
     terminate(child);
     assert!(reading.join().unwrap(), "the download ends with the server");
     let elapsed = stopping.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(2), "stopped after {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "stopped after {elapsed:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -196,11 +234,15 @@ fn connections_past_a_client_share_are_logged_once_a_minute_with_a_count() {
     use std::io::Read;
     let (child, address, next) = listening(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "1")]);
     let mut held = std::net::TcpStream::connect(&address).unwrap();
-    held.write_all(b"GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").unwrap();
+    held.write_all(b"GET /probe HTTP/1.1\r\nHost: test\r\n\r\n")
+        .unwrap();
     held.read_exact(&mut [0; 12]).unwrap();
     for _ in 0..3 {
         let mut refused = std::net::TcpStream::connect(&address).unwrap();
-        assert!(matches!(refused.read(&mut [0; 1]), Ok(0) | Err(_)), "closed unserved");
+        assert!(
+            matches!(refused.read(&mut [0; 1]), Ok(0) | Err(_)),
+            "closed unserved"
+        );
     }
     assert_eq!(
         next(),
@@ -209,5 +251,8 @@ fn connections_past_a_client_share_are_logged_once_a_minute_with_a_count() {
     );
     drop(held);
     terminate(child);
-    assert!(next().starts_with("stop requested"), "the later refusals wait for the next minute");
+    assert!(
+        next().starts_with("stop requested"),
+        "the later refusals wait for the next minute"
+    );
 }

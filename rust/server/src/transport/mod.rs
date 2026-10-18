@@ -21,8 +21,12 @@ use tokio::{io::BufReader, net::TcpStream};
 use tokio_rustls::server::TlsStream;
 
 /// Connection failures any peer can cause, such as a refused TLS handshake.
-pub(crate) static PEER_FAILURES: RateLimited =
-    RateLimited::new(Level::Info, "peer", "peer connection failures", module_path!());
+pub(crate) static PEER_FAILURES: RateLimited = RateLimited::new(
+    Level::Info,
+    "peer",
+    "peer connection failures",
+    module_path!(),
+);
 
 /// Bytes a connection's socket moves before its task lets the other tasks on its pinned runtime run.
 const BURST_BYTES: usize = 256 << 10;
@@ -126,12 +130,17 @@ mod tests {
         let accepted = listener.accept().unwrap().0;
         accepted.set_nonblocking(true).unwrap();
         // Registered with the first runtime's driver, which nothing polls again.
-        let mut socket = first.block_on(async { TcpStream::from_std(accepted) }).unwrap();
+        let mut socket = first
+            .block_on(async { TcpStream::from_std(accepted) })
+            .unwrap();
         let read = second.block_on(async move {
             socket.rehome().unwrap();
             std::io::Write::write_all(&mut peer, b"ping").unwrap();
             let mut buffer = [0; 4];
-            let reading = tokio::time::timeout(std::time::Duration::from_secs(5), socket.read_exact(&mut buffer));
+            let reading = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                socket.read_exact(&mut buffer),
+            );
             reading.await.map(|_| buffer)
         });
         assert_eq!(read.unwrap(), *b"ping");

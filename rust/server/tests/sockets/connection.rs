@@ -12,7 +12,10 @@ async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duratio
     tokio::time::advance(open).await;
     tokio::task::yield_now().await;
     std::thread::sleep(Duration::from_millis(1));
-    assert!(client.answer().now_or_never().is_none(), "open after {open:?}");
+    assert!(
+        client.answer().now_or_never().is_none(),
+        "open after {open:?}"
+    );
     for _ in 0..400 {
         tokio::time::advance(Duration::from_millis(50)).await;
         tokio::task::yield_now().await;
@@ -28,7 +31,11 @@ async fn closes_after(client: &mut Client<TcpStream>, open: Duration) -> Duratio
 }
 
 /// Sends part of a head after `idle` seconds without traffic, and returns how long the server then took to close.
-async fn partial_head_closes_after(client: &mut Client<TcpStream>, idle: u64, open: Duration) -> Duration {
+async fn partial_head_closes_after(
+    client: &mut Client<TcpStream>,
+    idle: u64,
+    open: Duration,
+) -> Duration {
     tokio::time::pause();
     sleep(Duration::from_secs(idle)).await;
     tokio::time::resume();
@@ -44,7 +51,10 @@ async fn keep_alive_idleness_and_request_heads_have_fifteen_seconds() {
     let mut idle = server.connect().await;
     assert_eq!(idle.request("GET /probe", "").await.status, 200);
     let elapsed = closes_after(&mut idle, fourteen).await;
-    assert!(elapsed < Duration::from_millis(15_100), "an idle keep-alive connection: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_millis(15_100),
+        "an idle keep-alive connection: {elapsed:?}"
+    );
     let elapsed = partial_head_closes_after(&mut server.connect().await, 10, four).await;
     assert!(
         elapsed < Duration::from_millis(5_100),
@@ -86,7 +96,10 @@ async fn an_unadmitted_reply_the_peer_does_not_read_is_cut_at_the_exchange_bound
         received += read;
     }
     sending.abort();
-    assert!(received < REQUESTS * reply / 2, "the replies were cut with {received} bytes read");
+    assert!(
+        received < REQUESTS * reply / 2,
+        "the replies were cut with {received} bytes read"
+    );
 }
 
 #[tokio::test]
@@ -94,7 +107,12 @@ async fn a_head_over_thirty_two_kibibytes_is_refused() {
     let server = start(&[]).await;
     let mut client = server.connect().await;
     let field = |bytes| "a".repeat(bytes);
-    let head = |bytes| format!("GET /probe HTTP/1.1\r\nHost: test\r\nX-Pad: {}\r\n\r\n", field(bytes));
+    let head = |bytes| {
+        format!(
+            "GET /probe HTTP/1.1\r\nHost: test\r\nX-Pad: {}\r\n\r\n",
+            field(bytes)
+        )
+    };
     client.send(&head(30 << 10)).await;
     assert_eq!(client.answer().await.unwrap().status, 200);
     client.send(&head(33 << 10)).await;
@@ -111,13 +129,17 @@ async fn connections_beyond_a_client_share_are_closed_unserved() {
         held.push(client);
     }
     let mut refused = server.connect().await;
-    refused.send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").await;
+    refused
+        .send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n")
+        .await;
     assert!(refused.answer().await.is_none());
     drop(held);
     let served = async {
         loop {
             let mut client = server.connect().await;
-            client.send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").await;
+            client
+                .send("GET /probe HTTP/1.1\r\nHost: test\r\n\r\n")
+                .await;
             if client.answer().await.is_some() {
                 return;
             }
@@ -132,9 +154,14 @@ async fn connections_beyond_a_client_share_are_closed_unserved() {
 async fn discovery_names_the_bound_port_of_a_listener_configured_with_port_zero() {
     let server = start(&[]).await;
     let port = server.address.port();
-    let preflight: serde_json::Value = serde_json::from_slice(&server.get("/preflight").await.body).unwrap();
+    let preflight: serde_json::Value =
+        serde_json::from_slice(&server.get("/preflight").await.body).unwrap();
     let target = &preflight["capabilities"]["throughput"][0];
     assert_eq!(target["baseUrl"], format!("http://test:{port}"));
-    let servers: serde_json::Value = serde_json::from_slice(&server.get("/servers").await.body).unwrap();
-    assert_eq!(servers["servers"][0]["additionalOrigins"][0], format!("http://test:{port}"));
+    let servers: serde_json::Value =
+        serde_json::from_slice(&server.get("/servers").await.body).unwrap();
+    assert_eq!(
+        servers["servers"][0]["additionalOrigins"][0],
+        format!("http://test:{port}")
+    );
 }

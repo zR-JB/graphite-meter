@@ -45,12 +45,26 @@ pub(super) struct Requests {
 }
 
 impl Requests {
-    pub(super) fn new(app: Arc<App>, connection: Connection, window: Arc<QuicWindow>, quic: noq::Connection) -> Self {
-        Self { app, connection, window, quic, large: Arc::default() }
+    pub(super) fn new(
+        app: Arc<App>,
+        connection: Connection,
+        window: Arc<QuicWindow>,
+        quic: noq::Connection,
+    ) -> Self {
+        Self {
+            app,
+            connection,
+            window,
+            quic,
+            large: Arc::default(),
+        }
     }
 
     /// One request: reset when it expires unadmitted or its reply ends unwritten; admitted work once a poll sees it.
-    pub(super) fn serve(&self, request: server::Request) -> impl Future<Output = ()> + Send + use<> {
+    pub(super) fn serve(
+        &self,
+        request: server::Request,
+    ) -> impl Future<Output = ()> + Send + use<> {
         let requests = self.clone();
         async move {
             let exchange = Exchange::start();
@@ -91,7 +105,13 @@ impl Requests {
     }
 
     /// A CONNECT: its WebTransport session, or the app's answer within the reply's bound.
-    async fn connect(&self, head: Request<()>, stream: RequestStream, exchange: Exchange, watch: &Watch) {
+    async fn connect(
+        &self,
+        head: Request<()>,
+        stream: RequestStream,
+        exchange: Exchange,
+        watch: &Watch,
+    ) {
         let request = head.map(|()| Body::empty());
         match self.app.handle(request, &self.connection, exchange).await {
             Outcome::WebTransport(response, lane, plan) => {
@@ -100,11 +120,16 @@ impl Requests {
                     funding.fund(watch, self.app.budget(), |keys| window.fund(keys));
                     matches!(funding, Funding::Funded)
                 };
-                webtransport::serve(stream, response.into_parts().0.headers, lane, plan, fund).await;
+                webtransport::serve(stream, response.into_parts().0.headers, lane, plan, fund)
+                    .await;
             }
             Outcome::Response(response) => {
                 let (send, _recv) = stream.split();
-                let mut reply = H3Reply { send, large: None, stopped: None };
+                let mut reply = H3Reply {
+                    send,
+                    large: None,
+                    stopped: None,
+                };
                 let _ = pump(&mut reply, response, false).await;
             }
             Outcome::WebSocket(..) | Outcome::Abort => {}
@@ -123,15 +148,29 @@ struct H3Reply {
 }
 
 impl Sink for H3Reply {
-    async fn head(&mut self, head: Parts, end: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
-        within(bound, self.send.send_response(Response::from_parts(head, ()))).await?;
+    async fn head(
+        &mut self,
+        head: Parts,
+        end: bool,
+        bound: &mut ReplyBound,
+    ) -> Result<(), Aborted> {
+        within(
+            bound,
+            self.send.send_response(Response::from_parts(head, ())),
+        )
+        .await?;
         if end {
             within(bound, self.send.finish()).await?;
         }
         Ok(())
     }
 
-    async fn data(&mut self, mut data: Bytes, last: bool, bound: &mut ReplyBound) -> Result<(), Aborted> {
+    async fn data(
+        &mut self,
+        mut data: Bytes,
+        last: bool,
+        bound: &mut ReplyBound,
+    ) -> Result<(), Aborted> {
         while !data.is_empty() {
             if let Some(large) = &self.large {
                 within(bound, large.paced()).await?;
@@ -169,7 +208,10 @@ struct Large {
 impl Large {
     fn new(count: &Arc<AtomicUsize>, quic: &noq::Connection) -> Self {
         count.fetch_add(1, Ordering::Relaxed);
-        Self { count: count.clone(), quic: quic.clone() }
+        Self {
+            count: count.clone(),
+            quic: quic.clone(),
+        }
     }
 
     /// Only a crowded connection needs a handoff after each frame; on others it would halve throughput.

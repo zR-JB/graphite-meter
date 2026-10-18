@@ -88,14 +88,21 @@ async fn head(stream: &mut RequestStream) -> Result<http::Request<()>, Error> {
 }
 
 /// Charges the decoded head until the request's extensions drop.
-fn admit(stream: &mut RequestStream, head: fields::Head<http::Request<()>>) -> Result<http::Request<()>, Error> {
-    let bytes = head.size as usize + head.message.headers().len() * size_of::<(http::HeaderName, http::HeaderValue)>();
+fn admit(
+    stream: &mut RequestStream,
+    head: fields::Head<http::Request<()>>,
+) -> Result<http::Request<()>, Error> {
+    let bytes = head.size as usize
+        + head.message.headers().len() * size_of::<(http::HeaderName, http::HeaderValue)>();
     let Some(charge) = Charge::new(&stream.shared().budget, bytes) else {
         return Err(stream.abort(Code::H3_REQUEST_REJECTED));
     };
     let mut request = head.message;
     if request.method() != http::Method::CONNECT {
-        stream.shared().served.store(true, std::sync::atomic::Ordering::Release);
+        stream
+            .shared()
+            .served
+            .store(true, std::sync::atomic::Ordering::Release);
     }
     request.extensions_mut().insert(Arc::new(charge));
     stream.recv.message.owed = head.content_length;

@@ -42,7 +42,10 @@ pub(super) struct Challenge {
 
 impl Challenge {
     pub(super) fn parse(text: &str) -> Option<Self> {
-        Some(Self { code: verification_code(text)?, text: text.to_owned() })
+        Some(Self {
+            code: verification_code(text)?,
+            text: text.to_owned(),
+        })
     }
 
     /// The challenge `verifier` answers.
@@ -132,12 +135,16 @@ impl State {
     fn approval_room(&self, login: Option<LoginKey>, keys: &ClientKeys) -> Room {
         // An issued approval is bounded by its live grant, so only pending ones count.
         let count = |held: &dyn Fn(&Approval) -> bool| {
-            let pending = self.approvals.values().filter(|approval| !approval.issued());
+            let pending = self
+                .approvals
+                .values()
+                .filter(|approval| !approval.issued());
             pending.filter(|approval| held(approval)).count()
         };
         let held = count(&|approval| approval.login() == login);
         let client = |key: &ClientKey| count(&|approval| approval.clients.contains(key));
-        let total = count(&|_| true) < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
+        let total =
+            count(&|_| true) < MAX_APPROVALS && (login.is_some() || held < MAX_APPROVALS / 2);
         Room {
             login: held < MAX_LOGIN_APPROVALS,
             shared: total && !share_full(keys, MAX_CLIENT_APPROVALS, client),
@@ -160,8 +167,15 @@ impl State {
     ) {
         let (clients, deadline) = (keys.iter().collect(), Instant::now() + LIFETIME);
         let stage = login.map_or(Stage::Open, Stage::Claimed);
-        self.approvals
-            .insert(challenge, Approval { browser, clients, stage, deadline });
+        self.approvals.insert(
+            challenge,
+            Approval {
+                browser,
+                clients,
+                stage,
+                deadline,
+            },
+        );
     }
 }
 
@@ -174,7 +188,13 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     let lease = signed_in(auth, request.headers());
     let mut state = lock(&auth.store.0);
     let found = state.pending(&challenge);
-    let found = found.map(|approval| (approval.browser.clone(), approval.login(), approval.issued()));
+    let found = found.map(|approval| {
+        (
+            approval.browser.clone(),
+            approval.login(),
+            approval.issued(),
+        )
+    });
     if let Some((Some(origin), ..)) = &found {
         let origin = origin.header().to_str().unwrap_or_default();
         let query = query::encode(&[("challenge", challenge.as_str()), ("client_origin", origin)]);
@@ -183,9 +203,13 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
     let Some(lease) = lease else {
         return redirect(&challenge.sign_in());
     };
-    let Some(keys) = peer.keys() else { return refused(Refused::Busy) };
+    let Some(keys) = peer.keys() else {
+        return refused(Refused::Busy);
+    };
     match found {
-        Some((_, login, issued)) if issued || login != Some(lease.login()) => return refused(Refused::Link),
+        Some((_, login, issued)) if issued || login != Some(lease.login()) => {
+            return refused(Refused::Link);
+        }
         Some(_) => {}
         None => {
             state.sweep(Instant::now());
@@ -205,21 +229,30 @@ pub(super) fn cli_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> 
 /// `GET /auth/browser`: the approval page for a browser origin's challenge, opened before sign-in when need be.
 pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer) -> Response<Body> {
     let (headers, query) = (request.headers(), request.uri().query());
-    let challenge = query::get(query, "challenge").and_then(|challenge| Challenge::parse(&challenge));
-    let origin = query::get(query, "client_origin").and_then(|origin| HeaderValue::from_str(&origin).ok());
-    let (Some(challenge), Some(origin)) = (challenge, origin.as_ref().and_then(BrowserOrigin::parse)) else {
+    let challenge =
+        query::get(query, "challenge").and_then(|challenge| Challenge::parse(&challenge));
+    let origin =
+        query::get(query, "client_origin").and_then(|origin| HeaderValue::from_str(&origin).ok());
+    let (Some(challenge), Some(origin)) =
+        (challenge, origin.as_ref().and_then(BrowserOrigin::parse))
+    else {
         return refused(Refused::Link);
     };
     let known = lock(&auth.store.0).pending(&challenge).is_some();
     let keys = peer
         .keys()
         .filter(|keys| known || auth.browser_approvals.allow(keys, false, None));
-    let Some(keys) = keys else { return refused(Refused::Busy) };
+    let Some(keys) = keys else {
+        return refused(Refused::Busy);
+    };
     let login = signed_in(auth, headers);
     let mut state = lock(&auth.store.0);
     if state.pending(&challenge).is_none() {
         state.sweep(Instant::now());
-        if !state.approval_room(login.as_ref().map(AuthLease::login), &keys).shared {
+        if !state
+            .approval_room(login.as_ref().map(AuthLease::login), &keys)
+            .shared
+        {
             return refused(Refused::Busy);
         }
         state.open(challenge.clone(), Some(origin.clone()), &keys, None);
@@ -243,7 +276,9 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
     match approval.stage {
         Stage::Open if room == Some(true) => approval.stage = Stage::Claimed(lease.login()),
         Stage::Open => return refused(Refused::Busy),
-        Stage::Claimed(login) | Stage::Approved(login) if login != lease.login() => return refused(Refused::Link),
+        Stage::Claimed(login) | Stage::Approved(login) if login != lease.login() => {
+            return refused(Refused::Link);
+        }
         Stage::Claimed(_) | Stage::Approved(_) => {}
         Stage::Issued(_) => return refused(Refused::Link),
     }
@@ -256,7 +291,12 @@ pub(super) fn browser_page<B>(auth: &Enabled, request: &Request<B>, peer: &Peer)
 }
 
 /// `POST /auth/{cli,browser}/approve`: the login's approval of its pending challenge, proving its CSRF token.
-pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Form>, browser: bool) -> Response<Body> {
+pub(super) fn approve(
+    auth: &Enabled,
+    lease: Option<&AuthLease>,
+    form: Option<Form>,
+    browser: bool,
+) -> Response<Body> {
     let (Some(lease), Some(form)) = (lease, form) else {
         return response::empty(StatusCode::FORBIDDEN);
     };
@@ -284,17 +324,29 @@ pub(super) fn approve(auth: &Enabled, lease: Option<&AuthLease>, form: Option<Fo
     approval.stage = Stage::Approved(lease.login());
     drop(state);
     auth.security.count(Counter::CliApproval);
-    crate::log!(Info, "auth", "sign-in approved for a {}", if browser { "browser" } else { "terminal" });
+    crate::log!(
+        Info,
+        "auth",
+        "sign-in approved for a {}",
+        if browser { "browser" } else { "terminal" }
+    );
     response::html(page::cli_done(browser))
 }
 
 /// `POST /auth/{cli,browser}/token`: the grant for an approved challenge's verifier; a browser's from its origin.
-pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B>, browser: bool) -> Response<Body> {
+pub(super) async fn token<B: http_body::Body>(
+    auth: &Enabled,
+    request: Request<B>,
+    browser: bool,
+) -> Response<Body> {
     #[derive(Deserialize)]
     struct Exchange {
         verifier: String,
     }
-    let origin = request.headers().get(header::ORIGIN).and_then(BrowserOrigin::parse);
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(BrowserOrigin::parse);
     let origin = origin.filter(|_| browser);
     if browser && origin.is_none() {
         return response::empty(StatusCode::FORBIDDEN);
@@ -302,7 +354,8 @@ pub(super) async fn token<B: http_body::Body>(auth: &Enabled, request: Request<B
     let document = body(request.into_body()).await;
     let verifier = document.and_then(|document| serde_json::from_slice::<Exchange>(&document).ok());
     let shortest = if browser { MIN_BROWSER_VERIFIER } else { 0 };
-    let verifier = verifier.filter(|exchange| (shortest..=MAX_VERIFIER).contains(&exchange.verifier.len()));
+    let verifier =
+        verifier.filter(|exchange| (shortest..=MAX_VERIFIER).contains(&exchange.verifier.len()));
     let mut answer = match verifier {
         Some(exchange) => issue(auth, &exchange.verifier, origin.clone()),
         None if browser => response::empty(StatusCode::FORBIDDEN),
@@ -321,7 +374,9 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
     };
     let (mut state, now) = (lock(&auth.store.0), Instant::now());
     state.sweep(now);
-    let approval = state.pending(&challenge).filter(|approval| approval.browser == origin);
+    let approval = state
+        .pending(&challenge)
+        .filter(|approval| approval.browser == origin);
     let Some(stage) = approval.map(|approval| approval.stage.clone()) else {
         return pending();
     };
@@ -333,11 +388,17 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
     };
     let token = match stage {
         // A lost answer is asked again with the same verifier, so it gets the same grant for a short while.
-        Stage::Issued(Issued { token: Some(token), .. }) => token,
+        Stage::Issued(Issued {
+            token: Some(token), ..
+        }) => token,
         Stage::Issued(_) => return response::empty(StatusCode::GONE),
         Stage::Open | Stage::Claimed(_) => {
             let full = origin.is_some() && state.grants_of(login) >= MAX_LOGIN_GRANTS;
-            return if full { response::empty(StatusCode::TOO_MANY_REQUESTS) } else { pending() };
+            return if full {
+                response::empty(StatusCode::TOO_MANY_REQUESTS)
+            } else {
+                pending()
+            };
         }
         Stage::Approved(_) => {
             let token = match state.grant(login, origin.clone(), credentials) {
@@ -348,13 +409,20 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
             let (replay_until, grant) = (now + REPLAY, digest(token.as_str()));
             if let Some(approval) = state.approvals.get_mut(&challenge) {
                 approval.deadline = approval.deadline.max(replay_until);
-                approval.stage = Stage::Issued(Issued { login, grant, token: Some(token.clone()), replay_until });
+                approval.stage = Stage::Issued(Issued {
+                    login,
+                    grant,
+                    token: Some(token.clone()),
+                    replay_until,
+                });
             }
             token
         }
     };
     drop(state);
-    let remaining = expires.duration_since(SystemTime::now()).unwrap_or_default();
+    let remaining = expires
+        .duration_since(SystemTime::now())
+        .unwrap_or_default();
     response::json_of(&match origin {
         None => json!({"token": token.as_str(), "expires": crate::clock::rfc3339(expires)}),
         Some(_) => json!({
@@ -369,7 +437,9 @@ fn issue(auth: &Enabled, verifier: &str, origin: Option<BrowserOrigin>) -> Respo
 /// A document navigation from another site, which reenters with the strictly same-site session cookie.
 fn cross_site_navigation(headers: &HeaderMap) -> bool {
     let sent = |name, value| headers.get(name).is_some_and(|given| given == value);
-    sent(SEC_FETCH_SITE, "cross-site") && sent(SEC_FETCH_MODE, "navigate") && sent(SEC_FETCH_DEST, "document")
+    sent(SEC_FETCH_SITE, "cross-site")
+        && sent(SEC_FETCH_MODE, "navigate")
+        && sent(SEC_FETCH_DEST, "document")
 }
 
 /// The cookie login of a request that carries no `Authorization`.
@@ -415,12 +485,18 @@ fn refused(refused: Refused) -> Response<Body> {
 
 /// The page of a login holding all its grants.
 fn capacity() -> Response<Body> {
-    let page = page::Cli::Capacity { limit: MAX_LOGIN_GRANTS }.render();
+    let page = page::Cli::Capacity {
+        limit: MAX_LOGIN_GRANTS,
+    }
+    .render();
     with_status(StatusCode::TOO_MANY_REQUESTS, response::html(page))
 }
 
 fn pending() -> Response<Body> {
-    with_status(StatusCode::ACCEPTED, response::json(r#"{"status":"pending"}"#))
+    with_status(
+        StatusCode::ACCEPTED,
+        response::json(r#"{"status":"pending"}"#),
+    )
 }
 
 fn with_status(status: StatusCode, mut answer: Response<Body>) -> Response<Body> {

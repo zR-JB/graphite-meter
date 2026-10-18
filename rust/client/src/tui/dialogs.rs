@@ -25,7 +25,10 @@ impl App {
                 true
             }
             1 => {
-                self.notify(Line::styled("This server offers one test server.", self.palette.muted));
+                self.notify(Line::styled(
+                    "This server offers one test server.",
+                    self.palette.muted,
+                ));
                 false
             }
             _ => {
@@ -33,19 +36,28 @@ impl App {
                     true => self.view.servers.iter().any(|server| server.id == *id),
                     false => self.config.servers.contains(id),
                 };
-                let draft = catalog.iter().map(|entry| entry.id.clone()).filter(selected).collect();
+                let draft = catalog
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .filter(selected)
+                    .collect();
                 (self.overlay, self.scroll) = (Overlay::Chooser(Chooser { row: 0, draft }), 0);
                 false
             }
         };
         if later {
-            self.notify(Line::styled("Test servers open once the check finishes.", self.palette.muted));
+            self.notify(Line::styled(
+                "Test servers open once the check finishes.",
+                self.palette.muted,
+            ));
         }
         self.setup.chooser = later;
     }
 
     pub(super) fn chooser_key(&mut self, action: Action, key: Key) {
-        let Overlay::Chooser(chooser) = &mut self.overlay else { return };
+        let Overlay::Chooser(chooser) = &mut self.overlay else {
+            return;
+        };
         let catalog = &self.view.catalog;
         match action {
             Action::Move => {
@@ -73,8 +85,12 @@ impl App {
 
     /// Selects the focused entry, or deselects it.
     fn select_entry(&mut self) {
-        let Overlay::Chooser(chooser) = &mut self.overlay else { return };
-        let Some(entry) = self.view.catalog.get(chooser.row) else { return };
+        let Overlay::Chooser(chooser) = &mut self.overlay else {
+            return;
+        };
+        let Some(entry) = self.view.catalog.get(chooser.row) else {
+            return;
+        };
         match chooser.draft.iter().position(|id| *id == entry.id) {
             Some(at) => _ = chooser.draft.remove(at),
             None if chooser.draft.len() < MAX_SELECTED => chooser.draft.push(entry.id.clone()),
@@ -86,13 +102,17 @@ impl App {
     }
 
     pub(super) fn chooser_title(&self) -> String {
-        let Overlay::Chooser(chooser) = &self.overlay else { return String::new() };
+        let Overlay::Chooser(chooser) = &self.overlay else {
+            return String::new();
+        };
         format!("Test servers · {} selected", chooser.draft.len())
     }
 
     /// The catalog as the chooser's entries, each with its address and readiness, and the focused one's index.
     pub(super) fn chooser_entries(&self) -> (Vec<Entry>, usize) {
-        let Overlay::Chooser(chooser) = &self.overlay else { return (Vec::new(), 0) };
+        let Overlay::Chooser(chooser) = &self.overlay else {
+            return (Vec::new(), 0);
+        };
         let palette = &self.palette;
         let lead = format!("Choose up to {MAX_SELECTED}. Their speeds add up.");
         let mut entries = vec![Entry::Text(Line::styled(lead, palette.muted))];
@@ -105,12 +125,20 @@ impl App {
             let label = checked
                 .and(" ", Style::default())
                 .and(format::server(&entry.name, &entry.location), palette.text);
-            let server = self.view.servers.iter().find(|server| server.id == entry.id);
+            let server = self
+                .view
+                .servers
+                .iter()
+                .find(|server| server.id == entry.id);
             let value = match server {
                 Some(server) => Line::styled(self.readiness(server).label(), palette.muted),
                 None => Line::default(),
             };
-            entries.push(Entry::Item { label, value, target: Some(Target::Entry(index)) });
+            entries.push(Entry::Item {
+                label,
+                value,
+                target: Some(Target::Entry(index)),
+            });
         }
         (entries, focus)
     }
@@ -124,7 +152,8 @@ pub struct SignIn {
 
 impl App {
     pub(super) fn sign_in_key(&mut self, action: Action) -> Vec<Effect> {
-        let (Overlay::SignIn(sign_in), Some(prompt)) = (&mut self.overlay, &self.view.sign_in) else {
+        let (Overlay::SignIn(sign_in), Some(prompt)) = (&mut self.overlay, &self.view.sign_in)
+        else {
             return Vec::new();
         };
         match action {
@@ -153,7 +182,10 @@ pub(super) fn browse(url: &str) {
     };
     let mut command = std::process::Command::new(opener);
     command.args(args).arg(url);
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if let Ok(mut child) = command.spawn() {
         std::thread::spawn(move || child.wait());
     }

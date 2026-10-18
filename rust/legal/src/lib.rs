@@ -28,8 +28,17 @@ pub struct Notices {
 impl Notices {
     /// The generated `legal.rs` calls this.
     #[doc(hidden)]
-    pub const fn new(payload: Option<(&'static [u8], usize)>, browser: Option<usize>, marker: &'static str) -> Self {
-        Self { payload, browser, marker, report: OnceLock::new() }
+    pub const fn new(
+        payload: Option<(&'static [u8], usize)>,
+        browser: Option<usize>,
+        marker: &'static str,
+    ) -> Self {
+        Self {
+            payload,
+            browser,
+            marker,
+            report: OnceLock::new(),
+        }
     }
 
     /// Keeps the build's plain marker, which release verification reads, in the executable.
@@ -59,7 +68,9 @@ impl Notices {
 /// Writes `report` and returns the exit status, 141 into a closed pipe on Unix, as a process killed by SIGPIPE, else 0.
 pub fn print(mut out: impl Write, report: &[u8]) -> io::Result<u8> {
     match out.write_all(report).and_then(|()| out.flush()) {
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(if cfg!(unix) { 141 } else { 0 }),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+            Ok(if cfg!(unix) { 141 } else { 0 })
+        }
         written => written.map(|()| 0),
     }
 }

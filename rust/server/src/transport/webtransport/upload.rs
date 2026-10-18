@@ -35,7 +35,12 @@ pub struct Upload {
 
 impl Upload {
     /// Serves the session until it ends; refusals get an `error` record and close after a linger; `fund` once fed.
-    pub(super) async fn serve(self, session: &Session, lane: &Lane, mut fund: impl FnMut() -> bool) {
+    pub(super) async fn serve(
+        self,
+        session: &Session,
+        lane: &Lane,
+        mut fund: impl FnMut() -> bool,
+    ) {
         let feed = match self.uploads.subscribe(&self.id, self.owner.as_ref()) {
             Ok(feed) => feed,
             Err(refusal) => {
@@ -59,11 +64,17 @@ impl Upload {
         // The session is one transfer however many streams it reads.
         let transfer = self.uploads.meter().open();
         let join = || {
-            self.uploads
-                .begin(&self.id, self.owner.as_ref(), lane.clone(), transfer.clone())
+            self.uploads.begin(
+                &self.id,
+                self.owner.as_ref(),
+                lane.clone(),
+                transfer.clone(),
+            )
         };
         let mut datagrams = self.datagrams.then(|| join().ok()).flatten();
-        let mut finalized = pin!(OptionFuture::from(datagrams.as_ref().map(UploadSink::finished)));
+        let mut finalized = pin!(OptionFuture::from(
+            datagrams.as_ref().map(UploadSink::finished)
+        ));
         let (mut streams, mut refusal) = (FuturesUnordered::new(), pin!(Fuse::terminated()));
         loop {
             tokio::select! {
@@ -97,7 +108,12 @@ impl Upload {
 async fn receive(mut stream: RecvStream, mut sink: UploadSink) {
     let mut chunks = [const { Bytes::new() }; CHUNKS_PER_READ];
     while let Ok(Ok(Some(count))) = timeout(IDLE_BOUND, stream.read_chunks(&mut chunks)).await {
-        sink.record(chunks[..count].iter_mut().map(|chunk| mem::take(chunk).len()).sum());
+        sink.record(
+            chunks[..count]
+                .iter_mut()
+                .map(|chunk| mem::take(chunk).len())
+                .sum(),
+        );
     }
 }
 
@@ -119,7 +135,11 @@ async fn refuse(session: &Session, refusal: UploadRefusal) {
     let Ok(mut stream) = session.open_uni().await else {
         return;
     };
-    if stream.write_all(Record::from(refusal).line().as_bytes()).await.is_ok() {
+    if stream
+        .write_all(Record::from(refusal).line().as_bytes())
+        .await
+        .is_ok()
+    {
         let _ = stream.finish();
     }
 }

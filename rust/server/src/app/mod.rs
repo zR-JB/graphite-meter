@@ -67,7 +67,11 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(endpoint: Endpoint, peer: IpAddr) -> Self {
-        Self { endpoint, peer, work: Work::default() }
+        Self {
+            endpoint,
+            peer,
+            work: Work::default(),
+        }
     }
 }
 
@@ -96,9 +100,16 @@ impl App {
             let port = listener.address.port;
             HeaderValue::from_str(&format!("h3=\":{port}\"")).expect("a port is a header value")
         });
-        let password = config.auth.as_ref().and_then(|auth| auth.methods.password.as_ref());
-        let operator = password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
-        let generation = crate::random::<16>().iter().map(|byte| format!("{byte:02x}")).collect();
+        let password = config
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.methods.password.as_ref());
+        let operator =
+            password.map(|_| crate::peer::ClientKey::Principal(crate::auth::Principal::operator()));
+        let generation = crate::random::<16>()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Ok(Self {
             quotas: Quotas::new(config.limits, &budget, operator),
             uploads: Uploads::new(crate::random(), Meter::new(config.verbose)),
@@ -115,7 +126,12 @@ impl App {
 
     /// Serves `files` and `notices` as the browser app instead of the embedded ones.
     pub fn with_assets(self, files: &'static [Asset], notices: &'static Notices) -> Self {
-        let assets = Assets::new(files, notices, self.config.auth.is_some(), self.config.result_history_default);
+        let assets = Assets::new(
+            files,
+            notices,
+            self.config.auth.is_some(),
+            self.config.result_history_default,
+        );
         Self { assets, ..self }
     }
 
@@ -140,10 +156,16 @@ impl App {
     }
 
     /// The verbose throughput lines for the `window` since the last, for each direction that moved or runs.
-    pub fn transfer_lines(&self, window: Duration) -> impl Iterator<Item = (&'static str, String)> + '_ {
-        [("download", self.block.meter()), ("upload", self.uploads.meter())]
-            .into_iter()
-            .filter_map(move |(direction, meter)| Some((direction, meter.line(window)?)))
+    pub fn transfer_lines(
+        &self,
+        window: Duration,
+    ) -> impl Iterator<Item = (&'static str, String)> + '_ {
+        [
+            ("download", self.block.meter()),
+            ("upload", self.uploads.meter()),
+        ]
+        .into_iter()
+        .filter_map(move |(direction, meter)| Some((direction, meter.line(window)?)))
     }
 
     /// A connection's share, keyed by its socket address; `None` refuses the connection.
@@ -155,7 +177,9 @@ impl App {
     /// Whether a QUIC handshake from `peer` needs Retry: a quarter of connections or budget used, or its source held.
     pub fn quic_retry(&self, peer: IpAddr) -> bool {
         let keys = ClientKeys::connection(peer, &self.config.trusted_proxies);
-        self.quotas.connections_crowded() || self.budget.pressure() >= Pressure::Retry || self.quotas.holds_quic(&keys)
+        self.quotas.connections_crowded()
+            || self.budget.pressure() >= Pressure::Retry
+            || self.quotas.holds_quic(&keys)
     }
 
     /// Receive-window credit for a connection `keys` fund; `None` past their share or the clients' half.
@@ -179,7 +203,9 @@ impl App {
                     && request.method() != Method::OPTIONS;
                 let access = self.auth.access(route, peer.auth(), request.headers());
                 let access = access.as_ref();
-                let outcome = self.dispatch(request, route, &peer, connection, exchange).await;
+                let outcome = self
+                    .dispatch(request, route, &peer, connection, exchange)
+                    .await;
                 let mut outcome = outcome.unwrap_or_else(Outcome::Response);
                 if let Outcome::Response(response)
                 | Outcome::WebSocket(response, _)
@@ -187,7 +213,9 @@ impl App {
                 {
                     self.finalize(response, access, bootstrap, version);
                 }
-                let Outcome::Response(response) = outcome else { return outcome };
+                let Outcome::Response(response) = outcome else {
+                    return outcome;
+                };
                 response
             }
         };
@@ -219,9 +247,15 @@ impl App {
         let response = match route {
             Route::Upload => return self.receive(request, peer, connection, exchange).await,
             Route::Ping => return self.websocket(&request, peer, connection, exchange),
-            Route::WtPing => return self.webtransport(&request, WtRoute::Ping, peer, connection, exchange),
-            Route::WtDownload => return self.webtransport(&request, WtRoute::Download, peer, connection, exchange),
-            Route::WtUpload => return self.webtransport(&request, WtRoute::Upload, peer, connection, exchange),
+            Route::WtPing => {
+                return self.webtransport(&request, WtRoute::Ping, peer, connection, exchange);
+            }
+            Route::WtDownload => {
+                return self.webtransport(&request, WtRoute::Download, peer, connection, exchange);
+            }
+            Route::WtUpload => {
+                return self.webtransport(&request, WtRoute::Upload, peer, connection, exchange);
+            }
             Route::Download => self.download(&request, peer, connection, exchange)?,
             Route::UploadProgress => self.progress(&request, peer, connection, exchange)?,
             Route::Probe => self.probe(peer, connection.endpoint),
@@ -250,7 +284,14 @@ impl App {
             false => (self.quotas.operation(&keys), lifetimes.operation),
         };
         let hold = hold.map_err(response::busy)?;
-        Ok(exchange.admit(keys, hold, lifetime, &connection.work, &self.shutdown, peer.auth()))
+        Ok(exchange.admit(
+            keys,
+            hold,
+            lifetime,
+            &connection.work,
+            &self.shutdown,
+            peer.auth(),
+        ))
     }
 
     /// A WebTransport session admitted before its upgrade: `/wt/ping` as an operation, transfer routes as sessions.
@@ -281,11 +322,21 @@ impl App {
             }),
             WtRoute::Ping => Plan::Ping,
         };
-        Ok(Outcome::WebTransport(response::empty(StatusCode::OK), lane, plan))
+        Ok(Outcome::WebTransport(
+            response::empty(StatusCode::OK),
+            lane,
+            plan,
+        ))
     }
 
     /// The WebSocket bus, admitted before its handshake is checked.
-    fn websocket<B>(&self, request: &Request<B>, peer: &Peer, connection: &Connection, exchange: Exchange) -> Admitted {
+    fn websocket<B>(
+        &self,
+        request: &Request<B>,
+        peer: &Peer,
+        connection: &Connection,
+        exchange: Exchange,
+    ) -> Admitted {
         let lane = self.admit(peer, connection, exchange, false)?;
         Ok(match websocket::handshake(request) {
             Ok(accepted) => Outcome::WebSocket(accepted, lane),
@@ -309,7 +360,10 @@ impl App {
         };
         let mut response = Response::new(body);
         let headers = response.headers_mut();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
         Ok(response)
@@ -326,7 +380,10 @@ impl App {
         let lane = self.admit(peer, connection, exchange, false)?;
         let id = query::get(request.uri().query(), "id").unwrap_or_default();
         let transfer = self.uploads.meter().open();
-        let mut sink = match self.uploads.begin(&id, peer.keys().as_ref(), lane.clone(), transfer) {
+        let mut sink = match self
+            .uploads
+            .begin(&id, peer.keys().as_ref(), lane.clone(), transfer)
+        {
             Ok(sink) => sink,
             Err(refusal) => return Err(response::upload_refusal(refusal)),
         };
@@ -379,7 +436,11 @@ enum End {
 }
 
 /// Up to `FRAMES_PER_READ` frames of `body` that are ready now, then `lane`'s check; pending only while none is.
-fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, lane: &Lane) -> Poll<Batch> {
+fn poll_batch<B: http_body::Body>(
+    mut body: Pin<&mut B>,
+    cx: &mut Context<'_>,
+    lane: &Lane,
+) -> Poll<Batch> {
     let mut bytes = 0;
     for taken in 0..FRAMES_PER_READ {
         let end = match body.as_mut().poll_frame(cx) {
@@ -392,14 +453,28 @@ fn poll_batch<B: http_body::Body>(mut body: Pin<&mut B>, cx: &mut Context<'_>, l
             Poll::Pending if taken == 0 => return Poll::Pending,
             Poll::Pending => break,
         };
-        return Poll::Ready(Batch { bytes, end: Some(end) });
+        return Poll::Ready(Batch {
+            bytes,
+            end: Some(end),
+        });
     }
-    Poll::Ready(Batch { bytes, end: lane.due().map(End::Lane) })
+    Poll::Ready(Batch {
+        bytes,
+        end: lane.due().map(End::Lane),
+    })
 }
 
 /// The authority a request names in its URI or Host header, without user information.
 pub(crate) fn authority<B>(request: &Request<B>) -> Option<Authority> {
-    let named = || request.headers().get(header::HOST)?.to_str().ok()?.parse().ok();
+    let named = || {
+        request
+            .headers()
+            .get(header::HOST)?
+            .to_str()
+            .ok()?
+            .parse()
+            .ok()
+    };
     let authority = request.uri().authority().cloned().or_else(named);
     authority.filter(|authority| !authority.as_str().contains('@'))
 }
@@ -415,7 +490,13 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
-    pub const ALL: [Self; 5] = [Self::H1, Self::H1Tls, Self::H2, Self::H3Companion, Self::Quic];
+    pub const ALL: [Self; 5] = [
+        Self::H1,
+        Self::H1Tls,
+        Self::H2,
+        Self::H3Companion,
+        Self::Quic,
+    ];
 
     /// Whether this endpoint serves `route`: the only mount decision.
     pub const fn mounts(self, route: Route) -> bool {

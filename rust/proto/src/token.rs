@@ -20,6 +20,9 @@ pub struct SocketTicket {
 impl SocketTicket {
     /// The answer with authentication off.
     pub fn unauthenticated() -> Self {
-        Self { token: String::new(), expires: 0 }
+        Self {
+            token: String::new(),
+            expires: 0,
+        }
     }
 }

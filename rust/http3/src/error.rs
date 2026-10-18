@@ -12,7 +12,11 @@ pub enum Error {
     /// The peer broke HTTP/3 on this stream, which the layer aborted with this code.
     Protocol(Code),
     /// The connection closed with an HTTP/3 code, by the peer or by the layer on a violation.
-    Connection { local: bool, code: Code, reason: Bytes },
+    Connection {
+        local: bool,
+        code: Code,
+        reason: Bytes,
+    },
     /// QUIC failed below HTTP/3.
     Transport(noq::ConnectionError),
     /// A protocol deadline passed.
@@ -32,7 +36,11 @@ pub enum Error {
 impl Error {
     /// This side closed the connection with `code`.
     pub(crate) fn local(code: Code) -> Self {
-        Self::Connection { local: true, code, reason: Bytes::new() }
+        Self::Connection {
+            local: true,
+            code,
+            reason: Bytes::new(),
+        }
     }
 
     /// A normal close: H3_NO_ERROR, the peer's QUIC NO_ERROR, or an application close below the layer.
@@ -54,7 +62,11 @@ impl fmt::Display for Error {
             Self::Reset(code) => write!(f, "HTTP/3 stream reset by peer: {:#x}", code.0),
             Self::Stopped(code) => write!(f, "HTTP/3 stream stopped by peer: {:#x}", code.0),
             Self::Protocol(code) => write!(f, "HTTP/3 stream aborted: {:#x}", code.0),
-            Self::Connection { local, code, reason } => write!(
+            Self::Connection {
+                local,
+                code,
+                reason,
+            } => write!(
                 f,
                 "HTTP/3 connection closed by {}: {:#x} {}",
                 if *local { "this side" } else { "peer" },
@@ -64,7 +76,9 @@ impl fmt::Display for Error {
             Self::Transport(error) => write!(f, "QUIC connection failed: {error}"),
             Self::TimedOut => f.write_str("HTTP/3 deadline passed"),
             Self::NoWebTransport => f.write_str("peer did not negotiate WebTransport"),
-            Self::GoingAway => f.write_str("HTTP/3 connection going away after the server's GOAWAY"),
+            Self::GoingAway => {
+                f.write_str("HTTP/3 connection going away after the server's GOAWAY")
+            }
             Self::Refused => f.write_str("HTTP/3 request refused"),
             Self::SessionEnded => f.write_str("WebTransport session ended"),
             Self::Closed => f.write_str("HTTP/3 stream already closed by this side"),

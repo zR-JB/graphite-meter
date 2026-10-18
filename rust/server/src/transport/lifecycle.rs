@@ -112,7 +112,9 @@ impl Lifecycle {
             self.quiet = None;
             return false;
         }
-        let quiet = self.quiet.get_or_insert_with(|| Box::pin(sleep(CONNECTION_IDLE)));
+        let quiet = self
+            .quiet
+            .get_or_insert_with(|| Box::pin(sleep(CONNECTION_IDLE)));
         quiet.as_mut().poll(cx).is_ready()
     }
 }
@@ -136,13 +138,22 @@ mod tests {
             let work = Work::default();
             let mut lifecycle = Lifecycle::new(work.clone(), grace);
             advance(CONNECTION_IDLE * 2).await;
-            assert!(poll(&mut lifecycle, false, true).await.is_pending(), "no credit, no idle rule");
+            assert!(
+                poll(&mut lifecycle, false, true).await.is_pending(),
+                "no credit, no idle rule"
+            );
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(CONNECTION_IDLE - MILLI).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending(), "unadmitted streams do not count");
+            assert!(
+                poll(&mut lifecycle, true, true).await.is_pending(),
+                "unadmitted streams do not count"
+            );
             advance(MILLI).await;
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::GoAway)
+            );
             advance(SHUTDOWN_GRACE - MILLI).await;
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(MILLI).await;
@@ -162,10 +173,16 @@ mod tests {
             drop(work.start());
             assert!(poll(&mut lifecycle, true, true).await.is_pending());
             advance(CONNECTION_IDLE).await;
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::GoAway)
+            );
             let racing = work.start();
             advance(SHUTDOWN_GRACE * 4).await;
-            assert!(poll(&mut lifecycle, true, true).await.is_pending(), "running work is not cut");
+            assert!(
+                poll(&mut lifecycle, true, true).await.is_pending(),
+                "running work is not cut"
+            );
             drop(racing);
             if grace == Grace::Fresh {
                 assert!(poll(&mut lifecycle, true, true).await.is_pending());
@@ -173,7 +190,10 @@ mod tests {
                 assert!(poll(&mut lifecycle, true, true).await.is_pending());
                 advance(MILLI).await;
             }
-            assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::Close));
+            assert_eq!(
+                poll(&mut lifecycle, true, true).await,
+                Poll::Ready(Event::Close)
+            );
         }
     }
 
@@ -184,9 +204,15 @@ mod tests {
         drop(work.start());
         assert!(poll(&mut lifecycle, false, true).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
-        assert!(poll(&mut lifecycle, true, true).await.is_pending(), "credited after its work ended");
+        assert!(
+            poll(&mut lifecycle, true, true).await.is_pending(),
+            "credited after its work ended"
+        );
         advance(MILLI).await;
-        assert_eq!(poll(&mut lifecycle, true, true).await, Poll::Ready(Event::GoAway));
+        assert_eq!(
+            poll(&mut lifecycle, true, true).await,
+            Poll::Ready(Event::GoAway)
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -194,13 +220,22 @@ mod tests {
         let mut lifecycle = Lifecycle::new(Work::default(), Grace::Fresh);
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
-        assert!(poll(&mut lifecycle, false, true).await.is_pending(), "a stream restarts the bound");
+        assert!(
+            poll(&mut lifecycle, false, true).await.is_pending(),
+            "a stream restarts the bound"
+        );
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(CONNECTION_IDLE - MILLI).await;
         assert!(poll(&mut lifecycle, false, false).await.is_pending());
         advance(MILLI).await;
-        assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::GoAway));
+        assert_eq!(
+            poll(&mut lifecycle, false, false).await,
+            Poll::Ready(Event::GoAway)
+        );
         advance(SHUTDOWN_GRACE).await;
-        assert_eq!(poll(&mut lifecycle, false, false).await, Poll::Ready(Event::Close));
+        assert_eq!(
+            poll(&mut lifecycle, false, false).await,
+            Poll::Ready(Event::Close)
+        );
     }
 }

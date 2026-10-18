@@ -14,7 +14,11 @@ const RETRY: u8 = 3;
 async fn initial(h3: &H3) -> Vec<u8> {
     let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let endpoint = noq::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-    let connecting = endpoint.connect_with(h3.client(transport(None)), silent.local_addr().unwrap(), "localhost");
+    let connecting = endpoint.connect_with(
+        h3.client(transport(None)),
+        silent.local_addr().unwrap(),
+        "localhost",
+    );
     let mut packet = vec![0; 2048];
     let length = silent.recv(&mut packet).await.unwrap();
     drop(connecting);
@@ -48,17 +52,32 @@ async fn unvalidated_handshakes_need_retry_under_pressure_or_from_a_source_holdi
     let h3 = H3::start(&[]).await;
     assert!(!retried(&h3, "127.0.0.2").await);
     let _held = h3.connect_from("127.0.0.3", transport(None)).await.unwrap();
-    assert!(retried(&h3, "127.0.0.3").await, "the source holds a connection");
+    assert!(
+        retried(&h3, "127.0.0.3").await,
+        "the source holds a connection"
+    );
     assert!(!retried(&h3, "127.0.0.4").await);
     let budget = h3.server.budget.clone();
     let quarter = budget.lease(budget.usage().limit / 4).unwrap();
-    assert!(retried(&h3, "127.0.0.5").await, "a quarter of the budget is used");
+    assert!(
+        retried(&h3, "127.0.0.5").await,
+        "a quarter of the budget is used"
+    );
     drop(quarter);
 
-    let limits = [("GM_MAX_CONNECTIONS", "4"), ("GM_MAX_CONNECTIONS_PER_CLIENT", "4")];
+    let limits = [
+        ("GM_MAX_CONNECTIONS", "4"),
+        ("GM_MAX_CONNECTIONS_PER_CLIENT", "4"),
+    ];
     let h3 = H3::start(&limits).await;
-    assert!(!retried(&h3, "127.0.0.2").await, "the handshake holds one of four connections");
-    assert!(retried(&h3, "127.0.0.3").await, "a quarter of the connections are used");
+    assert!(
+        !retried(&h3, "127.0.0.2").await,
+        "the handshake holds one of four connections"
+    );
+    assert!(
+        retried(&h3, "127.0.0.3").await,
+        "a quarter of the connections are used"
+    );
 }
 
 /// The budget's usage once it held still for three 30 ms windows in a row.
@@ -80,23 +99,37 @@ pub(super) async fn settled(budget: &Budget) -> usize {
 
 #[tokio::test]
 async fn only_an_admitted_upload_reserves_receive_credit_until_its_connection_is_gone() {
-    let env = [("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"), ("GM_MAX_SESSIONS_PER_CLIENT", "1")];
+    let env = [
+        ("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "1"),
+        ("GM_MAX_SESSIONS_PER_CLIENT", "1"),
+    ];
     let h3 = H3::start(&env).await;
     let budget = h3.server.budget.clone();
     let idle = settled(&budget).await;
     let connection = h3.connect(transport(None)).await;
     let id = h3.server.upload_id().await;
     let (_download, mut download) = connection.send("GET", ENDLESS, b"").await;
-    let (refused, _) = connection.send("POST", &format!("/upload?id={id}"), b"refused").await;
+    let (refused, _) = connection
+        .send("POST", &format!("/upload?id={id}"), b"refused")
+        .await;
     assert_eq!(refused.status(), 429, "the client's share is held");
     let unfunded = settled(&budget).await - idle;
-    assert!(unfunded < CONNECTION_CREDIT / 4, "{unfunded} bytes without an admitted upload");
+    assert!(
+        unfunded < CONNECTION_CREDIT / 4,
+        "{unfunded} bytes without an admitted upload"
+    );
     download.stop(graphite_meter_http3::Code::H3_REQUEST_CANCELLED);
     h3.server.until_active(0).await;
-    let mut answer = connection.send("POST", &format!("/upload?id={id}"), b"funded").await.1;
+    let mut answer = connection
+        .send("POST", &format!("/upload?id={id}"), b"funded")
+        .await
+        .1;
     assert_eq!(read(&mut answer).await.unwrap(), br#"{"bytes":6}"#);
     let funded = settled(&budget).await - idle;
-    assert!(funded >= CONNECTION_CREDIT, "{funded} bytes once an admitted upload read");
+    assert!(
+        funded >= CONNECTION_CREDIT,
+        "{funded} bytes once an admitted upload read"
+    );
     connection.quic.close(0_u32.into(), b"done");
     let drained = async {
         while budget.usage().used != idle {
@@ -125,7 +158,10 @@ async fn a_peer_sending_on_streams_nothing_reads_holds_at_most_192_kib() {
     }
     let sent = connection.quic.stats().udp_tx.bytes - sent;
     let held = settled(&budget).await.saturating_sub(before);
-    assert!(sent <= 192 << 10 && held <= 192 << 10, "{sent} bytes sent, {held} held");
+    assert!(
+        sent <= 192 << 10 && held <= 192 << 10,
+        "{sent} bytes sent, {held} held"
+    );
 }
 
 #[tokio::test]
@@ -165,7 +201,11 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
     let mut download = running.send("GET", "/download?bytes=4194304", b"").await.1;
     let exhausted = exhaust(&budget, 0);
     let bytes = tokio::time::timeout(Duration::from_secs(10), read(&mut download)).await;
-    assert_eq!(bytes.unwrap().unwrap().len(), 4 << 20, "refused charges leave the transfer its floors");
+    assert_eq!(
+        bytes.unwrap().unwrap().len(),
+        4 << 20,
+        "refused charges leave the transfer its floors"
+    );
     drop(exhausted);
 
     let short = exhaust(&budget, 128 << 10);
@@ -178,7 +218,10 @@ async fn an_exhausted_budget_slows_running_connections_and_closes_one_it_cannot_
     };
     // The first charge refused decides the code: the handshake's CRYPTO data, which shares the spare with the
     // endpoint's receive buffers, or the connection's floor.
-    let codes = [noq::TransportErrorCode::INTERNAL_ERROR, noq::TransportErrorCode::CRYPTO_BUFFER_EXCEEDED];
+    let codes = [
+        noq::TransportErrorCode::INTERNAL_ERROR,
+        noq::TransportErrorCode::CRYPTO_BUFFER_EXCEEDED,
+    ];
     assert!(codes.contains(&close.error_code), "{close:?}");
     assert_eq!(&close.reason[..], b"buffer allocation limit");
     assert_eq!(running.quic.close_reason(), None);

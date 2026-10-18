@@ -73,11 +73,17 @@ fn unset_lifetimes_cover_the_stage_limit() {
         let lifetimes = config(env, &[]).lifetimes;
         [lifetimes.operation, lifetimes.session].map(|lifetime| lifetime.as_secs())
     };
-    assert_eq!(lifetimes(&[("GM_MAX_STAGE_DURATION", "3h")]), [3 * 3600 + 60, 3 * 3600 + 60]);
+    assert_eq!(
+        lifetimes(&[("GM_MAX_STAGE_DURATION", "3h")]),
+        [3 * 3600 + 60, 3 * 3600 + 60]
+    );
     assert_eq!(lifetimes(&[]), [360, 7200], "the defaults --help prints");
     assert_eq!(lifetimes(&[("GM_MAX_STAGE_DURATION", "1m")]), [360, 7200]);
     assert_eq!(
-        lifetimes(&[("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_OPERATION_DURATION", "10m")]),
+        lifetimes(&[
+            ("GM_MAX_STAGE_DURATION", "3h"),
+            ("GM_MAX_OPERATION_DURATION", "10m")
+        ]),
         [600, 7200]
     );
     let empty = [
@@ -85,17 +91,31 @@ fn unset_lifetimes_cover_the_stage_limit() {
         ("GM_MAX_OPERATION_DURATION", ""),
         ("GM_MAX_SESSION_DURATION", ""),
     ];
-    assert_eq!(lifetimes(&empty), [3 * 3600 + 60, 3 * 3600 + 60], "an empty value is unset");
-    let explicit = [("GM_MAX_STAGE_DURATION", "3h"), ("GM_MAX_SESSION_DURATION", "1h")];
+    assert_eq!(
+        lifetimes(&empty),
+        [3 * 3600 + 60, 3 * 3600 + 60],
+        "an empty value is unset"
+    );
+    let explicit = [
+        ("GM_MAX_STAGE_DURATION", "3h"),
+        ("GM_MAX_SESSION_DURATION", "1h"),
+    ];
     let message = "GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION";
     assert_eq!(error(&explicit, &[]), message);
     let zero = "GM_MAX_OPERATION_DURATION must be greater than zero";
     assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "0")], &[]), zero);
     let negative = "GM_MAX_OPERATION_DURATION: a duration cannot be negative";
-    assert_eq!(error(&[("GM_MAX_OPERATION_DURATION", "-1s")], &[]), negative);
+    assert_eq!(
+        error(&[("GM_MAX_OPERATION_DURATION", "-1s")], &[]),
+        negative
+    );
     for stage in ["999ms", "24h1s", "0"] {
         let message = "GM_MAX_STAGE_DURATION must be from 1 s to 24 h";
-        assert_eq!(error(&[("GM_MAX_STAGE_DURATION", stage)], &[]), message, "{stage}");
+        assert_eq!(
+            error(&[("GM_MAX_STAGE_DURATION", stage)], &[]),
+            message,
+            "{stage}"
+        );
     }
 }
 
@@ -104,32 +124,70 @@ fn counts_are_positive_and_nested() {
     let zero = "GM_MAX_CONNECTIONS_PER_CLIENT must be greater than zero";
     assert_eq!(error(&[("GM_MAX_CONNECTIONS_PER_CLIENT", "0")], &[]), zero);
     let nested = "GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS";
-    assert_eq!(error(&[("GM_MAX_CONNECTIONS", "8"), ("GM_MAX_CONNECTIONS_PER_CLIENT", "9")], &[]), nested);
-    let config = config(&[("GM_MAX_CONNECTIONS", "8"), ("GM_MAX_CONNECTIONS_PER_CLIENT", "8")], &[]);
+    assert_eq!(
+        error(
+            &[
+                ("GM_MAX_CONNECTIONS", "8"),
+                ("GM_MAX_CONNECTIONS_PER_CLIENT", "9")
+            ],
+            &[]
+        ),
+        nested
+    );
+    let config = config(
+        &[
+            ("GM_MAX_CONNECTIONS", "8"),
+            ("GM_MAX_CONNECTIONS_PER_CLIENT", "8"),
+        ],
+        &[],
+    );
     assert_eq!(config.limits.connections_per_client.get(), 8);
 }
 
 #[test]
 fn trusted_proxies_take_cidrs_without_default_routes() {
-    let config = config(&[("GM_TRUSTED_PROXIES", "192.0.2.77/24, 2001:db8::1/48")], &[]);
-    let proxies: Vec<_> = config.trusted_proxies.iter().map(ToString::to_string).collect();
+    let config = config(
+        &[("GM_TRUSTED_PROXIES", "192.0.2.77/24, 2001:db8::1/48")],
+        &[],
+    );
+    let proxies: Vec<_> = config
+        .trusted_proxies
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     assert_eq!(proxies, ["192.0.2.0/24", "2001:db8::/48"]);
     for (value, message) in [
-        ("0.0.0.0/0", "\"0.0.0.0/0\" trusts every address; list only the proxy's own CIDR"),
-        ("::/0", "\"::/0\" trusts every address; list only the proxy's own CIDR"),
+        (
+            "0.0.0.0/0",
+            "\"0.0.0.0/0\" trusts every address; list only the proxy's own CIDR",
+        ),
+        (
+            "::/0",
+            "\"::/0\" trusts every address; list only the proxy's own CIDR",
+        ),
         (
             "192.0.2.0/024",
             "\"192.0.2.0/024\" is not a CIDR: prefix length \"024\" is not a number without leading zeros",
         ),
-        ("192.0.2.1", "\"192.0.2.1\" is not a CIDR: the prefix length after '/' is missing"),
+        (
+            "192.0.2.1",
+            "\"192.0.2.1\" is not a CIDR: the prefix length after '/' is missing",
+        ),
     ] {
-        assert_eq!(error(&[("GM_TRUSTED_PROXIES", value)], &[]), format!("GM_TRUSTED_PROXIES: {message}"));
+        assert_eq!(
+            error(&[("GM_TRUSTED_PROXIES", value)], &[]),
+            format!("GM_TRUSTED_PROXIES: {message}")
+        );
     }
 }
 
 #[test]
 fn listeners_need_distinct_addresses_and_tls_files() {
-    let all = with_tls(&[("GM_H1_TLS_ADDR", ":8443"), ("GM_H2_ADDR", ":8444"), ("GM_H3_ADDR", ":8445")]);
+    let all = with_tls(&[
+        ("GM_H1_TLS_ADDR", ":8443"),
+        ("GM_H2_ADDR", ":8444"),
+        ("GM_H3_ADDR", ":8445"),
+    ]);
     let config = config(&all, &["-advertised-native-endpoints", "http2,http3"]);
     let kinds: Vec<_> = config
         .listeners
@@ -146,8 +204,14 @@ fn listeners_need_distinct_addresses_and_tls_files() {
     assert_eq!(config.tls.unwrap().cert.to_str(), Some("/c.pem"));
     let message = "TLS certificate missing for GM_H2_ADDR: GM_TLS_CERT and GM_TLS_KEY must both be set; set them, or \
                    leave GM_H2_ADDR empty";
-    assert_eq!(error(&[("GM_H2_ADDR", ":8444"), ("GM_TLS_CERT", "/c.pem")], &[]), message);
-    assert_eq!(error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]), "GM_H1_ADDR and GM_H3_ADDR must differ");
+    assert_eq!(
+        error(&[("GM_H2_ADDR", ":8444"), ("GM_TLS_CERT", "/c.pem")], &[]),
+        message
+    );
+    assert_eq!(
+        error(&with_tls(&[("GM_H3_ADDR", ":7246")]), &[]),
+        "GM_H1_ADDR and GM_H3_ADDR must differ"
+    );
     for address in ["7246", "::1:7246", ":+80", "localhost:65536"] {
         assert_eq!(
             error(&[("GM_H1_ADDR", address)], &[]),
@@ -156,27 +220,50 @@ fn listeners_need_distinct_addresses_and_tls_files() {
         );
     }
     let message = "GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint \"http3\"";
-    assert_eq!(error(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear, http3")], &[]), message);
+    assert_eq!(
+        error(
+            &[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear, http3")],
+            &[]
+        ),
+        message
+    );
 }
 
 #[test]
 fn origins_follow_their_listener_schemes_and_roles() {
-    let shared = [("GM_H1_TLS_ADDR", ":8443"), ("GM_H1_TLS_PUBLIC_ORIGIN", "https://m.example")];
+    let shared = [
+        ("GM_H1_TLS_ADDR", ":8443"),
+        ("GM_H1_TLS_PUBLIC_ORIGIN", "https://m.example"),
+    ];
     let mut env = with_tls(&shared);
-    env.extend([("GM_H2_ADDR", ":8444"), ("GM_H2_PUBLIC_ORIGIN", "https://M.example:443")]);
+    env.extend([
+        ("GM_H2_ADDR", ":8444"),
+        ("GM_H2_PUBLIC_ORIGIN", "https://M.example:443"),
+    ]);
     let message = "native origin \"https://M.example:443\" is advertised with multiple deterministic protocols";
     assert_eq!(error(&env, &[]), message);
     let mut env = with_tls(&shared);
     env.push(("GM_PUBLIC_THROUGHPUT_ORIGINS", "https://m.example"));
-    let message = "origin \"https://m.example\" cannot be both native deterministic and public negotiated";
+    let message =
+        "origin \"https://m.example\" cannot be both native deterministic and public negotiated";
     assert_eq!(error(&env, &[]), message);
     env.pop();
     env.push(("GM_PUBLIC_LATENCY_ORIGINS", "https://m.example"));
-    assert_eq!(config(&env, &[]).public.latency.len(), 1, "a latency-only origin may be native");
+    assert_eq!(
+        config(&env, &[]).public.latency.len(),
+        1,
+        "a latency-only origin may be native"
+    );
     let none = [("GM_ADVERTISED_NATIVE_ENDPOINTS", "none")];
-    assert_eq!(error(&none, &[]), "configuration advertises no throughput endpoint");
+    assert_eq!(
+        error(&none, &[]),
+        "configuration advertises no throughput endpoint"
+    );
     let negotiated = [none[0], ("GM_PUBLIC_THROUGHPUT_ORIGINS", "self")];
-    assert_eq!(config(&negotiated, &[]).public.throughput, [BaseUrl::Served]);
+    assert_eq!(
+        config(&negotiated, &[]).public.throughput,
+        [BaseUrl::Served]
+    );
 }
 
 /// A password deployment behind TLS on `meter.example`.
@@ -211,7 +298,10 @@ fn authentication_settings_are_complete_and_canonical() {
         (&["ops".into(), "admins".into()][..], "Authelia")
     );
     assert!(auth.methods.password.is_some());
-    assert!(!format!("{:?}", auth.methods).contains("s3cret"), "secrets stay out of Debug");
+    assert!(
+        !format!("{:?}", auth.methods).contains("s3cret"),
+        "secrets stay out of Debug"
+    );
 }
 
 /// The environment with later entries replacing earlier ones of the same name.
@@ -235,8 +325,14 @@ fn authentication_refusals_name_the_setting() {
         error(&[("GM_AUTH_PUBLIC_URL", "https://meter.example")], &[]),
         "authentication settings require GM_AUTH_MODE to be enabled"
     );
-    assert!(config(&[("GM_AUTH_PUBLIC_URL", "")], &[]).auth.is_none(), "an empty value is unset");
-    assert_eq!(with(&[("GM_AUTH_MODE", "ldap")]), "GM_AUTH_MODE must be off, password, oidc, or hybrid");
+    assert!(
+        config(&[("GM_AUTH_PUBLIC_URL", "")], &[]).auth.is_none(),
+        "an empty value is unset"
+    );
+    assert_eq!(
+        with(&[("GM_AUTH_MODE", "ldap")]),
+        "GM_AUTH_MODE must be off, password, oidc, or hybrid"
+    );
     for (changes, message) in [
         (
             &[("GM_AUTH_PUBLIC_URL", "https://meter.example/ui")][..],
@@ -282,11 +378,15 @@ fn authentication_refusals_name_the_setting() {
         ("GM_AUTH_OIDC_ALLOWED_GROUPS", "ops"),
     ];
     let issuer = "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment";
-    let name = "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters";
+    let name =
+        "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters";
     let long = "x".repeat(65);
     for (change, message) in [
         (("GM_AUTH_OIDC_ISSUER", "http://id.example"), issuer),
-        (("GM_AUTH_OIDC_ISSUER", "https://id.example/?realm=1"), issuer),
+        (
+            ("GM_AUTH_OIDC_ISSUER", "https://id.example/?realm=1"),
+            issuer,
+        ),
         (("GM_AUTH_OIDC_PROVIDER_NAME", long.as_str()), name),
     ] {
         let mut env: Vec<(&str, &str)> = password_auth();
@@ -299,10 +399,21 @@ fn authentication_refusals_name_the_setting() {
 // Secrets and proxy trust stay out of argv, which other local users can read.
 #[test]
 fn secrets_and_proxies_have_no_flag() {
-    let env_only = ["trusted-proxies", "auth-password-hash", "auth-oidc-client-secret", "server-catalog"];
+    let env_only = [
+        "trusted-proxies",
+        "auth-password-hash",
+        "auth-oidc-client-secret",
+        "server-catalog",
+    ];
     for flag in env_only.into_iter().chain(["server-catalog-file"]) {
-        assert_eq!(error(&[], &[&format!("-{flag}"), "x"]), format!("unknown option --{flag}"));
-        assert!(!include_str!("usage.txt").contains(&format!("--{flag} ")), "{flag}");
+        assert_eq!(
+            error(&[], &[&format!("-{flag}"), "x"]),
+            format!("unknown option --{flag}")
+        );
+        assert!(
+            !include_str!("usage.txt").contains(&format!("--{flag} ")),
+            "{flag}"
+        );
     }
 }
 
@@ -312,7 +423,12 @@ fn time_zone_is_a_bundled_name_or_utc() {
         let zone = config(&[("TZ", name)], &[]).log_zone;
         assert_eq!(zone.as_ref().and_then(|zone| zone.iana_name()), Some(name));
     }
-    for utc in [&[][..], &[("TZ", "")], &[("TZ", "UTC")], &[("TZ", "Etc/UTC")]] {
+    for utc in [
+        &[][..],
+        &[("TZ", "")],
+        &[("TZ", "UTC")],
+        &[("TZ", "Etc/UTC")],
+    ] {
         assert!(config(utc, &[]).log_zone.is_none(), "{utc:?}");
     }
     for refused in [

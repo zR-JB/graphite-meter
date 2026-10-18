@@ -68,7 +68,8 @@ impl UploadId {
         let encoded = text.strip_prefix(ID_PREFIX)?;
         let mut raw = [0; ID_BYTES];
         let exact = encoded.len() == (ID_BYTES * 4).div_ceil(3);
-        (exact && URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES)).then_some(Self(raw))
+        (exact && URL_SAFE_NO_PAD.decode_slice(encoded, &mut raw) == Ok(ID_BYTES))
+            .then_some(Self(raw))
     }
 }
 
@@ -194,8 +195,9 @@ impl Entries {
             .iter()
             .filter_map(|(id, entry)| {
                 let life = entry.aggregate.life();
-                let empty =
-                    life.lanes == 0 && life.phase == Phase::Open && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
+                let empty = life.lanes == 0
+                    && life.phase == Phase::Open
+                    && entry.aggregate.bytes.load(Ordering::Acquire) == 0;
                 empty.then_some((life.touched, id))
             })
             .min_by_key(|(touched, _)| *touched)
@@ -230,7 +232,10 @@ impl Uploads {
             clock: Clock(now),
             capacity: Quota::new(MAX_LIVE, MAX_PER_CLIENT),
             next_sweep: AtomicU64::new(SWEEP_NANOS),
-            entries: Mutex::new(Entries { live: HashMap::new(), tombstones: HashMap::new() }),
+            entries: Mutex::new(Entries {
+                live: HashMap::new(),
+                tombstones: HashMap::new(),
+            }),
         }))
     }
 
@@ -261,7 +266,11 @@ impl Uploads {
     }
 
     /// Attaches the progress feed, replacing the previous reader's.
-    pub fn subscribe(&self, id: &str, owner: Option<&ClientKeys>) -> Result<ProgressFeed, UploadRefusal> {
+    pub fn subscribe(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+    ) -> Result<ProgressFeed, UploadRefusal> {
         let aggregate = self.reach(id, owner, Reach::Watch)?;
         let reader = {
             let mut life = aggregate.life();
@@ -282,13 +291,19 @@ impl Uploads {
         match entries.live.get(&id) {
             Some(entry) if entry.aggregate.owner != narrowest => Err(UploadRefusal::OwnerMismatch),
             Some(_) => Ok(()),
-            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => Err(UploadRefusal::Invalid),
+            None if entries.tombstones.contains_key(&id) || !self.valid(&id) => {
+                Err(UploadRefusal::Invalid)
+            }
             None => Ok(()),
         }
     }
 
     /// An existing aggregate's counters, without refreshing its retention.
-    pub fn checkpoint(&self, id: &str, owner: Option<&ClientKeys>) -> Result<Counters, UploadRefusal> {
+    pub fn checkpoint(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+    ) -> Result<Counters, UploadRefusal> {
         Ok(self.reach(id, owner, Reach::Read)?.counters())
     }
 
@@ -311,7 +326,12 @@ impl Uploads {
         }
     }
 
-    fn reach(&self, id: &str, owner: Option<&ClientKeys>, reach: Reach) -> Result<Arc<Aggregate>, UploadRefusal> {
+    fn reach(
+        &self,
+        id: &str,
+        owner: Option<&ClientKeys>,
+        reach: Reach,
+    ) -> Result<Arc<Aggregate>, UploadRefusal> {
         let narrowest = owner.and_then(ClientKeys::narrowest);
         if reach != Reach::Read && narrowest.is_none() {
             return Err(UploadRefusal::OwnerMismatch);
@@ -347,7 +367,10 @@ impl Uploads {
             }),
             changed: Notify::new(),
         });
-        let entry = Entry { aggregate: aggregate.clone(), _capacity: capacity };
+        let entry = Entry {
+            aggregate: aggregate.clone(),
+            _capacity: capacity,
+        };
         entries.live.insert(id, entry);
         Ok(aggregate)
     }
@@ -371,7 +394,9 @@ impl Uploads {
         let now = self.0.clock.now();
         if now >= self.0.next_sweep.load(Ordering::Relaxed) {
             entries.sweep(Instant::now());
-            self.0.next_sweep.store(now + SWEEP_NANOS, Ordering::Relaxed);
+            self.0
+                .next_sweep
+                .store(now + SWEEP_NANOS, Ordering::Relaxed);
         }
         entries
     }

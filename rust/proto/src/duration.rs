@@ -27,7 +27,12 @@ pub fn parse(text: &str) -> Result<Duration, &'static str> {
     while !rest.is_empty() {
         let (whole, after) = digits(rest);
         let (fraction, after) = after.strip_prefix(b".").map_or((&b""[..], after), digits);
-        let (unit, after) = after.split_at(after.iter().take_while(|byte| byte.is_ascii_alphabetic()).count());
+        let (unit, after) = after.split_at(
+            after
+                .iter()
+                .take_while(|byte| byte.is_ascii_alphabetic())
+                .count(),
+        );
         let unit = UNITS
             .iter()
             .find(|(name, _)| name.as_bytes() == unit)
@@ -36,23 +41,36 @@ pub fn parse(text: &str) -> Result<Duration, &'static str> {
             return Err(INVALID);
         };
         let fraction = &fraction[..fraction.len().min(FRACTION_DIGITS)];
-        let fraction_nanos = decimal(fraction).ok_or(TOO_LONG)? * unit / 10_u128.pow(fraction.len() as u32);
+        let fraction_nanos =
+            decimal(fraction).ok_or(TOO_LONG)? * unit / 10_u128.pow(fraction.len() as u32);
         nanos = decimal(whole)
-            .and_then(|whole| whole.checked_mul(unit)?.checked_add(fraction_nanos)?.checked_add(nanos))
+            .and_then(|whole| {
+                whole
+                    .checked_mul(unit)?
+                    .checked_add(fraction_nanos)?
+                    .checked_add(nanos)
+            })
             .ok_or(TOO_LONG)?;
         rest = after;
     }
-    u64::try_from(nanos).map(Duration::from_nanos).map_err(|_| TOO_LONG)
+    u64::try_from(nanos)
+        .map(Duration::from_nanos)
+        .map_err(|_| TOO_LONG)
 }
 
 fn digits(bytes: &[u8]) -> (&[u8], &[u8]) {
-    bytes.split_at(bytes.iter().take_while(|byte| byte.is_ascii_digit()).count())
+    bytes.split_at(
+        bytes
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count(),
+    )
 }
 
 fn decimal(digits: &[u8]) -> Option<u128> {
-    digits
-        .iter()
-        .try_fold(0_u128, |value, &digit| value.checked_mul(10)?.checked_add(u128::from(digit - b'0')))
+    digits.iter().try_fold(0_u128, |value, &digit| {
+        value.checked_mul(10)?.checked_add(u128::from(digit - b'0'))
+    })
 }
 
 /// Formats a duration as `parse` reads it, such as `5m`, `1m30s`, `1.5s` or `800ms`.
@@ -64,8 +82,11 @@ pub fn format(duration: Duration) -> String {
         1_000..1_000_000 => format!("{}us", fixed(nanos, 1_000)),
         1_000_000..1_000_000_000 => format!("{}ms", fixed(nanos, 1_000_000)),
         _ => {
-            let (hours, minutes, seconds) =
-                (nanos / 3_600_000_000_000, nanos / 60_000_000_000 % 60, nanos % 60_000_000_000);
+            let (hours, minutes, seconds) = (
+                nanos / 3_600_000_000_000,
+                nanos / 60_000_000_000 % 60,
+                nanos % 60_000_000_000,
+            );
             let mut text = String::new();
             if hours > 0 {
                 text += &format!("{hours}h");
@@ -88,5 +109,8 @@ fn fixed(value: u128, scale: u128) -> String {
         return whole.to_string();
     }
     let digits = scale.ilog10() as usize;
-    format!("{whole}.{}", format!("{fraction:0digits$}").trim_end_matches('0'))
+    format!(
+        "{whole}.{}",
+        format!("{fraction:0digits$}").trim_end_matches('0')
+    )
 }

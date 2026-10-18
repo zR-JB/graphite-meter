@@ -10,8 +10,8 @@ use crate::{
 };
 use graphite_meter_proto::{
     discovery::{
-        Capabilities, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol, Preflight, Probe, Protocol,
-        ServerInfo, ThroughputTarget, ThroughputTransport,
+        Capabilities, IpFamily, LatencyTarget, LatencyTransport, Load, NegotiatedProtocol,
+        Preflight, Probe, Protocol, ServerInfo, ThroughputTarget, ThroughputTransport,
     },
     origin::{BaseUrl, Origin},
     upload::Session,
@@ -21,8 +21,12 @@ use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 /// A published catalog holds at most this many bytes.
 const MAX_CATALOG_BYTES: usize = 64 << 10;
 
-static CATALOG_REFUSED: RateLimited =
-    RateLimited::new(Level::Warn, "catalog", "refused catalog requests", module_path!());
+static CATALOG_REFUSED: RateLimited = RateLimited::new(
+    Level::Warn,
+    "catalog",
+    "refused catalog requests",
+    module_path!(),
+);
 
 impl App {
     /// How the server saw this request's client and connection, and the handler load.
@@ -42,7 +46,10 @@ impl App {
             client_ip_version: IpFamily::of(address.ip()),
             client_ip_source: source,
             protocol_negotiated: protocol,
-            load: Some(Load { active: active as u64, max: max as u64 }),
+            load: Some(Load {
+                active: active as u64,
+                max: max as u64,
+            }),
         })
     }
 
@@ -51,11 +58,17 @@ impl App {
         let host = request_host(request);
         let mut offered = Capabilities {
             upload_checkpoint: true,
-            max_stage_ms: u64::try_from(self.config.lifetimes.stage.as_millis()).unwrap_or(u64::MAX),
+            max_stage_ms: u64::try_from(self.config.lifetimes.stage.as_millis())
+                .unwrap_or(u64::MAX),
             throughput: vec![],
             latency: vec![],
         };
-        for listener in self.config.listeners.iter().filter(|listener| listener.advertised) {
+        for listener in self
+            .config
+            .listeners
+            .iter()
+            .filter(|listener| listener.advertised)
+        {
             let public = listener.public_origin.clone();
             let base = BaseUrl::Origin(public.unwrap_or_else(|| native(listener, &host)));
             fetch_stream(&mut offered, &base, listener.kind.protocol());
@@ -63,12 +76,22 @@ impl App {
                 ListenerKind::H1 | ListenerKind::H1Tls => websocket(&mut offered, &base),
                 ListenerKind::H2 => {}
                 ListenerKind::H3 => {
-                    for transport in [ThroughputTransport::WebTransport, ThroughputTransport::WebTransportDatagram] {
-                        let target = ThroughputTarget { base_url: base.clone(), transport, protocol: Protocol::Http3 };
+                    for transport in [
+                        ThroughputTransport::WebTransport,
+                        ThroughputTransport::WebTransportDatagram,
+                    ] {
+                        let target = ThroughputTarget {
+                            base_url: base.clone(),
+                            transport,
+                            protocol: Protocol::Http3,
+                        };
                         offered.throughput.push(target);
                     }
                     let transport = LatencyTransport::WebTransport;
-                    offered.latency.push(LatencyTarget { base_url: base, transport });
+                    offered.latency.push(LatencyTarget {
+                        base_url: base,
+                        transport,
+                    });
                 }
             }
         }
@@ -88,7 +111,12 @@ impl App {
             location: self.config.location().into(),
         };
         let (engine_version, generation) = (ENGINE_VERSION.into(), self.generation.clone());
-        Preflight { server, engine_version, generation, capabilities: offered }
+        Preflight {
+            server,
+            engine_version,
+            generation,
+            capabilities: offered,
+        }
     }
 
     /// The server catalog, `self` approving the origins of its own targets.
@@ -105,7 +133,9 @@ impl App {
         let document = serde_json::to_vec(&catalog).expect("catalogs serialize");
         let refused = match catalog.validate() {
             Err(error) => Some(error.to_string()),
-            Ok(()) if document.len() > MAX_CATALOG_BYTES => Some(format!("it exceeds {} KiB", MAX_CATALOG_BYTES >> 10)),
+            Ok(()) if document.len() > MAX_CATALOG_BYTES => {
+                Some(format!("it exceeds {} KiB", MAX_CATALOG_BYTES >> 10))
+            }
             Ok(()) => None,
         };
         match refused {
@@ -115,13 +145,18 @@ impl App {
                 CATALOG_REFUSED.write(format_args!(
                     "server catalog for host {host:?} invalid: {error}; clients get 500 until it is fixed"
                 ));
-                response::text(StatusCode::INTERNAL_SERVER_ERROR, "server catalog unavailable")
+                response::text(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "server catalog unavailable",
+                )
             }
         }
     }
 
     pub(super) fn upload_session(&self) -> Response<Body> {
-        response::json_of(&Session { upload_id: self.uploads.mint() })
+        response::json_of(&Session {
+            upload_id: self.uploads.mint(),
+        })
     }
 
     /// An existing upload's counters, which never keep it alive.
@@ -141,7 +176,10 @@ impl App {
         connection: &Connection,
         exchange: Exchange,
     ) -> Result<Response<Body>, Response<Body>> {
-        let (id, owner) = (query::get(request.uri().query(), "id").unwrap_or_default(), peer.keys());
+        let (id, owner) = (
+            query::get(request.uri().query(), "id").unwrap_or_default(),
+            peer.keys(),
+        );
         let body = match *request.method() {
             Method::HEAD => {
                 self.uploads
@@ -167,9 +205,18 @@ impl App {
         };
         let mut response = Response::new(body);
         let headers = response.headers_mut();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-ndjson"));
-        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store, no-transform"));
-        headers.insert(crate::headers::X_ACCEL_BUFFERING, HeaderValue::from_static("no"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-ndjson"),
+        );
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-transform"),
+        );
+        headers.insert(
+            crate::headers::X_ACCEL_BUFFERING,
+            HeaderValue::from_static("no"),
+        );
         Ok(response)
     }
 }
@@ -196,9 +243,11 @@ fn fetch_stream(offered: &mut Capabilities, base: &BaseUrl, protocol: Protocol) 
     match known {
         Some(target) if target.protocol != protocol => target.protocol = Protocol::Negotiated,
         Some(_) => {}
-        None => offered
-            .throughput
-            .push(ThroughputTarget { base_url: base.clone(), transport, protocol }),
+        None => offered.throughput.push(ThroughputTarget {
+            base_url: base.clone(),
+            transport,
+            protocol,
+        }),
     }
 }
 
@@ -206,7 +255,10 @@ fn websocket(offered: &mut Capabilities, base: &BaseUrl) {
     let transport = LatencyTransport::WebSocket;
     let mut targets = offered.latency.iter();
     if !targets.any(|target| target.transport == transport && target.base_url == *base) {
-        let target = LatencyTarget { base_url: base.clone(), transport };
+        let target = LatencyTarget {
+            base_url: base.clone(),
+            transport,
+        };
         offered.latency.push(target);
     }
 }

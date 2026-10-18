@@ -44,7 +44,9 @@ pub fn client_transport() -> TransportConfig {
     transport.initial_receive_window(Some(INITIAL_RECEIVE_WINDOW.into()));
     transport.send_window(MAX_SEND_WINDOW);
     transport.datagram_receive_buffer_size(Some(CLIENT_DATAGRAM_BUFFER));
-    transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(CLIENT_IDLE_MILLIS))));
+    transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(
+        CLIENT_IDLE_MILLIS,
+    ))));
     transport
 }
 
@@ -61,7 +63,10 @@ pub fn server_transport(requests: u32) -> TransportConfig {
     transport.datagram_send_buffer_size(SERVER_DATAGRAM_BUFFER);
     const IDLE_MILLIS: u32 = {
         let millis = IDLE_BOUND.as_millis();
-        assert!(millis <= u32::MAX as u128, "the lane bound fits QUIC's idle timeout");
+        assert!(
+            millis <= u32::MAX as u128,
+            "the lane bound fits QUIC's idle timeout"
+        );
         millis as u32
     };
     transport.max_idle_timeout(Some(IdleTimeout::from(VarInt::from_u32(IDLE_MILLIS))));
@@ -75,10 +80,15 @@ const ANSWERING: Duration = Duration::from_secs(5);
 
 /// A client connection to `host` with its own endpoint: each address in turn, IPv4 first, each given its share of the
 /// dial timeout as a TCP dial gives it; the last one's error if none connects.
-pub async fn dial(host: &Host, port: u16, verify: &Verify) -> Result<(noq::Endpoint, noq::Connection), ConnectError> {
+pub async fn dial(
+    host: &Host,
+    port: u16,
+    verify: &Verify,
+) -> Result<(noq::Endpoint, noq::Connection), ConnectError> {
     let crypto = QuicClientConfig::try_from(client_config(verify, Some(Protocol::Http3)).await);
-    let mut config =
-        noq::ClientConfig::new(Arc::new(crypto.map_err(|error| ConnectError::Io(io::Error::other(error)))?));
+    let mut config = noq::ClientConfig::new(Arc::new(
+        crypto.map_err(|error| ConnectError::Io(io::Error::other(error)))?,
+    ));
     config.transport_config(Arc::new(client_transport()));
     let name = match host {
         Host::Name(name) => name.clone(),
@@ -87,11 +97,19 @@ pub async fn dial(host: &Host, port: u16, verify: &Verify) -> Result<(noq::Endpo
     let overran = || ConnectError::Unreachable(io::ErrorKind::TimedOut.into());
     let deadline = Instant::now() + TIMEOUT;
     let dialing = async {
-        let mut addresses = resolve(host, port).await.map_err(ConnectError::Unreachable)?;
+        let mut addresses = resolve(host, port)
+            .await
+            .map_err(ConnectError::Unreachable)?;
         addresses.sort_by_key(|address| !address.ip().to_canonical().is_ipv4());
-        let mut last = ConnectError::Unreachable(io::Error::new(io::ErrorKind::NotFound, "no address resolved"));
+        let mut last = ConnectError::Unreachable(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no address resolved",
+        ));
         for (index, &address) in addresses.iter().enumerate() {
-            let share = share(deadline.saturating_duration_since(Instant::now()), addresses.len() - index);
+            let share = share(
+                deadline.saturating_duration_since(Instant::now()),
+                addresses.len() - index,
+            );
             match timeout(share, attempt(&config, address, &name)).await {
                 Ok(Ok(dialed)) => return Ok(dialed),
                 Ok(Err(error)) => last = error,
@@ -100,7 +118,9 @@ pub async fn dial(host: &Host, port: u16, verify: &Verify) -> Result<(noq::Endpo
         }
         Err(last)
     };
-    timeout_at(deadline, dialing).await.unwrap_or_else(|_| Err(overran()))
+    timeout_at(deadline, dialing)
+        .await
+        .unwrap_or_else(|_| Err(overran()))
 }
 
 async fn attempt(
@@ -113,15 +133,18 @@ async fn attempt(
         SocketAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
     };
     let (socket, _) = bind_udp(local, 1).map_err(ConnectError::Io)?;
-    let runtime = noq::default_runtime().ok_or_else(|| ConnectError::Io(io::Error::other("no runtime for QUIC")))?;
-    let endpoint =
-        noq::Endpoint::new(noq::EndpointConfig::default(), None, socket, runtime).map_err(ConnectError::Io)?;
+    let runtime = noq::default_runtime()
+        .ok_or_else(|| ConnectError::Io(io::Error::other("no runtime for QUIC")))?;
+    let endpoint = noq::Endpoint::new(noq::EndpointConfig::default(), None, socket, runtime)
+        .map_err(ConnectError::Io)?;
     let mut connecting = endpoint
         .connect_with(config.clone(), address, name)
         .map_err(|error| ConnectError::Io(io::Error::other(error)))?;
     let overran = |what| ConnectError::Unreachable(io::Error::new(io::ErrorKind::TimedOut, what));
     let answered = timeout(SILENT, connecting.handshake_data()).await;
-    answered.map_err(|_| overran("no QUIC answer"))?.map_err(refused)?;
+    answered
+        .map_err(|_| overran("no QUIC answer"))?
+        .map_err(refused)?;
     let finished = timeout(ANSWERING, connecting).await;
     let connection = finished
         .map_err(|_| overran("QUIC handshake timed out"))?

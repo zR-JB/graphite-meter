@@ -28,7 +28,10 @@ async fn page(app: &App, path: &str, login: Option<&NewLogin>) -> Response<Body>
 async fn approve(app: &App, path: &str, login: &NewLogin, challenge: &str) -> Response<Body> {
     let request = signed("POST", path, login)
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(Full::new(Bytes::from(format!("csrf={}&challenge={challenge}", login.csrf.as_str()))))
+        .body(Full::new(Bytes::from(format!(
+            "csrf={}&challenge={challenge}",
+            login.csrf.as_str()
+        ))))
         .unwrap();
     tls(app, request).await
 }
@@ -39,7 +42,13 @@ async fn exchange(app: &App, path: &str, origin: Option<&str>, document: &str) -
     if let Some(origin) = origin {
         request = request.header("origin", origin);
     }
-    tls(app, request.body(Full::new(Bytes::from(document.to_owned()))).unwrap()).await
+    tls(
+        app,
+        request
+            .body(Full::new(Bytes::from(document.to_owned())))
+            .unwrap(),
+    )
+    .await
 }
 
 fn verifier(verifier: &str) -> String {
@@ -55,22 +64,41 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
     let app = auth_app(&[]);
     let operator = login(&app, Principal::operator());
     let approval = challenge(VERIFIER);
-    let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
-    assert_eq!(location(&page(&app, &path, None).await), format!("/login?challenge={approval}"));
+    let path =
+        format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
+    assert_eq!(
+        location(&page(&app, &path, None).await),
+        format!("/login?challenge={approval}")
+    );
     let navigated = public("GET", &path)
         .header("sec-fetch-site", "cross-site")
         .header("sec-fetch-mode", "navigate")
         .header("sec-fetch-dest", "document");
     let html = text(tls(&app, empty(navigated)).await).await;
-    assert!(html.contains("Continue sign-in") && html.contains(&format!("href=\"/auth/cli?challenge={approval}\"")));
+    assert!(
+        html.contains("Continue sign-in")
+            && html.contains(&format!("href=\"/auth/cli?challenge={approval}\""))
+    );
     let terminal = page(&app, &format!("/auth/cli?challenge={approval}"), None).await;
-    assert_eq!(location(&terminal), path, "the terminal page sends a browser challenge to its own page");
+    assert_eq!(
+        location(&terminal),
+        path,
+        "the terminal page sends a browser challenge to its own page"
+    );
 
     let shown = page(&app, &path, Some(&operator)).await;
     assert_eq!(shown.status(), StatusCode::OK);
     let html = text(shown).await;
-    assert!(html.contains("<strong>https://app.example</strong>") && html.contains("action=\"/auth/browser/approve\""));
-    let elsewhere = page(&app, &path.replace("app.example", "other.example"), Some(&operator)).await;
+    assert!(
+        html.contains("<strong>https://app.example</strong>")
+            && html.contains("action=\"/auth/browser/approve\"")
+    );
+    let elsewhere = page(
+        &app,
+        &path.replace("app.example", "other.example"),
+        Some(&operator),
+    )
+    .await;
     assert_eq!(elsewhere.status(), StatusCode::FORBIDDEN);
     let token = "/auth/browser/token";
     assert!(
@@ -78,7 +106,9 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
         "not yet approved"
     );
     assert_eq!(
-        approve(&app, "/auth/cli/approve", &operator, &approval).await.status(),
+        approve(&app, "/auth/cli/approve", &operator, &approval)
+            .await
+            .status(),
         StatusCode::FORBIDDEN
     );
     assert!(
@@ -87,8 +117,17 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
             .contains("Browser client approved")
     );
 
-    let other = exchange(&app, token, Some("https://other.example"), &verifier(VERIFIER)).await;
-    assert_eq!(header(&other, "access-control-allow-origin"), Some("https://other.example"));
+    let other = exchange(
+        &app,
+        token,
+        Some("https://other.example"),
+        &verifier(VERIFIER),
+    )
+    .await;
+    assert_eq!(
+        header(&other, "access-control-allow-origin"),
+        Some("https://other.example")
+    );
     assert!(pending(other).await, "another origin's exchange");
     assert!(
         pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await,
@@ -108,14 +147,22 @@ async fn a_browser_approval_binds_its_grant_to_the_requesting_origin() {
         );
     }
     let issued = exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await;
-    assert_eq!(header(&issued, "access-control-allow-origin"), Some(BROWSER));
+    assert_eq!(
+        header(&issued, "access-control-allow-origin"),
+        Some(BROWSER)
+    );
     assert_eq!(header(&issued, "access-control-allow-credentials"), None);
     let issued = json(issued).await;
     assert!(issued["expires"].as_u64().unwrap() > 1_700_000_000_000);
     assert!(issued["remainingMs"].as_u64().unwrap() > 28_700_000);
     assert_eq!(issued["maximumLifetimeMs"], 28_800_000);
-    let grant = store(&app).bearer(issued["token"].as_str().unwrap()).unwrap();
-    assert_eq!(grant.browser().map(BrowserOrigin::header), Some(&HeaderValue::from_static(BROWSER)));
+    let grant = store(&app)
+        .bearer(issued["token"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        grant.browser().map(BrowserOrigin::header),
+        Some(&HeaderValue::from_static(BROWSER))
+    );
 }
 
 /// An exchange whose answer was lost is asked again. The same verifier and origin get the same grant for 30 s, which
@@ -125,8 +172,12 @@ async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     let app = auth_app(&[]);
     let operator = login(&app, Principal::operator());
     let approval = challenge(VERIFIER);
-    let path = format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
-    assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::OK);
+    let path =
+        format!("/auth/browser?challenge={approval}&client_origin=https%3A%2F%2Fapp.example");
+    assert_eq!(
+        page(&app, &path, Some(&operator)).await.status(),
+        StatusCode::OK
+    );
     assert_eq!(
         approve(&app, "/auth/browser/approve", &operator, &approval)
             .await
@@ -137,13 +188,22 @@ async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     let issued = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
     let again = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
     assert_eq!(again["token"], issued["token"]);
-    let other = exchange(&app, token, Some("https://other.example"), &verifier(VERIFIER)).await;
+    let other = exchange(
+        &app,
+        token,
+        Some("https://other.example"),
+        &verifier(VERIFIER),
+    )
+    .await;
     assert!(pending(other).await, "another origin's exchange");
     assert!(
         pending(exchange(&app, "/auth/cli/token", None, &verifier(VERIFIER)).await).await,
         "a native exchange"
     );
-    assert_eq!(page(&app, &path, Some(&operator)).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        page(&app, &path, Some(&operator)).await.status(),
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         approve(&app, "/auth/browser/approve", &operator, &approval)
             .await
@@ -154,7 +214,10 @@ async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     for _ in 1..8 {
         store(&app).grant(operator.key, browser.clone()).unwrap();
     }
-    assert!(store(&app).grant(operator.key, browser).is_err(), "the login holds eight grants");
+    assert!(
+        store(&app).grant(operator.key, browser).is_err(),
+        "the login holds eight grants"
+    );
     let full = json(exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await).await;
     assert_eq!(full["token"], issued["token"]);
 
@@ -163,5 +226,9 @@ async fn a_repeated_exchange_returns_the_same_grant_briefly() {
     tokio::time::resume();
     let late = exchange(&app, token, Some(BROWSER), &verifier(VERIFIER)).await;
     assert_eq!(late.status(), StatusCode::GONE);
-    assert!(store(&app).bearer(issued["token"].as_str().unwrap()).is_some());
+    assert!(
+        store(&app)
+            .bearer(issued["token"].as_str().unwrap())
+            .is_some()
+    );
 }

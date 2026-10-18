@@ -46,8 +46,12 @@ pub enum Unapproved {
 /// Why `origin` refuses sign-in: it is not HTTPS, or TLS goes unverified.
 pub fn refusal(origin: &Origin, insecure: bool) -> Option<&'static str> {
     match () {
-        _ if insecure => Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure)."),
-        _ if origin.scheme == Scheme::Http => Some("Sign-in needs a server address that starts with https://."),
+        _ if insecure => {
+            Some("Sign-in needs TLS verification; turn off Skip TLS verification (--insecure).")
+        }
+        _ if origin.scheme == Scheme::Http => {
+            Some("Sign-in needs a server address that starts with https://.")
+        }
         _ => None,
     }
 }
@@ -91,27 +95,46 @@ impl Approval {
             match polled {
                 Ok(Ok(Some(token))) => return Ok(token),
                 Ok(Ok(None)) => unreachable = None,
-                Ok(Err(fault @ Fault::Malformed(_))) => return Err(Unapproved::Failed(fault.failure())),
+                Ok(Err(fault @ Fault::Malformed(_))) => {
+                    return Err(Unapproved::Failed(fault.failure()));
+                }
                 Ok(Err(fault)) if !cut => unreachable = Some(fault),
                 _ => {}
             }
             if cut || next >= self.deadline {
                 sleep_until(self.deadline).await;
-                return Err(unreachable.map_or(Unapproved::Expired, |fault| Unapproved::Failed(fault.failure())));
+                return Err(unreachable.map_or(Unapproved::Expired, |fault| {
+                    Unapproved::Failed(fault.failure())
+                }));
             }
             sleep_until(next).await;
         }
     }
 
     /// One token exchange over `conn`, kept for the next while it stays usable: the grant, or none while pending.
-    async fn poll(&self, client: &Client, conn: &mut Option<Conn>) -> Result<Option<String>, Fault> {
+    async fn poll(
+        &self,
+        client: &Client,
+        conn: &mut Option<Conn>,
+    ) -> Result<Option<String>, Fault> {
         let exchange = async {
             let mut ready = match conn.take().filter(Conn::usable) {
                 Some(ready) => ready,
-                None => Conn::dial(client, &self.origin, Protocol::Negotiated, ReadBuffer::Adaptive, None).await?,
+                None => {
+                    Conn::dial(
+                        client,
+                        &self.origin,
+                        Protocol::Negotiated,
+                        ReadBuffer::Adaptive,
+                        None,
+                    )
+                    .await?
+                }
             };
             let body = Bytes::from(format!(r#"{{"verifier":"{}"}}"#, self.verifier));
-            let answer = ready.send(self.head(body.len())?, Payload::once(body)).await;
+            let answer = ready
+                .send(self.head(body.len())?, Payload::once(body))
+                .await;
             let answer = answer.map_err(|failed| failed.fault)?;
             *conn = Some(ready);
             let status = answer.status();
@@ -123,7 +146,10 @@ impl Approval {
             match status {
                 StatusCode::ACCEPTED => Ok(None),
                 StatusCode::OK => grant(document?),
-                status => Err(Fault::Malformed(format!("sign-in answered HTTP {}", status.as_u16()))),
+                status => Err(Fault::Malformed(format!(
+                    "sign-in answered HTTP {}",
+                    status.as_u16()
+                ))),
             }
         };
         let exchanged = timeout(CONTROL_TIMEOUT, exchange).await;
@@ -134,7 +160,10 @@ impl Approval {
         http::Request::builder()
             .method(Method::POST)
             .uri(format!("{}{}", self.origin, AuthRoute::CliToken.path()))
-            .header(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )
             .header(header::CONTENT_LENGTH, length)
             .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
             .body(())

@@ -39,7 +39,11 @@ fn signed_in(h3: &H3) -> (Store, NewLogin) {
     (store, login)
 }
 
-async fn session(connection: &Connection, path: &str, grant: Option<&str>) -> Result<Session, Response<()>> {
+async fn session(
+    connection: &Connection,
+    path: &str,
+    grant: Option<&str>,
+) -> Result<Session, Response<()>> {
     let mut request = Request::get(format!("https://localhost{path}"));
     if let Some(grant) = grant {
         request = request.header("authorization", format!("Bearer {grant}"));
@@ -56,7 +60,9 @@ async fn sign_out_closes_a_bus_with_1008() {
     let (store, login) = signed_in(&h3);
     let grant = store.grant(login.key, None).unwrap().as_str().to_owned();
     let address = h3.server.address;
-    let mut request = format!("ws://{address}/ws/ping").into_client_request().unwrap();
+    let mut request = format!("ws://{address}/ws/ping")
+        .into_client_request()
+        .unwrap();
     let headers = request.headers_mut();
     headers.insert("authorization", format!("Bearer {grant}").parse().unwrap());
     headers.insert("x-forwarded-proto", "https".parse().unwrap());
@@ -70,7 +76,10 @@ async fn sign_out_closes_a_bus_with_1008() {
     assert!(store.sign_out(login.key, false));
     match socket.next().await {
         Some(Ok(Message::Close(Some(frame)))) => {
-            assert_eq!((u16::from(frame.code), frame.reason.as_str()), (1008, "authentication required"));
+            assert_eq!(
+                (u16::from(frame.code), frame.reason.as_str()),
+                (1008, "authentication required")
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -81,15 +90,26 @@ async fn a_connect_needs_a_grant_and_sign_out_ends_its_session_with_3() {
     let h3 = H3::start(&AUTH).await;
     let (store, login) = signed_in(&h3);
     let connection = h3.connect(transport(None)).await;
-    let refused = session(&connection, "/wt/ping", None).await.err().expect("a refusal");
+    let refused = session(&connection, "/wt/ping", None)
+        .await
+        .err()
+        .expect("a refusal");
     assert_eq!(refused.status(), 403);
     assert_eq!(refused.headers()["graphite-meter-auth"], "required");
-    assert_eq!(refused.headers()["strict-transport-security"], "max-age=31536000");
+    assert_eq!(
+        refused.headers()["strict-transport-security"],
+        "max-age=31536000"
+    );
     let grant = store.grant(login.key, None).unwrap().as_str().to_owned();
-    let opened = session(&connection, "/wt/ping", Some(&grant)).await.unwrap();
+    let opened = session(&connection, "/wt/ping", Some(&grant))
+        .await
+        .unwrap();
     assert!(open(&opened).await);
     assert!(store.sign_out(login.key, false));
-    assert_eq!(opened.closed().await, Ok(ending(3, "authentication required")));
+    assert_eq!(
+        opened.closed().await,
+        Ok(ending(3, "authentication required"))
+    );
 }
 
 #[tokio::test]
@@ -105,7 +125,8 @@ async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
     let grant = |key| store.grant(key, None).unwrap().as_str().to_owned();
     let (owner, other) = (grant(login.key), grant(other.key));
     let connection = h3.connect(transport(None)).await;
-    let request = Request::post("https://localhost/upload/session").header("authorization", format!("Bearer {owner}"));
+    let request = Request::post("https://localhost/upload/session")
+        .header("authorization", format!("Bearer {owner}"));
     let (mut send, mut answer) = connection
         .requests
         .send_request(request.body(()).unwrap())
@@ -114,7 +135,8 @@ async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
         .split();
     send.finish().await.unwrap();
     assert_eq!(answer.response().await.unwrap().status(), 200);
-    let created: serde_json::Value = serde_json::from_slice(&read(&mut answer).await.unwrap()).unwrap();
+    let created: serde_json::Value =
+        serde_json::from_slice(&read(&mut answer).await.unwrap()).unwrap();
     let path = format!("/wt/upload?id={}", created["uploadId"].as_str().unwrap());
     let unsigned = session(&connection, &path, None)
         .await
@@ -127,5 +149,8 @@ async fn an_upload_session_needs_a_grant_and_the_upload_s_owner() {
     // A connection carries one session.
     let elsewhere = h3.connect(transport(None)).await;
     let foreign = session(&elsewhere, &path, Some(&other)).await.unwrap();
-    assert_eq!(refused(Feed::of(&foreign).await.next().await), "ownerMismatch");
+    assert_eq!(
+        refused(Feed::of(&foreign).await.next().await),
+        "ownerMismatch"
+    );
 }

@@ -41,15 +41,27 @@ impl App {
         let links = self.paint(&mut canvas);
         self.hits = std::mem::take(&mut canvas.hits);
         let title = format!("Graphite Meter · {}", self.status().0);
-        Chrome { title, progress: self.progress(), links }
+        Chrome {
+            title,
+            progress: self.progress(),
+            links,
+        }
     }
 
     /// Paints the frame, and returns where its links landed.
     fn paint(&mut self, canvas: &mut Canvas) -> Vec<Link> {
         let area = canvas.area();
         if area.width < SMALLEST.0 || area.height < SMALLEST.1 {
-            let notice = format!("Enlarge the terminal to at least {}×{}.", SMALLEST.0, SMALLEST.1);
-            canvas.center(area.x, area.y + area.height / 2, area.width, &Line::styled(notice, self.palette.muted));
+            let notice = format!(
+                "Enlarge the terminal to at least {}×{}.",
+                SMALLEST.0, SMALLEST.1
+            );
+            canvas.center(
+                area.x,
+                area.y + area.height / 2,
+                area.width,
+                &Line::styled(notice, self.palette.muted),
+            );
             return Vec::new();
         }
         let body = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
@@ -58,7 +70,10 @@ impl App {
         let mut links = Vec::new();
         if !matches!(self.overlay, Overlay::None) {
             // What opens over the console takes every press; a press beside it closes it.
-            let (canvas_color, soft) = (self.palette.canvas(), self.palette.muted.fg.unwrap_or(self.palette.canvas()));
+            let (canvas_color, soft) = (
+                self.palette.canvas(),
+                self.palette.muted.fg.unwrap_or(self.palette.canvas()),
+            );
             canvas.dim(body, canvas_color, soft, 0.55);
             canvas.hits.clear();
             canvas.hit(body, Target::Backdrop);
@@ -119,23 +134,52 @@ impl App {
         let names = self.labels().join(", ");
         let dot = |style: Style| Line::styled("●", style);
         match () {
-            _ if self.config.url.is_none() => (Line::styled("○", palette.muted), "No server".into(), palette.muted),
-            _ if self.checking() && !self.running() => {
-                (Line::styled(self.spinner(), palette.accent), "Checking".into(), palette.muted)
-            }
+            _ if self.config.url.is_none() => (
+                Line::styled("○", palette.muted),
+                "No server".into(),
+                palette.muted,
+            ),
+            _ if self.checking() && !self.running() => (
+                Line::styled(self.spinner(), palette.accent),
+                "Checking".into(),
+                palette.muted,
+            ),
             _ if self.view.check == Check::SignIn || self.view.sign_in.is_some() => {
                 (dot(palette.warn), "Sign in".into(), palette.warn)
             }
             _ if matches!(self.view.check, Check::Failed(_))
-                || !self.view.servers.is_empty() && self.view.servers.iter().all(|s| s.path.is_err()) =>
+                || !self.view.servers.is_empty()
+                    && self.view.servers.iter().all(|s| s.path.is_err()) =>
             {
-                let unreached = if self.view.servers.is_empty() { "Failed".into() } else { names };
-                (dot(Style { bold: false, ..palette.err }), unreached, palette.text)
+                let unreached = if self.view.servers.is_empty() {
+                    "Failed".into()
+                } else {
+                    names
+                };
+                (
+                    dot(Style {
+                        bold: false,
+                        ..palette.err
+                    }),
+                    unreached,
+                    palette.text,
+                )
             }
             _ => {
-                let readiness: Vec<_> = self.view.servers.iter().map(|server| self.readiness(server)).collect();
-                let ready = readiness.iter().all(|state| matches!(state, Readiness::Ready));
-                let tone = if ready || self.running() { palette.ok } else { palette.warn };
+                let readiness: Vec<_> = self
+                    .view
+                    .servers
+                    .iter()
+                    .map(|server| self.readiness(server))
+                    .collect();
+                let ready = readiness
+                    .iter()
+                    .all(|state| matches!(state, Readiness::Ready));
+                let tone = if ready || self.running() {
+                    palette.ok
+                } else {
+                    palette.warn
+                };
                 (dot(tone), names, palette.text)
             }
         }
@@ -155,10 +199,15 @@ impl App {
         {
             let elapsed = match run.outcome {
                 Some(_) => run.elapsed,
-                None => run.at.map_or_default(|at| self.now.saturating_duration_since(at)),
+                None => run
+                    .at
+                    .map_or_default(|at| self.now.saturating_duration_since(at)),
             };
             status = status.and(format!("   {}", format::duration(elapsed)), palette.text);
-            status = status.and(format!("   {}", format::bytes(run.moved as u64)), palette.text);
+            status = status.and(
+                format!("   {}", format::bytes(run.moved as u64)),
+                palette.text,
+            );
             if let Some(left) = self.left() {
                 status = status.and(format!("   {} left", format::duration(left)), palette.muted);
             }
@@ -167,14 +216,25 @@ impl App {
         let bindings = self.bar_keys();
         let mut caps: Vec<(Line, Action)> = Vec::new();
         for binding in &bindings {
-            let Some((key, mut does)) = binding.help else { continue };
+            let Some((key, mut does)) = binding.help else {
+                continue;
+            };
             if binding.action == Action::Start && self.view.run.is_some() {
                 does = "run again";
             }
-            caps.push((self.cap(key, does, self.hover == Some(Target::Cap(binding.action))), binding.action));
+            caps.push((
+                self.cap(key, does, self.hover == Some(Target::Cap(binding.action))),
+                binding.action,
+            ));
         }
         let room = area.width.saturating_sub(status.width() as u16 + 6);
-        while caps.len() > 1 && caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum::<u16>() > room {
+        while caps.len() > 1
+            && caps
+                .iter()
+                .map(|(cap, _)| cap.width() as u16 + 2)
+                .sum::<u16>()
+                > room
+        {
             caps.remove(caps.len() - 2);
         }
         let total: u16 = caps.iter().map(|(cap, _)| cap.width() as u16 + 2).sum();
@@ -193,7 +253,12 @@ impl App {
             _ => {
                 let version = Line::styled(format!("Client {VERSION}"), palette.muted);
                 if free.1 > free.0 + version.width() as u16 + 2 {
-                    canvas.line(x - version.width() as u16 - 3, area.y, version.width() as u16, &version);
+                    canvas.line(
+                        x - version.width() as u16 - 3,
+                        area.y,
+                        version.width() as u16,
+                        &version,
+                    );
                 }
             }
         }
@@ -211,9 +276,22 @@ impl App {
             return keys::listed(keys::EDIT, |_| true);
         }
         let wanted: &[Action] = match &self.overlay {
-            Overlay::None | Overlay::Connect(_) if self.running() => &[Action::Stop, Action::Details, Action::Help],
-            Overlay::None | Overlay::Connect(_) => &[Action::Start, Action::Settings, Action::Details, Action::Help],
-            Overlay::Settings { .. } => &[Action::Move, Action::Adjust, Action::Toggle, Action::Open, Action::Close],
+            Overlay::None | Overlay::Connect(_) if self.running() => {
+                &[Action::Stop, Action::Details, Action::Help]
+            }
+            Overlay::None | Overlay::Connect(_) => &[
+                Action::Start,
+                Action::Settings,
+                Action::Details,
+                Action::Help,
+            ],
+            Overlay::Settings { .. } => &[
+                Action::Move,
+                Action::Adjust,
+                Action::Toggle,
+                Action::Open,
+                Action::Close,
+            ],
             _ => &[
                 Action::Move,
                 Action::Scroll,
@@ -269,16 +347,34 @@ impl App {
         footer: Vec<Line>,
     ) {
         let palette = self.palette;
-        let width = if area.width < 96 { area.width } else { (area.width * 2 / 5).clamp(56, 80) };
+        let width = if area.width < 96 {
+            area.width
+        } else {
+            (area.width * 2 / 5).clamp(56, 80)
+        };
         let sheet = Rect::new(area.right() - width, area.y, width, area.height);
         canvas.clear(sheet);
         canvas.fill(sheet, palette.surface);
         canvas.hit(sheet, Target::Sheet);
         let inner = width.saturating_sub(4);
-        canvas.line(sheet.x + 2, sheet.y + 1, inner, &Line::styled(title, palette.heading));
-        let close = self.cap("esc", "close", self.hover == Some(Target::Cap(Action::Close)));
+        canvas.line(
+            sheet.x + 2,
+            sheet.y + 1,
+            inner,
+            &Line::styled(title, palette.heading),
+        );
+        let close = self.cap(
+            "esc",
+            "close",
+            self.hover == Some(Target::Cap(Action::Close)),
+        );
         let close_width = close.width() as u16;
-        canvas.line(sheet.right() - close_width - 2, sheet.y + 1, close_width, &close);
+        canvas.line(
+            sheet.right() - close_width - 2,
+            sheet.y + 1,
+            close_width,
+            &close,
+        );
         canvas.hit(
             Rect::new(sheet.right() - close_width - 2, sheet.y + 1, close_width, 1),
             Target::Cap(Action::Close),
@@ -294,17 +390,32 @@ impl App {
                     }
                     lines.push((Line::styled(heading, palette.heading), None));
                 }
-                Entry::Item { label, value, target } => {
+                Entry::Item {
+                    label,
+                    value,
+                    target,
+                } => {
                     if focus == Some(index) {
                         focused_line = Some(lines.len());
                     }
-                    let gap = usize::from(inner).saturating_sub(label.width() + value.width()).max(2);
-                    let row = label.clone().and(" ".repeat(gap), Style::default()).with(value.clone());
+                    let gap = usize::from(inner)
+                        .saturating_sub(label.width() + value.width())
+                        .max(2);
+                    let row = label
+                        .clone()
+                        .and(" ".repeat(gap), Style::default())
+                        .with(value.clone());
                     lines.push((row.fit(usize::from(inner)), Some((index, *target))));
                 }
                 Entry::Text(text) => {
                     for part in fill(&text.text(), usize::from(inner)) {
-                        lines.push((Line::styled(part, text.0.first().map_or(palette.muted, |span| span.style)), None));
+                        lines.push((
+                            Line::styled(
+                                part,
+                                text.0.first().map_or(palette.muted, |span| span.style),
+                            ),
+                            None,
+                        ));
                     }
                 }
                 Entry::Gap => lines.push((Line::default(), None)),
@@ -353,7 +464,12 @@ impl App {
                 (true, false) => "↑ more",
                 _ => "↓ more",
             };
-            canvas.right(sheet.x + 2, bottom, inner, &Line::styled(hint, palette.muted));
+            canvas.right(
+                sheet.x + 2,
+                bottom,
+                inner,
+                &Line::styled(hint, palette.muted),
+            );
         }
         for (offset, line) in footer_lines.iter().enumerate() {
             canvas.line(sheet.x + 2, bottom + 1 + offset as u16, inner, line);
@@ -362,40 +478,92 @@ impl App {
 
     /// A card centred over the console, `height` rows tall at most, its ground filled; its inner area.
     fn card_over(&self, canvas: &mut Canvas, area: Rect, height: u16) -> Rect {
-        let (width, height) = (area.width.saturating_sub(4).min(76), height.min(area.height));
-        let card = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 3, width, height);
+        let (width, height) = (
+            area.width.saturating_sub(4).min(76),
+            height.min(area.height),
+        );
+        let card = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 3,
+            width,
+            height,
+        );
         canvas.clear(card);
         canvas.fill(card, self.palette.surface);
         canvas.hit(card, Target::Sheet);
-        Rect::new(card.x + 3, card.y + 1, width.saturating_sub(6), height.saturating_sub(2))
+        Rect::new(
+            card.x + 3,
+            card.y + 1,
+            width.saturating_sub(6),
+            height.saturating_sub(2),
+        )
     }
 
     /// The server's address asked for: the field, and how its check stands.
     fn connect_card(&self, canvas: &mut Canvas, area: Rect) {
         let palette = &self.palette;
         let inner = self.card_over(canvas, area, 13);
-        canvas.line(inner.x, inner.y, inner.width, &Line::styled("Connect to a server", palette.heading));
+        canvas.line(
+            inner.x,
+            inner.y,
+            inner.width,
+            &Line::styled("Connect to a server", palette.heading),
+        );
         let lead = "Enter the address of your Graphite Meter server, or paste it.";
-        canvas.line(inner.x, inner.y + 2, inner.width, &Line::styled(lead, palette.muted));
+        canvas.line(
+            inner.x,
+            inner.y + 2,
+            inner.width,
+            &Line::styled(lead, palette.muted),
+        );
         let field = Rect::new(inner.x, inner.y + 4, inner.width, 1);
         canvas.fill(field, palette.raised);
         if let Some(editor) = self.editor() {
-            canvas.line(field.x + 1, field.y, field.width - 2, &editor.line(usize::from(field.width - 2), palette));
+            canvas.line(
+                field.x + 1,
+                field.y,
+                field.width - 2,
+                &editor.line(usize::from(field.width - 2), palette),
+            );
         }
-        let host = self.config.url.as_ref().map(format::authority).unwrap_or_default();
+        let host = self
+            .config
+            .url
+            .as_ref()
+            .map(format::authority)
+            .unwrap_or_default();
         let failure = match &self.view.check {
             Check::Failed(failure) => Some(failure.text.clone()),
             _ if self.could_not_start() => {
-                let failure = self.view.servers.iter().find_map(|server| server.path.as_ref().err());
-                Some(failure.map_or("No test server answered".into(), |failure| failure.text.clone()))
+                let failure = self
+                    .view
+                    .servers
+                    .iter()
+                    .find_map(|server| server.path.as_ref().err());
+                Some(failure.map_or("No test server answered".into(), |failure| {
+                    failure.text.clone()
+                }))
             }
             _ => None,
         };
         let warn = |text: String| Line::styled(text, palette.warn);
-        let [said, next] = match (self.editor().and_then(|editor| editor.error.clone()), failure) {
-            (Some(error), _) => [Line::styled(error, Style { bold: false, ..palette.err }), Line::default()],
+        let [said, next] = match (
+            self.editor().and_then(|editor| editor.error.clone()),
+            failure,
+        ) {
+            (Some(error), _) => [
+                Line::styled(
+                    error,
+                    Style {
+                        bold: false,
+                        ..palette.err
+                    },
+                ),
+                Line::default(),
+            ],
             _ if self.checking() && !host.is_empty() => [
-                Line::styled(self.spinner(), palette.accent).and(format!(" Checking {host}…"), palette.muted),
+                Line::styled(self.spinner(), palette.accent)
+                    .and(format!(" Checking {host}…"), palette.muted),
                 Line::default(),
             ],
             (None, Some(text)) => {
@@ -405,21 +573,43 @@ impl App {
                 };
                 [
                     said,
-                    Line::styled("Check the address and that the server is running; Enter tries again.", palette.muted),
+                    Line::styled(
+                        "Check the address and that the server is running; Enter tries again.",
+                        palette.muted,
+                    ),
                 ]
             }
             (None, None) => [Line::default(), Line::default()],
         };
-        canvas.line(inner.x, inner.y + 6, inner.width, &said.fit(usize::from(inner.width)));
-        canvas.line(inner.x, inner.y + 7, inner.width, &next.fit(usize::from(inner.width)));
+        canvas.line(
+            inner.x,
+            inner.y + 6,
+            inner.width,
+            &said.fit(usize::from(inner.width)),
+        );
+        canvas.line(
+            inner.x,
+            inner.y + 7,
+            inner.width,
+            &next.fit(usize::from(inner.width)),
+        );
         // Remembering is the user's choice: the switch, lit under the pointer, and its key.
         let switch = Rect::new(inner.x, inner.y + 9, inner.width, 1);
         if self.hover == Some(Target::Remember) {
-            canvas.fill(Rect::new(switch.x - 1, switch.y, switch.width + 2, 1), palette.hover);
+            canvas.fill(
+                Rect::new(switch.x - 1, switch.y, switch.width + 2, 1),
+                palette.hover,
+            );
         }
-        let remember = Line::styled("Remember this server  ", palette.text).with(self.switch_mark(self.remembering));
+        let remember = Line::styled("Remember this server  ", palette.text)
+            .with(self.switch_mark(self.remembering));
         canvas.line(switch.x, switch.y, switch.width, &remember);
-        canvas.right(switch.x, switch.y, switch.width, &Line::styled("tab", palette.muted));
+        canvas.right(
+            switch.x,
+            switch.y,
+            switch.width,
+            &Line::styled("tab", palette.muted),
+        );
         canvas.hit(switch, Target::Remember);
         let keys = Line::styled("enter", palette.text)
             .and(" connects    ", palette.muted)
@@ -436,7 +626,10 @@ impl App {
         let palette = &self.palette;
         let width = usize::from(area.width.saturating_sub(10).min(70));
         let url: Vec<char> = prompt.url.chars().collect();
-        let wrapped: Vec<String> = url.chunks(width.max(1)).map(|chunk| chunk.iter().collect()).collect();
+        let wrapped: Vec<String> = url
+            .chunks(width.max(1))
+            .map(|chunk| chunk.iter().collect())
+            .collect();
         let inner = self.card_over(canvas, area, 12 + wrapped.len() as u16);
         canvas.line(
             inner.x,
@@ -445,27 +638,61 @@ impl App {
             &Line::styled(format!("Sign in to {}", prompt.issuer), palette.heading),
         );
         let status = match sign_in.opened {
-            false => Line::styled("Open the sign-in page and check that it shows this code.", palette.muted),
-            true => Line::styled(self.spinner(), palette.accent).and(" Waiting for approval…", palette.muted),
+            false => Line::styled(
+                "Open the sign-in page and check that it shows this code.",
+                palette.muted,
+            ),
+            true => Line::styled(self.spinner(), palette.accent)
+                .and(" Waiting for approval…", palette.muted),
         };
         canvas.line(inner.x, inner.y + 2, inner.width, &status);
-        let code = Rect::new(inner.x, inner.y + 4, prompt.code.chars().count() as u16 + 6, 3);
+        let code = Rect::new(
+            inner.x,
+            inner.y + 4,
+            prompt.code.chars().count() as u16 + 6,
+            3,
+        );
         canvas.fill(code, palette.raised);
-        canvas.line(code.x + 3, code.y + 1, code.width - 6, &Line::styled(&prompt.code, palette.value));
+        canvas.line(
+            code.x + 3,
+            code.y + 1,
+            code.width - 6,
+            &Line::styled(&prompt.code, palette.value),
+        );
         let waited = self.now.saturating_duration_since(sign_in.since);
-        let left = prompt.deadline.into_std().saturating_duration_since(self.now);
+        let left = prompt
+            .deadline
+            .into_std()
+            .saturating_duration_since(self.now);
         let left = std::time::Duration::from_secs(left.as_secs_f64().round() as u64);
-        let times = format!("Waited {} · expires in {}", format::duration(waited), format::stage_time(left));
-        canvas.line(inner.x, inner.y + 8, inner.width, &Line::styled(times, palette.muted));
+        let times = format!(
+            "Waited {} · expires in {}",
+            format::duration(waited),
+            format::stage_time(left)
+        );
+        canvas.line(
+            inner.x,
+            inner.y + 8,
+            inner.width,
+            &Line::styled(times, palette.muted),
+        );
         let mut links = Vec::new();
         for (index, part) in wrapped.into_iter().enumerate() {
-            let (y, text) = (inner.y + 10 + index as u16, Line::styled(part, palette.accent));
+            let (y, text) = (
+                inner.y + 10 + index as u16,
+                Line::styled(part, palette.accent),
+            );
             if y >= inner.bottom() {
                 break;
             }
             canvas.line(inner.x, y, inner.width, &text);
             canvas.hit(Rect::new(inner.x, y, text.width() as u16, 1), Target::Link);
-            links.push(Link { row: y, column: inner.x, url: prompt.url.clone(), text });
+            links.push(Link {
+                row: y,
+                column: inner.x,
+                url: prompt.url.clone(),
+                text,
+            });
         }
         links
     }
@@ -509,7 +736,11 @@ impl App {
             target: None,
         };
         let mut entries = Vec::new();
-        let address = self.config.url.as_ref().map_or(MISSING.into(), ToString::to_string);
+        let address = self
+            .config
+            .url
+            .as_ref()
+            .map_or(MISSING.into(), ToString::to_string);
         for server in self.view.servers.iter() {
             entries.push(Entry::Heading(match self.several() {
                 true => server.name.clone(),
@@ -523,16 +754,30 @@ impl App {
             entries.push(item("Status", self.readiness(server).label().into()));
             match &server.path {
                 Ok(paths) => {
-                    entries.push(item("Throughput path", format::throughput_path(&paths.throughput)));
-                    entries.push(item("Streams", format::streams(&self.config, &paths.throughput)));
-                    let latency = paths.latency.as_ref().map_or(MISSING.into(), format::latency_path);
+                    entries.push(item(
+                        "Throughput path",
+                        format::throughput_path(&paths.throughput),
+                    ));
+                    entries.push(item(
+                        "Streams",
+                        format::streams(&self.config, &paths.throughput),
+                    ));
+                    let latency = paths
+                        .latency
+                        .as_ref()
+                        .map_or(MISSING.into(), format::latency_path);
                     entries.push(item("Latency path", latency));
                     if let Some(rtt) = paths.idle_rtt {
                         entries.push(item("Path check round trip", round_trip(rtt)));
                     }
-                    entries.push(item("IP family", format!("IPv{}", paths.ip_family.version())));
+                    entries.push(item(
+                        "IP family",
+                        format!("IPv{}", paths.ip_family.version()),
+                    ));
                 }
-                Err(failure) => entries.push(Entry::Text(Line::styled(&failure.text, palette.warn))),
+                Err(failure) => {
+                    entries.push(Entry::Text(Line::styled(&failure.text, palette.warn)))
+                }
             }
             if let Some(run) = &self.view.run {
                 let results = run
@@ -543,7 +788,8 @@ impl App {
                     let own = result.servers.iter().find(|own| own.server == server.id);
                     let rate = own.map_or(0.0, |own| own.throughput.mean());
                     if rate > 0.0 {
-                        let label = format!("{} {}", icon(result.stage), format::label(result.stage));
+                        let label =
+                            format!("{} {}", icon(result.stage), format::label(result.stage));
                         entries.push(item(&label, format::rate(rate)));
                     }
                 }
@@ -552,15 +798,23 @@ impl App {
         if self.view.servers.is_empty() {
             entries.push(Entry::Heading("Server".into()));
             entries.push(item("Server address", address));
-            entries.push(Entry::Text(Line::styled("Its test servers show here once it answers.", palette.muted)));
+            entries.push(Entry::Text(Line::styled(
+                "Its test servers show here once it answers.",
+                palette.muted,
+            )));
         }
         if let Some(run) = self.view.run.as_ref().filter(|run| !run.issues.is_empty()) {
             entries.push(Entry::Heading("Issues".into()));
             for (stage, issue) in &run.issues {
-                let at = issue.at.saturating_duration_since(run.at.unwrap_or(issue.at));
+                let at = issue
+                    .at
+                    .saturating_duration_since(run.at.unwrap_or(issue.at));
                 let name = self.name(Some(&issue.server));
                 let label = format!("{} at {}", format::label(*stage), format::duration(at));
-                entries.push(item(&label, format!("{name}: {}", issue.failure.reason.label())));
+                entries.push(item(
+                    &label,
+                    format!("{name}: {}", issue.failure.reason.label()),
+                ));
             }
         }
         let latency = Stage::ALL
@@ -568,11 +822,17 @@ impl App {
             .filter_map(|&stage| Some((stage, self.population(stage)?)));
         let latency: Vec<_> = latency.filter(|(_, summary)| summary.replies > 0).collect();
         if !latency.is_empty() {
-            entries.push(Entry::Heading(format!("Latency to {}", self.name(self.latency_server()))));
+            entries.push(Entry::Heading(format!(
+                "Latency to {}",
+                self.name(self.latency_server())
+            )));
             for (stage, summary) in latency {
                 let median = summary.p50.map_or(MISSING.into(), round_trip);
                 let p95 = summary.p95.map_or(MISSING.into(), round_trip);
-                let value = format!("Median {median} · P95 {p95} · {} replies", format::count(summary.replies));
+                let value = format!(
+                    "Median {median} · P95 {p95} · {} replies",
+                    format::count(summary.replies)
+                );
                 entries.push(item(format::population(stage), value));
             }
         }

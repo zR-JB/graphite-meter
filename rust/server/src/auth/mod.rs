@@ -63,9 +63,18 @@ pub(crate) struct Enabled {
 
 impl Auth {
     /// The authentication `config` enables, its hash and OIDC secret read; the OIDC provider is discovered later.
-    pub fn new(config: Option<&config::Auth>, outbound: &config::Outbound, verbose: bool) -> Result<Self, String> {
-        let Some(config) = config else { return Ok(Self(None)) };
-        let Methods { password, oidc: settings } = &config.methods;
+    pub fn new(
+        config: Option<&config::Auth>,
+        outbound: &config::Outbound,
+        verbose: bool,
+    ) -> Result<Self, String> {
+        let Some(config) = config else {
+            return Ok(Self(None));
+        };
+        let Methods {
+            password,
+            oidc: settings,
+        } = &config.methods;
         let mode = match (password, settings) {
             (_, None) => "password",
             (None, Some(_)) => "OIDC",
@@ -73,7 +82,9 @@ impl Auth {
         };
         let security = Security::new(verbose);
         let load = |secret: &config::Secret| {
-            let encoded = secret.read(4096).map_err(|error| format!("password hash: {error}"))?;
+            let encoded = secret
+                .read(4096)
+                .map_err(|error| format!("password hash: {error}"))?;
             let verifier = Password::new(&encoded)?;
             security.debug(format_args!("password hash loaded: valid"));
             Ok::<_, String>(verifier)
@@ -91,13 +102,24 @@ impl Auth {
                 .transpose()?,
         };
         let lifetime = log::span(LOGIN_LIFETIME);
-        log!(Info, "auth", "{mode} sign-in at {}; sessions last {lifetime}", config.public_origin);
+        log!(
+            Info,
+            "auth",
+            "{mode} sign-in at {}; sessions last {lifetime}",
+            config.public_origin
+        );
         if let Some(oidc) = settings {
             let groups = match oidc.allowed_groups.as_slice() {
                 [_] => "1 group allowed".to_owned(),
                 groups => format!("{} groups allowed", groups.len()),
             };
-            log!(Info, "auth", "OIDC provider {} at {}; {groups}", config.provider, oidc.issuer);
+            log!(
+                Info,
+                "auth",
+                "OIDC provider {} at {}; {groups}",
+                config.provider,
+                oidc.issuer
+            );
         }
         Ok(Self(Some(Box::new(Enabled {
             policy: Policy::new(config),
@@ -111,7 +133,11 @@ impl Auth {
 
     /// Discovers the OIDC provider once, when one is configured; OIDC mode serves only after this succeeds.
     pub async fn discover(&self) -> Result<(), String> {
-        match self.0.as_ref().and_then(|auth| auth.sign_in.oidc.as_deref()) {
+        match self
+            .0
+            .as_ref()
+            .and_then(|auth| auth.sign_in.oidc.as_deref())
+        {
             Some(oidc) => oidc.discover().await,
             None => Ok(()),
         }
@@ -120,7 +146,11 @@ impl Auth {
     /// Hybrid mode's discovery, retried in the background until the provider answers.
     pub fn background_discovery(&self) -> Option<impl Future<Output = ()> + Send + '_> {
         let Some(auth) = &self.0 else { return None };
-        let SignIn { password: Some(_), oidc: Some(oidc) } = &auth.sign_in else {
+        let SignIn {
+            password: Some(_),
+            oidc: Some(oidc),
+        } = &auth.sign_in
+        else {
             return None;
         };
         Some(oidc.retry())
@@ -154,7 +184,12 @@ impl Auth {
     }
 
     /// Answers an authentication route by `deadline`: pages, sign-in posts, the OIDC callback, approvals, logout.
-    pub async fn handle<B: http_body::Body>(&self, request: Request<B>, deadline: Instant, peer: &Peer) -> Outcome {
+    pub async fn handle<B: http_body::Body>(
+        &self,
+        request: Request<B>,
+        deadline: Instant,
+        peer: &Peer,
+    ) -> Outcome {
         let response = match &self.0 {
             None => response::status(StatusCode::NOT_FOUND),
             Some(auth) => routes::handle(auth, request, deadline, peer).await,
@@ -177,7 +212,12 @@ impl Auth {
     }
 
     /// The answer to a socket-ticket mint for routes of `kind`.
-    pub(crate) fn ticket<B>(&self, request: &Request<B>, lease: Option<&AuthLease>, kind: Kind) -> Response<Body> {
+    pub(crate) fn ticket<B>(
+        &self,
+        request: &Request<B>,
+        lease: Option<&AuthLease>,
+        kind: Kind,
+    ) -> Response<Body> {
         match &self.0 {
             None => response::json_of(&SocketTicket::unauthenticated()),
             Some(auth) => routes::mint(auth, request, lease, kind),
@@ -338,7 +378,10 @@ pub struct Security {
 
 impl Security {
     fn new(verbose: bool) -> Self {
-        Self { counts: Default::default(), verbose }
+        Self {
+            counts: Default::default(),
+            verbose,
+        }
     }
 
     fn count(&self, counter: Counter) {
@@ -361,7 +404,10 @@ impl Security {
 
     /// The minute line of the counts since `last`, which it advances; `None` when nothing changed.
     pub fn line(&self, last: &mut [u64; COUNTERS]) -> Option<String> {
-        let counts = self.counts.each_ref().map(|count| count.load(Ordering::Relaxed));
+        let counts = self
+            .counts
+            .each_ref()
+            .map(|count| count.load(Ordering::Relaxed));
         if counts == *last {
             return None;
         }

@@ -42,7 +42,9 @@ mod testing {
     /// `fields` as our QPACK encodes them.
     pub fn section(fields: &[(&str, &str)]) -> Vec<u8> {
         let mut section = Vec::new();
-        let fields = fields.iter().map(|(name, value)| (name.as_bytes(), value.as_bytes()));
+        let fields = fields
+            .iter()
+            .map(|(name, value)| (name.as_bytes(), value.as_bytes()));
         crate::qpack::encode(fields, &mut section);
         section
     }
@@ -62,10 +64,14 @@ mod tests {
         for input in short {
             let _ = qpack::decode(&input, |_, _| Ok(()));
             let _ = qpack::decode(&[&[0, 0][..], &input].concat(), |_, _| Ok(()));
-            let (mut frames, mut bytes) = (frame::Reader::<frame::FrameType>::default(), Bytes::from(input.clone()));
+            let (mut frames, mut bytes) = (
+                frame::Reader::<frame::FrameType>::default(),
+                Bytes::from(input.clone()),
+            );
             while frames.next(&mut bytes).is_some() {}
             let _ = capsule::Reader::default().read(&mut Bytes::from(input.clone()));
-            let _ = settings::Reader::new(input.len() as u64).map(|mut reader| reader.read(&mut &input[..]));
+            let _ = settings::Reader::new(input.len() as u64)
+                .map(|mut reader| reader.read(&mut &input[..]));
             for peer in [Role::Client, Role::Server] {
                 let mut message = Message::new(4096, peer);
                 let mut bytes = Bytes::from(input.clone());

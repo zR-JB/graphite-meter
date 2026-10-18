@@ -89,7 +89,12 @@ impl Quota {
     }
 
     /// Charges this quota and `outer`'s total, checking this client share, then `outer`'s total, then this total.
-    pub fn acquire_within(&self, keys: &ClientKeys, weight: usize, outer: Option<&Quota>) -> Result<Hold, Refusal> {
+    pub fn acquire_within(
+        &self,
+        keys: &ClientKeys,
+        weight: usize,
+        outer: Option<&Quota>,
+    ) -> Result<Hold, Refusal> {
         let total = self.0.total();
         let mut state = lock(&self.0.state);
         if self.0.keys(keys).enumerate().any(|(index, key)| {
@@ -113,7 +118,12 @@ impl Quota {
             *state.held.entry(key).or_default() += weight;
         }
         let linked = outer.map(Box::new);
-        Ok(Hold { quota: self.clone(), keys: keys.clone(), weight, linked })
+        Ok(Hold {
+            quota: self.clone(),
+            keys: keys.clone(),
+            weight,
+            linked,
+        })
     }
 
     /// Tells whether any of the keys holds part of this quota.
@@ -124,8 +134,19 @@ impl Quota {
 
     pub fn usage(&self) -> QuotaUsage {
         let state = lock(&self.0.state);
-        let State { used, peak, refused_total, refused_client, .. } = *state;
-        QuotaUsage { active: used, peak, refused_total, refused_client }
+        let State {
+            used,
+            peak,
+            refused_total,
+            refused_client,
+            ..
+        } = *state;
+        QuotaUsage {
+            active: used,
+            peak,
+            refused_total,
+            refused_client,
+        }
     }
 
     /// Completes once nothing is held, also when that happened since the last wait ended.
@@ -143,7 +164,8 @@ impl Inner {
     }
 
     fn keys<'a>(&'a self, keys: &'a ClientKeys) -> impl Iterator<Item = ClientKey> + 'a {
-        keys.iter().filter(move |key| Some(key) != self.exempt.as_ref())
+        keys.iter()
+            .filter(move |key| Some(key) != self.exempt.as_ref())
     }
 }
 
@@ -159,7 +181,12 @@ pub struct Hold {
 
 impl fmt::Debug for Hold {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { keys, weight, linked, .. } = self;
+        let Self {
+            keys,
+            weight,
+            linked,
+            ..
+        } = self;
         formatter
             .debug_struct("Hold")
             .field("keys", keys)
@@ -212,9 +239,17 @@ mod tests {
     fn ipv6_prefixes_share_once_twice_and_four_times() {
         let quota = Quota::new(100, 1);
         let first = quota.acquire(&v6("2001:db8:1:1::1"), 1).unwrap();
-        assert_eq!(quota.acquire(&v6("2001:db8:1:1::2"), 1).err(), Some(Refusal::Client), "its /64 is full");
+        assert_eq!(
+            quota.acquire(&v6("2001:db8:1:1::2"), 1).err(),
+            Some(Refusal::Client),
+            "its /64 is full"
+        );
         let mut held = vec![quota.acquire(&v6("2001:db8:1:2::1"), 1).unwrap()];
-        assert_eq!(quota.acquire(&v6("2001:db8:1:3::1"), 1).err(), Some(Refusal::Client), "its /56 holds two");
+        assert_eq!(
+            quota.acquire(&v6("2001:db8:1:3::1"), 1).err(),
+            Some(Refusal::Client),
+            "its /56 holds two"
+        );
         held.push(quota.acquire(&v6("2001:db8:1:100::1"), 1).unwrap());
         held.push(quota.acquire(&v6("2001:db8:1:101::1"), 1).unwrap());
         assert_eq!(
@@ -230,13 +265,17 @@ mod tests {
 
     #[test]
     fn a_principal_shares_twice_unless_exempt() {
-        let login = |id: &str, principal: Principal| ClientKeys::Auth(Holder::Login(id.into()), principal);
+        let login =
+            |id: &str, principal: Principal| ClientKeys::Auth(Holder::Login(id.into()), principal);
         let quota = Quota::new(100, 1);
         let held = [
             quota.acquire(&login("a", Principal::oidc("p")), 1).unwrap(),
             quota.acquire(&login("b", Principal::oidc("p")), 1).unwrap(),
         ];
-        assert_eq!(quota.acquire(&login("c", Principal::oidc("p")), 1).err(), Some(Refusal::Client));
+        assert_eq!(
+            quota.acquire(&login("c", Principal::oidc("p")), 1).err(),
+            Some(Refusal::Client)
+        );
         drop(held);
         let operator = ClientKey::Principal(Principal::operator());
         let credit = Quota::client_windows(Budget::new(usize::MAX), 10, Some(operator));

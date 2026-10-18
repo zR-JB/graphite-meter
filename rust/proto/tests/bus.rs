@@ -16,13 +16,22 @@ fn bus_messages_pass_the_shared_vectors() {
         };
         let actual = match operation {
             "encode-ping" => {
-                let ping = Ping { id: input.parse().unwrap() };
-                assert_eq!(ping.write(&mut [0; Ping::MAX_BYTES]), ping.encode().as_bytes(), "{line}");
+                let ping = Ping {
+                    id: input.parse().unwrap(),
+                };
+                assert_eq!(
+                    ping.write(&mut [0; Ping::MAX_BYTES]),
+                    ping.encode().as_bytes(),
+                    "{line}"
+                );
                 Some(ping.encode())
             }
-            "encode-pong" => input.split_once(',').map(|(id, nanos)| pong(id, nanos).encode()),
+            "encode-pong" => input
+                .split_once(',')
+                .map(|(id, nanos)| pong(id, nanos).encode()),
             "decode-ping" => Ping::decode(input.as_bytes()).map(|ping| ping.id.to_string()),
-            "decode-pong" => Pong::decode(input.as_bytes()).map(|pong| format!("{},{}", pong.id, pong.handling_nanos)),
+            "decode-pong" => Pong::decode(input.as_bytes())
+                .map(|pong| format!("{},{}", pong.id, pong.handling_nanos)),
             _ => panic!("unknown operation {operation}"),
         };
         let expected = (expected != "INVALID").then_some(expected);
@@ -32,7 +41,14 @@ fn bus_messages_pass_the_shared_vectors() {
 
 #[test]
 fn messages_have_no_framing_and_unknown_frames_are_malformed() {
-    for message in ["PING,7\n", "PING,7\r\n", " PING,7", "ping,7", "PING,7\0", "HELLO"] {
+    for message in [
+        "PING,7\n",
+        "PING,7\r\n",
+        " PING,7",
+        "ping,7",
+        "PING,7\0",
+        "HELLO",
+    ] {
         assert_eq!(Ping::decode(message.as_bytes()), None, "{message:?}");
     }
     assert_eq!(Ping::decode(b"PING,\xff"), None);

@@ -55,11 +55,16 @@ async fn run(config: &Config, seen: impl AsyncFnMut(&Event)) -> (Outcome, Vec<Ev
         drop(events);
         outcome
     };
-    let ran = tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(outcome, watched) });
+    let ran = tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(outcome, watched)
+    });
     ran.await.expect("the run ends")
 }
 
-async fn watch(mut received: mpsc::UnboundedReceiver<Event>, mut seen: impl AsyncFnMut(&Event)) -> Vec<Event> {
+async fn watch(
+    mut received: mpsc::UnboundedReceiver<Event>,
+    mut seen: impl AsyncFnMut(&Event),
+) -> Vec<Event> {
     let mut events = Vec::new();
     while let Some(event) = received.recv().await {
         seen(&event).await;
@@ -70,8 +75,17 @@ async fn watch(mut received: mpsc::UnboundedReceiver<Event>, mut seen: impl Asyn
 
 /// A server that advertises the origin it is asked at, behind a link to its HTTP/1.1 listener.
 async fn relayed() -> (Server, Link) {
-    let server = Server::with(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"), ("GM_PUBLIC_ORIGINS", "self")]).await;
-    let address: SocketAddr = server.http1.to_string().trim_start_matches("http://").parse().unwrap();
+    let server = Server::with(&[
+        ("GM_ADVERTISED_NATIVE_ENDPOINTS", "none"),
+        ("GM_PUBLIC_ORIGINS", "self"),
+    ])
+    .await;
+    let address: SocketAddr = server
+        .http1
+        .to_string()
+        .trim_start_matches("http://")
+        .parse()
+        .unwrap();
     (server, Link::tcp(address, Duration::ZERO).await.unwrap())
 }
 
@@ -97,10 +111,18 @@ async fn completes(server: &Server, args: &[&str]) {
             panic!("one server: {result:?}")
         };
         let latency = server.latency.unwrap().summary;
-        assert!(latency.replies > 0 && latency.p50.is_some(), "{:?}: {latency:?}", result.stage);
+        assert!(
+            latency.replies > 0 && latency.p50.is_some(),
+            "{:?}: {latency:?}",
+            result.stage
+        );
         for &direction in result.stage.directions() {
             let throughput = result.throughput[direction].unwrap();
-            assert!(throughput.rate.is_some() && throughput.bytes > 0, "{:?} {direction:?}", result.stage);
+            assert!(
+                throughput.rate.is_some() && throughput.bytes > 0,
+                "{:?} {direction:?}",
+                result.stage
+            );
         }
     }
     let measuring = events.iter().filter_map(|event| match event {
@@ -109,10 +131,15 @@ async fn completes(server: &Server, args: &[&str]) {
     });
     assert_eq!(measuring.collect::<Vec<_>>(), config.stages);
     let replied = |event: &Event| match event {
-        Event::Probes { probes, latency, .. } => probes.iter().any(|probe| probe.rtt.is_some()) && latency.replies > 0,
+        Event::Probes {
+            probes, latency, ..
+        } => probes.iter().any(|probe| probe.rtt.is_some()) && latency.replies > 0,
         _ => false,
     };
-    assert!(events.iter().any(replied), "live round trips and the latency they add up to");
+    assert!(
+        events.iter().any(replied),
+        "live round trips and the latency they add up to"
+    );
     let up = |event: &Event| matches!(event, Event::Sample { rates, .. } if rates.up.is_some_and(|rate| rate > 0.0));
     assert!(events.iter().any(up), "live upload rates");
 }
@@ -126,7 +153,14 @@ async fn a_run_completes_over_http1_with_websocket_latency() {
 async fn a_run_completes_over_http2_with_websocket_latency() {
     let server = Server::start().await;
     let origin = server.http2.to_string();
-    let args = ["-throughput-origin", &origin, "-latency-transport", "websocket", "-stages", TRANSFERS];
+    let args = [
+        "-throughput-origin",
+        &origin,
+        "-latency-transport",
+        "websocket",
+        "-stages",
+        TRANSFERS,
+    ];
     completes(&server, &args).await;
 }
 
@@ -134,7 +168,14 @@ async fn a_run_completes_over_http2_with_websocket_latency() {
 async fn a_run_completes_over_http3_with_datagram_latency() {
     let server = Server::start().await;
     let origin = server.http3.to_string();
-    let args = ["-throughput-origin", &origin, "-latency-transport", "webtransport", "-stages", TRANSFERS];
+    let args = [
+        "-throughput-origin",
+        &origin,
+        "-latency-transport",
+        "webtransport",
+        "-stages",
+        TRANSFERS,
+    ];
     completes(&server, &args).await;
 }
 
@@ -159,15 +200,27 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
         link.address
     );
     let server = Server::with(&[("GM_SERVER_CATALOG", &catalog)]).await;
-    let args = ["-server", "self", "-server", "relayed", "-stages", "download", "-download-duration", "4s"];
+    let args = [
+        "-server",
+        "self",
+        "-server",
+        "relayed",
+        "-stages",
+        "download",
+        "-download-duration",
+        "4s",
+    ];
     let config = config(&server.http1, &[&["-insecure"], args.as_slice()].concat());
     let stall = async |event: &Event| {
-        if matches!(event, Event::Sample { rates, .. } if rates.down.is_some_and(|rate| rate > 0.0)) {
+        if matches!(event, Event::Sample { rates, .. } if rates.down.is_some_and(|rate| rate > 0.0))
+        {
             link.stall();
         }
     };
     let (outcome, events) = run(&config, stall).await;
-    let [result] = results(&events)[..] else { panic!("one stage: {events:?}") };
+    let [result] = results(&events)[..] else {
+        panic!("one stage: {events:?}")
+    };
     assert_eq!(outcome, Outcome::Partial, "{result:#?}");
     let relayed = ServerId::parse("relayed").unwrap();
     let left: Vec<_> = result
@@ -182,6 +235,7 @@ async fn a_server_stalled_mid_download_departs_and_the_other_completes_partial()
         (&relayed, Scope::Throughput, FailureReason::Timeout)
     );
     assert!(result.throughput[Direction::Down].unwrap().rate.is_some());
-    let announced = |event: &Event| matches!(event, Event::ServerFailed(failure) if failure.server == relayed);
+    let announced =
+        |event: &Event| matches!(event, Event::ServerFailed(failure) if failure.server == relayed);
     assert!(events.iter().any(announced));
 }

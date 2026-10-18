@@ -10,7 +10,9 @@ use crate::{
 };
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, RecvHalf};
-use graphite_meter_net::quic::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, server_transport};
+use graphite_meter_net::quic::{
+    MAX_SEND_WINDOW, MIN_SEND_WINDOW, RECEIVE_WINDOW, server_transport,
+};
 use std::{
     sync::{
         Arc, Mutex,
@@ -32,7 +34,8 @@ pub(super) fn max_requests(limits: &Limits) -> Result<u32, String> {
     let streams = limits
         .operations_per_client
         .checked_add(limits.sessions_per_client.get());
-    let streams = streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
+    let streams =
+        streams.and_then(|streams| u32::try_from(streams.get().checked_add(CONTROL_STREAMS)?).ok());
     streams.ok_or_else(|| "per-client stream budgets exceed the QUIC stream limit".into())
 }
 
@@ -65,7 +68,11 @@ pub fn endpoint_bytes(
     segments: usize,
 ) -> Option<usize> {
     let packet = packet_bytes(config)?;
-    let queue = if shards > 1 { super::shard::forwarding_bytes(packet)? } else { 0 };
+    let queue = if shards > 1 {
+        super::shard::forwarding_bytes(packet)?
+    } else {
+        0
+    };
     noq::receive_batch_bytes(packet, segments)
         .checked_add(packet.checked_mul(connections.div_ceil(shards).checked_add(1)?)?)?
         .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
@@ -186,7 +193,10 @@ impl ReceiveWindow for QuicWindow {
         self.fund(keys)
     }
 
-    fn poll_data(stream: &mut RecvHalf, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, http3::Error>>> {
+    fn poll_data(
+        stream: &mut RecvHalf,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, http3::Error>>> {
         stream.poll_data(cx).map(Result::transpose)
     }
 }
@@ -201,7 +211,11 @@ pub(super) struct SendWindow {
 
 impl Default for SendWindow {
     fn default() -> Self {
-        Self { limit: MIN_SEND_WINDOW, last: None, low_since: None }
+        Self {
+            limit: MIN_SEND_WINDOW,
+            last: None,
+            low_since: None,
+        }
     }
 }
 
@@ -220,7 +234,11 @@ impl SendWindow {
         };
         let (now, sent) = (Instant::now(), path.udp_tx.bytes);
         if let Some((last, previous)) = self.last {
-            let target = desired(sent.saturating_sub(previous), path.rtt, now.duration_since(last));
+            let target = desired(
+                sent.saturating_sub(previous),
+                path.rtt,
+                now.duration_since(last),
+            );
             if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
                 let since = *self.low_since.get_or_insert(now);
                 if now.duration_since(since) >= SEND_WINDOW_SHRINK_DELAY {
@@ -270,6 +288,10 @@ mod tests {
         assert_eq!(desired(16 << 20, millis(50), millis(250)), 6_710_886);
         assert_eq!(desired(16 << 20, millis(100), millis(100)), MAX_SEND_WINDOW);
         assert_eq!(desired(1 << 20, millis(1), millis(250)), MIN_SEND_WINDOW);
-        assert_eq!(desired(1 << 20, millis(1), Duration::ZERO), MIN_SEND_WINDOW, "no time observed");
+        assert_eq!(
+            desired(1 << 20, millis(1), Duration::ZERO),
+            MIN_SEND_WINDOW,
+            "no time observed"
+        );
     }
 }

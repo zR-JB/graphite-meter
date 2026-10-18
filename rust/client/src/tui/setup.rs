@@ -63,7 +63,8 @@ impl Row {
     /// Gives the row's label and what the sheet's foot says of it.
     fn text(self) -> (&'static str, &'static str) {
         let row = ROWS.iter().find(|(_, row, ..)| *row == self);
-        row.map(|(.., label, help)| (*label, *help)).unwrap_or_default()
+        row.map(|(.., label, help)| (*label, *help))
+            .unwrap_or_default()
     }
 
     pub(super) fn label(self) -> &'static str {
@@ -93,7 +94,11 @@ impl App {
 
     /// Moves the focus `step` rows.
     pub(super) fn move_focus(&mut self, step: isize) {
-        self.setup.row = self.setup.row.saturating_add_signed(step).min(ROWS.len() - 1);
+        self.setup.row = self
+            .setup
+            .row
+            .saturating_add_signed(step)
+            .min(ROWS.len() - 1);
         self.resetting(false);
     }
 
@@ -146,10 +151,20 @@ impl App {
             Row::IdleCadence => format::cadence(config.ping),
             Row::LoadedCadence => format::cadence(config.loaded_ping),
             Row::Streams => config.streams.shown().to_string(),
-            Row::Reset if matches!(self.overlay, Overlay::Settings { resetting: true, .. }) => {
+            Row::Reset
+                if matches!(
+                    self.overlay,
+                    Overlay::Settings {
+                        resetting: true,
+                        ..
+                    }
+                ) =>
+            {
                 return Line::styled("Enter again resets", palette.warn);
             }
-            Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => String::new(),
+            Row::Remember | Row::LoadedLatency | Row::ForceStreams | Row::Insecure | Row::Reset => {
+                String::new()
+            }
         };
         let style = if inert { palette.muted } else { palette.value };
         match self.flag(row) {
@@ -188,7 +203,11 @@ impl App {
                 _ => self.value(row),
             };
             let label = Line::styled(label, self.palette.text);
-            entries.push(Entry::Item { label, value, target: Some(Target::Row(index)) });
+            entries.push(Entry::Item {
+                label,
+                value,
+                target: Some(Target::Row(index)),
+            });
         }
         (entries, focus)
     }
@@ -215,13 +234,20 @@ impl App {
             Row::Servers => help.push_str(&format!(" Enter picks up to {MAX_SELECTED}.")),
             Row::Stage(_) => help.push_str(" ←→ steps its time; Space switches it."),
             Row::Warmup => {
-                help.push_str(&format!(", up to {}. Never counted. ←→ ±100 ms.", format::stage_time(MAX_WARMUP)));
+                help.push_str(&format!(
+                    ", up to {}. Never counted. ←→ ±100 ms.",
+                    format::stage_time(MAX_WARMUP)
+                ));
             }
             Row::Streams if self.config.streams.forced.is_some() => {
-                help = format!("The streams every path opens per direction. ←→ ±1, from 1 to {MAX_STREAMS}.");
+                help = format!(
+                    "The streams every path opens per direction. ←→ ±1, from 1 to {MAX_STREAMS}."
+                );
             }
             Row::Streams => help.push_str(&format!(" ←→ ±1, from 1 to {MAX_STREAMS}.")),
-            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => help.push_str(" Space switches it."),
+            Row::LoadedLatency | Row::Insecure | Row::ForceStreams => {
+                help.push_str(" Space switches it.")
+            }
             _ => {}
         }
         vec![Line::styled(help, self.palette.muted)]
@@ -229,7 +255,12 @@ impl App {
 
     /// Names the selected servers and says how many are ready.
     fn selection(&self) -> String {
-        let names: Vec<_> = self.view.servers.iter().map(|server| server.name.as_str()).collect();
+        let names: Vec<_> = self
+            .view
+            .servers
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect();
         let (servers, ready) = (names.len(), self.ready().len());
         let summary = match () {
             _ if servers == 0 => String::new(),
@@ -246,7 +277,10 @@ impl App {
     /// Sums how long the configured stages take with their warmups.
     pub(super) fn plan_time(&self) -> String {
         let plan = self.config.plan();
-        let total: Duration = plan.iter().map(|(_, duration)| *duration + self.config.warmup).sum();
+        let total: Duration = plan
+            .iter()
+            .map(|(_, duration)| *duration + self.config.warmup)
+            .sum();
         format::stage_time(Duration::from_secs(total.as_secs_f64().round() as u64))
     }
 }

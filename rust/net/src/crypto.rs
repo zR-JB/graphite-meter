@@ -22,9 +22,12 @@ pub fn provider() -> Arc<CryptoProvider> {
             [CHACHA, AES_128, AES_256]
         };
         let mut provider = rustls::crypto::ring::default_provider();
-        provider
-            .cipher_suites
-            .sort_by_key(|suite| order.iter().position(|&id| id == suite.suite()).unwrap_or(order.len()));
+        provider.cipher_suites.sort_by_key(|suite| {
+            order
+                .iter()
+                .position(|&id| id == suite.suite())
+                .unwrap_or(order.len())
+        });
         Arc::new(provider)
     });
     PROVIDER.clone()
@@ -65,8 +68,13 @@ pub(crate) const CONFIGS: usize = Protocol::ALL.len() + 1;
 
 /// Builds the client configuration for `verify` offering `alpn` once, so its connections share one session cache.
 pub async fn client_config(verify: &Verify, alpn: Option<Protocol>) -> Arc<ClientConfig> {
-    static INSECURE: [OnceCell<Arc<ClientConfig>>; CONFIGS] = [const { OnceCell::const_new() }; CONFIGS];
-    let build = || async { trust::verifier(verify).await.map(|verifier| configure(verifier, alpn)) };
+    static INSECURE: [OnceCell<Arc<ClientConfig>>; CONFIGS] =
+        [const { OnceCell::const_new() }; CONFIGS];
+    let build = || async {
+        trust::verifier(verify)
+            .await
+            .map(|verifier| configure(verifier, alpn))
+    };
     let index = alpn.map_or(0, |protocol| protocol as usize + 1);
     let configs = match verify {
         Verify::Trusted(trust) => &trust.configs,

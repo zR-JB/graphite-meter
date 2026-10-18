@@ -75,7 +75,9 @@ impl fmt::Debug for Trust {
 }
 
 /// Builds the verifier for `verify`. Trusted roots load once off-thread. An unreadable store fails connections only.
-pub(crate) async fn verifier(verify: &Verify) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
+pub(crate) async fn verifier(
+    verify: &Verify,
+) -> Result<Arc<dyn ServerCertVerifier>, tokio::task::JoinError> {
     let Verify::Trusted(trust) = verify else {
         return Ok(Arc::new(Verifier::Insecure));
     };
@@ -120,7 +122,8 @@ impl Locations {
     fn new(file: Option<OsString>, directories: Option<OsString>) -> Self {
         Self {
             files: file.into_iter().map(PathBuf::from).collect(),
-            directories: directories.map_or_else(Vec::new, |list| std::env::split_paths(&list).collect()),
+            directories: directories
+                .map_or_else(Vec::new, |list| std::env::split_paths(&list).collect()),
         }
     }
 
@@ -239,24 +242,33 @@ impl ServerCertVerifier for Verifier {
     ) -> Result<ServerCertVerified, rustls::Error> {
         let (webpki, roots) = match self {
             Self::Roots { webpki, roots } => (webpki, roots),
-            Self::Empty(Some(reason)) => return Err(CertificateError::Other(OtherError(reason.clone())).into()),
+            Self::Empty(Some(reason)) => {
+                return Err(CertificateError::Other(OtherError(reason.clone())).into());
+            }
             Self::Empty(None) => return Err(CertificateError::UnknownIssuer.into()),
             Self::Insecure => return Ok(ServerCertVerified::assertion()),
         };
         let result = webpki.verify_server_cert(end_entity, intermediates, server_name, ocsp, now);
-        let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(error)))) = &result else {
+        let Err(rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(error)))) =
+            &result
+        else {
             return result;
         };
         if error.downcast_ref::<webpki::Error>() != Some(&webpki::Error::CaUsedAsEndEntity) {
             return result;
         }
-        if roots.iter().any(|root| root.as_ref() == end_entity.as_ref()) {
+        if roots
+            .iter()
+            .any(|root| root.as_ref() == end_entity.as_ref())
+        {
             // webpki checked the validity period before it refused the CA as a leaf.
             verify_server_name(&ParsedCertificate::try_from(end_entity)?, server_name)?;
             return Ok(ServerCertVerified::assertion());
         }
         match webpki::EndEntityCert::try_from(end_entity) {
-            Ok(cert) if cert.subject() == cert.issuer() => Err(CertificateError::UnknownIssuer.into()),
+            Ok(cert) if cert.subject() == cert.issuer() => {
+                Err(CertificateError::UnknownIssuer.into())
+            }
             _ => result,
         }
     }
@@ -267,7 +279,12 @@ impl ServerCertVerifier for Verifier {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(message, certificate, signature, &provider().signature_verification_algorithms)
+        verify_tls12_signature(
+            message,
+            certificate,
+            signature,
+            &provider().signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
@@ -276,11 +293,18 @@ impl ServerCertVerifier for Verifier {
         certificate: &CertificateDer<'_>,
         signature: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(message, certificate, signature, &provider().signature_verification_algorithms)
+        verify_tls13_signature(
+            message,
+            certificate,
+            signature,
+            &provider().signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        provider().signature_verification_algorithms.supported_schemes()
+        provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 

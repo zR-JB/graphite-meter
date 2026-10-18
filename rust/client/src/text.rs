@@ -20,7 +20,11 @@ pub struct Style {
 
 impl Style {
     pub const fn fg(color: Color) -> Self {
-        Self { fg: Some(color), bg: None, bold: false }
+        Self {
+            fg: Some(color),
+            bg: None,
+            bold: false,
+        }
     }
 
     pub const fn bold(self) -> Self {
@@ -50,7 +54,10 @@ pub struct Line(pub Vec<Span>);
 
 impl Line {
     pub fn styled(text: impl Into<String>, style: Style) -> Self {
-        Self(vec![Span { text: text.into(), style }])
+        Self(vec![Span {
+            text: text.into(),
+            style,
+        }])
     }
 
     pub fn plain(text: impl Into<String>) -> Self {
@@ -59,7 +66,10 @@ impl Line {
 
     /// The line with `text` added in `style`.
     pub fn and(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.0.push(Span { text: text.into(), style });
+        self.0.push(Span {
+            text: text.into(),
+            style,
+        });
         self
     }
 
@@ -67,7 +77,10 @@ impl Line {
     pub fn push(&mut self, c: char, style: Style) {
         match self.0.last_mut() {
             Some(last) if last.style == style => last.text.push(c),
-            _ => self.0.push(Span { text: c.into(), style }),
+            _ => self.0.push(Span {
+                text: c.into(),
+                style,
+            }),
         }
     }
 
@@ -103,20 +116,30 @@ impl Line {
             for c in span.text.chars() {
                 let taken = c.width().unwrap_or(0);
                 if taken > room {
-                    spans.push(Span { text: kept + "…", style: span.style });
+                    spans.push(Span {
+                        text: kept + "…",
+                        style: span.style,
+                    });
                     return Self(spans);
                 }
                 room -= taken;
                 kept.push(c);
             }
-            spans.push(Span { text: kept, style: span.style });
+            spans.push(Span {
+                text: kept,
+                style: span.style,
+            });
         }
         Self(spans)
     }
 
     /// The line with `base` for its unstyled spans.
     pub fn based(mut self, base: Style) -> Self {
-        for span in self.0.iter_mut().filter(|span| span.style == Style::default()) {
+        for span in self
+            .0
+            .iter_mut()
+            .filter(|span| span.style == Style::default())
+        {
             span.style = base;
         }
         self
@@ -138,9 +161,9 @@ impl Line {
 /// `text` with its first character in upper case.
 pub fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
-    chars
-        .next()
-        .map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// The cells `text` takes.
@@ -151,7 +174,11 @@ pub fn width(text: &str) -> usize {
 /// `parts` joined by ` · ` while a line holds `cells`; one empty line for none.
 pub fn wrap(parts: &[String], cells: usize) -> Vec<String> {
     let lines = joined(parts.iter().map(String::as_str), " · ", cells);
-    if lines.is_empty() { vec![String::new()] } else { lines }
+    if lines.is_empty() {
+        vec![String::new()]
+    } else {
+        lines
+    }
 }
 
 /// `text`'s words filled into lines of at most `cells`; a longer word takes a line of its own.
@@ -178,7 +205,11 @@ fn joined<'a>(parts: impl Iterator<Item = &'a str>, separator: &str, cells: usiz
 pub fn write(lines: &[Line], profile: Profile, out: &mut impl Write) -> io::Result<()> {
     for line in lines {
         for span in &line.0 {
-            let text: String = span.text.chars().map(|c| if safe(c) { c } else { ' ' }).collect();
+            let text: String = span
+                .text
+                .chars()
+                .map(|c| if safe(c) { c } else { ' ' })
+                .collect();
             match sgr(span.style, profile) {
                 Some(codes) => write!(out, "\x1b[{codes}m{text}\x1b[m")?,
                 None => out.write_all(text.as_bytes())?,
@@ -215,7 +246,12 @@ mod tests {
 
     #[test]
     fn parts_join_while_they_fit_and_an_empty_line_takes_no_separator() {
-        let parts = |parts: &[&str]| parts.iter().map(|part| (*part).to_owned()).collect::<Vec<_>>();
+        let parts = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+        };
         assert_eq!(wrap(&parts(&["", "a", "bb"]), 6), ["a · bb"]);
         assert_eq!(wrap(&parts(&["aaa", "bbb"]), 8), ["aaa", "bbb"]);
         assert_eq!(wrap(&[], 8), [""]);

@@ -36,7 +36,9 @@ impl Server {
 
     /// The server with `settings` over the test configuration.
     pub async fn with(settings: &[(&str, &str)]) -> Self {
-        Self::try_serve(settings, &Identity::generate().unwrap()).await.unwrap()
+        Self::try_serve(settings, &Identity::generate().unwrap())
+            .await
+            .unwrap()
     }
 
     /// The server with `settings` over the test configuration presenting `identity`, or why it could not bind.
@@ -44,7 +46,10 @@ impl Server {
         let scratch = Scratch::new().unwrap();
         let certificate = scratch.file("cert.pem", &identity.certificate).unwrap();
         let key = scratch.file("key.pem", &identity.key).unwrap();
-        let mut env: Vec<(&str, OsString)> = settings.iter().map(|&(name, value)| (name, value.into())).collect();
+        let mut env: Vec<(&str, OsString)> = settings
+            .iter()
+            .map(|&(name, value)| (name, value.into()))
+            .collect();
         env.extend([
             ("GM_H1_ADDR", ADDRESSES[0].into()),
             ("GM_H2_ADDR", ADDRESSES[1].into()),
@@ -52,14 +57,20 @@ impl Server {
             ("GM_TLS_CERT", certificate.into()),
             ("GM_TLS_KEY", key.into()),
         ]);
-        let lookup = |name: &str| env.iter().find(|(set, _)| *set == name).map(|(_, value)| value.clone());
-        let loaded = graphite_meter_server::config::load(lookup, Vec::<OsString>::new(), &mut Vec::new());
+        let lookup = |name: &str| {
+            env.iter()
+                .find(|(set, _)| *set == name)
+                .map(|(_, value)| value.clone())
+        };
+        let loaded =
+            graphite_meter_server::config::load(lookup, Vec::<OsString>::new(), &mut Vec::new());
         let Ok(Loaded::Config(config)) = loaded else {
             panic!("the test configuration loads: {:?}", loaded.err());
         };
         let server = runtime::Server::bind(*config, Pool::inline()).await?;
         let address = |endpoint| server.local_addr(endpoint).unwrap();
-        let origin = |scheme, endpoint| Origin::parse(&format!("{scheme}://{}", address(endpoint))).unwrap();
+        let origin =
+            |scheme, endpoint| Origin::parse(&format!("{scheme}://{}", address(endpoint))).unwrap();
         let (http1, http2, http3) = (
             origin("http", Endpoint::H1),
             origin("https", Endpoint::H2),

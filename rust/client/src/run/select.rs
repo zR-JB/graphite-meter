@@ -22,10 +22,21 @@ pub struct Candidates {
 }
 
 /// Selects the `--server` IDs, else the operator's default, as entries in catalog order.
-pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a ServerEntry>, String> {
+pub fn servers<'a>(
+    received: &'a Received,
+    config: &Config,
+) -> Result<Vec<&'a ServerEntry>, String> {
     let chosen = |id: &str| config.servers.iter().any(|server| server.as_str() == id);
-    if let Some(left) = received.rejected.iter().find(|rejected| chosen(&rejected.id)) {
-        return Err(format!("test server {} is unusable: {}", quote(&left.id), left.error));
+    if let Some(left) = received
+        .rejected
+        .iter()
+        .find(|rejected| chosen(&rejected.id))
+    {
+        return Err(format!(
+            "test server {} is unusable: {}",
+            quote(&left.id),
+            left.error
+        ));
     }
     let catalog = &received.catalog;
     let ids = match config.servers.is_empty() {
@@ -40,11 +51,18 @@ pub fn servers<'a>(received: &'a Received, config: &Config) -> Result<Vec<&'a Se
             |id| format!("unknown or repeated test server {}", quote(id.as_str())),
         )
     })?;
-    let explicit = config.paths.throughput_origin.is_some() || config.paths.latency_origin.is_some();
+    let explicit =
+        config.paths.throughput_origin.is_some() || config.paths.latency_origin.is_some();
     if explicit && ids.len() > 1 {
-        return Err("explicit origins need a single test server; use automatic origins for several".into());
+        return Err(
+            "explicit origins need a single test server; use automatic origins for several".into(),
+        );
     }
-    Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
+    Ok(catalog
+        .servers
+        .iter()
+        .filter(|entry| ids.contains(&entry.id))
+        .collect())
 }
 
 /// Orders `entry`'s paths, throughput by fetch-stream then WebTransport, latency by WebTransport then WebSocket.
@@ -56,19 +74,30 @@ pub fn candidates(
     latency: bool,
 ) -> Result<Candidates, String> {
     if !entry.approves(served, preflight) {
-        return Err(format!("test server {} offered an unapproved origin", quote(entry.id.as_str())));
+        return Err(format!(
+            "test server {} offered an unapproved origin",
+            quote(entry.id.as_str())
+        ));
     }
     let offered = &preflight.capabilities;
     let transports = choice.throughput_transport.map_or_else(
-        || vec![ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
+        || {
+            vec![
+                ThroughputTransport::FetchStream,
+                ThroughputTransport::WebTransport,
+            ]
+        },
         |forced| vec![forced],
     );
     let wanted = choice.throughput_origin.as_ref();
     let throughput = resolved(transports.into_iter().map(|transport| {
         let eligible = offered.throughput.iter().filter(|target| {
-            target.transport == transport && (wanted.is_some() || serves(target.protocol, choice.protocol))
+            target.transport == transport
+                && (wanted.is_some() || serves(target.protocol, choice.protocol))
         });
-        let target = pick("throughput", eligible, wanted, served, |target| &target.base_url)?;
+        let target = pick("throughput", eligible, wanted, served, |target| {
+            &target.base_url
+        })?;
         throughput_path(target, choice.protocol, served)
     }))?;
     let transports = match (latency, choice.latency_transport) {
@@ -77,11 +106,26 @@ pub fn candidates(
         (true, Some(forced)) => vec![forced],
     };
     let latency = resolved(transports.into_iter().map(|transport| {
-        let eligible = offered.latency.iter().filter(|target| target.transport == transport);
-        let target = pick("latency", eligible, choice.latency_origin.as_ref(), served, |target| &target.base_url)?;
-        Ok(LatencyPath { origin: target.base_url.resolve(served).clone(), transport })
+        let eligible = offered
+            .latency
+            .iter()
+            .filter(|target| target.transport == transport);
+        let target = pick(
+            "latency",
+            eligible,
+            choice.latency_origin.as_ref(),
+            served,
+            |target| &target.base_url,
+        )?;
+        Ok(LatencyPath {
+            origin: target.base_url.resolve(served).clone(),
+            transport,
+        })
     }))?;
-    Ok(Candidates { throughput, latency })
+    Ok(Candidates {
+        throughput,
+        latency,
+    })
 }
 
 /// Refuses a planned stage longer than the smallest limit among the prepared servers, naming the server that sets it.
@@ -97,7 +141,9 @@ pub fn fit(plan: &[(Stage, Duration)], servers: &[ServerPath]) -> Result<(), Str
         .filter(|(_, duration)| *duration > limit)
         .map(|&(stage, _)| format::label(stage))
         .collect();
-    let Some((last, others)) = over.split_last() else { return Ok(()) };
+    let Some((last, others)) = over.split_last() else {
+        return Ok(());
+    };
     let (stages, plural) = match others {
         [] => ((*last).to_owned(), ""),
         others => (format!("{} and {last}", others.join(", ")), "s"),
@@ -158,8 +204,13 @@ fn throughput_path(
 ) -> Result<ThroughputPath, String> {
     let protocol = match forced {
         Some(forced) if target.protocol != Protocol::Negotiated && target.protocol != forced => {
-            let (fixed, forced) = (format::protocol(Some(target.protocol)), format::protocol(Some(forced)));
-            return Err(format!("the origin is fixed to {fixed} and cannot use {forced}"));
+            let (fixed, forced) = (
+                format::protocol(Some(target.protocol)),
+                format::protocol(Some(forced)),
+            );
+            return Err(format!(
+                "the origin is fixed to {fixed} and cannot use {forced}"
+            ));
         }
         forced => forced.unwrap_or(target.protocol),
     };
@@ -167,7 +218,11 @@ fn throughput_path(
         return Err("WebTransport requires HTTP/3".into());
     }
     let origin = target.base_url.resolve(served).clone();
-    Ok(ThroughputPath { origin, transport: target.transport, protocol })
+    Ok(ThroughputPath {
+        origin,
+        transport: target.transport,
+        protocol,
+    })
 }
 
 #[cfg(test)]
@@ -180,7 +235,9 @@ mod tests {
         run::prepare::{Paths, Prepared},
     };
     use graphite_meter_net::Pool;
-    use graphite_meter_proto::{catalog::ServerCatalog, discovery::IpFamily, reason::FailureReason};
+    use graphite_meter_proto::{
+        catalog::ServerCatalog, discovery::IpFamily, reason::FailureReason,
+    };
     use std::{ffi::OsString, sync::Arc, time::Instant};
 
     const CATALOG: &str = r#"{"defaultSelection": ["b"], "servers": [
@@ -206,27 +263,35 @@ mod tests {
     fn the_selection_is_the_server_ids_or_the_default_in_catalog_order() {
         assert_eq!(selected("").unwrap(), ["b"]);
         assert_eq!(selected("-server b -server self").unwrap(), ["self", "b"]);
-        assert_eq!(selected("-server b -server a -server self").unwrap(), ["self", "a", "b"]);
+        assert_eq!(
+            selected("-server b -server a -server self").unwrap(),
+            ["self", "a", "b"]
+        );
         let unknown = "unknown or repeated test server \"nowhere\"";
         assert_eq!(selected("-server a -server nowhere").unwrap_err(), unknown);
         let left = "test server \"broken\" is unusable: invalid catalog origin";
         assert_eq!(selected("-server broken").unwrap_err(), left);
-        let explicit = "explicit origins need a single test server; use automatic origins for several";
-        assert_eq!(selected("-server a -server b -latency-origin https://a.example").unwrap_err(), explicit);
-        assert_eq!(selected("-throughput-origin https://b.example").unwrap(), ["b"]);
+        let explicit =
+            "explicit origins need a single test server; use automatic origins for several";
+        assert_eq!(
+            selected("-server a -server b -latency-origin https://a.example").unwrap_err(),
+            explicit
+        );
+        assert_eq!(
+            selected("-throughput-origin https://b.example").unwrap(),
+            ["b"]
+        );
     }
 
     const SERVED: &str = "http://meter.example:7246";
 
     fn preflight(throughput: &[(&str, &str, &str)], latency: &[(&str, &str)]) -> Preflight {
         use serde_json::json;
-        let fetch =
-            |(base, transport, protocol)| json!({"baseUrl": base, "transport": transport, "protocol": protocol});
+        let fetch = |(base, transport, protocol)| json!({"baseUrl": base, "transport": transport, "protocol": protocol});
         let throughput: Vec<_> = throughput.iter().copied().map(fetch).collect();
         let probe = |(base, transport)| json!({"baseUrl": base, "transport": transport});
         let latency: Vec<_> = latency.iter().copied().map(probe).collect();
-        let capabilities =
-            json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": latency});
+        let capabilities = json!({"uploadCheckpoint": true, "maxStageMs": 300_000, "throughput": throughput, "latency": latency});
         let document = json!({"server": {"name": "meter"}, "engineVersion": "1", "generation": "g",
             "capabilities": capabilities});
         Preflight::decode(document.to_string().as_bytes()).unwrap()
@@ -238,20 +303,44 @@ mod tests {
             ("https://meter.example:7248", "fetch-stream", "http2"),
             ("https://meter.example:7249", "fetch-stream", "http3"),
             ("https://meter.example:7249", "webtransport", "http3"),
-            ("https://meter.example:7249", "webtransport-datagram", "http3"),
+            (
+                "https://meter.example:7249",
+                "webtransport-datagram",
+                "http3",
+            ),
         ];
-        preflight(&throughput, &[(SERVED, "websocket"), ("https://meter.example:7249", "webtransport")])
+        preflight(
+            &throughput,
+            &[
+                (SERVED, "websocket"),
+                ("https://meter.example:7249", "webtransport"),
+            ],
+        )
     }
 
     /// Renders the candidates as `transport protocol port` and `transport port` lines.
-    fn paths(args: &str, served: &str, preflight: &Preflight, entry: &ServerEntry) -> Result<String, String> {
+    fn paths(
+        args: &str,
+        served: &str,
+        preflight: &Preflight,
+        entry: &ServerEntry,
+    ) -> Result<String, String> {
         let config = config(args);
         let served = Origin::parse(served).unwrap();
         let found = candidates(&config.paths, entry, &served, preflight, config.probes())?;
-        let fetch =
-            |path: &ThroughputPath| format!("{} {} {}", path.transport.name(), path.protocol.name(), path.origin.port);
+        let fetch = |path: &ThroughputPath| {
+            format!(
+                "{} {} {}",
+                path.transport.name(),
+                path.protocol.name(),
+                path.origin.port
+            )
+        };
         let probe = |path: &LatencyPath| format!("{} {}", path.transport.name(), path.origin.port);
-        let (throughput, latency) = (found.throughput.iter().map(fetch), found.latency.iter().map(probe));
+        let (throughput, latency) = (
+            found.throughput.iter().map(fetch),
+            found.latency.iter().map(probe),
+        );
         Ok(throughput.chain(latency).collect::<Vec<_>>().join(", "))
     }
 
@@ -275,7 +364,11 @@ mod tests {
                 "fetch-stream http1 7246, webtransport http3 7249, webtransport 7249"),
         ];
         for (args, expected) in rows {
-            assert_eq!(paths(args, SERVED, &native, &own).unwrap(), expected, "{args}");
+            assert_eq!(
+                paths(args, SERVED, &native, &own).unwrap(),
+                expected,
+                "{args}"
+            );
         }
         #[rustfmt::skip]
         let refusals = [
@@ -285,19 +378,33 @@ mod tests {
             ("-latency-origin https://other.example", "latency origin \"https://other.example\" is not offered"),
         ];
         for (args, refusal) in refusals {
-            assert_eq!(paths(args, SERVED, &native, &own).unwrap_err(), refusal, "{args}");
+            assert_eq!(
+                paths(args, SERVED, &native, &own).unwrap_err(),
+                refusal,
+                "{args}"
+            );
         }
         let elsewhere = |args| paths(args, "https://meter.example", &native, &own);
-        assert_eq!(elsewhere("-stages down -loaded-latency=false").unwrap(), "webtransport http3 7249");
+        assert_eq!(
+            elsewhere("-stages down -loaded-latency=false").unwrap(),
+            "webtransport http3 7249"
+        );
         let several = "several throughput origins are offered; select one";
-        assert_eq!(elsewhere("-throughput-transport fetch-stream").unwrap_err(), several);
+        assert_eq!(
+            elsewhere("-throughput-transport fetch-stream").unwrap_err(),
+            several
+        );
     }
 
     /// Builds a server named after its ID in capitals with a stage limit of `seconds`, prepared unless `failure`.
     fn server(name: &str, seconds: u64, failure: Option<Failure>) -> ServerPath {
         let origin = Origin::parse(SERVED).unwrap();
         let (transport, protocol) = (ThroughputTransport::FetchStream, Protocol::Http1);
-        let throughput = ThroughputPath { origin: origin.clone(), transport, protocol };
+        let throughput = ThroughputPath {
+            origin: origin.clone(),
+            transport,
+            protocol,
+        };
         let (stage_limit, idle_rtt) = (Duration::from_secs(seconds), None);
         let paths = Paths {
             throughput,

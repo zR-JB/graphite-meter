@@ -59,7 +59,11 @@ type Bus = Arc<Mutex<Option<(OnUpgrade, Lane)>>>;
 
 impl Http1 {
     /// An accepted connection's work, after its TLS handshake on a TLS listener, on whichever runtime polls it.
-    pub fn connection(&self, socket: TcpStream, peer: SocketAddr) -> impl Future<Output = ()> + Send + use<> {
+    pub fn connection(
+        &self,
+        socket: TcpStream,
+        peer: SocketAddr,
+    ) -> impl Future<Output = ()> + Send + use<> {
         let (listener, socket, accepted) = (self.clone(), socket.into_std(), Instant::now());
         async move {
             let Ok(socket) = socket.and_then(TcpStream::from_std) else {
@@ -91,7 +95,15 @@ impl Http1 {
         let bus = Bus::default();
         let service = {
             let (app, bus) = (self.app.clone(), bus.clone());
-            service_fn(move |request| respond(app.clone(), request, connection.clone(), shared.clone(), bus.clone()))
+            service_fn(move |request| {
+                respond(
+                    app.clone(),
+                    request,
+                    connection.clone(),
+                    shared.clone(),
+                    bus.clone(),
+                )
+            })
         };
         let mut serving = pin!(
             http1::Builder::new()
@@ -128,7 +140,8 @@ where
         _ = lane.ended() => return,
         upgraded = upgrade => upgraded,
     };
-    let Ok(Ok(Parts { io, read_buf, .. })) = upgraded.map(Upgraded::downcast::<TokioIo<Io<S>>>) else {
+    let Ok(Ok(Parts { io, read_buf, .. })) = upgraded.map(Upgraded::downcast::<TokioIo<Io<S>>>)
+    else {
         return;
     };
     let mut stream = io.into_inner().inner;
@@ -190,7 +203,10 @@ impl Shared {
         let complete = head || http_body::Body::is_end_stream(response.body());
         self.complete.store(complete, Ordering::Release);
         self.post(State::Reply(ReplyBound::of(response.body())));
-        response.map(|body| H1Reply { body, shared: self.clone() })
+        response.map(|body| H1Reply {
+            body,
+            shared: self.clone(),
+        })
     }
 }
 
@@ -204,7 +220,10 @@ impl http_body::Body for H1Reply {
     type Data = Bytes;
     type Error = Aborted;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Aborted>>> {
         let this = self.get_mut();
         let frame = ready!(Pin::new(&mut this.body).poll_frame(cx));
         if frame.is_none() || this.body.is_end_stream() {
@@ -247,18 +266,28 @@ impl<S> Io<S> {
     fn new(inner: S, shared: Arc<Shared>, deadline: Instant) -> Self {
         *lock(&shared.started) = Some(deadline);
         let (state, deadline) = (State::Exchange(None), Box::pin(sleep_until(deadline)));
-        Self { inner, state, deadline, shared, burst: Burst::default() }
+        Self {
+            inner,
+            state,
+            deadline,
+            shared,
+            burst: Burst::default(),
+        }
     }
 
     /// Adopts a posted limit and fails once the connection's deadline passed or its reply must end.
     fn check(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if self.shared.changed.load(Ordering::Acquire) && self.shared.changed.swap(false, Ordering::Acquire) {
+        if self.shared.changed.load(Ordering::Acquire)
+            && self.shared.changed.swap(false, Ordering::Acquire)
+        {
             self.adopt();
         }
         match &mut self.state {
             State::Reply(bound) => Ok(bound.check(cx)?),
             State::Open => Ok(()),
-            State::Waiting | State::Exchange(_) if self.deadline.as_mut().poll(cx).is_pending() => Ok(()),
+            State::Waiting | State::Exchange(_) if self.deadline.as_mut().poll(cx).is_pending() => {
+                Ok(())
+            }
             // A request admitted while its body is read is bound by its lane instead.
             State::Exchange(Some(watch)) if watch.admitted().is_some() => {
                 self.state = State::Open;
@@ -286,7 +315,11 @@ impl<S> Io<S> {
         Ok(())
     }
 
-    fn written(&mut self, cx: &mut Context<'_>, result: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
+    fn written(
+        &mut self,
+        cx: &mut Context<'_>,
+        result: Poll<io::Result<usize>>,
+    ) -> Poll<io::Result<usize>> {
         match &result {
             Poll::Ready(Ok(written @ 1..)) => {
                 self.burst.moved(*written);
@@ -309,14 +342,20 @@ impl<S> Io<S> {
             return Ok(());
         };
         bound.delivered()?;
-        self.deadline.as_mut().reset(Instant::now() + CONNECTION_IDLE);
+        self.deadline
+            .as_mut()
+            .reset(Instant::now() + CONNECTION_IDLE);
         self.state = State::Waiting;
         Ok(())
     }
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         let this = &mut *self;
         this.check(cx)?;
         ready!(this.burst.poll_turn(cx));
@@ -328,7 +367,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
                 this.burst.waited();
                 this.blocked(cx)?;
             }
-            Poll::Ready(Ok(())) if buffer.filled().len() > filled && matches!(this.state, State::Waiting) => {
+            Poll::Ready(Ok(()))
+                if buffer.filled().len() > filled && matches!(this.state, State::Waiting) =>
+            {
                 let deadline = Instant::now() + EXCHANGE_BOUND;
                 this.deadline.as_mut().reset(deadline);
                 this.state = State::Exchange(None);
@@ -341,7 +382,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for Io<S> {
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Io<S> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         this.check(cx)?;
         ready!(this.burst.poll_turn(cx));

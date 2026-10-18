@@ -14,10 +14,17 @@ use std::{
 
 impl App {
     /// The answer to a request that no route claims on a listener serving the app.
-    pub(super) fn page<B>(&self, request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> Response<Body> {
+    pub(super) fn page<B>(
+        &self,
+        request: &Request<B>,
+        endpoint: Endpoint,
+        peer: &Peer,
+    ) -> Response<Body> {
         let head = request.method() == Method::HEAD;
         let mut response = match self.assets.get(request.uri().path(), request.headers()) {
-            _ if request.method() != Method::GET && !head => response::method_not_allowed("GET, HEAD"),
+            _ if request.method() != Method::GET && !head => {
+                response::method_not_allowed("GET, HEAD")
+            }
             Some(served) => {
                 let mut response = Response::new(Body::full(served.bytes));
                 *response.status_mut() = served.status;
@@ -26,16 +33,18 @@ impl App {
             }
             None => response::status(StatusCode::NOT_FOUND),
         };
-        let length = http_body::Body::size_hint(response.body()).exact().unwrap_or_default();
+        let length = http_body::Body::size_hint(response.body())
+            .exact()
+            .unwrap_or_default();
         let status = response.status();
         let headers = response.headers_mut();
         if status != StatusCode::NOT_MODIFIED {
             headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
         }
         // Every response carries the policy: a worker runs under its own script's, not the page's.
-        let policy = self
-            .assets
-            .policy(&self.connect_sources(&self.preflight(request), secure(request, endpoint, peer)));
+        let policy = self.assets.policy(
+            &self.connect_sources(&self.preflight(request), secure(request, endpoint, peer)),
+        );
         let policy = HeaderValue::from_str(&policy).expect("policies hold ASCII origins");
         headers.insert(header::CONTENT_SECURITY_POLICY, policy);
         headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
@@ -51,10 +60,14 @@ impl App {
     fn connect_sources(&self, preflight: &Preflight, secure: bool) -> Vec<String> {
         let mut sources = Vec::new();
         for server in &self.config.catalog.servers {
-            let BaseUrl::Origin(origin) = &server.url else { continue };
+            let BaseUrl::Origin(origin) = &server.url else {
+                continue;
+            };
             if !matches!(origin.host, Host::Ip(IpAddr::V6(_))) {
                 let host = &origin.host;
-                sources.extend(["http", "https", "ws", "wss"].map(|scheme| format!("{scheme}://{host}:*")));
+                sources.extend(
+                    ["http", "https", "ws", "wss"].map(|scheme| format!("{scheme}://{host}:*")),
+                );
             }
             sources.extend(server.additional_origins.iter().flat_map(with_socket));
         }
@@ -69,7 +82,9 @@ impl App {
             }
         }
         let mut seen = HashSet::new();
-        sources.retain(|source| !source.contains("://[") && !(secure && mixed(source)) && seen.insert(source.clone()));
+        sources.retain(|source| {
+            !source.contains("://[") && !(secure && mixed(source)) && seen.insert(source.clone())
+        });
         sources
     }
 }
@@ -82,7 +97,11 @@ fn secure<B>(request: &Request<B>, endpoint: Endpoint, peer: &Peer) -> bool {
 /// A clear-text source, which browsers block from an HTTPS page as mixed content unless its host is loopback.
 fn mixed(source: &str) -> bool {
     let (scheme, rest) = source.split_once("://").unwrap_or_default();
-    let host = rest.split(':').next().unwrap_or_default().to_ascii_lowercase();
+    let host = rest
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let loopback = host == "localhost"
         || host.ends_with(".localhost")
         || host.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback());
@@ -100,7 +119,11 @@ fn with_socket(origin: &Origin) -> [String; 2] {
 mod tests {
     #[test]
     fn clear_text_sources_off_loopback_are_mixed_content() {
-        for source in ["http://meter.example:*", "ws://meter.example:7246", "http://localhost.example"] {
+        for source in [
+            "http://meter.example:*",
+            "ws://meter.example:7246",
+            "http://localhost.example",
+        ] {
             assert!(super::mixed(source), "{source}");
         }
         for source in [

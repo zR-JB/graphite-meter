@@ -82,7 +82,11 @@ impl Header {
         let mut rest = &mut bytes[..];
         put_header(kind, second, &mut rest);
         let end = (16 - rest.len()) as u8;
-        Self { bytes, end, written: 0 }
+        Self {
+            bytes,
+            end,
+            written: 0,
+        }
     }
 
     pub(crate) fn len(&self) -> u8 {
@@ -126,7 +130,10 @@ impl Pair {
     }
 
     /// Reads a unidirectional stream's type, followed by a session ID on WebTransport streams.
-    pub(crate) fn stream_type(&mut self, input: &mut impl Buf) -> Option<(StreamType, Option<u64>)> {
+    pub(crate) fn stream_type(
+        &mut self,
+        input: &mut impl Buf,
+    ) -> Option<(StreamType, Option<u64>)> {
         match StreamType(self.first.map_or_else(|| self.varint.read(input), Some)?) {
             StreamType::WEBTRANSPORT => {
                 self.first = Some(StreamType::WEBTRANSPORT.0);
@@ -162,12 +169,16 @@ impl<K: Kind> Reader<K> {
         if self.remaining == 0 {
             let (kind, length) = self.header.read(input)?;
             self.remaining = length;
-            return Some(Piece::Header { kind: K::from_wire(kind), length });
+            return Some(Piece::Header {
+                kind: K::from_wire(kind),
+                length,
+            });
         }
         if input.is_empty() {
             return None;
         }
-        let take = usize::try_from(self.remaining).map_or(input.len(), |remaining| remaining.min(input.len()));
+        let take = usize::try_from(self.remaining)
+            .map_or(input.len(), |remaining| remaining.min(input.len()));
         self.remaining -= take as u64;
         Some(Piece::Payload(input.split_to(take)))
     }
@@ -204,7 +215,9 @@ mod tests {
                 while let Some(piece) = reader.next(&mut part) {
                     match piece {
                         Piece::Header { kind, .. } => frames.push((kind, Vec::new())),
-                        Piece::Payload(bytes) => frames.last_mut().unwrap().1.extend_from_slice(&bytes),
+                        Piece::Payload(bytes) => {
+                            frames.last_mut().unwrap().1.extend_from_slice(&bytes)
+                        }
                     }
                 }
                 assert!(part.is_empty());

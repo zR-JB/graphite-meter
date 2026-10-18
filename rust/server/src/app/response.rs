@@ -11,8 +11,14 @@ pub fn text(status: StatusCode, text: &str) -> Response<Body> {
     let mut response = Response::new(Body::full(format!("{text}\n")));
     *response.status_mut() = status;
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
-    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     response
 }
 
@@ -39,7 +45,10 @@ pub fn html(page: String) -> Response<Body> {
 pub fn json(document: impl Into<Bytes>) -> Response<Body> {
     let mut response = Response::new(Body::full(document));
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
@@ -71,7 +80,9 @@ pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> 
         true => {
             let escaped = escape(location.to_str().unwrap_or_default());
             let reason = status.canonical_reason().unwrap_or_default();
-            Response::new(Body::full(format!("<a href=\"{escaped}\">{reason}</a>.\n\n")))
+            Response::new(Body::full(format!(
+                "<a href=\"{escaped}\">{reason}</a>.\n\n"
+            )))
         }
         false => Response::new(Body::empty()),
     };
@@ -79,7 +90,10 @@ pub fn redirect(method: &Method, status: StatusCode, location: &HeaderValue) -> 
     let headers = response.headers_mut();
     headers.insert(header::LOCATION, location.clone());
     if linked {
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        );
     }
     response
 }
@@ -114,7 +128,10 @@ pub fn ambiguous() -> Response<Body> {
 pub fn upload_refusal(refusal: UploadRefusal) -> Response<Body> {
     let mut response = text(refusal.status(), refusal.message());
     let headers = response.headers_mut();
-    headers.insert(UPLOAD_REFUSAL_HEADER, HeaderValue::from_static(refusal.name()));
+    headers.insert(
+        UPLOAD_REFUSAL_HEADER,
+        HeaderValue::from_static(refusal.name()),
+    );
     match refusal {
         UploadRefusal::GlobalFull | UploadRefusal::ClientFull => {
             headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));

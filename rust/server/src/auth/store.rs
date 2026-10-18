@@ -153,7 +153,11 @@ pub struct Store(pub(super) Arc<Mutex<State>>);
 impl Store {
     /// Signs `identity` in, ending its principal's oldest login at the cap; `None` when the server is full.
     pub fn sign_in(&self, identity: Identity<'_>) -> Option<NewLogin> {
-        let (token, csrf, id) = (SessionToken(random::<32>()), CsrfToken(random::<32>()), random::<16>());
+        let (token, csrf, id) = (
+            SessionToken(random::<32>()),
+            CsrfToken(random::<32>()),
+            random::<16>(),
+        );
         let key = digest(token.as_str());
         let now = Instant::now();
         let mut state = lock(&self.0);
@@ -179,7 +183,12 @@ impl Store {
             revoked: CancellationToken::new(),
         };
         state.logins.insert(key, login);
-        Some(NewLogin { key: LoginKey(key), token, csrf, expires })
+        Some(NewLogin {
+            key: LoginKey(key),
+            token,
+            csrf,
+            expires,
+        })
     }
 
     /// Ends the login, or with `every` its principal's logins, with grants and tickets; `false` when it already ended.
@@ -188,7 +197,11 @@ impl Store {
         let Some(principal) = state.login(&login.0).map(|login| login.principal.clone()) else {
             return false;
         };
-        let ended = if every { state.held(&principal) } else { vec![login.0] };
+        let ended = if every {
+            state.held(&principal)
+        } else {
+            vec![login.0]
+        };
         for key in ended {
             state.end(&key);
         }
@@ -200,9 +213,12 @@ impl Store {
         let key = digest(token);
         let mut state = lock(&self.0);
         match state.logins.get(&key) {
-            Some(login) if Instant::now() < login.deadline => {
-                Some(login.lease(LoginKey(key), Holder::Login(login.id.clone()), Via::Cookie, login.revoked.clone()))
-            }
+            Some(login) if Instant::now() < login.deadline => Some(login.lease(
+                LoginKey(key),
+                Holder::Login(login.id.clone()),
+                Via::Cookie,
+                login.revoked.clone(),
+            )),
             Some(_) => {
                 state.end(&key);
                 None
@@ -221,12 +237,19 @@ impl Store {
         let found = state.grants.get(&digest(token));
         let grant = found.filter(|grant| !grant.revoked.is_cancelled())?;
         let login = state.login(&grant.login.0)?;
-        let (holder, via) = (Holder::Grant(grant.id.clone()), Via::Bearer(grant.browser.clone()));
+        let (holder, via) = (
+            Holder::Grant(grant.id.clone()),
+            Via::Bearer(grant.browser.clone()),
+        );
         Some(login.lease(grant.login, holder, via, grant.revoked.clone()))
     }
 
     /// Issues a grant as an approved challenge does.
-    pub fn grant(&self, login: LoginKey, browser: Option<BrowserOrigin>) -> Result<GrantToken, GrantRefusal> {
+    pub fn grant(
+        &self,
+        login: LoginKey,
+        browser: Option<BrowserOrigin>,
+    ) -> Result<GrantToken, GrantRefusal> {
         let credentials = credentials();
         lock(&self.0).grant(login, browser, credentials)
     }
@@ -252,34 +275,70 @@ impl Store {
         }
         let deadline = (now + TICKET_LIFETIME).min(lease.expires);
         let expires = SystemTime::now() + (deadline - now);
-        let lease = AuthLease { via: Via::Bearer(lease.browser().cloned()), ..lease.clone() };
-        let ticket = Ticket { lease, target, origin, deadline };
+        let lease = AuthLease {
+            via: Via::Bearer(lease.browser().cloned()),
+            ..lease.clone()
+        };
+        let ticket = Ticket {
+            lease,
+            target,
+            origin,
+            deadline,
+        };
         state.tickets.insert(digest(&token), ticket);
-        let expires = expires.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-        Ok(SocketTicket { token, expires: u64::try_from(expires).unwrap_or(u64::MAX) })
+        let expires = expires
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        Ok(SocketTicket {
+            token,
+            expires: u64::try_from(expires).unwrap_or(u64::MAX),
+        })
     }
 
     /// Spends the ticket `token`, valid when presented at its `target` from its `origin` before it expired.
-    pub(super) fn redeem(&self, token: &str, target: &str, origin: Option<&HeaderValue>) -> Option<AuthLease> {
+    pub(super) fn redeem(
+        &self,
+        token: &str,
+        target: &str,
+        origin: Option<&HeaderValue>,
+    ) -> Option<AuthLease> {
         let ticket = lock(&self.0).tickets.remove(&digest(token))?;
         let now = Instant::now();
-        let valid = ticket.target == target && ticket.origin.as_ref() == origin && now < ticket.deadline;
-        valid.then_some(ticket.lease).filter(|lease| !lease.is_ended(now))
+        let valid =
+            ticket.target == target && ticket.origin.as_ref() == origin && now < ticket.deadline;
+        valid
+            .then_some(ticket.lease)
+            .filter(|lease| !lease.is_ended(now))
     }
 
     /// Whether `proof` is the login's CSRF token, compared in constant time.
     pub(super) fn csrf(&self, login: LoginKey, proof: &str) -> bool {
         let state = lock(&self.0);
-        state
-            .login(&login.0)
-            .is_some_and(|login| login.csrf.as_str().as_bytes().ct_eq(proof.as_bytes()).into())
+        state.login(&login.0).is_some_and(|login| {
+            login
+                .csrf
+                .as_str()
+                .as_bytes()
+                .ct_eq(proof.as_bytes())
+                .into()
+        })
     }
 
     pub(super) fn view(&self, login: LoginKey) -> Option<LoginView> {
         let state = lock(&self.0);
         let login = state.login(&login.0)?;
-        let (name, provider, csrf) = (login.name.clone(), login.provider.clone(), login.csrf.clone());
-        Some(LoginView { name, provider, expires: login.expires, csrf })
+        let (name, provider, csrf) = (
+            login.name.clone(),
+            login.provider.clone(),
+            login.csrf.clone(),
+        );
+        Some(LoginView {
+            name,
+            provider,
+            expires: login.expires,
+            csrf,
+        })
     }
 }
 
@@ -291,31 +350,56 @@ impl State {
         browser: Option<BrowserOrigin>,
         Credentials { token, id }: Credentials,
     ) -> Result<GrantToken, GrantRefusal> {
-        let revoked = self.login(&login.0).ok_or(GrantRefusal::NoLogin)?.revoked.child_token();
-        let held: Vec<_> = self.grants.iter().filter(|(_, grant)| grant.login == login).collect();
+        let revoked = self
+            .login(&login.0)
+            .ok_or(GrantRefusal::NoLogin)?
+            .revoked
+            .child_token();
+        let held: Vec<_> = self
+            .grants
+            .iter()
+            .filter(|(_, grant)| grant.login == login)
+            .collect();
         if held.len() >= MAX_LOGIN_GRANTS {
             let native = held.iter().filter(|(_, grant)| grant.browser.is_none());
-            let oldest = native.min_by_key(|(_, grant)| grant.sequence).map(|(key, _)| **key);
-            let oldest = oldest.filter(|_| browser.is_none()).ok_or(GrantRefusal::Full)?;
+            let oldest = native
+                .min_by_key(|(_, grant)| grant.sequence)
+                .map(|(key, _)| **key);
+            let oldest = oldest
+                .filter(|_| browser.is_none())
+                .ok_or(GrantRefusal::Full)?;
             if let Some(evicted) = self.grants.remove(&oldest) {
                 evicted.revoked.cancel();
             }
-            self.approvals.retain(|_, approval| !approval.became(&oldest));
+            self.approvals
+                .retain(|_, approval| !approval.became(&oldest));
         }
         self.sequence += 1;
-        let grant = Grant { login, id, browser, sequence: self.sequence, revoked };
+        let grant = Grant {
+            login,
+            id,
+            browser,
+            sequence: self.sequence,
+            revoked,
+        };
         self.grants.insert(digest(token.as_str()), grant);
         Ok(token)
     }
 
     /// How many grants `login` holds.
     pub(super) fn grants_of(&self, login: LoginKey) -> usize {
-        self.grants.values().filter(|grant| grant.login == login).count()
+        self.grants
+            .values()
+            .filter(|grant| grant.login == login)
+            .count()
     }
 
     /// The logins of `principal`, oldest first.
     fn held(&self, principal: &Principal) -> Vec<Digest> {
-        let held = self.logins.iter().filter(|(_, login)| login.principal == *principal);
+        let held = self
+            .logins
+            .iter()
+            .filter(|(_, login)| login.principal == *principal);
         let mut held: Vec<_> = held.map(|(key, login)| (login.sequence, *key)).collect();
         held.sort_unstable();
         held.into_iter().map(|(_, key)| key).collect()
@@ -323,7 +407,9 @@ impl State {
 
     /// The login keyed `key` while it lasts.
     pub(super) fn login(&self, key: &Digest) -> Option<&Login> {
-        self.logins.get(key).filter(|login| Instant::now() < login.deadline)
+        self.logins
+            .get(key)
+            .filter(|login| Instant::now() < login.deadline)
     }
 
     /// Ends the login keyed `key`, revoking every lane its grants and tickets hold.
@@ -332,13 +418,17 @@ impl State {
             login.revoked.cancel();
         }
         self.grants.retain(|_, grant| grant.login.0 != *key);
-        self.tickets.retain(|_, ticket| ticket.lease.login.0 != *key);
+        self.tickets
+            .retain(|_, ticket| ticket.lease.login.0 != *key);
         self.approvals
             .retain(|_, approval| approval.login().is_none_or(|login| login.0 != *key));
     }
 
     pub(super) fn sweep(&mut self, now: Instant) {
-        let expired = self.logins.iter().filter(|(_, login)| now >= login.deadline);
+        let expired = self
+            .logins
+            .iter()
+            .filter(|(_, login)| now >= login.deadline);
         for key in expired.map(|(key, _)| *key).collect::<Vec<_>>() {
             self.end(&key);
         }
@@ -352,15 +442,31 @@ impl State {
 }
 
 impl Login {
-    fn lease(&self, login: LoginKey, holder: Holder, via: Via, revoked: CancellationToken) -> AuthLease {
+    fn lease(
+        &self,
+        login: LoginKey,
+        holder: Holder,
+        via: Via,
+        revoked: CancellationToken,
+    ) -> AuthLease {
         let (principal, expires) = (self.principal.clone(), self.deadline);
-        AuthLease { holder, principal, login, via, revoked, expires }
+        AuthLease {
+            holder,
+            principal,
+            login,
+            via,
+            revoked,
+            expires,
+        }
     }
 }
 
 pub(super) fn digest(token: &str) -> Digest {
     let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
-    digest.as_ref().try_into().expect("SHA-256 digests are 32 bytes")
+    digest
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 digests are 32 bytes")
 }
 
 /// `N` random bytes in unpadded base64url.
@@ -376,5 +482,8 @@ pub(super) struct Credentials {
 
 /// A new grant's credentials, drawn before the store is locked.
 pub(super) fn credentials() -> Credentials {
-    Credentials { token: GrantToken(random::<32>()), id: random::<16>().into() }
+    Credentials {
+        token: GrantToken(random::<32>()),
+        id: random::<16>().into(),
+    }
 }

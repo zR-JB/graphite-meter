@@ -54,11 +54,14 @@ pub fn hash(password: &[u8]) -> Result<String, &'static str> {
     getrandom::fill(&mut salt).map_err(|_| "password salt unavailable")?;
     let key = derive(password, &salt)?;
     let (salt, key) = (STANDARD_NO_PAD.encode(salt), STANDARD_NO_PAD.encode(key));
-    Ok(format!("$argon2id$v=19$m={MEMORY_KIB},t={PASSES},p={LANES}${salt}${key}"))
+    Ok(format!(
+        "$argon2id$v=19$m={MEMORY_KIB},t={PASSES},p={LANES}${salt}${key}"
+    ))
 }
 
 fn derive(password: &[u8], salt: &[u8]) -> Result<[u8; KEY_BYTES], &'static str> {
-    let params = Params::new(MEMORY_KIB, PASSES, LANES, Some(KEY_BYTES)).map_err(|_| "invalid Argon2 parameters")?;
+    let params = Params::new(MEMORY_KIB, PASSES, LANES, Some(KEY_BYTES))
+        .map_err(|_| "invalid Argon2 parameters")?;
     let mut key = [0; KEY_BYTES];
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(password, salt, &mut key)
@@ -84,12 +87,18 @@ impl Hash {
         if params.len() != 3 {
             return Err("password hash has invalid Argon2 parameters".into());
         }
-        for (param, (prefix, expected)) in params.iter().zip([("m=", MEMORY_KIB), ("t=", PASSES), ("p=", LANES)]) {
+        for (param, (prefix, expected)) in
+            params
+                .iter()
+                .zip([("m=", MEMORY_KIB), ("t=", PASSES), ("p=", LANES)])
+        {
             let number = param
                 .strip_prefix(prefix)
                 .ok_or("password hash has invalid Argon2 parameters")?;
             if number.starts_with('+') || number.parse::<u32>().ok() != Some(expected) {
-                return Err(format!("password hash must use m={MEMORY_KIB},t={PASSES},p={LANES}"));
+                return Err(format!(
+                    "password hash must use m={MEMORY_KIB},t={PASSES},p={LANES}"
+                ));
             }
         }
         fn decode<const N: usize>(text: &str) -> Option<[u8; N]> {
@@ -101,7 +110,8 @@ impl Hash {
     }
 
     fn verify(&self, password: &[u8]) -> bool {
-        validate(password).is_ok() && derive(password, &self.salt).is_ok_and(|key| key.ct_eq(&self.key).into())
+        validate(password).is_ok()
+            && derive(password, &self.salt).is_ok_and(|key| key.ct_eq(&self.key).into())
     }
 }
 
@@ -126,7 +136,10 @@ pub(super) struct Password {
 
 /// The device-cookie key: an HMAC of a fixed label under the hash, so no other use of the hash shares the key.
 fn device_key(encoded: &str) -> hmac::Key {
-    let derived = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, encoded.as_bytes()), b"graphite-meter device cookie");
+    let derived = hmac::sign(
+        &hmac::Key::new(hmac::HMAC_SHA256, encoded.as_bytes()),
+        b"graphite-meter device cookie",
+    );
     hmac::Key::new(hmac::HMAC_SHA256, derived.as_ref())
 }
 
@@ -145,7 +158,10 @@ impl Password {
     /// Records an attempt by `keys` within its rate; a known `device` skips the shared wrong-password rate.
     pub fn admit(&self, keys: Option<ClientKeys>, device: Option<&str>) -> bool {
         let known = device.is_some_and(|cookie| self.known(cookie));
-        keys.is_some_and(|keys| self.attempts.allow(&keys, known, (!known).then_some(&self.wrong)))
+        keys.is_some_and(|keys| {
+            self.attempts
+                .allow(&keys, known, (!known).then_some(&self.wrong))
+        })
     }
 
     /// Checks `password` on a blocking thread that holds its slot.
@@ -174,7 +190,10 @@ impl Password {
         let since_epoch = expires.duration_since(UNIX_EPOCH).unwrap_or_default();
         let seconds = since_epoch.as_secs().to_be_bytes();
         let tag = hmac::sign(&self.device, &seconds);
-        (URL_SAFE_NO_PAD.encode([&seconds[..], tag.as_ref()].concat()), expires)
+        (
+            URL_SAFE_NO_PAD.encode([&seconds[..], tag.as_ref()].concat()),
+            expires,
+        )
     }
 
     fn known(&self, cookie: &str) -> bool {
@@ -185,7 +204,9 @@ impl Password {
         let Some((expires, tag)) = raw.split_first_chunk() else {
             return false;
         };
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let expires_at = u64::from_be_bytes(*expires);
         now.as_secs() < expires_at && hmac::verify(&self.device, expires, tag).is_ok()
     }
@@ -198,12 +219,18 @@ mod tests {
     fn key(phc: &str) -> (Vec<u8>, Vec<u8>) {
         let fields: Vec<_> = phc.split('$').collect();
         assert_eq!(fields[..4], ["", "argon2id", "v=19", "m=19456,t=2,p=1"]);
-        (STANDARD_NO_PAD.decode(fields[4]).unwrap(), STANDARD_NO_PAD.decode(fields[5]).unwrap())
+        (
+            STANDARD_NO_PAD.decode(fields[4]).unwrap(),
+            STANDARD_NO_PAD.decode(fields[5]).unwrap(),
+        )
     }
 
     /// `api/password.testvectors.json`: a pinned hash and the passwords refused and accepted.
     fn vectors() -> serde_json::Value {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/password.testvectors.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../api/password.testvectors.json"
+        );
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
@@ -225,28 +252,46 @@ mod tests {
         assert_eq!(derive(secret, &salt).unwrap().to_vec(), expected);
         let phc = hash(secret).unwrap();
         let (salt, expected) = key(&phc);
-        assert_eq!((salt.len(), derive(secret, &salt).unwrap().to_vec()), (16, expected));
+        assert_eq!(
+            (salt.len(), derive(secret, &salt).unwrap().to_vec()),
+            (16, expected)
+        );
         assert_ne!(hash(secret).unwrap(), phc, "every hash has its own salt");
         for case in vectors["refused"].as_array().unwrap() {
-            assert_eq!(hash(&bytes(case)), Err(case["error"].as_str().unwrap()), "{case}");
+            assert_eq!(
+                hash(&bytes(case)),
+                Err(case["error"].as_str().unwrap()),
+                "{case}"
+            );
         }
         for case in vectors["accepted"].as_array().unwrap() {
-            assert!(hash(&bytes(case)).is_ok(), "bytes need not be UTF-8: {case}");
+            assert!(
+                hash(&bytes(case)).is_ok(),
+                "bytes need not be UTF-8: {case}"
+            );
         }
     }
 
     #[test]
-    fn a_device_cookie_outlives_a_restart_until_it_expires_or_the_password_changes_and_passes_the_shared_ceiling() {
+    fn a_device_cookie_outlives_a_restart_until_it_expires_or_the_password_changes_and_passes_the_shared_ceiling()
+     {
         let vectors = vectors();
         let configured = vectors["hash"].as_str().unwrap();
         let password = Password::new(configured).unwrap();
         let (cookie, expires) = password.device(SystemTime::now());
         assert!(expires > SystemTime::now() + DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(password.known(&cookie));
-        assert!(Password::new(configured).unwrap().known(&cookie), "a restart keeps known devices");
+        assert!(
+            Password::new(configured).unwrap().known(&cookie),
+            "a restart keeps known devices"
+        );
         let changed = configured.replacen("$9kV", "$8kV", 1);
-        assert!(!Password::new(&changed).unwrap().known(&cookie), "a new password forgets them");
-        let (old, _) = password.device(SystemTime::now() - DEVICE_LIFETIME - Duration::from_secs(1));
+        assert!(
+            !Password::new(&changed).unwrap().known(&cookie),
+            "a new password forgets them"
+        );
+        let (old, _) =
+            password.device(SystemTime::now() - DEVICE_LIFETIME - Duration::from_secs(1));
         assert!(!password.known(&old));
         let forged = format!("{}A{}", &cookie[..10], &cookie[11..]);
         assert!(!password.known(&forged) || forged == cookie);

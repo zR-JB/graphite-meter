@@ -51,7 +51,11 @@ impl Budget {
     /// Charges `bytes` until the lease drops, if they fit.
     pub fn lease(&self, bytes: usize) -> Option<Lease> {
         let charged = self.0.charge(bytes);
-        charged.then(|| Lease { budget: self.clone(), bytes, reserved: false })
+        charged.then(|| Lease {
+            budget: self.clone(),
+            bytes,
+            reserved: false,
+        })
     }
 
     /// Charges endpoint buffers, which the pressure thresholds and the clients' half leave out.
@@ -62,18 +66,34 @@ impl Budget {
             self.0.released.fetch_add(bytes, Ordering::Relaxed);
             return None;
         }
-        Some(Lease { budget: self.clone(), bytes, reserved: true })
+        Some(Lease {
+            budget: self.clone(),
+            bytes,
+            reserved: true,
+        })
     }
 
     /// The pressure level; logs when growth is held back at three quarters and when usage falls below five eighths.
     pub fn pressure(&self) -> Pressure {
         let (limit, used) = self.0.unreserved();
-        if let Some(held_back) = self.0.held_back.update(used >= limit / 4 * 3, used < limit / 8 * 5) {
+        if let Some(held_back) = self
+            .0
+            .held_back
+            .update(used >= limit / 4 * 3, used < limit / 8 * 5)
+        {
             let Usage { limit, used, .. } = self.usage();
             if held_back {
-                crate::log!(Warn, "memory", "receive window growth paused: {used} of {limit} buffer bytes in use");
+                crate::log!(
+                    Warn,
+                    "memory",
+                    "receive window growth paused: {used} of {limit} buffer bytes in use"
+                );
             } else {
-                crate::log!(Info, "memory", "receive window growth resumed: {used} of {limit} buffer bytes in use");
+                crate::log!(
+                    Info,
+                    "memory",
+                    "receive window growth resumed: {used} of {limit} buffer bytes in use"
+                );
             }
         }
         match used {
@@ -109,7 +129,9 @@ impl Budget {
 impl Shared {
     fn charge(&self, bytes: usize) -> bool {
         let fits = |used: usize| used.checked_add(bytes).filter(|&used| used <= self.limit);
-        self.used.try_update(Ordering::Relaxed, Ordering::Relaxed, fits).is_ok()
+        self.used
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, fits)
+            .is_ok()
     }
 
     fn give_back(&self, bytes: usize) {
@@ -120,7 +142,11 @@ impl Shared {
     fn unreserved(&self) -> (usize, usize) {
         let released = self.released.load(Ordering::Acquire);
         let used = self.used.load(Ordering::Acquire);
-        let reserved = self.reserved.load(Ordering::Relaxed).wrapping_sub(released).min(used);
+        let reserved = self
+            .reserved
+            .load(Ordering::Relaxed)
+            .wrapping_sub(released)
+            .min(used);
         (self.limit - reserved, used - reserved)
     }
 }
@@ -156,7 +182,10 @@ impl Drop for Lease {
     fn drop(&mut self) {
         self.budget.0.give_back(self.bytes);
         if self.reserved {
-            self.budget.0.released.fetch_add(self.bytes, Ordering::Release);
+            self.budget
+                .0
+                .released
+                .fetch_add(self.bytes, Ordering::Release);
         }
     }
 }
@@ -169,7 +198,11 @@ mod tests {
     fn pressure_counts_only_what_reservations_leave() {
         let budget = Budget::new(1000);
         let reserved = budget.reserve(200).unwrap();
-        assert_eq!(budget.pressure(), Pressure::Normal, "an idle server with endpoints is under no pressure");
+        assert_eq!(
+            budget.pressure(),
+            Pressure::Normal,
+            "an idle server with endpoints is under no pressure"
+        );
         assert_eq!(budget.client_windows(), 400);
         let quarter = budget.lease(199).unwrap();
         assert_eq!(budget.pressure(), Pressure::Normal);
@@ -180,7 +213,16 @@ mod tests {
         drop((more, one, quarter));
         assert_eq!(budget.pressure(), Pressure::Normal);
         drop(reserved);
-        assert_eq!((budget.usage(), budget.client_windows()), (Usage { limit: 1000, used: 0 }, 500));
+        assert_eq!(
+            (budget.usage(), budget.client_windows()),
+            (
+                Usage {
+                    limit: 1000,
+                    used: 0
+                },
+                500
+            )
+        );
     }
 
     #[test]

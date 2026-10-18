@@ -42,7 +42,10 @@ pub struct Counters {
 impl Counters {
     /// Counters past the exact JSON range stay at its maximum.
     pub fn new(bytes: u64, nanos: u64) -> Self {
-        Self { bytes: bytes.min(MAX_COUNTER), nanos: nanos.min(MAX_COUNTER) }
+        Self {
+            bytes: bytes.min(MAX_COUNTER),
+            nanos: nanos.min(MAX_COUNTER),
+        }
     }
 
     pub fn bytes(self) -> u64 {
@@ -109,7 +112,13 @@ impl Record {
             #[serde(default)]
             message: String,
         }
-        let Sent { r#type, bytes, nanos, code, message } = json::decode(line)?;
+        let Sent {
+            r#type,
+            bytes,
+            nanos,
+            code,
+            message,
+        } = json::decode(line)?;
         let counters = || match (bytes, nanos) {
             (Some(bytes), Some(nanos)) => Ok(Counters { bytes, nanos }),
             _ => Err(serde_json::Error::custom("missing upload progress counter")),

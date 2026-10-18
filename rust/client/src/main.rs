@@ -33,7 +33,9 @@ fn main() -> ExitCode {
     let usage = || config::usage(&text::clean(&program.to_string_lossy(), usize::MAX));
     match config::parse(args) {
         Ok(Parsed::Help) => eprint!("{}", usage()),
-        Ok(Parsed::Version) => return written(format!("graphite-meter-client {VERSION}\n").as_bytes()),
+        Ok(Parsed::Version) => {
+            return written(format!("graphite-meter-client {VERSION}\n").as_bytes());
+        }
         Ok(Parsed::Legal) => return legal(),
         Ok(Parsed::Run(mut config)) => {
             let kept = config::kept_server().and_then(|path| config::recall(&path));
@@ -48,7 +50,8 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(USAGE_ERROR);
             }
-            return run(*config, kept, interactive).unwrap_or_else(|error| fail(&error.to_string()));
+            return run(*config, kept, interactive)
+                .unwrap_or_else(|error| fail(&error.to_string()));
         }
         Err(Refusal::Flag(error)) => {
             eprint!("{error}\n{}", usage());
@@ -69,7 +72,9 @@ fn fail(error: &str) -> ExitCode {
 
 /// The interface when `interactive`, else one run of `config` and its report; `kept` is the remembered server.
 fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<ExitCode> {
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
     let pool = Arc::new(Pool::probing(runtime.handle())?);
     runtime.block_on(async {
         let terminal = io::stdout().is_terminal();
@@ -78,7 +83,13 @@ fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<Ex
             let exit = tui::interactive(config, kept, pool, signals).await?;
             let status = status(&exit.view, exit.signal);
             if exit.report {
-                return print(&exit.view, &exit.palette, columns(terminal), terminal, status);
+                return print(
+                    &exit.view,
+                    &exit.palette,
+                    columns(terminal),
+                    terminal,
+                    status,
+                );
             }
             return Ok(ExitCode::from(status));
         }
@@ -107,7 +118,9 @@ fn run(config: Config, kept: Option<Origin>, interactive: bool) -> io::Result<Ex
         }
         print(
             &view,
-            &answer.background.map_or_else(|| Palette::new(true), Palette::over),
+            &answer
+                .background
+                .map_or_else(|| Palette::new(true), Palette::over),
             columns,
             terminal,
             status,
@@ -122,10 +135,19 @@ fn columns(terminal: bool) -> Option<u16> {
 }
 
 /// Writes `view`'s report to stdout at terminal width or 100 columns, ending with `status`; 141 into a closed pipe.
-fn print(view: &View, palette: &Palette, columns: Option<u16>, terminal: bool, status: u8) -> io::Result<ExitCode> {
+fn print(
+    view: &View,
+    palette: &Palette,
+    columns: Option<u16>,
+    terminal: bool,
+    status: u8,
+) -> io::Result<ExitCode> {
     let width = columns.map_or(report::WIDTH, |columns| usize::from(columns).max(40));
     let lines = report::report(view, width, palette);
-    let (profile, mut out) = (style::profile(terminal, |name| std::env::var(name).ok()), Vec::new());
+    let (profile, mut out) = (
+        style::profile(terminal, |name| std::env::var(name).ok()),
+        Vec::new(),
+    );
     styled::write(&lines, profile, &mut out)?;
     let printed = graphite_meter_legal::print(io::stdout().lock(), &out)?;
     Ok(ExitCode::from(if printed == 0 { status } else { printed }))
@@ -153,7 +175,10 @@ fn signals(at_once: bool) -> io::Result<UnboundedReceiver<u8>> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let (mut interrupts, mut terminations) = (signal(SignalKind::interrupt())?, signal(SignalKind::terminate())?);
+        let (mut interrupts, mut terminations) = (
+            signal(SignalKind::interrupt())?,
+            signal(SignalKind::terminate())?,
+        );
         tokio::spawn(async move {
             loop {
                 tokio::select! {

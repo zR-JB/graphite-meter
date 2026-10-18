@@ -34,12 +34,17 @@ impl Pool {
 
     fn spawn(runtime: &Handle, probing: bool) -> io::Result<Self> {
         if runtime.runtime_flavor() == RuntimeFlavor::CurrentThread {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "pinned runtimes need a multi-thread runtime"));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "pinned runtimes need a multi-thread runtime",
+            ));
         }
         let workers = runtime.metrics().num_workers();
         let (running, ended) = watch::channel(());
         let thread = |name: String, niced: bool| -> io::Result<Handle> {
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
             let (handle, mut ended) = (runtime.handle().clone(), ended.clone());
             std::thread::Builder::new().name(name).spawn(move || {
                 if niced {
@@ -52,7 +57,9 @@ impl Pool {
         let runtimes = (0..if workers > 1 { workers } else { 0 })
             .map(|index| thread(format!("gm-worker-{index}"), true))
             .collect::<io::Result<_>>()?;
-        let latency = probing.then(|| thread("gm-latency".into(), false)).transpose()?;
+        let latency = probing
+            .then(|| thread("gm-latency".into(), false))
+            .transpose()?;
         Ok(Self {
             runtimes,
             latency,

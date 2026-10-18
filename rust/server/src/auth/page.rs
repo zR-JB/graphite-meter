@@ -37,7 +37,8 @@ impl Login<'_> {
             _ => "",
         };
         if !status.is_empty() {
-            main += &format!("<p class=\"notice\" data-tone=\"neutral\" role=\"status\">{status}</p>");
+            main +=
+                &format!("<p class=\"notice\" data-tone=\"neutral\" role=\"status\">{status}</p>");
         }
         let (tone, alert) = match self.error {
             "" => ("", String::new()),
@@ -57,8 +58,13 @@ impl Login<'_> {
         };
         let mistyped = self.error == "password";
         if !alert.is_empty() {
-            let id = if mistyped { " id=\"password-error\"" } else { "" };
-            main += &format!("<p class=\"notice\"{id} data-tone=\"{tone}\" role=\"alert\">{alert}</p>");
+            let id = if mistyped {
+                " id=\"password-error\""
+            } else {
+                ""
+            };
+            main +=
+                &format!("<p class=\"notice\"{id} data-tone=\"{tone}\" role=\"alert\">{alert}</p>");
         }
         let fields = format!(
             "<input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"challenge\" value=\"{}\">",
@@ -86,7 +92,11 @@ impl Login<'_> {
                 ""
             };
             // Beside a working provider the caret stays out of the operator's field.
-            let autofocus = if self.oidc && self.oidc_ready { "" } else { " autofocus" };
+            let autofocus = if self.oidc && self.oidc_ready {
+                ""
+            } else {
+                " autofocus"
+            };
             // The username field names the one account for password managers; the server ignores it.
             main += &format!(
                 "<form method=\"post\" action=\"{action}\">{fields}<input class=\"sr-only\" name=\"username\" \
@@ -133,10 +143,17 @@ impl Cli<'_> {
             Self::Refused(refused) => {
                 // One fixed sentence per refusal kind: nothing from the request is echoed.
                 let why = match refused {
-                    Refused::Busy => "Too many approvals are open. Try again from the client in a few minutes.",
-                    Refused::Link => "This approval link is not valid. Start sign-in again from the client.",
+                    Refused::Busy => {
+                        "Too many approvals are open. Try again from the client in a few minutes."
+                    }
+                    Refused::Link => {
+                        "This approval link is not valid. Start sign-in again from the client."
+                    }
                 };
-                ("Approval unavailable", format!("<h1>Approval unavailable</h1><p>{why}</p>"))
+                (
+                    "Approval unavailable",
+                    format!("<h1>Approval unavailable</h1><p>{why}</p>"),
+                )
             }
             Self::Capacity { limit } => (
                 "Client limit reached",
@@ -147,7 +164,12 @@ impl Cli<'_> {
                     AuthRoute::Login.path()
                 ),
             ),
-            Self::Approval { code, challenge, csrf, browser_origin } => {
+            Self::Approval {
+                code,
+                challenge,
+                csrf,
+                browser_origin,
+            } => {
                 let (title, intro, action) = match browser_origin {
                     Some(origin) => (
                         "Approve browser client",
@@ -187,8 +209,14 @@ impl Cli<'_> {
 /// An approval's confirmation, for a browser or a terminal.
 pub(super) fn cli_done(browser: bool) -> String {
     let (title, text) = match browser {
-        true => ("Browser client approved", "The site you approved can now run tests as you."),
-        false => ("Terminal client approved", "Your terminal can now run tests as you."),
+        true => (
+            "Browser client approved",
+            "The site you approved can now run tests as you.",
+        ),
+        false => (
+            "Terminal client approved",
+            "Your terminal can now run tests as you.",
+        ),
     };
     let main = format!("<h1>{title}</h1><p>{text} You can close this tab and return to it.</p>");
     page(title, "", "card completion", &main, false)
@@ -196,19 +224,29 @@ pub(super) fn cli_done(browser: bool) -> String {
 
 /// The step back from a provider or another site to this one, opening the approval when `opening`.
 pub(super) fn continuing(challenge: Option<&Challenge>, opening: bool) -> String {
-    let title = if opening { "Continue sign-in" } else { "Signed in" };
+    let title = if opening {
+        "Continue sign-in"
+    } else {
+        "Signed in"
+    };
     let (next, place) = match challenge {
         Some(challenge) => (escape(&challenge.page()), "the approval page"),
         None => ("/".into(), "Graphite&nbsp;Meter"),
     };
     let head = format!("<meta http-equiv=\"refresh\" content=\"0; url={next}\">");
-    let main = format!("<h1>{title}</h1><p>Taking you to {place}…</p><p><a href=\"{next}\">Continue</a></p>");
+    let main = format!(
+        "<h1>{title}</h1><p>Taking you to {place}…</p><p><a href=\"{next}\">Continue</a></p>"
+    );
     page(title, &head, "card completion", &main, false)
 }
 
 /// A whole page: `title` before the product name, `head` and `main` markup, and the pending script beside forms.
 fn page(title: &str, head: &str, class: &str, main: &str, forms: bool) -> String {
-    let pending = if forms { format!("<script>{PENDING}</script>") } else { String::new() };
+    let pending = if forms {
+        format!("<script>{PENDING}</script>")
+    } else {
+        String::new()
+    };
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
          content=\"width=device-width,initial-scale=1\">{ICON}{head}<title>{title} · Graphite Meter</title><meta \
@@ -232,7 +270,10 @@ pub(super) fn protect(headers: &mut HeaderMap, secure: bool, forms: Option<&str>
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     // A private server's sign-in and approval pages stay out of search indexes.
-    headers.insert(crate::headers::X_ROBOTS_TAG, HeaderValue::from_static("noindex, nofollow"));
+    headers.insert(
+        crate::headers::X_ROBOTS_TAG,
+        HeaderValue::from_static("noindex, nofollow"),
+    );
     crate::app::finalize::harden(headers, secure);
     let policy = HeaderValue::try_from(policy).expect("hashes and origins are header-safe");
     headers.insert(header::CONTENT_SECURITY_POLICY, policy);
@@ -261,7 +302,8 @@ mod tests {
         assert!(page.contains("action=\"/auth/password\"") && !page.contains("/auth/oidc/start"));
         assert!(page.contains("spellcheck=\"false\" autofocus required"));
         assert!(
-            page.contains(&format!("<style>{STYLES}</style>")) && page.contains(&format!("<script>{PENDING}</script>"))
+            page.contains(&format!("<style>{STYLES}</style>"))
+                && page.contains(&format!("<script>{PENDING}</script>"))
         );
     }
 
@@ -300,7 +342,10 @@ mod tests {
             for tag in ["script", "style"] {
                 for inline in page.split(&format!("<{tag}>")).skip(1) {
                     let (code, _) = inline.split_once(&format!("</{tag}>")).unwrap();
-                    assert!(policy.contains(&format!("'sha256-{}'", sha256(code))), "{tag} in {page}");
+                    assert!(
+                        policy.contains(&format!("'sha256-{}'", sha256(code))),
+                        "{tag} in {page}"
+                    );
                 }
             }
         }

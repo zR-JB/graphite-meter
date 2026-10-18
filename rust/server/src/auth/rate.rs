@@ -31,7 +31,11 @@ struct Table {
 
 impl Attempts {
     pub fn new(name: &'static str, limit: usize) -> Self {
-        Self { name, limit, table: Mutex::default() }
+        Self {
+            name,
+            limit,
+            table: Mutex::default(),
+        }
     }
 
     /// Records an attempt unless its key's share is spent, `ceiling` engaged or the table full, which `known` bypasses.
@@ -86,7 +90,11 @@ pub(super) struct Ceiling {
 
 impl Ceiling {
     pub fn new(name: &'static str, limit: usize) -> Self {
-        Self { name, limit, window: Mutex::default() }
+        Self {
+            name,
+            limit,
+            window: Mutex::default(),
+        }
     }
 
     pub fn note(&self) {
@@ -111,12 +119,21 @@ impl Ceiling {
 }
 
 /// Tells if `keys`' client holds its share of `limit`. `held` counts per key, each wider key holding twice the last.
-pub(super) fn share_full(keys: &ClientKeys, limit: usize, held: impl Fn(&ClientKey) -> usize) -> bool {
-    keys.iter().enumerate().any(|(wider, key)| held(&key) >= limit << wider)
+pub(super) fn share_full(
+    keys: &ClientKeys,
+    limit: usize,
+    held: impl Fn(&ClientKey) -> usize,
+) -> bool {
+    keys.iter()
+        .enumerate()
+        .any(|(wider, key)| held(&key) >= limit << wider)
 }
 
 fn expire(times: &mut VecDeque<Instant>, now: Instant) {
-    while times.pop_front_if(|time| now.duration_since(*time) >= WINDOW).is_some() {}
+    while times
+        .pop_front_if(|time| now.duration_since(*time) >= WINDOW)
+        .is_some()
+    {}
 }
 
 /// Logs that the ceiling `name` engaged, at most once a minute.
@@ -150,7 +167,10 @@ mod tests {
         }
         let newcomer = v4(MAX_KEYS as u32);
         assert!(!attempts.allow(&newcomer, false, None));
-        assert!(attempts.allow(&newcomer, true, None), "a known device passes a full table");
+        assert!(
+            attempts.allow(&newcomer, true, None),
+            "a known device passes a full table"
+        );
         advance(WINDOW).await;
         let ceiling = Ceiling::new("password-attempt", 60);
         (0..60).for_each(|_| ceiling.note());

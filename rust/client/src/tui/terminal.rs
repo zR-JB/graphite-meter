@@ -12,9 +12,14 @@ use crate::{
     text::Profile,
 };
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream, MouseEventKind},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, Event as Input, EventStream, MouseEventKind,
+    },
     execute,
-    terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 use futures_util::StreamExt;
 use graphite_meter_net::Pool;
@@ -49,15 +54,23 @@ pub async fn interactive(
     };
     // The clear wipes what a terminal that ignores the query shows.
     execute!(io::stdout(), Clear(ClearType::All))?;
-    let palette = answer.background.map_or_else(|| Palette::new(true), Palette::over);
-    let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout())))?;
+    let palette = answer
+        .background
+        .map_or_else(|| Palette::new(true), Palette::over);
+    let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(
+        1 << 16,
+        io::stdout(),
+    )))?;
     terminal.hide_cursor()?;
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(true, runtimes, events);
     // A read error ends the input, which quits, instead of polling a broken terminal again.
     let input = EventStream::new().take_while(|input| std::future::ready(input.is_ok()));
     let mut input = pin!(input.filter_map(|input| std::future::ready(input.ok())));
-    let (mut app, mut shown) = (App::new(config, kept, (profile, palette), Instant::now()), None);
+    let (mut app, mut shown) = (
+        App::new(config, kept, (profile, palette), Instant::now()),
+        None,
+    );
     // Ctrl+C while the terminal was asked quits, as it does at setup.
     if answer.interrupted {
         return Ok(app.exit());
@@ -125,7 +138,12 @@ pub async fn interactive(
 type Screen = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
 /// Draws a frame's changed cells, chrome and progress bar in one synchronized write; an unchanged frame writes nothing.
-fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome)>, progress: bool) -> io::Result<()> {
+fn draw(
+    terminal: &mut Screen,
+    app: &mut App,
+    shown: &mut Option<(Buffer, Chrome)>,
+    progress: bool,
+) -> io::Result<()> {
     let mut frame = terminal.get_frame();
     let cells = frame.buffer_mut();
     let mut drawn = app.draw(cells, Instant::now());
@@ -133,7 +151,11 @@ fn draw(terminal: &mut Screen, app: &mut App, shown: &mut Option<(Buffer, Chrome
         drawn.progress = Progress::None;
     }
     let unchanged = shown.as_ref().is_some_and(|(last, _)| last == cells);
-    let bytes = drawn.bytes(shown.as_ref().map(|(_, chrome)| chrome), !unchanged, app.profile);
+    let bytes = drawn.bytes(
+        shown.as_ref().map(|(_, chrome)| chrome),
+        !unchanged,
+        app.profile,
+    );
     if unchanged && bytes.is_empty() {
         cells.reset();
         return Ok(());
@@ -172,7 +194,10 @@ type Hook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
 
 impl Session {
     fn enter(progress: bool) -> io::Result<Self> {
-        let (hook, interface) = (Arc::new(std::panic::take_hook()), std::thread::current().id());
+        let (hook, interface) = (
+            Arc::new(std::panic::take_hook()),
+            std::thread::current().id(),
+        );
         let previous = hook.clone();
         // A panic on the interface's thread ends it; elsewhere the run ends as failed and the interface stays.
         std::panic::set_hook(Box::new(move |info| {

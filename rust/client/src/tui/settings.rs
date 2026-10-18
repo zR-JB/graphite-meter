@@ -32,7 +32,9 @@ impl App {
             Action::Move => self.move_focus(step),
             // Remembering writes or deletes a file, which the loop does.
             Action::Adjust if row == Row::Remember => return self.remember(step > 0),
-            Action::Toggle | Action::Open if row == Row::Remember => return self.remember(!self.remembering),
+            Action::Toggle | Action::Open if row == Row::Remember => {
+                return self.remember(!self.remembering);
+            }
             Action::Adjust => self.adjust(row, step),
             Action::Toggle => match self.flag(row) {
                 Some(on) => self.set_flag(row, !on),
@@ -71,7 +73,9 @@ impl App {
                 self.config.stages.sort_unstable();
             }
             Row::LoadedLatency => self.config.loaded_latency = on,
-            Row::ForceStreams => self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on),
+            Row::ForceStreams => {
+                self.config.streams.forced = NonZero::new(self.config.streams.auto).filter(|_| on)
+            }
             Row::Insecure => self.config.insecure = on,
             _ => {}
         }
@@ -85,16 +89,34 @@ impl App {
         match row {
             Row::Servers => self.open_chooser(),
             Row::Reset if confirmed => {
-                let (url, servers) = (self.config.url.clone(), std::mem::take(&mut self.config.servers));
-                self.config = Config { url, servers, ..Config::default() };
-                self.notify(Line::styled("Settings reset to their defaults.", self.palette.muted));
+                let (url, servers) = (
+                    self.config.url.clone(),
+                    std::mem::take(&mut self.config.servers),
+                );
+                self.config = Config {
+                    url,
+                    servers,
+                    ..Config::default()
+                };
+                self.notify(Line::styled(
+                    "Settings reset to their defaults.",
+                    self.palette.muted,
+                ));
             }
             Row::Reset => _ = self.resetting(true),
             Row::Stage(_) | Row::Warmup => {
                 let value = span(&mut self.config, row).map(|(value, _)| duration::format(*value));
                 self.edit(row, &value.unwrap_or_default());
             }
-            Row::Address => self.edit(row, &self.config.url.as_ref().map(ToString::to_string).unwrap_or_default()),
+            Row::Address => self.edit(
+                row,
+                &self
+                    .config
+                    .url
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+            ),
             Row::Streams => {
                 let count = self.config.streams.shown().to_string();
                 self.edit(row, &count);
@@ -119,11 +141,22 @@ impl App {
                 600..3600 => Duration::from_mins(1),
                 _ => Duration::from_mins(5),
             };
-            let moved = if step > 0 { value.saturating_add(unit) } else { value.saturating_sub(unit) };
+            let moved = if step > 0 {
+                value.saturating_add(unit)
+            } else {
+                value.saturating_sub(unit)
+            };
             *value = moved.clamp(*bounds.start(), *bounds.end());
         } else if let Some(on) = self.flag(row) {
             // The stream count's switch flips either way, as a cycle does.
-            self.set_flag(row, if row == Row::ForceStreams { !on } else { step > 0 });
+            self.set_flag(
+                row,
+                if row == Row::ForceStreams {
+                    !on
+                } else {
+                    step > 0
+                },
+            );
         } else {
             self.cycle(row, step);
         }
@@ -144,7 +177,12 @@ impl App {
             }
             Row::Latency => self.cycle_path(&LATENCY, step),
             Row::Protocol if fixed.is_none() => {
-                let versions = [None, Some(Protocol::Http1), Some(Protocol::Http2), Some(Protocol::Http3)];
+                let versions = [
+                    None,
+                    Some(Protocol::Http1),
+                    Some(Protocol::Http2),
+                    Some(Protocol::Http3),
+                ];
                 let at = versions
                     .iter()
                     .position(|version| *version == self.config.paths.protocol);
@@ -152,13 +190,18 @@ impl App {
             }
             Row::IdleCadence | Row::LoadedCadence => {
                 let config = &mut self.config;
-                let cadence = if row == Row::IdleCadence { &mut config.ping } else { &mut config.loaded_ping };
+                let cadence = if row == Row::IdleCadence {
+                    &mut config.ping
+                } else {
+                    &mut config.loaded_ping
+                };
                 let at = CADENCES.iter().position(|(_, preset)| preset == cadence);
                 *cadence = CADENCES[next(at, CADENCES.len())].1;
             }
             Row::Streams => {
                 let streams = &mut self.config.streams;
-                let count = NonZero::new(streams.shown().saturating_add_signed(step).min(MAX_STREAMS));
+                let count =
+                    NonZero::new(streams.shown().saturating_add_signed(step).min(MAX_STREAMS));
                 streams.show(count.unwrap_or(NonZero::<usize>::MIN));
             }
             _ => {}
@@ -177,7 +220,9 @@ impl App {
         if connecting && key == Key::Code(KeyCode::Tab) {
             return self.remember(!self.remembering);
         }
-        let Some(editor) = self.editor_mut() else { return Vec::new() };
+        let Some(editor) = self.editor_mut() else {
+            return Vec::new();
+        };
         match keys::find(keys::EDIT, key, |_| true) {
             Some(Action::Abort) => return self.interrupt(),
             Some(Action::Cancel) if connecting => self.overlay = Overlay::None,
@@ -219,17 +264,24 @@ impl App {
                 .parse::<NonZero<usize>>()
                 .ok()
                 .filter(|count| count.get() <= MAX_STREAMS);
-            config
-                .streams
-                .show(count.ok_or(format!("Streams must be a whole number from 1 to {MAX_STREAMS}."))?);
+            config.streams.show(count.ok_or(format!(
+                "Streams must be a whole number from 1 to {MAX_STREAMS}."
+            ))?);
             return Ok(());
         }
-        let Some((value, bounds)) = span(config, row) else { return Ok(()) };
+        let Some((value, bounds)) = span(config, row) else {
+            return Ok(());
+        };
         let seconds = raw.parse::<f64>();
         let raw = seconds.map_or_else(|_| raw.to_owned(), |seconds| format!("{seconds}s"));
-        let parsed = duration::parse(&raw).map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
+        let parsed = duration::parse(&raw)
+            .map_err(|_| "Use a time like 800ms, 4s or 1m; a bare number is seconds.")?;
         if !bounds.contains(&parsed) {
-            let range = format!("{} to {}", duration::format(*bounds.start()), duration::format(*bounds.end()));
+            let range = format!(
+                "{} to {}",
+                duration::format(*bounds.start()),
+                duration::format(*bounds.end())
+            );
             return Err(format!("{} must be from {range}.", row.label()));
         }
         *value = parsed;
@@ -256,7 +308,12 @@ pub(super) struct Editor {
 
 impl Editor {
     pub fn new(row: Row, text: &str) -> Self {
-        let mut editor = Self { row, text: Vec::new(), cursor: 0, error: None };
+        let mut editor = Self {
+            row,
+            text: Vec::new(),
+            cursor: 0,
+            error: None,
+        };
         editor.insert(text);
         editor
     }
@@ -271,9 +328,13 @@ impl Editor {
 
     /// Inserts `text` at the cursor while room is left; tabs and line breaks become spaces.
     pub fn insert(&mut self, text: &str) {
-        let spaced = text
-            .chars()
-            .map(|c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c });
+        let spaced = text.chars().map(|c| {
+            if matches!(c, '\t' | '\n' | '\r') {
+                ' '
+            } else {
+                c
+            }
+        });
         let room = MAX_TEXT.saturating_sub(self.text.len());
         let typed: Vec<_> = spaced.filter(|c| safe(*c)).take(room).collect();
         let at = self.cursor;
@@ -317,10 +378,14 @@ impl Editor {
             room -= cell(&self.text[start]);
         }
         let before: String = self.text[start..self.cursor].iter().collect();
-        let after = self.text.iter().skip(self.cursor + 1).scan(room, |room, c| {
-            *room = room.checked_sub(cell(c))?;
-            Some(c)
-        });
+        let after = self
+            .text
+            .iter()
+            .skip(self.cursor + 1)
+            .scan(room, |room, c| {
+                *room = room.checked_sub(cell(c))?;
+                Some(c)
+            });
         Line::styled(before, palette.value)
             .and(under.to_string(), palette.cursor)
             .and(after.collect::<String>(), palette.value)

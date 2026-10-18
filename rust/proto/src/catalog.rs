@@ -116,12 +116,20 @@ impl ServerCatalog {
             location: String::new(),
             additional_origins: Vec::new(),
         };
-        Self { default_selection: vec![ServerId::own()], servers: vec![own] }
+        Self {
+            default_selection: vec![ServerId::own()],
+            servers: vec![own],
+        }
     }
 
     /// Checks a catalog before a server publishes it.
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if !self.servers.first().is_some_and(|first| first.id == ServerId::own()) || self.servers.len() > MAX_SERVERS {
+        if !self
+            .servers
+            .first()
+            .is_some_and(|first| first.id == ServerId::own())
+            || self.servers.len() > MAX_SERVERS
+        {
             return Err(CatalogError::Servers);
         }
         for (index, entry) in self.servers.iter().enumerate() {
@@ -134,8 +142,8 @@ impl ServerCatalog {
     pub fn validate_selection(&self, selected: &[ServerId]) -> Result<(), CatalogError> {
         let mut seen = HashSet::new();
         let known = |id: &ServerId| self.servers.iter().any(|entry| entry.id == *id);
-        let valid =
-            (1..=MAX_SELECTED).contains(&selected.len()) && selected.iter().all(|id| seen.insert(id) && known(id));
+        let valid = (1..=MAX_SELECTED).contains(&selected.len())
+            && selected.iter().all(|id| seen.insert(id) && known(id));
         valid.then_some(()).ok_or(CatalogError::Selection)
     }
 
@@ -163,12 +171,18 @@ impl ServerCatalog {
             }
         }
         let known = |id: &ServerId| servers.iter().any(|entry| entry.id == *id);
-        let parsed = sent.default_selection.iter().filter_map(|id| ServerId::parse(id));
+        let parsed = sent
+            .default_selection
+            .iter()
+            .filter_map(|id| ServerId::parse(id));
         let mut default_selection: Vec<_> = parsed.filter(known).collect();
         if default_selection.is_empty() {
             default_selection.push(ServerId::own());
         }
-        let catalog = Self { default_selection, servers };
+        let catalog = Self {
+            default_selection,
+            servers,
+        };
         catalog.validate().map_err(refused)?;
         Ok(Received { catalog, rejected })
     }
@@ -179,7 +193,9 @@ impl ServerEntry {
     pub fn approves(&self, served: &Origin, preflight: &Preflight) -> bool {
         preflight.base_urls().all(|base| match base {
             BaseUrl::Served => true,
-            BaseUrl::Origin(target) => target.host == served.host || self.additional_origins.contains(target),
+            BaseUrl::Origin(target) => {
+                target.host == served.host || self.additional_origins.contains(target)
+            }
         })
     }
 
@@ -191,7 +207,10 @@ impl ServerEntry {
         if self.url == BaseUrl::Served && self.id != ServerId::own() {
             return Err(CatalogError::Origin);
         }
-        if earlier.iter().any(|prior| prior.id == self.id || prior.url == self.url) {
+        if earlier
+            .iter()
+            .any(|prior| prior.id == self.id || prior.url == self.url)
+        {
             return Err(CatalogError::Duplicate);
         }
         if self.additional_origins.len() > MAX_ADDITIONAL_ORIGINS {
@@ -214,7 +233,13 @@ struct SentEntry {
 
 impl SentEntry {
     fn received(self, earlier: &[ServerEntry]) -> Result<ServerEntry, CatalogError> {
-        let Self { id, url, name, location, additional_origins } = self;
+        let Self {
+            id,
+            url,
+            name,
+            location,
+            additional_origins,
+        } = self;
         let id = ServerId::parse(&id).ok_or(CatalogError::Identity)?;
         let url = match url.as_str() {
             "." => BaseUrl::Served,
@@ -224,7 +249,13 @@ impl SentEntry {
             .iter()
             .map(|origin| received_origin(origin))
             .collect::<Result<_, _>>()?;
-        let entry = ServerEntry { id, url, name, location, additional_origins };
+        let entry = ServerEntry {
+            id,
+            url,
+            name,
+            location,
+            additional_origins,
+        };
         entry.check(earlier)?;
         Ok(entry)
     }

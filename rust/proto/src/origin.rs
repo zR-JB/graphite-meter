@@ -97,10 +97,14 @@ impl Origin {
         let (host, port) = match authority.strip_prefix('[') {
             Some(literal) => {
                 let (ip, port) = literal.split_once(']').ok_or(OriginError)?;
-                (Host::Ip(ip.parse::<Ipv6Addr>().map_err(|_| OriginError)?.into()), port)
+                (
+                    Host::Ip(ip.parse::<Ipv6Addr>().map_err(|_| OriginError)?.into()),
+                    port,
+                )
             }
             None => {
-                let (name, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+                let (name, port) =
+                    authority.split_at(authority.find(':').unwrap_or(authority.len()));
                 (Host::parse(name)?, port)
             }
         };

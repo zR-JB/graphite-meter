@@ -63,14 +63,28 @@ pub struct Binding {
 }
 
 impl Binding {
-    const fn new(keys: &'static [Key], action: Action, key: &'static str, does: &'static str) -> Self {
-        Self { keys, action, help: Some((key, does)) }
+    const fn new(
+        keys: &'static [Key],
+        action: Action,
+        key: &'static str,
+        does: &'static str,
+    ) -> Self {
+        Self {
+            keys,
+            action,
+            help: Some((key, does)),
+        }
     }
 
     /// Renames what the binding does to `does`.
     pub const fn does(self, does: &'static str) -> Self {
-        let Some((key, _)) = self.help else { return self };
-        Self { help: Some((key, does)), ..self }
+        let Some((key, _)) = self.help else {
+            return self;
+        };
+        Self {
+            help: Some((key, does)),
+            ..self
+        }
     }
 
     const fn hidden(self) -> Self {
@@ -78,8 +92,14 @@ impl Binding {
     }
 
     const fn on(self, keys: &'static [Key], key: &'static str) -> Self {
-        let Some((_, does)) = self.help else { return Self { keys, ..self } };
-        Self { keys, help: Some((key, does)), ..self }
+        let Some((_, does)) = self.help else {
+            return Self { keys, ..self };
+        };
+        Self {
+            keys,
+            help: Some((key, does)),
+            ..self
+        }
     }
 }
 
@@ -101,17 +121,33 @@ const ENTER: Key = code(KeyCode::Enter);
 const ESC: Key = code(KeyCode::Esc);
 const SPACE: Key = char(' ');
 
-pub const START: Binding = Binding::new(&[ENTER, SPACE, char('r')], Action::Start, "enter", "start test");
+pub const START: Binding = Binding::new(
+    &[ENTER, SPACE, char('r')],
+    Action::Start,
+    "enter",
+    "start test",
+);
 pub const STOP: Binding = Binding::new(&[ESC], Action::Stop, "esc", "stop test");
 pub const SETTINGS: Binding = Binding::new(&[char('s')], Action::Settings, "s", "settings");
 pub const DETAILS: Binding = Binding::new(&[char('d')], Action::Details, "d", "details");
 pub const HELP: Binding = Binding::new(&[char('?')], Action::Help, "?", "keys");
-const STAGES: Binding =
-    Binding::new(&[char('1'), char('2'), char('3'), char('4')], Action::Stage, "1 to 4", "stages on/off");
+const STAGES: Binding = Binding::new(
+    &[char('1'), char('2'), char('3'), char('4')],
+    Action::Stage,
+    "1 to 4",
+    "stages on/off",
+);
 const LATENCY: Binding = Binding::new(&[char('l')], Action::Latency, "l", "latency server");
 const RECHECK: Binding = Binding::new(&[char('v')], Action::Recheck, "v", "check the server again");
 const MOVE: Binding = Binding::new(
-    &[UP, DOWN, char('k'), char('j'), code(KeyCode::Tab), code(KeyCode::BackTab)],
+    &[
+        UP,
+        DOWN,
+        char('k'),
+        char('j'),
+        code(KeyCode::Tab),
+        code(KeyCode::BackTab),
+    ],
     Action::Move,
     "↑↓",
     "move",
@@ -120,18 +156,43 @@ const ADJUST: Binding = Binding::new(&[LEFT, RIGHT], Action::Adjust, "←→", "
 const TOGGLE: Binding = Binding::new(&[SPACE], Action::Toggle, "space", "on/off");
 const OPEN: Binding = Binding::new(&[ENTER], Action::Open, "enter", "edit");
 pub const CLOSE: Binding = Binding::new(&[ESC], Action::Close, "esc", "close");
-const SCROLL: Binding = Binding::new(&[UP, DOWN, char('k'), char('j')], Action::Scroll, "↑↓", "scroll");
-const PAGE: Binding =
-    Binding::new(&[code(KeyCode::PageUp), code(KeyCode::PageDown), HOME, END], Action::Page, "pgdn", "page");
+const SCROLL: Binding = Binding::new(
+    &[UP, DOWN, char('k'), char('j')],
+    Action::Scroll,
+    "↑↓",
+    "scroll",
+);
+const PAGE: Binding = Binding::new(
+    &[code(KeyCode::PageUp), code(KeyCode::PageDown), HOME, END],
+    Action::Page,
+    "pgdn",
+    "page",
+);
 const SELECT: Binding = Binding::new(&[SPACE], Action::Select, "space", "select");
 const APPLY: Binding = Binding::new(&[ENTER], Action::Apply, "enter", "apply");
 const CANCEL: Binding = Binding::new(&[ESC], Action::Cancel, "esc", "cancel");
 const CURSOR: Binding = Binding::new(&[LEFT, RIGHT, HOME, END], Action::Cursor, "←→", "move");
-const BROWSE: Binding = Binding::new(&[ENTER, char('o')], Action::Browse, "enter", "open the sign-in page");
+const BROWSE: Binding = Binding::new(
+    &[ENTER, char('o')],
+    Action::Browse,
+    "enter",
+    "open the sign-in page",
+);
 pub const QUIT: Binding = Binding::new(&[char('q')], Action::Quit, "q", "quit");
 const ABORT: Binding = Binding::new(&[Key::Ctrl('c')], Action::Abort, "ctrl+c", "quit at once");
 
-pub const CONSOLE: &[Binding] = &[START, STOP, SETTINGS, DETAILS, STAGES, LATENCY, RECHECK, HELP, QUIT, ABORT.hidden()];
+pub const CONSOLE: &[Binding] = &[
+    START,
+    STOP,
+    SETTINGS,
+    DETAILS,
+    STAGES,
+    LATENCY,
+    RECHECK,
+    HELP,
+    QUIT,
+    ABORT.hidden(),
+];
 #[rustfmt::skip]
 pub const SETTINGS_SHEET: &[Binding] = &[
     MOVE, ADJUST, TOGGLE, OPEN, START.on(&[char('r')], "r"), CLOSE, CLOSE.on(&[char('s')], "s").hidden(), HELP, QUIT,
@@ -141,7 +202,13 @@ pub const SETTINGS_SHEET: &[Binding] = &[
 pub const DETAILS_SHEET: &[Binding] = &[
     SCROLL, PAGE, CLOSE, CLOSE.on(&[char('d')], "d").hidden(), HELP, QUIT, ABORT.hidden(),
 ];
-pub const HELP_SHEET: &[Binding] = &[SCROLL, CLOSE, CLOSE.on(&[char('?')], "?").hidden(), QUIT, ABORT.hidden()];
+pub const HELP_SHEET: &[Binding] = &[
+    SCROLL,
+    CLOSE,
+    CLOSE.on(&[char('?')], "?").hidden(),
+    QUIT,
+    ABORT.hidden(),
+];
 pub const CHOOSER: &[Binding] = &[MOVE, SELECT, APPLY, CANCEL, QUIT, ABORT.hidden()];
 pub const SIGN_IN: &[Binding] = &[BROWSE, CANCEL.does("cancel sign-in"), QUIT, ABORT.hidden()];
 pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
@@ -149,7 +216,9 @@ pub const EDIT: &[Binding] = &[CURSOR, APPLY, CANCEL, ABORT.hidden()];
 /// Finds the first binding of `table` for `key` whose action is `offered`.
 pub fn find(table: &[Binding], key: Key, offered: impl Fn(Action) -> bool) -> Option<Action> {
     let bindings = table.iter().filter(|binding| binding.keys.contains(&key));
-    bindings.map(|binding| binding.action).find(|&action| offered(action))
+    bindings
+        .map(|binding| binding.action)
+        .find(|&action| offered(action))
 }
 
 /// Lists the bindings of `table` that help shows while their actions are `offered`.

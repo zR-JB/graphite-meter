@@ -84,7 +84,9 @@ impl Shared {
     }
 
     pub(crate) fn peer_field_limit(&self) -> Option<u64> {
-        self.peer.borrow().and_then(|peer| peer.max_field_section_size)
+        self.peer
+            .borrow()
+            .and_then(|peer| peer.max_field_section_size)
     }
 
     /// Whether the server sent GOAWAY, after which this client starts nothing new.
@@ -201,7 +203,11 @@ impl Driver {
     pub(crate) fn goaway(&mut self) {
         if self.goaway.is_none() && !self.ended {
             self.goaway = Some(self.next_request);
-            frame::put_header(FrameType::GOAWAY, varint::len(self.next_request) as u64, &mut self.control.pending);
+            frame::put_header(
+                FrameType::GOAWAY,
+                varint::len(self.next_request) as u64,
+                &mut self.control.pending,
+            );
             varint::put(self.next_request, &mut self.control.pending);
         }
     }
@@ -226,10 +232,12 @@ impl Driver {
         }
         self.end();
         match result {
-            Err(Error::Transport(noq::ConnectionError::LocallyClosed)) => match self.shared.close_error() {
-                error if error.graceful() => Ok(None),
-                error => Err(error),
-            },
+            Err(Error::Transport(noq::ConnectionError::LocallyClosed)) => {
+                match self.shared.close_error() {
+                    error if error.graceful() => Ok(None),
+                    error => Err(error),
+                }
+            }
             Err(error) if error.graceful() => Ok(None),
             result => result,
         }
@@ -248,7 +256,12 @@ impl Driver {
                 return Ok(None);
             }
             let early = shared.sessions().deadline();
-            let deadlines = [close_at, self.incoming.deadline(), early, self.sessions.deadline()];
+            let deadlines = [
+                close_at,
+                self.incoming.deadline(),
+                early,
+                self.sessions.deadline(),
+            ];
             let deadline = deadlines.into_iter().flatten().min();
             if let Some(deadline) = deadline.filter(|&deadline| deadline != self.timer.deadline()) {
                 self.timer.as_mut().reset(deadline);
@@ -286,12 +299,16 @@ impl Driver {
         let idle = *self.idle_since.get_or_insert(now) + CONNECTION_IDLE;
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
         let only_sessions = self.sessions.carried && !self.shared.served.load(Ordering::Acquire);
-        let done = (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
+        let done =
+            (self.goaway.is_some() || only_sessions).then(|| self.sessions.linger.unwrap_or(now));
         [self.drain, Some(idle), done].into_iter().flatten().min()
     }
 
     /// Refused past GOAWAY or over the budget, a new stream gets H3_REQUEST_REJECTED.
-    fn admit(&mut self, (mut send, mut recv): (noq::SendStream, noq::RecvStream)) -> Option<RequestStream> {
+    fn admit(
+        &mut self,
+        (mut send, mut recv): (noq::SendStream, noq::RecvStream),
+    ) -> Option<RequestStream> {
         let id = u64::from(recv.id());
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
@@ -319,7 +336,14 @@ impl Driver {
 /// Hands a peer's session stream to the registry; one the budget cannot hold is refused as unbuffered.
 fn route(shared: &Shared, session: SessionId, mut stream: noq::RecvStream, first: Bytes) {
     match Charge::new(&shared.budget, size_of::<RecvStream>()) {
-        Some(charge) => shared.sessions().stream(session, Unrouted { stream, first, charge }),
+        Some(charge) => shared.sessions().stream(
+            session,
+            Unrouted {
+                stream,
+                first,
+                charge,
+            },
+        ),
         None => drop(stream.stop(Code::WT_BUFFERED_STREAM_REJECTED.into())),
     }
 }
@@ -373,7 +397,9 @@ impl Control {
         while self.written < self.pending.len() {
             match ready!(pin!(stream.write(&self.pending[self.written..])).poll(cx)) {
                 Ok(written) => self.written += written,
-                Err(noq::WriteError::Stopped(_)) => return Poll::Ready(Code::H3_CLOSED_CRITICAL_STREAM),
+                Err(noq::WriteError::Stopped(_)) => {
+                    return Poll::Ready(Code::H3_CLOSED_CRITICAL_STREAM);
+                }
                 Err(_) => return Poll::Pending,
             }
         }
@@ -406,7 +432,10 @@ struct PeerStream {
 }
 
 enum Kind {
-    Unknown { header: frame::Pair, deadline: Instant },
+    Unknown {
+        header: frame::Pair,
+        deadline: Instant,
+    },
     Control(Box<ControlReader>),
     Encoder,
     Decoder(qpack::DecoderStream),
@@ -422,7 +451,11 @@ enum Read {
 
 impl Incoming {
     fn new() -> Self {
-        Self { streams: Vec::new(), critical: [false; 3], floor: FLOOR }
+        Self {
+            streams: Vec::new(),
+            critical: [false; 3],
+            floor: FLOOR,
+        }
     }
 
     /// A budget refusal stops the new stream, never a critical one within the floor.
@@ -441,8 +474,12 @@ impl Incoming {
             header: frame::Pair::default(),
             deadline: Instant::now() + TYPE_TIMEOUT,
         };
-        self.streams
-            .push(PeerStream { stream, input: Bytes::new(), kind, _charge: charge });
+        self.streams.push(PeerStream {
+            stream,
+            input: Bytes::new(),
+            kind,
+            _charge: charge,
+        });
     }
 
     /// Reads every stream as far as it goes; `Ready` with a WebTransport stream or a violation's close code.
@@ -482,7 +519,12 @@ impl Incoming {
 }
 
 impl PeerStream {
-    fn read(&mut self, cx: &mut Context<'_>, shared: &Shared, critical: &mut [bool; 3]) -> Result<Read, Code> {
+    fn read(
+        &mut self,
+        cx: &mut Context<'_>,
+        shared: &Shared,
+        critical: &mut [bool; 3],
+    ) -> Result<Read, Code> {
         loop {
             match &mut self.kind {
                 Kind::Unknown { header, .. } => {
@@ -496,7 +538,9 @@ impl PeerStream {
                     }
                 }
                 Kind::Control(reader) => {
-                    reader.read(shared.role.peer(), &mut self.input, |event| shared.control(event))?;
+                    reader.read(shared.role.peer(), &mut self.input, |event| {
+                        shared.control(event)
+                    })?;
                 }
                 Kind::Encoder => qpack::encoder_stream(&std::mem::take(&mut self.input))?,
                 Kind::Decoder(decoder) => decoder.read(&std::mem::take(&mut self.input))?,
@@ -506,7 +550,9 @@ impl PeerStream {
                 Poll::Pending => return Ok(Read::Pending),
                 Poll::Ready(Ok(Some(chunk))) => self.input = chunk,
                 Poll::Ready(Err(noq::ReadError::ConnectionLost(_))) => return Ok(Read::Pending),
-                Poll::Ready(_) if matches!(self.kind, Kind::Unknown { .. }) => return Ok(Read::Done),
+                Poll::Ready(_) if matches!(self.kind, Kind::Unknown { .. }) => {
+                    return Ok(Read::Done);
+                }
                 Poll::Ready(_) => return Err(Code::H3_CLOSED_CRITICAL_STREAM),
             }
         }
@@ -521,7 +567,9 @@ fn classify(
     critical: &mut [bool; 3],
 ) -> Result<Option<Kind>, Code> {
     if let Some(session) = session {
-        return Ok(Some(Kind::Session(SessionId::new(session).ok_or(Code::H3_ID_ERROR)?)));
+        return Ok(Some(Kind::Session(
+            SessionId::new(session).ok_or(Code::H3_ID_ERROR)?,
+        )));
     }
     let (slot, next) = match kind {
         StreamType::CONTROL => (0, Kind::Control(Box::default())),
@@ -599,12 +647,15 @@ impl ControlReader {
             FrameType::MAX_PUSH_ID if peer == Role::Server => Err(Code::H3_FRAME_UNEXPECTED),
             // We send no MAX_PUSH_ID, so a server's CANCEL_PUSH names a push ID over our limit (RFC 9114 §7.2.3).
             FrameType::CANCEL_PUSH if peer == Role::Server => Err(Code::H3_ID_ERROR),
-            FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH if !(1..=8).contains(&length) => {
+            FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH
+                if !(1..=8).contains(&length) =>
+            {
                 Err(Code::H3_FRAME_ERROR)
             }
-            FrameType::SETTINGS | FrameType::DATA | FrameType::HEADERS | FrameType::PUSH_PROMISE => {
-                Err(Code::H3_FRAME_UNEXPECTED)
-            }
+            FrameType::SETTINGS
+            | FrameType::DATA
+            | FrameType::HEADERS
+            | FrameType::PUSH_PROMISE => Err(Code::H3_FRAME_UNEXPECTED),
             FrameType::WEBTRANSPORT_BIDI => Err(Code::H3_FRAME_ERROR),
             kind if kind.is_http2() => Err(Code::H3_FRAME_UNEXPECTED),
             _ => Ok(()),
@@ -613,7 +664,10 @@ impl ControlReader {
 
     /// Reads a one-varint frame's payload; returns a server's GOAWAY once it is complete.
     fn value(&mut self, payload: &mut Bytes, peer: Role) -> Result<Option<u64>, Code> {
-        if !matches!(self.kind, FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH) {
+        if !matches!(
+            self.kind,
+            FrameType::GOAWAY | FrameType::MAX_PUSH_ID | FrameType::CANCEL_PUSH
+        ) {
             return Ok(None);
         }
         let value = self.value.read(payload);
@@ -622,7 +676,8 @@ impl ControlReader {
             return Err(Code::H3_FRAME_ERROR);
         }
         // A client's GOAWAY names push IDs, and we never push.
-        let Some(id) = value.filter(|_| self.kind == FrameType::GOAWAY && peer == Role::Server) else {
+        let Some(id) = value.filter(|_| self.kind == FrameType::GOAWAY && peer == Role::Server)
+        else {
             return Ok(None);
         };
         if !id.is_multiple_of(4) || self.goaway.is_some_and(|previous| id > previous) {
@@ -659,9 +714,16 @@ mod control_tests {
             events(Role::Server, &[goaway(8), goaway(4)]),
             Ok(vec![settings, ControlEvent::Goaway, ControlEvent::Goaway])
         );
-        assert_eq!(events(Role::Server, &[goaway(4), goaway(8)]), Err(Code::H3_ID_ERROR));
+        assert_eq!(
+            events(Role::Server, &[goaway(4), goaway(8)]),
+            Err(Code::H3_ID_ERROR)
+        );
         assert_eq!(events(Role::Server, &[goaway(2)]), Err(Code::H3_ID_ERROR));
-        assert_eq!(events(Role::Client, &[goaway(3)]), Ok(vec![settings]), "a client's GOAWAY names push IDs");
+        assert_eq!(
+            events(Role::Client, &[goaway(3)]),
+            Ok(vec![settings]),
+            "a client's GOAWAY names push IDs"
+        );
         let mut reader = ControlReader::default();
         let missing = reader.read(Role::Server, &mut Bytes::from(goaway(4)), |_| Ok(()));
         assert_eq!(missing, Err(Code::H3_MISSING_SETTINGS));
@@ -670,17 +732,52 @@ mod control_tests {
     #[test]
     fn frames_that_never_belong_on_a_control_stream() {
         for (peer, frames, code) in [
-            (Role::Server, frame(FrameType::SETTINGS, &[]), Code::H3_FRAME_UNEXPECTED),
-            (Role::Server, frame(FrameType::DATA, &[]), Code::H3_FRAME_UNEXPECTED),
-            (Role::Server, frame(FrameType::MAX_PUSH_ID, &[0]), Code::H3_FRAME_UNEXPECTED),
-            (Role::Server, frame(FrameType::WEBTRANSPORT_BIDI, &[]), Code::H3_FRAME_ERROR),
-            (Role::Client, frame(FrameType::GOAWAY, &[]), Code::H3_FRAME_ERROR),
-            (Role::Server, frame(FrameType::CANCEL_PUSH, &[0]), Code::H3_ID_ERROR),
+            (
+                Role::Server,
+                frame(FrameType::SETTINGS, &[]),
+                Code::H3_FRAME_UNEXPECTED,
+            ),
+            (
+                Role::Server,
+                frame(FrameType::DATA, &[]),
+                Code::H3_FRAME_UNEXPECTED,
+            ),
+            (
+                Role::Server,
+                frame(FrameType::MAX_PUSH_ID, &[0]),
+                Code::H3_FRAME_UNEXPECTED,
+            ),
+            (
+                Role::Server,
+                frame(FrameType::WEBTRANSPORT_BIDI, &[]),
+                Code::H3_FRAME_ERROR,
+            ),
+            (
+                Role::Client,
+                frame(FrameType::GOAWAY, &[]),
+                Code::H3_FRAME_ERROR,
+            ),
+            (
+                Role::Server,
+                frame(FrameType::CANCEL_PUSH, &[0]),
+                Code::H3_ID_ERROR,
+            ),
         ] {
-            assert_eq!(events(peer, std::slice::from_ref(&frames)), Err(code), "{frames:x?}");
+            assert_eq!(
+                events(peer, std::slice::from_ref(&frames)),
+                Err(code),
+                "{frames:x?}"
+            );
         }
         assert!(
-            events(Role::Client, &[frame(FrameType::MAX_PUSH_ID, &[0]), frame(FrameType(0x21), b"grease")]).is_ok()
+            events(
+                Role::Client,
+                &[
+                    frame(FrameType::MAX_PUSH_ID, &[0]),
+                    frame(FrameType(0x21), b"grease")
+                ]
+            )
+            .is_ok()
         );
     }
 }

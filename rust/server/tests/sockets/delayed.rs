@@ -26,7 +26,10 @@ async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
     upload.send_data(Bytes::from(vec![7; size])).await.unwrap();
     upload.finish().await.unwrap();
     assert_eq!(answer.response().await.unwrap().status(), 200);
-    assert_eq!(read(&mut answer).await.unwrap(), format!(r#"{{"bytes":{size}}}"#).as_bytes());
+    assert_eq!(
+        read(&mut answer).await.unwrap(),
+        format!(r#"{{"bytes":{size}}}"#).as_bytes()
+    );
     let updates = connection.quic.stats().frame_rx.max_data - granted;
     let floor_bound = ((size - 64 * KIB) / (64 * KIB)) as u64;
     assert!(
@@ -38,10 +41,17 @@ async fn an_http3_upload_is_not_bound_by_the_floor_window_on_a_delayed_link() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_link() {
     let h3 = H3::start(&[]).await;
-    let bottleneck = Bottleneck { bits_per_second: 2_000_000, queue: Duration::from_millis(50) };
-    let link = Link::udp(h3.server.quic.unwrap(), Duration::from_millis(20), Some(bottleneck))
-        .await
-        .unwrap();
+    let bottleneck = Bottleneck {
+        bits_per_second: 2_000_000,
+        queue: Duration::from_millis(50),
+    };
+    let link = Link::udp(
+        h3.server.quic.unwrap(),
+        Duration::from_millis(20),
+        Some(bottleneck),
+    )
+    .await
+    .unwrap();
     // A peer that never grows its connection credit past the first window on a path this slow.
     let mut credit = transport(None);
     credit.receive_window(INITIAL_RECEIVE_WINDOW.into());
@@ -64,7 +74,10 @@ async fn a_control_reply_beside_downloads_waits_for_no_credit_grant_on_a_slow_li
         let started = Instant::now();
         connection.json("GET", "/probe").await;
         let took = started.elapsed();
-        assert!(took < Duration::from_millis(500), "a probe beside the downloads took {took:?}");
+        assert!(
+            took < Duration::from_millis(500),
+            "a probe beside the downloads took {took:?}"
+        );
     }
 }
 
@@ -88,7 +101,9 @@ async fn quic_downloads_outgrow_a_fixed_window() {
             );
         }
     };
-    tokio::time::timeout(Duration::from_secs(60), gate).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(60), gate)
+        .await
+        .unwrap();
 }
 
 /// A download's body or WebTransport stream.
@@ -110,23 +125,36 @@ impl Lane {
 /// delaying each direction by `one_way`.
 async fn download_rate(webtransport: bool, one_way: Duration) -> f64 {
     let h3 = H3::start(&[]).await;
-    let link = Link::udp(h3.server.quic.unwrap(), one_way, None).await.unwrap();
-    let target = if one_way.is_zero() { h3.server.quic.unwrap() } else { link.address };
+    let link = Link::udp(h3.server.quic.unwrap(), one_way, None)
+        .await
+        .unwrap();
+    let target = if one_way.is_zero() {
+        h3.server.quic.unwrap()
+    } else {
+        link.address
+    };
     let mut wide = transport(Some(64 << 20));
     wide.receive_window((64_u32 << 20).into());
     let connection = h3.connect_via(target, wide).await;
     let (mut lane, _session) = if webtransport {
         let session = connection.session("/wt/download?bytes=4294967296").await;
-        (Lane::Stream(session.accept_uni().await.unwrap()), Some(session))
+        (
+            Lane::Stream(session.accept_uni().await.unwrap()),
+            Some(session),
+        )
     } else {
-        let (answer, body) = connection.send("GET", "/download?bytes=4294967296", b"").await;
+        let (answer, body) = connection
+            .send("GET", "/download?bytes=4294967296", b"")
+            .await;
         assert_eq!(answer.status(), 200);
         (Lane::Http(Box::new(body)), None)
     };
     let started = Instant::now();
     let (mut marks, mut total, mut next) = (Vec::new(), 0, Duration::from_millis(500));
     while started.elapsed() < Duration::from_secs(4) {
-        let Some(chunk) = lane.chunk().await else { break };
+        let Some(chunk) = lane.chunk().await else {
+            break;
+        };
         total += chunk.len();
         if started.elapsed() >= next {
             marks.push((started.elapsed(), total));

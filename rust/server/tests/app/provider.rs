@@ -75,16 +75,29 @@ impl Provider {
     /// Serves at `https://localhost:<port>` with a fresh identity until the test ends.
     pub async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let issuer = format!("https://localhost:{}", listener.local_addr().unwrap().port());
+        let issuer = format!(
+            "https://localhost:{}",
+            listener.local_addr().unwrap().port()
+        );
         let (scratch, identity) = (Scratch::new().unwrap(), Identity::generate().unwrap());
         let ca = scratch.file("ca.pem", &identity.ca).unwrap();
-        let roots = [ca, scratch.dir("none").unwrap()].map(|path| path.to_str().unwrap().to_owned());
-        Self(Self::serve(listener, issuer, &identity), Roots { paths: roots, _scratch: scratch })
+        let roots =
+            [ca, scratch.dir("none").unwrap()].map(|path| path.to_str().unwrap().to_owned());
+        Self(
+            Self::serve(listener, issuer, &identity),
+            Roots {
+                paths: roots,
+                _scratch: scratch,
+            },
+        )
     }
 
     /// The settings that make a server trust this provider alone.
     pub fn trust(&self) -> [(&'static str, &str); 2] {
-        [("SSL_CERT_FILE", &self.1.paths[0]), ("SSL_CERT_DIR", &self.1.paths[1])]
+        [
+            ("SSL_CERT_FILE", &self.1.paths[0]),
+            ("SSL_CERT_DIR", &self.1.paths[1]),
+        ]
     }
 
     /// Serves on `listener` as `issuer` with `identity`.
@@ -105,7 +118,9 @@ impl Provider {
                 let (socket, _) = listener.accept().await.unwrap();
                 let (acceptor, shared) = (acceptor.clone(), serving.clone());
                 tokio::spawn(async move {
-                    let Ok(socket) = acceptor.accept(socket).await else { return };
+                    let Ok(socket) = acceptor.accept(socket).await else {
+                        return;
+                    };
                     let service = service_fn(move |request| shared.clone().answer(request));
                     let _ = http1::Builder::new()
                         .serve_connection(TokioIo::new(socket), service)
@@ -147,12 +162,24 @@ impl Provider {
         assert_eq!(endpoint, format!("{}/authorize", self.0.issuer));
         let fields = query::form(query).unwrap();
         let names: Vec<_> = fields.iter().map(|(name, _)| name.as_str()).collect();
-        let sorted = ["client_id", "code_challenge", "code_challenge_method", "nonce", "redirect_uri"];
-        assert_eq!(names, [&sorted[..], &["response_type", "scope", "state"]].concat());
+        let sorted = [
+            "client_id",
+            "code_challenge",
+            "code_challenge_method",
+            "nonce",
+            "redirect_uri",
+        ];
+        assert_eq!(
+            names,
+            [&sorted[..], &["response_type", "scope", "state"]].concat()
+        );
         let fields: HashMap<_, _> = fields.into_iter().collect();
         assert_eq!(fields["client_id"], CLIENT_ID);
         assert_eq!(fields["code_challenge_method"], "S256");
-        assert_eq!(fields["redirect_uri"], "https://meter.example/auth/oidc/callback");
+        assert_eq!(
+            fields["redirect_uri"],
+            "https://meter.example/auth/oidc/callback"
+        );
         assert_eq!(
             (fields["response_type"].as_str(), fields["scope"].as_str()),
             ("code", "openid profile groups")
@@ -165,7 +192,10 @@ impl Provider {
 }
 
 impl Shared {
-    async fn answer(self: Arc<Self>, request: Request<Incoming>) -> Result<Response<Full<Bytes>>, http::Error> {
+    async fn answer(
+        self: Arc<Self>,
+        request: Request<Incoming>,
+    ) -> Result<Response<Full<Bytes>>, http::Error> {
         let (head, body) = request.into_parts();
         let body = body.collect().await.unwrap().to_bytes();
         let agent = head.headers[header::USER_AGENT].to_str().unwrap();
@@ -212,12 +242,14 @@ impl Shared {
             "/userinfo" => {
                 assert_eq!(head.headers[header::AUTHORIZATION], "Bearer access");
                 let twist = self.twist.lock().unwrap();
-                let info = json!({"sub": "operator", "name": "Example Operator", "groups": ["operators"]});
+                let info =
+                    json!({"sub": "operator", "name": "Example Operator", "groups": ["operators"]});
                 if twist.signed_userinfo {
                     let claims = merge(json!({"iss": issuer, "aud": CLIENT_ID}), &info);
-                    let token = self
-                        .keys
-                        .sign(&json!({"alg": "ES256", "kid": "p256"}), &merge(claims, &twist.userinfo));
+                    let token = self.keys.sign(
+                        &json!({"alg": "ES256", "kid": "p256"}),
+                        &merge(claims, &twist.userinfo),
+                    );
                     return answered(200, "application/jwt", token);
                 }
                 (200, merge(info, &twist.userinfo))
@@ -233,18 +265,31 @@ impl Shared {
         assert_eq!(headers[header::AUTHORIZATION], basic);
         let form = query::form(std::str::from_utf8(body).unwrap()).unwrap();
         let names: Vec<_> = form.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["code", "code_verifier", "grant_type", "redirect_uri"]);
+        assert_eq!(
+            names,
+            ["code", "code_verifier", "grant_type", "redirect_uri"]
+        );
         let form: HashMap<_, _> = form.into_iter().collect();
         assert_eq!(form["grant_type"], "authorization_code");
-        assert_eq!(form["redirect_uri"], "https://meter.example/auth/oidc/callback");
+        assert_eq!(
+            form["redirect_uri"],
+            "https://meter.example/auth/oidc/callback"
+        );
         let bound = self.codes.lock().unwrap().remove(&form["code"]);
-        let verified = bound.filter(|(code_challenge, _)| *code_challenge == challenge(&form["code_verifier"]));
+        let verified = bound
+            .filter(|(code_challenge, _)| *code_challenge == challenge(&form["code_verifier"]));
         let Some((_, nonce)) = verified else {
             return (400, json!({"error": "invalid_grant"}));
         };
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let twist = self.twist.lock().unwrap();
-        let header = merge(json!({"alg": "ES256", "kid": "p256", "typ": "JWT"}), &twist.header);
+        let header = merge(
+            json!({"alg": "ES256", "kid": "p256", "typ": "JWT"}),
+            &twist.header,
+        );
         let alg = header["alg"].as_str().unwrap_or_default();
         let hash = match alg {
             "EdDSA" => &ring::digest::SHA512,
@@ -255,7 +300,10 @@ impl Shared {
         let claims = json!({"iss": self.issuer, "aud": CLIENT_ID, "sub": "operator", "iat": now, "exp": now + 300,
             "nonce": nonce, "at_hash": at_hash});
         let id_token = self.keys.sign(&header, &merge(claims, &twist.claims));
-        (200, json!({"access_token": "access", "token_type": "Bearer", "id_token": id_token}))
+        (
+            200,
+            json!({"access_token": "access", "token_type": "Bearer", "id_token": id_token}),
+        )
     }
 }
 
@@ -270,7 +318,10 @@ fn merge(mut value: Value, twist: &Value) -> Value {
     for (name, member) in twist.as_object().into_iter().flatten() {
         match member {
             Value::Null => value.as_object_mut().unwrap().remove(name),
-            member => value.as_object_mut().unwrap().insert(name.clone(), member.clone()),
+            member => value
+                .as_object_mut()
+                .unwrap()
+                .insert(name.clone(), member.clone()),
         };
     }
     value
@@ -299,7 +350,9 @@ impl Signers {
             let pkcs8 = EcdsaKeyPair::generate_pkcs8(curve, &random).unwrap();
             EcdsaKeyPair::from_pkcs8(curve, pkcs8.as_ref(), &random).unwrap()
         };
-        let ed = Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&random).unwrap().as_ref()).unwrap();
+        let ed =
+            Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&random).unwrap().as_ref())
+                .unwrap();
         Self {
             rsa: RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap(),
             p256: ec(&signature::ECDSA_P256_SHA256_FIXED_SIGNING),
@@ -329,7 +382,9 @@ impl Signers {
             .unwrap()
             .iter_mut()
             .flat_map(|key| key.as_object_mut().unwrap());
-        for (_, value) in members.filter(|(name, _)| padded && ["n", "e", "x", "y"].contains(&name.as_str())) {
+        for (_, value) in
+            members.filter(|(name, _)| padded && ["n", "e", "x", "y"].contains(&name.as_str()))
+        {
             let text = value.as_str().unwrap();
             *value = json!(format!("{text}{}", "=".repeat((4 - text.len() % 4) % 4)));
         }
@@ -338,7 +393,11 @@ impl Signers {
 
     /// A compact JWS of `claims` signed as `header` names; `none` and unknown algorithms sign nothing.
     fn sign(&self, header: &Value, claims: &Value) -> String {
-        let message = format!("{}.{}", B64.encode(header.to_string()), B64.encode(claims.to_string()));
+        let message = format!(
+            "{}.{}",
+            B64.encode(header.to_string()),
+            B64.encode(claims.to_string())
+        );
         let rsa = |padding: &'static dyn signature::RsaEncoding| {
             let mut signature = vec![0; self.rsa.public().modulus_len()];
             self.rsa
@@ -346,8 +405,16 @@ impl Signers {
                 .unwrap();
             signature
         };
-        let ec = |key: &EcdsaKeyPair| key.sign(&self.random, message.as_bytes()).unwrap().as_ref().to_vec();
-        let signature = match (header["alg"].as_str().unwrap_or_default(), header["kid"].as_str()) {
+        let ec = |key: &EcdsaKeyPair| {
+            key.sign(&self.random, message.as_bytes())
+                .unwrap()
+                .as_ref()
+                .to_vec()
+        };
+        let signature = match (
+            header["alg"].as_str().unwrap_or_default(),
+            header["kid"].as_str(),
+        ) {
             (_, Some("stranger")) => ec(&self.stranger),
             ("RS256", _) => rsa(&signature::RSA_PKCS1_SHA256),
             ("PS256", _) => rsa(&signature::RSA_PSS_SHA256),

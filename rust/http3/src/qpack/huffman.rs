@@ -64,7 +64,13 @@ const fn canonical() -> Code {
     }
     // The code is complete, with EOS as the all-ones 30-bit code, so every bit string decodes or pads.
     assert!(code == 1 << 31 && codes[EOS as usize] == (1 << 30) - 1);
-    Code { codes, first, count, start, symbols }
+    Code {
+        codes,
+        first,
+        count,
+        start,
+        symbols,
+    }
 }
 
 pub(crate) fn encoded_len(input: &[u8]) -> usize {
@@ -128,8 +134,14 @@ mod tests {
             ("custom-value", "25a849e95bb8e8b4bf"),
             ("302", "6402"),
             ("private", "aec3771a4b"),
-            ("Mon, 21 Oct 2013 20:13:21 GMT", "d07abe941054d444a8200595040b8166e082a62d1bff"),
-            ("https://www.example.com", "9d29ad171863c78f0b97c8e9ae82ae43d3"),
+            (
+                "Mon, 21 Oct 2013 20:13:21 GMT",
+                "d07abe941054d444a8200595040b8166e082a62d1bff",
+            ),
+            (
+                "https://www.example.com",
+                "9d29ad171863c78f0b97c8e9ae82ae43d3",
+            ),
             ("gzip", "9bd9ab"),
             (
                 "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1",
@@ -149,8 +161,17 @@ mod tests {
     #[test]
     fn padding_and_eos_are_checked() {
         let mut output = Vec::new();
-        for invalid in [&[0xff, 0xff, 0xff, 0xff][..], &[0x00], &[0xf8, 0x01], &[0xff, 0xfe]] {
-            assert_eq!(decode(invalid, &mut output), Err(Invalid::Qpack), "{invalid:02x?}");
+        for invalid in [
+            &[0xff, 0xff, 0xff, 0xff][..],
+            &[0x00],
+            &[0xf8, 0x01],
+            &[0xff, 0xfe],
+        ] {
+            assert_eq!(
+                decode(invalid, &mut output),
+                Err(Invalid::Qpack),
+                "{invalid:02x?}"
+            );
         }
         // "0" is the five-bit code 00000; three one bits of padding complete the byte.
         output.clear();

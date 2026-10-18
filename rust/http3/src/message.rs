@@ -42,7 +42,11 @@ pub(crate) struct Message {
 impl Message {
     /// A message `peer` sends: a server sends responses.
     pub(crate) fn new(limit: u64, peer: Role) -> Self {
-        Self { limit, response: peer == Role::Server, ..Self::default() }
+        Self {
+            limit,
+            response: peer == Role::Server,
+            ..Self::default()
+        }
     }
 
     /// Takes a response head: `None` for an interim one, restarting the message, else the final one, bounded by status.
@@ -61,7 +65,10 @@ impl Message {
         self.owed = if *method == http::Method::CONNECT && status.is_success() {
             None
         } else if *method == http::Method::HEAD
-            || matches!(status, http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED)
+            || matches!(
+                status,
+                http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED
+            )
         {
             Some(0)
         } else {
@@ -89,11 +96,19 @@ impl Message {
         let opening = !std::mem::replace(&mut self.started, true) && !self.response;
         self.kind = kind;
         match (kind, self.phase) {
-            (FrameType::HEADERS, Phase::Head | Phase::Body) if length > self.limit => Err(Code::H3_EXCESSIVE_LOAD),
-            (FrameType::HEADERS, Phase::Head | Phase::Body) if length == 0 => Ok(Some(self.fields(Bytes::new()))),
-            (FrameType::HEADERS, Phase::Head | Phase::Body) | (FrameType::DATA, Phase::Body) => Ok(None),
+            (FrameType::HEADERS, Phase::Head | Phase::Body) if length > self.limit => {
+                Err(Code::H3_EXCESSIVE_LOAD)
+            }
+            (FrameType::HEADERS, Phase::Head | Phase::Body) if length == 0 => {
+                Ok(Some(self.fields(Bytes::new())))
+            }
+            (FrameType::HEADERS, Phase::Head | Phase::Body) | (FrameType::DATA, Phase::Body) => {
+                Ok(None)
+            }
             (FrameType::WEBTRANSPORT_BIDI, _) if !opening => Err(Code::H3_FRAME_ERROR),
-            (FrameType::WEBTRANSPORT_BIDI, _) if SessionId::new(length).is_none() => Err(Code::H3_ID_ERROR),
+            (FrameType::WEBTRANSPORT_BIDI, _) if SessionId::new(length).is_none() => {
+                Err(Code::H3_ID_ERROR)
+            }
             // No route takes a peer's WebTransport stream: it is refused like a cancelled lane.
             (FrameType::WEBTRANSPORT_BIDI, _) => Err(Code::WT_CANCELLED),
             // We send no MAX_PUSH_ID, so every push ID is over our limit (RFC 9114 §7.2.5).
@@ -117,7 +132,9 @@ impl Message {
         match self.kind {
             FrameType::DATA => {
                 if let Some(owed) = &mut self.owed {
-                    *owed = owed.checked_sub(payload.len() as u64).ok_or(Code::H3_MESSAGE_ERROR)?;
+                    *owed = owed
+                        .checked_sub(payload.len() as u64)
+                        .ok_or(Code::H3_MESSAGE_ERROR)?;
                 }
                 Ok(Some(Event::Data(payload)))
             }
@@ -202,7 +219,11 @@ mod tests {
     }
 
     fn request(bytes: &[u8]) -> Result<Vec<Event>, Code> {
-        let (events, end) = read(&mut Message::new(4096, Role::Client), bytes, bytes.len().max(1));
+        let (events, end) = read(
+            &mut Message::new(4096, Role::Client),
+            bytes,
+            bytes.len().max(1),
+        );
         end.map(|()| events)
     }
 
@@ -216,7 +237,11 @@ mod tests {
             head(&[("x", "1")]),
         ];
         for chunk in [1, 2, 7, 1024] {
-            let (events, end) = read(&mut Message::new(4096, Role::Client), &bytes.concat(), chunk);
+            let (events, end) = read(
+                &mut Message::new(4096, Role::Client),
+                &bytes.concat(),
+                chunk,
+            );
             assert_eq!(end, Ok(()));
             let data: Vec<u8> = events
                 .iter()
@@ -225,7 +250,10 @@ mod tests {
                     _ => Vec::new(),
                 })
                 .collect();
-            assert_eq!(events.first(), Some(&Event::Head(section[2..].to_vec().into())));
+            assert_eq!(
+                events.first(),
+                Some(&Event::Head(section[2..].to_vec().into()))
+            );
             assert_eq!(data, b"body");
             assert_matches!(events.last(), Some(Event::Trailers(_)), "chunk {chunk}");
         }
@@ -236,28 +264,59 @@ mod tests {
         let get = head(&[(":method", "GET")]);
         for (bytes, code) in [
             (frame(FrameType::DATA, b"body"), Code::H3_FRAME_UNEXPECTED),
-            ([get.clone(), head(&[]), head(&[])].concat(), Code::H3_FRAME_UNEXPECTED),
-            ([get.clone(), frame(FrameType::PUSH_PROMISE, &[0])].concat(), Code::H3_FRAME_UNEXPECTED),
-            (frame(FrameType::HEADERS, &[0; 4097]), Code::H3_EXCESSIVE_LOAD),
-            ([get.clone(), frame(FrameType::WEBTRANSPORT_BIDI, &[])].concat(), Code::H3_FRAME_ERROR),
-            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 2]), Code::H3_ID_ERROR),
-            (frame(FrameType::WEBTRANSPORT_BIDI, &[0; 4]), Code::WT_CANCELLED),
+            (
+                [get.clone(), head(&[]), head(&[])].concat(),
+                Code::H3_FRAME_UNEXPECTED,
+            ),
+            (
+                [get.clone(), frame(FrameType::PUSH_PROMISE, &[0])].concat(),
+                Code::H3_FRAME_UNEXPECTED,
+            ),
+            (
+                frame(FrameType::HEADERS, &[0; 4097]),
+                Code::H3_EXCESSIVE_LOAD,
+            ),
+            (
+                [get.clone(), frame(FrameType::WEBTRANSPORT_BIDI, &[])].concat(),
+                Code::H3_FRAME_ERROR,
+            ),
+            (
+                frame(FrameType::WEBTRANSPORT_BIDI, &[0; 2]),
+                Code::H3_ID_ERROR,
+            ),
+            (
+                frame(FrameType::WEBTRANSPORT_BIDI, &[0; 4]),
+                Code::WT_CANCELLED,
+            ),
             (get[..get.len() - 1].to_vec(), Code::H3_FRAME_ERROR),
-            (frame(FrameType(0x21), b"grease"), Code::H3_REQUEST_INCOMPLETE),
+            (
+                frame(FrameType(0x21), b"grease"),
+                Code::H3_REQUEST_INCOMPLETE,
+            ),
         ] {
             assert_eq!(request(&bytes), Err(code), "{bytes:x?}");
         }
-        assert_eq!(request(&frame(FrameType::HEADERS, &[])), Ok(vec![Event::Head(Bytes::new())]));
+        assert_eq!(
+            request(&frame(FrameType::HEADERS, &[])),
+            Ok(vec![Event::Head(Bytes::new())])
+        );
     }
 
     #[test]
     fn responses_restart_after_interim_heads_and_bound_their_content() {
         let mut message = Message::new(4096, Role::Server);
         let push = frame(FrameType::PUSH_PROMISE, &[0, 0, 0]);
-        assert_eq!(read(&mut message, &push, push.len()).1, Err(Code::H3_ID_ERROR));
+        assert_eq!(
+            read(&mut message, &push, push.len()).1,
+            Err(Code::H3_ID_ERROR)
+        );
         let section = |status| section(&[(":status", status), ("content-length", "2")]);
         let mut message = Message::new(4096, Role::Server);
-        assert_matches!(message.response(&section("103"), &http::Method::GET), Ok(None), "interim");
+        assert_matches!(
+            message.response(&section("103"), &http::Method::GET),
+            Ok(None),
+            "interim"
+        );
         for (method, status, body, end) in [
             (http::Method::GET, "200", &b"12"[..], Ok(())),
             (http::Method::GET, "200", b"1", Err(Code::H3_MESSAGE_ERROR)),
@@ -266,11 +325,23 @@ mod tests {
         ] {
             let mut message = Message::new(4096, Role::Server);
             message
-                .next(&mut Bytes::from(frame(FrameType::HEADERS, &section(status))))
+                .next(&mut Bytes::from(frame(
+                    FrameType::HEADERS,
+                    &section(status),
+                )))
                 .unwrap();
-            assert!(message.response(&section(status), &method).unwrap().is_some());
+            assert!(
+                message
+                    .response(&section(status), &method)
+                    .unwrap()
+                    .is_some()
+            );
             let data = frame(FrameType::DATA, body);
-            assert_eq!(read(&mut message, &data, data.len()).1, end, "{method} {status}");
+            assert_eq!(
+                read(&mut message, &data, data.len()).1,
+                end,
+                "{method} {status}"
+            );
         }
     }
 }

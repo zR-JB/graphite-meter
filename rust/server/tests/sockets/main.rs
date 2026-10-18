@@ -42,7 +42,10 @@ async fn advance_clock(duration: Duration) {
 
 fn config(env: &[(&str, &str)]) -> Config {
     let lookup = |name: &str| {
-        let given = env.iter().find(|(key, _)| *key == name).map(|(_, value)| *value);
+        let given = env
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| *value);
         let local = (name == "GM_H1_ADDR").then_some("127.0.0.1:0");
         given.or(local).map(OsString::from)
     };
@@ -85,9 +88,18 @@ async fn bind(env: &[(&str, &str)]) -> Server {
 
 async fn start(env: &[(&str, &str)]) -> Running {
     let server = bind(env).await;
-    let (address, tls) = (server.local_addr(Endpoint::H1).unwrap(), server.local_addr(Endpoint::H1Tls));
-    let (h2, quic) = (server.local_addr(Endpoint::H2), server.local_addr(Endpoint::Quic));
-    let (companion, budget) = (server.local_addr(Endpoint::H3Companion), server.app().budget().clone());
+    let (address, tls) = (
+        server.local_addr(Endpoint::H1).unwrap(),
+        server.local_addr(Endpoint::H1Tls),
+    );
+    let (h2, quic) = (
+        server.local_addr(Endpoint::H2),
+        server.local_addr(Endpoint::Quic),
+    );
+    let (companion, budget) = (
+        server.local_addr(Endpoint::H3Companion),
+        server.app().budget().clone(),
+    );
     let (endpoints, app) = (server.quic_endpoints(), server.app());
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve(async {
@@ -122,14 +134,17 @@ impl Running {
     async fn get(&self, path: &str) -> Answer {
         let mut client = self.connect().await;
         client
-            .send(&format!("GET {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n"))
+            .send(&format!(
+                "GET {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n"
+            ))
             .await;
         client.answer().await.unwrap()
     }
 
     /// Reads the handlers in use, as `/probe` reports them.
     async fn active(&self) -> u64 {
-        let probe: serde_json::Value = serde_json::from_slice(&self.get("/probe").await.body).unwrap();
+        let probe: serde_json::Value =
+            serde_json::from_slice(&self.get("/probe").await.body).unwrap();
         probe["load"]["active"].as_u64().unwrap()
     }
 
@@ -140,7 +155,9 @@ impl Running {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), reached).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), reached)
+            .await
+            .unwrap();
     }
 
     async fn upload_id(&self) -> String {
@@ -177,19 +194,28 @@ struct Client<S> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     fn new(stream: S) -> Self {
-        Self { stream: BufReader::new(stream), bodiless: false }
+        Self {
+            stream: BufReader::new(stream),
+            bodiless: false,
+        }
     }
 
     async fn send(&mut self, bytes: &str) {
         self.bodiless = bytes.starts_with("HEAD ");
-        self.stream.get_mut().write_all(bytes.as_bytes()).await.unwrap();
+        self.stream
+            .get_mut()
+            .write_all(bytes.as_bytes())
+            .await
+            .unwrap();
     }
 
     /// Sends `line` (method and target) with `body` on this connection.
     async fn request(&mut self, line: &str, body: &str) -> Answer {
         let length = body.len();
-        self.send(&format!("{line} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{body}"))
-            .await;
+        self.send(&format!(
+            "{line} HTTP/1.1\r\nHost: test\r\nContent-Length: {length}\r\n\r\n{body}"
+        ))
+        .await;
         self.answer().await.unwrap()
     }
 
@@ -209,7 +235,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 None => break,
             }
         }
-        Some(Answer { status, headers, body: Vec::new() })
+        Some(Answer {
+            status,
+            headers,
+            body: Vec::new(),
+        })
     }
 
     /// Reads the next whole answer, or `None` when the connection ends first.

@@ -63,10 +63,19 @@ fn empty(builder: Builder) -> Request<http_body_util::Full<Bytes>> {
 }
 
 fn connection(endpoint: Endpoint, peer: &str) -> Connection {
-    Connection { endpoint, peer: peer.parse().unwrap(), work: Work::default() }
+    Connection {
+        endpoint,
+        peer: peer.parse().unwrap(),
+        work: Work::default(),
+    }
 }
 
-async fn outcome<B: http_body::Body>(app: &App, endpoint: Endpoint, peer: &str, request: Request<B>) -> Outcome {
+async fn outcome<B: http_body::Body>(
+    app: &App,
+    endpoint: Endpoint,
+    peer: &str,
+    request: Request<B>,
+) -> Outcome {
     app.handle(request, &connection(endpoint, peer), Exchange::start())
         .await
 }
@@ -78,12 +87,18 @@ async fn send_from<B: http_body::Body>(
     request: Request<B>,
 ) -> Response<Body> {
     match outcome(app, endpoint, peer, request).await {
-        Outcome::Response(response) | Outcome::WebSocket(response, _) | Outcome::WebTransport(response, ..) => response,
+        Outcome::Response(response)
+        | Outcome::WebSocket(response, _)
+        | Outcome::WebTransport(response, ..) => response,
         Outcome::Abort => panic!("the exchange was aborted"),
     }
 }
 
-async fn send<B: http_body::Body>(app: &App, endpoint: Endpoint, request: Request<B>) -> Response<Body> {
+async fn send<B: http_body::Body>(
+    app: &App,
+    endpoint: Endpoint,
+    request: Request<B>,
+) -> Response<Body> {
     send_from(app, endpoint, "192.0.2.1", request).await
 }
 
@@ -93,7 +108,10 @@ async fn text(response: Response<Body>) -> String {
 }
 
 fn header<'a>(response: &'a Response<Body>, name: &str) -> Option<&'a str> {
-    response.headers().get(name).map(|value| value.to_str().unwrap())
+    response
+        .headers()
+        .get(name)
+        .map(|value| value.to_str().unwrap())
 }
 
 async fn json(response: Response<Body>) -> Value {

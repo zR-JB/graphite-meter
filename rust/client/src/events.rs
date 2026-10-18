@@ -126,13 +126,19 @@ pub struct Point {
 
 impl Series {
     pub fn new(span: Duration) -> Self {
-        Self { points: Vec::new(), step: STEP, span }
+        Self {
+            points: Vec::new(),
+            step: STEP,
+            span,
+        }
     }
 
     /// Adds `value` at `at`; none breaks the trace.
     pub fn push(&mut self, at: Duration, value: Option<f64>) {
         if let (Some(last), Some(value)) = (self.points.last_mut(), value)
-            && let Some(mean) = last.value.filter(|_| at.saturating_sub(last.at) < self.step)
+            && let Some(mean) = last
+                .value
+                .filter(|_| at.saturating_sub(last.at) < self.step)
         {
             last.count += 1;
             last.value = Some(mean + (value - mean) / f64::from(last.count));
@@ -143,7 +149,13 @@ impl Series {
             self.coarsen();
         }
         let peak = value.map_or(0.0, |value| value.max(0.0));
-        self.points.push(Point { at, value, low: peak, peak, count: 1 });
+        self.points.push(Point {
+            at,
+            value,
+            low: peak,
+            peak,
+            count: 1,
+        });
     }
 
     /// Merges each pair of points in place; a gap absorbs its pair.
@@ -258,7 +270,8 @@ impl View {
     /// Whether `server` is still in the run: in its latest stage without leaving, or prepared before any.
     pub fn remains(&self, server: &ServerId) -> bool {
         let results = self.run.iter().flat_map(|run| run.results.iter().rev());
-        let mut own = results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
+        let mut own =
+            results.filter_map(|result| result.servers.iter().find(|own| own.server == *server));
         let prepared = |prepared: &ServerPath| prepared.id == *server && prepared.path.is_ok();
         match own.next() {
             Some(own) => !own.left,
@@ -271,26 +284,36 @@ impl View {
             Event::Checking(Kind::Run) => (self.starting, self.refused) = (true, None),
             Event::Checking(Kind::Check) => self.check = Check::Checking,
             Event::Prepared { servers, catalog } => {
-                (self.servers, self.catalog, self.check) = (servers.clone(), catalog.clone(), Check::Ready);
+                (self.servers, self.catalog, self.check) =
+                    (servers.clone(), catalog.clone(), Check::Ready);
             }
-            Event::CheckFailed(failure) if self.check == Check::Checking => self.check = Check::Failed(failure.clone()),
+            Event::CheckFailed(failure) if self.check == Check::Checking => {
+                self.check = Check::Failed(failure.clone())
+            }
             Event::SignIn(prompt) => self.sign_in = Some(prompt.clone()),
             Event::SignInEnded(end) => {
                 self.sign_in = None;
-                if matches!(end, SignInEnd::Canceled | SignInEnd::Expired) && self.check == Check::Checking {
+                if matches!(end, SignInEnd::Canceled | SignInEnd::Expired)
+                    && self.check == Check::Checking
+                {
                     self.check = Check::SignIn;
                 }
             }
             Event::RunStarted { plan, focus, at } => {
                 (self.run, self.starting) = (Some(Run::new(plan, focus, *at)), false);
             }
-            Event::RunFinished { outcome, error, elapsed } => {
+            Event::RunFinished {
+                outcome,
+                error,
+                elapsed,
+            } => {
                 let earlier = std::mem::take(&mut self.starting) && self.run.is_some();
                 let run = match earlier {
                     true => self.refused.insert(Run::default()),
                     false => self.run.get_or_insert_with(Run::default),
                 };
-                (run.outcome, run.error, run.elapsed, run.stage) = (Some(*outcome), error.clone(), *elapsed, None);
+                (run.outcome, run.error, run.elapsed, run.stage) =
+                    (Some(*outcome), error.clone(), *elapsed, None);
             }
             event => {
                 if let Some(run) = &mut self.run {
@@ -322,7 +345,9 @@ impl Run {
             }
             Event::Measuring(stage) => self.measuring(*stage),
             Event::Sample { at, rates } => {
-                let Some((stage, offset)) = self.window() else { return };
+                let Some((stage, offset)) = self.window() else {
+                    return;
+                };
                 let ms = at
                     .saturating_sub(std::mem::replace(&mut self.sampled, *at))
                     .as_secs_f64()
@@ -341,14 +366,24 @@ impl Run {
                         self.throughput[direction].push(offset + *at, Some(presented));
                     }
                 }
-                let presented = Direction::BOTH.map(|direction| self.live[direction].presented().unwrap_or_default());
+                let presented = Direction::BOTH
+                    .map(|direction| self.live[direction].presented().unwrap_or_default());
                 self.peak = self.peak.max(presented.iter().sum());
             }
-            Event::Probes { server, probes, latency } => {
-                let Some((stage, offset)) = self.window() else { return };
+            Event::Probes {
+                server,
+                probes,
+                latency,
+            } => {
+                let Some((stage, offset)) = self.window() else {
+                    return;
+                };
                 let series = self.series(server);
                 for probe in probes {
-                    series.push(offset + probe.at, probe.rtt.map(|rtt| rtt.as_secs_f64() * 1e3));
+                    series.push(
+                        offset + probe.at,
+                        probe.rtt.map(|rtt| rtt.as_secs_f64() * 1e3),
+                    );
                 }
                 let own = self
                     .latency
@@ -379,12 +414,15 @@ impl Run {
 
     /// Opens the stage's window at its planned offset and breaks every trace there.
     fn measuring(&mut self, stage: Stage) {
-        let before = self.plan.iter().take_while(|(planned, _)| *planned != stage);
+        let before = self
+            .plan
+            .iter()
+            .take_while(|(planned, _)| *planned != stage);
         let offset = before.map(|(_, duration)| *duration).sum();
-        self.stage = self
-            .stage
-            .take()
-            .map(|running| Running::Measuring { plan: running.into_plan(), offset });
+        self.stage = self.stage.take().map(|running| Running::Measuring {
+            plan: running.into_plan(),
+            offset,
+        });
         self.sampled = Duration::ZERO;
         for direction in Direction::BOTH {
             self.throughput[direction].push(offset, None);
@@ -404,7 +442,8 @@ impl Run {
     fn series(&mut self, server: &ServerId) -> &mut Series {
         let at = self.rtt.iter().position(|(probed, _)| probed == server);
         let at = at.unwrap_or_else(|| {
-            self.rtt.push((server.clone(), Series::new(self.throughput.down.span)));
+            self.rtt
+                .push((server.clone(), Series::new(self.throughput.down.span)));
             self.rtt.len() - 1
         });
         &mut self.rtt[at].1
@@ -413,11 +452,18 @@ impl Run {
     /// Keeps `result`, whose failures replace the stage's announced ones, and moves the focus off a server that left.
     fn finished(&mut self, result: &StageResult) {
         self.issues.retain(|(stage, _)| *stage != result.stage);
-        let failures = result.failures.iter().map(|failure| (result.stage, failure.clone()));
+        let failures = result
+            .failures
+            .iter()
+            .map(|failure| (result.stage, failure.clone()));
         self.issues.extend(failures);
         self.peak = self.peak.max(result.throughput.mean());
         self.results.push(result.clone());
-        self.moved = self.results.iter().map(|result| result.throughput.bytes() as f64).sum();
+        self.moved = self
+            .results
+            .iter()
+            .map(|result| result.throughput.bytes() as f64)
+            .sum();
         self.focus = focus(&self.results).or(self.focus.take());
         self.stage = None;
     }

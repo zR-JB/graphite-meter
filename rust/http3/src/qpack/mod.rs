@@ -64,7 +64,10 @@ pub(crate) fn decode(
 }
 
 /// Appends a field section, with static references where they exist and Huffman where it is shorter.
-pub(crate) fn encode<'a>(fields: impl IntoIterator<Item = (&'a [u8], &'a [u8])>, output: &mut Vec<u8>) {
+pub(crate) fn encode<'a>(
+    fields: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
+    output: &mut Vec<u8>,
+) {
     output.extend_from_slice(&[0, 0]);
     for (name, value) in fields {
         match table::find(name, value) {
@@ -141,7 +144,11 @@ fn integer(section: &mut &[u8], bits: u32) -> Result<u64, Invalid> {
 }
 
 /// A string literal after a prefix of `bits` length bits and one Huffman bit.
-fn string<'a: 'b, 'b>(section: &mut &'a [u8], bits: u32, buffer: &'b mut Vec<u8>) -> Result<&'b [u8], Invalid> {
+fn string<'a: 'b, 'b>(
+    section: &mut &'a [u8],
+    bits: u32,
+    buffer: &'b mut Vec<u8>,
+) -> Result<&'b [u8], Invalid> {
     let huffman = section.first().is_some_and(|&first| first & 1 << bits != 0);
     let length = usize::try_from(integer(section, bits)?).map_err(|_| Invalid::Qpack)?;
     let (raw, rest) = section.split_at_checked(length).ok_or(Invalid::Qpack)?;
@@ -206,7 +213,10 @@ mod tests {
                     tail
                 }
                 (b'\\', [b'x', high, low, tail @ ..]) => {
-                    bytes.push(u8::from_str_radix(std::str::from_utf8(&[*high, *low]).unwrap(), 16).unwrap());
+                    bytes.push(
+                        u8::from_str_radix(std::str::from_utf8(&[*high, *low]).unwrap(), 16)
+                            .unwrap(),
+                    );
                     tail
                 }
                 _ => {
@@ -230,7 +240,12 @@ mod tests {
             } else if let Some(encoded) = line.strip_prefix("ours: ") {
                 assert_eq!(fields(&other), Ok(block.clone()));
                 let mut ours = Vec::new();
-                encode(block.iter().map(|(name, value)| (name.as_slice(), value.as_slice())), &mut ours);
+                encode(
+                    block
+                        .iter()
+                        .map(|(name, value)| (name.as_slice(), value.as_slice())),
+                    &mut ours,
+                );
                 assert_eq!(ours, hex(encoded));
                 assert_eq!(fields(&ours), Ok(block.clone()));
                 block.clear();
@@ -244,7 +259,10 @@ mod tests {
     #[test]
     fn static_references_decode_and_dynamic_or_malformed_ones_fail() {
         let rfc9204 = fields(&hex("0000510b2f696e6465782e68746d6c"));
-        assert_eq!(rfc9204, Ok(vec![(b":path".to_vec(), b"/index.html".to_vec())]));
+        assert_eq!(
+            rfc9204,
+            Ok(vec![(b":path".to_vec(), b"/index.html".to_vec())])
+        );
         for section in [
             "",
             "00",
@@ -274,10 +292,21 @@ mod tests {
     #[test]
     fn qpack_streams_accept_only_what_a_static_peer_sends() {
         assert_eq!(encoder_stream(&[0x20, 0x20]), Ok(()));
-        assert_eq!(encoder_stream(&[0x3f, 0x01]), Err(Code::QPACK_ENCODER_STREAM_ERROR));
+        assert_eq!(
+            encoder_stream(&[0x3f, 0x01]),
+            Err(Code::QPACK_ENCODER_STREAM_ERROR)
+        );
         let mut decoder = DecoderStream::default();
-        assert_eq!(decoder.read(&[0x44, 0x7f]), Ok(()), "cancel stream 4, then a continued ID");
+        assert_eq!(
+            decoder.read(&[0x44, 0x7f]),
+            Ok(()),
+            "cancel stream 4, then a continued ID"
+        );
         assert_eq!(decoder.read(&[0x81, 0x01, 0x40]), Ok(()));
-        assert_eq!(decoder.read(&[0x80]), Err(Code::QPACK_DECODER_STREAM_ERROR), "a Section Acknowledgment");
+        assert_eq!(
+            decoder.read(&[0x80]),
+            Err(Code::QPACK_DECODER_STREAM_ERROR),
+            "a Section Acknowledgment"
+        );
     }
 }

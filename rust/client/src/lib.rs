@@ -46,7 +46,11 @@ pub const INTERRUPTED: u8 = 130;
 pub const TERMINATED: u8 = 143;
 
 /// Runs `config` once without the interface, stage progress on stderr. Returns the view and a status `stop` can set.
-pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Output = u8>) -> (View, u8) {
+pub async fn headless(
+    config: Config,
+    runtimes: Arc<Pool>,
+    stop: impl Future<Output = u8>,
+) -> (View, u8) {
     let (events, mut received) = Events::channel();
     let mut controller = Controller::new(false, runtimes, events);
     controller.command(Command::Run(config));
@@ -71,7 +75,10 @@ pub async fn headless(config: Config, runtimes: Arc<Pool>, stop: impl Future<Out
     }
     controller.settled().await;
     // The signal's status holds only for a run it stopped.
-    let stopped = matches!(view.latest().and_then(|run| run.outcome), None | Some(Outcome::Stopped));
+    let stopped = matches!(
+        view.latest().and_then(|run| run.outcome),
+        None | Some(Outcome::Stopped)
+    );
     let status = status(&view, signal.filter(|_| stopped));
     (view, status)
 }

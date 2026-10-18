@@ -35,10 +35,17 @@ async fn until(lanes: &mut Lanes, bound: Duration, mut done: impl AsyncFnMut(&La
         if let LaneHealth::Failed(failure) = lanes.health() {
             panic!("a lane failed: {}", failure.text);
         }
-        assert!(Instant::now() < deadline, "lanes did not get there within {bound:?}");
+        assert!(
+            Instant::now() < deadline,
+            "lanes did not get there within {bound:?}"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(!matches!(lanes.health(), LaneHealth::Failed(_)), "{:?}", lanes.health());
+    assert!(
+        !matches!(lanes.health(), LaneHealth::Failed(_)),
+        "{:?}",
+        lanes.health()
+    );
 }
 
 async fn received(client: &Client, via: Protocol, origin: &Origin, id: &str) -> u64 {
@@ -53,29 +60,77 @@ async fn bidirectional_lanes_move_bytes_over_each_transport_on_pinned_runtimes()
     let pinned = Arc::new(Pool::beside(&Handle::current()).unwrap());
     let (server, client) = (Server::start().await, Client::new(true, pinned.clone()));
     for (transport, protocol, origin) in [
-        (ThroughputTransport::FetchStream, Protocol::Http1, &server.http1),
-        (ThroughputTransport::FetchStream, Protocol::Http2, &server.http2),
-        (ThroughputTransport::FetchStream, Protocol::Http3, &server.http3),
-        (ThroughputTransport::WebTransport, Protocol::Http3, &server.http3),
+        (
+            ThroughputTransport::FetchStream,
+            Protocol::Http1,
+            &server.http1,
+        ),
+        (
+            ThroughputTransport::FetchStream,
+            Protocol::Http2,
+            &server.http2,
+        ),
+        (
+            ThroughputTransport::FetchStream,
+            Protocol::Http3,
+            &server.http3,
+        ),
+        (
+            ThroughputTransport::WebTransport,
+            Protocol::Http3,
+            &server.http3,
+        ),
     ] {
-        let path = ThroughputPath { origin: origin.clone(), transport, protocol };
+        let path = ThroughputPath {
+            origin: origin.clone(),
+            transport,
+            protocol,
+        };
         let plans = topology(&path, Stage::Bidirectional, Dir { down: 2, up: 2 });
         let minted = Request::new(Method::POST, origin, Route::UploadSession);
-        let id = client.json(protocol, minted, Session::decode).await.unwrap().upload_id;
+        let id = client
+            .json(protocol, minted, Session::decode)
+            .await
+            .unwrap()
+            .upload_id;
         let token = CancellationToken::new();
-        let mut download = Lanes::start(&client, plans.clone(), Work::Download, Duration::ZERO, token.clone());
-        let mut upload = Lanes::start(&client, plans, Work::Upload(id.clone()), Duration::ZERO, token.clone());
+        let mut download = Lanes::start(
+            &client,
+            plans.clone(),
+            Work::Download,
+            Duration::ZERO,
+            token.clone(),
+        );
+        let mut upload = Lanes::start(
+            &client,
+            plans,
+            Work::Upload(id.clone()),
+            Duration::ZERO,
+            token.clone(),
+        );
         let bound = Duration::from_secs(20);
-        until(&mut download, bound, async |lanes| lanes.ready() && lanes.bytes() >= MIB).await;
-        let counted = async |lanes: &Lanes| lanes.ready() && received(&client, protocol, origin, &id).await >= MIB;
+        until(&mut download, bound, async |lanes| {
+            lanes.ready() && lanes.bytes() >= MIB
+        })
+        .await;
+        let counted = async |lanes: &Lanes| {
+            lanes.ready() && received(&client, protocol, origin, &id).await >= MIB
+        };
         until(&mut upload, bound, counted).await;
-        assert_eq!(upload.bytes(), 0, "{transport:?} {protocol:?}: the receiver counts uploads");
+        assert_eq!(
+            upload.bytes(),
+            0,
+            "{transport:?} {protocol:?}: the receiver counts uploads"
+        );
         let tasks: usize = pinned
             .runtimes()
             .iter()
             .map(|runtime| runtime.metrics().num_alive_tasks())
             .sum();
-        assert!(tasks >= 4, "{transport:?} {protocol:?}: {tasks} tasks on the pinned runtimes, four lanes");
+        assert!(
+            tasks >= 4,
+            "{transport:?} {protocol:?}: {tasks} tasks on the pinned runtimes, four lanes"
+        );
         token.cancel();
     }
 }
@@ -89,7 +144,13 @@ async fn fourteen_webtransport_lanes_outgrow_the_first_connection_window_without
         protocol: Protocol::Http3,
     };
     let plans = topology(&path, Stage::Download, Dir { down: 14, up: 0 });
-    let mut download = Lanes::start(&client, plans, Work::Download, Duration::ZERO, CancellationToken::new());
+    let mut download = Lanes::start(
+        &client,
+        plans,
+        Work::Download,
+        Duration::ZERO,
+        CancellationToken::new(),
+    );
     // Fourteen streams share one session's connection, whose receive window starts at 768 KiB.
     until(&mut download, Duration::from_secs(30), async |lanes| {
         lanes.ready() && lanes.bytes() > 16 * MIB
@@ -102,15 +163,29 @@ async fn a_silent_quic_address_waits_at_least_3_s_while_a_delayed_answering_one_
     let (server, client) = (Server::start().await, client());
     let silent = Link::udp(server.quic, Duration::ZERO, None).await.unwrap();
     silent.stall();
-    let delayed = Link::udp(server.quic, Duration::from_secs(1), None).await.unwrap();
+    let delayed = Link::udp(server.quic, Duration::from_secs(1), None)
+        .await
+        .unwrap();
     let timed = async |link: &Link| {
-        let (started, origin) = (Instant::now(), Origin::parse(&format!("https://{}", link.address)).unwrap());
+        let (started, origin) = (
+            Instant::now(),
+            Origin::parse(&format!("https://{}", link.address)).unwrap(),
+        );
         let request = Request::new(Method::GET, &origin, Route::Probe);
-        (client.json(Protocol::Http3, request, Probe::decode).await, started.elapsed())
+        (
+            client.json(Protocol::Http3, request, Probe::decode).await,
+            started.elapsed(),
+        )
     };
     let ((unanswered, silence), (answered, delay)) = tokio::join!(timed(&silent), timed(&delayed));
-    assert_matches!(unanswered, Err(Fault::Connect(ConnectError::Unreachable(_))));
+    assert_matches!(
+        unanswered,
+        Err(Fault::Connect(ConnectError::Unreachable(_)))
+    );
     assert!((3.0..10.0).contains(&silence.as_secs_f64()), "{silence:?}");
     answered.unwrap();
-    assert!(delay > Duration::from_secs(3), "{delay:?} outlasts the silent address's bound");
+    assert!(
+        delay > Duration::from_secs(3),
+        "{delay:?} outlasts the silent address's bound"
+    );
 }

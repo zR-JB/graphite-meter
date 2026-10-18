@@ -80,21 +80,42 @@ pub struct Request {
 
 impl Request {
     pub fn new(method: Method, origin: &Origin, route: Route) -> Self {
-        Self { method, origin: origin.clone(), route, query: Vec::new() }
+        Self {
+            method,
+            origin: origin.clone(),
+            route,
+            query: Vec::new(),
+        }
     }
 }
 
 impl Client {
     /// A client through the environment's proxies; `insecure` skips certificate checks and never sends a grant.
     pub fn new(insecure: bool, runtimes: Arc<Pool>) -> Self {
-        Self::with(if insecure { Verify::Insecure } else { Verify::trusted() }, Proxy::from_env(), runtimes)
+        Self::with(
+            if insecure {
+                Verify::Insecure
+            } else {
+                Verify::trusted()
+            },
+            Proxy::from_env(),
+            runtimes,
+        )
     }
 
     /// A client through `proxy`, checking certificates as `verify` says; an insecure one never sends a grant.
     pub fn with(verify: Verify, proxy: Proxy, runtimes: Arc<Pool>) -> Self {
         let connector = Connector::new(proxy, verify.clone());
-        let shared = Arc::new(Shared { connector, verify, grants: Mutex::default(), runtimes });
-        Self { shared, connections: Arc::default() }
+        let shared = Arc::new(Shared {
+            connector,
+            verify,
+            grants: Mutex::default(),
+            runtimes,
+        });
+        Self {
+            shared,
+            connections: Arc::default(),
+        }
     }
 
     /// Where latency probes run, apart from the runtimes that carry transfers.
@@ -104,24 +125,38 @@ impl Client {
 
     /// The same client with control connections of its own, apart from those its lanes may share.
     pub fn apart(&self) -> Self {
-        Self { shared: self.shared.clone(), connections: Arc::default() }
+        Self {
+            shared: self.shared.clone(),
+            connections: Arc::default(),
+        }
     }
 
     /// A control request's JSON answer, read by `decode` within the control timeout.
-    pub async fn json<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<T, Fault> {
+    pub async fn json<T>(
+        &self,
+        via: Protocol,
+        request: Request,
+        decode: Decode<T>,
+    ) -> Result<T, Fault> {
         Ok(self.exchange(via, request, decode).await?.1)
     }
 
     /// The protocol a valid probe answer from `origin` came over, a negotiated one resolved, and the address family
     /// the server saw the probe arrive from.
-    pub async fn probe(&self, origin: &Origin, via: Protocol) -> Result<(Protocol, IpFamily), Fault> {
+    pub async fn probe(
+        &self,
+        origin: &Origin,
+        via: Protocol,
+    ) -> Result<(Protocol, IpFamily), Fault> {
         let request = Request::new(Method::GET, origin, Route::Probe);
         let (version, probe) = self.exchange(via, request, Probe::decode).await?;
         let protocol = match (via, version) {
             (Protocol::Negotiated, Version::HTTP_11) => Protocol::Http1,
             (Protocol::Negotiated, Version::HTTP_2) => Protocol::Http2,
             (Protocol::Negotiated, _) => {
-                return Err(Fault::Malformed("probe used an unsupported HTTP protocol".into()));
+                return Err(Fault::Malformed(
+                    "probe used an unsupported HTTP protocol".into(),
+                ));
             }
             (via, _) => via,
         };
@@ -136,7 +171,12 @@ impl Client {
     }
 
     /// A connection of its own to `origin`, dialed on the current runtime, which then runs it.
-    pub async fn dial(&self, origin: &Origin, via: Protocol, buffer: ReadBuffer) -> Result<Conn, Fault> {
+    pub async fn dial(
+        &self,
+        origin: &Origin,
+        via: Protocol,
+        buffer: ReadBuffer,
+    ) -> Result<Conn, Fault> {
         Conn::dial(self, origin, via, buffer, Some(&Handle::current())).await
     }
 
@@ -144,7 +184,9 @@ impl Client {
     pub fn grant(&self, issuer: &Origin, token: &str) {
         if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
             value.set_sensitive(true);
-            lock(&self.shared.grants).tokens.insert(issuer.clone(), value);
+            lock(&self.shared.grants)
+                .tokens
+                .insert(issuer.clone(), value);
         }
     }
 
@@ -154,13 +196,21 @@ impl Client {
         grants.issuers.insert(server.clone(), server.clone());
         for target in targets {
             if target.scheme == Scheme::Https && target.host == server.host {
-                grants.issuers.entry(target.clone()).or_insert_with(|| server.clone());
+                grants
+                    .issuers
+                    .entry(target.clone())
+                    .or_insert_with(|| server.clone());
             }
         }
     }
 
     /// The HTTP version a JSON answer came over, and the answer read by `decode`, within the control timeout.
-    async fn exchange<T>(&self, via: Protocol, request: Request, decode: Decode<T>) -> Result<(Version, T), Fault> {
+    async fn exchange<T>(
+        &self,
+        via: Protocol,
+        request: Request,
+        decode: Decode<T>,
+    ) -> Result<(Version, T), Fault> {
         let deadline = Instant::now() + CONTROL_TIMEOUT;
         let exchange = async {
             let answer = self.connections.send(self, via, &request, deadline).await?;
@@ -184,12 +234,14 @@ impl Client {
             .header(header::CACHE_CONTROL, "no-store");
         let grants = lock(&self.shared.grants);
         let token = grants.tokens.get(grants.issuer(&request.origin));
-        if let Some(token) =
-            token.filter(|_| matches!(self.shared.verify, Verify::Trusted(_)) && request.origin.scheme == Scheme::Https)
-        {
+        if let Some(token) = token.filter(|_| {
+            matches!(self.shared.verify, Verify::Trusted(_))
+                && request.origin.scheme == Scheme::Https
+        }) {
             head = head.header(header::AUTHORIZATION, token.clone());
         }
-        head.body(()).map_err(|error| Fault::Malformed(error.to_string()))
+        head.body(())
+            .map_err(|error| Fault::Malformed(error.to_string()))
     }
 
     /// The answer's body when it is a 200.
@@ -274,8 +326,14 @@ impl Connections {
         deadline: Instant,
     ) -> Result<Answer, Fault> {
         let slot = self.slot(&request.origin, via);
-        match self.attempt(client, &slot, via, request, deadline, true).await {
-            Err((_, true)) => self.attempt(client, &slot, via, request, deadline, false).await,
+        match self
+            .attempt(client, &slot, via, request, deadline, true)
+            .await
+        {
+            Err((_, true)) => {
+                self.attempt(client, &slot, via, request, deadline, false)
+                    .await
+            }
             result => result,
         }
         .map_err(|(fault, _)| fault)
@@ -284,7 +342,10 @@ impl Connections {
     /// The multiplexed connection to `origin` over `via`, dialed on the current runtime when there is none.
     async fn shared(&self, client: &Client, origin: &Origin, via: Protocol) -> Result<Conn, Fault> {
         let (slot, home) = (self.slot(origin, via), Handle::current());
-        Ok(self.take(client, &slot, via, origin, true, Some(&home)).await?.conn)
+        Ok(self
+            .take(client, &slot, via, origin, true, Some(&home))
+            .await?
+            .conn)
     }
 
     /// The runtime the multiplexed QUIC connection to `origin` over `via` runs on, if there is one.
@@ -310,9 +371,17 @@ impl Connections {
         reuse: bool,
     ) -> Result<Answer, (Fault, bool)> {
         let head = client.head(request).map_err(|fault| (fault, false))?;
-        let taken = timeout_at(deadline, self.take(client, slot, via, &request.origin, reuse, None)).await;
+        let taken = timeout_at(
+            deadline,
+            self.take(client, slot, via, &request.origin, reuse, None),
+        )
+        .await;
         let taken = taken.map_err(|_| (Fault::TimedOut("control connection"), false));
-        let Taken { mut conn, serial, reused } = taken?.map_err(|fault| (fault, false))?;
+        let Taken {
+            mut conn,
+            serial,
+            reused,
+        } = taken?.map_err(|fault| (fault, false))?;
         match timeout_at(deadline, conn.send(head, Payload::empty())).await {
             Ok(Ok(answer)) => Ok(slot.keep(conn, answer)),
             Ok(Err(Failed { fault, again })) => {
@@ -345,7 +414,11 @@ impl Connections {
             || via == Protocol::Negotiated && origin.scheme == Scheme::Https;
         if !multiplexed || slot.exclusive.load(Ordering::Relaxed) {
             let conn = Conn::dial(client, origin, via, ReadBuffer::Adaptive, home).await?;
-            return Ok(Taken { conn, serial: None, reused: false });
+            return Ok(Taken {
+                conn,
+                serial: None,
+                reused: false,
+            });
         }
         let _dialing = slot.dialing.lock().await;
         if reuse && let Some(taken) = slot.reusable() {
@@ -354,11 +427,19 @@ impl Connections {
         let conn = Conn::dial(client, origin, via, ReadBuffer::Adaptive, home).await?;
         let Some(shared) = conn.share() else {
             slot.exclusive.store(true, Ordering::Relaxed);
-            return Ok(Taken { conn, serial: None, reused: false });
+            return Ok(Taken {
+                conn,
+                serial: None,
+                reused: false,
+            });
         };
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         *lock(&slot.shared) = Some((serial, shared));
-        Ok(Taken { conn, serial: Some(serial), reused: false })
+        Ok(Taken {
+            conn,
+            serial: Some(serial),
+            reused: false,
+        })
     }
 }
 
@@ -367,13 +448,21 @@ impl Slot {
     fn reusable(&self) -> Option<Taken> {
         let shared = lock(&self.shared);
         if let Some((serial, conn)) = shared.as_ref().filter(|(_, conn)| conn.usable()) {
-            return Some(Taken { conn: conn.share()?, serial: Some(*serial), reused: true });
+            return Some(Taken {
+                conn: conn.share()?,
+                serial: Some(*serial),
+                reused: true,
+            });
         }
         drop(shared);
         let mut idle = lock(&self.idle);
         idle.retain(Conn::usable);
         let ready = idle.iter().position(Conn::idle)?;
-        Some(Taken { conn: idle.swap_remove(ready), serial: None, reused: true })
+        Some(Taken {
+            conn: idle.swap_remove(ready),
+            serial: None,
+            reused: true,
+        })
     }
 
     /// Keeps an HTTP/1.1 connection for later requests once `answer`'s body ended; one sent mid-body would wait behind.
@@ -438,7 +527,10 @@ mod pool_tests {
         let mut answer = client.control(Protocol::Http1, feed).await.unwrap();
         assert!(answer.chunk().await.unwrap().is_some());
         let slot = client.connections.slot(&origin, Protocol::Http1);
-        assert!(lock(&slot.idle).is_empty(), "the connection still carries its answer");
+        assert!(
+            lock(&slot.idle).is_empty(),
+            "the connection still carries its answer"
+        );
         end.send(()).unwrap();
         assert_eq!(answer.chunk().await.unwrap(), None);
         assert_eq!(lock(&slot.idle).len(), 1);

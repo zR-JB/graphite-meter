@@ -71,7 +71,9 @@ pub fn topology(path: &ThroughputPath, stage: Stage, lanes: Dir<usize>) -> Vec<G
         let apart = stage == Stage::Bidirectional && direction == Direction::Up;
         let (carrier, size) = match (path.transport, path.protocol) {
             (ThroughputTransport::FetchStream, Protocol::Http2) => (Carrier::Dialed, usize::MAX),
-            (ThroughputTransport::FetchStream, Protocol::Http3) if apart => (Carrier::Dialed, usize::MAX),
+            (ThroughputTransport::FetchStream, Protocol::Http3) if apart => {
+                (Carrier::Dialed, usize::MAX)
+            }
             (ThroughputTransport::FetchStream, Protocol::Http3) => (Carrier::Path, usize::MAX),
             (ThroughputTransport::FetchStream, _) => (Carrier::Dialed, 1),
             _ => (Carrier::Session, SESSION_LANES),
@@ -135,10 +137,20 @@ impl Lanes {
             Work::Download => Direction::Down,
             Work::Upload(_) => Direction::Up,
         };
-        let plans: Vec<_> = plans.into_iter().filter(|plan| plan.direction == direction).collect();
+        let plans: Vec<_> = plans
+            .into_iter()
+            .filter(|plan| plan.direction == direction)
+            .collect();
         let count = plans.iter().map(|plan| plan.lanes.len()).sum();
-        let tally = Arc::new(Tally { retrying: Mutex::new(vec![None; count]), ..Tally::default() });
-        let block = if direction == Direction::Up { block() } else { Bytes::new() };
+        let tally = Arc::new(Tally {
+            retrying: Mutex::new(vec![None; count]),
+            ..Tally::default()
+        });
+        let block = if direction == Direction::Up {
+            block()
+        } else {
+            Bytes::new()
+        };
         let mut tasks = JoinSet::new();
         for plan in plans {
             let path = (plan.carrier == Carrier::Path).then_some(&plan.path);
@@ -157,10 +169,22 @@ impl Lanes {
             for lane in group.plan.lanes.clone() {
                 let (group, tally, token) = (group.clone(), tally.clone(), token.clone());
                 let delay = stagger.saturating_mul(u32::try_from(lane).unwrap_or(u32::MAX));
-                tasks.spawn_on(async move { token.run_until_cancelled(group.run(lane, tally, delay)).await }, &home);
+                tasks.spawn_on(
+                    async move {
+                        token
+                            .run_until_cancelled(group.run(lane, tally, delay))
+                            .await
+                    },
+                    &home,
+                );
             }
         }
-        Self { tally, tasks, count, failed: None }
+        Self {
+            tally,
+            tasks,
+            count,
+            failed: None,
+        }
     }
 
     /// Payload bytes the download lanes consumed; upload lanes count none, as the receiver counts uploads.
@@ -224,11 +248,17 @@ impl<T> Slot<T> {
         handle: fn(&T) -> Option<T>,
     ) -> Result<T, Fault> {
         let mut current = self.0.lock().await;
-        if let Some(handle) = current.as_ref().filter(|shared| usable(shared)).and_then(handle) {
+        if let Some(handle) = current
+            .as_ref()
+            .filter(|shared| usable(shared))
+            .and_then(handle)
+        {
             return Ok(handle);
         }
         let dialed = dial.await?;
-        let Some(handle) = handle(&dialed) else { return Ok(dialed) };
+        let Some(handle) = handle(&dialed) else {
+            return Ok(dialed);
+        };
         *current = Some(dialed);
         Ok(handle)
     }
@@ -267,7 +297,12 @@ impl Group {
     /// Runs lane `number` after `delay` until its fault stands.
     async fn run(self: Arc<Self>, number: usize, tally: Arc<Tally>, delay: Duration) -> Fault {
         tokio::time::sleep(delay).await;
-        let mut lane = Lane { number, announced: false, moved: false, sent: Arc::default() };
+        let mut lane = Lane {
+            number,
+            announced: false,
+            moved: false,
+            sent: Arc::default(),
+        };
         let mut retry = Retry::default();
         loop {
             let (started, sent) = (Instant::now(), lane.sent.load(Ordering::Relaxed));
@@ -283,7 +318,11 @@ impl Group {
                 Ok(()) => Fault::TimedOut("transfer"),
                 Err(fault) => fault,
             };
-            let moved = moved && !matches!(fault, Fault::Status { .. } | Fault::SignIn(_) | Fault::Refused(_));
+            let moved = moved
+                && !matches!(
+                    fault,
+                    Fault::Status { .. } | Fault::SignIn(_) | Fault::Refused(_)
+                );
             tally.retrying(number, (!moved).then(|| fault.failure()));
             match retry.after(fault, Attempt { started, moved }, Instant::now()) {
                 Ok(pause) => tokio::time::sleep(pause).await,
@@ -293,11 +332,21 @@ impl Group {
     }
 
     async fn attempt(&self, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
-        let (ThroughputPath { origin, protocol, .. }, client) = (&self.plan.path, &self.client);
+        let (
+            ThroughputPath {
+                origin, protocol, ..
+            },
+            client,
+        ) = (&self.plan.path, &self.client);
         let conn = match self.plan.carrier {
             Carrier::Session => {
-                let (dial, usable) = (self.dial_session(tally), |session: &Arc<Session>| session.usable());
-                let session = self.session.get(dial, usable, |session| Some(session.clone())).await?;
+                let (dial, usable) = (self.dial_session(tally), |session: &Arc<Session>| {
+                    session.usable()
+                });
+                let session = self
+                    .session
+                    .get(dial, usable, |session| Some(session.clone()))
+                    .await?;
                 return match &self.work {
                     Work::Download => receive(&session, lane, tally).await,
                     Work::Upload(_) => send(&session, &self.block, lane, tally).await,
@@ -305,7 +354,11 @@ impl Group {
             }
             Carrier::Dialed => {
                 let down = self.plan.direction == Direction::Down;
-                let buffer = if down { ReadBuffer::Fixed } else { ReadBuffer::Adaptive };
+                let buffer = if down {
+                    ReadBuffer::Fixed
+                } else {
+                    ReadBuffer::Adaptive
+                };
                 let dial = client.dial(origin, *protocol, buffer);
                 self.conn.get(dial, Conn::usable, Conn::share).await?
             }
@@ -322,12 +375,17 @@ impl Group {
         let (route, query) = match &self.work {
             Work::Download => {
                 let streams = self.plan.lanes.len().to_string();
-                (Route::WtDownload, vec![("bytes", STREAM_BYTES.to_string()), ("streams", streams)])
+                (
+                    Route::WtDownload,
+                    vec![("bytes", STREAM_BYTES.to_string()), ("streams", streams)],
+                )
             }
             Work::Upload(id) => (Route::WtUpload, vec![("id", id.clone())]),
         };
         let home = Handle::current();
-        let session = self.client.session(Some(&home), &self.plan.path.origin, route, query);
+        let session = self
+            .client
+            .session(Some(&home), &self.plan.path.origin, route, query);
         let session = Arc::new(session.await?);
         if let Work::Upload(_) = self.work {
             tally.session.send_replace(Some(session.clone()));
@@ -336,7 +394,12 @@ impl Group {
     }
 
     fn request(&self, method: Method, route: Route, query: Vec<(&'static str, String)>) -> Request {
-        Request { method, origin: self.plan.path.origin.clone(), route, query }
+        Request {
+            method,
+            origin: self.plan.path.origin.clone(),
+            route,
+            query,
+        }
     }
 
     async fn download(&self, mut conn: Conn, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
@@ -355,8 +418,18 @@ impl Group {
         Ok(())
     }
 
-    async fn upload(&self, mut conn: Conn, id: &str, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
-        let query = vec![("cb", cache_buster()), ("id", id.to_owned()), ("lane", lane.number.to_string())];
+    async fn upload(
+        &self,
+        mut conn: Conn,
+        id: &str,
+        lane: &mut Lane,
+        tally: &Tally,
+    ) -> Result<(), Fault> {
+        let query = vec![
+            ("cb", cache_buster()),
+            ("id", id.to_owned()),
+            ("lane", lane.number.to_string()),
+        ];
         let request = self.request(Method::POST, Route::Upload, query);
         lane.announce(tally);
         let payload = Payload::repeat(self.block.clone(), lane.sent.clone());
@@ -384,7 +457,9 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
             lane.announce(tally);
         }
         if received > STREAM_BYTES {
-            return Err(Fault::Malformed("WebTransport download exceeded its byte count".into()));
+            return Err(Fault::Malformed(
+                "WebTransport download exceeded its byte count".into(),
+            ));
         }
     }
     match received == STREAM_BYTES {
@@ -394,13 +469,21 @@ async fn receive(session: &Session, lane: &mut Lane, tally: &Tally) -> Result<()
 }
 
 /// Streams of a transfer's bytes, one after another, on the session.
-async fn send(session: &Session, block: &Bytes, lane: &mut Lane, tally: &Tally) -> Result<(), Fault> {
+async fn send(
+    session: &Session,
+    block: &Bytes,
+    lane: &mut Lane,
+    tally: &Tally,
+) -> Result<(), Fault> {
     loop {
         let mut stream = session.open_uni().await?;
         lane.announce(tally);
         let mut payload = Payload::repeat(block.clone(), lane.sent.clone());
         while let Some(slice) = payload.slice() {
-            stream.write_chunk(slice).await.map_err(|error| session.fault(error))?;
+            stream
+                .write_chunk(slice)
+                .await
+                .map_err(|error| session.fault(error))?;
         }
         stream.finish().map_err(|error| session.fault(error))?;
     }

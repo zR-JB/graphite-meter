@@ -21,7 +21,11 @@ pub struct Canvas<'a> {
 
 impl<'a> Canvas<'a> {
     pub fn new(buffer: &'a mut Buffer, profile: Profile) -> Self {
-        Self { buffer, profile, hits: Vec::new() }
+        Self {
+            buffer,
+            profile,
+            hits: Vec::new(),
+        }
     }
 
     pub fn area(&self) -> Rect {
@@ -35,13 +39,21 @@ impl<'a> Canvas<'a> {
     /// Fills `area` with a tile's color from 256 colors on. With fewer the canvas stays flat.
     pub fn fill(&mut self, area: Rect, color: Color) {
         if self.profile >= Profile::Ansi256 {
-            self.plate(area, Style { bg: Some(color), ..Style::default() });
+            self.plate(
+                area,
+                Style {
+                    bg: Some(color),
+                    ..Style::default()
+                },
+            );
         }
     }
 
     /// Paints `area` in `style`'s background in every profile that has color, as a key's plate.
     pub fn plate(&mut self, area: Rect, style: Style) {
-        let Some(bg) = paint(style.bg, self.profile) else { return };
+        let Some(bg) = paint(style.bg, self.profile) else {
+            return;
+        };
         for (x, y) in cells(area.intersection(self.buffer.area)) {
             self.buffer[(x, y)].set_bg(bg);
         }
@@ -68,10 +80,17 @@ impl<'a> Canvas<'a> {
             }
             let text: Cow<'_, str> = match span.text.chars().all(safe) {
                 true => Cow::Borrowed(&span.text),
-                false => Cow::Owned(span.text.chars().map(|c| if safe(c) { c } else { ' ' }).collect()),
+                false => Cow::Owned(
+                    span.text
+                        .chars()
+                        .map(|c| if safe(c) { c } else { ' ' })
+                        .collect(),
+                ),
             };
             let style = self.painted(span.style);
-            (at, _) = self.buffer.set_stringn(at, y, text, usize::from(end - at), style);
+            (at, _) = self
+                .buffer
+                .set_stringn(at, y, text, usize::from(end - at), style);
         }
         at
     }
@@ -92,8 +111,9 @@ impl<'a> Canvas<'a> {
     pub fn dots(&mut self, dots: &Dots) {
         let area = dots.area.intersection(self.buffer.area);
         for (x, y) in cells(area) {
-            let (mask, color, _) =
-                dots.cells[usize::from(y - dots.area.y) * usize::from(dots.area.width) + usize::from(x - dots.area.x)];
+            let (mask, color, _) = dots.cells[usize::from(y - dots.area.y)
+                * usize::from(dots.area.width)
+                + usize::from(x - dots.area.x)];
             if mask == 0 {
                 continue;
             }
@@ -121,8 +141,9 @@ impl<'a> Canvas<'a> {
         let ((red, green, blue), soft) = (rgb(canvas), rgb(soft));
         let toward = |color: Paint| match color {
             Paint::Rgb(r, g, b) => {
-                let blend =
-                    |own: u8, base: u8| (f64::from(own) * (1.0 - share) + f64::from(base) * share).round() as u8;
+                let blend = |own: u8, base: u8| {
+                    (f64::from(own) * (1.0 - share) + f64::from(base) * share).round() as u8
+                };
                 Paint::Rgb(blend(r, red), blend(g, green), blend(b, blue))
             }
             other => other,
@@ -186,13 +207,18 @@ impl Dots {
 
     /// Counts the dots across and down the area.
     pub fn size(&self) -> (usize, usize) {
-        (usize::from(self.area.width) * 2, usize::from(self.area.height) * 4)
+        (
+            usize::from(self.area.width) * 2,
+            usize::from(self.area.height) * 4,
+        )
     }
 
     /// Lights the dot `x` across and `y` down in `color` at `rank`. One off the area is dropped.
     pub fn set(&mut self, x: isize, y: isize, color: Color, rank: u8) {
         let (width, height) = self.size();
-        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else { return };
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
         if x >= width || y >= height {
             return;
         }

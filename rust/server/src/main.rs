@@ -76,10 +76,11 @@ fn serve(config: Config) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("could not start the runtime: {error}"))?;
-    let pool =
-        Pool::beside(runtime.handle()).map_err(|error| format!("could not start the runtime threads: {error}"))?;
+    let pool = Pool::beside(runtime.handle())
+        .map_err(|error| format!("could not start the runtime threads: {error}"))?;
     runtime.block_on(async {
-        let stop = runtime::stop_signal().map_err(|error| format!("could not watch for stop signals: {error}"))?;
+        let stop = runtime::stop_signal()
+            .map_err(|error| format!("could not watch for stop signals: {error}"))?;
         Server::bind(config, pool).await?.serve(stop).await
     })
 }
@@ -128,7 +129,10 @@ fn hash_password() -> Result<(), String> {
 /// Reads a line of up to a password's bytes and its line break, and drops trailing line breaks.
 fn read_line(input: &mut impl BufRead) -> io::Result<Zeroizing<Vec<u8>>> {
     let mut line = Zeroizing::new(Vec::with_capacity(LINE_BYTES));
-    input.by_ref().take(LINE_BYTES as u64).read_until(b'\n', &mut line)?;
+    input
+        .by_ref()
+        .take(LINE_BYTES as u64)
+        .read_until(b'\n', &mut line)?;
     let last = line.iter().rposition(|byte| !matches!(byte, b'\r' | b'\n'));
     line.truncate(last.map_or(0, |last| last + 1));
     Ok(line)
@@ -149,7 +153,9 @@ impl Hidden {
         use rustix::termios::{LocalModes, OptionalActions, tcgetattr, tcsetattr};
         let original = tcgetattr(&terminal)?;
         let mut hidden = original.clone();
-        hidden.local_modes.remove(LocalModes::ECHO | LocalModes::ECHONL);
+        hidden
+            .local_modes
+            .remove(LocalModes::ECHO | LocalModes::ECHONL);
         tcsetattr(&terminal, OptionalActions::Now, &hidden)?;
         Ok(Self { terminal, original })
     }
@@ -158,6 +164,10 @@ impl Hidden {
 #[cfg(unix)]
 impl Drop for Hidden {
     fn drop(&mut self) {
-        let _ = rustix::termios::tcsetattr(&self.terminal, rustix::termios::OptionalActions::Now, &self.original);
+        let _ = rustix::termios::tcsetattr(
+            &self.terminal,
+            rustix::termios::OptionalActions::Now,
+            &self.original,
+        );
     }
 }

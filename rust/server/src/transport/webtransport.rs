@@ -44,7 +44,13 @@ pub enum Form {
 }
 
 /// Accepts `stream`'s session, serving `plan` until `lane` ends, the peer closes or the route ends; uploads ask `fund`.
-pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: Plan, fund: impl FnMut() -> bool) {
+pub async fn serve(
+    stream: RequestStream,
+    headers: HeaderMap,
+    lane: Lane,
+    plan: Plan,
+    fund: impl FnMut() -> bool,
+) {
     let Ok(session) = Session::accept(stream, headers).await else {
         return;
     };
@@ -57,7 +63,9 @@ pub async fn serve(stream: RequestStream, headers: HeaderMap, lane: Lane, plan: 
             () = routed => lane.finish(),
         }
     };
-    session.close(ending.webtransport_code(), ending.reason()).await;
+    session
+        .close(ending.webtransport_code(), ending.reason())
+        .await;
 }
 
 async fn route(session: &Session, lane: &Lane, plan: Plan, fund: impl FnMut() -> bool) {
@@ -102,8 +110,9 @@ async fn download(session: &Session, lane: &Lane, source: DownloadSource, form: 
             _ if source.remaining() == 0 => sleep(VERIFY_LINGER).await,
             Form::Datagrams => flood(session, &source).await,
             Form::Streams(streams) => {
-                let mut lanes: FuturesUnordered<_> =
-                    (0..streams).map(|_| download_stream(session, &source, lane)).collect();
+                let mut lanes: FuturesUnordered<_> = (0..streams)
+                    .map(|_| download_stream(session, &source, lane))
+                    .collect();
                 while lanes.next().await.is_some() {}
             }
         }

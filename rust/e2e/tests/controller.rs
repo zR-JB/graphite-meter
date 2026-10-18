@@ -18,12 +18,30 @@ const LIMIT: Duration = Duration::from_secs(20);
 /// Configures a one-second latency run at `url` without warmup.
 fn config(url: &Origin, args: &[&str]) -> Config {
     let url = url.to_string();
-    e2e::config(&[&["-url", &url, "-stages", "latency", "-latency-duration", "1s", "-warmup", "0s"], args].concat())
+    e2e::config(
+        &[
+            &[
+                "-url",
+                &url,
+                "-stages",
+                "latency",
+                "-latency-duration",
+                "1s",
+                "-warmup",
+                "0s",
+            ],
+            args,
+        ]
+        .concat(),
+    )
 }
 
 fn controller(interactive: bool) -> (Controller, UnboundedReceiver<Event>) {
     let (events, received) = Events::channel();
-    (Controller::new(interactive, Arc::new(Pool::inline()), events), received)
+    (
+        Controller::new(interactive, Arc::new(Pool::inline()), events),
+        received,
+    )
 }
 
 fn run_finished(event: &Event) -> bool {
@@ -31,7 +49,8 @@ fn run_finished(event: &Event) -> bool {
 }
 
 #[tokio::test]
-async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_without_the_interface() {
+async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_without_the_interface()
+{
     let server = Server::with(&[
         ("GM_AUTH_MODE", "password"),
         ("GM_AUTH_PUBLIC_URL", "https://127.0.0.7"),
@@ -55,7 +74,10 @@ async fn a_protected_server_refuses_sign_in_over_http_with_insecure_tls_and_with
     let (mut interactive, mut received) = controller(true);
     for (url, args, failure) in checks {
         interactive.command(Command::Check(config(url, args)));
-        let events = until(&mut received, LIMIT, |event| matches!(event, Event::CheckFailed(_))).await;
+        let events = until(&mut received, LIMIT, |event| {
+            matches!(event, Event::CheckFailed(_))
+        })
+        .await;
         assert_eq!(events.last(), Some(&Event::CheckFailed(failure)));
     }
     let (mut headless, mut received) = controller(false);

@@ -49,8 +49,14 @@ fn boundary(value: &Value, at: Instant, receivers: &mut Receivers) -> Boundary {
         reading(&mut readings, server).down = bytes.as_u64();
     }
     for (server, snapshot) in entries("up").filter(|(_, snapshot)| !snapshot.is_null()) {
-        let counters = Counters::new(snapshot["bytes"].as_u64().unwrap(), snapshot["nanos"].as_u64().unwrap());
-        reading(&mut readings, server).up = Some(Receiver { id: receivers.number(snapshot), counters });
+        let counters = Counters::new(
+            snapshot["bytes"].as_u64().unwrap(),
+            snapshot["nanos"].as_u64().unwrap(),
+        );
+        reading(&mut readings, server).up = Some(Receiver {
+            id: receivers.number(snapshot),
+            counters,
+        });
     }
     for (server, observed) in entries("observedUp") {
         let fed = Fed {
@@ -59,12 +65,25 @@ fn boundary(value: &Value, at: Instant, receivers: &mut Receivers) -> Boundary {
         };
         reading(&mut readings, server).fed = Some(fed);
     }
-    Boundary { at, stalled: false, last: value["final"] == true, readings }
+    Boundary {
+        at,
+        stalled: false,
+        last: value["final"] == true,
+        readings,
+    }
 }
 
 fn reading<'a>(readings: &'a mut Vec<Reading>, server: &str) -> &'a mut Reading {
-    if !readings.iter().any(|reading| reading.server.as_str() == server) {
-        readings.push(Reading { server: id(server), down: None, up: None, fed: None });
+    if !readings
+        .iter()
+        .any(|reading| reading.server.as_str() == server)
+    {
+        readings.push(Reading {
+            server: id(server),
+            down: None,
+            up: None,
+            fed: None,
+        });
     }
     readings
         .iter_mut()
@@ -75,7 +94,10 @@ fn reading<'a>(readings: &'a mut Vec<Reading>, server: &str) -> &'a mut Reading 
 /// Reads a vector's headline as mean and peak.
 fn expected(value: &Value) -> Option<Rate> {
     let rate = |field: &str| value[field].as_f64();
-    Some(Rate { mean: rate("bytesPerSec")?, peak: rate("peakBytesPerSec")? })
+    Some(Rate {
+        mean: rate("bytesPerSec")?,
+        peak: rate("peakBytesPerSec")?,
+    })
 }
 
 /// Reads a vector's window as its bounds in milliseconds and its rates.
@@ -111,7 +133,11 @@ fn aggregation() {
         for value in case["boundaries"].as_array().unwrap() {
             let at = ms(&value["atMs"]);
             if let Some(departed) = value["dropout"].as_array() {
-                participants.retain(|id| !departed.iter().any(|gone| gone.as_str() == Some(id.as_str())));
+                participants.retain(|id| {
+                    !departed
+                        .iter()
+                        .any(|gone| gone.as_str() == Some(id.as_str()))
+                });
                 aggregate.dropout(&participants, at);
             }
             aggregate.observe(boundary(value, at, &mut receivers));
@@ -122,7 +148,11 @@ fn aggregation() {
                 case["totalBytes"][field].as_u64().unwrap(),
                 "{name}: {field} bytes"
             );
-            assert_eq!(aggregate.result(direction), expected(&case["result"][field]), "{name}: {field}");
+            assert_eq!(
+                aggregate.result(direction),
+                expected(&case["result"][field]),
+                "{name}: {field}"
+            );
             for (server, rates) in case["servers"].as_object().into_iter().flatten() {
                 assert_eq!(
                     aggregate.server(&id(server), direction),
@@ -138,7 +168,12 @@ fn aggregation() {
             assert_eq!(interval.complete, expected["complete"], "{name}");
             let window = interval.window.as_ref().map(|window| {
                 let ms = |at: Instant| (at - base).as_millis() as u64;
-                (ms(window.start), ms(window.end), window.rates.down, window.rates.up)
+                (
+                    ms(window.start),
+                    ms(window.end),
+                    window.rates.down,
+                    window.rates.up,
+                )
             });
             assert_eq!(window, expected_window(&expected["window"]), "{name}");
         }
@@ -161,18 +196,27 @@ fn latency() {
                 _ if outcome["timeout"] == true => latency.record(ProbeOutcome::Timeout),
                 _ => {
                     let rtt = ms(&outcome["rttMs"]);
-                    latency.record(ProbeOutcome::Reply { rtt, handling: Duration::ZERO });
+                    latency.record(ProbeOutcome::Reply {
+                        rtt,
+                        handling: Duration::ZERO,
+                    });
                     deadline.observe(rtt);
                     deadlines.push(deadline.get());
                 }
             }
         }
         if let Some(expected) = case["deadlineMs"].as_array() {
-            assert_eq!(deadlines, expected.iter().map(ms).collect::<Vec<_>>(), "{name}");
+            assert_eq!(
+                deadlines,
+                expected.iter().map(ms).collect::<Vec<_>>(),
+                "{name}"
+            );
         }
         let summary = latency.summary();
         let ms = |duration: Option<Duration>| {
-            duration.map_or(Value::Null, |duration| (duration.as_secs_f64() * 1000.0).into())
+            duration.map_or(Value::Null, |duration| {
+                (duration.as_secs_f64() * 1000.0).into()
+            })
         };
         let actual = serde_json::json!({
             "replies": summary.replies,
@@ -224,7 +268,11 @@ fn live_rate() {
             let changed = rate.observe(number(0), number(1));
             let (presented, expected) = (rate.presented().unwrap_or_default(), number(2));
             let close = (presented - expected).abs() <= 1e-9 * expected.max(1.0);
-            assert!(close && changed == step[3], "{} step {index}: {presented} {changed}", case["name"]);
+            assert!(
+                close && changed == step[3],
+                "{} step {index}: {presented} {changed}",
+                case["name"]
+            );
         }
     }
 }
@@ -245,7 +293,11 @@ fn the_wire_rate_matches_the_browser_s_model() {
             _ => Protocol::Http3,
         };
         let origin = Origin::parse(&format!("{}://meter.example", text("scheme"))).unwrap();
-        let path = ThroughputPath { origin, transport, protocol };
+        let path = ThroughputPath {
+            origin,
+            transport,
+            protocol,
+        };
         let family = serde_json::from_value(case["ipVersion"].clone()).unwrap();
         let expected = case["multiplier"].as_f64().unwrap();
         let got = wire::multiplier(&path, family);

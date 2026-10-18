@@ -33,8 +33,14 @@ const SIZE: Rect = Rect::new(0, 0, 120, 40);
 const TICK: Duration = Duration::from_millis(250);
 /// Bytes per second each way, and what the stages moved.
 const RATE: f64 = 2.35e9 / 8.0;
-const PEAK: Dir<f64> = Dir { down: 2.36e9 / 8.0, up: 2.38e9 / 8.0 };
-const BYTES: Dir<u64> = Dir { down: 2_900_000_000, up: 3_000_000_000 };
+const PEAK: Dir<f64> = Dir {
+    down: 2.36e9 / 8.0,
+    up: 2.38e9 / 8.0,
+};
+const BYTES: Dir<u64> = Dir {
+    down: 2_900_000_000,
+    up: 3_000_000_000,
+};
 
 /// `count` round trips in µs within `spread` of `median`, a few `tail` slower or a fifth of it faster, the same every
 /// run: a linear congruential walk.
@@ -57,7 +63,10 @@ fn console(palette: Palette) -> Buffer {
     let now = Instant::now();
     let home = ServerId::parse("self").unwrap();
     let origin = Origin::parse("https://meter.home.arpa:7247").unwrap();
-    let config = Config { url: Some(origin.clone()), ..Config::default() };
+    let config = Config {
+        url: Some(origin.clone()),
+        ..Config::default()
+    };
     let mut app = App::new(config.clone(), None, (Profile::TrueColor, palette), now);
     app.tick(now);
     let paths = Paths {
@@ -87,9 +96,22 @@ fn console(palette: Palette) -> Buffer {
         location: String::new(),
         additional_origins: Vec::new(),
     };
-    app.event(&Event::Prepared { servers: Arc::new([server]), catalog: Arc::new([entry]) }, now);
+    app.event(
+        &Event::Prepared {
+            servers: Arc::new([server]),
+            catalog: Arc::new([entry]),
+        },
+        now,
+    );
     app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), now);
-    app.event(&Event::RunStarted { plan: config.plan(), focus: home.clone(), at: now }, now);
+    app.event(
+        &Event::RunStarted {
+            plan: config.plan(),
+            focus: home.clone(),
+            at: now,
+        },
+        now,
+    );
 
     let mut at = now;
     for (stage, median, spread, tail, replies) in [
@@ -98,9 +120,24 @@ fn console(palette: Palette) -> Buffer {
         (Stage::Upload, 3_200, 300, 900, 40),
     ] {
         let duration = config.duration(stage);
-        let cadence = if stage == Stage::Latency { config.ping } else { Cadence::Every(TICK) };
-        let members = vec![Member { server: home.clone(), warmup: config.warmup }];
-        app.event(&Event::StageStarted(StagePlan { stage, members, duration, latency: Some(cadence) }), at);
+        let cadence = if stage == Stage::Latency {
+            config.ping
+        } else {
+            Cadence::Every(TICK)
+        };
+        let members = vec![Member {
+            server: home.clone(),
+            warmup: config.warmup,
+        }];
+        app.event(
+            &Event::StageStarted(StagePlan {
+                stage,
+                members,
+                duration,
+                latency: Some(cadence),
+            }),
+            at,
+        );
         at += config.warmup;
         app.event(&Event::Measuring(stage), at);
         let ticks = (duration.as_millis() / TICK.as_millis()) as usize;
@@ -112,14 +149,24 @@ fn console(palette: Palette) -> Buffer {
                 .take(due)
                 .enumerate()
                 .map(|(index, rtt)| {
-                    latency.record(ProbeOutcome::Reply { rtt, handling: Duration::ZERO });
+                    latency.record(ProbeOutcome::Reply {
+                        rtt,
+                        handling: Duration::ZERO,
+                    });
                     Probed {
                         at: into - TICK + TICK * index as u32 / due as u32,
                         rtt: Some(rtt),
                     }
                 })
                 .collect();
-            app.event(&Event::Probes { server: home.clone(), probes, latency: latency.summary() }, at + into);
+            app.event(
+                &Event::Probes {
+                    server: home.clone(),
+                    probes,
+                    latency: latency.summary(),
+                },
+                at + into,
+            );
             let wander = RATE * (1.0 + 0.003 * (tick % 5) as f64 - 0.006);
             let live = |moves: bool| moves.then_some(wander);
             let rates = Dir {
@@ -132,13 +179,19 @@ fn console(palette: Palette) -> Buffer {
         }
         at += duration;
         let moved = |dir: Stage, peak: f64, bytes: u64| {
-            (stage == dir).then_some(Throughput { rate: Some(Rate { mean: RATE, peak }), bytes })
+            (stage == dir).then_some(Throughput {
+                rate: Some(Rate { mean: RATE, peak }),
+                bytes,
+            })
         };
         let throughput = Dir {
             down: moved(Stage::Download, PEAK.down, BYTES.down),
             up: moved(Stage::Upload, PEAK.up, BYTES.up),
         };
-        let population = Population { summary: latency.summary(), complete: true };
+        let population = Population {
+            summary: latency.summary(),
+            complete: true,
+        };
         let servers = vec![ServerResult {
             server: home.clone(),
             left: false,
@@ -156,7 +209,14 @@ fn console(palette: Palette) -> Buffer {
         app.event(&Event::StageFinished(result), at);
     }
     let elapsed = Duration::from_millis(28_600);
-    app.event(&Event::RunFinished { outcome: Outcome::Complete, error: None, elapsed }, now + elapsed);
+    app.event(
+        &Event::RunFinished {
+            outcome: Outcome::Complete,
+            error: None,
+            elapsed,
+        },
+        now + elapsed,
+    );
     let mut buffer = Buffer::empty(SIZE);
     app.draw(&mut buffer, now + elapsed + Duration::from_secs(5));
     buffer
@@ -171,14 +231,22 @@ fn hex(color: Color, default: &str) -> String {
 
 fn cells(buffer: &Buffer, palette: Palette) -> Value {
     let rgb = |rgb: u32| format!("#{:06x}", rgb & 0xff_ff_ff);
-    let (canvas, text) = (rgb(palette.canvas().rgb), rgb(palette.text.fg.map_or(0, |color| color.rgb)));
+    let (canvas, text) = (
+        rgb(palette.canvas().rgb),
+        rgb(palette.text.fg.map_or(0, |color| color.rgb)),
+    );
     let rows: Vec<Value> = buffer
         .content()
         .chunks(usize::from(SIZE.width))
         .map(|row| {
             let cells = row.iter().map(|cell| {
                 let bold = cell.modifier.contains(Modifier::BOLD);
-                json!([cell.symbol(), hex(cell.fg, &text), hex(cell.bg, &canvas), bold])
+                json!([
+                    cell.symbol(),
+                    hex(cell.fg, &text),
+                    hex(cell.bg, &canvas),
+                    bold
+                ])
             });
             Value::Array(cells.collect())
         })
@@ -187,9 +255,10 @@ fn cells(buffer: &Buffer, palette: Palette) -> Value {
 }
 
 fn main() {
-    let themes = [("dark", [0x0d, 0x10, 0x13]), ("light", [0xf1, 0xf2, 0xf5])].map(|(name, background)| {
-        let palette = Palette::over(Background(Some(background)));
-        (name.to_owned(), cells(&console(palette), palette))
-    });
+    let themes =
+        [("dark", [0x0d, 0x10, 0x13]), ("light", [0xf1, 0xf2, 0xf5])].map(|(name, background)| {
+            let palette = Palette::over(Background(Some(background)));
+            (name.to_owned(), cells(&console(palette), palette))
+        });
     println!("{}", Value::Object(themes.into_iter().collect()));
 }

@@ -4,7 +4,9 @@ use super::Reason;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ring::{
     digest::{self, SHA256, SHA384, SHA512},
-    signature::{self, RsaParameters, RsaPublicKeyComponents, UnparsedPublicKey, VerificationAlgorithm},
+    signature::{
+        self, RsaParameters, RsaPublicKeyComponents, UnparsedPublicKey, VerificationAlgorithm,
+    },
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -47,7 +49,10 @@ impl Alg {
     pub fn allowed(advertised: &[String]) -> Vec<Self> {
         let known = |name: &String| name == "ES512" || Self::parse(name).is_some();
         match advertised.iter().any(known) {
-            true => advertised.iter().filter_map(|name| Self::parse(name)).collect(),
+            true => advertised
+                .iter()
+                .filter_map(|name| Self::parse(name))
+                .collect(),
             false => vec![Self::RS256],
         }
     }
@@ -79,12 +84,20 @@ struct Key {
 
 impl Key {
     fn verifies(&self, alg: Alg, message: &[u8], signature: &[u8]) -> bool {
-        if self.alg.as_deref().is_some_and(|name| Alg::parse(name) != Some(alg)) {
+        if self
+            .alg
+            .as_deref()
+            .is_some_and(|name| Alg::parse(name) != Some(alg))
+        {
             return false;
         }
         match (&self.public, alg.scheme().0) {
-            (Ok((n, e)), Ok(rsa)) => RsaPublicKeyComponents { n, e }.verify(rsa, message, signature).is_ok(),
-            (Err(point), Err(curve)) => UnparsedPublicKey::new(curve, point).verify(message, signature).is_ok(),
+            (Ok((n, e)), Ok(rsa)) => RsaPublicKeyComponents { n, e }
+                .verify(rsa, message, signature)
+                .is_ok(),
+            (Err(point), Err(curve)) => UnparsedPublicKey::new(curve, point)
+                .verify(message, signature)
+                .is_ok(),
             _ => false,
         }
     }
@@ -115,10 +128,13 @@ impl Jwks {
             x: Option<String>,
             y: Option<String>,
         }
-        let bytes = |value: &Option<String>| B64.decode(value.as_deref()?.trim_end_matches('=')).ok();
+        let bytes =
+            |value: &Option<String>| B64.decode(value.as_deref()?.trim_end_matches('=')).ok();
         let key = |key: Jwk| {
-            let point =
-                |size: usize| Some([vec![4], bytes(&key.x)?, bytes(&key.y)?].concat()).filter(|p| p.len() == 1 + size);
+            let point = |size: usize| {
+                Some([vec![4], bytes(&key.x)?, bytes(&key.y)?].concat())
+                    .filter(|p| p.len() == 1 + size)
+            };
             let signs = key.usage.as_deref().is_none_or(|usage| usage == "sig");
             let ops = key.key_ops.as_ref();
             let verifies = ops.is_none_or(|ops| ops.iter().any(|op| op == "verify"));
@@ -130,9 +146,16 @@ impl Jwks {
                 ("OKP", Some("Ed25519")) => Err(bytes(&key.x).filter(|x| x.len() == 32)?),
                 _ => return None,
             };
-            Some(Key { kid: key.kid, alg: key.alg, public })
+            Some(Key {
+                kid: key.kid,
+                alg: key.alg,
+                public,
+            })
         };
-        let keys = serde_json::from_slice::<Set>(document).ok()?.keys.into_iter();
+        let keys = serde_json::from_slice::<Set>(document)
+            .ok()?
+            .keys
+            .into_iter();
         let keys = keys.filter_map(|value| serde_json::from_value(value).ok().and_then(key));
         Some(Self(keys.take(MAX_KEYS).collect()))
     }
@@ -163,8 +186,12 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Option<Verifi
         enc: Option<Value>,
     }
     let token = token.trim();
-    let (message, signature) = token.rsplit_once('.').filter(|_| token.len() <= MAX_TOKEN)?;
-    let (header, payload) = message.split_once('.').filter(|(_, payload)| !payload.contains('.'))?;
+    let (message, signature) = token
+        .rsplit_once('.')
+        .filter(|_| token.len() <= MAX_TOKEN)?;
+    let (header, payload) = message
+        .split_once('.')
+        .filter(|(_, payload)| !payload.contains('.'))?;
     let header: Header = serde_json::from_slice(&B64.decode(header).ok()?).ok()?;
     let jose = ["jwt", "application/jwt", "jose", "application/jose"];
     let typed = header
@@ -178,7 +205,10 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Option<Verifi
     let signature = B64.decode(signature).ok()?;
     let mut named = keys.0.iter().filter(|key| kid.is_none() || key.kid == kid);
     named.find(|key| key.verifies(alg, message.as_bytes(), &signature))?;
-    Some(Verified { alg, payload: B64.decode(payload).ok()? })
+    Some(Verified {
+        alg,
+        payload: B64.decode(payload).ok()?,
+    })
 }
 
 /// Whether claims name `issuer` and include `client` in their audience.
@@ -192,7 +222,8 @@ pub(super) fn addressed(payload: &[u8], issuer: &str, client: &str) -> bool {
         return false;
     };
     let many = claims.aud.as_array();
-    let audience = claims.aud == client || many.is_some_and(|many| many.iter().any(|one| one == client));
+    let audience =
+        claims.aud == client || many.is_some_and(|many| many.iter().any(|one| one == client));
     claims.iss == issuer && audience
 }
 
@@ -222,8 +253,11 @@ pub(super) fn id_token(
     let payload = &verified.payload;
     let now = SystemTime::now().duration_since(UNIX_EPOCH);
     let now = now.unwrap_or_default().as_secs_f64();
-    let current = |period: &Period| now < period.exp && period.nbf.is_none_or(|nbf| nbf <= now + SKEW);
-    let period = serde_json::from_slice::<Period>(payload).ok().filter(current);
+    let current =
+        |period: &Period| now < period.exp && period.nbf.is_none_or(|nbf| nbf <= now + SKEW);
+    let period = serde_json::from_slice::<Period>(payload)
+        .ok()
+        .filter(current);
     let Some(period) = period.filter(|_| addressed(payload, issuer, client)) else {
         return Err(Reason::IdTokenVerification);
     };
@@ -240,5 +274,8 @@ pub(super) fn id_token(
     {
         return Err(Reason::AccessTokenHash);
     }
-    Ok((period.sub.unwrap_or_default(), [named.name, named.preferred_username]))
+    Ok((
+        period.sub.unwrap_or_default(),
+        [named.name, named.preferred_username],
+    ))
 }

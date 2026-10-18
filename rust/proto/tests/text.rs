@@ -6,8 +6,8 @@ fn safe_text_has_no_controls_or_bidi_formatting() {
         assert!(safe(c), "{c:?}");
     }
     for c in [
-        '\0', '\t', '\n', '\u{7f}', '\u{85}', '\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}', '\u{2066}',
-        '\u{2069}',
+        '\0', '\t', '\n', '\u{7f}', '\u{85}', '\u{61c}', '\u{200e}', '\u{200f}', '\u{202a}',
+        '\u{202e}', '\u{2066}', '\u{2069}',
     ] {
         assert!(!safe(c), "{c:?}");
     }
@@ -28,13 +28,21 @@ fn quoting_escapes_controls_bidi_formatting_quotes_and_backslashes() {
     for (text, quoted) in [
         ("plain 日本 é", r#""plain 日本 é""#),
         ("a\"b\\c", r#""a\"b\\c""#),
-        ("\t\n\r\0\u{1}\u{7f}\u{85}", r#""\t\n\r\0\u{1}\u{7f}\u{85}""#),
-        ("\u{61c}\u{200e}\u{202e}\u{2066}", r#""\u{61c}\u{200e}\u{202e}\u{2066}""#),
+        (
+            "\t\n\r\0\u{1}\u{7f}\u{85}",
+            r#""\t\n\r\0\u{1}\u{7f}\u{85}""#,
+        ),
+        (
+            "\u{61c}\u{200e}\u{202e}\u{2066}",
+            r#""\u{61c}\u{200e}\u{202e}\u{2066}""#,
+        ),
     ] {
         assert_eq!(quote(text), quoted, "{text:?}");
     }
     assert!(
-        quote("\u{200b}\u{feff}").chars().all(|c| c.is_ascii_graphic()),
+        quote("\u{200b}\u{feff}")
+            .chars()
+            .all(|c| c.is_ascii_graphic()),
         "invisible characters escape too"
     );
 }

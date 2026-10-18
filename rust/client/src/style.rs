@@ -15,8 +15,16 @@ type Tone = [Color; 2];
 
 const fn tone(light: (u32, u8, u8), dark: (u32, u8, u8)) -> Tone {
     [
-        Color { rgb: light.0, ansi256: light.1, ansi: light.2 },
-        Color { rgb: dark.0, ansi256: dark.1, ansi: dark.2 },
+        Color {
+            rgb: light.0,
+            ansi256: light.1,
+            ansi: light.2,
+        },
+        Color {
+            rgb: dark.0,
+            ansi256: dark.1,
+            ansi: dark.2,
+        },
     ]
 }
 
@@ -80,7 +88,10 @@ impl Palette {
     pub fn over(background: Background) -> Self {
         let dark = background.dark();
         let canvas = CANVAS[usize::from(dark)];
-        Self::on(dark, background.0.map_or(canvas, |rgb| nearest(rgb, canvas.ansi)))
+        Self::on(
+            dark,
+            background.0.map_or(canvas, |rgb| nearest(rgb, canvas.ansi)),
+        )
     }
 
     fn on(dark: bool, canvas: Color) -> Self {
@@ -97,13 +108,22 @@ impl Palette {
             warn: shade(CAUTION),
             err: shade(BAD).bold(),
             border: shade(BORDER),
-            cursor: Style { bg: Some(pick(TEXT)), ..Style::fg(canvas) },
-            plate: Style { bg: Some(pick(INK)), ..Style::fg(canvas) },
+            cursor: Style {
+                bg: Some(pick(TEXT)),
+                ..Style::fg(canvas)
+            },
+            plate: Style {
+                bg: Some(pick(INK)),
+                ..Style::fg(canvas)
+            },
             plate_note: Style {
                 bg: Some(pick(INK)),
                 ..Style::fg(mix(pick(INK), canvas, 0.45))
             },
-            plate_off: Style { bg: Some(pick(PLATE_OFF)), ..shade(SOFT) },
+            plate_off: Style {
+                bg: Some(pick(PLATE_OFF)),
+                ..shade(SOFT)
+            },
             surface: lift(if dark { 0.045 } else { 0.03 }),
             raised: lift(if dark { 0.09 } else { 0.07 }),
             hover: lift(if dark { 0.07 } else { 0.05 }),
@@ -146,7 +166,10 @@ impl Palette {
 /// `share` of `color` over `under` in sRGB, at the nearest of the 256 colors, and `color`'s own of the 16.
 pub fn mix(color: Color, under: Color, share: f64) -> Color {
     let channel = |at: u32| {
-        let (over, below) = (f64::from((color.rgb >> at) as u8), f64::from((under.rgb >> at) as u8));
+        let (over, below) = (
+            f64::from((color.rgb >> at) as u8),
+            f64::from((under.rgb >> at) as u8),
+        );
         (over * share + below * (1.0 - share)).round() as u8
     };
     nearest([channel(16), channel(8), channel(0)], color.ansi)
@@ -162,7 +185,11 @@ fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
             .sum::<u32>()
     };
     // The 6×6×6 cube's nearest color or the grey ramp's, whichever lies closer.
-    let cube = rgb.map(|value| (0..6).min_by_key(|&index| value.abs_diff(LEVELS[index])).unwrap_or(0));
+    let cube = rgb.map(|value| {
+        (0..6)
+            .min_by_key(|&index| value.abs_diff(LEVELS[index]))
+            .unwrap_or(0)
+    });
     let grey = (rgb.iter().map(|&value| u16::from(value)).sum::<u16>() / 3).saturating_sub(3) / 10;
     let grey = grey.min(23) as u8;
     let ansi256 = match distance(cube.map(|index| LEVELS[index])) <= distance([8 + 10 * grey; 3]) {
@@ -170,7 +197,9 @@ fn nearest(rgb: [u8; 3], ansi: u8) -> Color {
         false => 232 + grey,
     };
     Color {
-        rgb: rgb.iter().fold(0, |rgb, &value| rgb << 8 | u32::from(value)),
+        rgb: rgb
+            .iter()
+            .fold(0, |rgb, &value| rgb << 8 | u32::from(value)),
         ansi256,
         ansi,
     }
@@ -186,7 +215,16 @@ pub fn profile(tty: bool, var: impl Fn(&str) -> Option<String>) -> Profile {
     if !(set("CLICOLOR_FORCE") || set("FORCE_COLOR")) && (!tty || term == "dumb") {
         return Profile::Plain;
     }
-    const DIRECT: [&str; 8] = ["alacritty", "contour", "foot", "ghostty", "kitty", "rio", "st", "wezterm"];
+    const DIRECT: [&str; 8] = [
+        "alacritty",
+        "contour",
+        "foot",
+        "ghostty",
+        "kitty",
+        "rio",
+        "st",
+        "wezterm",
+    ];
     let color_term = var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
     // tmux and screen pass on 256 colors unless told otherwise, and screen never 24-bit.
     let multiplexer = term.starts_with("tmux") || term.starts_with("screen");
@@ -240,22 +278,31 @@ pub fn ask(limit: Duration) -> Answer {
     let (stdin, deadline) = (io::stdin(), Instant::now() + limit);
     let (mut answers, mut chunk) = (Vec::new(), [0; 1024]);
     while answers.len() < 4096 {
-        let left = Timespec::try_from(deadline.saturating_duration_since(Instant::now())).unwrap_or_default();
+        let left = Timespec::try_from(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_default();
         match poll(&mut [PollFd::new(&stdin, PollFlags::IN)], Some(&left)) {
             Err(Errno::INTR) => continue,
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let Ok(read @ 1..) = rustix::io::read(&stdin, &mut chunk) else { break };
+        let Ok(read @ 1..) = rustix::io::read(&stdin, &mut chunk) else {
+            break;
+        };
         answers.extend_from_slice(&chunk[..read]);
         // Raw mode turns Ctrl+C into a byte, which interrupts as the signal would.
         let (background, ended) = scan(&answers);
         let interrupted = answers.contains(&0x03);
         if ended || interrupted {
-            return Answer { background, interrupted };
+            return Answer {
+                background,
+                interrupted,
+            };
         }
     }
-    Answer { background: scan(&answers).0, interrupted: false }
+    Answer {
+        background: scan(&answers).0,
+        interrupted: false,
+    }
 }
 
 #[cfg(not(unix))]
@@ -271,7 +318,10 @@ impl Background {
     /// Whether the background has an HSL lightness under one half; an unreadable one is dark.
     pub fn dark(self) -> bool {
         self.0.is_none_or(|rgb| {
-            let (high, low) = (rgb.iter().max().copied().unwrap_or(0), rgb.iter().min().copied().unwrap_or(0));
+            let (high, low) = (
+                rgb.iter().max().copied().unwrap_or(0),
+                rgb.iter().min().copied().unwrap_or(0),
+            );
             u16::from(high) + u16::from(low) < 255
         })
     }
@@ -311,13 +361,20 @@ pub fn scan(answers: &[u8]) -> (Option<Background>, bool) {
 
 /// An `rgb:`/`rgba:` or `#` color's channels.
 fn rgb(color: &[u8]) -> Option<[u8; 3]> {
-    let hex = |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let hex =
+        |digits: &str| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit());
     let color = std::str::from_utf8(color).unwrap_or_default();
     let channels: Option<Vec<u8>> = match color.strip_prefix('#') {
         Some(digits) => {
             let wide = if digits.len() == 3 { 1 } else { 2 };
-            let channel = |index: usize| digits.get(index * wide..(index + 1) * wide).filter(|pair| hex(pair));
-            let value = |pair: &str| Some(u8::from_str_radix(pair, 16).ok()? * if wide == 1 { 17 } else { 1 });
+            let channel = |index: usize| {
+                digits
+                    .get(index * wide..(index + 1) * wide)
+                    .filter(|pair| hex(pair))
+            };
+            let value = |pair: &str| {
+                Some(u8::from_str_radix(pair, 16).ok()? * if wide == 1 { 17 } else { 1 })
+            };
             (0..3).map(|index| channel(index).and_then(value)).collect()
         }
         None => {
@@ -377,24 +434,57 @@ mod tests {
     #[test]
     fn device_attributes_end_the_answers_and_only_whole_background_answers_count() {
         for (answers, expected) in [
-            (&b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..], (Some(Some([255; 3])), true)),
-            (b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c", (Some(Some([0; 3])), true)),
-            (b"\x1b]11;#fdf6e3\x07\x1b[?6c", (Some(Some([0xfd, 0xf6, 0xe3])), true)),
-            (b"\x1b]11;rgb:1010/1414/1818\x07\x1b[?6c", (Some(Some([0x10, 0x14, 0x18])), true)),
-            (b"\x1b]11;rgb:ffff/ffff/fffff\x07\x1b[?6c", (Some(None), true)),
-            (b"\x1b]11;rgba:f/fff/88/0\x07\x1b[?6c", (Some(Some([255, 255, 0x88])), true)),
+            (
+                &b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"[..],
+                (Some(Some([255; 3])), true),
+            ),
+            (
+                b"\x1b[A\x1b]11;rgb:0000/0000/0000\x07\x1b[?6c",
+                (Some(Some([0; 3])), true),
+            ),
+            (
+                b"\x1b]11;#fdf6e3\x07\x1b[?6c",
+                (Some(Some([0xfd, 0xf6, 0xe3])), true),
+            ),
+            (
+                b"\x1b]11;rgb:1010/1414/1818\x07\x1b[?6c",
+                (Some(Some([0x10, 0x14, 0x18])), true),
+            ),
+            (
+                b"\x1b]11;rgb:ffff/ffff/fffff\x07\x1b[?6c",
+                (Some(None), true),
+            ),
+            (
+                b"\x1b]11;rgba:f/fff/88/0\x07\x1b[?6c",
+                (Some(Some([255, 255, 0x88])), true),
+            ),
             (b"\x1b]11;nonsense\x07\x1b[?6c", (Some(None), true)),
             (b"\x1b]10;rgb:ffff/ffff/ffff\x07\x1b[?6c", (None, true)),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1bx\x1b[?6c", (None, true)),
-            (b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", (Some(Some([255; 3])), false)),
+            (
+                b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\",
+                (Some(Some([255; 3])), false),
+            ),
             (b"\x1b]11;rgb:ffff/ffff/ffff\x1b", (None, false)),
         ] {
             let (background, ended) = scan(answers);
-            assert_eq!((background.map(|background| background.0), ended), expected, "{}", answers.escape_ascii());
+            assert_eq!(
+                (background.map(|background| background.0), ended),
+                expected,
+                "{}",
+                answers.escape_ascii()
+            );
         }
-        assert!(!Background(Some([0xfd, 0xf6, 0xe3])).dark() && Background(Some([0x10, 0x14, 0x18])).dark());
+        assert!(
+            !Background(Some([0xfd, 0xf6, 0xe3])).dark()
+                && Background(Some([0x10, 0x14, 0x18])).dark()
+        );
         assert!(Background(None).dark());
         let named = Palette::over(Background(Some([0x10, 0x14, 0x18])));
-        assert_eq!(named.canvas().rgb, 0x101418, "blends land on the terminal's own background");
+        assert_eq!(
+            named.canvas().rgb,
+            0x101418,
+            "blends land on the terminal's own background"
+        );
     }
 }

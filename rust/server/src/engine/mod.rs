@@ -64,7 +64,9 @@ impl Meter {
         let gbits = bytes as f64 * 8.0 / window.as_secs_f64() / 1e9;
         let megabytes = bytes as f64 / 1e6;
         let seconds = window.as_secs_f64();
-        Some(format!("{gbits:.2} Gbit/s · {transfers} transfers · {megabytes:.2} MB in {seconds:.1} s"))
+        Some(format!(
+            "{gbits:.2} Gbit/s · {transfers} transfers · {megabytes:.2} MB in {seconds:.1} s"
+        ))
     }
 }
 
@@ -98,7 +100,12 @@ pub struct UploadSink {
 
 impl UploadSink {
     fn new(aggregate: Arc<Aggregate>, lane: Lane, transfer: Option<Arc<Transfer>>) -> Self {
-        Self { aggregate, lane, bytes: 0, transfer }
+        Self {
+            aggregate,
+            lane,
+            bytes: 0,
+            transfer,
+        }
     }
 
     /// Counts bytes received from the peer, once per chunk or batch; receiving any is the lane's movement.

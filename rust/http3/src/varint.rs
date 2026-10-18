@@ -13,7 +13,9 @@ pub(crate) fn decode(input: &[u8]) -> Option<(u64, usize)> {
     let bytes = input.get(..size(*input.first()?))?;
     let value = bytes[1..]
         .iter()
-        .fold(u64::from(bytes[0] & 0x3f), |value, byte| value << 8 | u64::from(*byte));
+        .fold(u64::from(bytes[0] & 0x3f), |value, byte| {
+            value << 8 | u64::from(*byte)
+        });
     Some((value, bytes.len()))
 }
 

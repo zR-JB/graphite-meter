@@ -28,7 +28,10 @@ const READ_CHUNKS: usize = 16;
 
 /// Charges for a request stream's two halves, so each can drop on its own.
 pub(crate) fn charges(budget: &Budget) -> Option<(Charge, Charge)> {
-    Some((Charge::new(budget, size_of::<SendHalf>())?, Charge::new(budget, size_of::<RecvHalf>())?))
+    Some((
+        Charge::new(budget, size_of::<SendHalf>())?,
+        Charge::new(budget, size_of::<RecvHalf>())?,
+    ))
 }
 
 /// Writes what remains of `header`.
@@ -129,11 +132,15 @@ impl RecvHalf {
             match ready!(self.poll_event(cx))? {
                 Some(Event::Data(data)) => return Poll::Ready(Ok(Some(data))),
                 Some(Event::Trailers(section)) => {
-                    if let Err(invalid) = fields::check_trailers(&section, self.shared.field_limit()) {
+                    if let Err(invalid) =
+                        fields::check_trailers(&section, self.shared.field_limit())
+                    {
                         return Poll::Ready(Err(self.abort(invalid.code())));
                     }
                 }
-                Some(Event::Head(_)) => return Poll::Ready(Err(self.abort(Code::H3_FRAME_UNEXPECTED))),
+                Some(Event::Head(_)) => {
+                    return Poll::Ready(Err(self.abort(Code::H3_FRAME_UNEXPECTED)));
+                }
                 None => return Poll::Ready(Ok(None)),
             }
         }
@@ -171,7 +178,10 @@ impl RecvHalf {
                 Some(left) => self.left = left,
                 None => return Poll::Ready(Err(self.abort(Code::H3_EXCESSIVE_LOAD))),
             }
-            if !self.charge.resize(size_of::<Self>() + self.message.buffered()) {
+            if !self
+                .charge
+                .resize(size_of::<Self>() + self.message.buffered())
+            {
                 // Refused before its head is read, a request was never processed (RFC 9114 §4.1.1).
                 let refusal = if self.message.has_head() {
                     Code::H3_EXCESSIVE_LOAD
@@ -194,7 +204,12 @@ impl RecvHalf {
                 Ok(Some(count)) => self.read = 0..count,
                 Ok(None) => {
                     self.done = true;
-                    return Poll::Ready(self.message.finish().map(|()| None).map_err(|code| self.abort(code)));
+                    return Poll::Ready(
+                        self.message
+                            .finish()
+                            .map(|()| None)
+                            .map_err(|code| self.abort(code)),
+                    );
                 }
                 Err(error) => {
                     self.done = true;
@@ -208,7 +223,10 @@ impl RecvHalf {
     pub(crate) fn abort(&mut self, code: Code) -> Error {
         if matches!(
             code,
-            Code::H3_FRAME_UNEXPECTED | Code::H3_FRAME_ERROR | Code::H3_ID_ERROR | Code::QPACK_DECOMPRESSION_FAILED
+            Code::H3_FRAME_UNEXPECTED
+                | Code::H3_FRAME_ERROR
+                | Code::H3_ID_ERROR
+                | Code::QPACK_DECOMPRESSION_FAILED
         ) {
             return self.shared.close(code);
         }
@@ -219,8 +237,13 @@ impl RecvHalf {
     /// Whether FIN already arrived unread, after a complete message.
     fn finished_unread(&mut self) -> bool {
         let mut cx = Context::from_waker(Waker::noop());
-        let complete = self.input.is_empty() && self.read.is_empty() && self.message.finish().is_ok();
-        complete && matches!(pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx), Poll::Ready(Ok(None)))
+        let complete =
+            self.input.is_empty() && self.read.is_empty() && self.message.finish().is_ok();
+        complete
+            && matches!(
+                pin!(self.stream.read_chunk(usize::MAX)).poll(&mut cx),
+                Poll::Ready(Ok(None))
+            )
     }
 }
 
@@ -295,7 +318,8 @@ impl SendHalf {
     /// Queues a response head within the peer's field section limit.
     pub(crate) fn queue_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
         let (parts, ()) = response.into_parts();
-        let section = fields::encode_response(&parts, self.shared.peer_field_limit()).map_err(|_| Error::Refused)?;
+        let section = fields::encode_response(&parts, self.shared.peer_field_limit())
+            .map_err(|_| Error::Refused)?;
         self.queue(FrameType::HEADERS, section.into());
         Ok(())
     }
@@ -313,8 +337,13 @@ impl SendHalf {
             End::Cut => return Poll::Ready(Err(Error::Closed)),
             End::Open => {}
         }
-        let finished = ready!(self.poll_ready(cx)).and_then(|()| self.stream.finish().map_err(|_| Error::Closed));
-        self.end = if finished.is_ok() { End::Finished } else { End::Cut };
+        let finished = ready!(self.poll_ready(cx))
+            .and_then(|()| self.stream.finish().map_err(|_| Error::Closed));
+        self.end = if finished.is_ok() {
+            End::Finished
+        } else {
+            End::Cut
+        };
         Poll::Ready(finished)
     }
 

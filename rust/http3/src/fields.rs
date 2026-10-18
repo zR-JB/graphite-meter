@@ -21,12 +21,20 @@ impl Fields {
     /// Counts a field against the limit before any of it is kept.
     fn count(&mut self, name: &[u8], value: &[u8], limit: u64) -> Result<(), Invalid> {
         self.size += field_size(name, value);
-        if self.size > limit { Err(Invalid::TooLarge) } else { Ok(()) }
+        if self.size > limit {
+            Err(Invalid::TooLarge)
+        } else {
+            Ok(())
+        }
     }
 
     /// Pseudo-header fields precede all others.
     fn pseudo(&self) -> Result<(), Invalid> {
-        if self.regular { Err(Invalid::Malformed) } else { Ok(()) }
+        if self.regular {
+            Err(Invalid::Malformed)
+        } else {
+            Ok(())
+        }
     }
 
     fn regular(&mut self, name: &[u8], value: &[u8]) -> Result<(), Invalid> {
@@ -35,7 +43,9 @@ impl Fields {
         if name == header::CONTENT_LENGTH {
             let length = std::str::from_utf8(value.as_bytes())
                 .ok()
-                .filter(|digits| !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit()))
+                .filter(|digits| {
+                    !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
+                })
                 .and_then(|digits| digits.parse().ok())
                 .ok_or(Invalid::Malformed)?;
             if *self.content_length.get_or_insert(length) != length {
@@ -62,7 +72,10 @@ fn regular(name: &[u8], value: &[u8]) -> Result<(HeaderName, HeaderValue), Inval
     if connection_specific(&name) || name == header::TE && value != b"trailers" {
         return Err(Invalid::Malformed);
     }
-    Ok((name, HeaderValue::from_bytes(value).map_err(|_| Invalid::Malformed)?))
+    Ok((
+        name,
+        HeaderValue::from_bytes(value).map_err(|_| Invalid::Malformed)?,
+    ))
 }
 
 fn connection_specific(name: &HeaderName) -> bool {
@@ -84,9 +97,13 @@ fn set<T, E>(slot: &mut Option<T>, value: Result<T, E>) -> Result<(), Invalid> {
 }
 
 /// A request our routes serve. Plain CONNECT and other extended CONNECT protocols are `Unsupported`.
-pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Request<()>>, Invalid> {
+pub(crate) fn decode_request(
+    section: &[u8],
+    limit: u64,
+) -> Result<Head<http::Request<()>>, Invalid> {
     let mut fields = Fields::default();
-    let (mut method, mut scheme, mut authority, mut path, mut protocol) = (None, None, None, None, None);
+    let (mut method, mut scheme, mut authority, mut path, mut protocol) =
+        (None, None, None, None, None);
     qpack::decode(section, |name, value| {
         fields.count(name, value, limit)?;
         match name {
@@ -94,7 +111,10 @@ pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Re
             b":scheme" => set(&mut scheme, uri::Scheme::try_from(value)),
             b":authority" => set(&mut authority, uri::Authority::try_from(value)),
             b":path" => set(&mut path, uri::PathAndQuery::try_from(value)),
-            b":protocol" => set(&mut protocol, Ok::<_, ()>(matches!(value, b"webtransport" | b"webtransport-h3"))),
+            b":protocol" => set(
+                &mut protocol,
+                Ok::<_, ()>(matches!(value, b"webtransport" | b"webtransport-h3")),
+            ),
             _ if name.starts_with(b":") => Err(Invalid::Malformed),
             _ => return fields.regular(name, value),
         }?;
@@ -106,7 +126,9 @@ pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Re
         match protocol {
             Some(true) if extended => {}
             Some(_) if extended => return Err(Invalid::Unsupported),
-            None if authority.is_some() && scheme.is_none() && path.is_none() => return Err(Invalid::Unsupported),
+            None if authority.is_some() && scheme.is_none() && path.is_none() => {
+                return Err(Invalid::Unsupported);
+            }
             _ => return Err(Invalid::Malformed),
         }
     } else if protocol.is_some() {
@@ -118,8 +140,11 @@ pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Re
         return Err(Invalid::Malformed);
     }
     let mut parts = uri::Parts::default();
-    (parts.scheme, parts.authority, parts.path_and_query) =
-        (Some(scheme.ok_or(Invalid::Malformed)?), Some(authority), Some(path));
+    (parts.scheme, parts.authority, parts.path_and_query) = (
+        Some(scheme.ok_or(Invalid::Malformed)?),
+        Some(authority),
+        Some(path),
+    );
     let mut request = http::Request::new(());
     *request.method_mut() = method;
     *request.uri_mut() = Uri::from_parts(parts).map_err(|_| Invalid::Malformed)?;
@@ -128,7 +153,10 @@ pub(crate) fn decode_request(section: &[u8], limit: u64) -> Result<Head<http::Re
 }
 
 /// Host may stand in for :authority and must agree with it (RFC 9114 §4.3.1); neither carries userinfo.
-fn request_authority(authority: Option<uri::Authority>, headers: &HeaderMap) -> Result<uri::Authority, Invalid> {
+fn request_authority(
+    authority: Option<uri::Authority>,
+    headers: &HeaderMap,
+) -> Result<uri::Authority, Invalid> {
     let mut hosts = headers.get_all(header::HOST).iter();
     let authority = match (authority, hosts.next(), hosts.next()) {
         (_, Some(_), Some(_)) | (None, None, _) => return Err(Invalid::Malformed),
@@ -136,7 +164,9 @@ fn request_authority(authority: Option<uri::Authority>, headers: &HeaderMap) -> 
             return Err(Invalid::Malformed);
         }
         (Some(authority), _, _) => authority,
-        (None, Some(host), _) => uri::Authority::try_from(host.as_bytes()).map_err(|_| Invalid::Malformed)?,
+        (None, Some(host), _) => {
+            uri::Authority::try_from(host.as_bytes()).map_err(|_| Invalid::Malformed)?
+        }
     };
     if authority.as_str().contains('@') {
         return Err(Invalid::Malformed);
@@ -144,7 +174,10 @@ fn request_authority(authority: Option<uri::Authority>, headers: &HeaderMap) -> 
     Ok(authority)
 }
 
-pub(crate) fn decode_response(section: &[u8], limit: u64) -> Result<Head<http::Response<()>>, Invalid> {
+pub(crate) fn decode_response(
+    section: &[u8],
+    limit: u64,
+) -> Result<Head<http::Response<()>>, Invalid> {
     let mut fields = Fields::default();
     let mut status = None;
     qpack::decode(section, |name, value| {
@@ -182,15 +215,32 @@ pub(crate) fn encode_request(
     let pseudo = [
         (":method", request.method.as_str()),
         (":scheme", uri.scheme_str().ok_or(Invalid::Malformed)?),
-        (":authority", uri.authority().ok_or(Invalid::Malformed)?.as_str()),
-        (":path", uri.path_and_query().map_or("/", uri::PathAndQuery::as_str)),
+        (
+            ":authority",
+            uri.authority().ok_or(Invalid::Malformed)?.as_str(),
+        ),
+        (
+            ":path",
+            uri.path_and_query().map_or("/", uri::PathAndQuery::as_str),
+        ),
         (":protocol", protocol.unwrap_or_default()),
     ];
-    encode(&pseudo[..if protocol.is_some() { 5 } else { 4 }], &request.headers, limit)
+    encode(
+        &pseudo[..if protocol.is_some() { 5 } else { 4 }],
+        &request.headers,
+        limit,
+    )
 }
 
-pub(crate) fn encode_response(response: &http::response::Parts, limit: Option<u64>) -> Result<Vec<u8>, Invalid> {
-    encode(&[(":status", response.status.as_str())], &response.headers, limit)
+pub(crate) fn encode_response(
+    response: &http::response::Parts,
+    limit: Option<u64>,
+) -> Result<Vec<u8>, Invalid> {
+    encode(
+        &[(":status", response.status.as_str())],
+        &response.headers,
+        limit,
+    )
 }
 
 /// A field's size as the field section limit counts it (RFC 9114 §4.2.2).
@@ -198,15 +248,23 @@ fn field_size(name: &[u8], value: &[u8]) -> u64 {
     (name.len() + value.len() + 32) as u64
 }
 
-fn encode(pseudo: &[(&str, &str)], headers: &HeaderMap, limit: Option<u64>) -> Result<Vec<u8>, Invalid> {
+fn encode(
+    pseudo: &[(&str, &str)],
+    headers: &HeaderMap,
+    limit: Option<u64>,
+) -> Result<Vec<u8>, Invalid> {
     let fields = || {
-        let regular = headers.iter().filter(|(name, _)| !connection_specific(name));
+        let regular = headers
+            .iter()
+            .filter(|(name, _)| !connection_specific(name));
         pseudo
             .iter()
             .map(|&(name, value)| (name.as_bytes(), value.as_bytes()))
             .chain(regular.map(|(name, value)| (name.as_str().as_bytes(), value.as_bytes())))
     };
-    let size = fields().map(|(name, value)| field_size(name, value)).sum::<u64>();
+    let size = fields()
+        .map(|(name, value)| field_size(name, value))
+        .sum::<u64>();
     if limit.is_some_and(|limit| size > limit) {
         return Err(Invalid::TooLarge);
     }
@@ -220,8 +278,12 @@ mod tests {
     use super::*;
     use crate::testing::section;
 
-    const GET: [(&str, &str); 4] =
-        [(":method", "GET"), (":scheme", "https"), (":authority", "meter.example"), (":path", "/")];
+    const GET: [(&str, &str); 4] = [
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "meter.example"),
+        (":path", "/"),
+    ];
 
     fn request(fields: &[(&str, &str)]) -> Result<http::Request<()>, Invalid> {
         decode_request(&section(fields), 4096).map(|head| head.message)
@@ -237,11 +299,21 @@ mod tests {
 
     #[test]
     fn requests_become_absolute_http3_requests() {
-        let head = decode_request(&section(&with(&[("content-length", "7"), ("content-length", "7")])), 4096).unwrap();
+        let head = decode_request(
+            &section(&with(&[("content-length", "7"), ("content-length", "7")])),
+            4096,
+        )
+        .unwrap();
         assert_eq!(head.message.uri(), "https://meter.example/");
-        assert_eq!((head.message.version(), head.content_length), (Version::HTTP_3, Some(7)));
+        assert_eq!(
+            (head.message.version(), head.content_length),
+            (Version::HTTP_3, Some(7))
+        );
         let fields = GET.iter().chain(&[("content-length", "7"); 2]);
-        assert_eq!(head.size, fields.map(|(n, v)| n.len() + v.len() + 32).sum::<usize>() as u64);
+        assert_eq!(
+            head.size,
+            fields.map(|(n, v)| n.len() + v.len() + 32).sum::<usize>() as u64
+        );
         for protocol in ["webtransport", "webtransport-h3"] {
             let session = connect(&[(":protocol", protocol), GET[1], GET[2], (":path", "/wt")]);
             assert_eq!(request(&session).unwrap().method(), Method::CONNECT);
@@ -268,13 +340,21 @@ mod tests {
             connect(&[(":protocol", "webtransport"), GET[1], GET[2]]),
         ];
         for fields in malformed {
-            assert_eq!(request(&fields).err(), Some(Invalid::Malformed), "{fields:?}");
+            assert_eq!(
+                request(&fields).err(),
+                Some(Invalid::Malformed),
+                "{fields:?}"
+            );
         }
         for fields in [
             connect(&[(":authority", "meter.example:443")]),
             connect(&[(":protocol", "websocket"), GET[1], GET[2], GET[3]]),
         ] {
-            assert_eq!(request(&fields).err(), Some(Invalid::Unsupported), "{fields:?}");
+            assert_eq!(
+                request(&fields).err(),
+                Some(Invalid::Unsupported),
+                "{fields:?}"
+            );
         }
     }
 
@@ -285,8 +365,14 @@ mod tests {
             .map(|(name, value)| name.len() + value.len() + 32)
             .sum::<usize>() as u64;
         assert!(decode_request(&section(&GET), exact).is_ok());
-        assert_eq!(decode_request(&section(&GET), exact - 1).err(), Some(Invalid::TooLarge));
-        assert_eq!(decode_request(&[0x01, 0x00], 4096).err(), Some(Invalid::Qpack));
+        assert_eq!(
+            decode_request(&section(&GET), exact - 1).err(),
+            Some(Invalid::TooLarge)
+        );
+        assert_eq!(
+            decode_request(&[0x01, 0x00], 4096).err(),
+            Some(Invalid::Qpack)
+        );
     }
 
     #[test]
@@ -298,12 +384,29 @@ mod tests {
             (response.status(), response.headers()["x"].as_bytes()),
             (StatusCode::NO_CONTENT, &b"y"[..])
         );
-        for fields in [&[("x", "y")][..], &[(":status", "2000")], &[(":status", "200"), (":path", "/")]] {
-            assert_eq!(decode_response(&section(fields), 4096).err(), Some(Invalid::Malformed), "{fields:?}");
+        for fields in [
+            &[("x", "y")][..],
+            &[(":status", "2000")],
+            &[(":status", "200"), (":path", "/")],
+        ] {
+            assert_eq!(
+                decode_response(&section(fields), 4096).err(),
+                Some(Invalid::Malformed),
+                "{fields:?}"
+            );
         }
-        assert_eq!(check_trailers(&section(&[("x-checksum", "1")]), 4096), Ok(()));
-        assert_eq!(check_trailers(&section(&[(":status", "200")]), 4096), Err(Invalid::Malformed));
-        assert_eq!(check_trailers(&section(&[("x", "y")]), 33), Err(Invalid::TooLarge));
+        assert_eq!(
+            check_trailers(&section(&[("x-checksum", "1")]), 4096),
+            Ok(())
+        );
+        assert_eq!(
+            check_trailers(&section(&[(":status", "200")]), 4096),
+            Err(Invalid::Malformed)
+        );
+        assert_eq!(
+            check_trailers(&section(&[("x", "y")]), 33),
+            Err(Invalid::TooLarge)
+        );
     }
 
     #[test]
@@ -316,10 +419,24 @@ mod tests {
             .into_parts();
         let encoded = encode_request(&parts, Some("webtransport-h3"), Some(4096)).unwrap();
         let decoded = decode_request(&encoded, 4096).unwrap().message;
-        assert_eq!((decoded.uri(), decoded.headers().len()), (&parts.uri, 1), "without connection fields");
-        assert_eq!(encode_request(&parts, None, Some(100)), Err(Invalid::TooLarge));
-        let (parts, ()) = http::Response::builder().status(431).body(()).unwrap().into_parts();
+        assert_eq!(
+            (decoded.uri(), decoded.headers().len()),
+            (&parts.uri, 1),
+            "without connection fields"
+        );
+        assert_eq!(
+            encode_request(&parts, None, Some(100)),
+            Err(Invalid::TooLarge)
+        );
+        let (parts, ()) = http::Response::builder()
+            .status(431)
+            .body(())
+            .unwrap()
+            .into_parts();
         let encoded = encode_response(&parts, None).unwrap();
-        assert_eq!(decode_response(&encoded, 4096).unwrap().message.status(), 431);
+        assert_eq!(
+            decode_response(&encoded, 4096).unwrap().message.status(),
+            431
+        );
     }
 }

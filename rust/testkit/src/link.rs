@@ -29,7 +29,10 @@ struct Pace {
 
 impl Pace {
     fn new(bottleneck: Option<Bottleneck>) -> Self {
-        Self { bottleneck, free: Instant::now() }
+        Self {
+            bottleneck,
+            free: Instant::now(),
+        }
     }
 
     /// When a packet of `bytes` leaves the bottleneck, or `None` when its queue is full.
@@ -81,13 +84,24 @@ impl Link {
                 relays.spawn(relay(client, server, one_way, stalls.clone()));
             }
         });
-        Ok(Self { address, stalled, _tasks: tasks })
+        Ok(Self {
+            address,
+            stalled,
+            _tasks: tasks,
+        })
     }
 
     /// Relays through `bottleneck`, if any, in each direction before the delay.
-    pub async fn udp(target: SocketAddr, one_way: Duration, bottleneck: Option<Bottleneck>) -> io::Result<Self> {
+    pub async fn udp(
+        target: SocketAddr,
+        one_way: Duration,
+        bottleneck: Option<Bottleneck>,
+    ) -> io::Result<Self> {
         if bottleneck.is_some_and(|bottleneck| bottleneck.bits_per_second == 0) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "a bottleneck passes at least 1 bit/s"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a bottleneck passes at least 1 bit/s",
+            ));
         }
         let front = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let back = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -118,7 +132,10 @@ impl Link {
                     && let Some(departure) = pace.departure(count)
                 {
                     let _ = up
-                        .send((departure + one_way, Bytes::copy_from_slice(&buffer[..count])))
+                        .send((
+                            departure + one_way,
+                            Bytes::copy_from_slice(&buffer[..count]),
+                        ))
                         .await;
                 }
             }
@@ -136,7 +153,10 @@ impl Link {
                     && let Some(departure) = pace.departure(count)
                 {
                     let _ = down
-                        .send((departure + one_way, Bytes::copy_from_slice(&buffer[..count])))
+                        .send((
+                            departure + one_way,
+                            Bytes::copy_from_slice(&buffer[..count]),
+                        ))
                         .await;
                 }
             }
@@ -159,16 +179,28 @@ impl Link {
                 }
             }
         });
-        Ok(Self { address, stalled, _tasks: tasks })
+        Ok(Self {
+            address,
+            stalled,
+            _tasks: tasks,
+        })
     }
 }
 
 /// A receive error an earlier send's ICMP reply raised, such as an unbound target; the socket still works.
 fn transient(error: &io::Error) -> bool {
-    matches!(error.kind(), io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset)
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
+    )
 }
 
-async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, stalls: watch::Receiver<bool>) {
+async fn relay(
+    mut client: TcpStream,
+    mut server: TcpStream,
+    delay: Duration,
+    stalls: watch::Receiver<bool>,
+) {
     let _ = client.set_nodelay(true);
     let _ = server.set_nodelay(true);
     let (client_read, client_write) = client.split();
@@ -180,13 +212,20 @@ async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, st
 }
 
 /// Forwards each chunk `delay` after it was read, holding everything once stalled.
-async fn pipe(mut from: tcp::ReadHalf<'_>, mut to: tcp::WriteHalf<'_>, delay: Duration, stalls: watch::Receiver<bool>) {
+async fn pipe(
+    mut from: tcp::ReadHalf<'_>,
+    mut to: tcp::WriteHalf<'_>,
+    delay: Duration,
+    stalls: watch::Receiver<bool>,
+) {
     let (sender, mut receiver) = mpsc::channel::<(Instant, Bytes)>(256);
     let mut open = stalls.clone();
     let read = async move {
         let mut buffer = vec![0; 64 * 1024];
         while open.wait_for(|stalled| !*stalled).await.is_ok() {
-            let Ok(count @ 1..) = from.read(&mut buffer).await else { return };
+            let Ok(count @ 1..) = from.read(&mut buffer).await else {
+                return;
+            };
             let chunk = Bytes::copy_from_slice(&buffer[..count]);
             if sender.send((Instant::now() + delay, chunk)).await.is_err() {
                 return;

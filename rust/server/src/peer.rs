@@ -8,7 +8,12 @@ use ipnet::{IpNet, Ipv6Net};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// A misconfigured proxy refuses every request it forwards, so one line a minute names the fault.
-static REFUSALS: RateLimited = RateLimited::new(Level::Warn, "proxy", "refused proxy requests", module_path!());
+static REFUSALS: RateLimited = RateLimited::new(
+    Level::Warn,
+    "proxy",
+    "refused proxy requests",
+    module_path!(),
+);
 
 /// Pairs a client's address with where it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,11 +74,17 @@ fn forwarded_client(headers: &HeaderMap) -> Result<IpAddr, String> {
         .and_then(|text| text.trim().parse::<IpAddr>().ok())
         .ok_or("X-Real-IP is not one IP address")?
         .to_canonical();
-    if let Some(chain) = headers.get_all(crate::headers::X_FORWARDED_FOR).iter().next_back() {
+    if let Some(chain) = headers
+        .get_all(crate::headers::X_FORWARDED_FOR)
+        .iter()
+        .next_back()
+    {
         let chain = chain.to_str().map_err(|_| "X-Forwarded-For is not text")?;
         let last = chain.rsplit(',').next().unwrap_or_default().trim();
         if !last.is_empty() && hop(last) != Some(client) {
-            return Err(format!("X-Forwarded-For ends in {last}, not X-Real-IP {client}"));
+            return Err(format!(
+                "X-Forwarded-For ends in {last}, not X-Real-IP {client}"
+            ));
         }
     }
     Ok(client)
@@ -90,7 +101,11 @@ fn hop(text: &str) -> Option<IpAddr> {
 /// Reads a field that is present once with one comma-free value.
 pub(crate) fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
-    let value = values.next().filter(|_| values.next().is_none())?.to_str().ok()?;
+    let value = values
+        .next()
+        .filter(|_| values.next().is_none())?
+        .to_str()
+        .ok()?;
     (!value.contains(',')).then(|| value.trim())
 }
 
@@ -107,7 +122,10 @@ pub struct Peer {
 
 impl Peer {
     pub fn new(address: Address) -> Self {
-        Self { address, auth: None }
+        Self {
+            address,
+            auth: None,
+        }
     }
 
     pub fn with_auth(self, auth: Option<AuthLease>) -> Self {
@@ -170,7 +188,11 @@ impl ClientKeys {
     /// Keys a connection by its socket address, or by nothing for a trusted proxy.
     pub fn connection(socket: IpAddr, trusted: &[IpNet]) -> Self {
         let socket = socket.to_canonical();
-        if is_trusted(socket, trusted) { Self::Exempt } else { Self::address(socket) }
+        if is_trusted(socket, trusted) {
+            Self::Exempt
+        } else {
+            Self::address(socket)
+        }
     }
 
     /// Returns the key an owner is compared by, which is the address, IPv6 /64, login or grant.
@@ -179,7 +201,13 @@ impl ClientKeys {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ClientKey> {
-        let prefix = |ip, bits| ClientKey::V6(Ipv6Net::new(ip, bits).expect("a prefix length up to 128").trunc());
+        let prefix = |ip, bits| {
+            ClientKey::V6(
+                Ipv6Net::new(ip, bits)
+                    .expect("a prefix length up to 128")
+                    .trunc(),
+            )
+        };
         let keys = match self {
             Self::Exempt => [None, None, None],
             Self::V4(ip) => [Some(ClientKey::V4(*ip)), None, None],
@@ -210,12 +238,22 @@ mod tests {
     #[test]
     fn only_a_trusted_peer_names_its_client_and_only_unambiguously() {
         fn resolve(socket: &str, pairs: &[(&'static str, &'static str)]) -> Address {
-            Address::resolve(socket.parse().unwrap(), &headers(pairs), &["10.0.0.0/8".parse().unwrap()])
+            Address::resolve(
+                socket.parse().unwrap(),
+                &headers(pairs),
+                &["10.0.0.0/8".parse().unwrap()],
+            )
         }
         let ip = |text: &str| text.parse::<IpAddr>().unwrap();
         let real = ("x-real-ip", " 2001:db8::1 ");
-        assert_eq!(resolve("::ffff:192.0.2.1", &[real]), Address::Socket(ip("192.0.2.1")));
-        assert_eq!(resolve("10.1.2.3", &[real]), Address::Forwarded(ip("2001:db8::1")));
+        assert_eq!(
+            resolve("::ffff:192.0.2.1", &[real]),
+            Address::Socket(ip("192.0.2.1"))
+        );
+        assert_eq!(
+            resolve("10.1.2.3", &[real]),
+            Address::Forwarded(ip("2001:db8::1"))
+        );
         assert_eq!(
             resolve("::ffff:10.1.2.3", &[("x-real-ip", "::ffff:192.0.2.9")]),
             Address::Forwarded(ip("192.0.2.9"))
@@ -238,13 +276,24 @@ mod tests {
         for pairs in [
             &[real, ("x-forwarded-for", "")][..],
             &[real, ("x-forwarded-for", "192.0.2.1, 2001:db8::1")],
-            &[real, ("x-forwarded-for", "192.0.2.1"), ("x-forwarded-for", "[2001:db8::1]:443")],
+            &[
+                real,
+                ("x-forwarded-for", "192.0.2.1"),
+                ("x-forwarded-for", "[2001:db8::1]:443"),
+            ],
             &[real, ("forwarded", "for=192.0.2.1")],
         ] {
-            assert_eq!(resolve("10.1.2.3", pairs), Address::Forwarded(ip("2001:db8::1")), "{pairs:?}");
+            assert_eq!(
+                resolve("10.1.2.3", pairs),
+                Address::Forwarded(ip("2001:db8::1")),
+                "{pairs:?}"
+            );
         }
         assert_eq!(proxy.source(), None);
-        assert_eq!(Address::Forwarded(ip("::1")).source(), Some(ClientIpSource::Forwarded));
+        assert_eq!(
+            Address::Forwarded(ip("::1")).source(),
+            Some(ClientIpSource::Forwarded)
+        );
     }
 
     #[test]
@@ -262,7 +311,9 @@ mod tests {
             provider: "local",
         };
         let login = store.sign_in(identity).unwrap();
-        let lease = store.bearer(store.grant(login.key, None).unwrap().as_str()).unwrap();
+        let lease = store
+            .bearer(store.grant(login.key, None).unwrap().as_str())
+            .unwrap();
         let ClientKeys::Auth(Holder::Grant(grant), _) = lease.keys() else {
             panic!("a grant's lease")
         };
@@ -271,10 +322,16 @@ mod tests {
         let signed_in = keys(peer.with_auth(Some(lease)).keys().unwrap());
         assert_eq!(
             signed_in,
-            [ClientKey::Holder(Holder::Grant(grant)), ClientKey::Principal(Principal::oidc("alice"))]
+            [
+                ClientKey::Holder(Holder::Grant(grant)),
+                ClientKey::Principal(Principal::oidc("alice"))
+            ]
         );
         let trusted = ["192.0.2.0/24".parse().unwrap()];
-        assert_eq!(ClientKeys::connection("192.0.2.7".parse().unwrap(), &trusted), ClientKeys::Exempt);
+        assert_eq!(
+            ClientKeys::connection("192.0.2.7".parse().unwrap(), &trusted),
+            ClientKeys::Exempt
+        );
         assert_eq!(keys(ClientKeys::Exempt), []);
     }
 }

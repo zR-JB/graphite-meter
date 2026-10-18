@@ -16,9 +16,21 @@ fn id(text: &str) -> ServerId {
 
 /// Builds a server's share of `stage`, with a latency median when `median` is given.
 fn server(name: &str, left: bool, median: Option<Duration>) -> ServerResult {
-    let summary = Summary { replies: 5, p50: median, ..Summary::default() };
-    let latency = Some(Population { summary, complete: median.is_some() });
-    ServerResult { server: id(name), left, throughput: Dir::default(), latency }
+    let summary = Summary {
+        replies: 5,
+        p50: median,
+        ..Summary::default()
+    };
+    let latency = Some(Population {
+        summary,
+        complete: median.is_some(),
+    });
+    ServerResult {
+        server: id(name),
+        left,
+        throughput: Dir::default(),
+        latency,
+    }
 }
 
 fn result(stage: Stage, servers: Vec<ServerResult>, failures: Vec<ServerFailure>) -> StageResult {
@@ -34,7 +46,12 @@ fn result(stage: Stage, servers: Vec<ServerResult>, failures: Vec<ServerFailure>
 }
 
 fn stage(stage: Stage) -> Event {
-    Event::StageStarted(StagePlan { stage, members: Vec::new(), duration: SECOND, latency: None })
+    Event::StageStarted(StagePlan {
+        stage,
+        members: Vec::new(),
+        duration: SECOND,
+        latency: None,
+    })
 }
 
 /// Views a latency then download run over `a` and `b`, where `a` leaves the download after 1.5 s and `c` had no path.
@@ -56,22 +73,36 @@ fn departed(b_measured: bool) -> (View, [ServerFailure; 2]) {
         at,
     };
     let events = [
-        Event::RunStarted { plan, focus: id("a"), at },
+        Event::RunStarted {
+            plan,
+            focus: id("a"),
+            at,
+        },
         Event::ServerFailed(unprepared.clone()),
         stage(Stage::Latency),
         Event::StageFinished(result(
             Stage::Latency,
-            vec![server("a", false, Some(Duration::from_millis(4))), server("b", false, b_median)],
+            vec![
+                server("a", false, Some(Duration::from_millis(4))),
+                server("b", false, b_median),
+            ],
             vec![unprepared.clone()],
         )),
         stage(Stage::Download),
-        Event::ServerFailed(ServerFailure { at: at + SECOND * 2, ..left.clone() }),
+        Event::ServerFailed(ServerFailure {
+            at: at + SECOND * 2,
+            ..left.clone()
+        }),
         Event::StageFinished(result(
             Stage::Download,
             vec![server("a", true, None), server("b", false, None)],
             vec![left.clone()],
         )),
-        Event::RunFinished { outcome: Outcome::Partial, error: None, elapsed: SECOND * 4 },
+        Event::RunFinished {
+            outcome: Outcome::Partial,
+            error: None,
+            elapsed: SECOND * 4,
+        },
     ];
     events.iter().for_each(|event| view.apply(event));
     (view, [unprepared, left])
@@ -84,5 +115,9 @@ fn the_latency_server_moves_to_a_survivor_that_measured_latency_and_stays_otherw
     assert_eq!(run.focus, Some(id("b")));
     assert_eq!(run.outcome, Some(Outcome::Partial));
     let (view, _) = departed(false);
-    assert_eq!(view.run.unwrap().focus, Some(id("a")), "no survivor measured latency");
+    assert_eq!(
+        view.run.unwrap().focus,
+        Some(id("a")),
+        "no survivor measured latency"
+    );
 }

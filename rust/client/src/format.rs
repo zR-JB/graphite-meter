@@ -15,13 +15,21 @@ pub const MISSING: &str = "–";
 
 /// Milliseconds: one decimal below 100, whole from there.
 pub fn ms(value: f64) -> String {
-    let decimals = if (value * 10.0).round().abs() < 1000.0 { 1 } else { 0 };
+    let decimals = if (value * 10.0).round().abs() < 1000.0 {
+        1
+    } else {
+        0
+    };
     format!("{value:.decimals$}")
 }
 
 /// A round trip in milliseconds; below 0.1 shows as `< 0.1`.
 pub fn latency(value: f64) -> String {
-    if (0.0..0.1).contains(&value) { "< 0.1".into() } else { ms(value) }
+    if (0.0..0.1).contains(&value) {
+        "< 0.1".into()
+    } else {
+        ms(value)
+    }
 }
 
 /// A round trip with its unit.
@@ -37,7 +45,11 @@ pub fn latency_range(fastest: Duration, slowest: Duration) -> String {
 
 /// Added latency in milliseconds, always signed; what rounds to zero is `+0.0`.
 pub fn added(value: f64) -> String {
-    let sign = if (value * 10.0).round() < 0.0 { '−' } else { '+' };
+    let sign = if (value * 10.0).round() < 0.0 {
+        '−'
+    } else {
+        '+'
+    };
     format!("{sign}{}", ms(value.abs()))
 }
 
@@ -150,7 +162,11 @@ pub fn label(stage: Stage) -> &'static str {
 }
 
 pub fn compact_stage(stage: Stage) -> &'static str {
-    if stage == Stage::Bidirectional { "Bi-dir" } else { label(stage) }
+    if stage == Stage::Bidirectional {
+        "Bi-dir"
+    } else {
+        label(stage)
+    }
 }
 
 pub fn population(stage: Stage) -> &'static str {
@@ -187,7 +203,11 @@ pub fn direction_label(stage: Stage, direction: Direction) -> String {
 }
 
 pub fn arrow(direction: Direction) -> &'static str {
-    if direction == Direction::Down { "↓" } else { "↑" }
+    if direction == Direction::Down {
+        "↓"
+    } else {
+        "↑"
+    }
 }
 
 pub fn outcome_label(outcome: Outcome) -> &'static str {
@@ -245,16 +265,28 @@ pub fn latency_protocol(transport: LatencyTransport) -> Protocol {
 
 /// A path as its transport over its HTTP version, and whether TLS carries it.
 pub fn path(transport: &str, version: Protocol, origin: &Origin) -> String {
-    let tls = if origin.scheme == Scheme::Https { " (TLS)" } else { "" };
+    let tls = if origin.scheme == Scheme::Https {
+        " (TLS)"
+    } else {
+        ""
+    };
     format!("{transport} over {}{tls}", protocol(Some(version)))
 }
 
 pub fn throughput_path(path: &ThroughputPath) -> String {
-    self::path(throughput_transport(path.transport), path.protocol, &path.origin)
+    self::path(
+        throughput_transport(path.transport),
+        path.protocol,
+        &path.origin,
+    )
 }
 
 pub fn latency_path(path: &LatencyPath) -> String {
-    self::path(latency_transport(path.transport), latency_protocol(path.transport), &path.origin)
+    self::path(
+        latency_transport(path.transport),
+        latency_protocol(path.transport),
+        &path.origin,
+    )
 }
 
 /// The streams a run opens per server and direction on `path`.
@@ -319,7 +351,10 @@ mod tests {
             (7500.0, "2 h 5 min", "2 h 5 min"),
             (7170.0, "2 h", "2 h"),
         ] {
-            assert_eq!((duration(seconds(value)), stage_time(seconds(value))), (shown.into(), planned.into()));
+            assert_eq!(
+                (duration(seconds(value)), stage_time(seconds(value))),
+                (shown.into(), planned.into())
+            );
         }
     }
 
