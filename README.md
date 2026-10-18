@@ -36,17 +36,15 @@ A self-hosted speed and latency test, in one container, for the browser and the 
 
 The [measurement definitions](docs/MEASUREMENTS.md) define every result.
 
-### Compared with OpenSpeedTest and LibreSpeed
+### No proxy needed
 
-From each project's README and documentation in October 2026.
+Graphite Meter serves the app and every measurement path itself, so a test runs straight from the browser to the server.
 
-|                   | Graphite Meter                                    | OpenSpeedTest                                  | LibreSpeed                                                          |
-| ----------------- | ------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------- |
-| Server side       | One binary that serves the app and times uploads  | Static files on a web server such as NGINX     | PHP 5.4 or newer on a web server; other backends exist              |
-| Browser transport | HTTP/1.1, HTTP/2, HTTP/3, WebSocket, WebTransport | XHR; HTTP/2 and HTTP/3 supported               | XHR in Web Workers; no WebSocket                                    |
-| Several servers   | Up to four measured together in one run           | Picks the one with the least latency           | Picks the one with the lowest ping                                  |
-| Saved results     | Optional, in the browser only                     | Optional, sent to a database URL you configure | Optional database: MySQL or MariaDB, PostgreSQL, SQLite, SQL Server |
-| License           | AGPL-3.0-or-later                                 | MIT                                            | LGPL-3.0-or-later                                                   |
+- **Every protocol arrives as sent.** Behind a reverse proxy the server sees a second hop, usually clear HTTP/1.1, whatever the browser used; direct listeners measure HTTP/2, HTTP/3 and WebTransport end to end.
+- **Uploads are timed where they land.** No proxy buffers or limits the request body before the server counts its bytes.
+- **Nothing to tune.** No upstream timeouts, buffering rules or forwarded headers to get right.
+
+It still runs behind nginx, Caddy or Traefik when you need one; see [reverse proxies](docs/DEPLOYMENT.md#reverse-proxies).
 
 ## Quick start
 
@@ -57,8 +55,6 @@ docker run -d --name graphite-meter --restart unless-stopped -p 7246:7246 ghcr.i
 Open `http://SERVER_IP:7246`. Clear HTTP measures HTTP/1.1 and WebSocket; HTTP/2, HTTP/3 and WebTransport need TLS
 from the [native listeners](docs/DEPLOYMENT.md#native-listeners) or a [reverse proxy](docs/DEPLOYMENT.md#reverse-proxies).
 
-> [!NOTE]
-> If you upgrade from 0.12 or earlier, `latest` now runs the Rust server. See [upgrading](docs/DEPLOYMENT.md#upgrading).
 
 ## Terminal
 
@@ -100,7 +96,7 @@ History keeps up to 2,000 results in the browser and shows the columns you choos
 
 | Page                                            | Covers                                                                                           |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| [Deployment](docs/DEPLOYMENT.md)                | Compose, Quadlet, TLS, reverse proxies, sign-in, the server catalog, upgrading, troubleshooting. |
+| [Deployment](docs/DEPLOYMENT.md)                | Compose, Quadlet, TLS, reverse proxies, sign-in, the server catalog, troubleshooting. |
 | [Server reference](docs/REFERENCE.md)           | Every server command, setting and limit, and the log format.                                     |
 | [Terminal client](docs/TERMINAL.md)             | Installing, flags, keys, report mode and exit codes.                                             |
 | [Measurement definitions](docs/MEASUREMENTS.md) | What each result means and how it is computed.                                                   |
